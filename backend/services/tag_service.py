@@ -546,10 +546,9 @@ def get_tag_statistics(conn) -> dict:
         '''
         SELECT td.id, td.category, td.value, td.label, td.label_zh, COUNT(dt.device_id) as device_count
         FROM tag_definitions td
-        LEFT JOIN device_tags dt ON dt.tag_id = td.id
-        GROUP BY td.id
-        HAVING device_count > 0
-        ORDER BY device_count DESC
+        INNER JOIN device_tags dt ON dt.tag_id = td.id
+        GROUP BY td.id, td.category, td.value, td.label, td.label_zh
+        ORDER BY COUNT(dt.device_id) DESC
         LIMIT 20
         '''
     ).fetchall()

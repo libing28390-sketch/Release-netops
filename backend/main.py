@@ -196,11 +196,17 @@ async def lifespan(app: FastAPI):
         inspection_trigger, id='inspection_scheduler', replace_existing=True
     )
     
-    from services.password_rotation_service import run_rotation_sweep
-    scheduler.add_job(
-        synchronized_scheduler_job('password_rotation_sweep', expire_seconds=3600)(run_rotation_sweep),
-        CronTrigger(hour=2, minute=0), id='password_rotation_sweep', replace_existing=True
-    )
+    # Do not register a daily no-op when credential rotation is disabled. This
+    # keeps the scheduler registry aligned with the features actually enabled
+    # for the deployment while preserving the job when the feature is on.
+    if settings.PASSWORD_ROTATION_ENABLED:
+        from services.password_rotation_service import run_rotation_sweep
+        scheduler.add_job(
+            synchronized_scheduler_job('password_rotation_sweep', expire_seconds=3600)(run_rotation_sweep),
+            CronTrigger(hour=2, minute=0), id='password_rotation_sweep', replace_existing=True
+        )
+    else:
+        logger.info("[Scheduler] Password rotation sweep disabled by configuration")
 
     # Launch background tasks
     asyncio.create_task(_bg_init())

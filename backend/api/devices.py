@@ -192,6 +192,17 @@ def _build_probe_stage(stage: str, ok: bool, summary: str, detail: str, latency_
 
 def _sanitize_device_item(item: dict) -> dict:
     sanitized = dict(item)
+    canonical_site_name = str(
+        sanitized.get('site_name') or sanitized.get('site_code') or ''
+    ).strip()
+    canonical_site_id = str(sanitized.get('canonical_site_id') or '').strip()
+    if canonical_site_name:
+        # All device consumers use ``site`` as their display field. Keep the
+        # canonical ID separately for filters and writes.
+        sanitized['site'] = canonical_site_name
+        sanitized['datacenter'] = canonical_site_name
+    if canonical_site_id:
+        sanitized['site_id'] = canonical_site_id
     if 'password' in sanitized:
         sanitized['password'] = ''
     if 'enable_password' in sanitized:
@@ -525,7 +536,7 @@ def read_devices(
             'hostname': 'd.hostname',
             'model': 'd.model',
             'platform': 'd.platform',
-            'site': 'd.site',
+            'site': "COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), d.site)",
             'connection_method': 'd.connection_method',
             'status': 'd.status',
             'ip_address': 'd.ip_address',
@@ -538,9 +549,15 @@ def read_devices(
         asset_cols = (
             ', pa.asset_tag, pa.site_id AS asset_site_id, pa.rack, pa.rack_unit, '
             'pa.department, pa.warranty_expiry, pa.purchase_date, '
-            'pa.business_ip, pa.vlan, pa.uplink_switch, pa.uplink_port'
+            'pa.business_ip, pa.vlan, pa.uplink_switch, pa.uplink_port, '
+            'COALESCE(NULLIF(pa.site_id, \'\'), NULLIF(d.site_id, \'\'), \'\') AS canonical_site_id, '
+            's.site_name, s.site_code'
         )
-        from_clause = 'FROM devices d LEFT JOIN physical_assets pa ON d.asset_id = pa.id'
+        from_clause = (
+            'FROM devices d '
+            'LEFT JOIN physical_assets pa ON d.asset_id = pa.id '
+            "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))"
+        )
 
         select_clause = f'd.*{asset_cols}'
         if str(mode).lower() == 'light':

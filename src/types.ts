@@ -23,6 +23,8 @@ export interface Device {
   role: string;
   site: string;
   site_id?: string;
+  site_name?: string;
+  site_code?: string;
   uptime: string;
   connection_method: 'ssh' | 'netconf';
   current_config?: string;

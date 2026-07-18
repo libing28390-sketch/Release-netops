@@ -89,7 +89,9 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   // Category & Filter state
   const [activeCategory, setActiveCategory] = useState<'all' | 'system' | 'backup' | 'inspection' | 'script_run'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [systemCollapsed, setSystemCollapsed] = useState(false);
+  // Keep platform schedules out of the way of user-created jobs by default.
+  // Selecting the dedicated system category expands the small curated list.
+  const [systemCollapsed, setSystemCollapsed] = useState(true);
 
   const filteredJobs = useMemo(() => {
     return jobs.filter(j => {
@@ -813,21 +815,24 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <span>{zh ? '全部作业' : 'All Jobs'}</span>
+                    <span>{zh ? '用户作业' : 'User Jobs'}</span>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'all' ? 'bg-cyan-100 text-cyan-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
                       {jobs.length}
                     </span>
                   </button>
 
                   <button
-                    onClick={() => setActiveCategory('system')}
+                    onClick={() => {
+                      setActiveCategory('system');
+                      setSystemCollapsed(false);
+                    }}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                       activeCategory === 'system'
                         ? 'bg-white text-cyan-700 shadow-sm border border-cyan-100'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                     }`}
                   >
-                    <span>{zh ? '内置系统任务' : 'System Schedules'}</span>
+                    <span>{zh ? '系统计划' : 'System Schedules'}</span>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeCategory === 'system' ? 'bg-cyan-100 text-cyan-800 font-mono' : 'bg-slate-200/80 text-slate-600'}`}>
                       {systemJobs.length}
                     </span>
@@ -896,7 +901,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
               </div>
 
               {/* ═══ 内置系统作业分栏呈现 ═══ */}
-              {(activeCategory === 'all' || activeCategory === 'system') && (
+              {activeCategory === 'system' && (
                 <div className="rounded-2xl border border-slate-200/80 bg-white shadow-sm overflow-hidden">
                   <div
                     onClick={() => setSystemCollapsed(!systemCollapsed)}
@@ -908,12 +913,16 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       </div>
                       <div>
                         <h4 className="text-xs font-bold text-slate-700 flex items-center gap-2">
-                          <span>{zh ? '内置系统计划调度作业' : 'Kernel System Schedule Daemon'}</span>
+                          <span>{zh ? '系统业务计划' : 'System Business Schedules'}</span>
                           <span className="px-2 py-0.5 rounded-full bg-slate-200/70 text-slate-700 text-[10px] font-mono">
                             {filteredSystemJobs.length} {zh ? '项' : 'items'}
                           </span>
                         </h4>
-                        <p className="text-[10px] text-slate-400 mt-0.5">{zh ? '只读系统级微内核控制模块，不允许修改' : 'Read-only scheduled operations'}</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          {zh
+                            ? '仅展示需要业务关注的计划；采集与同步守护任务由平台托管'
+                            : 'Operator-facing schedules only; collectors and sync daemons are platform-managed'}
+                        </p>
                       </div>
                     </div>
                     <button className="text-slate-400 hover:text-slate-600 transition-colors p-1">

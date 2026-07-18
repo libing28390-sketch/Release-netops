@@ -73,11 +73,11 @@ def list_scheduled_jobs(
 
 
 # ── System Jobs ──
-# Platform-managed periodic jobs (APScheduler). Unlike user-defined scheduled
-# jobs they cannot be created / edited / deleted from the UI because they are
-# part of the product's guaranteed behavior (backups, inspections, retention,
-# etc.). We expose them read-only so operators have a single place to see every
-# recurring task on the platform.
+# Operator-facing platform schedules (APScheduler). The scheduler also contains
+# low-level samplers and cache-refresh daemons, but those are implementation
+# details rather than jobs an operator can act on. Keep this catalog as an
+# explicit allow-list so adding an internal daemon never makes the Scheduled
+# Jobs page noisy again.
 _SYSTEM_JOB_CATALOG = {
     'daily_backup': {
         'name_zh': '配置自动备份',
@@ -88,15 +88,6 @@ _SYSTEM_JOB_CATALOG = {
         'action_type': 'backup',
         'deep_link': '/config/schedule',
     },
-    'arp_cache_sweep': {
-        'name_zh': 'ARP 缓存采集',
-        'name_en': 'ARP Cache Sweep',
-        'description_zh': '定期从接入层设备采集 ARP 表，用于 IP 定位器的 MAC 追踪。',
-        'description_en': 'Periodic ARP table collection for the IP Locator’s MAC-tracking workflow.',
-        'category': 'collection',
-        'action_type': 'arp_sweep',
-        'deep_link': '/ip-locator',
-    },
     'inspection_scheduler': {
         'name_zh': '周期巡检 (主发条引擎)',
         'name_en': 'Inspection Master Daemon',
@@ -106,24 +97,6 @@ _SYSTEM_JOB_CATALOG = {
         'action_type': 'inspection',
         'deep_link': '/automation/schedule',
     },
-    'host_resource_sampler': {
-        'name_zh': '宿主机资源采样',
-        'name_en': 'Host Resource Sampler',
-        'description_zh': '每分钟采集宿主机 CPU / 内存 / 磁盘指标，用于监控看板。',
-        'description_en': 'Samples host CPU / memory / disk every minute for monitoring dashboards.',
-        'category': 'collection',
-        'action_type': 'resource_snapshot',
-        'deep_link': '/monitoring',
-    },
-    'device_health_sampler': {
-        'name_zh': '设备健康采样',
-        'name_en': 'Device Health Sampler',
-        'description_zh': '每分钟对设备状态与健康打分进行抽样，驱动监控告警。',
-        'description_en': 'Samples device status and health score each minute to drive monitoring signals.',
-        'category': 'collection',
-        'action_type': 'device_health',
-        'deep_link': '/monitoring',
-    },
     'password_rotation_sweep': {
         'name_zh': '凭据轮换扫描',
         'name_en': 'Password Rotation Sweep',
@@ -132,60 +105,6 @@ _SYSTEM_JOB_CATALOG = {
         'category': 'security',
         'action_type': 'password_rotation',
         'deep_link': '/credentials',
-    },
-    'topology_interface_sync': {
-        'name_zh': '接口与拓扑同步',
-        'name_en': 'Interface & Topology Sync',
-        'description_zh': '自动从所有在线网络设备同步物理接口和 LLDP/CDP 邻居。',
-        'description_en': 'Automatically sync physical interfaces and LLDP/CDP neighbors from all online network devices.',
-        'category': 'collection',
-        'action_type': 'topology_sync',
-        'deep_link': '/cmdb/racks',
-    },
-    'poll_endpoints': {
-        'name_zh': '终端位置同步',
-        'name_en': 'Endpoint Location Sync',
-        'description_zh': '定期轮询 ARP/MAC 表并基于 LLDP/CDP 路径计算终端精准接入端口。',
-        'description_en': 'Periodically poll ARP/MAC tables and trace LLDP/CDP paths to locate endpoints.',
-        'category': 'collection',
-        'action_type': 'endpoint_poll',
-        'deep_link': '/ip-locator',
-    },
-    'route_cache_sweep': {
-        'name_zh': 'Route Cache Sweep',
-        'name_en': 'Route Cache Sweep',
-        'description_zh': '周期性从三层设备采集路由表并更新路由缓存。',
-        'description_en': 'Periodically collect routing tables from eligible L3 devices.',
-        'category': 'collection',
-        'action_type': 'route_sweep',
-        'deep_link': '/ip-locator',
-    },
-    'routing_neighbors_sync': {
-        'name_zh': 'Routing Neighbor Sync',
-        'name_en': 'Routing Neighbor Sync',
-        'description_zh': '周期性采集 BGP/OSPF/BFD 邻居状态。',
-        'description_en': 'Periodically collect BGP/OSPF/BFD neighbor state.',
-        'category': 'collection',
-        'action_type': 'routing_neighbors',
-        'deep_link': '/monitoring',
-    },
-    'bgp_routes_sync': {
-        'name_zh': 'BGP Route Sync',
-        'name_en': 'BGP Route Sync',
-        'description_zh': '周期性采集默认 VRF 和 CMDB VRF 的 BGP 路由。',
-        'description_en': 'Periodically collect default and CMDB VRF BGP routes.',
-        'category': 'collection',
-        'action_type': 'bgp_routes',
-        'deep_link': '/monitoring',
-    },
-    'device_telemetry_sampler': {
-        'name_zh': 'Linux Telemetry Sampler',
-        'name_en': 'Linux Telemetry Sampler',
-        'description_zh': '周期性通过 SSH 采集在线 Linux/服务器遥测数据。',
-        'description_en': 'Periodically collect telemetry from online Linux/server assets over SSH.',
-        'category': 'collection',
-        'action_type': 'device_telemetry',
-        'deep_link': '/monitoring',
     },
 }
 
@@ -207,11 +126,12 @@ def _describe_trigger(trigger) -> str:
 
 @router.get("/scheduled-jobs/system")
 def list_system_scheduled_jobs(_user=require_role("Viewer")):
-    """Return platform-managed periodic jobs (read-only).
+    """Return operator-facing platform schedules (read-only).
 
     Sourced from APScheduler's in-memory job registry, enriched with the static
-    metadata in ``_SYSTEM_JOB_CATALOG``. Unknown IDs are reported with their raw
-    information so newly added jobs surface without a code change.
+    metadata in ``_SYSTEM_JOB_CATALOG``. Internal and unknown scheduler IDs are
+    deliberately omitted: they remain running, but do not belong in the user
+    job-management surface.
     """
     from core.scheduler_manager import scheduler
 
@@ -222,21 +142,18 @@ def list_system_scheduled_jobs(_user=require_role("Viewer")):
         logger.warning(f"[SystemJobs] Could not list APScheduler jobs: {exc}")
         jobs = []
 
-    for sjob in jobs:
-        jid = sjob.id
-        # Skip user-defined dynamic jobs (prefix 'dyn_'); those are already
-        # returned by /scheduled-jobs.
-        if jid.startswith('dyn_'):
+    running_jobs = {
+        sjob.id: sjob
+        for sjob in jobs
+        if not sjob.id.startswith('dyn_')
+    }
+
+    # Dict insertion order is the product-defined display order. Iterating the
+    # allow-list (rather than scheduler.get_jobs()) also keeps the API stable.
+    for jid, meta in _SYSTEM_JOB_CATALOG.items():
+        sjob = running_jobs.get(jid)
+        if sjob is None:
             continue
-        meta = _SYSTEM_JOB_CATALOG.get(jid, {
-            'name_zh': jid,
-            'name_en': jid,
-            'description_zh': '平台内置任务',
-            'description_en': 'Platform built-in task',
-            'category': 'platform',
-            'action_type': 'system',
-            'deep_link': None,
-        })
         next_run = None
         try:
             if sjob.next_run_time:
@@ -255,17 +172,6 @@ def list_system_scheduled_jobs(_user=require_role("Viewer")):
             'trigger': _describe_trigger(sjob.trigger),
             'next_run_at': next_run,
         })
-    # Stable order: daily_backup / inspection first, then the rest alphabetically
-    _priority = ['daily_backup', 'inspection_scheduler', 'topology_interface_sync', 'poll_endpoints', 'arp_cache_sweep',
-                 'route_cache_sweep', 'routing_neighbors_sync', 'bgp_routes_sync', 'device_telemetry_sampler',
-                 'device_health_sampler', 'host_resource_sampler',
-                 'password_rotation_sweep']
-    def _sort_key(item: dict):
-        try:
-            return (_priority.index(item['id']), item['id'])
-        except ValueError:
-            return (len(_priority), item['id'])
-    items.sort(key=_sort_key)
     return {'success': True, 'data': {'items': items, 'total': len(items)}}
 
 

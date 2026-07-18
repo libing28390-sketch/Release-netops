@@ -37,7 +37,9 @@ export type TopologyDecoratedLink = {
   evidence_count?: number;
   metadata_json?: string;
   last_seen?: string;
+  ttl_seconds?: number;
   inferred?: boolean;
+  is_inferred?: boolean | number;
   status?: string;
   operational_state: TopologyOperationalState;
   operational_summary: string;
@@ -93,6 +95,19 @@ const createTopologyIdempotencyKey = (): string => {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 };
 
+const topologyApiErrorMessage = (payload: unknown, fallback: string): string => {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const detail = (payload as { detail?: unknown }).detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (detail && typeof detail === 'object') {
+    const message = (detail as { message?: unknown }).message;
+    const code = (detail as { code?: unknown }).code;
+    if (typeof message === 'string' && message.trim()) return message;
+    if (typeof code === 'string' && code.trim()) return code;
+  }
+  return fallback;
+};
+
 const STALE_THRESHOLD_MS = 30 * 60 * 1000;
 
 interface UseTopologyArgs {
@@ -139,7 +154,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       const sitesPayload = await sitesResponse.json();
       setTopologySites(Array.isArray(sitesPayload?.items) ? sitesPayload.items : []);
     }
-    setTopologyDataError('');
+    setTopologyDataError(sitesResponse.ok ? '' : `topology_sites_${sitesResponse.status}`);
   }, [topologySiteFilter]);
 
   React.useEffect(() => {
@@ -215,14 +230,20 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       const sourceDeviceStatus = String(sourceDevice?.status || 'unknown').toLowerCase();
       const targetDeviceStatus = String(targetDevice?.status || 'unknown').toLowerCase();
       const lastSeenTime = link.last_seen ? new Date(link.last_seen).getTime() : NaN;
-      const isStale = Number.isFinite(lastSeenTime) && Date.now() - lastSeenTime > STALE_THRESHOLD_MS;
+      const evidenceTtlMs = Number.isFinite(Number(link.ttl_seconds))
+        ? Math.max(60_000, Number(link.ttl_seconds) * 1000)
+        : STALE_THRESHOLD_MS;
+      const isStale = Number.isFinite(lastSeenTime) && Date.now() - lastSeenTime > evidenceTtlMs;
+      const serverOperationalState = String(link.operational_state || link.status || '').toLowerCase();
+      const serverMarksStale = serverOperationalState === 'stale';
+      const inferred = Boolean(link.inferred || link.is_inferred);
 
       let operationalState: TopologyOperationalState = 'unknown';
       let operationalSummary = language === 'zh'
         ? '缺少接口遥测，链路状态未知。'
         : 'Link state is unknown because interface telemetry is unavailable.';
 
-      if (link.inferred) {
+      if (inferred) {
         operationalState = 'unknown';
         operationalSummary = language === 'zh'
           ? '这是推断链路，需要等待真实邻居证据确认。'
@@ -237,6 +258,16 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         operationalSummary = language === 'zh'
           ? '本端或对端接口处于 down。'
           : 'One side of the adjacency reports the interface as down.';
+      } else if (serverMarksStale || isStale) {
+        operationalState = 'stale';
+        operationalSummary = language === 'zh'
+          ? '这条链路在最近 30 分钟内没有被新的邻居发现刷新，建议重新触发发现确认当前连通性。'
+          : 'This adjacency has not been refreshed by recent discovery within the last 30 minutes. Run discovery again to confirm current connectivity.';
+      } else if (serverOperationalState === 'down') {
+        operationalState = 'down';
+        operationalSummary = language === 'zh'
+          ? '服务端链路状态为 down。'
+          : 'The server reports this link as down.';
       } else if (
         sourceInterfaceSnapshot?.operationalState === 'up'
         && targetInterfaceSnapshot?.operationalState === 'up'
@@ -247,12 +278,14 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         operationalSummary = language === 'zh'
           ? '双端接口均为 up，且未发现明显退化信号。'
           : 'Both interfaces are up and no degradation signals were detected.';
-      } else if (isStale) {
-        operationalState = 'stale';
+      } else if (serverOperationalState === 'up') {
+        operationalState = 'up';
         operationalSummary = language === 'zh'
-          ? '这条链路在最近 30 分钟内没有被新的邻居发现刷新，建议重新触发发现确认当前连通性。'
-          : 'This adjacency has not been refreshed by recent discovery within the last 30 minutes. Run discovery again to confirm current connectivity.';
+          ? '服务端链路状态为 up。'
+          : 'The server reports this link as up.';
       } else if (
+        serverOperationalState === 'degraded'
+        ||
         sourceDeviceStatus === 'pending'
         || targetDeviceStatus === 'pending'
         || sourceInterfaceSnapshot?.operationalState === 'degraded'
@@ -266,6 +299,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
 
       return {
         ...link,
+        inferred,
         operational_state: operationalState,
         operational_summary: operationalSummary,
         evidence_sources: evidenceSources,
@@ -487,7 +521,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.run_id) {
-        throw new Error(payload?.detail || 'topology_discovery_start_failed');
+        throw new Error(topologyApiErrorMessage(payload, 'topology_discovery_start_failed'));
       }
       setTopologyDiscoveryRunId(String(payload.run_id));
       setTopologyDiscoveryProgress({
@@ -528,6 +562,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         const payload = await response.json();
         if (!active) return;
         const run = payload?.run as TopologyDiscoveryProgress;
+        setTopologyDataError('');
         setTopologyDiscoveryProgress(run);
         setTopologyDiscoveryDevices(Array.isArray(payload?.devices) ? payload.devices : []);
         if (run && terminalStates.has(run.status)) {
@@ -538,7 +573,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
             language === 'zh'
               ? `拓扑发现${run.status === 'completed' ? '完成' : '结束'}：成功 ${run.success_devices || 0}，失败 ${run.failed_devices || 0}`
               : `Topology discovery ${run.status}: ${run.success_devices || 0} succeeded, ${run.failed_devices || 0} failed`,
-            run.status === 'failed' ? 'error' : 'success',
+            run.status === 'failed' ? 'error' : (run.status === 'partial' || run.status === 'cancelled' ? 'info' : 'success'),
           );
           return;
         }

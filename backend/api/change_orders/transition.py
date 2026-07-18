@@ -29,6 +29,12 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
 
     conn = get_db_connection()
     try:
+        # Serialize state transitions on PostgreSQL so two reviewers cannot
+        # approve/reject the same state concurrently.
+        import database as database_module
+        if database_module._USE_PG:
+            conn.execute('SELECT id FROM change_orders WHERE id = ? FOR UPDATE', (order_id,))
+
         existing = get_change_order(conn, order_id)
         if not existing:
             raise HTTPException(status_code=404, detail='Change order not found')
@@ -44,6 +50,19 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
         requester_username = existing.get('requester_username', '')
         actor_username = user.get('username', '')
         actor_groups = _load_actor_change_groups(conn, str(user.get('user_id') or ''))
+        is_admin = user.get('role') == 'Administrator'
+
+        requester_actions = (
+            new_status == 'cancelled'
+            or (current_status == 'draft' and new_status == 'initial_review')
+            or (current_status == 'rejected' and new_status == 'draft')
+        )
+        if requester_actions and requester_username != actor_username and not is_admin:
+            raise HTTPException(status_code=403, detail='Only the requester or an administrator can perform this transition')
+
+        if new_status == 'initial_review' and current_status == 'draft' and not existing.get('assigned_initial_reviewer_id'):
+            raise HTTPException(status_code=400, detail='An initial reviewer is required before submission')
+
         # Applicant cannot review/approve own ticket.
         if requester_username and requester_username == actor_username:
             if new_status in {'final_review', 'approved', 'rejected'} or (new_status == 'initial_review' and current_status != 'draft'):
@@ -58,13 +77,13 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             assigned_initial_reviewer_id = str(existing.get('assigned_initial_reviewer_id') or '')
             if assigned_initial_reviewer_id and assigned_initial_reviewer_id != str(user.get('user_id') or ''):
                 raise HTTPException(status_code=403, detail='只有被指定的初审人才能处理此工单的初审')
-            if not assigned_initial_reviewer_id and actor_groups and 'initial_reviewer' not in actor_groups and user.get('role') != 'Administrator':
+            if not assigned_initial_reviewer_id and 'initial_reviewer' not in actor_groups and not is_admin:
                 raise HTTPException(status_code=403, detail='只有初审组成员或管理员才能处理此工单的初审')
         if current_status == 'final_review' and new_status in {'approved', 'rejected', 'initial_review'}:
             assigned_final_approver_id = str(existing.get('assigned_final_approver_id') or '')
             if assigned_final_approver_id and assigned_final_approver_id != str(user.get('user_id') or ''):
                 raise HTTPException(status_code=403, detail='只有被指定的终审人才能处理此工单的终审')
-            if not assigned_final_approver_id and actor_groups and 'final_approver' not in actor_groups and user.get('role') != 'Administrator':
+            if not assigned_final_approver_id and 'final_approver' not in actor_groups and not is_admin:
                 raise HTTPException(status_code=403, detail='只有终审组成员或管理员才能处理此工单的终审')
         
         # Implementation stages: Only requester can operate
@@ -169,7 +188,7 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             if is_control_sheet_enabled():
                 _validate_control_sheet_completeness(conn, order_id, full_payload, 'implementing')
 
-        order = update_change_order(conn, order_id, updates)
+        order = update_change_order(conn, order_id, updates, commit=False)
         severity = 'high' if new_status in ('rejected', 'failed') else 'medium'
         log_audit_event(
             event_type=f'change_order.{new_status}',

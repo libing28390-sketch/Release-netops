@@ -39,7 +39,11 @@ class Settings(BaseSettings):
     # 「前往平台处理」按钮跳转地址，留空则不显示按钮
     PLATFORM_URL: str = ""
     # 外部配置管理 API
-    CONFIG_MANAGEMENT_URL: str = "http://192.168.42.1:4300/configuration"
+    # Optional external configuration-management API. Keep it disabled by
+    # default so standalone and Docker installations read the local database
+    # without waiting for an unreachable private-network endpoint.
+    CONFIG_MANAGEMENT_URL: str = ""
+    CONFIG_MANAGEMENT_TIMEOUT_SECONDS: float = 1.0
 
     # HashiCorp Vault integration
     VAULT_ENABLED: bool = False

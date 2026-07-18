@@ -142,6 +142,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
   /* ─── State ─── */
   const [assets, setAssets]             = useState<Asset[]>([]);
+  const [sites, setSites]               = useState<Array<{ id: string; site_name: string; site_code: string }>>([]);
   const [summary, setSummary]           = useState<AssetSummary | null>(null);
   const [total, setTotal]               = useState(0);
   const [page, setPage]                 = useState(1);
@@ -294,6 +295,19 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     try { const r = await fetch('/api/assets/summary'); if (r.ok) setSummary(await r.json()); } catch { /* noop */ }
   }, []);
 
+  const fetchSites = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('netops_token');
+      const response = await fetch('/api/cmdb/sites', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const payload = await response.json();
+      setSites(Array.isArray(payload?.data) ? payload.data : []);
+    } catch {
+      setSites([]);
+    }
+  }, []);
+
   const fetchAssets = useCallback(async () => {
     setLoading(true);
     try {
@@ -313,6 +327,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   }, [page, pageSize, search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, tagFilter]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
+  useEffect(() => { fetchSites(); }, [fetchSites]);
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
   useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, tagFilter, pageSize]);
 
@@ -348,7 +363,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   }, [feedbackMsg, rotatingAssetId]);
 
   const vendorList = useMemo(() => summary?.by_vendor ? Object.keys(summary.by_vendor).sort() : [], [summary]);
-  const dcList     = useMemo(() => summary?.by_site ? Object.keys(summary.by_site).sort() : [], [summary]);
+  const dcList = useMemo(
+    () => sites
+      .map(site => ({ value: site.id, label: site.site_name || site.site_code || site.id }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    [sites],
+  );
   const deptList   = useMemo(() => summary?.by_department ? Object.keys(summary.by_department).sort() : [], [summary]);
 
   const criticalCount  = (summary?.by_status?.['inactive'] ?? 0);
@@ -710,7 +730,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         [zh ? 'VLAN' : 'VLAN']: a.vlan,
         [zh ? '上联交换机' : 'Uplink Switch']: a.uplink_switch,
         [zh ? '上联端口' : 'Uplink Port']: a.uplink_port,
-        [zh ? '站点' : 'Site']: a.site_id,
+        [zh ? '站点' : 'Site']: a.site_name || a.site_code || a.site_id,
         [zh ? '机柜' : 'Rack']: a.rack,
         [zh ? 'U位' : 'Rack Unit']: a.rack_unit,
         [zh ? 'U高度' : 'U Height']: a.u_height ?? 1,
@@ -1157,7 +1177,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const groupedAssets = useMemo<Record<string, Asset[]>>(() => {
     const g: Record<string, Asset[]> = {};
     const keyFn = (a: Asset) => {
-      if (groupBy === 'site_id') return a.site_id || (zh ? '未分配站点' : 'Unassigned site');
+      if (groupBy === 'site_id') return a.site_name || a.site_code || a.site_id || (zh ? '未分配站点' : 'Unassigned site');
       if (groupBy === 'department') return a.department || (zh ? '未分配' : 'Unassigned');
       if (groupBy === 'device_category') return a.device_category || typeMeta(a.asset_type).label[zh ? 'zh' : 'en'];
       if (groupBy === 'status') return statusMeta(a.status).label[zh ? 'zh' : 'en'];
@@ -1251,7 +1271,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     switch (column) {
       case 'hostname': return <><p className="font-semibold text-[11px] text-black/80 leading-tight truncate max-w-[180px]">{a.hostname || '—'}</p><p className="text-[9px] text-black/20 font-mono truncate">{a.asset_tag || a.management_ip || a.serial_number || ''}</p></>;
       case 'category_role': return <><span className="inline-flex items-center gap-1 text-[10px] text-cyan-600">{a.asset_type === 'server' ? <Server size={9} /> : <Router size={9} />}{typeDisplay(a)}</span><span className="block text-[9px] text-black/35 truncate max-w-[120px]">{categoryDisplay(a)}{a.device_role ? ` / ${a.device_role}` : ''}</span></>;
-      case 'site': return <span className="text-[10px] text-black/45 truncate max-w-[100px] block">{a.site_id || '—'}{a.rack && <span className="text-black/25 block text-[9px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}</span>;
+      case 'site': return <span className="text-[10px] text-black/45 truncate max-w-[100px] block">{a.site_name || a.site_code || a.site_id || '—'}{a.rack && <span className="text-black/25 block text-[9px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}</span>;
       case 'status': return <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${onlineMeta.text}`}><span className={`h-1.5 w-1.5 rounded-full ${onlineMeta.dot}`} />{onlineMeta.label}</span>;
       case 'tags': return a.tags?.length ? <div className="flex flex-wrap items-center gap-1 max-w-[180px]">{a.tags.slice(0, 3).map(tag => <span key={tag.id} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-medium whitespace-nowrap" style={{ color: tag.color || '#0891b2', backgroundColor: `${tag.color || '#0891b2'}12` }}><span className="h-1 w-1 rounded-full" style={{ backgroundColor: tag.color || '#0891b2' }} />{zh ? (tag.label_zh || tag.label) : tag.label}</span>)}{a.tags.length > 3 && <span className="text-[8px] text-black/25">+{a.tags.length - 3}</span>}</div> : <span className="text-black/15">—</span>;
       case 'vendor': return <span className="text-[10px] text-black/55">{a.vendor || '—'}</span>;
@@ -1508,7 +1528,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     <span className="text-[9px] text-black/20 mr-0.5">{zh ? '高级:' : 'More:'}</span>
                     {([
                       { val: vendorFilter, set: setVendorFilter, label: zh ? '厂商' : 'Vendor', opts: vendorList.map(v => ({ v, l: v })),   hide: !vendorList.length },
-                      { val: dcFilter,     set: setDcFilter,     label: zh ? '机房' : 'DC',     opts: dcList.map(d => ({ v: d, l: d })),     hide: !dcList.length },
+                      { val: dcFilter,     set: setDcFilter,     label: zh ? '站点' : 'Site',   opts: dcList.map(d => ({ v: d.value, l: d.label })), hide: !dcList.length },
                       { val: deptFilter,   set: setDeptFilter,   label: zh ? '业务' : 'Service', opts: deptList.map(d => ({ v: d, l: d })),  hide: !deptList.length },
                       { val: lifecycleFilter, set: setLifecycleFilter, label: zh ? '投产' : 'Lifecycle', opts: LIFECYCLE_STATUSES.map(s => ({ v: s.value, l: s.label[zh ? 'zh' : 'en'] })), hide: false },
                     ] as const).filter(f => !f.hide).map(f => (

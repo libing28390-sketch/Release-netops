@@ -13,9 +13,11 @@ from services.topology_service import (
     get_discovery_evidence,
     get_discovery_run,
     get_unmanaged_neighbors,
+    get_topology_generation_status,
     get_topology_site_summaries,
     list_discovery_runs,
     request_cancel_discovery_run,
+    select_topology_discovery_devices,
 )
 
 router = APIRouter()
@@ -25,6 +27,17 @@ class TopologyDiscoveryRequest(BaseModel):
     scope: str = Field(default='full', pattern='^(full|site|devices)$')
     site_id: str = ''
     device_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+_SCOPE_ERROR_MESSAGES = {
+    'topology_scope_invalid': 'Topology discovery scope must be full, site, or devices.',
+    'topology_site_required': 'site_id is required when scope is site.',
+    'topology_device_ids_required': 'device_ids is required when scope is devices.',
+    'topology_full_scope_has_selectors': 'Full discovery scope cannot include site_id or device_ids.',
+    'topology_site_scope_has_device_ids': 'Site discovery scope cannot include device_ids.',
+    'topology_device_scope_has_site_id': 'Device discovery scope cannot include site_id.',
+    'topology_site_not_found': 'The requested topology site does not exist.',
+}
 
 
 def _get_authenticated_session(request: Request) -> dict:
@@ -45,50 +58,52 @@ async def trigger_discovery(
 ):
     session = _get_authenticated_session(request)
     request_payload = payload or TopologyDiscoveryRequest()
-    clauses = ["status = 'online'", "COALESCE(ip_address, '') <> ''"]
-    params: list[object] = []
-    if request_payload.site_id:
-        clauses.append('site_id = ?')
-        params.append(request_payload.site_id)
-    if request_payload.device_ids:
-        placeholders = ','.join('?' for _ in request_payload.device_ids)
-        clauses.append(f'id IN ({placeholders})')
-        params.extend(request_payload.device_ids)
-
-    conn = get_db_connection()
     try:
-        device_rows = conn.execute(
-            f'''
-            SELECT id
-            FROM devices
-            WHERE {' AND '.join(clauses)}
-            ORDER BY hostname
-            ''',
-            tuple(params),
-        ).fetchall()
-    finally:
-        conn.close()
+        selection = select_topology_discovery_devices(
+            request_payload.scope,
+            site_id=request_payload.site_id,
+            device_ids=request_payload.device_ids,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        raise HTTPException(
+            status_code=422,
+            detail={'code': code, 'message': _SCOPE_ERROR_MESSAGES.get(code, code)},
+        ) from exc
 
-    device_ids = [row['id'] for row in device_rows]
+    device_ids = selection['device_ids']
     if not device_ids:
-        raise HTTPException(status_code=400, detail='No online devices match the requested topology discovery scope')
+        raise HTTPException(
+            status_code=400,
+            detail={
+                'code': 'topology_scope_empty',
+                'message': 'No online device with a management IP matches the requested topology discovery scope.',
+                'excluded_device_ids': selection['excluded_device_ids'],
+            },
+        )
 
     requested_by = str(session.get('username') or session.get('user_id') or 'api')
     run_id = create_discovery_run(
         device_ids=device_ids,
         requested_by=requested_by,
-        scope=request_payload.scope,
-        site_id=request_payload.site_id,
-        scope_payload=request_payload.model_dump(),
+        scope=selection['scope'],
+        site_id=selection['site_id'],
+        scope_payload={
+            **request_payload.model_dump(),
+            'resolved_site_id': selection['site_id'],
+            'selected_device_ids': device_ids,
+            'excluded_device_ids': selection['excluded_device_ids'],
+        },
         idempotency_key=idempotency_key or '',
     )
-    existing_run = get_topology_discovery_run(run_id)
+    existing_run = get_discovery_run(run_id)
     run_status = str((existing_run or {}).get('run', {}).get('status') or 'pending')
     if run_status not in {'pending', 'running'}:
         return {
             'status': 'Discovery request already completed',
             'run_id': run_id,
             'device_count': len(device_ids),
+            'excluded_device_count': len(selection['excluded_device_ids']),
             'run_status': run_status,
         }
     background_tasks.add_task(execute_discovery_run, run_id, device_ids)
@@ -96,6 +111,9 @@ async def trigger_discovery(
         'status': 'Discovery started in background',
         'run_id': run_id,
         'device_count': len(device_ids),
+        'excluded_device_count': len(selection['excluded_device_ids']),
+        'scope': selection['scope'],
+        'site_id': selection['site_id'],
     }
 
 
@@ -124,6 +142,11 @@ def get_links(
 @router.get('/topology/sites')
 def get_topology_sites():
     return {'items': get_topology_site_summaries()}
+
+
+@router.get('/topology/generation-status')
+def get_generation_status():
+    return get_topology_generation_status()
 
 
 @router.get('/topology/layout')

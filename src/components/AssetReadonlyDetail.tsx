@@ -29,6 +29,8 @@ export interface AssetRecord {
   model: string;
   hostname: string;
   site_id: string;
+  site_name?: string;
+  site_code?: string;
   rack: string;
   rack_unit: string;
   u_height?: number;
@@ -145,7 +147,7 @@ export function AssetReadonlyDetailInner({ asset: a, zh }: { asset: AssetRecord;
         {a.asset_type === 'server' && (
           <ReadonlyField label={zh ? '上联端口' : 'Uplink Port'} value={a.uplink_port || '—'} mono />
         )}
-        <ReadonlyField label={zh ? '站点' : 'Site'} value={a.site_id || '—'} />
+        <ReadonlyField label={zh ? '站点' : 'Site'} value={a.site_name || a.site_code || a.site_id || '—'} />
         <ReadonlyField label={zh ? '机柜' : 'Rack'} value={a.rack || '—'} />
         <ReadonlyField label={zh ? '设备高度(U)' : 'Height (U)'} value={a.u_height != null ? String(a.u_height) : '—'} />
         <ReadonlyField label={zh ? '计划起始U' : 'Planned start U'} value={a.planned_start_u != null ? String(a.planned_start_u) : '—'} />
@@ -189,6 +191,8 @@ export function normalizeAssetApiRow(row: Record<string, unknown>): AssetRecord 
     model: s('model'),
     hostname: s('hostname'),
     site_id: s('site_id'),
+    site_name: s('site_name'),
+    site_code: s('site_code'),
     rack: s('rack'),
     rack_unit: s('rack_unit'),
     u_height: n('u_height'),

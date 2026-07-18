@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Body
+import logging
 import os
 import uuid
 import json
@@ -9,34 +10,53 @@ from services.audit_service import log_audit_event
 from core.config import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _read_local_templates() -> list[dict]:
+    conn = get_db_connection()
+    try:
+        templates = conn.execute(
+            'SELECT id, name, type, category, vendor, content, rollback, '
+            'last_used as lastUsed FROM templates'
+        ).fetchall()
+        return [dict(template) for template in templates]
+    finally:
+        conn.close()
 
 @router.get("/templates")
 def read_templates():
-    """读取配置管理模板，从外部 API 或本地数据库"""
-    # 尝试从外部配置管理 API 获取
-    external_url = settings.CONFIG_MANAGEMENT_URL
+    """Read templates from an explicitly configured API or the local DB.
+
+    Local deployments must not perform an implicit network call. The previous
+    hard-coded private address made every request wait for the five-second
+    socket timeout before falling back to PostgreSQL.
+    """
+    external_url = settings.CONFIG_MANAGEMENT_URL.strip()
+    if not external_url:
+        return _read_local_templates()
+
+    timeout = max(0.1, float(settings.CONFIG_MANAGEMENT_TIMEOUT_SECONDS))
     try:
-        response = urlopen(external_url, timeout=5)
-        if response.status == 200:
-            templates = json.loads(response.read().decode('utf-8'))
-            # 确保模板格式一致
-            if isinstance(templates, list):
+        with urlopen(external_url, timeout=timeout) as response:
+            if response.status == 200:
+                templates = json.loads(response.read().decode('utf-8'))
+                if isinstance(templates, list):
+                    return templates
+                if isinstance(templates, dict) and 'data' in templates:
+                    return templates.get('data', [])
                 return templates
-            elif isinstance(templates, dict) and 'data' in templates:
-                return templates.get('data', [])
-            else:
-                return templates
-    except (URLError, json.JSONDecodeError, Exception) as e:
-        # 外部 API 失败时回退到本地数据库
-        pass
-    
-    # 回退：从本地数据库读取
-    conn = get_db_connection()
-    try:
-        templates = conn.execute('SELECT id, name, type, category, vendor, content, rollback, last_used as lastUsed FROM templates').fetchall()
-        return [dict(t) for t in templates]
-    finally:
-        conn.close()
+            logger.warning(
+                "External configuration API returned HTTP %s; using local templates",
+                response.status,
+            )
+    except (URLError, TimeoutError, OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        logger.warning(
+            "External configuration API unavailable; using local templates: %s",
+            exc,
+        )
+
+    return _read_local_templates()
 
 @router.post("/templates")
 def create_template(template: dict = Body(...)):

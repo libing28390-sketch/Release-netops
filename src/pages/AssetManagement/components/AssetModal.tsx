@@ -523,20 +523,23 @@ export const AssetModal: React.FC<AssetModalProps> = ({
             </div>
             <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
               <div>
-                <Field
-                  label={zh ? '站点' : 'Site'}
+                <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '站点' : 'Site'}</label>
+                <select
                   value={form.site_id || ''}
-                  onChange={v => setForm(f => ({ ...f, site_id: v, rack: f.site_id === v ? f.rack : '' }))}
-                  placeholder="BJ-DC1"
-                  list="site-options"
-                />
-                <datalist id="site-options">
+                  onChange={e => {
+                    const siteId = e.target.value;
+                    setForm(f => ({ ...f, site_id: siteId, rack: f.site_id === siteId ? f.rack : '' }));
+                  }}
+                  className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+                  title={zh ? '站点' : 'Site'}
+                >
+                  <option value="">{zh ? '未分配站点' : 'Unassigned site'}</option>
                   {sites.map(site => (
                     <option key={site.id} value={site.id}>
-                      {site.site_code} {site.site_name}
+                      {site.site_name} ({site.site_code})
                     </option>
                   ))}
-                </datalist>
+                </select>
               </div>
               <div>
                 <Field

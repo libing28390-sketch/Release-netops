@@ -1551,20 +1551,20 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   }, [devices, links, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
 
   return (
-    <div ref={containerRef} className={`relative h-full w-full overflow-hidden rounded-[24px] bg-[radial-gradient(circle_at_20%_10%,rgba(14,165,233,0.12),transparent_34%),linear-gradient(145deg,#0b1424_0%,#111e32_52%,#0b1322_100%)] ${spacePanActive ? 'topology-space-pan' : ''}`}>
+    <div ref={containerRef} className={`relative h-full w-full overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-inner ${spacePanActive ? 'topology-space-pan' : ''}`}>
       {devices.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
           No topology data available.
         </div>
       )}
-      <div className={`pointer-events-none absolute left-4 top-4 z-10 rounded-xl border px-3 py-2 text-[10px] font-semibold tracking-wide backdrop-blur-sm ${spacePanActive ? 'border-cyan-300/50 bg-cyan-950/70 text-cyan-100' : 'border-white/10 bg-slate-950/55 text-slate-400'}`}>
+      <div className={`pointer-events-none absolute left-4 top-4 z-10 rounded-xl border px-3 py-2 text-[10px] font-semibold tracking-wide backdrop-blur-sm ${spacePanActive ? 'border-cyan-300/50 bg-cyan-950/70 text-cyan-100' : 'border-slate-200 bg-white/95 text-slate-500 shadow-sm'}`}>
         空白区平移&nbsp;·&nbsp;节点拖动&nbsp;·&nbsp;框选模式或 Shift+空白框选&nbsp;·&nbsp;Space+拖动平移&nbsp;·&nbsp;滚轮缩放
       </div>
-      <div className="absolute right-4 top-4 z-10 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-end gap-1.5 rounded-2xl border border-white/10 bg-slate-950/70 px-2.5 py-2 shadow-[0_18px_40px_rgba(0,0,0,0.25)] backdrop-blur-sm">
+      <div className="absolute right-4 top-4 z-10 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-end gap-1.5 rounded-2xl border border-slate-200 bg-white/95 px-2.5 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.12)] backdrop-blur-sm">
         <button
           type="button"
           onClick={applyAutoLayout}
-          className="rounded-xl border border-cyan-300/30 bg-cyan-400/10 px-2.5 py-2 text-[10px] font-bold text-cyan-100 transition-all hover:border-cyan-200/60 hover:bg-cyan-400/20"
+          className="rounded-xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-[10px] font-bold text-cyan-700 transition-all hover:border-cyan-300 hover:bg-cyan-100"
           aria-label="自动布局"
         >
           自动布局
@@ -1572,7 +1572,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         <button
           type="button"
           onClick={() => { setGridSnapEnabled((value) => !value); }}
-          className={`rounded-xl border px-2.5 py-2 text-[10px] font-bold transition-all ${gridSnapEnabled ? 'border-emerald-300/50 bg-emerald-400/15 text-emerald-100' : 'border-white/10 text-slate-400 hover:bg-white/10'}`}
+          className={`rounded-xl border px-2.5 py-2 text-[10px] font-bold transition-all ${gridSnapEnabled ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
           aria-label="网格吸附"
           aria-pressed={gridSnapEnabled}
         >
@@ -1581,7 +1581,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         <button
           type="button"
           onClick={() => { setBoxSelectMode((value) => !value); }}
-          className={`rounded-xl border px-2.5 py-2 text-[10px] font-bold transition-all ${boxSelectMode ? 'border-violet-300/60 bg-violet-400/20 text-violet-100' : 'border-white/10 text-slate-400 hover:bg-white/10'}`}
+          className={`rounded-xl border px-2.5 py-2 text-[10px] font-bold transition-all ${boxSelectMode ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
           aria-label="框选模式"
           aria-pressed={boxSelectMode}
         >
@@ -1590,7 +1590,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         <button
           type="button"
           onClick={() => persistCurrentLayout()}
-          className="rounded-xl border border-white/10 px-2.5 py-2 text-[10px] font-bold text-slate-300 transition-all hover:border-cyan-300/50 hover:bg-white/10"
+          className="rounded-xl border border-slate-200 px-2.5 py-2 text-[10px] font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50"
           aria-label="保存布局"
         >
           保存
@@ -1599,7 +1599,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           type="button"
           onClick={undoLayout}
           disabled={!historyState.canUndo}
-          className="h-8 w-8 rounded-xl border border-white/10 text-sm font-bold text-slate-200 transition-all hover:border-cyan-300/50 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
+          className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
           aria-label="撤销布局"
         >
           ↶
@@ -1608,7 +1608,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           type="button"
           onClick={redoLayout}
           disabled={!historyState.canRedo}
-          className="h-8 w-8 rounded-xl border border-white/10 text-sm font-bold text-slate-200 transition-all hover:border-cyan-300/50 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
+          className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
           aria-label="恢复布局"
         >
           ↷
@@ -1620,7 +1620,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           type="button"
           onClick={() => setSelectedNodeIds([])}
           disabled={selectedNodeIds.length === 0}
-          className="rounded-xl border border-white/10 px-2.5 py-2 text-[10px] font-bold text-slate-300 transition-all hover:border-cyan-300/50 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
+          className="rounded-xl border border-slate-200 px-2.5 py-2 text-[10px] font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
           aria-label="清除选择"
         >
           清除
@@ -1628,18 +1628,18 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         <button
           type="button"
           onClick={() => zoomAroundViewportCenter(0.88)}
-          className="h-8 w-8 rounded-xl border border-white/10 text-sm font-bold text-slate-200 transition-all hover:border-cyan-300/50 hover:bg-white/10"
+          className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50"
           aria-label="Zoom out"
         >
           -
         </button>
-        <span className="min-w-[52px] text-center text-[11px] font-bold uppercase tracking-[0.14em] text-slate-300">
+        <span className="min-w-[52px] text-center text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600">
           {zoomPercent}%
         </span>
         <button
           type="button"
           onClick={() => zoomAroundViewportCenter(1.14)}
-          className="h-8 w-8 rounded-xl border border-white/10 text-sm font-bold text-slate-200 transition-all hover:border-cyan-300/50 hover:bg-white/10"
+          className="h-8 w-8 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50"
           aria-label="Zoom in"
         >
           +
@@ -1647,7 +1647,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         <button
           type="button"
           onClick={fitViewport}
-          className="rounded-xl border border-white/10 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-300 transition-all hover:border-cyan-300/50 hover:bg-white/10"
+          className="rounded-xl border border-slate-200 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50"
           aria-label="Fit"
         >
           Fit
@@ -1655,7 +1655,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         <button
           type="button"
           onClick={resetLayout}
-          className="rounded-xl border border-white/10 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-300 transition-all hover:border-cyan-300/50 hover:bg-white/10"
+          className="rounded-xl border border-slate-200 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition-all hover:border-cyan-300 hover:bg-slate-50"
           aria-label="Reset"
         >
           Reset

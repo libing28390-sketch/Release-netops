@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Body
 from fastapi.responses import FileResponse
@@ -33,6 +34,17 @@ from api.change_orders.helpers import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _parse_iso_to_utc(value: str) -> Optional[datetime]:
+    """Parse stored change-window timestamps using the same UTC policy as execution."""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 # ── Summary ──────────────────────────────────────────────────────────
 
@@ -135,31 +147,32 @@ def api_validate_change_ticket(order_number: str, user=require_role("Viewer")):
             }
 
         # Check time window
-        from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         time_ok = True
         reason = 'ok'
         message = ''
 
         if scheduled_start:
-            try:
-                start_dt = datetime.fromisoformat(scheduled_start.replace('Z', '+00:00'))
-                if now < start_dt:
-                    time_ok = False
-                    reason = 'not_started'
-                    message = f'变更窗口尚未开始（计划开始：{scheduled_start}）'
-            except (ValueError, TypeError):
-                pass
+            start_dt = _parse_iso_to_utc(scheduled_start)
+            if start_dt is None:
+                time_ok = False
+                reason = 'invalid_schedule'
+                message = f'计划开始时间格式无效：{scheduled_start}'
+            elif now < start_dt:
+                time_ok = False
+                reason = 'not_started'
+                message = f'变更窗口尚未开始（计划开始：{scheduled_start}）'
 
         if time_ok and scheduled_end:
-            try:
-                end_dt = datetime.fromisoformat(scheduled_end.replace('Z', '+00:00'))
-                if now > end_dt:
-                    time_ok = False
-                    reason = 'expired'
-                    message = f'变更窗口已超时（计划结束：{scheduled_end}）'
-            except (ValueError, TypeError):
-                pass
+            end_dt = _parse_iso_to_utc(scheduled_end)
+            if end_dt is None:
+                time_ok = False
+                reason = 'invalid_schedule'
+                message = f'计划结束时间格式无效：{scheduled_end}'
+            elif now > end_dt:
+                time_ok = False
+                reason = 'expired'
+                message = f'变更窗口已超时（计划结束：{scheduled_end}）'
 
         return {
             'success': True,
@@ -265,6 +278,9 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
     try:
         payload = _normalize_assignment_payload(conn, body.model_dump())
         payload = _normalize_command_template_payload(payload)
+
+        if payload.get('status') not in {'draft', 'initial_review'}:
+            raise HTTPException(status_code=400, detail='New change orders must start as draft or initial_review')
         
         _validate_assignment_rules(user.get('username'), payload)
         
@@ -276,6 +292,12 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
         
         if is_control_sheet_enabled() and payload.get('status') == 'initial_review':
             _validate_control_sheet_completeness(conn, None, payload, 'initial_review')
+
+        # The human-readable number is derived from the current daily maximum;
+        # serialize PostgreSQL creators to avoid duplicate numbers under load.
+        import database as database_module
+        if database_module._USE_PG:
+            conn.execute('LOCK TABLE change_orders IN SHARE ROW EXCLUSIVE MODE')
 
         order = create_change_order(
             conn,
@@ -299,6 +321,7 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
             scheduled_end=payload['scheduled_end'],
             authorization_exempt=bool(payload.get('authorization_exempt')),
             control_sheet=payload.get('control_sheet') or {},
+            commit=False,
         )
         log_audit_event(
             event_type='change_order.created',
@@ -328,17 +351,71 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
 def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
-        updates = _normalize_assignment_payload(conn, body.model_dump(exclude_none=True))
-        updates = _normalize_command_template_payload(updates)
-        if not updates:
+        raw_updates = body.model_dump(exclude_none=True)
+        if not raw_updates:
             raise HTTPException(status_code=400, detail='No fields to update')
-            
+
+        # Serialize edit decisions on PostgreSQL so concurrent submit/update
+        # requests cannot both validate against the same stale status.
+        import database as database_module
+        if database_module._USE_PG:
+            conn.execute('SELECT id FROM change_orders WHERE id = ? FOR UPDATE', (order_id,))
+
         existing = get_change_order(conn, order_id)
         if not existing:
             raise HTTPException(status_code=404, detail='Change order not found')
-            
+
+        is_admin = user.get('role') == 'Administrator'
+        is_requester = existing.get('requester_username') == user.get('username')
+        if not is_admin and not is_requester:
+            raise HTTPException(status_code=403, detail='Only the requester or an administrator can edit this change order')
+        if existing.get('status') not in {'draft', 'rejected'}:
+            raise HTTPException(status_code=409, detail='Only draft or rejected change orders can be edited')
+
+        server_managed_fields = {
+            'approver_id', 'approver_username', 'actual_start', 'actual_end',
+            'result_summary', 'result_detail', 'rejected_reason',
+        }
+        forbidden_fields = sorted(server_managed_fields.intersection(raw_updates))
+        if forbidden_fields:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Server-managed fields cannot be updated directly: {", ".join(forbidden_fields)}',
+            )
+
+        target_status = raw_updates.get('status', existing.get('status'))
+        allowed_edit_statuses = {'draft', 'initial_review'}
+        if existing.get('status') == 'rejected':
+            allowed_edit_statuses.add('rejected')
+        if target_status not in allowed_edit_statuses:
+            raise HTTPException(status_code=400, detail=f'Invalid edit status: {target_status}')
+
+        updates = _normalize_assignment_payload(conn, raw_updates)
+        updates = _normalize_command_template_payload(updates)
+
+        # Editing a rejected ticket starts a clean review cycle. Keep the
+        # rejection reason for traceability, but discard recorded decisions.
+        if existing.get('status') == 'rejected' and target_status in {'draft', 'initial_review'}:
+            updates.update({
+                'initial_reviewer_id': '',
+                'initial_reviewer_username': '',
+                'final_approver_id': '',
+                'final_approver_username': '',
+                'approver_id': '',
+                'approver_username': '',
+                'assigned_final_approver_id': '',
+                'assigned_final_approver_username': '',
+            })
+            result_detail = dict(existing.get('result_detail') or {})
+            for key in ('initial_review_at', 'approved_at', 'rejected_by', 'rejected_at', 'rejected_stage'):
+                result_detail.pop(key, None)
+            updates['result_detail'] = result_detail
+
         full_payload = {**existing, **updates}
         _validate_assignment_rules(existing.get('requester_username'), full_payload)
+
+        if full_payload.get('status') == 'initial_review' and not full_payload.get('assigned_initial_reviewer_id'):
+            raise HTTPException(status_code=400, detail='An initial reviewer is required before submission')
         
         if is_template_required():
             _validate_template_completeness(full_payload)
@@ -346,7 +423,7 @@ def api_update_change_order(order_id: str, body: ChangeOrderUpdate, user=require
         if is_control_sheet_enabled() and full_payload.get('status') == 'initial_review' and existing.get('status') != 'initial_review':
              _validate_control_sheet_completeness(conn, order_id, full_payload, 'initial_review')
 
-        order = update_change_order(conn, order_id, updates)
+        order = update_change_order(conn, order_id, updates, commit=False)
         log_audit_event(
             event_type='change_order.updated',
             category='change_order',
@@ -375,7 +452,7 @@ def api_delete_change_order(order_id: str, user=require_role("Administrator")):
         existing = get_change_order(conn, order_id)
         if not existing:
             raise HTTPException(status_code=404, detail='Change order not found')
-        delete_change_order(conn, order_id)
+        delete_change_order(conn, order_id, commit=False)
         log_audit_event(
             event_type='change_order.deleted',
             category='change_order',

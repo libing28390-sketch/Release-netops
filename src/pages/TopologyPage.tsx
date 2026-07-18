@@ -1,11 +1,12 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Download, Globe, RotateCcw, Search, Network, EyeOff } from 'lucide-react';
+import { Activity, AlertTriangle, Clock3, Database, Download, EyeOff, GitMerge, Globe, Network, RotateCcw, Search } from 'lucide-react';
 import type { Device } from '../types';
 import { darkActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 import TopologyGraph from '../components/TopologyGraph';
 import TopologyInspectorPanel from '../components/TopologyInspectorPanel';
 import PageHero from '../components/PageHero';
+import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatus';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
@@ -64,7 +65,11 @@ interface TopologyPageProps {
     processed_devices: number;
     success_devices: number;
     failed_devices: number;
+    running_devices?: number;
+    pending_devices?: number;
     progress_percent: number;
+    completed_at?: string | null;
+    last_error_code?: string;
   } | null;
   topologyDiscoveryDevices: any[];
   topologySites: any[];
@@ -167,14 +172,45 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   formatTopologyEvidenceLabel,
   getTopologyOperationalTone,
 }) => {
+  const terminalDiscoveryStatus = topologyDiscoveryProgress && ['completed', 'partial', 'failed', 'cancelled'].includes(topologyDiscoveryProgress.status)
+    ? `${topologyDiscoveryProgress.id}:${topologyDiscoveryProgress.status}`
+    : undefined;
+  const {
+    status: generationStatus,
+    error: generationStatusError,
+    loading: generationStatusLoading,
+  } = useTopologyGenerationStatus(terminalDiscoveryStatus);
+  const generationInventory = generationStatus?.inventory;
+  const automaticIntervalMinutes = Math.max(1, Math.round((generationStatus?.generation.automatic.interval_seconds || 300) / 60));
+  const evidenceTtlMinutes = Math.max(1, Math.round((generationStatus?.generation.evidence_ttl_seconds || 1800) / 60));
+  const pipelineLabels: Record<string, string> = language === 'zh'
+    ? {
+        select: '筛选在线设备',
+        collect: '只读采集 LLDP/CDP',
+        normalize: '规范化厂商与端口',
+        match: '匹配受管设备',
+        deduplicate: '合并双向重复证据',
+        publish: '发布链路与未纳管节点',
+      }
+    : {
+        select: 'Select eligible devices',
+        collect: 'Collect LLDP/CDP read-only',
+        normalize: 'Normalize vendor and ports',
+        match: 'Match managed devices',
+        deduplicate: 'Merge directional evidence',
+        publish: 'Publish links and unmanaged peers',
+      };
+  const pipelineStages = generationStatus?.generation.pipeline.map((stage) => stage.stage)
+    || ['select', 'collect', 'normalize', 'match', 'deduplicate', 'publish'];
+
   return (
     <div className="topology-page-shell h-full flex flex-col overflow-hidden">
       <PageHero
         icon={Network}
         title={language === 'zh' ? '网络拓扑' : 'Network Topology'}
         subtitle={language === 'zh'
-          ? '基于 LLDP 邻居发现展示网络连接关系，按站点、角色和状态快速缩小故障域。'
-          : 'Visualize LLDP-based network adjacency and reduce the fault domain by site, role, and health state.'}
+          ? '基于 LLDP/CDP 邻居证据自动生成连接关系，按站点、角色和状态快速缩小故障域。'
+          : 'Generate network adjacency from LLDP/CDP evidence and reduce the fault domain by site, role, and health state.'}
         actions={
           <>
             <button onClick={onTriggerDiscovery} className={secondaryActionBtnClass} disabled={topologyDiscoveryRunning}>
@@ -203,6 +239,64 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           {language === 'zh' ? '拓扑数据刷新异常：' : 'Topology data refresh warning: '}{topologyDataError}
         </div>
       )}
+
+      <div className="ops-surface rounded-2xl p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <GitMerge size={16} className="text-sky-600" />
+              <h3 className="text-sm font-bold text-slate-800">{language === 'zh' ? '拓扑自动生成逻辑' : 'Topology Generation Pipeline'}</h3>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${generationStatus?.health === 'healthy' ? 'bg-emerald-100 text-emerald-700' : generationStatus?.health === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                {generationStatusLoading
+                  ? (language === 'zh' ? '读取中' : 'Loading')
+                  : generationStatus?.health === 'healthy'
+                    ? (language === 'zh' ? '证据正常' : 'Healthy')
+                    : generationStatus?.health === 'degraded'
+                      ? (language === 'zh' ? '需要关注' : 'Attention')
+                      : (language === 'zh' ? '等待证据' : 'Awaiting Evidence')}
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] leading-5 text-slate-500">
+              {language === 'zh'
+                ? `系统每 ${automaticIntervalMinutes} 分钟自动执行一次；“刷新发现”只用于立即校验。设备侧仅执行按厂商选择的只读邻居查询，不写入设备配置。`
+                : `Automatic discovery runs every ${automaticIntervalMinutes} minutes; Refresh Discovery is for immediate validation. Device access is limited to vendor-specific read-only neighbor queries.`}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[10px] font-semibold text-slate-600">
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"><Clock3 size={12} />{language === 'zh' ? `证据 ${evidenceTtlMinutes} 分钟过期` : `${evidenceTtlMinutes}m evidence TTL`}</span>
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"><Database size={12} />{language === 'zh' ? `${generationInventory?.eligible_devices ?? '—'} 台可发现` : `${generationInventory?.eligible_devices ?? '—'} eligible`}</span>
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"><Activity size={12} />{language === 'zh' ? `${generationInventory?.managed_links ?? '—'} 条已生成链路` : `${generationInventory?.managed_links ?? '—'} generated links`}</span>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+          {pipelineStages.map((stage, index) => (
+            <div key={stage} className="relative rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5">
+              <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-sky-600">{String(index + 1).padStart(2, '0')}</div>
+              <div className="mt-1 text-[11px] font-semibold leading-4 text-slate-700">{pipelineLabels[stage] || stage}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] text-slate-500">
+          <span>{language === 'zh' ? '最近邻居证据：' : 'Latest evidence: '}{generationInventory?.last_observation_at ? formatTopologyLastSeen(generationInventory.last_observation_at) : (language === 'zh' ? '暂无' : 'None')}</span>
+          <span>{language === 'zh' ? '匹配：' : 'Matched: '}<b className="text-emerald-700">{generationInventory?.matched_observations ?? 0}</b></span>
+          <span>{language === 'zh' ? '歧义：' : 'Ambiguous: '}<b className="text-amber-700">{generationInventory?.ambiguous_observations ?? 0}</b></span>
+          <span>{language === 'zh' ? '未纳管：' : 'Unmanaged: '}<b className="text-slate-700">{generationInventory?.unmatched_observations ?? 0}</b></span>
+          <span>{language === 'zh' ? '双向/多证据：' : 'Multi-evidence: '}<b className="text-sky-700">{generationInventory?.multi_evidence_links ?? 0}</b></span>
+          <span>{language === 'zh' ? '陈旧链路：' : 'Stale: '}<b className="text-rose-700">{generationInventory?.stale_links ?? 0}</b></span>
+        </div>
+        {(generationStatusError || (generationStatus?.warnings.length || 0) > 0) && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {generationStatusError && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700"><AlertTriangle size={11} />{language === 'zh' ? '生成状态暂时不可用，拓扑数据仍可继续查看。' : 'Generation status is temporarily unavailable; topology data remains available.'}</span>
+            )}
+            {generationStatus?.warnings.map((warning) => (
+              <span key={warning.code} className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700"><AlertTriangle size={11} />{warning.code} · {warning.count}</span>
+            ))}
+          </div>
+        )}
+      </div>
 
       {topologySites.length > 0 && (
         <div className="ops-surface rounded-2xl p-4">
@@ -242,11 +336,15 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
       )}
 
       {topologyDiscoveryProgress && (
-        <div className="ops-surface rounded-2xl border-l-4 border-l-sky-500 p-4">
+        <div className={`ops-surface rounded-2xl border-l-4 p-4 ${topologyDiscoveryProgress.status === 'failed' ? 'border-l-rose-500' : topologyDiscoveryProgress.status === 'partial' ? 'border-l-amber-500' : 'border-l-sky-500'}`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-sky-900">{language === 'zh' ? '拓扑发现任务' : 'Topology Discovery Run'}</h3>
-              <p className="mt-0.5 text-[11px] text-sky-700">{topologyDiscoveryProgress.status} · {topologyDiscoveryProgress.processed_devices}/{topologyDiscoveryProgress.total_devices}</p>
+              <p className="mt-0.5 text-[11px] text-sky-700">
+                {topologyDiscoveryProgress.status} · {topologyDiscoveryProgress.processed_devices}/{topologyDiscoveryProgress.total_devices}
+                {' · '}{language === 'zh' ? '成功' : 'Succeeded'} {topologyDiscoveryProgress.success_devices || 0}
+                {' · '}{language === 'zh' ? '失败' : 'Failed'} {topologyDiscoveryProgress.failed_devices || 0}
+              </p>
             </div>
             <span className="text-lg font-extrabold tabular-nums text-sky-800">{topologyDiscoveryProgress.progress_percent}%</span>
           </div>
@@ -256,11 +354,22 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           {topologyDiscoveryDevices.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {topologyDiscoveryDevices.slice(0, 8).map((item: any) => (
-                <span key={item.device_id} className={`rounded-full px-2 py-1 text-[10px] font-semibold ${item.status === 'success' ? 'bg-emerald-100 text-emerald-700' : item.status === 'failed' ? 'bg-rose-100 text-rose-700' : 'bg-white text-sky-700'}`}>
-                  {item.hostname || item.device_id}: {item.status}
+                <span
+                  key={item.device_id}
+                  title={item.error_message || item.error_code || item.status}
+                  className={`rounded-full px-2 py-1 text-[10px] font-semibold ${item.status === 'success' ? 'bg-emerald-100 text-emerald-700' : item.status === 'failed' ? 'bg-rose-100 text-rose-700' : item.status === 'cancelled' ? 'bg-slate-100 text-slate-600' : 'bg-white text-sky-700'}`}
+                >
+                  {item.hostname || item.device_id}: {item.status}{item.error_code ? ` (${item.error_code})` : ''}
                 </span>
               ))}
             </div>
+          )}
+          {(topologyDiscoveryProgress.failed_devices || 0) > 0 && (
+            <p className="mt-2 text-[10px] leading-4 text-rose-700">
+              {language === 'zh'
+                ? '失败设备会保留上一轮有效邻居证据；将鼠标停留在设备状态上可查看错误详情。'
+                : 'Failed devices retain their last valid neighbor evidence. Hover a device status to inspect the error.'}
+            </p>
           )}
         </div>
       )}

@@ -18,6 +18,7 @@ from database import get_db_connection
 from core.crypto import encrypt_credential, decrypt_credential
 from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
 from services import tag_service
+from services.site_identity_service import resolve_canonical_site_id
 
 import ping3
 import socket
@@ -796,14 +797,16 @@ def list_assets(
             params.extend(requested_tag_ids)
         if q:
             conditions.append(
-                "(pa.asset_tag LIKE ? OR pa.serial_number LIKE ? OR pa.hostname LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR pa.rack LIKE ?)"
+                "(pa.asset_tag LIKE ? OR pa.serial_number LIKE ? OR pa.hostname LIKE ? OR pa.vendor LIKE ? OR pa.model LIKE ? OR pa.management_ip LIKE ? OR pa.business_ip LIKE ? OR pa.rack LIKE ? OR s.site_name LIKE ? OR s.site_code LIKE ?)"
             )
             like = f'%{q}%'
-            params.extend([like] * 8)
+            params.extend([like] * 10)
 
         where = (' WHERE ' + ' AND '.join(conditions)) if conditions else ''
         total = conn.execute(
-            f'SELECT COUNT(*) FROM physical_assets pa LEFT JOIN devices d ON d.asset_id = pa.id{where}',
+            f'''SELECT COUNT(*) FROM physical_assets pa
+                LEFT JOIN devices d ON d.asset_id = pa.id
+                LEFT JOIN sites s ON s.id = pa.site_id{where}''',
             params,
         ).fetchone()[0]
 
@@ -811,12 +814,15 @@ def list_assets(
         rows = conn.execute(
             f'''SELECT pa.*,
                 d.id AS device_id,
+                s.site_name,
+                s.site_code,
                 COALESCE(NULLIF(d.status, ''), CASE WHEN pa.status = 'active' THEN 'online' WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline' ELSE 'pending' END) AS online_status,
                 COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
                 COALESCE(NULLIF(pa.admin_username,''),  d.admin_username,  '') AS admin_username,
                 COALESCE(NULLIF(pa.username,''),        d.username,        '') AS username
             FROM physical_assets pa
             LEFT JOIN devices d ON d.asset_id = pa.id
+            LEFT JOIN sites s ON s.id = pa.site_id
             {where} ORDER BY pa.created_at DESC LIMIT ? OFFSET ?''',
             params + [page_size, offset]
         ).fetchall()
@@ -933,6 +939,10 @@ def get_asset(asset_id: str):
 def create_asset(body: AssetCreate):
     conn = get_db_connection()
     try:
+        try:
+            body.site_id = resolve_canonical_site_id(conn, body.site_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
         asset_id = f"asset-{uuid.uuid4().hex[:12]}"
         now = _utc_now()
         asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
@@ -1026,6 +1036,12 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
         row = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
+
+        if body.site_id is not None:
+            try:
+                body.site_id = resolve_canonical_site_id(conn, body.site_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
 
         effective_vendor = body.vendor if body.vendor is not None else row['vendor']
         effective_asset_type = body.asset_type if body.asset_type is not None else row['asset_type']
@@ -1417,6 +1433,10 @@ def import_assets(items: list[AssetCreate]):
         skipped = 0
         skipped_items = []
         for body in items:
+            try:
+                body.site_id = resolve_canonical_site_id(conn, body.site_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
             asset_id = f"asset-{uuid.uuid4().hex[:12]}"
             body.platform = _normalize_asset_platform(body.vendor, body.platform, body.asset_type)
             asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'

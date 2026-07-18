@@ -9,6 +9,8 @@ export interface Asset {
   model: string;
   hostname: string;
   site_id: string;
+  site_name?: string;
+  site_code?: string;
   rack: string;
   rack_unit: string;
   u_height?: number;

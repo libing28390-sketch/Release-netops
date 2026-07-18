@@ -53,7 +53,8 @@ def create_change_order(conn, *, title: str, description: str = '',
                         scheduled_start: str = '',
                         scheduled_end: str = '',
                         authorization_exempt: bool = False,
-                        control_sheet: dict | None = None) -> dict:
+                        control_sheet: dict | None = None,
+                        commit: bool = True) -> dict:
     order_id = str(uuid.uuid4())
     order_number = generate_order_number(conn)
     now = _utc_now_iso()
@@ -87,12 +88,13 @@ def create_change_order(conn, *, title: str, description: str = '',
             now, now,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_change_order(conn, order_id)
 
 
 
-def update_change_order(conn, order_id: str, updates: dict) -> dict | None:
+def update_change_order(conn, order_id: str, updates: dict, *, commit: bool = True) -> dict | None:
     existing = get_change_order(conn, order_id)
     if not existing:
         return None
@@ -145,7 +147,8 @@ def update_change_order(conn, order_id: str, updates: dict) -> dict | None:
         f"UPDATE change_orders SET {', '.join(set_parts)} WHERE id = ?",
         values,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_change_order(conn, order_id)
 
 
@@ -474,12 +477,13 @@ def get_summary(conn, user_id: str = '', username: str = '') -> dict:
     }
 
 
-def delete_change_order(conn, order_id: str) -> bool:
+def delete_change_order(conn, order_id: str, *, commit: bool = True) -> bool:
     row = conn.execute("SELECT id FROM change_orders WHERE id = ?", (order_id,)).fetchone()
     if not row:
         return False
     conn.execute("DELETE FROM change_orders WHERE id = ?", (order_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
     return True
 
 

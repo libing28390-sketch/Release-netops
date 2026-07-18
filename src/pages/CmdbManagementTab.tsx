@@ -1974,7 +1974,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       return s ? (
         <span className="inline-flex items-center gap-1 text-cyan-700 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-100 dark:border-cyan-900/30 px-2 py-0.5 rounded text-xs font-semibold">
           <Building2 size={12} />
-          {s.site_code}
+          {s.site_name}
         </span>
       ) : (
         <span className="text-black/30 dark:text-white/30">—</span>

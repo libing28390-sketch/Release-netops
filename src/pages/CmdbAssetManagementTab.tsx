@@ -477,7 +477,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
                 : column.key === "category"
                   ? `${labelOf(CATEGORY_LABELS, asset.device_category || "other", zh)} / ${asset.device_role || (zh ? "未分配" : "Unassigned")}`
                   : column.key === "site"
-                    ? `${asset.site_name || "—"} (${asset.site_code || asset.site_id || "—"})`
+                    ? asset.site_name || asset.site_code || asset.site_id || "—"
                     : column.key === "status"
                       ? labelOf(STATUS_LABELS, asset.online_status, zh)
                       : column.key === "tags"
@@ -600,10 +600,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
     if (key === "site")
       return (
         <>
-          <div className="text-slate-700">{asset.site_name || "—"}</div>
-          <div className="mt-1 text-[10px] text-slate-400">
-            {asset.site_code || asset.site_id || "—"}
-          </div>
+          <div className="text-slate-700">{asset.site_name || asset.site_code || asset.site_id || "—"}</div>
         </>
       );
     if (key === "status")
