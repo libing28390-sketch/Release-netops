@@ -1174,11 +1174,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('stroke-width', 1.5)
       .attr('opacity', (d: any) => ((d.open_alert_count || 0) > 0 ? 1 : 0));
 
-    const nodeGlyph = node.append('g')
-      .attr('opacity', (d: any) => {
-        if (!hasFocus) return 1;
-        return isNodeSelected(d.id) || selectedNeighbors.has(d.id) ? 1 : 0.35;
-      });
+    // Keep device glyphs fully legible even when another node is selected.
+    // Focus mode still dims labels, links, and halos, but must not make a
+    // healthy device icon look offline or disabled.
+    const nodeGlyph = node.append('g').attr('opacity', 1);
 
     nodeGlyph.each(function (d: any) {
       if (d.is_unmanaged) {
