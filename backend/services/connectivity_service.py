@@ -77,11 +77,11 @@ def _server_tcp(target: str, port: int, timeout: int = 3) -> dict[str, Any]:
     """从服务器发起 TCP 连接探测。"""
     start = time.monotonic()
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(timeout)
-        result_code = s.connect_ex((target, port))
-        elapsed = round((time.monotonic() - start) * 1000, 1)
-        s.close()
+        # Close the probe socket even when DNS/connect raises an exception.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            result_code = s.connect_ex((target, port))
+            elapsed = round((time.monotonic() - start) * 1000, 1)
 
         if result_code == 0:
             return {'success': True, 'port': port, 'latency_ms': elapsed, 'detail': 'Connection established'}

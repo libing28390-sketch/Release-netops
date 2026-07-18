@@ -678,6 +678,12 @@ async def health_check():
         "metrics": metrics
     }
 
+@router.get("/health/live", tags=["health"])
+async def health_live():
+    """Cheap process liveness probe for Docker and reverse-proxy checks."""
+    return {"status": "alive"}
+
+
 @router.get("/health/metrics", tags=["health"])
 async def health_metrics():
     from core.metrics import metrics_registry

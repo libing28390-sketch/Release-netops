@@ -102,12 +102,12 @@ def _ping_device(ip: str, count: int = 3, timeout: int = 2) -> dict[str, Any]:
 
 def _check_ssh(ip: str, port: int = 22, timeout: int = 3) -> dict[str, Any]:
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(timeout)
-        start = time.monotonic()
-        result_code = s.connect_ex((ip, port))
-        elapsed = round((time.monotonic() - start) * 1000, 1)
-        s.close()
+        # Always close the probe socket, including DNS/connect exceptions.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            start = time.monotonic()
+            result_code = s.connect_ex((ip, port))
+            elapsed = round((time.monotonic() - start) * 1000, 1)
         return {'success': result_code == 0, 'latency_ms': elapsed, 'error': '' if result_code == 0 else f'errno={result_code}'}
     except socket.timeout:
         return {'success': False, 'latency_ms': None, 'error': 'connection timed out'}
