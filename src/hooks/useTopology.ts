@@ -485,39 +485,23 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       return;
     }
     showToast('Preparing topology map for export...', 'info');
-    let exportHost: HTMLDivElement | null = null;
+    let graphRoot: SVGGElement | undefined;
+    let originalTransform: string | null = null;
     try {
       await new Promise((resolve) => setTimeout(resolve, 500));
       const viewBox = topologySvg.viewBox.baseVal;
       const width = Math.max(1, Math.round(viewBox.width || topologySvg.clientWidth || 1));
       const height = Math.max(1, Math.round(viewBox.height || topologySvg.clientHeight || 1));
-      const svgClone = topologySvg.cloneNode(true) as SVGSVGElement;
-      svgClone.setAttribute('width', String(width));
-      svgClone.setAttribute('height', String(height));
-      svgClone.style.width = `${width}px`;
-      svgClone.style.height = `${height}px`;
 
-      // Export from the original graph coordinate space. The live SVG's root
-      // group contains the current pan/zoom transform and must not leak into
-      // the downloaded image.
-      const graphRoot = Array.from(svgClone.children)
+      // Export from the original graph coordinate space. Temporarily remove
+      // the live root transform so the browser paints the same SVG reliably;
+      // restore it immediately after the image is generated.
+      graphRoot = Array.from(topologySvg.children)
         .find((child) => child.tagName.toLowerCase() === 'g') as SVGGElement | undefined;
+      originalTransform = graphRoot?.getAttribute('transform') || null;
       graphRoot?.removeAttribute('transform');
 
-      exportHost = document.createElement('div');
-      Object.assign(exportHost.style, {
-        position: 'fixed',
-        left: '-100000px',
-        top: '0',
-        width: `${width}px`,
-        height: `${height}px`,
-        overflow: 'hidden',
-        backgroundColor: '#ffffff',
-      });
-      exportHost.appendChild(svgClone);
-      document.body.appendChild(exportHost);
-
-      const dataUrl = await htmlToImage.toPng(exportHost, {
+      const dataUrl = await htmlToImage.toPng(topologySvg as unknown as HTMLElement, {
         backgroundColor: '#ffffff',
         cacheBust: true,
         width,
@@ -541,7 +525,10 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       console.error('Export error:', error);
       showToast('Failed to export map. Please try again.', 'error');
     } finally {
-      exportHost?.remove();
+      if (graphRoot) {
+        if (originalTransform) graphRoot.setAttribute('transform', originalTransform);
+        else graphRoot.removeAttribute('transform');
+      }
     }
   }, [showToast]);
 
