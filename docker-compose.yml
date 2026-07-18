@@ -48,6 +48,8 @@ services:
       - CONFIG_MANAGEMENT_TIMEOUT_SECONDS=${CONFIG_MANAGEMENT_TIMEOUT_SECONDS:-1}
       - DB_POOL_SIZE=${DB_POOL_SIZE:-16}
       - DB_POOL_OVERFLOW_MAX=${DB_POOL_OVERFLOW_MAX:-4}
+      - DB_POOL_ACQUIRE_TIMEOUT_SECONDS=${DB_POOL_ACQUIRE_TIMEOUT_SECONDS:-10}
+      - TEMPLATES_CACHE_TTL_SECONDS=${TEMPLATES_CACHE_TTL_SECONDS:-2}
       - SCHEDULER_MISFIRE_GRACE_SECONDS=${SCHEDULER_MISFIRE_GRACE_SECONDS:-30}
       # Keep one worker by default because the lifespan-owned telemetry loops
       # must run once per deployment, not once per Uvicorn worker process.

@@ -3,6 +3,8 @@ import logging
 import os
 import uuid
 import json
+import threading
+import time
 from urllib.request import urlopen
 from urllib.error import URLError
 from database import get_db_connection
@@ -11,6 +13,12 @@ from core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_TEMPLATES_CACHE_TTL_SECONDS = max(
+    0.0, float(os.environ.get('TEMPLATES_CACHE_TTL_SECONDS', '2'))
+)
+_templates_cache_lock = threading.Lock()
+_templates_cache: tuple[float, list[dict]] | None = None
 
 
 def _read_local_templates() -> list[dict]:
@@ -24,6 +32,27 @@ def _read_local_templates() -> list[dict]:
     finally:
         conn.close()
 
+
+def _read_local_templates_cached() -> list[dict]:
+    """Serve the read-heavy template list without opening a DB connection per request."""
+    global _templates_cache
+    if _TEMPLATES_CACHE_TTL_SECONDS <= 0:
+        return _read_local_templates()
+
+    now = time.monotonic()
+    with _templates_cache_lock:
+        if _templates_cache and now - _templates_cache[0] < _TEMPLATES_CACHE_TTL_SECONDS:
+            return [dict(template) for template in _templates_cache[1]]
+        templates = _read_local_templates()
+        _templates_cache = (time.monotonic(), templates)
+        return [dict(template) for template in templates]
+
+
+def _invalidate_templates_cache() -> None:
+    global _templates_cache
+    with _templates_cache_lock:
+        _templates_cache = None
+
 @router.get("/templates")
 def read_templates():
     """Read templates from an explicitly configured API or the local DB.
@@ -34,7 +63,7 @@ def read_templates():
     """
     external_url = settings.CONFIG_MANAGEMENT_URL.strip()
     if not external_url:
-        return _read_local_templates()
+        return _read_local_templates_cached()
 
     timeout = max(0.1, float(settings.CONFIG_MANAGEMENT_TIMEOUT_SECONDS))
     try:
@@ -56,7 +85,7 @@ def read_templates():
             exc,
         )
 
-    return _read_local_templates()
+    return _read_local_templates_cached()
 
 @router.post("/templates")
 def create_template(template: dict = Body(...)):
@@ -77,6 +106,7 @@ def create_template(template: dict = Body(...)):
             template.get('lastUsed')
         ))
         conn.commit()
+        _invalidate_templates_cache()
         log_audit_event(
             event_type='TEMPLATE_CREATE',
             category='configuration',
@@ -112,6 +142,7 @@ def update_template(template_id: str, template: dict = Body(...)):
             template_id
         ))
         conn.commit()
+        _invalidate_templates_cache()
         log_audit_event(
             event_type='TEMPLATE_UPDATE',
             category='configuration',
