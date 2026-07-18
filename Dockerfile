@@ -69,7 +69,7 @@ EXPOSE 8003
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8003/api/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8003/api/health/live', timeout=3)" || exit 1
 
 # Non-root user for security
 RUN useradd --create-home --shell /bin/bash --uid 1000 netops && \
@@ -82,4 +82,4 @@ VOLUME ["/app/data", "/app/backup"]
 # Keep one worker by default because the lifespan-owned telemetry loops must
 # run once per deployment, not once per Uvicorn worker process. Set WORKERS to
 # override this deliberately for API-only scaling scenarios.
-CMD ["sh", "-c", "rm -rf /app/dist/* && cp -a /app/frontend-dist/. /app/dist/ && exec uvicorn backend.main:app --host 0.0.0.0 --port 8003 --workers ${WORKERS:-1}"]
+CMD ["sh", "-c", "rm -rf /app/dist/* && cp -a /app/frontend-dist/. /app/dist/ && exec uvicorn backend.main:app --host 0.0.0.0 --port 8003 --workers ${WORKERS:-1} --timeout-graceful-shutdown 20"]

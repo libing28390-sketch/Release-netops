@@ -2,6 +2,7 @@ import os
 import re
 import queue
 import logging
+import threading
 from datetime import datetime, timezone, timedelta
 
 _BEIJING_TZ = timezone(timedelta(hours=8))
@@ -60,10 +61,27 @@ else:
     import sqlite3
 
 _POOL_SIZE = int(os.environ.get('DB_POOL_SIZE', '16'))
+_PG_OVERFLOW_MAX = max(0, int(os.environ.get('DB_POOL_OVERFLOW_MAX', '4')))
 
 # ── PostgreSQL Connection pooling wrappers ──
 if _USE_PG:
     _pg_pool: psycopg2.pool.ThreadedConnectionPool | None = None
+    _pg_overflow_active = 0
+    _pg_overflow_lock = threading.Lock()
+    _pg_pool_init_lock = threading.Lock()
+
+    def _reserve_pg_overflow() -> bool:
+        global _pg_overflow_active
+        with _pg_overflow_lock:
+            if _pg_overflow_active >= _PG_OVERFLOW_MAX:
+                return False
+            _pg_overflow_active += 1
+            return True
+
+    def _release_pg_overflow() -> None:
+        global _pg_overflow_active
+        with _pg_overflow_lock:
+            _pg_overflow_active = max(0, _pg_overflow_active - 1)
 
     def _decode_pg_error(exc: BaseException) -> str:
         """Recover a readable message from a psycopg2 error that failed UTF-8 decode.
@@ -124,7 +142,7 @@ if _USE_PG:
         except Exception as e:
             logger.error("Failed to ensure database exists: %s", e, exc_info=True)
 
-    def _ensure_pg_pool():
+    def _initialize_pg_pool():
         global _pg_pool
         if _pg_pool is None:
             _ensure_database_exists()
@@ -144,6 +162,15 @@ if _USE_PG:
                     "无法初始化 PostgreSQL 连接池（数据库返回非 UTF-8 错误消息，已转码）："
                     + _decode_pg_error(e)
                 ) from None
+
+    def _ensure_pg_pool():
+        """Initialize the shared pool once, even under concurrent startup requests."""
+        global _pg_pool
+        if _pg_pool is not None:
+            return
+        with _pg_pool_init_lock:
+            if _pg_pool is None:
+                _initialize_pg_pool()
 
     _LIKE_RE = re.compile(r'\bLIKE\b', re.IGNORECASE)
 
@@ -230,6 +257,8 @@ if _USE_PG:
                     raw.close()
                 except Exception:
                     pass
+                finally:
+                    _release_pg_overflow()
             else:
                 try:
                     _pg_pool.putconn(raw)
@@ -315,15 +344,29 @@ def _make_raw_connection():
             keepalives=1, keepalives_idle=30,
             keepalives_interval=10, keepalives_count=5,
         )
+
+        def open_overflow_connection():
+            if not _reserve_pg_overflow():
+                raise psycopg2.pool.PoolError(
+                    "PG connection pool exhausted and overflow limit reached "
+                    f"(pool={_POOL_SIZE}, overflow={_PG_OVERFLOW_MAX})"
+                )
+            try:
+                return _pg_connect(dsn=_DATABASE_URL, **_pg_kwargs)
+            except Exception:
+                _release_pg_overflow()
+                raise
+
         try:
             raw = _pg_pool.getconn()
         except psycopg2.pool.PoolError:
             # 池已满：创建临时溢出连接，避免突发并发（如批量巡检）直接失败。
             # 与 SQLite 路径行为对齐；溢出连接用完即关，不占用池容量。
             logger.warning(
-                "PG pool exhausted (max=%d). Creating overflow connection.", _POOL_SIZE
+                "PG pool exhausted (max=%d). Using bounded overflow connection (active/max=%d/%d).",
+                _POOL_SIZE, _pg_overflow_active, _PG_OVERFLOW_MAX,
             )
-            raw = _pg_connect(dsn=_DATABASE_URL, **_pg_kwargs)
+            raw = open_overflow_connection()
             overflow = True
 
         try:
@@ -339,13 +382,16 @@ def _make_raw_connection():
                     _pg_pool.putconn(raw, close=True)
             except Exception:
                 pass
+            finally:
+                if overflow:
+                    _release_pg_overflow()
             if overflow:
-                raw = _pg_connect(dsn=_DATABASE_URL, **_pg_kwargs)
+                raw = open_overflow_connection()
             else:
                 try:
                     raw = _pg_pool.getconn()
                 except psycopg2.pool.PoolError:
-                    raw = _pg_connect(dsn=_DATABASE_URL, **_pg_kwargs)
+                    raw = open_overflow_connection()
                     overflow = True
         return _PgPooledConnection(_PgRawConnection(raw), raw, overflow)
     else:
@@ -435,4 +481,3 @@ def fetch_interface_data(conn, device_id: str) -> list[dict]:
     except Exception as exc:
         logger.warning(f"Failed to fetch interface data for device {device_id}: {exc}")
         return []
-

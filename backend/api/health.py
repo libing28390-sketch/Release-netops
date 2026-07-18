@@ -176,15 +176,19 @@ def _get_db_health() -> tuple[bool, str]:
         if _USE_PG:
             # PostgreSQL 模式：直接尝试连接
             conn = get_db_connection()
-            conn.execute("SELECT 1").fetchone()
-            conn.close()
+            try:
+                conn.execute("SELECT 1").fetchone()
+            finally:
+                conn.close()
             db_ok = True
             db_status = "connected"
         elif os.path.exists(DB_PATH):
             # SQLite 模式：检查文件存在再连接
             conn = get_db_connection()
-            conn.execute("SELECT 1").fetchone()
-            conn.close()
+            try:
+                conn.execute("SELECT 1").fetchone()
+            finally:
+                conn.close()
             db_ok = True
             db_status = "connected"
     except Exception as e:
@@ -558,12 +562,17 @@ def _get_db_pool_status() -> dict:
     from database import _USE_PG
     from database.core import _POOL_SIZE
     if _USE_PG:
-        from database.core import _pg_pool
+        from database.core import _PG_OVERFLOW_MAX, _pg_overflow_active, _pg_pool
         if _pg_pool is not None:
             used = len(_pg_pool._used) if hasattr(_pg_pool, '_used') else 0
             maxconn = _pg_pool.maxconn if hasattr(_pg_pool, 'maxconn') else _POOL_SIZE
-            return {"active": used, "max": maxconn}
-        return {"active": 0, "max": _POOL_SIZE}
+            return {
+                "active": used,
+                "max": maxconn,
+                "overflow_active": _pg_overflow_active,
+                "overflow_max": _PG_OVERFLOW_MAX,
+            }
+        return {"active": 0, "max": _POOL_SIZE, "overflow_active": 0, "overflow_max": _PG_OVERFLOW_MAX}
     else:
         try:
             from database.core import _active_connections
@@ -627,13 +636,15 @@ async def health_check():
     device_online = 0
     try:
         conn = get_db_connection()
-        row = conn.execute(
-            "SELECT COUNT(*) as total, SUM(CASE WHEN status='online' THEN 1 ELSE 0 END) as online FROM devices"
-        ).fetchone()
-        if row:
-            device_total = row["total"] or 0
-            device_online = row["online"] or 0
-        conn.close()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) as total, SUM(CASE WHEN status='online' THEN 1 ELSE 0 END) as online FROM devices"
+            ).fetchone()
+            if row:
+                device_total = row["total"] or 0
+                device_online = row["online"] or 0
+        finally:
+            conn.close()
     except Exception:
         pass
 
@@ -650,6 +661,8 @@ async def health_check():
     metrics.update({
         "db_connections_active": db_pool["active"],
         "db_connections_max": db_pool["max"],
+        "db_overflow_connections_active": db_pool.get("overflow_active", 0),
+        "db_overflow_connections_max": db_pool.get("overflow_max", 0),
         "worker_queue_length": db_metrics["worker_queue_length"],
         "jobs_by_status": db_metrics["jobs_by_status"],
         "reconciliation_findings_open": db_metrics["reconciliation_findings_open"],
@@ -695,6 +708,8 @@ async def health_metrics():
     metrics.update({
         "db_connections_active": db_pool["active"],
         "db_connections_max": db_pool["max"],
+        "db_overflow_connections_active": db_pool.get("overflow_active", 0),
+        "db_overflow_connections_max": db_pool.get("overflow_max", 0),
         "worker_queue_length": db_metrics["worker_queue_length"],
         "jobs_by_status": db_metrics["jobs_by_status"],
         "reconciliation_findings_open": db_metrics["reconciliation_findings_open"],
