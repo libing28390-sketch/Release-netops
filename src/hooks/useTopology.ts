@@ -508,7 +508,9 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         height,
         canvasWidth: width,
         canvasHeight: height,
-        pixelRatio: 1,
+        // Keep the original layout dimensions, but render a 3x bitmap so the
+        // downloaded PNG remains sharp when users zoom in afterward.
+        pixelRatio: 3,
         style: {
           backgroundColor: '#ffffff',
           transform: 'scale(1)',
