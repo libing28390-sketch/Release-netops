@@ -479,14 +479,20 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
 
   const handleExportMap = useCallback(async () => {
     if (!topologyRef.current) return;
+    const topologySvg = topologyRef.current.querySelector('svg.topology-graph-svg') as SVGSVGElement | null;
+    if (!topologySvg) {
+      showToast('Topology canvas is not ready for export', 'error');
+      return;
+    }
     showToast('Preparing topology map for export...', 'info');
     try {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      const dataUrl = await htmlToImage.toPng(topologyRef.current, {
-        backgroundColor: '#0b1424',
+      const dataUrl = await htmlToImage.toPng(topologySvg as unknown as HTMLElement, {
+        backgroundColor: '#ffffff',
         cacheBust: true,
         pixelRatio: Math.max(3, Math.round(window.devicePixelRatio * 2)),
         style: {
+          backgroundColor: '#ffffff',
           transform: 'scale(1)',
           transformOrigin: 'top left',
         },

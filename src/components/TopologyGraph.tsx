@@ -124,18 +124,6 @@ const appendDeviceGlyph = (selection: d3.Selection<SVGGElement, any, any, any>, 
   const iconUrl = getDeviceIconUrl(glyphKind);
   if (!iconUrl) return;
   const size = deviceIconSize[glyphKind];
-  const padding = 8;
-  selection.append('rect')
-    .attr('x', -(size.width + padding * 2) / 2)
-    .attr('y', -(size.height + padding * 2) / 2)
-    .attr('width', size.width + padding * 2)
-    .attr('height', size.height + padding * 2)
-    .attr('rx', 12)
-    .attr('fill', '#ffffff')
-    .attr('stroke', '#cbd5e1')
-    .attr('stroke-width', 1.2)
-    .attr('filter', 'drop-shadow(0 2px 3px rgba(15,23,42,0.12))')
-    .attr('pointer-events', 'none');
   selection.append('image')
     .attr('href', iconUrl)
     .attr('x', -size.width / 2)
@@ -805,6 +793,15 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     svg.selectAll('*').remove();
     svg.attr('viewBox', `0 0 ${width} ${height}`);
 
+    svg.append('rect')
+      .attr('class', 'topology-canvas-background')
+      .attr('x', 0)
+      .attr('y', 0)
+      .attr('width', width)
+      .attr('height', height)
+      .attr('fill', '#ffffff')
+      .attr('pointer-events', 'none');
+
     const g = svg.append('g');
     let syncMinimap = (_transform?: d3.ZoomTransform) => {};
 
@@ -1207,35 +1204,17 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         return isNodeSelected(d.id) || selectedNeighbors.has(d.id) ? 1 : 0.35;
       });
 
-    const nodeLabelBg = nodeLabelGroup.append('rect')
-      .attr('x', -10)
-      .attr('y', -2)
-      .attr('rx', 12)
-      .attr('ry', 12)
-      .attr('fill', 'rgba(15,29,48,0.94)')
-      .attr('stroke', 'rgba(148,163,184,0.30)')
-      .attr('stroke-width', 1);
-
     const nodeHostnameText = nodeLabelGroup.append('text')
-      .attr('y', 10)
+      .attr('y', 8)
       .attr('text-anchor', 'middle')
-      .attr('fill', (d: any) => (d.is_unmanaged ? '#94a3b8' : '#f8fafc'))
+      .attr('fill', (d: any) => (d.is_unmanaged ? '#64748b' : '#0f172a'))
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('font-size', '12px')
       .attr('font-weight', '700')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', '#ffffff')
+      .attr('stroke-width', 3)
       .text((d: any) => d.hostname);
-
-    const nodeMetaText = nodeLabelGroup.append('text')
-      .attr('y', 25)
-      .attr('text-anchor', 'middle')
-      .attr('fill', '#94a3b8')
-      .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
-      .attr('font-size', '10px')
-      .attr('font-weight', '600')
-      .text((d: any) => {
-        if (d.is_unmanaged) return 'Unmanaged';
-        return d.site || d.ip_address;
-      });
 
     const svgElement = svgRef.current;
     type SelectionInputEvent = MouseEvent | PointerEvent;
@@ -1342,23 +1321,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           .attr('y', bbox.y - 4)
           .attr('width', bbox.width + 12)
           .attr('height', bbox.height + 8);
-      });
-
-      nodeLabelBg.each(function (_item: any, index: number) {
-        const hostnameNode = nodeHostnameText.nodes()[index];
-        const metaNode = nodeMetaText.nodes()[index];
-        if (!hostnameNode || !metaNode) return;
-        const hostBox = hostnameNode.getBBox();
-        const metaBox = metaNode.getBBox();
-        const left = Math.min(hostBox.x, metaBox.x) - 10;
-        const top = Math.min(hostBox.y, metaBox.y) - 6;
-        const right = Math.max(hostBox.x + hostBox.width, metaBox.x + metaBox.width) + 10;
-        const bottom = Math.max(hostBox.y + hostBox.height, metaBox.y + metaBox.height) + 6;
-        d3.select(this)
-          .attr('x', left)
-          .attr('y', top)
-          .attr('width', right - left)
-          .attr('height', bottom - top);
       });
 
       node
