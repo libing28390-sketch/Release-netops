@@ -61,14 +61,6 @@ const abbreviateInterface = (value?: string) => {
     .replace(/^Loopback/i, 'Lo');
 };
 
-const getRoleBucket = (role?: string) => {
-  const normalizedRole = String(role || '').toLowerCase();
-  if (normalizedRole.includes('core')) return 'core';
-  if (normalizedRole.includes('distribution') || normalizedRole.includes('edge')) return 'distribution';
-  if (normalizedRole.includes('access')) return 'access';
-  return 'other';
-};
-
 type DeviceGlyphKind = 'switch' | 'firewall' | 'router' | 'server' | 'wireless' | 'generic';
 
 const getDeviceGlyphKind = (device: Device): DeviceGlyphKind => {
@@ -132,6 +124,18 @@ const appendDeviceGlyph = (selection: d3.Selection<SVGGElement, any, any, any>, 
   const iconUrl = getDeviceIconUrl(glyphKind);
   if (!iconUrl) return;
   const size = deviceIconSize[glyphKind];
+  const padding = 8;
+  selection.append('rect')
+    .attr('x', -(size.width + padding * 2) / 2)
+    .attr('y', -(size.height + padding * 2) / 2)
+    .attr('width', size.width + padding * 2)
+    .attr('height', size.height + padding * 2)
+    .attr('rx', 12)
+    .attr('fill', '#ffffff')
+    .attr('stroke', '#cbd5e1')
+    .attr('stroke-width', 1.2)
+    .attr('filter', 'drop-shadow(0 2px 3px rgba(15,23,42,0.12))')
+    .attr('pointer-events', 'none');
   selection.append('image')
     .attr('href', iconUrl)
     .attr('x', -size.width / 2)
@@ -219,58 +223,29 @@ const buildSiteAnchors = (devices: Device[], width: number) => {
 };
 
 const buildSeedPositions = (devices: Device[], width: number, height: number) => {
-  const buckets: Record<string, Device[]> = {
-    core: [],
-    distribution: [],
-    access: [],
-    other: [],
-  };
-
-  devices.forEach((device) => {
-    buckets[getRoleBucket(device.role)].push(device);
-  });
-
-  const rowOrder: Array<keyof typeof buckets> = ['core', 'distribution', 'access', 'other'];
-  const rowY: Record<(typeof rowOrder)[number], number> = {
-    core: height * 0.2,
-    distribution: height * 0.42,
-    access: height * 0.68,
-    other: height * 0.84,
-  };
   const positions: Record<string, { x: number; y: number }> = {};
   const siteAnchors = buildSiteAnchors(devices, width);
   const siteAnchorMap = new Map(siteAnchors.map((site) => [site.key, site]));
 
-  rowOrder.forEach((bucketName) => {
-    const bucket = buckets[bucketName];
-    const groupedBySite = new Map<string, Device[]>();
+  const groupedBySite = new Map<string, Device[]>();
+  devices.forEach((device) => {
+    const siteKey = getSiteKey(device.site_id || device.site);
+    if (!groupedBySite.has(siteKey)) groupedBySite.set(siteKey, []);
+    groupedBySite.get(siteKey)?.push(device);
+  });
 
-    bucket.forEach((device) => {
-      const siteKey = getSiteKey(device.site_id || device.site);
-      if (!groupedBySite.has(siteKey)) groupedBySite.set(siteKey, []);
-      groupedBySite.get(siteKey)?.push(device);
-    });
-
-    const orderedGroups = Array.from(groupedBySite.entries()).sort((left, right) => {
-      const leftAnchor = siteAnchorMap.get(left[0]);
-      const rightAnchor = siteAnchorMap.get(right[0]);
-      return (leftAnchor?.x || 0) - (rightAnchor?.x || 0);
-    });
-
-    orderedGroups.forEach(([siteKey, siteDevices]) => {
-      const anchorX = siteAnchorMap.get(siteKey)?.x ?? width / 2;
-      const clusterSpacing = Math.min(68, Math.max(42, width / Math.max(devices.length, 8)));
-
-      siteDevices.forEach((device, index) => {
-        const centeredOffset = (index - (siteDevices.length - 1) / 2) * clusterSpacing;
-        const fanOffset = siteDevices.length > 1 ? (((index % 2 === 0 ? 1 : -1) * Math.ceil(index / 2)) * 8) : 0;
-        const jitter = bucketName === 'other' ? fanOffset * 1.3 : fanOffset;
-
-        positions[device.id] = {
-          x: anchorX + centeredOffset,
-          y: rowY[bucketName] + jitter,
-        };
-      });
+  Array.from(groupedBySite.entries()).forEach(([siteKey, siteDevices]) => {
+    const anchorX = siteAnchorMap.get(siteKey)?.x ?? width / 2;
+    const columns = Math.max(1, Math.ceil(Math.sqrt(siteDevices.length)));
+    const rows = Math.max(1, Math.ceil(siteDevices.length / columns));
+    const spacing = Math.min(82, Math.max(54, width / Math.max(devices.length, 8)));
+    siteDevices.forEach((device, index) => {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      positions[device.id] = {
+        x: anchorX + (column - (columns - 1) / 2) * spacing,
+        y: height * 0.52 + (row - (rows - 1) / 2) * spacing,
+      };
     });
   });
 
@@ -332,23 +307,15 @@ const calculateAutoLayoutPositions = (devices: Device[], links: Link[], width: n
 };
 
 const clampPosition = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v1';
+const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v2';
 
 type PersistedTopologyLayout = {
   positions?: Record<string, { x: number; y: number }>;
   transform?: { x: number; y: number; k: number };
-  roleBuckets?: Record<string, string>;
+  layoutMode?: 'free';
 };
 
-const getRoleBucketSnapshot = (devices: Device[]) => Object.fromEntries(
-  devices.map((device) => [device.id, getRoleBucket(device.role)]),
-);
-
-const layoutMatchesRoles = (layout: PersistedTopologyLayout, devices: Device[]) => {
-  if (!layout.roleBuckets) return false;
-  const current = getRoleBucketSnapshot(devices);
-  return devices.every((device) => layout.roleBuckets?.[device.id] === current[device.id]);
-};
+const layoutIsFree = (layout: PersistedTopologyLayout) => layout.layoutMode === 'free';
 
 type MinimapSnapshot = {
   nodes: Array<{ id: string; x: number; y: number; fill: string; selected: boolean }>;
@@ -382,13 +349,6 @@ const writePersistedLayout = (layout: PersistedTopologyLayout) => {
 const createDefaultTransform = (width: number, height: number) => d3.zoomIdentity
   .translate(Math.max(width * 0.08, 44), Math.max(height * 0.08, 36))
   .scale(0.9);
-
-const layerMeta = (height: number) => ([
-  { key: 'core', label: 'Core', y: height * 0.2, tone: 'rgba(37, 99, 235, 0.12)', stroke: 'rgba(96, 165, 250, 0.26)', accent: '#60a5fa' },
-  { key: 'distribution', label: 'Distribution', y: height * 0.42, tone: 'rgba(16, 185, 129, 0.10)', stroke: 'rgba(52, 211, 153, 0.24)', accent: '#34d399' },
-  { key: 'access', label: 'Access', y: height * 0.68, tone: 'rgba(249, 115, 22, 0.10)', stroke: 'rgba(251, 146, 60, 0.24)', accent: '#fb923c' },
-  { key: 'other', label: 'Other', y: height * 0.84, tone: 'rgba(100, 116, 139, 0.10)', stroke: 'rgba(148, 163, 184, 0.20)', accent: '#94a3b8' },
-]);
 
 const getOrthogonalRoute = (source: { x: number; y: number }, target: { x: number; y: number }, offset = 0) => {
   const deltaX = target.x - source.x;
@@ -574,12 +534,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     writePersistedLayout({
       positions: persistedPositionsRef.current,
       transform: snapshot.transform,
-      roleBuckets: getRoleBucketSnapshot(devices),
+      layoutMode: 'free',
     });
     syncLayoutToBackend({
       positions: persistedPositionsRef.current,
       transform: snapshot.transform,
-      roleBuckets: getRoleBucketSnapshot(devices),
+      layoutMode: 'free',
     });
     setLayoutVersion((value) => value + 1);
     refreshHistoryState();
@@ -671,7 +631,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const layout = {
       positions: persistedPositionsRef.current,
       transform: transform ? { x: transform.x, y: transform.y, k: transform.k } : undefined,
-      roleBuckets: getRoleBucketSnapshot(devices),
+      layoutMode: 'free' as const,
     };
     writePersistedLayout(layout);
     if (persistTimerRef.current) {
@@ -784,7 +744,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
   useEffect(() => {
     const persistedLayout = readPersistedLayout();
-    const compatibleLocalLayout = layoutMatchesRoles(persistedLayout, devices);
+    const compatibleLocalLayout = layoutIsFree(persistedLayout);
     persistedPositionsRef.current = compatibleLocalLayout ? (persistedLayout.positions || {}) : {};
     if (compatibleLocalLayout && persistedLayout.transform) {
       zoomTransformRef.current = d3.zoomIdentity
@@ -809,7 +769,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .then((payload) => {
         const layout = payload?.layout;
         if (!layout || typeof layout !== 'object') return;
-        const compatibleRemoteLayout = layoutMatchesRoles(layout, devices);
+        const compatibleRemoteLayout = layoutIsFree(layout);
         persistedPositionsRef.current = compatibleRemoteLayout ? (layout.positions || {}) : {};
         if (compatibleRemoteLayout && layout.transform) {
           zoomTransformRef.current = d3.zoomIdentity
@@ -893,7 +853,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     });
 
     const { positions: seededPositions, siteAnchors } = buildSeedPositions(devices, width, height);
-    const roleLayers = layerMeta(height);
     const nodes = devices.map((device) => ({
       ...device,
       x: persistedPositionsRef.current[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2,
@@ -920,8 +879,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         .force('charge', d3.forceManyBody().strength((node: any) => (node.is_unmanaged ? -280 : -620)))
         .force('center', d3.forceCenter(width / 2, height / 2).strength(0.04))
         .force('collide', d3.forceCollide().radius((node: any) => (node.is_unmanaged ? 36 : 50)))
-        .force('x', d3.forceX((node: any) => seededPositions[node.id]?.x ?? width / 2).strength(0.32))
-        .force('y', d3.forceY((node: any) => seededPositions[node.id]?.y ?? (node.is_unmanaged ? height * 0.92 : height / 2)).strength(0.55))
+        .force('x', d3.forceX((node: any) => seededPositions[node.id]?.x ?? width / 2).strength(0.10))
+        .force('y', d3.forceY((node: any) => seededPositions[node.id]?.y ?? height / 2).strength(0.10))
         .stop();
 
       const settleTicks = Math.max(120, Math.min(260, nodes.length * 18));
@@ -952,7 +911,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const hasFocus = Boolean(selectedNodeId);
     const isNodeSelected = (deviceId: string) => selectedNodeIdSet.has(deviceId);
 
-    const layerGuide = g.append('g').attr('pointer-events', 'none');
     const siteGuide = g.append('g').attr('pointer-events', 'none');
 
     siteAnchors.forEach((site, index) => {
@@ -996,37 +954,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         .attr('font-size', '10px')
         .attr('font-weight', 700)
         .text(`${site.label.length > 12 ? `${site.label.slice(0, 12)}...` : site.label} · ${site.count}`);
-    });
-
-    roleLayers.forEach((layer, index) => {
-      const bandHeight = index === roleLayers.length - 1 ? height * 0.16 : height * 0.18;
-      layerGuide.append('rect')
-        .attr('x', 14)
-        .attr('y', layer.y - bandHeight / 2)
-        .attr('width', Math.max(width - 28, 0))
-        .attr('height', bandHeight)
-        .attr('rx', 20)
-        .attr('fill', layer.tone)
-        .attr('stroke', layer.stroke);
-
-      layerGuide.append('rect')
-        .attr('x', 18)
-        .attr('y', layer.y - bandHeight / 2 + 10)
-        .attr('width', 4)
-        .attr('height', Math.max(bandHeight - 20, 0))
-        .attr('rx', 2)
-        .attr('fill', layer.accent)
-        .attr('opacity', 0.9);
-
-      layerGuide.append('text')
-        .attr('x', 34)
-        .attr('y', layer.y - bandHeight / 2 + 18)
-        .attr('fill', layer.accent)
-        .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
-        .attr('font-size', '10px')
-        .attr('font-weight', 700)
-        .attr('letter-spacing', '0.16em')
-        .text(layer.label.toUpperCase());
     });
 
     const linkLayer = g.append('g').attr('stroke-linecap', 'round');
