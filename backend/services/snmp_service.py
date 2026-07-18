@@ -281,12 +281,51 @@ def _val_to_str(val) -> str:
     return str(val).strip()
 
 
+async def _safe_send_udp(endpoint, packet: bytes, timeout: int = 1, loop=None, retries: int = 10) -> bytes:
+    """Send one SNMP datagram and always close its asyncio UDP transport.
+
+    puresnmp's default sender leaves the transport open when the protocol
+    reports an OS-level socket error. Automatic telemetry calls this sender
+    frequently, so make cleanup unconditional for success, timeout, error,
+    and task cancellation paths.
+    """
+    from puresnmp import transport
+    from puresnmp.exc import Timeout
+
+    if loop is None:
+        loop = asyncio.get_event_loop()
+    remaining = max(1, int(retries))
+
+    while remaining > 0:
+        protocol = None
+        datagram_transport = None
+        try:
+            datagram_transport, protocol = await loop.create_datagram_endpoint(
+                lambda: transport.SNMPClientProtocol(packet),
+                remote_addr=(str(endpoint.ip), endpoint.port),
+            )
+            return await protocol.get_data(timeout)
+        except Timeout:
+            remaining -= 1
+            if remaining <= 0:
+                raise
+        finally:
+            active_transport = getattr(protocol, 'transport', None) or datagram_transport
+            if active_transport is not None:
+                try:
+                    active_transport.close()
+                except Exception:
+                    logger.debug('Failed to close SNMP UDP transport', exc_info=True)
+
+    raise Timeout(f'{timeout} second timeout exceeded on UDP transport.')
+
+
 async def _snmp_get(ip: str, community: str, oid: str, port: int = 161, timeout: float = 3) -> Optional[str]:
     """GET a single OID value via puresnmp (SNMPv2c)."""
     async with get_network_access_limiter().async_snmp():
       try:
         from puresnmp import Client, V2C, PyWrapper
-        client = PyWrapper(Client(ip, V2C(community), port=port))
+        client = PyWrapper(Client(ip, V2C(community), port=port, sender=_safe_send_udp))
         result = await asyncio.wait_for(client.get(oid), timeout=timeout)
         if result is None:
             return None
@@ -305,7 +344,7 @@ async def _snmp_walk(ip: str, community: str, oid: str, port: int = 161, timeout
 
     async def _collect():
         from puresnmp import Client, V2C, PyWrapper
-        client = PyWrapper(Client(ip, V2C(community), port=port))
+        client = PyWrapper(Client(ip, V2C(community), port=port, sender=_safe_send_udp))
         async for varbind in client.walk(base_oid):
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + '.') else oid_str
@@ -333,7 +372,7 @@ async def _snmp_bulk_walk(ip: str, community: str, oid: str, port: int = 161, ti
 
     async def _collect():
         from puresnmp import Client, V2C, PyWrapper
-        client = PyWrapper(Client(ip, V2C(community), port=port))
+        client = PyWrapper(Client(ip, V2C(community), port=port, sender=_safe_send_udp))
         # bulkwalk significantly reduces UDP round-trips
         async for varbind in client.bulkwalk([base_oid], bulk_size=max_repetitions):
             oid_str = str(varbind.oid)
