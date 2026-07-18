@@ -19,6 +19,7 @@ import argparse
 import json
 import statistics
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -60,6 +61,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=10.0, help="Per-request timeout in seconds (default: %(default)s)")
     parser.add_argument("--warmup", type=int, default=5, help="Warmup requests before measuring (default: %(default)s)")
     parser.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification for a self-signed test certificate")
+    parser.add_argument("--progress-interval", type=float, default=10.0, help="Print progress every N seconds; 0 disables it (default: %(default)s)")
+    parser.add_argument(
+        "--docker-container",
+        action="append",
+        dest="docker_containers",
+        help="Collect local docker stats for this container; repeat for netops/nginx/db",
+    )
     parser.add_argument(
         "--endpoint",
         action="append",
@@ -79,6 +87,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--concurrency must be greater than zero")
     if args.timeout <= 0:
         parser.error("--timeout must be greater than zero")
+    if args.progress_interval < 0:
+        parser.error("--progress-interval cannot be negative")
     if args.warmup < 0:
         parser.error("--warmup cannot be negative")
     return args
@@ -113,6 +123,31 @@ def request_once(url: str, endpoint: str, timeout: float, insecure: bool = False
         return Sample(endpoint, None, (time.perf_counter() - started) * 1000, repr(exc))
 
 
+def collect_docker_stats(containers: list[str]) -> dict | None:
+    """Collect one local Docker stats snapshot without requiring third-party packages."""
+    if not containers:
+        return None
+    try:
+        completed = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format", "{{json .}}", *containers],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"error": str(exc)}
+    if completed.returncode != 0:
+        return {"error": completed.stderr.strip() or f"docker stats exited {completed.returncode}"}
+    rows = []
+    for line in completed.stdout.splitlines():
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            rows.append({"raw": line})
+    return {"containers": rows}
+
+
 def warmup(base_url: str, endpoints: Iterable[str], count: int, timeout: float, insecure: bool) -> None:
     endpoint_list = list(endpoints)
     for index in range(count):
@@ -120,8 +155,9 @@ def warmup(base_url: str, endpoints: Iterable[str], count: int, timeout: float, 
         request_once(normalize_url(base_url, endpoint), endpoint, timeout, insecure)
 
 
-def run_load(base_url: str, endpoints: list[str], args: argparse.Namespace) -> tuple[list[Sample], float, int]:
+def run_load(base_url: str, endpoints: list[str], args: argparse.Namespace) -> tuple[list[Sample], float, int, list[dict]]:
     results: list[Sample] = []
+    resource_snapshots: list[dict] = []
     result_lock = threading.Lock()
     issue_lock = threading.Lock()
     issued = 0
@@ -145,11 +181,49 @@ def run_load(base_url: str, endpoints: list[str], args: argparse.Namespace) -> t
                 results.append(sample)
 
     started = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=args.concurrency, thread_name_prefix="nexora-load") as executor:
-        futures = [executor.submit(worker) for _ in range(args.concurrency)]
-        for future in futures:
-            future.result()
-    return results, time.perf_counter() - started, issued
+    stop_reporter = threading.Event()
+
+    def report_progress() -> None:
+        if args.progress_interval <= 0:
+            return
+        while not stop_reporter.wait(args.progress_interval):
+            elapsed = time.perf_counter() - started
+            with issue_lock:
+                issued_snapshot = issued
+            with result_lock:
+                completed_snapshot = len(results)
+                latency_snapshot = [item.elapsed_ms for item in results]
+                error_snapshot = sum(
+                    1 for item in results
+                    if item.error is not None or item.status is None or item.status >= 400
+                )
+            p95 = percentile(latency_snapshot, 0.95)
+            rps = completed_snapshot / elapsed if elapsed else 0.0
+            print(
+                f"[progress] elapsed={elapsed:.0f}s issued={issued_snapshot} "
+                f"completed={completed_snapshot} in_flight={issued_snapshot - completed_snapshot} "
+                f"rps={rps:.2f} errors={error_snapshot} p95={p95:.2f}ms",
+                file=sys.stderr,
+                flush=True,
+            )
+            if args.docker_containers:
+                snapshot = collect_docker_stats(args.docker_containers)
+                if snapshot is not None:
+                    snapshot["elapsed_seconds"] = round(elapsed, 3)
+                    resource_snapshots.append(snapshot)
+                    print(f"[docker] {json.dumps(snapshot, ensure_ascii=False)}", file=sys.stderr, flush=True)
+
+    reporter = threading.Thread(target=report_progress, name="nexora-load-progress", daemon=True)
+    reporter.start()
+    try:
+        with ThreadPoolExecutor(max_workers=args.concurrency, thread_name_prefix="nexora-load") as executor:
+            futures = [executor.submit(worker) for _ in range(args.concurrency)]
+            for future in futures:
+                future.result()
+    finally:
+        stop_reporter.set()
+        reporter.join(timeout=max(1.0, args.progress_interval + 1.0))
+    return results, time.perf_counter() - started, issued, resource_snapshots
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -179,6 +253,7 @@ def build_summary(samples: list[Sample], elapsed_s: float, issued: int, args: ar
         "responses_received": len(samples),
         "concurrency": args.concurrency,
         "insecure_tls": args.insecure,
+        "progress_interval_seconds": args.progress_interval,
         "elapsed_seconds": round(elapsed_s, 3),
         "throughput_rps": round(len(samples) / elapsed_s, 2) if elapsed_s else 0.0,
         "error_count": len(errors),
@@ -195,6 +270,8 @@ def build_summary(samples: list[Sample], elapsed_s: float, issued: int, args: ar
         "endpoint_stats": endpoint_stats,
         "sample_errors": [asdict(sample) for sample in errors[:20]],
     }
+    if getattr(args, "docker_containers", None):
+        summary["docker_stats_snapshots"] = getattr(args, "docker_stats_snapshots", [])
     return summary
 
 
@@ -215,7 +292,8 @@ def main() -> int:
     warmup(base_url, endpoints, args.warmup, args.timeout, args.insecure)
     mode = f"{args.requests} requests" if args.requests is not None else f"{args.duration:g}s duration"
     print(f"Load: {mode}, concurrency={args.concurrency}, endpoints={', '.join(endpoints)}")
-    samples, elapsed_s, issued = run_load(base_url, endpoints, args)
+    samples, elapsed_s, issued, docker_stats_snapshots = run_load(base_url, endpoints, args)
+    args.docker_stats_snapshots = docker_stats_snapshots
     summary = build_summary(samples, elapsed_s, issued, args)
     print_summary(summary)
 
