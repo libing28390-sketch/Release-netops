@@ -28,14 +28,14 @@ from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 logger = logging.getLogger(__name__)
 configure_ntc_templates()
 _topology_rebuild_lock = threading.Lock()
-TOPOLOGY_LINK_TTL_SECONDS = max(60, int(os.environ.get('TOPOLOGY_LINK_TTL_SECONDS', '1800')))
+TOPOLOGY_LINK_TTL_SECONDS = max(60, int(os.environ.get('TOPOLOGY_LINK_TTL_SECONDS', '172800')))
 TOPOLOGY_LINK_STALE_RETENTION_SECONDS = max(
     TOPOLOGY_LINK_TTL_SECONDS,
     int(os.environ.get('TOPOLOGY_LINK_STALE_RETENTION_SECONDS', str(24 * 60 * 60))),
 )
 TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS = max(
     60,
-    int(os.environ.get('TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS', '300')),
+    int(os.environ.get('TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS', '86400')),
 )
 DISCOVERY_LEASE_SECONDS = max(30, int(os.environ.get('TOPOLOGY_DISCOVERY_LEASE_SECONDS', '90')))
 DISCOVERY_DEFAULT_TIMEOUT_SECONDS = max(30, int(os.environ.get('TOPOLOGY_DISCOVERY_TIMEOUT_SECONDS', '300')))
@@ -342,9 +342,7 @@ def _deduplicate_observations(observations: list[dict[str, Any]]) -> list[dict[s
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for raw in observations:
         observation = dict(raw)
-        source_port = normalize_interface_name(
-            observation.get('source_port_normalized') or observation.get('source_port_raw') or ''
-        )
+        source_port = _observation_port_normalized(observation, 'source_port_raw', 'source_port_normalized')
         protocol = str(observation.get('protocol') or 'lldp').strip().lower()
         chassis = re.sub(r'[^0-9a-z]', '', str(observation.get('neighbor_chassis_id') or '').lower())
         neighbor_ip = str(observation.get('neighbor_ip_address') or '').strip().lower()
@@ -382,11 +380,11 @@ def _deduplicate_observations(observations: list[dict[str, Any]]) -> list[dict[s
         merged['neighbor_name_normalized'] = normalize_hostname(
             merged.get('neighbor_name_raw') or merged.get('neighbor_name_normalized')
         )
-        merged['source_port_normalized'] = normalize_interface_name(
-            merged.get('source_port_raw') or merged.get('source_port_normalized')
+        merged['source_port_normalized'] = _observation_port_normalized(
+            merged, 'source_port_raw', 'source_port_normalized'
         )
-        merged['target_port_normalized'] = normalize_interface_name(
-            merged.get('target_port_raw') or merged.get('target_port_normalized')
+        merged['target_port_normalized'] = _observation_port_normalized(
+            merged, 'target_port_raw', 'target_port_normalized'
         )
         deduplicated.append(merged)
 
@@ -420,7 +418,10 @@ def _get_device(device_id: str) -> dict[str, Any] | None:
         if not row:
             return None
         device = dict(row)
-        collector_credentials = resolve_collector_credentials(device)
+        # Topology discovery is a read-only workflow and must use the
+        # ordinary account stored on the linked CMDB asset. Administrative
+        # credentials are reserved for backup/configuration workflows.
+        collector_credentials = resolve_collector_credentials(device, ssh_role='normal')
         ssh_credentials = collector_credentials['ssh']
         device['username'] = ssh_credentials['username'] or device.get('username', '')
         device['password'] = ssh_credentials['password']
@@ -517,23 +518,61 @@ def _build_link_key(source_device_id: str, source_port: str, target_device_id: s
     return f'{ordered[0][0]}::{ordered[0][1]}--{ordered[1][0]}::{ordered[1][1]}'
 
 
+def _observation_port_normalized(observation: dict[str, Any], raw_key: str, normalized_key: str) -> str:
+    """Normalize the observed port from its raw value, never stale metadata.
+
+    Topology observations are durable evidence and can outlive a parser
+    normalization change. Recomputing from ``*_raw`` during every rebuild
+    prevents old aliases such as ``et0/1`` and ``eth0/1`` from becoming
+    separate links.
+    """
+    raw = str(observation.get(raw_key) or '').strip()
+    if raw:
+        return normalize_interface_name(raw)
+    return normalize_interface_name(str(observation.get(normalized_key) or '').strip())
+
+
 def _canonical_link_endpoints(observation: dict[str, Any]) -> tuple[tuple[str, str], tuple[str, str]]:
     endpoints = [
         (
             str(observation.get('source_device_id') or ''),
-            normalize_interface_name(
-                observation.get('source_port_normalized') or observation.get('source_port_raw') or ''
-            ),
+            _observation_port_normalized(observation, 'source_port_raw', 'source_port_normalized'),
         ),
         (
             str(observation.get('target_device_id') or ''),
-            normalize_interface_name(
-                observation.get('target_port_normalized') or observation.get('target_port_raw') or ''
-            ),
+            _observation_port_normalized(observation, 'target_port_raw', 'target_port_normalized'),
         ),
     ]
     ordered = sorted(endpoints, key=lambda item: (item[0], item[1]))
     return ordered[0], ordered[1]
+
+
+def _prefer_lldp_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Prefer LLDP evidence over contradictory CDP evidence for one device pair.
+
+    Cisco devices can expose the same physical neighbor through both protocols;
+    emulators and mixed software versions sometimes report different aliases or
+    stale ports for CDP.  LLDP is the canonical topology source when it exists,
+    while CDP remains a fallback for pairs that have no LLDP evidence at all.
+    """
+    lldp_pairs = {
+        tuple(sorted((str(row.get('source_device_id') or ''), str(row.get('target_device_id') or ''))))
+        for row in rows
+        if str(row.get('protocol') or '').strip().lower() == 'lldp'
+        and row.get('source_device_id')
+        and row.get('target_device_id')
+    }
+    if not lldp_pairs:
+        return rows
+
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        protocol = str(row.get('protocol') or '').strip().lower()
+        pair = tuple(sorted((str(row.get('source_device_id') or ''), str(row.get('target_device_id') or ''))))
+        if protocol == 'cdp' and pair in lldp_pairs:
+            continue
+        filtered.append(row)
+    return filtered
 
 
 def _group_link_observations(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -578,6 +617,379 @@ def _group_link_observations(rows: list[dict[str, Any]]) -> dict[str, list[dict[
         grouped.setdefault(link_key, []).append(item)
 
     return grouped
+
+
+def _interface_speed_mbps(row: dict[str, Any]) -> float:
+    """Return an interface speed in Mbps from the inventory's bps fields."""
+    for key in ('speed', 'bandwidth'):
+        try:
+            value = float(row.get(key) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            # Inventory stores speed/bandwidth in bits per second.
+            return value / 1_000_000 if value >= 100_000 else value
+    return 0.0
+
+
+def _interface_is_up(row: dict[str, Any]) -> bool:
+    return str(row.get('oper_status') or row.get('status') or '').strip().lower() in {
+        'up', 'up/up', 'online', 'active', 'selected', 'collecting', 'distributing',
+    }
+
+
+def _clean_interface_display_name(value: Any) -> str:
+    """Remove parser presentation suffixes while retaining vendor spelling."""
+    text = str(value or '').strip()
+    return re.sub(r'\s+interface\s*$', '', text, flags=re.IGNORECASE).strip()
+
+
+def _interface_display_score(row: dict[str, Any], device_meta: dict[str, Any]) -> tuple[int, int, str]:
+    """Rank duplicate interface aliases for a stable native display name.
+
+    Discovery can create both Cisco ``Et0/1`` and ``Ethernet0/1`` (or H3C
+    ``GE3/0`` and ``GigabitEthernet3/0``) for the same normalized interface.
+    Prefer an explicit display name, then the vendor's usual native CLI form.
+    """
+    raw = _clean_interface_display_name(row.get('name_display') or row.get('interface_name'))
+    compact = re.sub(r'\s+', '', raw).lower()
+    vendor = str(device_meta.get('vendor') or '').strip().lower()
+    score = 0
+    if row.get('name_display'):
+        score += 1000
+    if vendor == 'cisco' or 'cisco' in str(device_meta.get('platform') or '').lower():
+        if re.match(r'^ethernet\d', compact):
+            score += 80
+        elif re.match(r'^(fastethernet|tengigabitethernet|gigabitethernet)\d', compact):
+            score += 78
+        elif re.match(r'^(et|e|te|gi|fa)\d', compact):
+            score += 60
+    elif vendor in {'h3c', 'huawei'} or any(
+        token in str(device_meta.get('platform') or '').lower() for token in ('comware', 'huawei', 'vrp')
+    ):
+        if re.match(r'^(ge|xge|te|xe|fe|eth)\d', compact):
+            score += 80
+        elif re.match(r'^(gigabitethernet|tengigabitethernet|fastethernet)\d', compact):
+            score += 65
+    # A suffix-stripped value is always preferable to the raw parser label.
+    if str(row.get('interface_name') or '').strip().lower().endswith(' interface'):
+        score -= 20
+    return score, len(raw), raw
+
+
+def _canonical_fallback_interface_name(value: Any, device_meta: dict[str, Any]) -> str:
+    """Expand a short LLDP alias when the interface inventory is incomplete."""
+    raw = _clean_interface_display_name(value)
+    compact = re.sub(r'\s+', '', raw)
+    vendor = str(device_meta.get('vendor') or '').strip().lower()
+    platform = str(device_meta.get('platform') or '').strip().lower()
+    if vendor == 'cisco' or 'cisco' in platform:
+        match = re.match(r'^(?:e|et)(\d.*)$', compact, flags=re.IGNORECASE)
+        if match:
+            return f'Ethernet{match.group(1)}'
+    if vendor in {'h3c', 'huawei'} or any(token in platform for token in ('comware', 'huawei', 'vrp')):
+        match = re.match(r'^(?:ge|gi|gigabitethernet)(\d.*)$', compact, flags=re.IGNORECASE)
+        if match:
+            return f'GE{match.group(1)}'
+    return raw
+
+
+def _load_interface_aggregation_map(conn) -> dict[tuple[str, str], dict[str, Any]]:
+    """Build a vendor-neutral lookup from physical ports to their logical LAG.
+
+    The inventory already stores ``interface_type``, ``parent_interface_id``
+    and ``channel_group``.  This helper keeps the topology service independent
+    of vendor naming while preserving the original interface name for display.
+    """
+    rows = [dict(row) for row in conn.execute(
+        '''
+        SELECT id, device_id, interface_name, interface_type, parent_interface_id,
+               channel_group, aggregation_protocol, speed, bandwidth, admin_status, oper_status
+        FROM interfaces
+        '''
+    ).fetchall()]
+    by_id = {str(row.get('id') or ''): row for row in rows if row.get('id')}
+    logical_by_channel: dict[tuple[str, int], dict[str, Any]] = {}
+
+    def trailing_number(value: Any) -> int | None:
+        match = re.search(r'(\d+)(?:\.\d+)?$', str(value or '').strip())
+        return int(match.group(1)) if match else None
+
+    for row in rows:
+        interface_type = str(row.get('interface_type') or 'physical').strip().lower()
+        if interface_type not in {'port_channel', 'port-channel', 'lag', 'aggregation'}:
+            continue
+        channel = trailing_number(row.get('interface_name'))
+        if channel is not None:
+            logical_by_channel[(str(row.get('device_id') or ''), channel)] = row
+
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        device_id = str(row.get('device_id') or '')
+        raw_name = str(row.get('interface_name') or '').strip()
+        if not device_id or not raw_name:
+            continue
+        interface_type = str(row.get('interface_type') or 'physical').strip().lower()
+        parent = by_id.get(str(row.get('parent_interface_id') or ''))
+        if parent is None and interface_type not in {'port_channel', 'port-channel', 'lag', 'aggregation'}:
+            try:
+                channel_group = int(row.get('channel_group')) if row.get('channel_group') is not None else None
+            except (TypeError, ValueError):
+                channel_group = None
+            if channel_group is not None:
+                parent = logical_by_channel.get((device_id, channel_group))
+        if parent is None and interface_type in {'port_channel', 'port-channel', 'lag', 'aggregation'}:
+            parent = row
+        if parent is None:
+            continue
+
+        parent_id = str(parent.get('id') or '')
+        parent_name = str(parent.get('interface_name') or '').strip()
+        if not parent_id or not parent_name:
+            continue
+        result[(device_id, normalize_interface_name(raw_name).lower())] = {
+            'aggregation_id': parent_id,
+            'aggregation_name': parent_name,
+            'aggregation_protocol': str(parent.get('aggregation_protocol') or '').strip(),
+            'is_logical': parent_id == str(row.get('id') or ''),
+            'interface_id': str(row.get('id') or ''),
+            'raw_name': raw_name,
+            'speed_mbps': _interface_speed_mbps(row),
+            'is_up': _interface_is_up(row),
+        }
+    return result
+
+
+def _sync_aggregation_inventory(device: dict[str, Any]) -> dict[str, int]:
+    """Persist vendor-specific LAG membership for the next topology rebuild.
+
+    LLDP/CDP exposes physical member ports, while the aggregation command
+    exposes the parent/member relationship.  We collect the latter once per
+    topology discovery run and keep the raw vendor names in ``interfaces``.
+    A failure is intentionally isolated from neighbor discovery.
+    """
+    if str(os.environ.get('TOPOLOGY_AGGREGATION_DISCOVERY_ENABLED', '1')).strip().lower() in {'0', 'false', 'no'}:
+        return {'parents': 0, 'members': 0}
+    try:
+        from services.operational_data_service import collect_operational_data
+
+        payload = collect_operational_data(device, categories=['eth_trunk'], auth_role='admin')
+        category = next((item for item in payload.get('categories', []) if item.get('key') == 'eth_trunk'), None)
+        records = list(category.get('records') or []) if category else []
+    except Exception as exc:  # noqa: BLE001
+        logger.info('Aggregation inventory skipped for %s: %s', device.get('hostname'), exc)
+        return {'parents': 0, 'members': 0}
+    if not records:
+        return {'parents': 0, 'members': 0}
+
+    def value(record: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            raw = record.get(key)
+            if raw is not None and str(raw).strip():
+                return str(raw).strip()
+        return ''
+
+    def clean_member(value_raw: str) -> str:
+        cleaned = re.sub(r'\([^)]*\)', '', value_raw or '')
+        cleaned = re.sub(r'\s+', '', cleaned).strip()
+        return cleaned
+
+    conn = get_db_connection()
+    parents = 0
+    members = 0
+    try:
+        device_id = str(device.get('id') or '')
+        interface_rows = conn.execute(
+            'SELECT id, interface_name FROM interfaces WHERE device_id = ?', (device_id,)
+        ).fetchall()
+        interface_map = {
+            normalize_interface_name(row['interface_name']).lower(): str(row['id'])
+            for row in interface_rows
+        }
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            parent_name = clean_member(value(record, 'AGGREGATE_INTERFACE', 'ETH_TRUNK', 'PORT_CHANNEL', 'PORTCHANNEL', 'BUNDLE'))
+            member_name = clean_member(value(record, 'INTERFACE', 'MEMBER_INTERFACE', 'MEMBER', 'PORT'))
+            if parent_name and member_name:
+                grouped.setdefault(parent_name, []).append(record)
+
+        for parent_name, parent_records in grouped.items():
+            parent_norm = normalize_interface_name(parent_name).lower()
+            parent_row = conn.execute(
+                'SELECT id FROM interfaces WHERE device_id = ? AND interface_name = ?',
+                (device_id, parent_name),
+            ).fetchone()
+            parent_id = str(parent_row['id']) if parent_row else str(uuid.uuid4())
+            first = parent_records[0]
+            mode = value(first, 'AGGREGATION_MODE', 'MODE', 'PROTOCOL').lower()
+            protocol = 'LACP' if any(token in mode for token in ('dynamic', 'lacp')) else ('static' if mode else '')
+            parent_status = value(first, 'OPERATE_STATUS', 'STATUS').lower()
+            parent_oper = 'up' if parent_status in {'up', 'active', 'selected'} else 'down'
+            conn.execute(
+                '''
+                INSERT INTO interfaces (
+                    id, device_id, interface_name, interface_type, admin_status, oper_status,
+                    aggregation_protocol
+                ) VALUES (?, ?, ?, 'port_channel', 'up', ?, ?)
+                ON CONFLICT(device_id, interface_name) DO UPDATE SET
+                    interface_type = 'port_channel', oper_status = excluded.oper_status,
+                    aggregation_protocol = excluded.aggregation_protocol
+                ''',
+                (parent_id, device_id, parent_name, parent_oper, protocol),
+            )
+            interface_map[parent_norm] = parent_id
+            parents += 1
+
+            channel_match = re.search(r'(\d+)(?:\.\d+)?$', parent_name)
+            channel_group = int(channel_match.group(1)) if channel_match else None
+            for record in parent_records:
+                member_name = clean_member(value(record, 'INTERFACE', 'MEMBER_INTERFACE', 'MEMBER', 'PORT'))
+                if not member_name:
+                    continue
+                member_norm = normalize_interface_name(member_name).lower()
+                member_id = interface_map.get(member_norm)
+                if not member_id:
+                    member_id = str(uuid.uuid4())
+                    conn.execute(
+                        '''
+                        INSERT INTO interfaces (
+                            id, device_id, interface_name, interface_type, admin_status, oper_status,
+                            parent_interface_id, channel_group
+                        ) VALUES (?, ?, ?, 'physical', 'unknown', 'unknown', ?, ?)
+                        ON CONFLICT(device_id, interface_name) DO UPDATE SET
+                            parent_interface_id = excluded.parent_interface_id,
+                            channel_group = excluded.channel_group
+                        ''',
+                        (member_id, device_id, member_name, parent_id, channel_group),
+                    )
+                    interface_map[member_norm] = member_id
+                member_status = value(record, 'STATUS', 'PORT_STATUS').lower()
+                member_oper = 'up' if member_status in {'s', 'selected', 'up', 'active', 'collecting', 'distributing'} else 'down'
+                conn.execute(
+                    '''
+                    UPDATE interfaces SET parent_interface_id = ?, channel_group = ?,
+                        oper_status = ?, aggregation_protocol = ?
+                    WHERE id = ?
+                    ''',
+                    (parent_id, channel_group, member_oper, protocol, member_id),
+                )
+                members += 1
+        conn.commit()
+        return {'parents': parents, 'members': members}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _collapse_aggregation_groups(
+    grouped: dict[str, list[dict[str, Any]]],
+    aggregation_map: dict[tuple[str, str], dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Collapse physical member observations into one logical LAG edge.
+
+    A link is collapsed only when both endpoints resolve to a logical
+    aggregation.  Ambiguous or one-sided evidence remains a physical link.
+    """
+    collapsed: dict[str, dict[str, Any]] = {}
+    aggregation_groups: dict[str, dict[str, Any]] = {}
+
+    for link_key, observations in grouped.items():
+        first = observations[0] if observations else {}
+        source_key = (
+            str(first.get('source_device_id') or ''),
+            _observation_port_normalized(first, 'source_port_raw', 'source_port_normalized').lower(),
+        )
+        target_key = (
+            str(first.get('target_device_id') or ''),
+            _observation_port_normalized(first, 'target_port_raw', 'target_port_normalized').lower(),
+        )
+        source_agg = aggregation_map.get(source_key)
+        target_agg = aggregation_map.get(target_key)
+        if not source_agg or not target_agg:
+            collapsed[link_key] = {'observations': observations, 'aggregation': None}
+            continue
+
+        endpoints = sorted([
+            (str(first.get('source_device_id') or ''), source_agg),
+            (str(first.get('target_device_id') or ''), target_agg),
+        ], key=lambda item: item[0])
+        group_key = (
+            f"agg:{endpoints[0][0]}::{endpoints[0][1]['aggregation_id']}"
+            f"--{endpoints[1][0]}::{endpoints[1][1]['aggregation_id']}"
+        )
+        group = aggregation_groups.setdefault(group_key, {
+            'observations': [],
+            'aggregation': {
+                'source_device_id': endpoints[0][0],
+                'source_aggregation_id': endpoints[0][1]['aggregation_id'],
+                'source_aggregation_name': endpoints[0][1]['aggregation_name'],
+                'target_device_id': endpoints[1][0],
+                'target_aggregation_id': endpoints[1][1]['aggregation_id'],
+                'target_aggregation_name': endpoints[1][1]['aggregation_name'],
+                'aggregation_protocol': endpoints[0][1].get('aggregation_protocol') or endpoints[1][1].get('aggregation_protocol') or '',
+                'member_pairs': {},
+            },
+        })
+        group['observations'].extend(observations)
+        aggregation = group['aggregation']
+        for observation in observations:
+            source_member_key = (
+                str(observation.get('source_device_id') or ''),
+                _observation_port_normalized(observation, 'source_port_raw', 'source_port_normalized').lower(),
+            )
+            target_member_key = (
+                str(observation.get('target_device_id') or ''),
+                _observation_port_normalized(observation, 'target_port_raw', 'target_port_normalized').lower(),
+            )
+            source_member_agg = aggregation_map.get(source_member_key) or source_agg
+            target_member_agg = aggregation_map.get(target_member_key) or target_agg
+            source_member = {
+                'name': str(observation.get('source_port_raw') or observation.get('source_port_normalized') or ''),
+                'normalized': str(observation.get('source_port_normalized') or ''),
+                'device_id': str(observation.get('source_device_id') or ''),
+                'speed_mbps': source_member_agg.get('speed_mbps') or 0,
+                'up': source_member_agg.get('is_up', False),
+            }
+            target_member = {
+                'name': str(observation.get('target_port_raw') or observation.get('target_port_normalized') or ''),
+                'normalized': str(observation.get('target_port_normalized') or ''),
+                'device_id': str(observation.get('target_device_id') or ''),
+                'speed_mbps': target_member_agg.get('speed_mbps') or 0,
+                'up': target_member_agg.get('is_up', False),
+            }
+            pair_key = '::'.join(sorted([
+                f"{source_member['device_id']}:{source_member['normalized']}",
+                f"{target_member['device_id']}:{target_member['normalized']}",
+            ]))
+            aggregation['member_pairs'][pair_key] = {
+                'source': source_member,
+                'target': target_member,
+                'protocol': observation.get('protocol') or '',
+            }
+
+    collapsed.update(aggregation_groups)
+    for bundle in collapsed.values():
+        aggregation = bundle.get('aggregation')
+        if not aggregation:
+            continue
+        members = list(aggregation['member_pairs'].values())
+        source_capacity = sum(float(item['source'].get('speed_mbps') or 0) for item in members)
+        target_capacity = sum(float(item['target'].get('speed_mbps') or 0) for item in members)
+        aggregation['members'] = members
+        aggregation['member_count'] = len(members)
+        aggregation['active_member_count'] = sum(
+            1 for item in members if item['source'].get('up') and item['target'].get('up')
+        )
+        aggregation['bandwidth_mbps'] = min(source_capacity, target_capacity) if source_capacity and target_capacity else max(source_capacity, target_capacity)
+        if aggregation['active_member_count'] and aggregation['active_member_count'] < aggregation['member_count']:
+            aggregation['status'] = 'degraded'
+        elif aggregation['member_count'] and aggregation['active_member_count'] == aggregation['member_count']:
+            aggregation['status'] = 'up'
+        else:
+            aggregation['status'] = 'unknown'
+    return collapsed
 
 
 async def _collect_neighbors_with_scrapli(device: dict[str, Any], commands: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], str]:
@@ -814,16 +1226,41 @@ def _rebuild_links_from_observations_unlocked() -> int:
             '''
         ).fetchall()
 
-        grouped = _group_link_observations([dict(row) for row in rows])
+        grouped = _group_link_observations(_prefer_lldp_rows([dict(row) for row in rows]))
+        aggregation_map = _load_interface_aggregation_map(conn)
+        grouped_with_contract = _collapse_aggregation_groups(grouped, aggregation_map)
+        active_lldp_pairs: set[tuple[str, str]] = set()
+        for bundle in grouped_with_contract.values():
+            observations = bundle.get('observations') or []
+            if observations and any(str(item.get('protocol') or '').lower() == 'lldp' for item in observations):
+                first_observation = observations[0]
+                active_lldp_pairs.add(tuple(sorted((
+                    str(first_observation.get('source_device_id') or ''),
+                    str(first_observation.get('target_device_id') or ''),
+                ))))
 
-        # Load all interfaces into memory for fast lookup
-        intf_rows = conn.execute("SELECT id, device_id, interface_name FROM interfaces").fetchall()
-        interface_map = {}
-        for row in intf_rows:
-            dev_id = row['device_id']
-            intf_name = row['interface_name']
+        # Load all interfaces into memory for fast lookup.  A previous
+        # discovery may have stored both short and long aliases for one
+        # physical port; retain the best native spelling for display while
+        # still matching through the normalized key.
+        device_meta_rows = conn.execute("SELECT id, vendor, platform FROM devices").fetchall()
+        device_meta = {str(row['id']): dict(row) for row in device_meta_rows}
+        intf_rows = conn.execute(
+            "SELECT id, device_id, interface_name, name_display, interface_type FROM interfaces"
+        ).fetchall()
+        interface_map: dict[tuple[str, str], dict[str, Any]] = {}
+        for raw_row in intf_rows:
+            row = dict(raw_row)
+            dev_id = str(row.get('device_id') or '')
+            intf_name = row.get('interface_name') or ''
             norm = normalize_interface_name(intf_name).lower()
-            interface_map[(dev_id, norm)] = row['id']
+            if not dev_id or not norm:
+                continue
+            key = (dev_id, norm)
+            current = interface_map.get(key)
+            if current is None or _interface_display_score(row, device_meta.get(dev_id, {})) > _interface_display_score(current, device_meta.get(dev_id, {})):
+                row['display_name'] = _clean_interface_display_name(row.get('name_display') or intf_name)
+                interface_map[key] = row
 
         site_aliases, _ = _load_site_identity_maps(conn)
         device_site_rows = conn.execute('SELECT id, site_id FROM devices').fetchall()
@@ -836,7 +1273,9 @@ def _rebuild_links_from_observations_unlocked() -> int:
         conn.execute('DELETE FROM topology_links')
         active_link_keys: set[str] = set()
 
-        for link_key, observations in grouped.items():
+        for link_key, bundle in grouped_with_contract.items():
+            observations = bundle['observations']
+            aggregation = bundle.get('aggregation') or {}
             active_link_keys.add(link_key)
             first = max(
                 observations,
@@ -854,49 +1293,97 @@ def _rebuild_links_from_observations_unlocked() -> int:
             protocols = sorted({obs.get('protocol') or 'lldp' for obs in observations})
             confidence = 1.0 if reverse_seen else max(float(obs.get('confidence') or 0.0) for obs in observations)
 
+            is_aggregation = bool(aggregation)
             ordered = sorted(
                 [
                     {
                         'device_id': first['source_device_id'],
                         'hostname': first.get('source_hostname') or '',
-                        'port_raw': first.get('source_port_raw') or '',
-                        'port_normalized': first.get('source_port_normalized') or '',
+                        'port_raw': (aggregation.get('source_aggregation_name') if is_aggregation and str(first['source_device_id']) == str(aggregation.get('source_device_id')) else first.get('source_port_raw')) or '',
+                        'port_normalized': '' if is_aggregation and str(first['source_device_id']) == str(aggregation.get('source_device_id')) else _observation_port_normalized(first, 'source_port_raw', 'source_port_normalized'),
+                        'interface_id': aggregation.get('source_aggregation_id') if is_aggregation and str(first['source_device_id']) == str(aggregation.get('source_device_id')) else None,
                     },
                     {
                         'device_id': first['target_device_id'],
                         'hostname': first.get('target_hostname') or '',
-                        'port_raw': first.get('target_port_raw') or '',
-                        'port_normalized': first.get('target_port_normalized') or '',
+                        'port_raw': (aggregation.get('target_aggregation_name') if is_aggregation and str(first['target_device_id']) == str(aggregation.get('target_device_id')) else first.get('target_port_raw')) or '',
+                        'port_normalized': '' if is_aggregation and str(first['target_device_id']) == str(aggregation.get('target_device_id')) else _observation_port_normalized(first, 'target_port_raw', 'target_port_normalized'),
+                        'interface_id': aggregation.get('target_aggregation_id') if is_aggregation and str(first['target_device_id']) == str(aggregation.get('target_device_id')) else None,
                     },
                 ],
-                key=lambda item: (item['device_id'], item['port_normalized'] or item['port_raw']),
+                key=lambda item: (item['device_id'], normalize_interface_name(item['port_raw']) or item['port_raw']),
             )
 
             # Resolve source_interface_id
             src_dev = ordered[0]['device_id']
             src_port = ordered[0]['port_normalized'] or ordered[0]['port_raw']
             src_port_norm = normalize_interface_name(src_port).lower()
-            src_intf_id = interface_map.get((src_dev, src_port_norm))
+            src_interface = interface_map.get((src_dev, src_port_norm))
+            src_intf_id = ordered[0].get('interface_id') or (src_interface or {}).get('id')
+            if not is_aggregation:
+                display_name = _canonical_fallback_interface_name(
+                    (src_interface or {}).get('display_name') or ordered[0]['port_raw'],
+                    device_meta.get(str(src_dev), {}),
+                )
+                ordered[0]['port_raw'] = display_name
+                ordered[0]['port_normalized'] = normalize_interface_name(display_name)
             if src_dev and src_port_norm and not src_intf_id:
                 src_intf_id = str(uuid.uuid4())
                 conn.execute(
                     "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'unknown', 'unknown')",
                     (src_intf_id, src_dev, ordered[0]['port_raw'] or src_port)
                 )
-                interface_map[(src_dev, src_port_norm)] = src_intf_id
+                interface_map[(src_dev, src_port_norm)] = {
+                    'id': src_intf_id,
+                    'device_id': src_dev,
+                    'interface_name': ordered[0]['port_raw'] or src_port,
+                    'display_name': _clean_interface_display_name(ordered[0]['port_raw'] or src_port),
+                    'interface_type': 'physical',
+                }
 
             # Resolve target_interface_id
             tgt_dev = ordered[1]['device_id']
             tgt_port = ordered[1]['port_normalized'] or ordered[1]['port_raw']
             tgt_port_norm = normalize_interface_name(tgt_port).lower()
-            tgt_intf_id = interface_map.get((tgt_dev, tgt_port_norm))
+            tgt_interface = interface_map.get((tgt_dev, tgt_port_norm))
+            tgt_intf_id = ordered[1].get('interface_id') or (tgt_interface or {}).get('id')
+            if not is_aggregation:
+                display_name = _canonical_fallback_interface_name(
+                    (tgt_interface or {}).get('display_name') or ordered[1]['port_raw'],
+                    device_meta.get(str(tgt_dev), {}),
+                )
+                ordered[1]['port_raw'] = display_name
+                ordered[1]['port_normalized'] = normalize_interface_name(display_name)
             if tgt_dev and tgt_port_norm and not tgt_intf_id:
                 tgt_intf_id = str(uuid.uuid4())
                 conn.execute(
                     "INSERT INTO interfaces (id, device_id, interface_name, admin_status, oper_status) VALUES (?, ?, ?, 'unknown', 'unknown')",
                     (tgt_intf_id, tgt_dev, ordered[1]['port_raw'] or tgt_port)
                 )
-                interface_map[(tgt_dev, tgt_port_norm)] = tgt_intf_id
+                interface_map[(tgt_dev, tgt_port_norm)] = {
+                    'id': tgt_intf_id,
+                    'device_id': tgt_dev,
+                    'interface_name': ordered[1]['port_raw'] or tgt_port,
+                    'display_name': _clean_interface_display_name(ordered[1]['port_raw'] or tgt_port),
+                    'interface_type': 'physical',
+                }
+
+            member_rows = aggregation.get('members') or []
+            metadata = {
+                'protocols': protocols,
+                'reverse_seen': reverse_seen,
+                'match_methods': sorted({obs.get('match_method') or '' for obs in observations if obs.get('match_method')}),
+            }
+            if is_aggregation:
+                metadata.update({
+                    'link_kind': 'aggregation',
+                    'source_aggregation_name': aggregation.get('source_aggregation_name') or '',
+                    'target_aggregation_name': aggregation.get('target_aggregation_name') or '',
+                    'aggregation_protocol': aggregation.get('aggregation_protocol') or '',
+                    'member_count': int(aggregation.get('member_count') or 0),
+                    'active_member_count': int(aggregation.get('active_member_count') or 0),
+                    'members': member_rows,
+                })
 
             conn.execute(
                 '''
@@ -904,8 +1391,10 @@ def _rebuild_links_from_observations_unlocked() -> int:
                     id, link_key, source_device_id, source_interface_id, source_hostname, source_port, source_port_normalized,
                     target_device_id, target_interface_id, target_hostname, target_port, target_port_normalized,
                     discovery_source, confidence, status, is_inferred, evidence_count,
-                    metadata_json, created_at, updated_at, last_seen, source_site_id, target_site_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    metadata_json, created_at, updated_at, last_seen, source_site_id, target_site_id,
+                    link_kind, source_aggregation_name, target_aggregation_name, aggregation_protocol,
+                    member_count, active_member_count, aggregation_bandwidth_mbps, members_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     str(uuid.uuid4()),
@@ -922,24 +1411,44 @@ def _rebuild_links_from_observations_unlocked() -> int:
                     ordered[1]['port_normalized'],
                     '+'.join(protocols),
                     confidence,
-                    'unknown',
+                    aggregation.get('status') if is_aggregation else 'unknown',
                     0,
                     len(observations),
-                    _safe_json({
-                        'protocols': protocols,
-                        'reverse_seen': reverse_seen,
-                        'match_methods': sorted({obs.get('match_method') or '' for obs in observations if obs.get('match_method')}),
-                    }),
+                    _safe_json(metadata),
                     existing.get('created_at') or now,
                     now,
                     max(obs.get('updated_at') or now for obs in observations),
                     device_sites.get(str(ordered[0]['device_id']), ''),
                     device_sites.get(str(ordered[1]['device_id']), ''),
+                    'aggregation' if is_aggregation else 'physical',
+                    aggregation.get('source_aggregation_name') if is_aggregation else '',
+                    aggregation.get('target_aggregation_name') if is_aggregation else '',
+                    aggregation.get('aggregation_protocol') if is_aggregation else '',
+                    int(aggregation.get('member_count') or 0) if is_aggregation else 0,
+                    int(aggregation.get('active_member_count') or 0) if is_aggregation else 0,
+                    float(aggregation.get('bandwidth_mbps') or 0) if is_aggregation else 0,
+                    _safe_json(member_rows),
                 ),
             )
 
         for link_key, existing in existing_by_key.items():
             if link_key in active_link_keys:
+                continue
+            existing_pair = tuple(sorted((str(existing.get('source_device_id') or ''), str(existing.get('target_device_id') or ''))))
+            existing_canonical_key = _build_link_key(
+                str(existing.get('source_device_id') or ''),
+                str(existing.get('source_port') or existing.get('source_port_normalized') or ''),
+                str(existing.get('target_device_id') or ''),
+                str(existing.get('target_port') or existing.get('target_port_normalized') or ''),
+            )
+            # A link written by an older normalization pass can have a
+            # different persisted key while representing an active link.
+            if existing_canonical_key in active_link_keys:
+                continue
+            # CDP is only a fallback when LLDP is unavailable. Once LLDP is
+            # present for a device pair, do not retain a duplicate CDP edge
+            # through the stale-link grace period.
+            if existing_pair in active_lldp_pairs and 'cdp' in str(existing.get('discovery_source') or '').lower() and 'lldp' not in str(existing.get('discovery_source') or '').lower():
                 continue
             last_seen = str(existing.get('last_seen') or '')
             try:
@@ -962,8 +1471,10 @@ def _rebuild_links_from_observations_unlocked() -> int:
                     id, link_key, source_device_id, source_interface_id, source_hostname, source_port, source_port_normalized,
                     target_device_id, target_interface_id, target_hostname, target_port, target_port_normalized,
                     discovery_source, confidence, status, is_inferred, evidence_count,
-                    metadata_json, created_at, updated_at, last_seen, source_site_id, target_site_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    metadata_json, created_at, updated_at, last_seen, source_site_id, target_site_id,
+                    link_kind, source_aggregation_name, target_aggregation_name, aggregation_protocol,
+                    member_count, active_member_count, aggregation_bandwidth_mbps, members_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     str(existing.get('id') or uuid.uuid4()),
@@ -989,6 +1500,14 @@ def _rebuild_links_from_observations_unlocked() -> int:
                     existing.get('last_seen') or existing.get('updated_at') or now,
                     existing.get('source_site_id') or device_sites.get(str(existing.get('source_device_id') or ''), ''),
                     existing.get('target_site_id') or device_sites.get(str(existing.get('target_device_id') or ''), ''),
+                    existing.get('link_kind') or 'physical',
+                    existing.get('source_aggregation_name') or '',
+                    existing.get('target_aggregation_name') or '',
+                    existing.get('aggregation_protocol') or '',
+                    int(existing.get('member_count') or 0),
+                    int(existing.get('active_member_count') or 0),
+                    float(existing.get('aggregation_bandwidth_mbps') or 0),
+                    existing.get('members_json') or '[]',
                 ),
             )
 
@@ -1201,6 +1720,7 @@ async def discover_device_neighbors(
             raise RuntimeError('device_credentials_incomplete')
 
         observations, method = await _collect_device_observations(device)
+        aggregation_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
         observations = _deduplicate_observations(observations)
         match_summary = _replace_device_observations(device, observations, run_id)
         total_links = rebuild_links_from_observations() if rebuild_links else None
@@ -1217,6 +1737,7 @@ async def discover_device_neighbors(
                 'method': method,
                 'ambiguous': match_summary['ambiguous'],
                 'unmatched': match_summary['unmatched'],
+                'aggregation': aggregation_summary,
                 'run_id': run_id,
             },
         )
@@ -1230,6 +1751,7 @@ async def discover_device_neighbors(
             'unmatched_count': match_summary['unmatched'],
             'total_links': total_links,
             'protocols': sorted({item.get('protocol') or 'lldp' for item in observations}),
+            'aggregation': aggregation_summary,
         }
     except Exception as exc:
         record_collection_result(
@@ -1526,6 +2048,11 @@ def get_current_links(
         result = []
         for row in rows:
             item = dict(row)
+            try:
+                item['members'] = json.loads(item.get('members_json') or '[]')
+            except (TypeError, ValueError):
+                item['members'] = []
+            item['link_kind'] = str(item.get('link_kind') or 'physical')
             effective_state, stale_reason = _link_operational_state(item, now)
             item['operational_state'] = effective_state
             item['stale_reason'] = stale_reason

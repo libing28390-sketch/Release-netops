@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Search, Terminal, Monitor, Lock, Info, 
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight,
@@ -64,6 +64,15 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
   // Real current username from session
   const [currentUsername, setCurrentUsername] = useState<string>('');
+  const autoLoginDeviceRef = useRef<string | null>(null);
+  const [autoLoginInProgress, setAutoLoginInProgress] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('auto') === 'normal';
+    } catch {
+      return false;
+    }
+  });
+  const autoLoginModeRef = useRef(autoLoginInProgress);
 
   // Countdown timer for MFA code
   useEffect(() => {
@@ -386,6 +395,10 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       
       if (!res.ok) {
         showToast(result.detail || result.error || 'Failed to request session', 'error');
+        if (autoLoginModeRef.current) {
+          autoLoginModeRef.current = false;
+          setAutoLoginInProgress(false);
+        }
         return;
       }
       
@@ -399,12 +412,68 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       }
 
       if (result.session_token) {
-        window.open(`/terminal?session=${result.session_token}&hostname=${encodeURIComponent(dev.hostname || 'Terminal')}`, '_blank');
+        const terminalUrl = `/terminal?session=${result.session_token}&hostname=${encodeURIComponent(dev.hostname || 'Terminal')}`;
+        if (autoLoginModeRef.current) {
+          // The new tab is intentionally still on the loading gate. Replace
+          // that tab directly so the workspace UI never flashes first.
+          window.location.assign(terminalUrl);
+          return;
+        }
+        const terminalWindow = window.open(terminalUrl, '_blank');
+        // A deep-link auto login may be considered a popup by the browser;
+        // fall back to the same tab so the user is never left without a
+        // terminal after the normal session has been created.
+        if (!terminalWindow) window.location.assign(terminalUrl);
+      } else if (autoLoginModeRef.current) {
+        autoLoginModeRef.current = false;
+        setAutoLoginInProgress(false);
       }
     } catch (err) {
       showToast('Session request failed', 'error');
+      if (autoLoginModeRef.current) {
+        autoLoginModeRef.current = false;
+        setAutoLoginInProgress(false);
+      }
     }
   };
+
+  // Topology hover actions arrive here as a deep link. Execute only once per
+  // device so a state refresh cannot create duplicate PAM sessions.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('auto') !== 'normal') return;
+    const deviceId = params.get('device_id');
+    if (!deviceId || autoLoginDeviceRef.current === deviceId) return;
+    const target = devices.find((device) => device.id === deviceId);
+    if (!target) {
+      if (devices.length > 0) {
+        autoLoginModeRef.current = false;
+        setAutoLoginInProgress(false);
+      }
+      return;
+    }
+
+    autoLoginDeviceRef.current = deviceId;
+    autoLoginModeRef.current = true;
+    setAutoLoginInProgress(true);
+    void requestSession(target, 'normal');
+    params.delete('auto');
+    params.delete('device_id');
+    const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+    window.history.replaceState(window.history.state, '', nextUrl);
+  }, [devices]);
+
+  if (autoLoginInProgress) {
+    return (
+      <div className="flex h-full min-h-[320px] items-center justify-center bg-slate-950 text-white">
+        <div className="text-center">
+          <div className="mx-auto h-9 w-9 animate-spin rounded-full border-2 border-cyan-400/30 border-t-cyan-400" />
+          <p className="mt-4 text-sm font-semibold">正在建立普通账号会话...</p>
+          <p className="mt-1 text-xs text-white/45">登录成功后将自动进入终端</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full animate-in fade-in duration-500 overflow-hidden text-slate-700 font-sans" style={{ background: '#f8fafc' }}>

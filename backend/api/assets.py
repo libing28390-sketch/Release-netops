@@ -291,8 +291,10 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
     credential_id = row['credential_id']
 
     # Update credentials if modified in asset update
-    username = getattr(body, 'username', None) or getattr(body, 'normal_username', None) or getattr(body, 'admin_username', None)
-    pwd = getattr(body, 'password', None) or getattr(body, 'normal_password', None) or getattr(body, 'admin_password', None)
+    # Keep the compatibility credential row aligned with the normal role.
+    # The asset's normal/admin fields remain the authoritative source for SSH.
+    username = getattr(body, 'normal_username', None) or getattr(body, 'username', None) or getattr(body, 'admin_username', None)
+    pwd = getattr(body, 'normal_password', None) or getattr(body, 'password', None)
     enable_pwd = getattr(body, 'enable_password', None)
     community = getattr(body, 'snmp_community', None)
 

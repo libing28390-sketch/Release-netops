@@ -45,20 +45,15 @@ def _resolve_execution_credentials(device: dict, auth_role: str = 'normal') -> d
     if role == 'admin':
         username, password = _first_complete_credential_pair(
             (creds.get('admin_username') or '', creds.get('admin_password') or ''),
-            (creds.get('username') or '', creds.get('password') or ''),
-            (creds.get('normal_username') or '', creds.get('normal_password') or ''),
         )
     elif role == 'auto':
         username, password = _first_complete_credential_pair(
-            (creds.get('username') or '', creds.get('password') or ''),
-            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
             (creds.get('normal_username') or '', creds.get('normal_password') or ''),
+            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
         )
     else:
         username, password = _first_complete_credential_pair(
             (creds.get('normal_username') or '', creds.get('normal_password') or ''),
-            (creds.get('username') or '', creds.get('password') or ''),
-            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
         )
 
     return {

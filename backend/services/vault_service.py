@@ -202,6 +202,61 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
             ) or '',
         }
 
+    # The CMDB asset is the source of truth for the two supported SSH roles.
+    # Device/credentials.username is a legacy single-account field and must
+    # not override the role-specific credentials stored on physical_assets.
+    asset = {}
+    asset_id = str(device.get('asset_id') or '').strip()
+    if asset_id:
+        try:
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                row = conn.execute(
+                    '''SELECT username, password, normal_username, normal_password,
+                              admin_username, admin_password, enable_password
+                       FROM physical_assets WHERE id = ?''',
+                    (asset_id,),
+                ).fetchone()
+                asset = dict(row) if row else {}
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning('Failed to load linked asset credentials for %s: %s', asset_id, exc)
+
+    if asset:
+        for role in ('normal', 'admin'):
+            username_key = f'{role}_username'
+            password_key = f'{role}_password'
+            asset_username = str(asset.get(username_key) or '').strip()
+            asset_password = decrypt_credential(asset.get(password_key)) or ''
+            if asset_username:
+                resolved[username_key] = asset_username
+            if asset_password:
+                resolved[password_key] = asset_password
+        asset_enable_password = decrypt_credential(asset.get('enable_password')) or ''
+        if asset_enable_password:
+            resolved['enable_password'] = asset_enable_password
+
+        # Keep the generic return keys compatible for callers that have not
+        # yet been migrated, but derive them from the normal role first.
+        # Never use physical_assets.username/password as an SSH fallback.
+        normal_pair = (
+            resolved.get('normal_username') or '',
+            resolved.get('normal_password') or '',
+        )
+        admin_pair = (
+            resolved.get('admin_username') or '',
+            resolved.get('admin_password') or '',
+        )
+        if all(normal_pair):
+            resolved['username'], resolved['password'] = normal_pair
+        elif all(admin_pair):
+            resolved['username'], resolved['password'] = admin_pair
+        else:
+            resolved['username'] = ''
+            resolved['password'] = ''
+
     # Older Vault records may not contain SNMP fields. Keep the key stable so
     # collectors can distinguish "not configured" from an unreachable agent.
     resolved['snmp_community'] = resolved.get('snmp_community') or ''
@@ -221,20 +276,27 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     return resolved
 
 
-def resolve_collector_credentials(device: dict) -> dict[str, object]:
+def resolve_collector_credentials(device: dict, *, ssh_role: str = 'normal') -> dict[str, object]:
     """Return the stable credential contract consumed by network collectors.
 
     SNMPv2c is the currently supported wire driver. Keeping the version and
     configured flag explicit prevents callers from treating an empty community
     as the legacy public default and leaves a safe extension point for SNMPv3.
     """
+    role = str(ssh_role or 'normal').strip().lower()
+    if role not in {'normal', 'admin'}:
+        raise ValueError('ssh_role must be normal or admin')
+
     resolved = resolve_device_credentials(device)
+    role_username = resolved.get(f'{role}_username') or ''
+    role_password = resolved.get(f'{role}_password') or ''
     return {
         'ssh': {
-            'username': resolved.get('username') or '',
-            'password': resolved.get('password') or '',
+            'username': role_username,
+            'password': role_password,
             'enable_password': resolved.get('enable_password') or '',
             'port': int(device.get('management_port') or device.get('port') or 22),
+            'role': role,
         },
         'snmp': {
             'version': '2c',

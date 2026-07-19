@@ -146,14 +146,18 @@ def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str |
     now = _utc_now()
     asset_id = f"asset-{uuid.uuid4().hex[:12]}"
     vendor = device.get('vendor') or _vendor_from_platform(device.get('platform', ''))
+    normal_password = device.get('normal_password') or ''
+    admin_password = device.get('admin_password') or ''
     try:
         conn.execute('''
             INSERT INTO physical_assets (
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                 site_id, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
-                status, purchase_date, warranty_expiry, department, notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status, purchase_date, warranty_expiry, department, notes, created_at, updated_at,
+                platform, connection_method, username, normal_username, normal_password,
+                admin_username, admin_password, auth_model, enable_password, management_port
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, 'network_device', '', device.get('sn', ''), vendor,
             device.get('model', ''), device.get('hostname', ''),
@@ -161,6 +165,14 @@ def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str |
             device.get('ip_address', ''), '', device.get('role', ''),
             '', '', '',
             'active', '', '', '', '', now, now,
+            device.get('platform', ''), device.get('connection_method', 'ssh'),
+            device.get('username', ''), device.get('normal_username', ''),
+            encrypt_credential(normal_password) if normal_password else '',
+            device.get('admin_username', ''),
+            encrypt_credential(admin_password) if admin_password else '',
+            device.get('auth_model', 'single'),
+            encrypt_credential(device.get('enable_password')) if device.get('enable_password') else '',
+            int(device.get('management_port') or 22),
         ))
         conn.execute('UPDATE devices SET asset_id = ?, vendor = ? WHERE id = ?', (asset_id, vendor, device_id))
         return asset_id

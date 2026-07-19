@@ -177,6 +177,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbor'],
         'bfd': ['show bfd neighbors details'],
+        'eth_trunk': ['show etherchannel summary'],
         'bgp_routes': ['show ip bgp'],
         'ntp': ['show ntp status'],
         'environment': ['show environment temperature'],
@@ -196,6 +197,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbors'],
         'bfd': ['show bfd neighbors'],
+        'eth_trunk': ['show port-channel summary'],
         'bgp_routes': ['show ip bgp'],
         'ntp': ['show ntp peer-status'],
         'environment': ['show environment'],
@@ -215,6 +217,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['show bgp summary'],
         'ospf': ['show ospf neighbor'],
         'bfd': ['show bfd session'],
+        'eth_trunk': ['show lacp interfaces'],
         'bgp_routes': ['show route protocol bgp'],
         'version': ['show version'],
         'logs': ['show log messages | last 30'],
@@ -231,6 +234,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbor'],
         'bfd': ['show bfd neighbors'],
+        'eth_trunk': ['show port-channel summary'],
         'bgp_routes': ['show ip bgp'],
         'version': ['show version'],
         'logs': ['show logging'],
@@ -425,22 +429,17 @@ def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'auto
     if role == 'admin':
         username, password = _first_complete_pair(
             (creds.get('admin_username') or '', creds.get('admin_password') or ''),
-            (creds.get('username') or '', creds.get('password') or ''),
-            (creds.get('normal_username') or '', creds.get('normal_password') or ''),
         )
     elif role == 'normal':
         username, password = _first_complete_pair(
             (creds.get('normal_username') or '', creds.get('normal_password') or ''),
-            (creds.get('username') or '', creds.get('password') or ''),
-            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
         )
     else:
-        # For operational collection, prefer the credential-vault primary login,
-        # then privileged login, then normal login. Keep username/password paired.
+        # Auto mode is read-only by default: prefer the normal asset role and
+        # only use the admin role when explicitly available as a fallback.
         username, password = _first_complete_pair(
-            (creds.get('username') or '', creds.get('password') or ''),
-            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
             (creds.get('normal_username') or '', creds.get('normal_password') or ''),
+            (creds.get('admin_username') or '', creds.get('admin_password') or ''),
         )
 
     params = {
@@ -848,6 +847,48 @@ def _parse_bgp_routes_raw(output: str, platform: str) -> list[dict[str, Any]]:
     return records
 
 
+def _parse_aggregation_raw(output: str, platform: str = '') -> list[dict[str, Any]]:
+    """Fallback parser for Cisco/EOS/Juniper summaries without TextFSM."""
+    records: list[dict[str, Any]] = []
+    current_parent = ''
+    for raw_line in str(output or '').splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parent_match = re.search(r'(?i)(?:port-channel|portchannel|po|ae|bundle-ether)\s*(\d+)\s*\(([^)]*)\)', line)
+        if parent_match:
+            prefix = 'ae' if 'junos' in str(platform).lower() else ('Port-Channel' if 'arista' in str(platform).lower() else 'Port-channel')
+            current_parent = f"{prefix}{parent_match.group(1)}"
+            state = parent_match.group(2)
+            remainder = line[parent_match.end():]
+            members = re.findall(r'(?i)\b((?:gi|te|fa|et|eth|ethernet|xe|ge|et-\d[-/]\d+|[a-z]+-\d+/\d+/\d+)[\w./-]*)\(([^)]*)\)', remainder)
+            for member, member_state in members:
+                records.append({
+                    'PORT_CHANNEL': current_parent,
+                    'INTERFACE': member,
+                    'STATUS': member_state or state,
+                    'PROTOCOL': 'LACP' if re.search(r'(?i)lacp', line) else '',
+                    'OPERATE_STATUS': 'up' if any(flag in (member_state or state).upper() for flag in ('P', 'S', 'U')) else 'down',
+                })
+            continue
+        aggregate_match = re.search(r'(?i)(?:aggregated interface|aggregate interface|eth-trunk)\s*[: ]\s*(\S+)', line)
+        if aggregate_match:
+            current_parent = aggregate_match.group(1)
+            continue
+        if current_parent:
+            member_match = re.match(r'(?i)([A-Za-z][\w./-]+)(?:\s+|\()', line)
+            if member_match and not line.lower().startswith(('group', 'port-channel', 'flags', 'protocol')):
+                member = member_match.group(1)
+                if member.lower() not in {'local', 'remote', 'actor'}:
+                    records.append({
+                        'PORT_CHANNEL': current_parent,
+                        'INTERFACE': member,
+                        'STATUS': 'Selected' if re.search(r'(?i)selected|collecting|distributing|\(p\)', line) else 'Unselect',
+                        'PROTOCOL': 'LACP' if re.search(r'(?i)lacp|collecting|distributing', line) else '',
+                    })
+    return records
+
+
 def _parse_command_output(platform: str, category: str, command: str, output: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     try:
@@ -859,6 +900,9 @@ def _parse_command_output(platform: str, category: str, command: str, output: st
         return records
 
     normalized_command = _normalize_command_for_template_match(command)
+    if category == 'eth_trunk':
+        return _parse_aggregation_raw(output, platform)
+
     if category == 'bfd' or ' bfd ' in f' {normalized_command} ':
         return _parse_bfd_raw(output)
 

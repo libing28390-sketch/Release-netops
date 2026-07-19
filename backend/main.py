@@ -165,9 +165,14 @@ async def lifespan(app: FastAPI):
     )
     
     from services.scheduler_service import sync_topology_and_interfaces_job, poll_endpoints_job, sync_routing_neighbors_job, sync_bgp_routes_job
+    from services.topology_service import TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS
     scheduler.add_job(
-        synchronized_scheduler_job('topology_interface_sync', expire_seconds=290)(sync_topology_and_interfaces_job),
-        'interval', minutes=5, id='topology_interface_sync', replace_existing=True
+        synchronized_scheduler_job(
+            'topology_interface_sync',
+            expire_seconds=max(30, TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS - 10),
+        )(sync_topology_and_interfaces_job),
+        'interval', seconds=TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS,
+        id='topology_interface_sync', replace_existing=True
     )
     scheduler.add_job(
         synchronized_scheduler_job('poll_endpoints', expire_seconds=290)(poll_endpoints_job),

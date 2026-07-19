@@ -123,9 +123,12 @@ def _execute_shell_script(ip: str, script_content: str, device: dict) -> str:
     """真实执行 Shell 脚本并返回输出"""
     import paramiko
     import socket as _socket
-    from core.crypto import resolve_device_credentials
+    from services.vault_service import resolve_device_credentials
     try:
-        username, password, port = resolve_device_credentials(device)
+        creds = resolve_device_credentials(device)
+        username = creds.get('normal_username') or ''
+        password = creds.get('normal_password') or ''
+        port = int(device.get('management_port') or device.get('port') or 22)
 
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -215,11 +218,11 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_cred
     # 统一使用 Vault 凭据解析服务
     creds = resolve_device_credentials(device)
     if use_admin_creds:
-        username = creds.get('admin_username') or creds.get('username') or ''
-        password = creds.get('admin_password') or creds.get('password') or ''
+        username = creds.get('admin_username') or ''
+        password = creds.get('admin_password') or ''
     else:
-        username = creds.get('normal_username') or creds.get('username') or creds.get('admin_username') or ''
-        password = creds.get('normal_password') or creds.get('password') or creds.get('admin_password') or ''
+        username = creds.get('normal_username') or ''
+        password = creds.get('normal_password') or ''
 
     params = {
         'device_type': _netmiko_platform_type(platform),

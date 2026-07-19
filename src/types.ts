@@ -87,6 +87,7 @@ export interface Device {
   uplink_port?: string;
   interface_data?: {
     name: string; status: string; speed_mbps: number;
+    interface_type?: string; parent_interface_id?: string | null; channel_group?: number | null; aggregation_protocol?: string;
     in_octets: number; out_octets: number; description: string;
     in_bps?: number; out_bps?: number;
     in_errors?: number; out_errors?: number;

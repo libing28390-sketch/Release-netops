@@ -12,6 +12,8 @@ import { useTopologySelectionSync } from './useTopologySelectionSync';
 
 export type TopologyInterfaceSnapshot = {
   name: string;
+  /** Interface speed reported by the device, in Mbps. */
+  speedMbps: number | null;
   status: string;
   maxUtilizationPct: number | null;
   errorCount: number;
@@ -47,6 +49,16 @@ export type TopologyDecoratedLink = {
   reverse_confirmed: boolean;
   source_interface_snapshot: TopologyInterfaceSnapshot | null;
   target_interface_snapshot: TopologyInterfaceSnapshot | null;
+  /** Effective link capacity in Mbps. When both sides are known, the lower speed wins. */
+  bandwidth_mbps?: number | null;
+  link_kind?: 'physical' | 'aggregation' | string;
+  source_aggregation_name?: string;
+  target_aggregation_name?: string;
+  aggregation_protocol?: string;
+  member_count?: number;
+  active_member_count?: number;
+  aggregation_bandwidth_mbps?: number | null;
+  members?: Array<Record<string, unknown>>;
   is_unmanaged?: boolean;
 };
 
@@ -109,6 +121,28 @@ const topologyApiErrorMessage = (payload: unknown, fallback: string): string => 
 };
 
 const STALE_THRESHOLD_MS = 30 * 60 * 1000;
+
+const EXPORT_BANDWIDTH_TIERS = [
+  { label: '10M', color: '#f97316', minMbps: 0 },
+  { label: '100M', color: '#eab308', minMbps: 100 },
+  { label: '1G', color: '#22c55e', minMbps: 1_000 },
+  { label: '10G', color: '#0ea5e9', minMbps: 10_000 },
+  { label: '40G', color: '#8b5cf6', minMbps: 40_000 },
+  { label: 'Unknown', color: '#64748b', minMbps: -1 },
+] as const;
+
+const inferInterfaceSpeedMbps = (value?: string): number | null => {
+  const name = String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+  if (!name) return null;
+  if (/^(fortygigabitethernet|fo)/.test(name)) return 40_000;
+  if (/^(hundredgigabitethernet|hu)/.test(name)) return 100_000;
+  if (/^(twentyfivegige|tw)/.test(name)) return 25_000;
+  if (/^(tengigabitethernet|te)/.test(name)) return 10_000;
+  if (/^(gigabitethernet|gi|ge)/.test(name)) return 1_000;
+  if (/^(fastethernet|fa)/.test(name)) return 100;
+  if (/^(ethernet|et|e)/.test(name)) return 10;
+  return null;
+};
 
 interface UseTopologyArgs {
   devices: Device[];
@@ -188,6 +222,10 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
 
       const errorCount = Number(match.in_errors || 0) + Number(match.out_errors || 0);
       const discardCount = Number(match.in_discards || 0) + Number(match.out_discards || 0);
+      const speedValue = Number(match.speed_mbps);
+      const speedMbps = Number.isFinite(speedValue) && speedValue > 0
+        ? speedValue
+        : inferInterfaceSpeedMbps(match.name || port);
       const status = String(match.status || 'unknown').toLowerCase();
 
       let operationalState: TopologyOperationalState = 'unknown';
@@ -201,6 +239,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
 
       return {
         name: String(match.name || port),
+        speedMbps,
         status,
         maxUtilizationPct,
         errorCount,
@@ -223,6 +262,24 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       const evidenceSources = Array.from(new Set([...metadataProtocols, ...discoverySources]));
       const sourceInterfaceSnapshot = evaluateTopologyInterfaceSnapshot(sourceDevice, link.source_port_normalized || link.source_port);
       const targetInterfaceSnapshot = evaluateTopologyInterfaceSnapshot(targetDevice, link.target_port_normalized || link.target_port);
+      const endpointSpeeds = [
+        sourceInterfaceSnapshot?.speedMbps ?? inferInterfaceSpeedMbps(link.source_port || link.source_port_normalized),
+        targetInterfaceSnapshot?.speedMbps ?? inferInterfaceSpeedMbps(link.target_port || link.target_port_normalized),
+      ]
+        .filter((speed): speed is number => typeof speed === 'number' && Number.isFinite(speed) && speed > 0);
+      const backendBandwidth = Number(link.aggregation_bandwidth_mbps || link.bandwidth_mbps);
+      const bandwidthMbps = Number.isFinite(backendBandwidth) && backendBandwidth > 0
+        ? backendBandwidth
+        : (endpointSpeeds.length > 0 ? Math.min(...endpointSpeeds) : null);
+      let members: Array<Record<string, unknown>> = Array.isArray(link.members) ? link.members : [];
+      if (!members.length && typeof link.members_json === 'string') {
+        try {
+          const parsed = JSON.parse(link.members_json);
+          members = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          members = [];
+        }
+      }
       const sourceDeviceStatus = String(sourceDevice?.status || 'unknown').toLowerCase();
       const targetDeviceStatus = String(targetDevice?.status || 'unknown').toLowerCase();
       const lastSeenTime = link.last_seen ? new Date(link.last_seen).getTime() : NaN;
@@ -302,6 +359,15 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         reverse_confirmed: Boolean(metadata.reverse_seen),
         source_interface_snapshot: sourceInterfaceSnapshot,
         target_interface_snapshot: targetInterfaceSnapshot,
+        bandwidth_mbps: bandwidthMbps,
+        link_kind: String(link.link_kind || 'physical'),
+        source_aggregation_name: String(link.source_aggregation_name || ''),
+        target_aggregation_name: String(link.target_aggregation_name || ''),
+        aggregation_protocol: String(link.aggregation_protocol || ''),
+        member_count: Number(link.member_count || 0),
+        active_member_count: Number(link.active_member_count || 0),
+        aggregation_bandwidth_mbps: Number(link.aggregation_bandwidth_mbps || 0) || null,
+        members,
       };
     },
     [evaluateTopologyInterfaceSnapshot, language],
@@ -468,12 +534,15 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     }
     showToast('Preparing topology map for export...', 'info');
     let graphRoot: SVGGElement | undefined;
+    let exportOverlay: SVGGElement | null = null;
     let originalTransform: string | null = null;
+    let originalViewBox: string | null = null;
     try {
       await new Promise((resolve) => setTimeout(resolve, 500));
       const viewBox = topologySvg.viewBox.baseVal;
-      const width = Math.max(1, Math.round(viewBox.width || topologySvg.clientWidth || 1));
-      const height = Math.max(1, Math.round(viewBox.height || topologySvg.clientHeight || 1));
+      const viewportWidth = Math.max(1, Math.round(viewBox.width || topologySvg.clientWidth || 1));
+      const viewportHeight = Math.max(1, Math.round(viewBox.height || topologySvg.clientHeight || 1));
+      originalViewBox = topologySvg.getAttribute('viewBox');
 
       // Export from the original graph coordinate space. Temporarily remove
       // the live root transform so the browser paints the same SVG reliably;
@@ -482,6 +551,68 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         .find((child) => child.tagName.toLowerCase() === 'g') as SVGGElement | undefined;
       originalTransform = graphRoot?.getAttribute('transform') || null;
       graphRoot?.removeAttribute('transform');
+
+      // The live canvas is intentionally roomy for panning. Crop the export
+      // to the actual graph bounds so a one-row topology does not produce a
+      // very tall image with large empty regions.
+      let exportX = 0;
+      let exportY = 0;
+      let width = viewportWidth;
+      let height = viewportHeight;
+      try {
+        const bounds = graphRoot?.getBBox?.();
+        if (bounds && bounds.width > 0 && bounds.height > 0) {
+          const padding = 36;
+          exportX = Math.floor(bounds.x - padding);
+          exportY = Math.floor(bounds.y - padding);
+          width = Math.ceil(bounds.width + padding * 2);
+          height = Math.ceil(bounds.height + padding * 2);
+          topologySvg.setAttribute('viewBox', `${exportX} ${exportY} ${width} ${height}`);
+        }
+      } catch {
+        // Fall back to the full canvas when getBBox is unavailable.
+      }
+
+      // The bandwidth legend is an HTML overlay, while export intentionally
+      // renders the SVG only. The graph already renders the authoritative
+      // site badge using deduplicated drawable links, so do not add a second
+      // summary badge here.
+      const svgNs = 'http://www.w3.org/2000/svg';
+      const makeSvg = (tag: string, attrs: Record<string, string>, text?: string) => {
+        const element = document.createElementNS(svgNs, tag);
+        Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, value));
+        if (text != null) element.textContent = text;
+        return element;
+      };
+      exportOverlay = makeSvg('g', { class: 'topology-export-overlay', 'pointer-events': 'none' }) as SVGGElement;
+      const legendWidth = 390;
+      const legendHeight = 34;
+      const legendGroup = makeSvg('g', { transform: `translate(${exportX + 16}, ${exportY + Math.max(16, height - legendHeight - 16)})` });
+      legendGroup.appendChild(makeSvg('rect', {
+        x: '0', y: '0', width: String(Math.min(legendWidth, width - 32)), height: String(legendHeight), rx: '10',
+        fill: '#ffffff', 'fill-opacity': '0.94', stroke: '#cbd5e1', 'stroke-opacity': '0.9',
+      }));
+      legendGroup.appendChild(makeSvg('text', {
+        x: '12', y: '21', fill: '#475569', 'font-family': 'Segoe UI, Microsoft YaHei, sans-serif',
+        'font-size': '10', 'font-weight': '700',
+      }, 'Bandwidth'));
+      const legendStartX = 76;
+      const legendStep = 61;
+      EXPORT_BANDWIDTH_TIERS.forEach((tier, index) => {
+        const x = legendStartX + index * legendStep;
+        if (x > width - 50) return;
+        legendGroup.appendChild(makeSvg('line', {
+          x1: String(x), y1: '17', x2: String(x + 18), y2: '17',
+          stroke: tier.color, 'stroke-width': tier.label === 'Unknown' ? '2' : '3',
+          'stroke-linecap': 'round',
+        }));
+        legendGroup.appendChild(makeSvg('text', {
+          x: String(x + 23), y: '21', fill: '#475569', 'font-family': 'Segoe UI, Microsoft YaHei, sans-serif',
+          'font-size': '9', 'font-weight': '600',
+        }, tier.label));
+      });
+      exportOverlay.appendChild(legendGroup);
+      topologySvg.appendChild(exportOverlay);
 
       const dataUrl = await htmlToImage.toPng(topologySvg as unknown as HTMLElement, {
         backgroundColor: '#ffffff',
@@ -509,10 +640,12 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       console.error('Export error:', error);
       showToast('Failed to export map. Please try again.', 'error');
     } finally {
+      exportOverlay?.remove();
       if (graphRoot) {
         if (originalTransform) graphRoot.setAttribute('transform', originalTransform);
         else graphRoot.removeAttribute('transform');
       }
+      if (originalViewBox) topologySvg.setAttribute('viewBox', originalViewBox);
     }
   }, [showToast]);
 

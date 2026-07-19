@@ -3,13 +3,20 @@ export type TopologyOperationalState = 'up' | 'degraded' | 'down' | 'stale' | 'u
 export const normalizeTopologyPort = (value?: string) => String(value || '')
   .trim()
   .toLowerCase()
+  // Neighbor parsers from different vendors sometimes append a literal
+  // "Interface" suffix. It is descriptive noise, not part of the port key.
+  .replace(/\binterface\b/g, '')
   .replace(/\s+/g, '')
+  .replace(/interface$/, '')
   .replace(/^gigabitethernet/, 'gi')
   .replace(/^tengigabitethernet/, 'te')
   .replace(/^twentyfivegige/, 'tw')
   .replace(/^fortygigabitethernet/, 'fo')
   .replace(/^hundredgigabitethernet/, 'hu')
   .replace(/^ethernet/, 'eth')
+  .replace(/^et(?=\d)/, 'eth')
+  .replace(/^e(?=\d)/, 'eth')
+  .replace(/^ge(?=\d)/, 'gi')
   .replace(/^port-channel/, 'po')
   .replace(/^loopback/, 'lo');
 

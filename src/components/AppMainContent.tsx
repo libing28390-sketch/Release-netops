@@ -668,9 +668,16 @@ const AppMainContent: React.FC = () => {
             onTopologyStatusFilterChange={setTopologyStatusFilter}
             onTopologyLinkStatusFilterChange={setTopologyLinkStatusFilter}
             onTopologyProtocolFilterChange={setTopologyProtocolFilter}
-            onSelectTopologyDevice={setSelectedTopologyDeviceId}
-            onSelectTopologyLink={setSelectedTopologyLinkKey}
-            onOpenDeviceDetail={handleShowDetails}
+             onSelectTopologyDevice={setSelectedTopologyDeviceId}
+             onSelectTopologyLink={setSelectedTopologyLinkKey}
+             onOpenWorkspace={(device) => {
+               const workspaceUrl = `/access/workspace?device_id=${encodeURIComponent(device.id)}&auto=normal`;
+               const workspaceWindow = window.open(workspaceUrl, '_blank', 'noopener,noreferrer');
+               if (!workspaceWindow) {
+                 showToast(language === 'zh' ? '浏览器阻止了新窗口，请允许本站弹窗后重试' : 'The browser blocked the new tab. Allow pop-ups and try again.', 'error');
+               }
+             }}
+             onOpenDeviceDetail={handleShowDetails}
              onOpenMonitoring={() => {
               if (selectedTopologyDevice) {
                 setMonitorSelectedDevice(selectedTopologyDevice);

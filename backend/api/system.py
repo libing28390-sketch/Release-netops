@@ -11,6 +11,7 @@ import random
 import time
 from database import get_db_connection
 from services.connection_profile import resolve_ssh_port
+from services.vault_service import resolve_device_credentials
 
 router = APIRouter(prefix="/system", tags=["System"])
 
@@ -253,23 +254,34 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
     conn = get_db_connection()
     plain_password = ""
     try:
-        res = conn.execute("SELECT * FROM devices WHERE ip_address = ? LIMIT 1", (host,)).fetchone()
-        if not res:
-            res = conn.execute("SELECT * FROM physical_assets WHERE management_ip = ? LIMIT 1", (host,)).fetchone()
+        device_row = conn.execute("SELECT * FROM devices WHERE ip_address = ? LIMIT 1", (host,)).fetchone()
+        asset_row = None
+        if device_row and device_row['asset_id']:
+            asset_row = conn.execute(
+                "SELECT * FROM physical_assets WHERE id = ? LIMIT 1",
+                (device_row['asset_id'],),
+            ).fetchone()
+        if not device_row:
+            asset_row = conn.execute("SELECT * FROM physical_assets WHERE management_ip = ? LIMIT 1", (host,)).fetchone()
 
-        if not res:
+        if not device_row and not asset_row:
             return {"success": False, "error": f"Device/Asset with IP {host} not found in database"}
 
-        device_data = dict(res)
+        device_data = dict(device_row or asset_row)
+        if asset_row:
+            device_data['asset_id'] = asset_row['id']
         target_port = resolve_ssh_port(device_data)
-        password = ""
-        if user == device_data.get("username") or user == device_data.get("admin_username"):
-            password = device_data.get("password") or device_data.get("admin_password")
-        elif user == device_data.get("normal_username"):
-            password = device_data.get("normal_password")
+        resolved = resolve_device_credentials(device_data)
+        role_prefix = 'admin' if access_level == 'admin' else 'normal'
+        login_user = resolved.get(f'{role_prefix}_username') or ''
+        password = resolved.get(f'{role_prefix}_password') or ''
 
-        if not password:
-            return {"success": False, "error": f"Password for user {user} on {host} not found"}
+        if not login_user or not password:
+            return {"success": False, "error": f"{role_prefix} credentials for {host} not found"}
+
+        # The asset role is authoritative. Ignore a stale generic username
+        # sent by an older client and launch the selected role account.
+        user = login_user
 
         # Decrypt password so it can be returned
         plain_password = decrypt_credential(password)

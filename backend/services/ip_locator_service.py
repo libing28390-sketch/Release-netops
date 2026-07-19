@@ -308,11 +308,11 @@ def _load_eligible_devices(role_filter: list[str] | None = None) -> list[dict]:
 
         # dual 模式：优先用 admin 账号登录（与 operational_data_service 保持一致）
         if auth_model == 'dual':
-            username = creds.get('admin_username') or creds.get('username') or (d.get('admin_username') or d.get('username') or '').strip()
-            password = creds.get('admin_password') or creds.get('password') or ''
+            username = creds.get('admin_username') or ''
+            password = creds.get('admin_password') or ''
         else:
-            username = creds['username'] or (d.get('username') or '').strip()
-            password = creds['password']
+            username = creds.get('normal_username') or ''
+            password = creds.get('normal_password') or ''
 
         if not username or not password:
             continue

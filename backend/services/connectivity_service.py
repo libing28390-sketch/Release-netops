@@ -147,7 +147,7 @@ def _load_device(device_id: str | int) -> dict | None:
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT id, hostname, ip_address, platform, username, password, enable_password, priv_username, management_port AS port, credential_source, vault_path, cpu_usage, memory_usage "
+            "SELECT id, asset_id, hostname, ip_address, platform, username, password, enable_password, priv_username, management_port AS port, credential_source, vault_path, cpu_usage, memory_usage "
             "FROM devices WHERE id = ?", (device_id,)
         ).fetchone()
         if not row:
@@ -155,8 +155,8 @@ def _load_device(device_id: str | int) -> dict | None:
         d = dict(row)
         d['device_type'] = d.get('platform') or 'cisco_ios'
         creds = resolve_device_credentials(d)
-        d['username'] = creds['username'] or d.get('username', '')
-        d['password'] = creds['password']
+        d['username'] = creds.get('normal_username') or ''
+        d['password'] = creds.get('normal_password') or ''
         d['enable_password'] = creds['enable_password']
         return d
     finally:

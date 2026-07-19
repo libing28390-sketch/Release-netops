@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
 
 const topologyIconAssets = import.meta.glob('../assets/topology/devices/**/*.svg', {
@@ -33,35 +33,150 @@ interface Link {
   inferred?: boolean;
   source_hostname?: string;
   target_hostname?: string;
+  source_port_normalized?: string;
+  target_port_normalized?: string;
+  discovery_source?: string;
   operational_state?: 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
+  bandwidth_mbps?: number | null;
+  link_kind?: 'physical' | 'aggregation' | string;
+  source_aggregation_name?: string;
+  target_aggregation_name?: string;
+  aggregation_protocol?: string;
+  member_count?: number;
+  active_member_count?: number;
+  aggregation_bandwidth_mbps?: number | null;
+  members?: Array<Record<string, unknown>>;
   evidence_count?: number;
   is_unmanaged?: boolean;
 }
+
+type BandwidthTierKey = '10m' | '100m' | '1g' | '10g' | '40g' | 'unknown';
+
+type BandwidthTier = {
+  key: BandwidthTierKey;
+  label: string;
+  color: string;
+  mutedColor: string;
+  width: number;
+};
+
+const BANDWIDTH_TIERS: BandwidthTier[] = [
+  { key: '10m', label: '10M', color: '#f97316', mutedColor: 'rgba(249,115,22,0.30)', width: 2.1 },
+  { key: '100m', label: '100M', color: '#eab308', mutedColor: 'rgba(234,179,8,0.30)', width: 2.3 },
+  { key: '1g', label: '1G', color: '#22c55e', mutedColor: 'rgba(34,197,94,0.30)', width: 2.5 },
+  { key: '10g', label: '10G', color: '#0ea5e9', mutedColor: 'rgba(14,165,233,0.30)', width: 2.9 },
+  { key: '40g', label: '40G', color: '#8b5cf6', mutedColor: 'rgba(139,92,246,0.30)', width: 3.4 },
+  { key: 'unknown', label: '未知', color: '#64748b', mutedColor: 'rgba(100,116,139,0.28)', width: 1.8 },
+];
+
+const getBandwidthTier = (bandwidthMbps?: number | null): BandwidthTier => {
+  const speed = Number(bandwidthMbps);
+  if (!Number.isFinite(speed) || speed <= 0) return BANDWIDTH_TIERS[5];
+  if (speed >= 40_000) return BANDWIDTH_TIERS[4];
+  if (speed >= 10_000) return BANDWIDTH_TIERS[3];
+  if (speed >= 1_000) return BANDWIDTH_TIERS[2];
+  if (speed >= 100) return BANDWIDTH_TIERS[1];
+  return BANDWIDTH_TIERS[0];
+};
 
 interface TopologyGraphProps {
   devices: Device[];
   links: Link[];
   onNodeClick?: (device: Device) => void;
+  onOpenWorkspace?: (device: Device) => void;
   selectedNodeId?: string | null;
   selectedLinkKey?: string | null;
   onLinkClick?: (link: Link) => void;
 }
 
+const getFullInterfaceLabel = (value?: string) => String(value || '').replace(/\s+interface\s*$/i, '').trim();
+
+const getLinkEndpointLabel = (item: any, side: 'source' | 'target') => {
+  if (String(item?.link_kind || '').toLowerCase() === 'aggregation') {
+    const aggregationName = side === 'source' ? item.source_aggregation_name : item.target_aggregation_name;
+    if (aggregationName) return getFullInterfaceLabel(aggregationName);
+  }
+  return getFullInterfaceLabel(side === 'source'
+    ? item?.source_port || item?.source_port_normalized
+    : item?.target_port || item?.target_port_normalized);
+};
+
+const getLinkEndpointShortLabel = (item: any, side: 'source' | 'target') =>
+  abbreviateInterface(getLinkEndpointLabel(item, side));
+
 const abbreviateInterface = (value?: string) => {
-  const raw = String(value || '').trim();
+  const raw = getFullInterfaceLabel(value);
   if (!raw) return '';
-  return raw
-    .replace(/^GigabitEthernet/i, 'Gi')
-    .replace(/^TenGigabitEthernet/i, 'Te')
-    .replace(/^TwentyFiveGigE/i, 'Tw')
-    .replace(/^FortyGigabitEthernet/i, 'Fo')
-    .replace(/^HundredGigabitEthernet/i, 'Hu')
-    .replace(/^Ethernet/i, 'Eth')
-    .replace(/^Port-channel/i, 'Po')
-    .replace(/^Loopback/i, 'Lo');
+  const compact = raw.replace(/\s+/g, '');
+  if (/^GigabitEthernet/i.test(compact)) return `GE${compact.slice('GigabitEthernet'.length)}`;
+  if (/^TenGigabitEthernet/i.test(compact)) return `Te${compact.slice('TenGigabitEthernet'.length)}`;
+  if (/^FortyGigabitEthernet/i.test(compact)) return `Fo${compact.slice('FortyGigabitEthernet'.length)}`;
+  if (/^HundredGigabitEthernet/i.test(compact)) return `Hu${compact.slice('HundredGigabitEthernet'.length)}`;
+  if (/^FastEthernet/i.test(compact)) return `Fa${compact.slice('FastEthernet'.length)}`;
+  if (/^Ethernet/i.test(compact)) return `Et${compact.slice('Ethernet'.length)}`;
+  // Keep the device-native vendor prefix while shortening verbose forms for
+  // the canvas. The full raw value is attached as a hover title below.
+  return compact;
+};
+
+const normalizeGraphInterface = (value?: string) => {
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\binterface\b/g, '')
+    .replace(/\s+/g, '')
+    .replace(/interface$/, '');
+  if (!raw) return '';
+  if (/^et\d/.test(raw)) return `eth${raw.slice(2)}`;
+  if (/^e\d/.test(raw)) return `eth${raw.slice(1)}`;
+  if (/^ge\d/.test(raw)) return `gi${raw.slice(2)}`;
+  if (raw.startsWith('gigabitethernet')) return `gi${raw.slice('gigabitethernet'.length)}`;
+  if (raw.startsWith('ethernet')) return `eth${raw.slice('ethernet'.length)}`;
+  return raw;
 };
 
 type DeviceGlyphKind = 'switch' | 'firewall' | 'router' | 'server' | 'wireless' | 'generic';
+type TopologyLayoutMode = 'hierarchy' | 'horizontal' | 'force' | 'radial';
+
+const getLayerTone = (device: Device) => {
+  const layer = getDeviceTopologyLayer(device);
+  if (layer === 0) return { color: '#1e40af', soft: 'rgba(30,64,175,0.16)', label: 'CORE' };
+  if (layer === 1) return { color: '#1d4ed8', soft: 'rgba(29,78,216,0.14)', label: 'AGGREGATION' };
+  if (layer === 2) return { color: '#075985', soft: 'rgba(7,89,133,0.14)', label: 'ACCESS' };
+  const kind = getDeviceGlyphKind(device);
+  if (kind === 'firewall') return { color: '#b91c1c', soft: 'rgba(185,28,28,0.14)', label: 'FIREWALL' };
+  if (kind === 'router') return { color: '#c2410c', soft: 'rgba(194,65,12,0.14)', label: 'ROUTER' };
+  if (kind === 'server') return { color: '#15803d', soft: 'rgba(21,128,61,0.14)', label: 'SERVER' };
+  return { color: '#475569', soft: 'rgba(71,85,105,0.12)', label: 'DEVICE' };
+};
+
+type LayerSummary = {
+  label: string;
+  color: string;
+  count: number;
+};
+
+const buildLayerSummary = (devices: Device[]): LayerSummary[] => {
+  const summary = new Map<string, LayerSummary>();
+  devices.forEach((device) => {
+    const tone = getLayerTone(device);
+    const current = summary.get(tone.label);
+    if (current) {
+      current.count += 1;
+    } else {
+      summary.set(tone.label, { label: tone.label, color: tone.color, count: 1 });
+    }
+  });
+  const order = ['CORE', 'AGGREGATION', 'ROUTER', 'FIREWALL', 'ACCESS', 'SERVER', 'DEVICE'];
+  return Array.from(summary.values()).sort((left, right) => {
+    const leftIndex = order.indexOf(left.label);
+    const rightIndex = order.indexOf(right.label);
+    return (leftIndex < 0 ? order.length : leftIndex) - (rightIndex < 0 ? order.length : rightIndex);
+  });
+};
+
+const formatLayerSummary = (devices: Device[]) =>
+  buildLayerSummary(devices).map((item) => `${item.label} ${item.count}`).join(' / ');
 
 const getDeviceGlyphKind = (device: Device): DeviceGlyphKind => {
   const fingerprint = [device.role, device.hostname, device.platform, device.model]
@@ -107,11 +222,11 @@ const getDeviceIconUrl = (kind: DeviceGlyphKind) => {
 const hasDeviceIconAsset = (device: Device) => Boolean(getDeviceIconUrl(getDeviceGlyphKind(device)));
 
 const deviceIconSize: Record<Exclude<DeviceGlyphKind, 'generic'>, { width: number; height: number }> = {
-  switch: { width: 48, height: 48 },
-  router: { width: 48, height: 48 },
-  firewall: { width: 42, height: 52 },
-  server: { width: 48, height: 48 },
-  wireless: { width: 48, height: 48 },
+  switch: { width: 62, height: 62 },
+  router: { width: 62, height: 62 },
+  firewall: { width: 54, height: 66 },
+  server: { width: 62, height: 62 },
+  wireless: { width: 62, height: 62 },
 };
 
 const appendDeviceGlyph = (selection: d3.Selection<SVGGElement, any, any, any>, device: Device) => {
@@ -155,21 +270,6 @@ const getNodeTone = (device: Device) => {
     return { fill: '#f59e0b', stroke: '#b45309', halo: 'rgba(245,158,11,0.18)' };
   }
   return { fill: '#10b981', stroke: '#047857', halo: 'rgba(16,185,129,0.16)' };
-};
-
-const getLinkTone = (link: Link) => {
-  switch (link.operational_state) {
-    case 'up':
-      return { stroke: '#34d399', muted: 'rgba(52,211,153,0.28)', labelFill: 'rgba(15,35,48,0.94)', labelStroke: 'rgba(52,211,153,0.50)' };
-    case 'degraded':
-      return { stroke: '#fbbf24', muted: 'rgba(251,191,36,0.28)', labelFill: 'rgba(43,32,13,0.94)', labelStroke: 'rgba(251,191,36,0.50)' };
-    case 'down':
-      return { stroke: '#fb7185', muted: 'rgba(251,113,133,0.28)', labelFill: 'rgba(49,20,31,0.94)', labelStroke: 'rgba(251,113,133,0.50)' };
-    case 'stale':
-      return { stroke: '#38bdf8', muted: 'rgba(56,189,248,0.28)', labelFill: 'rgba(12,34,51,0.94)', labelStroke: 'rgba(56,189,248,0.50)' };
-    default:
-      return { stroke: '#94a3b8', muted: 'rgba(148,163,184,0.22)', labelFill: 'rgba(20,32,49,0.94)', labelStroke: 'rgba(148,163,184,0.40)' };
-  }
 };
 
 const buildSiteAnchors = (devices: Device[], width: number) => {
@@ -245,8 +345,19 @@ type LayoutNode = Device & { x: number; y: number };
 const buildGraphLinks = (nodes: LayoutNode[], links: Link[]) => {
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));
   const seen = new Set<string>();
+  const pairKey = (link: Link) => [String(link.source_device_id || ''), String(link.target_device_id || '')].sort().join('::');
+  const lldpPairs = new Set(
+    links
+      .filter((link) => String(link.discovery_source || '').toLowerCase().split('+').includes('lldp'))
+      .map(pairKey),
+  );
 
   return links
+    .filter((link) => {
+      const protocols = String(link.discovery_source || '').toLowerCase().split('+').filter(Boolean);
+      const isCdpOnly = protocols.includes('cdp') && !protocols.includes('lldp');
+      return !(isCdpOnly && lldpPairs.has(pairKey(link)));
+    })
     .map((link) => ({
       ...link,
       source: nodeMap.get(link.source_device_id),
@@ -255,7 +366,10 @@ const buildGraphLinks = (nodes: LayoutNode[], links: Link[]) => {
     .filter((link) => link.source && link.target)
     .filter((link) => {
       const pair = [String(link.source_device_id || ''), String(link.target_device_id || '')].sort().join('::');
-      const portKey = [String(link.source_port || ''), String(link.target_port || '')].sort().join('::');
+      const portKey = [
+        normalizeGraphInterface(link.source_port || link.source_port_normalized),
+        normalizeGraphInterface(link.target_port || link.target_port_normalized),
+      ].sort().join('::');
       const key = `${pair}::${portKey}`;
       if (seen.has(key)) return false;
       seen.add(key);
@@ -276,11 +390,16 @@ const getLinearChainOrder = (devices: Device[], links: Link[]) => {
   const graphNodes: LayoutNode[] = devices.map((device) => ({ ...device, x: 0, y: 0 }));
   const graphLinks = buildGraphLinks(graphNodes, links)
     .filter((link: any) => link.source_device_id !== link.target_device_id);
-  if (graphLinks.length !== devices.length - 1) return null;
+  const uniquePairLinks = new Map<string, any>();
+  graphLinks.forEach((link: any) => {
+    const pair = [String(link.source_device_id), String(link.target_device_id)].sort().join('::');
+    if (!uniquePairLinks.has(pair)) uniquePairLinks.set(pair, link);
+  });
+  if (uniquePairLinks.size !== devices.length - 1) return null;
 
   const adjacency = new Map<string, Set<string>>();
   devices.forEach((device) => adjacency.set(device.id, new Set<string>()));
-  graphLinks.forEach((link: any) => {
+  uniquePairLinks.forEach((link: any) => {
     adjacency.get(link.source_device_id)?.add(link.target_device_id);
     adjacency.get(link.target_device_id)?.add(link.source_device_id);
   });
@@ -313,25 +432,106 @@ const getLinearChainOrder = (devices: Device[], links: Link[]) => {
   return order.length === devices.length ? order : null;
 };
 
-const buildLinearPositions = (devices: Device[], links: Link[], width: number, height: number) => {
-  const order = getLinearChainOrder(devices, links);
-  if (!order) return null;
-
-  const spacing = order.length > 1
-    ? Math.max(72, Math.min(180, (width - 96) / (order.length - 1)))
+const buildHorizontalRowPositions = (ids: string[], width: number, height: number, yFraction = 0.42) => {
+  const spacing = ids.length > 1
+    ? Math.min(250, Math.max(120, (width * 0.70) / (ids.length - 1)))
     : 0;
-  const totalWidth = spacing * Math.max(order.length - 1, 0);
+  const totalWidth = spacing * Math.max(ids.length - 1, 0);
   const startX = Math.max(48, (width - totalWidth) / 2);
-  const y = clampPosition(height * 0.52, 56, Math.max(56, height - 56));
-  return Object.fromEntries(order.map((id, index) => [id, {
+  const y = clampPosition(height * yFraction, 56, Math.max(56, height - 56));
+  return Object.fromEntries(ids.map((id, index) => [id, {
     x: clampPosition(startX + index * spacing, 48, Math.max(48, width - 48)),
     y,
   }]));
 };
 
-const calculateAutoLayoutPositions = (devices: Device[], links: Link[], width: number, height: number) => {
-  const linearPositions = buildLinearPositions(devices, links, width, height);
-  if (linearPositions) return linearPositions;
+const getDeviceTopologyLayer = (device: Device): number | null => {
+  const fingerprint = [device.role, device.hostname, device.model]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+  if (/(core|核心|backbone|骨干)/.test(fingerprint)) return 0;
+  if (/(distribution|aggregation|汇聚|分布)/.test(fingerprint)) return 1;
+  if (/(access|接入|edge|acc[-_ ]?sw)/.test(fingerprint)) return 2;
+  return null;
+};
+
+const buildLayeredPositions = (devices: Device[], links: Link[], width: number, height: number) => {
+  if (devices.length === 0) return null;
+  const layers = devices.map(getDeviceTopologyLayer);
+  const hasExplicitLayers = layers.some((layer) => layer != null);
+  if (!hasExplicitLayers && !devices.every((device) => getDeviceGlyphKind(device) === 'switch')) return null;
+  if (!hasExplicitLayers || new Set(layers).size === 1) {
+    const chainOrder = getLinearChainOrder(devices, links);
+    const orderedIds = chainOrder || [...devices]
+      .sort((left, right) => left.hostname.localeCompare(right.hostname))
+      .map((device) => device.id);
+    return buildHorizontalRowPositions(orderedIds, width, height);
+  }
+
+  const fallbackLayer = Math.max(...layers.filter((layer): layer is number => layer != null), 1);
+  const grouped = new Map<number, Device[]>();
+  devices.forEach((device, index) => {
+    const layer = layers[index] ?? fallbackLayer;
+    if (!grouped.has(layer)) grouped.set(layer, []);
+    grouped.get(layer)?.push(device);
+  });
+  const layerKeys = Array.from(grouped.keys()).sort((left, right) => left - right);
+  const positions: Record<string, { x: number; y: number }> = {};
+  layerKeys.forEach((layer, index) => {
+    const rowDevices = grouped.get(layer) || [];
+    const rowIds = rowDevices
+      .sort((left, right) => left.hostname.localeCompare(right.hostname))
+      .map((device) => device.id);
+    const rowPositions = buildHorizontalRowPositions(
+      rowIds,
+      width,
+      height,
+      layerKeys.length === 1 ? 0.42 : 0.22 + (0.56 * index) / Math.max(layerKeys.length - 1, 1),
+    );
+    Object.assign(positions, rowPositions);
+  });
+  return positions;
+};
+
+const buildLinearPositions = (devices: Device[], links: Link[], width: number, height: number) => {
+  const order = getLinearChainOrder(devices, links);
+  if (!order) return null;
+  return buildHorizontalRowPositions(order, width, height);
+};
+
+const buildRadialPositions = (devices: Device[], width: number, height: number) => {
+  if (devices.length === 0) return null;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radius = Math.max(90, Math.min(width, height) * 0.28);
+  const ordered = [...devices].sort((left, right) => left.hostname.localeCompare(right.hostname));
+  return Object.fromEntries(ordered.map((device, index) => {
+    const angle = -Math.PI / 2 + (2 * Math.PI * index) / Math.max(ordered.length, 1);
+    return [device.id, {
+      x: clampPosition(centerX + Math.cos(angle) * radius, 72, Math.max(72, width - 72)),
+      y: clampPosition(centerY + Math.sin(angle) * radius, 82, Math.max(82, height - 82)),
+    }];
+  }));
+};
+
+const calculateAutoLayoutPositions = (
+  devices: Device[],
+  links: Link[],
+  width: number,
+  height: number,
+  layoutMode: TopologyLayoutMode = 'hierarchy',
+) => {
+  if (layoutMode === 'radial') return buildRadialPositions(devices, width, height);
+  if (layoutMode === 'horizontal') {
+    const order = getLinearChainOrder(devices, links) || [...devices]
+      .sort((left, right) => left.hostname.localeCompare(right.hostname))
+      .map((device) => device.id);
+    return buildHorizontalRowPositions(order, width, height);
+  }
+  if (layoutMode === 'hierarchy') {
+    const layeredPositions = buildLayeredPositions(devices, links, width, height);
+    if (layeredPositions) return layeredPositions;
+  }
 
   const { positions: seededPositions } = buildSeedPositions(devices, width, height);
   const nodes: LayoutNode[] = devices.map((device) => ({
@@ -364,19 +564,20 @@ const calculateAutoLayoutPositions = (devices: Device[], links: Link[], width: n
 };
 
 const clampPosition = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v2';
+const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v3';
 
 type PersistedTopologyLayout = {
   positions?: Record<string, { x: number; y: number }>;
   transform?: { x: number; y: number; k: number };
   layoutMode?: 'free';
+  displayMode?: TopologyLayoutMode;
 };
 
 const layoutIsFree = (layout: PersistedTopologyLayout) => layout.layoutMode === 'free';
 
 type MinimapSnapshot = {
   nodes: Array<{ id: string; x: number; y: number; fill: string; selected: boolean }>;
-  links: Array<{ id: string; sourceX: number; sourceY: number; targetX: number; targetY: number }>;
+  links: Array<{ id: string; sourceX: number; sourceY: number; targetX: number; targetY: number; color: string; width: number }>;
   viewport: { x: number; y: number; width: number; height: number };
   bounds: { minX: number; minY: number; scale: number; offsetX: number; offsetY: number; width: number; height: number };
   panel: { width: number; height: number };
@@ -501,6 +702,8 @@ const buildMinimapSnapshot = (
       sourceY: toMiniY(link.source.y || 0),
       targetX: toMiniX(link.target.x || 0),
       targetY: toMiniY(link.target.y || 0),
+      color: getBandwidthTier(link.bandwidth_mbps).color,
+      width: Math.max(1, getBandwidthTier(link.bandwidth_mbps).width * 0.65),
     })),
     viewport: {
       x: toMiniX(worldLeft),
@@ -513,7 +716,7 @@ const buildMinimapSnapshot = (
   };
 };
 
-const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeClick, selectedNodeId, selectedLinkKey, onLinkClick }) => {
+const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeClick, onOpenWorkspace, selectedNodeId, selectedLinkKey, onLinkClick }) => {
   const GRID_SIZE = 16;
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -546,8 +749,44 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const [gridSnapEnabled, setGridSnapEnabled] = useState(true);
   const [spacePanActive, setSpacePanActive] = useState(false);
   const [boxSelectMode, setBoxSelectMode] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<TopologyLayoutMode>('hierarchy');
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
+  const [hoveredDeviceId, setHoveredDeviceId] = useState<string | null>(null);
+  const [hoverCardPosition, setHoverCardPosition] = useState({ x: 12, y: 12 });
+  const hoverHideTimerRef = useRef<number | null>(null);
   const selectedNodeIdsKey = selectedNodeIds.join('|');
+  const hoveredDevice = useMemo(
+    () => devices.find((device) => device.id === hoveredDeviceId) || null,
+    [devices, hoveredDeviceId],
+  );
+
+  const clearHoverHideTimer = () => {
+    if (hoverHideTimerRef.current !== null) {
+      window.clearTimeout(hoverHideTimerRef.current);
+      hoverHideTimerRef.current = null;
+    }
+  };
+
+  const scheduleHoverCardHide = () => {
+    clearHoverHideTimer();
+    hoverHideTimerRef.current = window.setTimeout(() => {
+      setHoveredDeviceId(null);
+      hoverHideTimerRef.current = null;
+    }, 180);
+  };
+
+  const updateHoverCard = (event: any, device: Device) => {
+    const container = containerRef.current;
+    if (!container) return;
+    clearHoverHideTimer();
+    const rect = container.getBoundingClientRect();
+    const cardWidth = 220;
+    const cardHeight = 176;
+    const x = Math.min(Math.max(event.clientX - rect.left + 14, 8), Math.max(8, rect.width - cardWidth - 8));
+    const y = Math.min(Math.max(event.clientY - rect.top + 14, 8), Math.max(8, rect.height - cardHeight - 8));
+    setHoverCardPosition({ x, y });
+    setHoveredDeviceId(device.id);
+  };
 
   const clonePositions = (positions: Record<string, { x: number; y: number }>) => Object.fromEntries(
     Object.entries(positions).map(([id, position]) => [id, { x: position.x, y: position.y }]),
@@ -592,11 +831,13 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       positions: persistedPositionsRef.current,
       transform: snapshot.transform,
       layoutMode: 'free',
+      displayMode: layoutMode,
     });
     syncLayoutToBackend({
       positions: persistedPositionsRef.current,
       transform: snapshot.transform,
       layoutMode: 'free',
+      displayMode: layoutMode,
     });
     setLayoutVersion((value) => value + 1);
     refreshHistoryState();
@@ -682,13 +923,14 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     });
   };
 
-  const persistCurrentLayout = () => {
+  const persistCurrentLayout = (displayMode: TopologyLayoutMode = layoutMode) => {
     if (!hydrationCompleteRef.current) return;
     const transform = zoomTransformRef.current;
     const layout = {
       positions: persistedPositionsRef.current,
       transform: transform ? { x: transform.x, y: transform.y, k: transform.k } : undefined,
       layoutMode: 'free' as const,
+      displayMode,
     };
     writePersistedLayout(layout);
     if (persistTimerRef.current) {
@@ -733,10 +975,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     setLayoutVersion((value) => value + 1);
   };
 
-  const applyAutoLayout = () => {
+  const applyAutoLayout = (nextLayoutMode: TopologyLayoutMode = layoutMode) => {
     if (viewport.width === 0 || viewport.height === 0 || devices.length === 0) return;
     const before = clonePositions(persistedPositionsRef.current);
-    const next = calculateAutoLayoutPositions(devices, links, viewport.width, viewport.height);
+    const next = calculateAutoLayoutPositions(devices, links, viewport.width, viewport.height, nextLayoutMode);
     if (gridSnapRef.current) {
       Object.values(next).forEach((position) => {
         position.x = Math.round(position.x / GRID_SIZE) * GRID_SIZE;
@@ -745,8 +987,14 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     }
     persistedPositionsRef.current = next;
     recordLayoutHistory(before, next);
-    persistCurrentLayout();
+    persistCurrentLayout(nextLayoutMode);
+    applyTransform(createDefaultTransform(viewport.width, viewport.height));
     setLayoutVersion((value) => value + 1);
+  };
+
+  const changeLayoutMode = (nextLayoutMode: TopologyLayoutMode) => {
+    setLayoutMode(nextLayoutMode);
+    applyAutoLayout(nextLayoutMode);
   };
 
   const undoLayout = () => {
@@ -801,7 +1049,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
   useEffect(() => {
     const persistedLayout = readPersistedLayout();
-    const compatibleLocalLayout = layoutIsFree(persistedLayout);
+    if (persistedLayout.displayMode && ['hierarchy', 'horizontal', 'force', 'radial'].includes(persistedLayout.displayMode)) {
+      setLayoutMode(persistedLayout.displayMode);
+    }
+    const compatibleLocalLayout = layoutIsFree(persistedLayout)
+      && ['hierarchy', 'horizontal', 'force', 'radial'].includes(persistedLayout.displayMode || '');
     persistedPositionsRef.current = compatibleLocalLayout ? (persistedLayout.positions || {}) : {};
     if (compatibleLocalLayout && persistedLayout.transform) {
       zoomTransformRef.current = d3.zoomIdentity
@@ -826,7 +1078,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .then((payload) => {
         const layout = payload?.layout;
         if (!layout || typeof layout !== 'object') return;
-        const compatibleRemoteLayout = layoutIsFree(layout);
+        if (layout.displayMode && ['hierarchy', 'horizontal', 'force', 'radial'].includes(layout.displayMode)) {
+          setLayoutMode(layout.displayMode as TopologyLayoutMode);
+        }
+        const compatibleRemoteLayout = layoutIsFree(layout)
+          && ['hierarchy', 'horizontal', 'force', 'radial'].includes(String(layout.displayMode || ''));
         persistedPositionsRef.current = compatibleRemoteLayout ? (layout.positions || {}) : {};
         if (compatibleRemoteLayout && layout.transform) {
           zoomTransformRef.current = d3.zoomIdentity
@@ -849,6 +1105,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     if (persistTimerRef.current) {
       window.clearTimeout(persistTimerRef.current);
     }
+    clearHoverHideTimer();
   }, []);
 
   useEffect(() => {
@@ -878,6 +1135,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .scaleExtent([0.35, 3.2])
       .filter((event: any) => {
         if (dragStateRef.current.id) return false;
+        // Let the page scroll normally. Canvas zoom is intentionally exposed
+        // through the +/- controls and Fit so a wheel gesture never changes
+        // the whole topology view unexpectedly.
+        if (event.type === 'wheel') return false;
         if (spacePressedRef.current) return !event.ctrlKey && (!event.button || event.button === 0);
         if (event.shiftKey || shiftPressedRef.current || boxSelectModeRef.current) return false;
         const target = event.target as Element | null;
@@ -919,10 +1180,14 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     });
 
     const { positions: seededPositions, siteAnchors } = buildSeedPositions(devices, width, height);
-    const linearPositions = buildLinearPositions(devices, links, width, height);
-    const shouldAutoArrange = Boolean(linearPositions) || Object.keys(persistedPositionsRef.current).length === 0;
+    const layeredPositions = layoutMode === 'hierarchy' ? buildLayeredPositions(devices, links, width, height) : null;
+    const linearPositions = layoutMode === 'horizontal' ? buildLinearPositions(devices, links, width, height) : null;
+    const radialPositions = layoutMode === 'radial' ? buildRadialPositions(devices, width, height) : null;
+    const structuredPositions = layeredPositions || linearPositions || radialPositions;
+    const hasPersistedPositions = Object.keys(persistedPositionsRef.current).length > 0;
+    const shouldAutoArrange = !hasPersistedPositions;
     const autoPositions = shouldAutoArrange
-      ? (linearPositions || calculateAutoLayoutPositions(devices, links, width, height))
+      ? (structuredPositions || calculateAutoLayoutPositions(devices, links, width, height, layoutMode))
       : null;
     const nodes = devices.map((device) => ({
       ...device,
@@ -951,10 +1216,141 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const selectedNeighbors = selectedNodeId ? (neighborMap.get(selectedNodeId) || new Set<string>()) : new Set<string>();
     const hasFocus = Boolean(selectedNodeId);
     const isNodeSelected = (deviceId: string) => selectedNodeIdSet.has(deviceId);
+    const layerSummary = buildLayerSummary(devices);
+    // Repeating ACCESS below every node is useful for a small mixed-layer
+    // topology, but becomes visual noise when all devices are in one layer or
+    // when the graph contains many nodes. In those cases the site badge,
+    // legend, and node tooltip carry the same information more efficiently.
+    const showNodeRoleLabels = !structuredPositions && layerSummary.length > 1 && devices.length <= 20;
+    const showLayerLegend = devices.length > 12 || (!structuredPositions && layerSummary.length > 1);
+    const layerSummaryBySite = new Map<string, string>();
+    const devicesBySite = new Map<string, Device[]>();
+    devices.forEach((device) => {
+      const key = getSiteKey(device.site_id || device.site);
+      const current = devicesBySite.get(key) || [];
+      current.push(device);
+      devicesBySite.set(key, current);
+    });
+    devicesBySite.forEach((siteDevices, key) => layerSummaryBySite.set(key, formatLayerSummary(siteDevices)));
 
     const siteGuide = g.append('g').attr('pointer-events', 'none');
 
-    const siteGuides = linearPositions ? [] : siteAnchors;
+    if (structuredPositions) {
+      const groupedSites = new Map<string, { label: string; nodes: any[] }>();
+      nodes.forEach((node: any) => {
+        const key = getSiteKey(node.site_id || node.site);
+        const current = groupedSites.get(key) || { label: String(node.site || '').trim() || 'Unassigned', nodes: [] };
+        current.nodes.push(node);
+        groupedSites.set(key, current);
+      });
+      Array.from(groupedSites.values()).forEach((site, index) => {
+        const minX = Math.min(...site.nodes.map((node) => node.x));
+        const maxX = Math.max(...site.nodes.map((node) => node.x));
+        const minY = Math.min(...site.nodes.map((node) => node.y));
+        const maxY = Math.max(...site.nodes.map((node) => node.y));
+        const left = Math.max(8, minX - 88);
+        const top = Math.max(28, minY - 88);
+        const right = Math.min(width - 8, maxX + 88);
+        const bottom = Math.min(height - 18, maxY + 88);
+        siteGuide.append('rect')
+          .attr('x', left)
+          .attr('y', top)
+          .attr('width', Math.max(right - left, 1))
+          .attr('height', Math.max(bottom - top, 1))
+          .attr('rx', 22)
+          .attr('fill', index % 2 === 0 ? 'rgba(14,165,233,0.025)' : 'rgba(99,102,241,0.025)')
+          .attr('stroke', 'rgba(100,116,139,0.24)')
+          .attr('stroke-dasharray', '5,7');
+
+        const labelGroup = siteGuide.append('g').attr('transform', `translate(${(left + right) / 2},${top + 16})`);
+        const siteNodeIds = new Set(site.nodes.map((node) => node.id));
+        const siteLinkCount = d3Links.filter((link: any) => siteNodeIds.has(link.source_device_id) && siteNodeIds.has(link.target_device_id)).length;
+        const siteLayers = formatLayerSummary(site.nodes);
+        const label = `${site.label.length > 18 ? `${site.label.slice(0, 18)}...` : site.label} - ${site.nodes.length} Nodes - ${siteLinkCount} Links${siteLayers ? ` - ${siteLayers}` : ''}`;
+        const labelWidth = Math.max(108, label.length * 6.5 + 28);
+        labelGroup.append('rect')
+          .attr('x', -labelWidth / 2)
+          .attr('y', -11)
+          .attr('width', labelWidth)
+          .attr('height', 22)
+          .attr('rx', 11)
+          .attr('fill', 'rgba(15,29,48,0.94)')
+          .attr('stroke', 'rgba(148,163,184,0.38)');
+        labelGroup.append('text')
+          .attr('text-anchor', 'middle')
+          .attr('dominant-baseline', 'middle')
+          .attr('fill', '#dbeafe')
+          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+          .attr('font-size', '10px')
+          .attr('font-weight', 700)
+        .text(label);
+      });
+
+      // Put one layer marker at the start of each rendered row. This keeps a
+      // five-device ACCESS chain self-explanatory without repeating ACCESS
+      // under every node, and remains readable when a site contains several
+      // hierarchy rows.
+      const rowGroups = new Map<string, { y: number; tone: ReturnType<typeof getLayerTone> }>();
+      nodes.forEach((node: any) => {
+        const tone = getLayerTone(node as Device);
+        const rowKey = `${tone.label}:${Math.round(Number(node.y || 0) / 8) * 8}`;
+        if (!rowGroups.has(rowKey)) rowGroups.set(rowKey, { y: node.y, tone });
+      });
+      const rowLabelLayer = siteGuide.append('g');
+      rowGroups.forEach(({ y, tone }) => {
+        const rowLabelWidth = tone.label.length * 6.2 + 18;
+        const rowLabel = rowLabelLayer.append('g').attr('transform', `translate(14,${y - 13})`);
+        rowLabel.append('rect')
+          .attr('width', rowLabelWidth)
+          .attr('height', 18)
+          .attr('rx', 9)
+          .attr('fill', 'rgba(255,255,255,0.96)')
+          .attr('stroke', tone.color)
+          .attr('stroke-opacity', 0.35);
+        rowLabel.append('text')
+          .attr('x', 9)
+          .attr('y', 12)
+          .attr('fill', tone.color)
+          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+          .attr('font-size', '8px')
+          .attr('font-weight', 800)
+          .attr('letter-spacing', '0.1em')
+          .text(tone.label);
+      });
+    }
+
+    if (showLayerLegend) {
+      const layerLegend = siteGuide.append('g').attr('transform', 'translate(16,48)');
+      const legendWidth = Math.max(116, layerSummary.reduce((total, item) => total + (`${item.label} ${item.count}`.length * 5.8) + 18, 12));
+      layerLegend.append('rect')
+        .attr('x', 0)
+        .attr('y', 0)
+        .attr('width', legendWidth)
+        .attr('height', 22)
+        .attr('rx', 11)
+        .attr('fill', 'rgba(255,255,255,0.94)')
+        .attr('stroke', 'rgba(148,163,184,0.38)');
+      let cursor = 10;
+      layerSummary.forEach((item) => {
+        layerLegend.append('circle')
+          .attr('cx', cursor)
+          .attr('cy', 11)
+          .attr('r', 2.5)
+          .attr('fill', item.color);
+        const itemLabel = `${item.label} ${item.count}`;
+        layerLegend.append('text')
+          .attr('x', cursor + 6)
+          .attr('y', 14)
+          .attr('fill', '#334155')
+          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+          .attr('font-size', '9px')
+          .attr('font-weight', 700)
+          .text(itemLabel);
+        cursor += itemLabel.length * 5.8 + 18;
+      });
+    }
+
+    const siteGuides = structuredPositions ? [] : siteAnchors;
     siteGuides.forEach((site, index) => {
       const previous = siteGuides[index - 1];
       const next = siteGuides[index + 1];
@@ -979,10 +1375,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         .attr('stroke-dasharray', '2,8');
 
       const labelGroup = siteGuide.append('g').attr('transform', `translate(${site.x},18)`);
+      const siteLabel = `${site.label.length > 12 ? `${site.label.slice(0, 12)}...` : site.label} - ${site.count}${layerSummaryBySite.get(site.key) ? ` - ${layerSummaryBySite.get(site.key)}` : ''}`;
+      const siteLabelWidth = Math.max(96, siteLabel.length * 5.8 + 20);
       labelGroup.append('rect')
-        .attr('x', -48)
+        .attr('x', -siteLabelWidth / 2)
         .attr('y', -10)
-        .attr('width', 96)
+        .attr('width', siteLabelWidth)
         .attr('height', 20)
         .attr('rx', 10)
         .attr('fill', 'rgba(15,29,48,0.92)')
@@ -995,7 +1393,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
         .attr('font-size', '10px')
         .attr('font-weight', 700)
-        .text(`${site.label.length > 12 ? `${site.label.slice(0, 12)}...` : site.label} · ${site.count}`);
+        .text(siteLabel);
     });
 
     const linkLayer = g.append('g').attr('stroke-linecap', 'round');
@@ -1040,25 +1438,26 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('class', 'link-visible')
       .attr('fill', 'none')
       .attr('stroke', (item: any) => {
-        const tone = getLinkTone(item as Link);
-        const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
-        const isFocused = selectedNodeId && (item.source.id === selectedNodeId || item.target.id === selectedNodeId);
-        if (isSelected) return '#0284c7';
-        if (isFocused) return tone.stroke;
-        return item.inferred ? tone.muted : item.is_unmanaged ? 'rgba(148,163,184,0.45)' : tone.stroke;
+        const bandwidth = getBandwidthTier(item.bandwidth_mbps);
+        if (item.is_unmanaged) return 'rgba(100,116,139,0.52)';
+        return item.inferred ? bandwidth.mutedColor : bandwidth.color;
       })
       .attr('stroke-width', (item: any) => {
+        const bandwidth = getBandwidthTier(item.bandwidth_mbps);
+        const isAggregation = String(item.link_kind || '').toLowerCase() === 'aggregation';
         const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
         const isFocused = selectedNodeId && (item.source.id === selectedNodeId || item.target.id === selectedNodeId);
-        if (isSelected) return 3;
-        if (item.operational_state === 'down') return isFocused ? 2.8 : 2;
+        if (isSelected) return Math.max(3.6, bandwidth.width + (isAggregation ? 1.8 : 0.9));
         if (item.is_unmanaged) return isFocused ? 1.8 : 1.2;
-        return isFocused ? 2.4 : item.inferred ? 1.2 : 1.8;
+        if (item.inferred) return Math.max(1.4, bandwidth.width - 0.9);
+        if (item.operational_state === 'down') return Math.max(2.2, bandwidth.width);
+        return isFocused ? bandwidth.width + (isAggregation ? 1.3 : 0.7) : bandwidth.width + (isAggregation ? 0.8 : 0);
       })
       .attr('stroke-dasharray', (item: any) => {
         if (item.inferred) return '6,5';
         if (item.is_unmanaged) return '4,3';
         if (item.operational_state === 'down') return '8,4';
+        if (String(item.link_kind || '').toLowerCase() === 'aggregation' && Number(item.member_count || 0) > Number(item.active_member_count || 0)) return '9,4';
         return 'none';
       })
       .attr('stroke-linejoin', 'round')
@@ -1066,14 +1465,30 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
         if (isSelected) return 1;
         if (!hasFocus) return 0.88;
-        return item.source.id === selectedNodeId || item.target.id === selectedNodeId ? 1 : 0.14;
+        // Keep bandwidth colors readable while still making the selected
+        // neighborhood stand out.  The previous 14% opacity made every
+        // non-focused link look gray regardless of its actual speed.
+        return item.source.id === selectedNodeId || item.target.id === selectedNodeId ? 1 : 0.72;
+      });
+    link.append('title')
+      .text((item: any) => {
+        const source = getLinkEndpointLabel(item, 'source') || '-';
+        const target = getLinkEndpointLabel(item, 'target') || '-';
+        const bandwidth = getBandwidthTier(item.bandwidth_mbps).label;
+        if (String(item.link_kind || '').toLowerCase() === 'aggregation') {
+          return `${source} ↔ ${target} · ${bandwidth} · ${Number(item.active_member_count || 0)}/${Number(item.member_count || 0)} members`;
+        }
+        return `${source} ↔ ${target} · ${bandwidth}`;
       });
 
-    const labelledLinks = d3Links.filter((item: any) => item.source_port || item.target_port);
+    const labelledLinks = d3Links.filter((item: any) => item.source_port || item.target_port || item.source_port_normalized || item.target_port_normalized);
     const linkLabelGroup = g.append('g')
       .selectAll('g')
       .data(labelledLinks)
-      .join('g');
+      .join('g')
+      // Bandwidth is encoded by the link color and the fixed legend; keeping
+      // this group hidden avoids a second label colliding with port names.
+      .style('display', 'none');
 
     const linkLabelText = linkLabelGroup
       .append('text')
@@ -1084,10 +1499,59 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
       .text((item: any) => {
-        const left = abbreviateInterface(item.source_port);
-        const right = abbreviateInterface(item.target_port);
+        const left = getBandwidthTier(item.bandwidth_mbps).label;
+        if (String(item.link_kind || '').toLowerCase() === 'aggregation') {
+          return `${left} · ${Number(item.active_member_count || 0)}/${Number(item.member_count || 0)}`;
+        }
+        const right = '';
         if (left && right) return `${left}  ↔  ${right}`;
         return left || right;
+      });
+    linkLabelText.append('title')
+      .text((item: any) => {
+        const source = getLinkEndpointLabel(item, 'source') || '-';
+        const target = getLinkEndpointLabel(item, 'target') || '-';
+        return `${source} ↔ ${target}`;
+      });
+
+    const portLabelGroup = g.append('g')
+      .selectAll('g')
+      .data(labelledLinks)
+      .join('g')
+      .style('cursor', 'help');
+    const sourcePortLabel = portLabelGroup
+      .append('text')
+      .attr('font-size', 8)
+      .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+      .attr('fill', '#334155')
+      .attr('font-weight', 700)
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', '#ffffff')
+      .attr('stroke-width', 3)
+      .text((item: any) => getLinkEndpointShortLabel(item, 'source'));
+    sourcePortLabel.append('title')
+      .text((item: any) => getLinkEndpointLabel(item, 'source'));
+    const targetPortLabel = portLabelGroup
+      .append('text')
+      .attr('font-size', 8)
+      .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+      .attr('fill', '#334155')
+      .attr('font-weight', 700)
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'middle')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', '#ffffff')
+      .attr('stroke-width', 3)
+      .text((item: any) => getLinkEndpointShortLabel(item, 'target'));
+    targetPortLabel.append('title')
+      .text((item: any) => getLinkEndpointLabel(item, 'target'));
+    portLabelGroup.append('title')
+      .text((item: any) => {
+        const source = getFullInterfaceLabel(item.source_port || item.source_port_normalized) || '-';
+        const target = getFullInterfaceLabel(item.target_port || item.target_port_normalized) || '-';
+        return `${source} ↔ ${target}`;
       });
 
     const linkLabelBg = linkLabelGroup
@@ -1095,14 +1559,14 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('rx', 10)
       .attr('ry', 10)
       .attr('fill', (item: any) => {
-        const tone = getLinkTone(item as Link);
+        const bandwidth = getBandwidthTier(item.bandwidth_mbps);
         const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
-        return isSelected ? 'rgba(14,44,67,0.98)' : tone.labelFill;
+        return isSelected ? 'rgba(14,44,67,0.98)' : `color-mix(in srgb, ${bandwidth.color} 28%, #0f172a)`;
       })
       .attr('stroke', (item: any) => {
-        const tone = getLinkTone(item as Link);
+        const bandwidth = getBandwidthTier(item.bandwidth_mbps);
         const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
-        return isSelected ? 'rgba(2,132,199,0.50)' : tone.labelStroke;
+        return isSelected ? 'rgba(2,132,199,0.50)' : bandwidth.color;
       })
       .attr('stroke-width', 0.8);
 
@@ -1147,23 +1611,28 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         }
         setSelectedNodeIds([d.id]);
         if (onNodeClick) onNodeClick(d as Device);
-      });
+      })
+      .on('pointerenter', (event: any, d: any) => updateHoverCard(event, d as Device))
+      .on('pointermove', (event: any, d: any) => updateHoverCard(event, d as Device))
+      .on('pointerleave', () => scheduleHoverCardHide());
 
     node.append('circle')
-      .attr('r', 31)
+      // The device glyph already has its own boundary. An additional outer
+      // halo made the topology look like a status dashboard rather than a
+      // clean network diagram, so keep this structural layer invisible.
+      .attr('r', 0)
       .attr('fill', (d: any) => {
         if (d.is_unmanaged) return 'rgba(148,163,184,0.08)';
         if (shouldRenderDeviceGlyph(d as Device)) return 'transparent';
-        const tone = getNodeTone(d);
-        return isNodeSelected(d.id) ? tone.halo : 'rgba(148,163,184,0.08)';
+        return 'none';
       })
       .attr('stroke', (d: any) => {
         if (d.is_unmanaged) return 'rgba(100,116,139,0.35)';
-        return shouldRenderDeviceGlyph(d as Device) ? 'none' : (isNodeSelected(d.id) ? '#0f172a' : 'rgba(148,163,184,0.18)');
+        return 'none';
       })
       .attr('stroke-width', (d: any) => {
         if (d.is_unmanaged) return 1.5;
-        return shouldRenderDeviceGlyph(d as Device) ? 0 : (isNodeSelected(d.id) ? 2.5 : 1);
+        return 0;
       })
       .attr('stroke-dasharray', (d: any) => (d.is_unmanaged ? '4,3' : 'none'))
       .attr('opacity', (d: any) => {
@@ -1242,23 +1711,45 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     });
 
     const nodeLabelGroup = node.append('g')
-      .attr('transform', 'translate(0,38)')
-      .attr('opacity', (d: any) => {
-        if (!hasFocus) return 1;
-        return isNodeSelected(d.id) || selectedNeighbors.has(d.id) ? 1 : 0.35;
-      });
+      .attr('transform', 'translate(0,47)')
+      // Keep identity and layer text readable even while a node is focused.
+      // Links and glyphs still provide focus context; fading labels makes
+      // healthy devices look offline and is especially confusing in exports.
+      .attr('opacity', 1);
 
     const nodeHostnameText = nodeLabelGroup.append('text')
       .attr('y', 8)
       .attr('text-anchor', 'middle')
       .attr('fill', (d: any) => (d.is_unmanaged ? '#64748b' : '#0f172a'))
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
-      .attr('font-size', '12px')
+      .attr('font-size', '14px')
       .attr('font-weight', '700')
       .attr('paint-order', 'stroke')
       .attr('stroke', '#ffffff')
       .attr('stroke-width', 3)
       .text((d: any) => d.hostname);
+
+    nodeLabelGroup.append('text')
+      .attr('y', 22)
+      .attr('text-anchor', 'middle')
+      .attr('fill', (d: any) => getLayerTone(d as Device).color)
+      .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+      .attr('font-size', '9px')
+      .attr('font-weight', '800')
+      .attr('letter-spacing', '0.12em')
+      .style('display', showNodeRoleLabels ? null : 'none')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', '#ffffff')
+      .attr('stroke-width', 2.5)
+      .text((d: any) => getLayerTone(d as Device).label);
+
+    node.append('title')
+      .text((d: any) => {
+        const tone = getLayerTone(d as Device);
+        const platform = String(d.platform || '').trim();
+        const address = String(d.ip_address || '').trim();
+        return [d.hostname, tone.label, platform, address].filter(Boolean).join(' | ');
+      });
 
     const svgElement = svgRef.current;
     type SelectionInputEvent = MouseEvent | PointerEvent;
@@ -1347,13 +1838,43 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       linkLabelGroup
         .attr('transform', (d: any, i: number) => {
           const route = getOrthogonalRoute(d.source, d.target, parallelOffsetMap.get(String(i)) || 0);
-          return `translate(${route.labelX},${route.labelY - 6})`;
+          return `translate(${route.labelX},${route.labelY - 16})`;
         })
         .attr('opacity', (item: any) => {
           const isSelected = Boolean(selectedLinkKey && (item.link_key === selectedLinkKey || item.id === selectedLinkKey));
           if (isSelected) return 1;
           if (!hasFocus) return 0.96;
-          return item.source.id === selectedNodeId || item.target.id === selectedNodeId ? 0.98 : 0.15;
+          return item.source.id === selectedNodeId || item.target.id === selectedNodeId ? 0.98 : 0.74;
+        });
+
+      portLabelGroup
+        .attr('opacity', (item: any) => {
+          if (!hasFocus) return 0.9;
+          return item.source.id === selectedNodeId || item.target.id === selectedNodeId ? 0.95 : 0.68;
+        });
+      sourcePortLabel
+        .attr('transform', (d: any, i: number) => {
+          const offset = parallelOffsetMap.get(String(labelledLinks.indexOf(d))) || 0;
+          const dx = d.target.x - d.source.x;
+          const dy = d.target.y - d.source.y;
+          const distance = Math.max(1, Math.hypot(dx, dy));
+          const perpX = -dy / distance;
+          const perpY = dx / distance;
+          const x = d.source.x + dx * 0.3 + perpX * offset;
+          const y = d.source.y + dy * 0.3 + perpY * offset - 7;
+          return `translate(${x},${y})`;
+        });
+      targetPortLabel
+        .attr('transform', (d: any, i: number) => {
+          const offset = parallelOffsetMap.get(String(labelledLinks.indexOf(d))) || 0;
+          const dx = d.target.x - d.source.x;
+          const dy = d.target.y - d.source.y;
+          const distance = Math.max(1, Math.hypot(dx, dy));
+          const perpX = -dy / distance;
+          const perpY = dx / distance;
+          const x = d.source.x + dx * 0.7 + perpX * offset;
+          const y = d.source.y + dy * 0.7 + perpY * offset + 9;
+          return `translate(${x},${y})`;
         });
 
       linkLabelBg.each(function () {
@@ -1379,7 +1900,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     renderGraph();
 
-    const initialTransform = zoomTransformRef.current || createDefaultTransform(width, height);
+    const initialTransform = !hasPersistedPositions && structuredPositions
+      ? createDefaultTransform(width, height)
+      : (zoomTransformRef.current || createDefaultTransform(width, height));
   suppressPersistRef.current = true;
     svg.call(zoom.transform as any, initialTransform);
 
@@ -1411,6 +1934,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       node.classed('topology-node-dragging', (item: any) => item.id === event.subject.id);
       linkLayer.style('opacity', 0.38);
       linkLabelGroup.style('opacity', 0.12);
+      portLabelGroup.style('opacity', 0.12);
       svg.style('cursor', 'grabbing');
     }
 
@@ -1466,6 +1990,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       node.classed('topology-node-dragging', false);
       linkLayer.style('opacity', null);
       linkLabelGroup.style('opacity', null);
+      portLabelGroup.style('opacity', null);
       svg.style('cursor', 'grab');
     }
 
@@ -1480,7 +2005,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       window.removeEventListener('mousemove', handleSelectionPointerMove as EventListener, true);
       window.removeEventListener('mouseup', handleSelectionPointerUp as EventListener, true);
     };
-  }, [devices, links, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
+  }, [devices, links, layoutMode, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
 
   return (
     <div ref={containerRef} className={`relative h-full w-full overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-inner ${spacePanActive ? 'topology-space-pan' : ''}`}>
@@ -1493,9 +2018,21 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         空白区平移&nbsp;·&nbsp;节点拖动&nbsp;·&nbsp;框选模式或 Shift+空白框选&nbsp;·&nbsp;Space+拖动平移&nbsp;·&nbsp;滚轮缩放
       </div>
       <div className="absolute right-4 top-4 z-10 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-end gap-1.5 rounded-2xl border border-slate-200 bg-white/95 px-2.5 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.12)] backdrop-blur-sm">
+        <select
+          value={layoutMode}
+          onChange={(event) => changeLayoutMode(event.target.value as TopologyLayoutMode)}
+          className="h-8 rounded-xl border border-slate-200 bg-white px-2 text-[10px] font-bold text-slate-600 outline-none transition-colors hover:border-cyan-300"
+          aria-label="Layout mode"
+          title="Hierarchy uses device roles; Horizontal is for linear chains; Force is for meshes; Radial is for hub-and-spoke views."
+        >
+          <option value="hierarchy">Hierarchy · roles</option>
+          <option value="horizontal">Horizontal · chain</option>
+          <option value="force">Force · mesh</option>
+          <option value="radial">Radial · hub</option>
+        </select>
         <button
           type="button"
-          onClick={applyAutoLayout}
+          onClick={() => applyAutoLayout()}
           className="rounded-xl border border-cyan-200 bg-cyan-50 px-2.5 py-2 text-[10px] font-bold text-cyan-700 transition-all hover:border-cyan-300 hover:bg-cyan-100"
           aria-label="自动布局"
         >
@@ -1593,6 +2130,21 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           Reset
         </button>
       </div>
+      <div
+        className="pointer-events-none absolute bottom-4 left-4 z-10 flex max-w-[calc(100%-22rem)] flex-wrap items-center gap-x-3 gap-y-1.5 rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.12)] backdrop-blur-sm"
+        aria-label="链路带宽图例"
+      >
+        <span className="mr-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">带宽</span>
+        {BANDWIDTH_TIERS.map((tier) => (
+          <span key={tier.key} className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-slate-600">
+            <span
+              className="inline-block rounded-full"
+              style={{ width: 24, height: Math.max(2, tier.width), backgroundColor: tier.color }}
+            />
+            {tier.label}
+          </span>
+        ))}
+      </div>
       {minimapSnapshot && (
         <div className="absolute bottom-4 right-4 z-10 overflow-hidden rounded-[22px] border border-white/10 bg-slate-950/80 p-3 shadow-[0_18px_42px_rgba(0,0,0,0.28)] backdrop-blur-sm">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -1614,8 +2166,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
                 y1={link.sourceY}
                 x2={link.targetX}
                 y2={link.targetY}
-                stroke="rgba(100,116,139,0.42)"
-                strokeWidth="1.25"
+                stroke={link.color}
+                strokeOpacity="0.72"
+                strokeWidth={link.width}
               />
             ))}
             {minimapSnapshot.nodes.map((node) => (
@@ -1640,6 +2193,46 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
               strokeWidth="1.5"
             />
           </svg>
+        </div>
+      )}
+      {hoveredDevice && (
+        <div
+          className="pointer-events-auto absolute z-30 w-[220px] rounded-2xl border border-slate-200 bg-white/98 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.22)] backdrop-blur-sm"
+          style={{ left: hoverCardPosition.x, top: hoverCardPosition.y }}
+          onPointerEnter={clearHoverHideTimer}
+          onPointerLeave={scheduleHoverCardHide}
+        >
+          <div className="border-b border-slate-100 pb-2.5">
+            <div className="truncate text-sm font-extrabold text-slate-900" title={hoveredDevice.hostname}>{hoveredDevice.hostname}</div>
+            <div className="mt-1 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.08em] text-sky-700">
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: getLayerTone(hoveredDevice).color }} />
+              {getLayerTone(hoveredDevice).label}
+            </div>
+          </div>
+          <dl className="mt-2.5 space-y-2 text-[10px]">
+            <div>
+              <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">管理地址</dt>
+              <dd className="mt-0.5 break-all font-mono font-bold text-slate-700">{hoveredDevice.ip_address || '-'}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">平台</dt>
+              <dd className="mt-0.5 break-all font-semibold text-slate-700">{hoveredDevice.platform || hoveredDevice.model || '-'}</dd>
+            </div>
+          </dl>
+          <button
+            type="button"
+            disabled={!onOpenWorkspace}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!onOpenWorkspace) return;
+              clearHoverHideTimer();
+              setHoveredDeviceId(null);
+              onOpenWorkspace(hoveredDevice);
+            }}
+            className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-[10px] font-extrabold text-white shadow-sm transition-colors hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            登录
+          </button>
         </div>
       )}
       <svg ref={svgRef} className="topology-graph-svg h-full w-full" />

@@ -53,6 +53,12 @@ interface TopologyDecoratedLinkLike {
   evidence_sources: string[];
   evidence_count?: number;
   reverse_confirmed?: boolean;
+  link_kind?: string;
+  aggregation_protocol?: string;
+  member_count?: number;
+  active_member_count?: number;
+  aggregation_bandwidth_mbps?: number | null;
+  members?: Array<{ source?: { name?: string; speed_mbps?: number; up?: boolean }; target?: { name?: string; speed_mbps?: number; up?: boolean } }>;
 }
 
 interface TopologyPageProps {
@@ -106,6 +112,7 @@ interface TopologyPageProps {
   onTopologyProtocolFilterChange: (value: TopologyProtocolFilter) => void;
   onSelectTopologyDevice: (deviceId: string) => void;
   onSelectTopologyLink: (linkKey: string | null) => void;
+  onOpenWorkspace: (device: Device) => void;
   onOpenDeviceDetail: (device: Device) => void;
   onOpenMonitoring: () => void;
   hideStaleLinks: boolean;
@@ -159,6 +166,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   onTopologyProtocolFilterChange,
   onSelectTopologyDevice,
   onSelectTopologyLink,
+  onOpenWorkspace,
   onOpenDeviceDetail,
   onOpenMonitoring,
   hideStaleLinks,
@@ -181,8 +189,18 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
     loading: generationStatusLoading,
   } = useTopologyGenerationStatus(terminalDiscoveryStatus);
   const generationInventory = generationStatus?.inventory;
-  const automaticIntervalMinutes = Math.max(1, Math.round((generationStatus?.generation.automatic.interval_seconds || 300) / 60));
-  const evidenceTtlMinutes = Math.max(1, Math.round((generationStatus?.generation.evidence_ttl_seconds || 1800) / 60));
+  const automaticIntervalSeconds = Math.max(60, generationStatus?.generation.automatic.interval_seconds || 86400);
+  const evidenceTtlSeconds = Math.max(60, generationStatus?.generation.evidence_ttl_seconds || 172800);
+  const formatTopologyInterval = (seconds: number) => {
+    if (seconds >= 86400 && seconds % 86400 === 0) {
+      const days = Math.round(seconds / 86400);
+      return language === 'zh' ? `${days} 天` : `${days} day${days === 1 ? '' : 's'}`;
+    }
+    const minutes = Math.max(1, Math.round(seconds / 60));
+    return language === 'zh' ? `${minutes} 分钟` : `${minutes} minutes`;
+  };
+  const automaticIntervalLabel = formatTopologyInterval(automaticIntervalSeconds);
+  const evidenceTtlLabel = formatTopologyInterval(evidenceTtlSeconds);
   const pipelineLabels: Record<string, string> = language === 'zh'
     ? {
         select: '筛选在线设备',
@@ -258,12 +276,12 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             </div>
             <p className="mt-1 text-[11px] leading-5 text-slate-500">
               {language === 'zh'
-                ? `系统每 ${automaticIntervalMinutes} 分钟自动执行一次；“刷新发现”只用于立即校验。设备侧仅执行按厂商选择的只读邻居查询，不写入设备配置。`
-                : `Automatic discovery runs every ${automaticIntervalMinutes} minutes; Refresh Discovery is for immediate validation. Device access is limited to vendor-specific read-only neighbor queries.`}
+                ? `系统每 ${automaticIntervalLabel} 自动执行一次；“刷新发现”只用于立即校验。设备侧仅执行按厂商选择的只读邻居查询，不写入设备配置。`
+                : `Automatic discovery runs every ${automaticIntervalLabel}; Refresh Discovery is for immediate validation. Device access is limited to vendor-specific read-only neighbor queries.`}
             </p>
           </div>
           <div className="flex flex-wrap gap-2 text-[10px] font-semibold text-slate-600">
-            <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"><Clock3 size={12} />{language === 'zh' ? `证据 ${evidenceTtlMinutes} 分钟过期` : `${evidenceTtlMinutes}m evidence TTL`}</span>
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"><Clock3 size={12} />{language === 'zh' ? `证据 ${evidenceTtlLabel}过期` : `${evidenceTtlLabel} evidence TTL`}</span>
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"><Database size={12} />{language === 'zh' ? `${generationInventory?.eligible_devices ?? '—'} 台可发现` : `${generationInventory?.eligible_devices ?? '—'} eligible`}</span>
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5"><Activity size={12} />{language === 'zh' ? `${generationInventory?.managed_links ?? '—'} 条已生成链路` : `${generationInventory?.managed_links ?? '—'} generated links`}</span>
           </div>
@@ -494,7 +512,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
       </div>
 
       <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,2.35fr)_minmax(320px,0.85fr)]">
-        <div className="ops-surface relative flex min-h-[620px] flex-col overflow-hidden rounded-2xl" ref={topologyCanvasRef}>
+        <div className="ops-surface relative flex min-h-[480px] flex-col overflow-hidden rounded-2xl" ref={topologyCanvasRef}>
           <div className="absolute inset-0 bg-[radial-gradient(#000_1px,transparent_1px)] bg-[length:20px_20px] opacity-[0.03]" />
           <div className="relative flex items-center justify-between border-b border-black/5 px-5 py-4">
             <div>
@@ -556,6 +574,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                   onNodeClick={(device) => {
                     onSelectTopologyDevice(device.id);
                   }}
+                  onOpenWorkspace={onOpenWorkspace}
                   onLinkClick={(link) => {
                     onSelectTopologyDevice(link.source_device_id);
                     onSelectTopologyLink(link.link_key || link.id || null);

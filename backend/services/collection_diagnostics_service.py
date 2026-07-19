@@ -51,7 +51,7 @@ async def diagnose_device_collection(device_id: str, timeout_seconds: float = 2.
         row = conn.execute(
             '''
             SELECT id, hostname, ip_address, management_port, port, snmp_port,
-                   username, password, credential_id, credential_source, snmp_community
+                   username, password, credential_id, credential_source, asset_id, snmp_community
             FROM devices WHERE id = ?
             ''',
             (device_id,),
@@ -62,7 +62,7 @@ async def diagnose_device_collection(device_id: str, timeout_seconds: float = 2.
         return None
 
     device = dict(row)
-    collector_credentials = resolve_collector_credentials(device)
+    collector_credentials = resolve_collector_credentials(device, ssh_role='normal')
     ssh_credentials = collector_credentials['ssh']
     snmp_credentials = collector_credentials['snmp']
     host = str(device.get('ip_address') or '').strip()

@@ -26,6 +26,15 @@ interface TopologyDecoratedLinkLike {
   evidence_sources: string[];
   evidence_count?: number;
   reverse_confirmed?: boolean;
+  link_kind?: string;
+  aggregation_protocol?: string;
+  member_count?: number;
+  active_member_count?: number;
+  aggregation_bandwidth_mbps?: number | null;
+  members?: Array<{
+    source?: { name?: string; speed_mbps?: number; up?: boolean };
+    target?: { name?: string; speed_mbps?: number; up?: boolean };
+  }>;
 }
 
 interface TopologyInspectorPanelProps {
@@ -237,6 +246,28 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
             </div>
             {selectedTopologyLink.operational_summary && (
               <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">{selectedTopologyLink.operational_summary}</p>
+            )}
+            {selectedTopologyLink.link_kind === 'aggregation' && (
+              <div className="mt-2.5 rounded-lg bg-white/70 px-2.5 py-2 ring-1 ring-cyan-200/60">
+                <div className="flex items-center justify-between text-[10px] font-bold text-cyan-700">
+                  <span>{zh ? '聚合链路' : 'Aggregation'}</span>
+                  <span>
+                    {selectedTopologyLink.aggregation_protocol || 'LAG'} · {selectedTopologyLink.active_member_count || 0}/{selectedTopologyLink.member_count || 0}
+                  </span>
+                </div>
+                {selectedTopologyLink.members && selectedTopologyLink.members.length > 0 && (
+                  <div className="mt-1.5 space-y-1 text-[10px] text-slate-600">
+                    {selectedTopologyLink.members.map((member, index) => (
+                      <div key={`member-${index}`} className="flex items-center justify-between gap-2">
+                        <span>{member.source?.name || '-'} ↔ {member.target?.name || '-'}</span>
+                        <span className={member.source?.up && member.target?.up ? 'text-emerald-600' : 'text-amber-600'}>
+                          {member.source?.up && member.target?.up ? 'UP' : 'DEGRADED'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
             <div className="mt-2.5 grid grid-cols-2 gap-2">
               <div className="rounded-md bg-white/60 px-2.5 py-1.5 ring-1 ring-black/[0.04]">

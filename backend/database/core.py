@@ -458,6 +458,10 @@ def fetch_interface_data(conn, device_id: str) -> list[dict]:
         intf_rows = conn.execute('''
             SELECT 
                 i.interface_name as name,
+                i.interface_type,
+                i.parent_interface_id,
+                i.channel_group,
+                i.aggregation_protocol,
                 i.description,
                 COALESCE(t.status, i.oper_status) as status,
                 COALESCE(t.speed_mbps, i.speed / 1000000.0) as speed_mbps,

@@ -135,10 +135,7 @@ def _resolve_session_creds(device: dict, asset: dict, access_level: str) -> dict
             or (asset.get('admin_username') if asset else '')
             or ('root' if is_server else 'admin')
         )
-        password = (
-            creds.get('admin_password')
-            or creds.get('password')
-        )
+        password = creds.get('admin_password') or ''
         # Try asset-level admin password if device-level is empty
         if not password and asset and asset.get('admin_password'):
             password = decrypt_credential(asset['admin_password']) or ''
@@ -146,13 +143,8 @@ def _resolve_session_creds(device: dict, asset: dict, access_level: str) -> dict
         username = (
             creds.get('normal_username')
             or (asset.get('normal_username') if asset else '')
-            or creds.get('username')
-            or (asset.get('username') if asset else '')
         )
-        password = (
-            creds.get('normal_password')
-            or creds.get('password')
-        )
+        password = creds.get('normal_password') or ''
         if (not password and asset and (asset.get('normal_password') or asset.get('password'))):
             raw = asset.get('normal_password') or asset.get('password')
             password = decrypt_credential(raw) or ''
