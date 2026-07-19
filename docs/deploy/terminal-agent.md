@@ -75,7 +75,7 @@ NEXORA_AGENT_TLS_VERIFY=1
 
 Agent 只允许监听 `127.0.0.1`，不能通过局域网直接暴露。
 
-Docker 默认从 Release-netops 的 `windows` 分支获取 Windows EXE，并由 Nexora 后端以附件方式转发下载，不会把浏览器导航到 raw 页面：
+Docker 镜像会携带已打包的 `NexoraTerminalAgent.exe` 作为下载附件；如果运行的是旧镜像或自定义镜像没有该文件，才会从 Release-netops 的 `windows` 分支由后端代理下载，不会把浏览器导航到 raw 页面：
 
 ```text
 TERMINAL_AGENT_WINDOWS_URL=https://github.com/libing28390-sketch/Release-netops/raw/refs/heads/windows/NexoraTerminalAgent.exe

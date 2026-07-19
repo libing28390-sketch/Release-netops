@@ -49,6 +49,9 @@ COPY .env.example /app/.env.example
 # backend container.
 COPY scripts/terminal_agent.py /app/scripts/terminal_agent.py
 COPY scripts/install-terminal-agent.sh /app/scripts/install-terminal-agent.sh
+# This Windows binary is a download-only artifact. It is never executed in
+# the Linux container; the browser workstation downloads it as an attachment.
+COPY NexoraTerminalAgent.exe /app/NexoraTerminalAgent.exe
 
 # Keep release-owned TextFSM templates outside the persistent /app/data volume.
 # The parser checks this directory after user templates, so every rebuilt image
