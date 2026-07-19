@@ -6,8 +6,11 @@ NAME = "site_timestamps"
 
 def upgrade(cursor, use_pg: bool) -> None:
     definitions = {
-        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if use_pg else "TEXT DEFAULT ''",
-        "updated_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP" if use_pg else "TEXT DEFAULT ''",
+        # The legacy baseline stores these lifecycle values as TEXT on both
+        # SQLite and PostgreSQL. Keep that contract so existing PostgreSQL
+        # installations do not hit a text/timestamp COALESCE type error.
+        "created_at": "TEXT DEFAULT ''",
+        "updated_at": "TEXT DEFAULT ''",
     }
     if use_pg:
         for column, definition in definitions.items():
@@ -21,8 +24,12 @@ def upgrade(cursor, use_pg: bool) -> None:
     # Existing installations did not retain site creation time. Populate a
     # stable migration timestamp so the UI never renders an empty column.
     if use_pg:
-        cursor.execute("UPDATE sites SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP)")
-        cursor.execute("UPDATE sites SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)")
+        cursor.execute(
+            "UPDATE sites SET created_at = COALESCE(NULLIF(created_at, ''), CURRENT_TIMESTAMP::text)"
+        )
+        cursor.execute(
+            "UPDATE sites SET updated_at = COALESCE(NULLIF(updated_at, ''), created_at, CURRENT_TIMESTAMP::text)"
+        )
     else:
         cursor.execute("UPDATE sites SET created_at = COALESCE(NULLIF(created_at, ''), CURRENT_TIMESTAMP)")
         cursor.execute("UPDATE sites SET updated_at = COALESCE(NULLIF(updated_at, ''), created_at, CURRENT_TIMESTAMP)")
