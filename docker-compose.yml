@@ -27,7 +27,9 @@ services:
 
   netops:
     image: nexora-netops
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: nexora-netops
     init: true
     mem_limit: 2g

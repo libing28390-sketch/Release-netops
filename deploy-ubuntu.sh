@@ -40,7 +40,7 @@ fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
 # ---------- 配置 ----------
 NODE_MAJOR=22
 PYTHON_MIN="3.10"
-GIT_REPO="${GIT_REPO:-https://github.com/libing28390-sketch/Release-netops.git}"
+GIT_REPO="${GIT_REPO:-https://github.com/libing28390-sketch/netsops.git}"
 PROJECT_NAME="nexora-automation"
 SERVICE_NAME="netops"
 BACKEND_PORT=8003
@@ -239,6 +239,13 @@ else
 fi
 
 info "目标目录: $PROJECT_DIR"
+
+# The Docker build requires the local Terminal Agent source. Fail early with
+# an actionable message instead of reporting a cryptic Docker COPY checksum
+# error when an old/incomplete checkout is used.
+if [ ! -f "$PROJECT_DIR/scripts/terminal_agent.py" ]; then
+    fail "当前代码不是完整的 Nexora 主仓库（缺少 scripts/terminal_agent.py）。请执行 git fetch origin main && git reset --hard origin/main，或重新从 $GIT_REPO 克隆。"
+fi
 
 # ============================================================
 # 1.2 PostgreSQL 安装与数据库初始化

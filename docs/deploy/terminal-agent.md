@@ -38,6 +38,14 @@ chmod +x scripts/install-terminal-agent.sh
 
 ## Docker / Ubuntu 服务端
 
+Docker 构建必须在仓库根目录执行，构建上下文需要同时包含 `Dockerfile`、`scripts/terminal_agent.py` 和 `backend/`。如果出现 `COPY scripts/terminal_agent.py ... not found`，说明服务器仍是旧代码或使用了错误的子目录作为构建上下文，请先同步 `main`：
+
+```bash
+git fetch origin main
+git reset --hard origin/main
+docker compose build --no-cache netops
+```
+
 后端服务端不需要运行 Terminal Agent。用户从自己的工作站访问 Nexora 时，Agent 必须运行在该用户的电脑上。前端通过一次性短期令牌调用：
 
 ```text
