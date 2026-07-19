@@ -4,7 +4,19 @@ Docker 和 Ubuntu 部署时，Web 后端无法直接启动用户电脑上的 Xsh
 
 ## Windows 工作站
 
-在工作站上准备 Python 3.10 或更高版本，然后在项目目录执行：
+### 小白用户：双击启动
+
+在 Nexora 的个人设置中点击“Windows 一键启动”，下载 `NexoraTerminalAgent.exe`，然后双击运行即可。程序会在后台监听：
+
+```text
+http://127.0.0.1:17890
+```
+
+不需要安装 Python，也不需要打开 PowerShell。窗口不会显示命令行；如需停止它，可在任务管理器中结束 `NexoraTerminalAgent.exe`。
+
+### 运维人员：登录启动
+
+如果需要开机自动运行，在工作站上准备 Python 3.10 或更高版本，然后在项目目录执行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
@@ -27,7 +39,7 @@ Invoke-WebRequest http://127.0.0.1:17890/health
 
 ## Ubuntu 工作站
 
-如果浏览器也运行在 Ubuntu 工作站上，可执行：
+如果浏览器也运行在 Ubuntu 工作站上，在个人设置中下载“Ubuntu 安装脚本”，然后执行：
 
 ```bash
 chmod +x scripts/install-terminal-agent.sh
@@ -62,3 +74,11 @@ NEXORA_AGENT_TLS_VERIFY=1
 ```
 
 Agent 只允许监听 `127.0.0.1`，不能通过局域网直接暴露。
+
+Docker 默认从 Release-netops 的 `windows` 分支获取 Windows EXE，并由 Nexora 后端以附件方式转发下载，不会把浏览器导航到 raw 页面：
+
+```text
+TERMINAL_AGENT_WINDOWS_URL=https://github.com/libing28390-sketch/Release-netops/raw/refs/heads/windows/NexoraTerminalAgent.exe
+```
+
+如果部署在内网或使用私有发布仓库，请在 `.env` 中将该变量改为企业内部可访问的 EXE 地址。Windows 和 Ubuntu 下载入口分开，不能用 Ubuntu 的 `.sh` 安装脚本替代 Windows EXE。

@@ -838,17 +838,25 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   </div>
                 </div>
                 
-                <div className={`flex justify-between items-center rounded-xl p-3 border ${isDark ? 'bg-cyan-500/5 border-cyan-500/15' : 'bg-cyan-50/50 border-cyan-500/10'}`}>
+                <div className={`flex flex-wrap justify-between items-center gap-2 rounded-xl p-3 border ${isDark ? 'bg-cyan-500/5 border-cyan-500/15' : 'bg-cyan-50/50 border-cyan-500/10'}`}>
                     <span className={`text-[11px] ${isDark ? 'text-white/55' : 'text-black/60'}`}>
-                      {language === 'zh' ? 'Docker/Ubuntu 部署需要本机 Terminal Agent：' : 'Docker/Ubuntu deployments require the local Terminal Agent:'}
+                      {language === 'zh' ? '按当前工作站系统下载 Terminal Agent：' : 'Download the Terminal Agent for this workstation:'}
                     </span>
                     <a
-                      href="/api/system/download-terminal-agent"
-                      download="terminal_agent.py"
+                      href="/api/system/download-terminal-agent?platform=windows"
+                      download="NexoraTerminalAgent.exe"
                       className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 shadow-sm`}
                     >
                       <Download size={12} />
-                      {language === 'zh' ? '下载 Agent 脚本' : 'Download Agent Script'}
+                      {language === 'zh' ? 'Windows 一键启动' : 'Windows EXE'}
+                    </a>
+                    <a
+                      href="/api/system/download-terminal-agent?platform=ubuntu"
+                      download="install-terminal-agent.sh"
+                      className="px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 shadow-sm"
+                    >
+                      <Download size={12} />
+                      Ubuntu Script
                     </a>
                 </div>
                 

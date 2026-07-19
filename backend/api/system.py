@@ -136,14 +136,74 @@ async def download_assistant():
 
 
 @router.get("/download-terminal-agent")
-async def download_terminal_agent():
-    """Download the loopback Terminal Agent used by Docker/Ubuntu deployments."""
-    from fastapi.responses import FileResponse
+def download_terminal_agent(platform: str = "windows"):
+    """Return the agent package for the operator's workstation platform.
 
-    script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts", "terminal_agent.py")
-    if not os.path.exists(script_path):
-        return {"success": False, "error": "Terminal Agent script is not available in this release"}
-    return FileResponse(script_path, media_type="text/x-python", filename="terminal_agent.py")
+    The API server may run in Docker while the browser runs on Windows.  In
+    that case the Windows executable is a release artifact, not a file inside
+    the Linux container, so deployments can configure a redirect URL.  Ubuntu
+    workstations receive the systemd installer instead.
+    """
+    from fastapi.responses import FileResponse, StreamingResponse
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request as UrlRequest, urlopen
+
+    platform_key = (platform or "windows").strip().lower()
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    scripts_root = os.path.join(project_root, "scripts")
+
+    if platform_key in {"ubuntu", "linux", "unix"}:
+        installer_path = os.path.join(scripts_root, "install-terminal-agent.sh")
+        if not os.path.exists(installer_path):
+            return {"success": False, "error": "Ubuntu Terminal Agent installer is not available in this release"}
+        return FileResponse(installer_path, media_type="text/x-shellscript", filename="install-terminal-agent.sh")
+
+    if platform_key not in {"windows", "win"}:
+        return {"success": False, "error": "Unsupported Terminal Agent platform"}
+
+    executable_path = os.path.join(project_root, "NexoraTerminalAgent.exe")
+    if os.path.exists(executable_path):
+        return FileResponse(executable_path, media_type="application/vnd.microsoft.portable-executable", filename="NexoraTerminalAgent.exe")
+
+    release_url = os.environ.get(
+        "TERMINAL_AGENT_WINDOWS_URL",
+        "https://github.com/libing28390-sketch/Release-netops/raw/refs/heads/windows/NexoraTerminalAgent.exe",
+    ).strip()
+    if release_url.startswith(("https://", "http://")):
+        try:
+            remote_response = urlopen(
+                UrlRequest(release_url, headers={"User-Agent": "Nexora-NetOps/Terminal-Agent"}),
+                timeout=20,
+            )
+        except (HTTPError, URLError, TimeoutError) as exc:
+            return {
+                "success": False,
+                "error": f"Windows Terminal Agent download is unavailable: {exc}",
+            }
+
+        def stream_executable():
+            try:
+                while True:
+                    chunk = remote_response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                remote_response.close()
+
+        return StreamingResponse(
+            stream_executable(),
+            media_type="application/vnd.microsoft.portable-executable",
+            headers={
+                "Content-Disposition": 'attachment; filename="NexoraTerminalAgent.exe"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    return {
+        "success": False,
+        "error": "Windows Terminal Agent executable is not available in this release. Configure TERMINAL_AGENT_WINDOWS_URL or use the Python installer.",
+    }
 
 
 @router.get("/exchange-token")

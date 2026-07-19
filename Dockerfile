@@ -48,6 +48,7 @@ COPY .env.example /app/.env.example
 # download and run on their own workstation. It is never started in the
 # backend container.
 COPY scripts/terminal_agent.py /app/scripts/terminal_agent.py
+COPY scripts/install-terminal-agent.sh /app/scripts/install-terminal-agent.sh
 
 # Keep release-owned TextFSM templates outside the persistent /app/data volume.
 # The parser checks this directory after user templates, so every rebuilt image

@@ -44,6 +44,9 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-netops}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-change-me-to-a-random-secret}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # Windows browsers download the one-click EXE from the Windows release
+      # branch; Ubuntu browsers download the local systemd installer.
+      - TERMINAL_AGENT_WINDOWS_URL=${TERMINAL_AGENT_WINDOWS_URL:-https://github.com/libing28390-sketch/Release-netops/raw/refs/heads/windows/NexoraTerminalAgent.exe}
       # Optional integration. Empty means /api/templates reads PostgreSQL
       # directly instead of waiting on an external private-network endpoint.
       - CONFIG_MANAGEMENT_URL=${CONFIG_MANAGEMENT_URL:-}
