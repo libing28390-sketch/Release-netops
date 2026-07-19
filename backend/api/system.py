@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, Request
 from typing import Dict, Any, Optional
 import os
 import sys
@@ -14,6 +14,8 @@ from services.connection_profile import resolve_ssh_port
 from services.vault_service import resolve_device_credentials
 
 router = APIRouter(prefix="/system", tags=["System"])
+
+LOCAL_TERMINAL_TOKEN_TTL_SECONDS = 20 * 60
 
 
 def _get_system_name() -> str:
@@ -133,6 +135,17 @@ async def download_assistant():
     return FileResponse(bin_path, media_type="application/octet-stream", filename=fn)
 
 
+@router.get("/download-terminal-agent")
+async def download_terminal_agent():
+    """Download the loopback Terminal Agent used by Docker/Ubuntu deployments."""
+    from fastapi.responses import FileResponse
+
+    script_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts", "terminal_agent.py")
+    if not os.path.exists(script_path):
+        return {"success": False, "error": "Terminal Agent script is not available in this release"}
+    return FileResponse(script_path, media_type="text/x-python", filename="terminal_agent.py")
+
+
 @router.get("/exchange-token")
 async def exchange_token(token: str) -> Dict[str, Any]:
     import logging
@@ -180,12 +193,22 @@ async def exchange_token(token: str) -> Dict[str, Any]:
             return {"success": False, "error": f"Device/Asset with IP {host} not found in database"}
 
         device_data = dict(dev_res)
+        # A physical asset lookup does not carry the device-side asset_id
+        # column, so add the link before resolving role-specific credentials.
+        # This keeps the protocol handler aligned with the Web/PAM path.
+        if not device_data.get('asset_id') and device_data.get('management_ip'):
+            device_data['asset_id'] = device_data.get('id')
         target_port = resolve_ssh_port(session_data) if session_data.get("target_port") else resolve_ssh_port(device_data)
+        resolved_credentials = resolve_device_credentials(device_data)
         password = ""
-        if user == device_data.get("username") or user == device_data.get("admin_username"):
-            password = device_data.get("password") or device_data.get("admin_password")
-        elif user == device_data.get("normal_username"):
-            password = device_data.get("normal_password")
+        if user == resolved_credentials.get('normal_username'):
+            password = resolved_credentials.get('normal_password') or ''
+        elif user == resolved_credentials.get('admin_username'):
+            password = resolved_credentials.get('admin_password') or ''
+        elif user == device_data.get("username"):
+            # Legacy single-account records are still supported, but only as
+            # a final fallback after the two explicit CMDB roles.
+            password = resolved_credentials.get('password') or ''
 
         if not password:
             return {"success": False, "error": f"Password for user {user} on {host} not found"}
@@ -217,7 +240,7 @@ async def exchange_token(token: str) -> Dict[str, Any]:
 
 
 @router.post("/launch-terminal")
-async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def launch_terminal(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:
     import subprocess
     import logging
     import uuid
@@ -236,16 +259,25 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
     fixed_pin = payload.get("fixed_pin")
 
     # ── 特权账号登录必须先通过 MFA 审批 ──────────────────────────
+    auth_session = None
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        from api.users import validate_session_token
+        auth_session = validate_session_token(auth_header[7:].strip())
+    if auth_session and auth_session.get('username'):
+        requester_username = auth_session['username']
+
     if access_level == "admin":
+        if not auth_session or not auth_session.get('username'):
+            return {"success": False, "error": "管理员访问需要有效的登录会话"}
         if not mfa_code or not fixed_pin:
             return {
                 "success": False,
                 "requires_mfa": True,
                 "error": "特权访问需要 MFA 验证",
             }
-        from api.pam import _verify_mfa
-        mfa_nonce = payload.get("mfa_nonce")
-        ok, err = _verify_mfa(requester_username, fixed_pin, mfa_code, mfa_nonce)
+        from api.pam import _verify_mfa_totp
+        ok, err = _verify_mfa_totp(requester_username, fixed_pin, mfa_code)
         if not ok:
             return {"success": False, "error": err or "MFA 验证失败"}
     # ──────────────────────────────────────────────────────────────
@@ -299,7 +331,7 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
         session_id = f"session-{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc)
         now_str = now.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-        expires_at = (now + timedelta(seconds=60)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+        expires_at = (now + timedelta(seconds=LOCAL_TERMINAL_TOKEN_TTL_SECONDS)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
         session_token = f"local-{uuid.uuid4().hex[:16]}"
         try:
@@ -351,10 +383,15 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
         conn.close()
 
     if not path or not os.path.exists(path):
-        # 前端客户端侧启动模式：path 为特殊标记，跳过文件检查，只写审计日志
-        if path in ('__client_side_launch__', '__mfa_verify_only__'):
-            return {"success": True, "session_id": session_id, "client_side": True, "session_token": session_token, "port": target_port}
-        return {"success": False, "error": f"Executable path not found: {path}"}
+        # 后端不在用户 Windows 主机上时，返回令牌并让浏览器端助手接管启动。
+        return {
+            "success": True,
+            "session_id": session_id,
+            "client_side": True,
+            "session_token": session_token,
+            "port": target_port,
+            "path_unavailable": bool(path),
+        }
 
     try:
         if app_type == "xshell":
@@ -367,7 +404,8 @@ async def launch_terminal(payload: Dict[str, Any]) -> Dict[str, Any]:
             cmd = f'"{path}" "{user}@{host}:{target_port}"'
 
         logger.info(f"[System] Launching terminal: {app_type} on {host}")
-        subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        creation_flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+        subprocess.Popen(cmd, shell=True, creationflags=creation_flags)
         return {"success": True, "session_id": session_id}
     except Exception as e:
         logger.error(f"[System] Launch failed: {str(e)}")

@@ -2,6 +2,7 @@ export interface Rack {
   id: string;
   name: string;
   datacenter: string;
+  floor?: string;
   room: string;
   row: string;
   total_u: number;
@@ -80,6 +81,7 @@ export interface RackLayout {
   id: string;
   name: string;
   datacenter: string;
+  floor?: string;
   room: string;
   row: string;
   total_u: number;

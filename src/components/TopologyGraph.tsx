@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
+import {
+  aggregateTopologyGraph,
+  type TopologyDrillSegment,
+  type TopologyHierarchyLevel,
+  resolveTopologyDisplayMode,
+  type TopologyDisplayMode,
+} from '../utils/topologyAggregation';
 
 const topologyIconAssets = import.meta.glob('../assets/topology/devices/**/*.svg', {
   eager: true,
@@ -17,10 +24,37 @@ interface Device {
   model?: string;
   site?: string;
   site_id?: string;
+  site_country?: string;
+  site_state_province?: string;
+  site_city?: string;
+  site_district?: string;
+  region?: string;
+  floor?: string;
+  rack_id?: string;
+  rack?: string;
+  rack_code?: string;
+  rack_name?: string;
+  rack_floor?: string;
+  rack_room?: string;
+  rack_row?: string;
   health_status?: string;
   open_alert_count?: number;
   critical_open_alerts?: number;
   is_unmanaged?: boolean;
+  is_group?: boolean;
+  group_id?: string;
+  group_label?: string;
+  group_site?: string;
+  group_layer?: string;
+  group_member_count?: number;
+  group_online_count?: number;
+  group_offline_count?: number;
+  group_warning_count?: number;
+  group_alert_count?: number;
+  group_member_ids?: string[];
+  group_level?: TopologyHierarchyLevel;
+  group_path?: TopologyDrillSegment[];
+  group_can_drill?: boolean;
 }
 
 interface Link {
@@ -48,9 +82,11 @@ interface Link {
   members?: Array<Record<string, unknown>>;
   evidence_count?: number;
   is_unmanaged?: boolean;
+  group_link?: boolean;
+  grouped_link_count?: number;
 }
 
-type BandwidthTierKey = '10m' | '100m' | '1g' | '10g' | '40g' | 'unknown';
+type BandwidthTierKey = '10m' | '100m' | '1g' | '10g' | '40g' | '80g' | '100g' | '200g' | 'unknown';
 
 type BandwidthTier = {
   key: BandwidthTierKey;
@@ -66,12 +102,18 @@ const BANDWIDTH_TIERS: BandwidthTier[] = [
   { key: '1g', label: '1G', color: '#22c55e', mutedColor: 'rgba(34,197,94,0.30)', width: 2.5 },
   { key: '10g', label: '10G', color: '#0ea5e9', mutedColor: 'rgba(14,165,233,0.30)', width: 2.9 },
   { key: '40g', label: '40G', color: '#8b5cf6', mutedColor: 'rgba(139,92,246,0.30)', width: 3.4 },
+  { key: '80g', label: '80G', color: '#ec4899', mutedColor: 'rgba(236,72,153,0.30)', width: 3.8 },
+  { key: '100g', label: '100G', color: '#db2777', mutedColor: 'rgba(219,39,119,0.30)', width: 4.2 },
+  { key: '200g', label: '200G+', color: '#4338ca', mutedColor: 'rgba(67,56,202,0.30)', width: 4.7 },
   { key: 'unknown', label: '未知', color: '#64748b', mutedColor: 'rgba(100,116,139,0.28)', width: 1.8 },
 ];
 
 const getBandwidthTier = (bandwidthMbps?: number | null): BandwidthTier => {
   const speed = Number(bandwidthMbps);
-  if (!Number.isFinite(speed) || speed <= 0) return BANDWIDTH_TIERS[5];
+  if (!Number.isFinite(speed) || speed <= 0) return BANDWIDTH_TIERS[8];
+  if (speed >= 200_000) return BANDWIDTH_TIERS[7];
+  if (speed >= 100_000) return BANDWIDTH_TIERS[6];
+  if (speed >= 80_000) return BANDWIDTH_TIERS[5];
   if (speed >= 40_000) return BANDWIDTH_TIERS[4];
   if (speed >= 10_000) return BANDWIDTH_TIERS[3];
   if (speed >= 1_000) return BANDWIDTH_TIERS[2];
@@ -92,6 +134,8 @@ interface TopologyGraphProps {
 const getFullInterfaceLabel = (value?: string) => String(value || '').replace(/\s+interface\s*$/i, '').trim();
 
 const getLinkEndpointLabel = (item: any, side: 'source' | 'target') => {
+  if (side === 'source' && item?.source_is_group) return '';
+  if (side === 'target' && item?.target_is_group) return '';
   if (String(item?.link_kind || '').toLowerCase() === 'aggregation') {
     const aggregationName = side === 'source' ? item.source_aggregation_name : item.target_aggregation_name;
     if (aggregationName) return getFullInterfaceLabel(aggregationName);
@@ -139,6 +183,13 @@ type DeviceGlyphKind = 'switch' | 'firewall' | 'router' | 'server' | 'wireless' 
 type TopologyLayoutMode = 'hierarchy' | 'horizontal' | 'force' | 'radial';
 
 const getLayerTone = (device: Device) => {
+  if (device.is_group) {
+    const groupLayer = String(device.group_layer || device.group_label || '').toUpperCase();
+    if (groupLayer === 'CORE') return { color: '#1e40af', soft: 'rgba(30,64,175,0.16)', label: 'CORE' };
+    if (groupLayer === 'AGGREGATION') return { color: '#1d4ed8', soft: 'rgba(29,78,216,0.14)', label: 'AGGREGATION' };
+    if (groupLayer === 'ACCESS') return { color: '#075985', soft: 'rgba(7,89,133,0.14)', label: 'ACCESS' };
+    return { color: '#475569', soft: 'rgba(71,85,105,0.12)', label: 'GROUP' };
+  }
   const layer = getDeviceTopologyLayer(device);
   if (layer === 0) return { color: '#1e40af', soft: 'rgba(30,64,175,0.16)', label: 'CORE' };
   if (layer === 1) return { color: '#1d4ed8', soft: 'rgba(29,78,216,0.14)', label: 'AGGREGATION' };
@@ -162,9 +213,13 @@ const buildLayerSummary = (devices: Device[]): LayerSummary[] => {
     const tone = getLayerTone(device);
     const current = summary.get(tone.label);
     if (current) {
-      current.count += 1;
+      current.count += device.is_group ? Math.max(1, Number(device.group_member_count || 0)) : 1;
     } else {
-      summary.set(tone.label, { label: tone.label, color: tone.color, count: 1 });
+      summary.set(tone.label, {
+        label: tone.label,
+        color: tone.color,
+        count: device.is_group ? Math.max(1, Number(device.group_member_count || 0)) : 1,
+      });
     }
   });
   const order = ['CORE', 'AGGREGATION', 'ROUTER', 'FIREWALL', 'ACCESS', 'SERVER', 'DEVICE'];
@@ -179,6 +234,7 @@ const formatLayerSummary = (devices: Device[]) =>
   buildLayerSummary(devices).map((item) => `${item.label} ${item.count}`).join(' / ');
 
 const getDeviceGlyphKind = (device: Device): DeviceGlyphKind => {
+  if (device.is_group) return 'generic';
   const fingerprint = [device.role, device.hostname, device.platform, device.model]
     .map((value) => String(value || '').toLowerCase())
     .join(' ');
@@ -200,7 +256,7 @@ const iconCategoryByKind: Record<Exclude<DeviceGlyphKind, 'generic'>, string> = 
 };
 
 const preferredIconNames: Record<Exclude<DeviceGlyphKind, 'generic'>, string[]> = {
-  switch: ['cisco-switch-l3-master.svg', 'cisco-switch-l3-480x480.svg', 'cisco-switch-l3-240x240.svg', 'cisco-switch-l3-144x144.svg'],
+  switch: ['switch.svg', 'cisco-switch-l3-480x480.svg', 'cisco-switch-l3-240x240.svg', 'cisco-switch-l3-144x144.svg'],
   router: ['router.svg'],
   firewall: ['firewall.svg'],
   server: ['server.svg', 'server-linux.svg', 'server-windows.svg'],
@@ -279,13 +335,13 @@ const buildSiteAnchors = (devices: Device[], width: number) => {
     const key = getSiteKey(device.site_id || device.site);
     const current = siteMap.get(key);
     if (current) {
-      current.count += 1;
+      current.count += device.is_group ? Math.max(1, Number(device.group_member_count || 0)) : 1;
       return;
     }
     siteMap.set(key, {
       key,
       label: String(device.site || '').trim() || 'Unassigned',
-      count: 1,
+      count: device.is_group ? Math.max(1, Number(device.group_member_count || 0)) : 1,
     });
   });
 
@@ -750,15 +806,36 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const [spacePanActive, setSpacePanActive] = useState(false);
   const [boxSelectMode, setBoxSelectMode] = useState(false);
   const [layoutMode, setLayoutMode] = useState<TopologyLayoutMode>('hierarchy');
+  const [displayScope, setDisplayScope] = useState<'auto' | TopologyDisplayMode>('auto');
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
+  const [drillPath, setDrillPath] = useState<TopologyDrillSegment[]>([]);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const [hoveredDeviceId, setHoveredDeviceId] = useState<string | null>(null);
   const [hoverCardPosition, setHoverCardPosition] = useState({ x: 12, y: 12 });
   const hoverHideTimerRef = useRef<number | null>(null);
   const selectedNodeIdsKey = selectedNodeIds.join('|');
-  const hoveredDevice = useMemo(
-    () => devices.find((device) => device.id === hoveredDeviceId) || null,
-    [devices, hoveredDeviceId],
+  const resolvedDisplayMode = useMemo(
+    () => resolveTopologyDisplayMode(devices.length, displayScope),
+    [devices.length, displayScope],
   );
+  const displayGraph = useMemo(
+    () => aggregateTopologyGraph<Device, Link>(devices, links, resolvedDisplayMode, expandedGroupIds, drillPath),
+    [devices, drillPath, expandedGroupIds, links, resolvedDisplayMode],
+  );
+  const graphDevices = displayGraph.devices;
+  const graphLinks = displayGraph.links;
+  const hoveredDevice = useMemo(
+    () => graphDevices.find((device) => device.id === hoveredDeviceId) || null,
+    [graphDevices, hoveredDeviceId],
+  );
+
+  useEffect(() => {
+    const validIds = new Set(displayGraph.groups.map((group) => group.id));
+    setExpandedGroupIds((current) => {
+      const next = new Set(Array.from(current).filter((id) => validIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [displayGraph.groups]);
 
   const clearHoverHideTimer = () => {
     if (hoverHideTimerRef.current !== null) {
@@ -786,6 +863,35 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const y = Math.min(Math.max(event.clientY - rect.top + 14, 8), Math.max(8, rect.height - cardHeight - 8));
     setHoverCardPosition({ x, y });
     setHoveredDeviceId(device.id);
+  };
+
+  const toggleGroup = (group: Device) => {
+    if (!group.is_group || !group.group_id) return;
+    if (group.group_can_drill && group.group_path?.length) {
+      setDrillPath(group.group_path);
+      setExpandedGroupIds(new Set());
+      setHoveredDeviceId(null);
+      return;
+    }
+    setExpandedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(group.group_id)) next.delete(group.group_id);
+      else next.add(group.group_id);
+      return next;
+    });
+    setHoveredDeviceId(null);
+  };
+
+  const resetDrillPath = () => {
+    setDrillPath([]);
+    setExpandedGroupIds(new Set());
+    setHoveredDeviceId(null);
+  };
+
+  const jumpToDrillPath = (index: number) => {
+    setDrillPath((current) => current.slice(0, index));
+    setExpandedGroupIds(new Set());
+    setHoveredDeviceId(null);
   };
 
   const clonePositions = (positions: Record<string, { x: number; y: number }>) => Object.fromEntries(
@@ -1109,7 +1215,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   }, []);
 
   useEffect(() => {
-    if (!svgRef.current || !containerRef.current || devices.length === 0 || viewport.width === 0 || viewport.height === 0) return;
+    if (!svgRef.current || !containerRef.current || graphDevices.length === 0 || viewport.width === 0 || viewport.height === 0) return;
 
     const width = viewport.width;
     const height = viewport.height;
@@ -1172,29 +1278,29 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .style('user-select', 'none');
     svg.call(zoom as any);
 
-    const activeDeviceIds = new Set(devices.map((device) => device.id));
+    const activeDeviceIds = new Set(graphDevices.map((device) => device.id));
     Object.keys(persistedPositionsRef.current).forEach((deviceId) => {
       if (!activeDeviceIds.has(deviceId)) {
         delete persistedPositionsRef.current[deviceId];
       }
     });
 
-    const { positions: seededPositions, siteAnchors } = buildSeedPositions(devices, width, height);
-    const layeredPositions = layoutMode === 'hierarchy' ? buildLayeredPositions(devices, links, width, height) : null;
-    const linearPositions = layoutMode === 'horizontal' ? buildLinearPositions(devices, links, width, height) : null;
-    const radialPositions = layoutMode === 'radial' ? buildRadialPositions(devices, width, height) : null;
+    const { positions: seededPositions, siteAnchors } = buildSeedPositions(graphDevices, width, height);
+    const layeredPositions = layoutMode === 'hierarchy' ? buildLayeredPositions(graphDevices, graphLinks, width, height) : null;
+    const linearPositions = layoutMode === 'horizontal' ? buildLinearPositions(graphDevices, graphLinks, width, height) : null;
+    const radialPositions = layoutMode === 'radial' ? buildRadialPositions(graphDevices, width, height) : null;
     const structuredPositions = layeredPositions || linearPositions || radialPositions;
     const hasPersistedPositions = Object.keys(persistedPositionsRef.current).length > 0;
     const shouldAutoArrange = !hasPersistedPositions;
     const autoPositions = shouldAutoArrange
-      ? (structuredPositions || calculateAutoLayoutPositions(devices, links, width, height, layoutMode))
+      ? (structuredPositions || calculateAutoLayoutPositions(graphDevices, graphLinks, width, height, layoutMode))
       : null;
-    const nodes = devices.map((device) => ({
+    const nodes = graphDevices.map((device) => ({
       ...device,
       x: autoPositions?.[device.id]?.x ?? persistedPositionsRef.current[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2,
       y: autoPositions?.[device.id]?.y ?? persistedPositionsRef.current[device.id]?.y ?? seededPositions[device.id]?.y ?? height / 2,
     }));
-    const d3Links = buildGraphLinks(nodes, links);
+    const d3Links = buildGraphLinks(nodes, graphLinks);
 
     nodes.forEach((node: any) => {
       node.x = clampPosition(node.x || width / 2, 48, width - 48);
@@ -1216,16 +1322,16 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const selectedNeighbors = selectedNodeId ? (neighborMap.get(selectedNodeId) || new Set<string>()) : new Set<string>();
     const hasFocus = Boolean(selectedNodeId);
     const isNodeSelected = (deviceId: string) => selectedNodeIdSet.has(deviceId);
-    const layerSummary = buildLayerSummary(devices);
+    const layerSummary = buildLayerSummary(graphDevices);
     // Repeating ACCESS below every node is useful for a small mixed-layer
     // topology, but becomes visual noise when all devices are in one layer or
     // when the graph contains many nodes. In those cases the site badge,
     // legend, and node tooltip carry the same information more efficiently.
-    const showNodeRoleLabels = !structuredPositions && layerSummary.length > 1 && devices.length <= 20;
-    const showLayerLegend = devices.length > 12 || (!structuredPositions && layerSummary.length > 1);
+    const showNodeRoleLabels = !structuredPositions && layerSummary.length > 1 && graphDevices.length <= 20;
+    const showLayerLegend = graphDevices.length > 12 || (!structuredPositions && layerSummary.length > 1);
     const layerSummaryBySite = new Map<string, string>();
     const devicesBySite = new Map<string, Device[]>();
-    devices.forEach((device) => {
+    graphDevices.forEach((device) => {
       const key = getSiteKey(device.site_id || device.site);
       const current = devicesBySite.get(key) || [];
       current.push(device);
@@ -1266,7 +1372,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         const siteNodeIds = new Set(site.nodes.map((node) => node.id));
         const siteLinkCount = d3Links.filter((link: any) => siteNodeIds.has(link.source_device_id) && siteNodeIds.has(link.target_device_id)).length;
         const siteLayers = formatLayerSummary(site.nodes);
-        const label = `${site.label.length > 18 ? `${site.label.slice(0, 18)}...` : site.label} - ${site.nodes.length} Nodes - ${siteLinkCount} Links${siteLayers ? ` - ${siteLayers}` : ''}`;
+        const siteNodeCount = site.nodes.reduce((total: number, node: any) => total + (node.is_group ? Number(node.group_member_count || 0) : 1), 0);
+        const label = `${site.label.length > 18 ? `${site.label.slice(0, 18)}...` : site.label} - ${siteNodeCount} Nodes - ${siteLinkCount} Links${siteLayers ? ` - ${siteLayers}` : ''}`;
         const labelWidth = Math.max(108, label.length * 6.5 + 28);
         labelGroup.append('rect')
           .attr('x', -labelWidth / 2)
@@ -1609,6 +1716,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
             : [...current, d.id]);
           return;
         }
+        if (d.is_group) {
+          toggleGroup(d as Device);
+          return;
+        }
         setSelectedNodeIds([d.id]);
         if (onNodeClick) onNodeClick(d as Device);
       })
@@ -1648,6 +1759,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     node.append("circle")
       .attr("r", (d: any) => {
+        if (d.is_group) return 0;
         if (d.is_unmanaged) return 20;
         return shouldRenderDeviceGlyph(d as Device) ? 0 : 24;
       })
@@ -1672,6 +1784,18 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         return isNodeSelected(d.id) || selectedNeighbors.has(d.id) ? 1 : 0.35;
       });
 
+    node.append('rect')
+      .attr('class', 'topology-group-hit')
+      .attr('x', -96)
+      .attr('y', -42)
+      .attr('width', 192)
+      .attr('height', 84)
+      .attr('rx', 16)
+      .attr('fill', 'transparent')
+      .attr('stroke', 'none')
+      .style('display', (d: any) => (d.is_group ? null : 'none'))
+      .style('cursor', 'pointer');
+
     node.append('circle')
       .attr('r', 0)
       .attr('fill', 'rgba(248,250,252,0.96)')
@@ -1694,7 +1818,47 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const nodeGlyph = node.append('g').attr('opacity', 1);
 
     nodeGlyph.each(function (d: any) {
-      if (d.is_unmanaged) {
+      if (d.is_group) {
+        const tone = getLayerTone(d as Device);
+        const group = d3.select(this).append('g').attr('transform', 'translate(-88,-34)');
+        group.append('rect')
+          .attr('width', 176)
+          .attr('height', 68)
+          .attr('rx', 14)
+          .attr('fill', '#f8fafc')
+          .attr('stroke', tone.color)
+          .attr('stroke-width', 1.5)
+          .attr('stroke-dasharray', '5,3');
+        group.append('circle')
+          .attr('cx', 15)
+          .attr('cy', 17)
+          .attr('r', 4)
+          .attr('fill', getNodeTone(d as Device).fill);
+        group.append('text')
+          .attr('x', 26)
+          .attr('y', 21)
+          .attr('fill', '#0f172a')
+          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+          .attr('font-size', '12px')
+          .attr('font-weight', 800)
+          .text(String(d.hostname || 'Group').slice(0, 24));
+        group.append('text')
+          .attr('x', 14)
+          .attr('y', 41)
+          .attr('fill', tone.color)
+          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+          .attr('font-size', '10px')
+          .attr('font-weight', 700)
+          .text(`${d.group_member_count || 0} devices · ${d.group_online_count || 0} up`);
+        group.append('text')
+          .attr('x', 14)
+          .attr('y', 56)
+          .attr('fill', '#64748b')
+          .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", sans-serif')
+          .attr('font-size', '9px')
+          .attr('font-weight', 600)
+          .text(`${d.group_offline_count || 0} offline · ${d.group_alert_count || 0} alerts`);
+      } else if (d.is_unmanaged) {
         // Render a "?" question mark for unmanaged devices
         d3.select(this).append('text')
           .attr('text-anchor', 'middle')
@@ -1715,7 +1879,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       // Keep identity and layer text readable even while a node is focused.
       // Links and glyphs still provide focus context; fading labels makes
       // healthy devices look offline and is especially confusing in exports.
-      .attr('opacity', 1);
+      .attr('opacity', 1)
+      .style('display', (d: any) => (d.is_group ? 'none' : null));
 
     const nodeHostnameText = nodeLabelGroup.append('text')
       .attr('y', 8)
@@ -1745,6 +1910,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     node.append('title')
       .text((d: any) => {
+        if (d.is_group) {
+          return `${d.hostname} | ${d.group_member_count || 0} devices | ${d.group_online_count || 0} up | click to expand`;
+        }
         const tone = getLayerTone(d as Device);
         const platform = String(d.platform || '').trim();
         const address = String(d.ip_address || '').trim();
@@ -2005,7 +2173,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       window.removeEventListener('mousemove', handleSelectionPointerMove as EventListener, true);
       window.removeEventListener('mouseup', handleSelectionPointerUp as EventListener, true);
     };
-  }, [devices, links, layoutMode, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
+  }, [graphDevices, graphLinks, layoutMode, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
 
   return (
     <div ref={containerRef} className={`relative h-full w-full overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-inner ${spacePanActive ? 'topology-space-pan' : ''}`}>
@@ -2030,6 +2198,55 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           <option value="force">Force · mesh</option>
           <option value="radial">Radial · hub</option>
         </select>
+        <select
+          value={displayScope}
+          onChange={(event) => {
+            setExpandedGroupIds(new Set());
+            setDrillPath([]);
+            setDisplayScope(event.target.value as 'auto' | TopologyDisplayMode);
+          }}
+          className="h-8 rounded-xl border border-slate-200 bg-white px-2 text-[10px] font-bold text-slate-600 outline-none transition-colors hover:border-cyan-300"
+          aria-label="Topology display scope"
+          title="Automatically summarize large topologies, or switch to grouped and full-device views."
+        >
+          <option value="auto">Auto · {resolvedDisplayMode}</option>
+          <option value="overview">Site overview</option>
+          <option value="grouped">Grouped topology</option>
+          <option value="detail">All devices</option>
+        </select>
+        {displayGraph.groups.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpandedGroupIds(new Set())}
+            className="rounded-xl border border-violet-200 bg-violet-50 px-2.5 py-2 text-[10px] font-bold text-violet-700 transition-all hover:bg-violet-100"
+            title="Collapse all topology groups"
+          >
+            {expandedGroupIds.size > 0 ? 'Collapse groups' : `${displayGraph.groups.length} groups`}
+          </button>
+        )}
+        {drillPath.length > 0 && (
+          <div className="flex max-w-[360px] items-center gap-1 overflow-x-auto rounded-xl border border-cyan-100 bg-cyan-50 px-2 py-1">
+            <button type="button" onClick={resetDrillPath} className="shrink-0 text-[10px] font-extrabold text-cyan-700 hover:text-cyan-900">全部</button>
+            {drillPath.map((segment, index) => (
+              <React.Fragment key={`${segment.level}:${segment.key}`}>
+                <span className="shrink-0 text-[10px] text-cyan-400">/</span>
+                <button
+                  type="button"
+                  onClick={() => jumpToDrillPath(index + 1)}
+                  className="max-w-[140px] shrink-0 truncate text-[10px] font-bold text-cyan-700 hover:text-cyan-900"
+                  title={`${segment.level}: ${segment.label}`}
+                >
+                  {segment.label}
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+        {graphDevices.length !== devices.length && (
+          <span className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-2 text-[10px] font-semibold text-slate-500">
+            {graphDevices.length} visible / {devices.length} total
+          </span>
+        )}
         <button
           type="button"
           onClick={() => applyAutoLayout()}
@@ -2206,9 +2423,16 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
             <div className="truncate text-sm font-extrabold text-slate-900" title={hoveredDevice.hostname}>{hoveredDevice.hostname}</div>
             <div className="mt-1 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.08em] text-sky-700">
               <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: getLayerTone(hoveredDevice).color }} />
-              {getLayerTone(hoveredDevice).label}
+              {hoveredDevice.is_group ? `${getLayerTone(hoveredDevice).label} GROUP` : getLayerTone(hoveredDevice).label}
             </div>
           </div>
+          {hoveredDevice.is_group ? (
+            <dl className="mt-2.5 space-y-2 text-[10px]">
+              <div><dt className="font-semibold text-slate-400">Members</dt><dd className="mt-0.5 font-bold text-slate-700">{hoveredDevice.group_member_count || 0}</dd></div>
+              <div><dt className="font-semibold text-slate-400">Health</dt><dd className="mt-0.5 font-bold text-slate-700">{hoveredDevice.group_online_count || 0} up · {hoveredDevice.group_offline_count || 0} offline</dd></div>
+              <div><dt className="font-semibold text-slate-400">Alerts</dt><dd className="mt-0.5 font-bold text-slate-700">{hoveredDevice.group_alert_count || 0}</dd></div>
+            </dl>
+          ) : (
           <dl className="mt-2.5 space-y-2 text-[10px]">
             <div>
               <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">管理地址</dt>
@@ -2218,12 +2442,33 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
               <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">平台</dt>
               <dd className="mt-0.5 break-all font-semibold text-slate-700">{hoveredDevice.platform || hoveredDevice.model || '-'}</dd>
             </div>
+            {(hoveredDevice.site_state_province || hoveredDevice.site_city || hoveredDevice.site_district || hoveredDevice.region) && (
+              <div>
+                <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">区域</dt>
+                <dd className="mt-0.5 break-all font-semibold text-slate-700">
+                  {hoveredDevice.region || [hoveredDevice.site_state_province, hoveredDevice.site_city, hoveredDevice.site_district].filter(Boolean).join(' / ')}
+                </dd>
+              </div>
+            )}
+            {(hoveredDevice.floor || hoveredDevice.rack_floor || hoveredDevice.rack_name || hoveredDevice.rack_code || hoveredDevice.rack) && (
+              <div>
+                <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">位置</dt>
+                <dd className="mt-0.5 break-all font-semibold text-slate-700">
+                  {[hoveredDevice.floor || hoveredDevice.rack_floor, hoveredDevice.rack_name || hoveredDevice.rack_code || hoveredDevice.rack].filter(Boolean).join(' / ')}
+                </dd>
+              </div>
+            )}
           </dl>
+          )}
           <button
             type="button"
-            disabled={!onOpenWorkspace}
+            disabled={!hoveredDevice.is_group && !onOpenWorkspace}
             onClick={(event) => {
               event.stopPropagation();
+              if (hoveredDevice.is_group) {
+                toggleGroup(hoveredDevice);
+                return;
+              }
               if (!onOpenWorkspace) return;
               clearHoverHideTimer();
               setHoveredDeviceId(null);
@@ -2231,7 +2476,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
             }}
             className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-[10px] font-extrabold text-white shadow-sm transition-colors hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            登录
+            {hoveredDevice.is_group ? (hoveredDevice.group_can_drill ? '进入下一级' : '展开设备') : '登录'}
           </button>
         </div>
       )}

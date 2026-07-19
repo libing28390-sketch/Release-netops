@@ -1735,7 +1735,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                       onClick={async () => {
                         const terminalType = localStorage.getItem('terminal_app') || 'xshell';
                         const terminalPath = localStorage.getItem('local_terminal_path') || '';
-                        let url = '';
                         let user = '';
                         let host = '';
                         let port = 22;
@@ -1759,7 +1758,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
                                 app_type: terminalType,
-                                path: '__client_side_launch__',
+                                path: terminalPath,
                                 host, user,
                                 requester_username: 'unknown',
                                 access_level: terminalTarget ? terminalAccessLevel : 'normal',
@@ -1772,20 +1771,35 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                             if (result.success && result.port) {
                               port = Number(result.port) || port;
                             }
+                            if (!result.success) {
+                              throw new Error(result.error || 'Unable to create local terminal session');
+                            }
+                            if (!result.client_side) {
+                              setTerminalSession(null);
+                              return;
+                            }
+                            const agentBase = (localStorage.getItem('terminal_agent_url') || 'http://127.0.0.1:17890').replace(/\/$/, '');
+                            const agentRes = await fetch(`${agentBase}/v1/terminal/launch`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                backend_url: window.location.origin,
+                                session_token: sessionToken,
+                                client: terminalType,
+                                path: terminalPath,
+                              }),
+                            });
+                            const agentResult = await agentRes.json().catch(() => ({}));
+                            if (!agentRes.ok || !agentResult.success) {
+                              throw new Error(agentResult.error || `HTTP ${agentRes.status}`);
+                            }
+                            setTerminalSession(null);
+                            return;
                           } catch (err) {
-                            console.error(err);
+                            console.error('Local Terminal Agent launch failed', err);
+                            setTerminalSession(null);
+                            return;
                           }
-
-                          if (terminalType !== 'standard') {
-                            const isSsl = window.location.protocol === 'https:' ? '1' : '0';
-                            url = `nexora://${window.location.host}?token=${sessionToken}&client=${terminalType}&path=${encodeURIComponent(terminalPath)}&ssl=${isSsl}`;
-                          } else {
-                            url = `ssh://${encodeURIComponent(user)}@${host}:${port}`;
-                          }
-                        }
-
-                        if (url) {
-                          window.location.href = url;
                         }
                       }}
                       className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded hover:bg-emerald-500/30 transition-all flex items-center gap-1"

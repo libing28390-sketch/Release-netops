@@ -181,6 +181,12 @@ textarea {
 	font-feature-settings: "tnum" 1, "zero" 1;
 }
 
+/* Shared terminal face used by the workspace, VM console, and automation output. */
+.netops-terminal-font {
+	font-family: "JetBrains Mono", "Cascadia Mono", "Cascadia Code", Menlo, Monaco, Consolas, "Courier New", monospace;
+	font-variant-ligatures: none;
+}
+
 .monitoring-dot {
 	display: inline-block;
 	width: 0.5rem;

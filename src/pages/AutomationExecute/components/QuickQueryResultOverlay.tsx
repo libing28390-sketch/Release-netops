@@ -155,7 +155,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                             <span>{isZh ? '命令' : 'Command'}</span>
                             <span className="text-white/18">#{idx + 1}</span>
                           </div>
-                          <code className="block overflow-x-auto text-[11px] font-medium leading-relaxed text-[#F7FBFF]">{cmd}</code>
+                          <code className="netops-terminal-font block overflow-x-auto text-[11px] font-medium leading-relaxed text-[#F7FBFF]">{cmd}</code>
                         </div>
                       </div>
                     </div>
@@ -285,7 +285,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
               <div className="mb-3 flex items-start justify-between gap-2 border-b border-white/[0.04] pb-3">
                 <div className="flex items-start gap-2 flex-1 min-w-0">
                   <span className="text-emerald-400/60 font-mono font-bold text-[11px] mt-0.5 select-none shrink-0">❯</span>
-                  <code className="text-[11px] font-mono text-emerald-400/40 leading-relaxed whitespace-pre-wrap break-all">{quickQueryLabel}</code>
+                  <code className="netops-terminal-font text-[11px] text-emerald-400/40 leading-relaxed whitespace-pre-wrap break-all">{quickQueryLabel}</code>
                 </div>
                 {quickQueryOutput && (
                   <OutputActions
@@ -324,7 +324,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                   </button>
                 </div>
               )}
-              <pre className="text-[13px] font-mono text-[#e6edf3] leading-[1.75] whitespace-pre-wrap break-all select-text">{quickQueryOutput}</pre>
+              <pre className="netops-terminal-font text-[13px] text-[#e6edf3] leading-[1.75] whitespace-pre-wrap break-all select-text">{quickQueryOutput}</pre>
             </div>
           )}
         </div>

@@ -353,6 +353,7 @@ class RackCreate(BaseModel):
     # Canonical location relation. ``datacenter`` remains optional only so
     # older import payloads can be resolved during the transition.
     datacenter: str = ''
+    floor: str = ''
     room: str = ''
     row: str = ''
     total_u: int = 42
@@ -414,6 +415,7 @@ class RackUpdate(BaseModel):
     name: Optional[str] = None
     # Legacy compatibility input; new UI/API writes must use site_id.
     datacenter: Optional[str] = None
+    floor: Optional[str] = None
     room: Optional[str] = None
     row: Optional[str] = None
     total_u: Optional[int] = None

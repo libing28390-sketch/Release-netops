@@ -105,6 +105,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [rackForm, setRackForm] = useState({
     name: '',
     site_id: '',
+    floor: '',
     room: '',
     row: '',
     rack_type_id: '',
@@ -204,6 +205,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         r.name.toLowerCase().includes(q) ||
         siteLabel(r).toLowerCase().includes(q) ||
         r.datacenter.toLowerCase().includes(q) ||
+        (r.floor || '').toLowerCase().includes(q) ||
+        (r.rack_code || '').toLowerCase().includes(q) ||
         r.room.toLowerCase().includes(q) ||
         r.row.toLowerCase().includes(q) ||
         r.description.toLowerCase().includes(q) ||
@@ -393,6 +396,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     '机柜名称*': 'name',
     '站点': 'site_id',
     '数据中心': 'site_id',
+    '楼层': 'floor',
     '机房': 'room',
     '列': 'row',
     '总U位': 'total_u',
@@ -414,6 +418,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     'rack_type_name': 'rack_type_name',
     'Site': 'site_id',
     'Datacenter': 'site_id',
+    'Floor': 'floor',
     'Room': 'room',
     'Row': 'row',
     'Total U': 'total_u',
@@ -436,18 +441,18 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     const wb = XLSX.utils.book_new();
     const headers = zh
       ? ['机柜名称*', '站点', '机房', '列', '总U位', '最大功率(W)', '散热区域', '备注']
-      : ['Name*', 'Site', 'Room', 'Row', 'Total U', 'Max Power(W)', 'Cooling Zone', 'Notes'];
+      : ['Name*', 'Site', 'Floor', 'Room', 'Row', 'Total U', 'Max Power(W)', 'Cooling Zone', 'Notes'];
     const example = zh
       ? ['A-01', '北京第一数据中心', '302机房', 'A列', 42, 6000, '冷通道A区', '测试机柜']
-      : ['A-01', 'Beijing DC 1', 'Room 302', 'Row A', 42, 6000, 'Zone A', 'Test rack'];
+      : ['A-01', 'Beijing DC 1', '3F', 'Room 302', 'Row A', 42, 6000, 'Zone A', 'Test rack'];
     void headers;
     void example;
     const templateHeaders = zh
       ? ['机柜名称*', '机柜类型', '站点', '机房', '列', '总U位', '宽度(mm)', '深度(mm)', '最大承重(kg)', '最大功率(W)', '允许正反面', '散热区域', '备注']
-      : ['Name*', 'Rack Type', 'Site', 'Room', 'Row', 'Total U', 'Width(mm)', 'Depth(mm)', 'Max Weight(kg)', 'Max Power(W)', 'Allow Front/Rear', 'Cooling Zone', 'Notes'];
+      : ['Name*', 'Rack Type', 'Site', 'Floor', 'Room', 'Row', 'Total U', 'Width(mm)', 'Depth(mm)', 'Max Weight(kg)', 'Max Power(W)', 'Allow Front/Rear', 'Cooling Zone', 'Notes'];
     const templateExample = zh
       ? ['A-01', '48U Network Cabinet', '北京第一数据中心', '302机房', 'A列', 48, 600, 1000, 1200, 12000, '是', '冷通道A区', '核心网络机柜']
-      : ['A-01', '48U Network Cabinet', 'Beijing DC 1', 'Room 302', 'Row A', 48, 600, 1000, 1200, 12000, 'yes', 'Zone A', 'Core network rack'];
+      : ['A-01', '48U Network Cabinet', 'Beijing DC 1', '3F', 'Room 302', 'Row A', 48, 600, 1000, 1200, 'yes', 'Zone A', 'Core network rack'];
     
     const ws = XLSX.utils.aoa_to_sheet([templateHeaders, templateExample]);
     ws['!cols'] = templateHeaders.map(() => ({ wch: 15 }));
@@ -467,6 +472,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
           [zh ? '允许正反面' : 'Allow Front/Rear']: r.allow_front_rear_mount === false || r.allow_front_rear_mount === 0 ? (zh ? '否' : 'no') : (zh ? '是' : 'yes'),
           [zh ? '机柜名称' : 'Name']: r.name,
           [zh ? '站点' : 'Site']: siteLabel(r),
+          [zh ? '楼层' : 'Floor']: r.floor || '',
           [zh ? '机房' : 'Room']: r.room || '',
           [zh ? '列' : 'Row']: r.row || '',
           [zh ? '总U位' : 'Total U']: r.total_u,
@@ -577,6 +583,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     setRackForm({
       name: '',
       site_id: siteOptions[0]?.id || '',
+      floor: '',
       room: '',
       row: '',
       rack_type_id: '',
@@ -597,6 +604,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     setRackForm({
       name: rack.name,
       site_id: rack.site_id || '',
+      floor: rack.floor || '',
       room: rack.room,
       row: rack.row,
       rack_type_id: rack.rack_type_id || '',
@@ -1174,6 +1182,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {siteLabel(rack) && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#06b6d415', color: '#06b6d4' }}>{siteLabel(rack)}</span>}
+                    {rack.floor && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#8b5cf615', color: '#7c3aed' }}>{rack.floor}</span>}
                     {rack.rack_type_id && <span className="text-[10px] truncate max-w-[120px]" style={{ color: 'var(--muted-text)' }}>{getRackTypeName(rack.rack_type_id)}</span>}
                     <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.total_u}U</span>
                     {(rack.width_mm || rack.depth_mm) && <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.width_mm || '-'}×{rack.depth_mm || '-'}mm</span>}
@@ -1237,7 +1246,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                   <h3 className="text-sm font-bold" style={{ color: 'var(--heading-text)' }}>
                     {selectedRack.name}
                     <span className="text-[11px] font-normal ml-2" style={{ color: 'var(--muted-text)' }}>
-                      {siteLabel(selectedRack)}{selectedRack.room ? ` / ${selectedRack.room}` : ''}
+                      {siteLabel(selectedRack)}{selectedRack.floor ? ` / ${selectedRack.floor}` : ''}{selectedRack.room ? ` / ${selectedRack.room}` : ''}
                     </span>
                   </h3>
                   <div className="flex items-center rounded-lg p-0.5" style={{ background: 'var(--app-hover-bg)' }}>
@@ -1664,6 +1673,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       <option value="">{zh ? '请选择站点' : 'Select site'}</option>
                       {siteOptions.map(site => <option key={site.id} value={site.id}>{site.site_code} · {site.site_name}</option>)}
                     </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '楼层' : 'Floor'}</label>
+                    <input value={rackForm.floor} onChange={e => setRackForm({ ...rackForm, floor: e.target.value })} className="mt-1 w-full rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-cyan-500/30" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} placeholder={zh ? '例如 3F' : 'e.g. 3F'} />
                   </div>
                   <div>
                     <label className="text-[11px] font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '机房' : 'Room'}</label>

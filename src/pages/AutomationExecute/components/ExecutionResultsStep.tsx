@@ -259,7 +259,7 @@ export const ExecutionResultsStep: React.FC<ExecutionResultsStepProps> = ({
               )}
             </div>
           </div>
-          <div className="flex-1 min-h-0 overflow-auto p-4 font-mono text-[12px] leading-relaxed">
+          <div className="netops-terminal-font flex-1 min-h-0 overflow-auto p-4 text-[12px] leading-relaxed">
             {deviceEntries.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-white/15">
                 <Terminal size={32} strokeWidth={1} />

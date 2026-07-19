@@ -253,6 +253,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
             rack_name VARCHAR(100) NOT NULL,
             name VARCHAR(100) DEFAULT '',
             datacenter VARCHAR(100) DEFAULT '',
+            floor VARCHAR(100) DEFAULT '',
             room VARCHAR(100) DEFAULT '',
             row VARCHAR(50) DEFAULT '',
             room_name VARCHAR(100),
@@ -286,6 +287,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
             rack_name TEXT NOT NULL,
             name TEXT DEFAULT '',
             datacenter TEXT DEFAULT '',
+            floor TEXT DEFAULT '',
             room TEXT DEFAULT '',
             row TEXT DEFAULT '',
             room_name TEXT,
@@ -319,6 +321,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('racks', 'datacenter', "VARCHAR(100) DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
     ensure_column('racks', 'room', "VARCHAR(100) DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
     ensure_column('racks', 'row', "VARCHAR(50) DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
+    ensure_column('racks', 'floor', "VARCHAR(100) DEFAULT ''" if _USE_PG else "TEXT DEFAULT ''")
     ensure_column('racks', 'room_name', "VARCHAR(100)" if _USE_PG else "TEXT")
     ensure_column('racks', 'row_name', "VARCHAR(50)" if _USE_PG else "TEXT")
     ensure_column('racks', 'total_u', "INTEGER NOT NULL DEFAULT 42" if _USE_PG else "INTEGER DEFAULT 42")

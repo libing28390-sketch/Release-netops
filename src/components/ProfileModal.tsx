@@ -274,18 +274,18 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   const isDark = resolvedTheme === 'dark';
 
   return (
-    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
       <motion.div
         initial={{ opacity: 0, y: 12, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        className={`w-full max-w-2xl rounded-2xl border shadow-2xl overflow-hidden ${isDark ? 'bg-[#121c2d] border-white/10' : 'bg-white border-black/10'}`}
+        className={`w-full max-w-3xl overflow-hidden rounded-[1.75rem] border shadow-[0_24px_80px_rgba(15,23,42,0.28)] ${isDark ? 'bg-[#121c2d] border-white/10' : 'bg-slate-50 border-white/80'}`}
       >
         <div className={`px-6 py-4 border-b ${isDark ? 'border-white/10' : 'border-black/10'}`}>
           <h3 className={`text-lg font-bold ${isDark ? 'text-white/90' : 'text-[#0b2a3c]'}`}>个人信息</h3>
           <p className={`text-xs mt-1 ${isDark ? 'text-white/45' : 'text-black/45'}`}>管理您的账户个人信息</p>
         </div>
 
-        <div className="px-6 py-5 space-y-4 max-h-[75vh] overflow-y-auto">
+        <div className="max-h-[78vh] space-y-5 overflow-y-auto bg-slate-50/70 px-6 py-5">
           <div>
             <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>个人头像</label>
             <div className="flex items-center gap-3">
@@ -435,7 +435,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
           </div>
 
           {(currentRole === 'Administrator' || currentRole === 'admin') && (
-            <div className={`p-4 rounded-xl border ${isDark ? 'bg-orange-500/5 border-orange-500/20' : 'bg-orange-50 border-orange-200'}`}>
+            <div className={`rounded-2xl border p-5 ${isDark ? 'bg-orange-500/5 border-orange-500/20' : 'bg-orange-50/80 border-orange-200'}`}>
               <div className="flex items-center gap-2 mb-3">
                 <Shield size={16} className={isDark ? 'text-orange-400' : 'text-orange-600'} />
                 <span className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-orange-400' : 'text-orange-700'}`}>
@@ -468,14 +468,18 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
           )}
 
           {/* MFA (Multi-Factor Authentication) optional card */}
-          <div className={`p-4 rounded-xl border ${isDark ? 'bg-cyan-500/5 border-cyan-500/20' : 'bg-cyan-50 border-cyan-200'}`}>
+          <div className={`rounded-2xl border p-5 ${isDark ? 'bg-cyan-500/5 border-cyan-500/20' : 'bg-cyan-50/80 border-cyan-200'}`}>
             <div className="flex items-center gap-2 mb-3">
               <Shield size={16} className={isDark ? 'text-cyan-400' : 'text-cyan-600'} />
               <span className={`text-[11px] font-bold uppercase tracking-widest ${isDark ? 'text-cyan-400' : 'text-cyan-700'}`}>
                 {language === 'zh' ? 'MFA 双因子二次身份认证' : 'MFA Multi-Factor Authentication'}
               </span>
             </div>
-            
+            <p className={`mb-3 rounded-xl border px-3 py-2 text-[10px] leading-relaxed ${isDark ? 'border-cyan-500/15 bg-cyan-500/5 text-white/55' : 'border-cyan-200 bg-white/70 text-slate-500'}`}>
+              {language === 'zh'
+                ? '兼容标准 TOTP 的验证器，包括 Google Authenticator、Microsoft Authenticator，以及支持标准 TOTP 的腾讯/阿里等国产验证器。每位管理员使用自己的绑定密钥。'
+                : 'Compatible with standard TOTP authenticators, including Google Authenticator, Microsoft Authenticator, and domestic apps that support TOTP. Each administrator uses their own secret.'}
+            </p>
             {!mfaActive ? (
               // MFA not enabled
               !setupMode ? (
@@ -748,7 +752,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
               </span>
             </div>
             <p className={`text-[11px] mb-3 leading-relaxed ${isDark ? 'text-white/30' : 'text-black/35'}`}>
-              配置本地终端工具（Xshell/SecureCRT/Putty）的路径，实现从浏览器一键调起外部客户端。
+              配置本地终端工具路径，并运行 Terminal Agent，实现从 Docker/Ubuntu 部署的一键启动。
             </p>
 
             <div className={`p-4 rounded-xl border ${isDark ? 'bg-white/[0.02] border-white/10' : 'bg-black/[0.01] border-black/5'}`}>
@@ -765,7 +769,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                       }}
                       className={`w-full px-3 py-2 rounded-lg text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white focus:border-cyan-500/50' : 'bg-white border-black/10 text-black focus:border-cyan-500/40'}`}
                     >
-                      <option value="standard">{language === 'zh' ? '系统默认 (ssh://)' : 'System Default'}</option>
+                      <option value="standard">{language === 'zh' ? '系统 SSH（Terminal Agent）' : 'System SSH (Terminal Agent)'}</option>
                       <option value="xshell">Xshell</option>
                       <option value="putty">PuTTY</option>
                       <option value="securecrt">SecureCRT</option>
@@ -834,27 +838,25 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   </div>
                 </div>
                 
-                {terminalApp !== 'standard' && (
-                  <div className={`flex justify-between items-center rounded-xl p-3 border ${isDark ? 'bg-cyan-500/5 border-cyan-500/15' : 'bg-cyan-50/50 border-cyan-500/10'}`}>
+                <div className={`flex justify-between items-center rounded-xl p-3 border ${isDark ? 'bg-cyan-500/5 border-cyan-500/15' : 'bg-cyan-50/50 border-cyan-500/10'}`}>
                     <span className={`text-[11px] ${isDark ? 'text-white/55' : 'text-black/60'}`}>
-                      {language === 'zh' ? '需要 Windows 助手？下载自注册单文件版：' : 'Need Windows assistant? Download self-registering executable:'}
+                      {language === 'zh' ? 'Docker/Ubuntu 部署需要本机 Terminal Agent：' : 'Docker/Ubuntu deployments require the local Terminal Agent:'}
                     </span>
                     <a
-                      href="/api/system/download-assistant"
-                      download={systemInfo?.system_name ? `${systemInfo.system_name.toLowerCase()}_assistant.exe` : "nexora.exe"}
+                      href="/api/system/download-terminal-agent"
+                      download="terminal_agent.py"
                       className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 shadow-sm`}
                     >
                       <Download size={12} />
-                      {language === 'zh' ? `下载 ${systemInfo?.system_name || 'Nexora'} 助手` : `Download ${systemInfo?.system_name || 'Nexora'} Assistant`}
+                      {language === 'zh' ? '下载 Agent 脚本' : 'Download Agent Script'}
                     </a>
-                  </div>
-                )}
+                </div>
                 
                 <p className={`text-[10px] leading-relaxed flex items-center gap-1.5 ${isDark ? 'text-white/30' : 'text-black/40'}`}>
                   <Info size={12} className="text-cyan-500" />
                   {terminalApp === 'standard' 
-                    ? (language === 'zh' ? '标准模式：直接调用系统默认 SSH 处理器。' : 'Standard Mode: Calls OS default SSH handler.')
-                    : (language === 'zh' ? '本地模式：直接通过后台启动程序，无需注册表脚本，安全快捷。' : 'Local Mode: Direct launch via backend, no scripts needed.')}
+                    ? (language === 'zh' ? '标准模式：通过 127.0.0.1 Terminal Agent 启动系统 SSH。' : 'Standard Mode: Launches system SSH through the loopback Terminal Agent.')
+                    : (language === 'zh' ? '本地模式：通过 127.0.0.1 Terminal Agent 启动程序，不使用 nexora:// 协议。' : 'Local Mode: Launches through the loopback Terminal Agent without the nexora:// protocol.')}
                 </p>
               </div>
             </div>
@@ -863,7 +865,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
           <p className={`text-[11px] ${isDark ? 'text-white/40' : 'text-black/40'}`}>上次登录时间：{currentUserLastLogin}</p>
         </div>
 
-        <div className={`px-6 py-4 border-t flex gap-3 ${isDark ? 'border-white/10' : 'border-black/10'}`}>
+        <div className={`sticky bottom-0 flex gap-3 border-t bg-white/95 px-6 py-4 backdrop-blur ${isDark ? 'border-white/10 bg-[#121c2d]/95' : 'border-slate-200/80'}`}>
           <button onClick={onClose} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.04] text-black/70 hover:bg-black/[0.08]'}`}>
             取消
           </button>

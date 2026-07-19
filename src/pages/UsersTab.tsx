@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import type { User } from '../types';
 import { primaryActionBtnClass } from '../components/shared';
 import PageHero from '../components/PageHero';
+import { validateUserField } from '../utils/userValidation';
 
 type UserFormState = {
   username: string;
@@ -54,6 +55,8 @@ const UsersTab: React.FC<UsersTabProps> = ({
   handleAddUser, handleEditUser, language, t,
 }) => {
   const isZh = language === 'zh';
+  const fieldError = (field: Parameters<typeof validateUserField>[0], value: string) => validateUserField(field, value, isZh);
+  const inputClass = (error: string) => `w-full px-4 py-3 rounded-xl border ${error ? 'border-red-400 focus:border-red-500 focus:ring-red-100' : 'border-black/10 focus:border-black focus:ring-black/5'} focus:ring-4 outline-none transition-all`;
   const labelForGroup = (groupKey: string) => {
     const match = CHANGE_GROUP_OPTIONS.find((item) => item.key === groupKey);
     return match ? (isZh ? match.zh : match.en) : groupKey;
@@ -187,9 +190,10 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     title={t('username')}
                     value={newUserForm.username}
                     onChange={(e) => setNewUserForm({ ...newUserForm, username: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                    className={inputClass(fieldError('username', newUserForm.username))}
                     placeholder="e.g. jdoe"
                   />
+                  {fieldError('username', newUserForm.username) && <p className="text-[10px] text-red-500">{fieldError('username', newUserForm.username)}</p>}
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('password')}</label>
@@ -199,13 +203,14 @@ const UsersTab: React.FC<UsersTabProps> = ({
                       title={t('password')}
                       value={newUserForm.password}
                       onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
-                      className="w-full px-4 pr-12 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      className={`${inputClass(fieldError('password', newUserForm.password))} pr-12`}
                       placeholder="••••••••"
                     />
                     <button type="button" onClick={() => setShowNewUserPwd(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60 transition-colors">
                       {showNewUserPwd ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
+                  {fieldError('password', newUserForm.password) && <p className="text-[10px] text-red-500">{fieldError('password', newUserForm.password)}</p>}
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{t('role')}</label>
@@ -227,9 +232,10 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     title={isZh ? '所属分组' : 'User Group'}
                     value={newUserForm.group_name}
                     onChange={(e) => setNewUserForm({ ...newUserForm, group_name: e.target.value })}
-                    className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                    className={inputClass(fieldError('group_name', newUserForm.group_name))}
                     placeholder={isZh ? '例如：核心网络组 / 变更平台主管组' : 'e.g. Core Network Team'}
                   />
+                  {fieldError('group_name', newUserForm.group_name) && <p className="text-[10px] text-red-500">{fieldError('group_name', newUserForm.group_name)}</p>}
                 </div>
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-2">
@@ -239,9 +245,10 @@ const UsersTab: React.FC<UsersTabProps> = ({
                       title={isZh ? '真实姓名' : 'Display Name'}
                       value={newUserForm.display_name}
                       onChange={(e) => setNewUserForm({ ...newUserForm, display_name: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      className={inputClass(fieldError('display_name', newUserForm.display_name))}
                       placeholder={isZh ? '如：李兵' : 'e.g. Li Bing'}
                     />
+                    {fieldError('display_name', newUserForm.display_name) && <p className="text-[10px] text-red-500">{fieldError('display_name', newUserForm.display_name)}</p>}
                   </div>
                   <div className="space-y-2">
                     <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '手机号' : 'Phone'}</label>
@@ -250,9 +257,10 @@ const UsersTab: React.FC<UsersTabProps> = ({
                       title={isZh ? '手机号' : 'Phone'}
                       value={newUserForm.phone}
                       onChange={(e) => setNewUserForm({ ...newUserForm, phone: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      className={inputClass(fieldError('phone', newUserForm.phone))}
                       placeholder="138xxxx8888"
                     />
+                    {fieldError('phone', newUserForm.phone) && <p className="text-[10px] text-red-500">{fieldError('phone', newUserForm.phone)}</p>}
                   </div>
                   <div className="space-y-2">
                     <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '邮箱' : 'Email'}</label>
@@ -261,9 +269,10 @@ const UsersTab: React.FC<UsersTabProps> = ({
                       title={isZh ? '邮箱' : 'Email'}
                       value={newUserForm.email}
                       onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })}
-                      className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all"
+                      className={inputClass(fieldError('email', newUserForm.email))}
                       placeholder="li@example.com"
                     />
+                    {fieldError('email', newUserForm.email) && <p className="text-[10px] text-red-500">{fieldError('email', newUserForm.email)}</p>}
                   </div>
                 </div>
                 <div className="space-y-2">

@@ -44,6 +44,11 @@ COPY backend/ /app/backend/
 # Copy environment template
 COPY .env.example /app/.env.example
 
+# Keep the loopback Terminal Agent available for Docker/Ubuntu users to
+# download and run on their own workstation. It is never started in the
+# backend container.
+COPY scripts/terminal_agent.py /app/scripts/terminal_agent.py
+
 # Keep release-owned TextFSM templates outside the persistent /app/data volume.
 # The parser checks this directory after user templates, so every rebuilt image
 # receives the latest public-repository templates without overwriting user edits.

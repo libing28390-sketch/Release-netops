@@ -537,7 +537,7 @@ server {
     # pull resources from. `'unsafe-inline'` on script-src is needed
     # because Vite injects a tiny inline bootstrap; everything else
     # must come from the same origin or trusted CDNs.
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'self';" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss: http://127.0.0.1:17890 http://localhost:17890; frame-ancestors 'self';" always;
 
     client_max_body_size 20m;
 

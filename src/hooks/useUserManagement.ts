@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 
 import type { User } from '../types';
+import { validateNewUserForm } from '../utils/userValidation';
 
 interface UseUserManagementProps {
   currentUser: { id?: string; username?: string; role?: string; avatar_url?: string };
@@ -11,7 +12,7 @@ interface UseUserManagementProps {
 
 const createEmptyUserForm = () => ({
   username: '', password: '', role: 'Operator', group_name: '', change_groups: [] as string[],
-  display_name: '', phone: '', email: '',
+  display_name: '\u5f20\u4e09', phone: '', email: '',
 });
 
 export const useUserManagement = ({ currentUser, setCurrentUser, language, showToast }: UseUserManagementProps) => {
@@ -25,6 +26,20 @@ export const useUserManagement = ({ currentUser, setCurrentUser, language, showT
   const [newUserForm, setNewUserForm] = useState(createEmptyUserForm);
 
   const handleAddUser = useCallback(async () => {
+    const validationErrors = validateNewUserForm({
+      username: newUserForm.username,
+      password: newUserForm.password,
+      display_name: newUserForm.display_name,
+      phone: newUserForm.phone,
+      email: newUserForm.email,
+      group_name: newUserForm.group_name,
+      role: newUserForm.role,
+    }, language === 'zh');
+    const firstValidationError = Object.values(validationErrors)[0];
+    if (firstValidationError) {
+      showToast(firstValidationError, 'error');
+      return;
+    }
     if (!newUserForm.username.trim() || !newUserForm.password.trim()) {
       showToast(language === 'zh' ? '请填写用户名和密码' : 'Username and password are required', 'error');
       return;

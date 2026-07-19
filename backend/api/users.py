@@ -73,6 +73,26 @@ def _validate_password_strength(password: str) -> str | None:
     return None
 
 
+def _validate_new_user_fields(username: str, password: str, display_name: str, phone: str, email: str, role: str, group_name: str) -> str | None:
+    """Validate the required identity/contact fields before creating a user."""
+    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9._-]{2,31}', username):
+        return 'Username must start with a letter and contain 3-32 letters, digits, dot, underscore, or hyphen'
+    password_error = _validate_password_strength(password)
+    if password_error:
+        return password_error
+    if not re.fullmatch(r"[A-Za-z\u4e00-\u9fff][A-Za-z\u4e00-\u9fff .'-]{1,49}", display_name):
+        return 'Display name must contain 2-50 Chinese or English characters'
+    if not re.fullmatch(r'\+?[0-9][0-9\s().-]{6,24}', phone) or not (7 <= len(re.sub(r'\D', '', phone)) <= 15):
+        return 'Phone must contain 7-15 digits and may include a country code'
+    if len(email) > 254 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]{2,}', email):
+        return 'Enter a valid email address'
+    if role not in ('Administrator', 'Operator', 'Viewer'):
+        return 'Invalid role'
+    if len(group_name) > 100:
+        return 'Group name must be 100 characters or fewer'
+    return None
+
+
 def _normalize_change_groups(raw_groups) -> list[str]:
     if not isinstance(raw_groups, (list, tuple, set)):
         return []
@@ -370,27 +390,32 @@ def read_users():
 
 @router.post("/users")
 async def create_user(request: Request, user: dict = Body(...)):
-    conn = get_db_connection()
     user_id = user.get('id') or str(uuid.uuid4())
-    raw_password = user.get('password', '')
+    raw_password = str(user.get('password') or '')
+    username = str(user.get('username') or '').strip()
     group_name = str(user.get('group_name') or '').strip()
     change_groups = _normalize_change_groups(user.get('change_groups'))
     display_name = str(user.get('display_name') or '').strip()
     phone = str(user.get('phone') or '').strip()
     email = str(user.get('email') or '').strip()
-    strength_err = _validate_password_strength(raw_password)
-    if strength_err:
-        raise HTTPException(status_code=400, detail=strength_err)
+    role = str(user.get('role') or '').strip()
+    validation_error = _validate_new_user_fields(username, raw_password, display_name, phone, email, role, group_name)
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
     hashed = await _hash_password(raw_password)
+    conn = get_db_connection()
     try:
+        duplicate = conn.execute('SELECT 1 FROM users WHERE username = ? LIMIT 1', (username,)).fetchone()
+        if duplicate:
+            raise HTTPException(status_code=409, detail='Username already exists')
         conn.execute(
             'INSERT INTO users (id, username, password, role, status, last_login, avatar_url, group_name, change_groups_json, display_name, phone, email) '
             'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (
                 user_id,
-                user.get('username'),
+                username,
                 hashed,
-                user.get('role'),
+                role,
                 'active',
                 'Never',
                 user.get('avatar_url'),
@@ -407,13 +432,13 @@ async def create_user(request: Request, user: dict = Body(...)):
             category='identity',
             severity='medium',
             status='success',
-            summary=f"Created user {user.get('username')}",
+            summary=f"Created user {username}",
             actor_username=user.get('actor_username') or 'admin',
             actor_role=user.get('actor_role') or 'Administrator',
             source_ip=request.client.host if request and request.client else None,
             target_type='user',
             target_id=user_id,
-            target_name=user.get('username'),
+            target_name=username,
             details={'role': user.get('role'), 'group_name': group_name, 'change_groups': change_groups},
         )
         row = conn.execute(
@@ -421,6 +446,8 @@ async def create_user(request: Request, user: dict = Body(...)):
             (user_id,),
         ).fetchone()
         return _hydrate_user_row(row)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -798,6 +825,14 @@ async def forgot_password_reset(request: Request, payload: dict = Body(...)):
 
 @router.put("/users/{user_id}")
 async def update_user(user_id: str, request: Request, user: dict = Body(...)):
+    auth_header = request.headers.get('Authorization', '')
+    session_token = auth_header.replace('Bearer ', '', 1) if auth_header.startswith('Bearer ') else ''
+    session = validate_session_token(session_token)
+    if not session:
+        raise HTTPException(status_code=401, detail='Not authenticated')
+    if str(session.get('user_id')) != str(user_id) and session.get('role') != 'Administrator':
+        raise HTTPException(status_code=403, detail='You may only update your own profile')
+
     conn = get_db_connection()
     try:
         existing = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
@@ -873,6 +908,11 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         password = user.get('password')
         old_password = user.get('old_password') or user.get('oldPassword')
         fixed_pin = user.get('fixedPin')
+        if fixed_pin is not None and str(fixed_pin) != '':
+            if str(existing['role'] or '').lower() not in ('administrator', 'admin'):
+                raise HTTPException(status_code=403, detail='Only administrator accounts may configure a fixed PIN')
+            if not str(fixed_pin).isdigit() or len(str(fixed_pin)) != 6:
+                raise HTTPException(status_code=400, detail='Fixed PIN must be exactly 6 digits')
         display_name = str(user.get('display_name', existing['display_name'] if 'display_name' in existing.keys() else '') or '').strip()
         phone = str(user.get('phone', existing['phone'] if 'phone' in existing.keys() else '') or '').strip()
         email = str(user.get('email', existing['email'] if 'email' in existing.keys() else '') or '').strip()

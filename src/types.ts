@@ -25,6 +25,11 @@ export interface Device {
   site_id?: string;
   site_name?: string;
   site_code?: string;
+  site_country?: string;
+  site_state_province?: string;
+  site_city?: string;
+  site_district?: string;
+  region?: string;
   uptime: string;
   connection_method: 'ssh' | 'netconf';
   current_config?: string;
@@ -77,6 +82,13 @@ export interface Device {
   asset_tag?: string;
   datacenter?: string;
   rack?: string;
+  rack_id?: string;
+  rack_code?: string;
+  rack_name?: string;
+  rack_floor?: string;
+  rack_room?: string;
+  rack_row?: string;
+  floor?: string;
   rack_unit?: string;
   department?: string;
   warranty_expiry?: string;

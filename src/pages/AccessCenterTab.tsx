@@ -1,13 +1,14 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Search, Terminal, Monitor, Lock, Info, 
-  Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight,
-  Database, Server, Cpu, Key, Globe, X, Send, ChevronDown, UserCheck, Eye, EyeOff
+  Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight, Send, ChevronDown, UserCheck,
+  Database, Server, Cpu, Key, Globe, X, Eye, EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import DeviceMfaModal from './AccessCenterTab/components/DeviceMfaModal';
 
 interface Device {
   id: string;
@@ -19,13 +20,6 @@ interface Device {
   management_port?: number;
   normal_username?: string;
   admin_username?: string;
-}
-
-interface User {
-  id: string;
-  username: string;
-  role: string;
-  avatar_url?: string;
 }
 
 interface AccessCenterTabProps {
@@ -55,11 +49,15 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   const [fixedPassword, setFixedPassword] = useState('');
   const [showFixedPassword, setShowFixedPassword] = useState(false);
   const [dynamicCode, setDynamicCode] = useState('');
+  // Kept only for backward-compatible request payloads; the active flow uses
+  // the authenticator TOTP code directly and never requests a webhook code.
   const [mfaNonce, setMfaNonce] = useState('');
   const [mfaTarget, setMfaTarget] = useState<{device: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged'} | null>(null);
+  // Legacy webhook-request state is retained for old sessions only; the
+  // rendered authorization dialog no longer exposes it.
   const [isSending, setIsSending] = useState(false);
   const [countdown, setCountdown] = useState(0);
-  const [approvers, setApprovers] = useState<User[]>([]);
+  const [approvers] = useState<Array<{ id: string; username: string }>>([]);
   const [selectedApproverId, setSelectedApproverId] = useState('');
 
   // Real current username from session
@@ -74,46 +72,23 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   });
   const autoLoginModeRef = useRef(autoLoginInProgress);
 
-  // Countdown timer for MFA code
+  // Resolve the real requester from the authenticated session.  Device
+  // authorization must never trust a username supplied by the browser.
   useEffect(() => {
-    let timer: any;
-    if (countdown > 0) {
-      timer = setInterval(() => setCountdown(c => c - 1), 1000);
-    }
-    return () => clearInterval(timer);
-  }, [countdown]);
-
-  // Fetch approvers (Admins only, exclude self)
-  useEffect(() => {
-    const fetchApprovers = async () => {
+    const fetchCurrentUser = async () => {
       try {
         const token = localStorage.getItem('netops_token');
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        
-        // 1. Get real current user from session
         const sessionRes = await fetch('/api/session', { headers });
-        let loggedInUser = '';
         if (sessionRes.ok) {
           const sessionData = await sessionRes.json();
-          loggedInUser = sessionData.user?.username || '';
-          setCurrentUsername(loggedInUser);
-        }
-
-        // 2. Fetch all users
-        const res = await fetch('/api/users', { headers });
-        const data = await res.json();
-        
-        if (Array.isArray(data)) {
-          // Strict: only Administrator role, never the current user
-          const admins = data.filter((u: any) => u.role === 'Administrator' && u.username !== loggedInUser);
-          setApprovers(admins);
-          if (admins.length > 0) setSelectedApproverId(admins[0].id);
+          setCurrentUsername(sessionData.user?.username || '');
         }
       } catch (err) {
-        console.error('Failed to fetch approvers', err);
+        console.error('Failed to fetch current user', err);
       }
     };
-    fetchApprovers();
+    fetchCurrentUser();
   }, []);
 
   const getProtocol = (dev: Device) => {
@@ -143,14 +118,11 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     return filteredDevices.slice(start, start + pageSize);
   }, [filteredDevices, currentPage, pageSize]);
 
-  // Reset all MFA-related state to a clean slate (but keep approver selection).
+  // Reset all MFA-related state to a clean slate.
   const resetMFAState = () => {
     setFixedPassword('');
     setShowFixedPassword(false);
     setDynamicCode('');
-    setMfaNonce('');
-    setCountdown(0);
-    setIsSending(false);
   };
 
   const openMFAModal = (target: { device: Device; appType: 'xshell' | 'web'; identity: 'normal' | 'privileged' }) => {
@@ -209,6 +181,10 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     const user = level === 'admin' ? (dev.admin_username || 'admin') : (dev.normal_username || 'user');
     let port = Number(dev.management_port || 22) || 22;
     let sessionToken = '';
+    const authToken = localStorage.getItem('netops_token');
+    const authHeaders = authToken
+      ? { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` }
+      : { 'Content-Type': 'application/json' };
 
     // MFA verification for privileged access — still goes through backend
     if (level === 'admin') {
@@ -219,10 +195,10 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       try {
         const res = await fetch('/api/system/launch-terminal', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+            headers: authHeaders,
           body: JSON.stringify({
             app_type: terminalType,
-            path: '__mfa_verify_only__',   // 仅做 MFA 校验，不实际启动
+            path: terminalPath,
             host, user,
             requester_username: currentUsername || 'unknown',
             access_level: 'admin',
@@ -242,7 +218,13 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         if (result.success && result.port) {
           port = Number(result.port) || port;
         }
-        // MFA passed — fall through to local launch below
+        if (result.success && !result.client_side) {
+          showToast(isZh ? '\u6b63\u5728\u542f\u52a8\u672c\u5730\u7ec8\u7aef' : 'Launching local terminal', 'success');
+          return;
+        }
+        // A remote/container backend cannot execute the Windows client. In
+        // that case it returns a short-lived token and we use the protocol
+        // fallback below.
       } catch {
         showToast(isZh ? 'MFA 验证请求失败' : 'MFA verification failed', 'error');
         return;
@@ -252,10 +234,10 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       try {
         const res = await fetch('/api/system/launch-terminal', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+            headers: authHeaders,
           body: JSON.stringify({
             app_type: terminalType,
-            path: '__client_side_launch__',
+            path: terminalPath,
             host, user,
             requester_username: currentUsername || 'unknown',
             access_level: level,
@@ -268,36 +250,46 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         if (result.success && result.port) {
           port = Number(result.port) || port;
         }
+        if (result.success && !result.client_side) {
+          showToast(isZh ? '\u6b63\u5728\u542f\u52a8\u672c\u5730\u7ec8\u7aef' : 'Launching local terminal', 'success');
+          return;
+        }
+        if (!result.success) {
+          showToast(result.error || (isZh ? '无法创建本地终端会话' : 'Unable to create local terminal session'), 'error');
+          return;
+        }
       } catch (err) {
         console.error('Failed to fetch password for normal user launch', err);
+        showToast(isZh ? '无法获取本地终端会话，请重试' : 'Unable to create the local terminal session. Please retry.', 'error');
+        return;
       }
     }
 
-    // ── 纯前端本地启动：通过 URI scheme 调起 Windows 客户端 ──
-    // 后端在 Linux 容器里无法执行 Windows 程序，必须由浏览器直接触发。
-    // 如果用户在个人设置里选择了特定的本地终端工具（Xshell, PuTTY 等），则通过 nexora:// 协议调起，
-    // 否则直接使用系统默认的 ssh:// 协议。
+    // Remote Docker/Ubuntu deployments cannot execute a Windows terminal
+    // process. Delegate the one-time session token to the local loopback
+    // Terminal Agent instead of using a browser custom protocol. This avoids
+    // browser confirmation dialogs and transient blank tabs.
     try {
-      let uri = '';
-      if (terminalType !== 'standard') {
-        const isSsl = window.location.protocol === 'https:' ? '1' : '0';
-        uri = `nexora://${window.location.host}?token=${sessionToken}&client=${terminalType}&path=${encodeURIComponent(terminalPath || '')}&ssl=${isSsl}`;
-      } else {
-        uri = `ssh://${encodeURIComponent(user)}@${host}:${port}`;
+      if (!sessionToken) {
+        showToast(isZh ? '\u672c\u5730\u7ec8\u7aef\u4f1a\u8bdd\u65e0\u6548\uff0c\u8bf7\u91cd\u8bd5' : 'The local terminal session is invalid. Please retry.', 'error');
+        return;
       }
 
-      // 用户主动点击触发的 <a> 元素 click，浏览器会识别为用户行为，不会拦截
-      // （iframe.src 触发外部协议在 Chrome/Edge 中会被静默拦截）
-      const linker = document.createElement('a');
-      linker.href = uri;
-      linker.style.display = 'none';
-      // target=_self 避免新开空白页；rel 防止任何 referrer 泄漏
-      linker.rel = 'noopener noreferrer';
-      document.body.appendChild(linker);
-      linker.click();
-      setTimeout(() => {
-        try { document.body.removeChild(linker); } catch {}
-      }, 1000);
+      const agentBase = (localStorage.getItem('terminal_agent_url') || 'http://127.0.0.1:17890').replace(/\/$/, '');
+      const agentRes = await fetch(`${agentBase}/v1/terminal/launch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          backend_url: window.location.origin,
+          session_token: sessionToken,
+          client: terminalType,
+          path: terminalPath || '',
+        }),
+      });
+      const agentResult = await agentRes.json().catch(() => ({}));
+      if (!agentRes.ok || !agentResult.success) {
+        throw new Error(agentResult.error || `HTTP ${agentRes.status}`);
+      }
 
       const appName = terminalType === 'standard' ? 'SSH' : terminalType === 'xshell' ? 'Xshell' : terminalType === 'putty' ? 'PuTTY' : terminalType === 'securecrt' ? 'SecureCRT' : terminalType === 'mobaxterm' ? 'MobaXterm' : 'Terminal';
 
@@ -307,7 +299,13 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       );
 
     } catch (err) {
-      showToast(isZh ? '调起本地客户端失败，请检查浏览器是否允许打开外部程序' : 'Failed to launch local client — check browser permissions', 'error');
+      console.error('Local Terminal Agent launch failed', err);
+      showToast(
+        isZh
+          ? '\u65e0\u6cd5\u8fde\u63a5\u672c\u5730\u7ec8\u7aef\u4ee3\u7406\uff0c\u8bf7\u5148\u542f\u52a8 Terminal Agent\uff08\u4ec5\u76d1\u542c 127.0.0.1:17890\uff09'
+          : 'Cannot connect to the local Terminal Agent. Start it on this workstation (127.0.0.1:17890) and retry.',
+        'error',
+      );
     }
   };
 
@@ -355,7 +353,6 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     const target = mfaTarget;
     const code = dynamicCode;
     const pin = fixedPassword;
-    const nonce = mfaNonce;
 
     if (target.appType === 'xshell') {
       const terminalPath = localStorage.getItem('local_terminal_path') || '';
@@ -365,13 +362,13 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         return;
       }
       closeMFAModal();
-      launchLocalTerminal(target.device, terminalPath, terminalType, 'admin', code, pin, nonce);
+      launchLocalTerminal(target.device, terminalPath, terminalType, 'admin', code, pin);
       return;
     }
 
     // Privileged web login via PAM Session Gateway
     closeMFAModal();
-    requestSession(target.device, 'admin', code, pin, nonce);
+    requestSession(target.device, 'admin', code, pin);
   };
 
   const requestSession = async (dev: Device, accessLevel: 'normal' | 'admin', mfaCode?: string, fixedPw?: string, mfaNonce?: string) => {
@@ -380,7 +377,10 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     try {
       const res = await fetch('/api/pam/sessions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(localStorage.getItem('netops_token') ? { Authorization: `Bearer ${localStorage.getItem('netops_token')}` } : {}),
+        },
         body: JSON.stringify({
           asset_id: assetId,
           access_level: accessLevel,
@@ -600,9 +600,25 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         language={language}
       />
 
-      {/* MFA Modal with Approver Selection */}
+      {showMFAModal && mfaTarget && (
+        <DeviceMfaModal
+          isZh={isZh}
+          currentUsername={currentUsername}
+          target={mfaTarget}
+          fixedPin={fixedPassword}
+          dynamicCode={dynamicCode}
+          showFixedPin={showFixedPassword}
+          onFixedPinChange={setFixedPassword}
+          onDynamicCodeChange={setDynamicCode}
+          onToggleFixedPin={() => setShowFixedPassword((value) => !value)}
+          onClose={closeMFAModal}
+          onVerify={handleMFAVerify}
+        />
+      )}
+
+      {/* Legacy webhook approval dialog kept unreachable for old state recovery. */}
       <AnimatePresence>
-        {showMFAModal && (
+        {false && showMFAModal && (
           <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <motion.div 
               initial={{ scale: 0.95, opacity: 0 }}

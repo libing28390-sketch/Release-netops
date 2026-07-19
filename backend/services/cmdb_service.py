@@ -86,7 +86,16 @@ def list_cmdb_devices(conn) -> list[dict]:
             COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), '') AS site_id,
             s.site_code,
             s.site_name,
-            s.state_province,
+            s.country AS site_country,
+            s.state_province AS site_state_province,
+            s.city AS site_city,
+            s.district AS site_district,
+            COALESCE(NULLIF(r.id, ''), NULLIF(r_legacy.id, ''), '') AS cmdb_rack_id,
+            COALESCE(NULLIF(r.rack_code, ''), NULLIF(r_legacy.rack_code, ''), '') AS rack_code,
+            COALESCE(NULLIF(r.rack_name, ''), NULLIF(r_legacy.rack_name, ''), NULLIF(r_legacy.name, ''), '') AS rack_name,
+            COALESCE(NULLIF(r.floor, ''), NULLIF(r_legacy.floor, ''), '') AS rack_floor,
+            COALESCE(NULLIF(r.room, ''), NULLIF(r_legacy.room, ''), '') AS rack_room,
+            COALESCE(NULLIF(r.row, ''), NULLIF(r_legacy.row, ''), '') AS rack_row,
             pa.rack,
             pa.rack_unit,
             pa.management_ip,
@@ -110,6 +119,11 @@ def list_cmdb_devices(conn) -> list[dict]:
         FROM devices d
         LEFT JOIN physical_assets pa ON pa.id = d.asset_id
         LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+        LEFT JOIN rack_devices rd ON rd.asset_id = pa.id
+        LEFT JOIN racks r ON r.id = COALESCE(NULLIF(d.rack_id, ''), NULLIF(rd.rack_id, ''))
+        LEFT JOIN racks r_legacy ON NULLIF(pa.rack, '') IS NOT NULL
+            AND r_legacy.site_id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+            AND (r_legacy.rack_code = pa.rack OR r_legacy.rack_name = pa.rack OR r_legacy.name = pa.rack)
         ORDER BY COALESCE(d.hostname, ''), COALESCE(d.ip_address, '')
         """
     ).fetchall()

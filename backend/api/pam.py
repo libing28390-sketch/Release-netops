@@ -24,7 +24,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -39,6 +39,10 @@ router = APIRouter()
 # WS 自身已通过 session_token 做一次性令牌验证，无需额外 License 依赖。
 ws_router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# A newly issued PAM token is single-use, but users may need time to switch
+# from the dashboard to the terminal window or local protocol assistant.
+PAM_SESSION_TOKEN_TTL_MINUTES = 20
 
 # Track active WebSocket sessions for admin kill.
 # Value shape: { 'ws': WebSocket, 'loop': asyncio.AbstractEventLoop }
@@ -211,12 +215,61 @@ def _verify_mfa(username: str, fixed_pin: str, mfa_code: str, mfa_nonce: Optiona
     return True, ''
 
 
+def _verify_mfa_totp(username: str, fixed_pin: str, mfa_code: str) -> tuple[bool, str]:
+    """Verify the device-admin factors with a bcrypt PIN and standard TOTP.
+
+    Device authorization no longer depends on Feishu/DingTalk delivery.  The
+    fixed PIN is stored as a bcrypt hash and the second factor is the current
+    six-digit code from any RFC 6238-compatible authenticator application.
+    """
+    import bcrypt
+    from api.users import verify_totp
+
+    if not username:
+        return False, '无法识别当前用户身份'
+    pin = str(fixed_pin or '')
+    code = str(mfa_code or '')
+    if not pin.isdigit() or len(pin) != 6:
+        return False, '固定安全码必须是 6 位数字'
+    if not code.isdigit() or len(code) != 6:
+        return False, 'MFA 验证码必须是 6 位数字'
+
+    conn = get_db_connection()
+    try:
+        user_row = conn.execute(
+            "SELECT fixed_pin, mfa_enabled, mfa_secret FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+        if not user_row:
+            return False, '用户不存在'
+
+        stored_hash = str(user_row['fixed_pin'] or '')
+        if not stored_hash:
+            return False, '请先在个人设置中配置 6 位固定安全码'
+        if not stored_hash.startswith(('$2a$', '$2b$', '$2y$')):
+            return False, '固定安全码存储格式不安全，请重新保存固定安全码'
+        try:
+            pin_ok = bcrypt.checkpw(pin.encode('utf-8'), stored_hash.encode('utf-8'))
+        except (ValueError, TypeError):
+            pin_ok = False
+        if not pin_ok:
+            return False, '固定安全码验证失败'
+
+        if int(user_row['mfa_enabled'] or 0) != 1 or not user_row['mfa_secret']:
+            return False, '请先在个人设置中启用 MFA 验证器'
+        if not verify_totp(str(user_row['mfa_secret']), code, window=1):
+            return False, 'MFA 验证码错误或已过期'
+        return True, ''
+    finally:
+        conn.close()
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  CORE: Unified Session Gateway
 # ══════════════════════════════════════════════════════════════════════
 
 @router.post('/pam/sessions')
-def create_session(payload: SessionCreateIn):
+def create_session(payload: SessionCreateIn, request: Request):
     """
     Create a controlled terminal session.
     Returns a one-time session_token — frontend uses this to connect via WebSocket.
@@ -245,7 +298,14 @@ def create_session(payload: SessionCreateIn):
             raise HTTPException(status_code=422, detail='Asset has no management IP configured')
 
         # 2. Determine requester
-        requester = payload.requester_username or 'unknown'
+        auth_session = None
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            from api.users import validate_session_token
+            auth_session = validate_session_token(auth_header[7:].strip())
+        if not auth_session or not auth_session.get('username'):
+            raise HTTPException(status_code=401, detail='Not authenticated')
+        requester = auth_session['username']
 
         # 3. Access control: admin requires MFA
         level = (payload.access_level or 'normal').strip().lower()
@@ -261,7 +321,7 @@ def create_session(payload: SessionCreateIn):
                 }
             
             # Perform actual verification
-            success, error = _verify_mfa(requester, payload.fixed_pin, payload.mfa_code, payload.mfa_nonce)
+            success, error = _verify_mfa_totp(requester, payload.fixed_pin, payload.mfa_code)
             if not success:
                 raise HTTPException(status_code=403, detail=error)
 
@@ -279,7 +339,7 @@ def create_session(payload: SessionCreateIn):
         session_id = f"session-{uuid.uuid4().hex[:12]}"
         session_token = f"pam-sess-{uuid.uuid4().hex}"
         now = _utc_now()
-        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=PAM_SESSION_TOKEN_TTL_MINUTES)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
         target_port = resolve_ssh_port(device if device else asset)
 
         conn.execute('''
@@ -326,7 +386,7 @@ def create_session(payload: SessionCreateIn):
             'requires_mfa': False,
             'connect': {
                 'ws_url': f'/api/pam/ws/{session_token}',
-                'expires_in_seconds': 300,
+            'expires_in_seconds': PAM_SESSION_TOKEN_TTL_MINUTES * 60,
             },
             'access_level': level,
             'asset': {
@@ -1361,7 +1421,9 @@ async def verify_mfa(data: dict):
     fixed_pw = data.get("fixed_password")
     current_username = data.get("current_username")
     
-    success, error = _verify_mfa(current_username, fixed_pw, mfa_code, mfa_nonce)
+    # Stand-alone verification follows the same per-user bcrypt PIN + TOTP
+    # policy as device sessions; webhook-delivered codes are not accepted.
+    success, error = _verify_mfa_totp(current_username, fixed_pw, mfa_code)
     if success:
         return {"success": True}
     return {"success": False, "error": error}

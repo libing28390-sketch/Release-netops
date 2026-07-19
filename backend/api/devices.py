@@ -215,6 +215,9 @@ def _sanitize_device_item(item: dict) -> dict:
         sanitized['datacenter'] = canonical_site_name
     if canonical_site_id:
         sanitized['site_id'] = canonical_site_id
+    cmdb_rack_id = str(sanitized.get('cmdb_rack_id') or '').strip()
+    if cmdb_rack_id and not str(sanitized.get('rack_id') or '').strip():
+        sanitized['rack_id'] = cmdb_rack_id
     if 'password' in sanitized:
         sanitized['password'] = ''
     if 'enable_password' in sanitized:
@@ -563,12 +566,26 @@ def read_devices(
             'pa.department, pa.warranty_expiry, pa.purchase_date, '
             'pa.business_ip, pa.vlan, pa.uplink_switch, pa.uplink_port, '
             'COALESCE(NULLIF(pa.site_id, \'\'), NULLIF(d.site_id, \'\'), \'\') AS canonical_site_id, '
-            's.site_name, s.site_code'
+            's.site_name, s.site_code, s.country AS site_country, '
+            's.state_province AS site_state_province, s.city AS site_city, '
+            's.district AS site_district, '
+            'COALESCE(NULLIF(r.id, \'\'), NULLIF(r_legacy.id, \'\'), \'\') AS cmdb_rack_id, '
+            'COALESCE(NULLIF(r.rack_code, \'\'), NULLIF(r_legacy.rack_code, \'\'), \'\') AS rack_code, '
+            'COALESCE(NULLIF(r.rack_name, \'\'), NULLIF(r_legacy.rack_name, \'\'), NULLIF(r_legacy.name, \'\'), \'\') AS rack_name, '
+            'COALESCE(NULLIF(r.datacenter, \'\'), NULLIF(r_legacy.datacenter, \'\'), \'\') AS rack_datacenter, '
+            'COALESCE(NULLIF(r.floor, \'\'), NULLIF(r_legacy.floor, \'\'), \'\') AS rack_floor, '
+            'COALESCE(NULLIF(r.room, \'\'), NULLIF(r_legacy.room, \'\'), \'\') AS rack_room, '
+            'COALESCE(NULLIF(r.row, \'\'), NULLIF(r_legacy.row, \'\'), \'\') AS rack_row'
         )
         from_clause = (
             'FROM devices d '
             'LEFT JOIN physical_assets pa ON d.asset_id = pa.id '
-            "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))"
+            "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, '')) "
+            'LEFT JOIN rack_devices rd ON rd.asset_id = pa.id '
+            'LEFT JOIN racks r ON r.id = COALESCE(NULLIF(d.rack_id, \'\'), NULLIF(rd.rack_id, \'\')) '
+            "LEFT JOIN racks r_legacy ON NULLIF(pa.rack, '') IS NOT NULL "
+            "AND r_legacy.site_id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, '')) "
+            'AND (r_legacy.rack_code = pa.rack OR r_legacy.rack_name = pa.rack OR r_legacy.name = pa.rack)'
         )
 
         select_clause = f'd.*{asset_cols}'

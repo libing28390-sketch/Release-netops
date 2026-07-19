@@ -22,6 +22,13 @@ function humanizeError(raw: string, isZh: boolean): { title: string; detail?: st
     return isZh ? { title: '连接出错' } : { title: 'Connection error' };
   }
   if (s.includes('invalid') && s.includes('token')) {
+    if (isZh) {
+      return {
+        title: '\u4f1a\u8bdd\u4ee4\u724c\u65e0\u6548\u6216\u5df2\u8fc7\u671f',
+        detail: '\u4ee4\u724c\u4ec5\u4e00\u6b21\u6027\u6709\u6548\uff08\u9ed8\u8ba4 20 \u5206\u949f\uff09\uff0c\u6216\u8fde\u63a5\u5df2\u5728\u5176\u4ed6\u9875\u9762\u6253\u5f00\u3002',
+        hint: '\u8bf7\u56de\u5230\u8bbe\u5907\u5217\u8868\u91cd\u65b0\u7533\u8bf7\u4e00\u4e2a\u65b0\u4f1a\u8bdd\u518d\u8bd5\u3002',
+      };
+    }
     return isZh
       ? {
           title: '会话令牌无效或已过期',
@@ -30,7 +37,7 @@ function humanizeError(raw: string, isZh: boolean): { title: string; detail?: st
         }
       : {
           title: 'Session token is invalid or expired',
-          detail: 'Session tokens are single-use and expire after 5 minutes, or the session is already open in another tab.',
+          detail: 'Session tokens are single-use and expire after 20 minutes, or the session is already open in another tab.',
           hint: 'Please return to the device list and request a new session.',
         };
   }
@@ -139,8 +146,9 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
     // 1. Initialize Xterm
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: '"Cascadia Code", Menlo, monospace',
-      fontSize: 14,
+      // Match the AWS/VM terminal style used by the asset access console.
+      fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, "Courier New", monospace',
+      fontSize: 12,
       theme: {
         background: '#000000',
         foreground: '#cccccc',

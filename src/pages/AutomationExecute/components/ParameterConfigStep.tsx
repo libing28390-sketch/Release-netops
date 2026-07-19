@@ -333,7 +333,7 @@ export const ParameterConfigStep: React.FC<ParameterConfigStepProps> = ({
                       {(quickPlaybookPreview[phase] || []).map((cmd, idx) => (
                         <div key={idx} className="flex items-start gap-2 mb-1">
                           <span className="text-cyan-400/40 text-[11px] select-none mt-0.5">❯</span>
-                          <code className="text-[11px] font-mono text-[#e6edf3] leading-relaxed whitespace-pre-wrap">{cmd}</code>
+                          <code className="netops-terminal-font text-[11px] text-[#e6edf3] leading-relaxed whitespace-pre-wrap">{cmd}</code>
                         </div>
                       ))}
                     </div>

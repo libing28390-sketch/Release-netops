@@ -128,12 +128,18 @@ const EXPORT_BANDWIDTH_TIERS = [
   { label: '1G', color: '#22c55e', minMbps: 1_000 },
   { label: '10G', color: '#0ea5e9', minMbps: 10_000 },
   { label: '40G', color: '#8b5cf6', minMbps: 40_000 },
+  { label: '80G', color: '#ec4899', minMbps: 80_000 },
+  { label: '100G', color: '#db2777', minMbps: 100_000 },
+  { label: '200G+', color: '#4338ca', minMbps: 200_000 },
   { label: 'Unknown', color: '#64748b', minMbps: -1 },
 ] as const;
 
 const inferInterfaceSpeedMbps = (value?: string): number | null => {
   const name = String(value || '').trim().toLowerCase().replace(/\s+/g, '');
   if (!name) return null;
+  if (/^(fourhundredgigabitethernet|fourhundredgige|400g)/.test(name)) return 400_000;
+  if (/^(twohundredgigabitethernet|twohundredgige|200g)/.test(name)) return 200_000;
+  if (/^(eightygigabitethernet|eightygige|80g)/.test(name)) return 80_000;
   if (/^(fortygigabitethernet|fo)/.test(name)) return 40_000;
   if (/^(hundredgigabitethernet|hu)/.test(name)) return 100_000;
   if (/^(twentyfivegige|tw)/.test(name)) return 25_000;
@@ -585,7 +591,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         return element;
       };
       exportOverlay = makeSvg('g', { class: 'topology-export-overlay', 'pointer-events': 'none' }) as SVGGElement;
-      const legendWidth = 390;
+      const legendWidth = Math.max(390, 76 + EXPORT_BANDWIDTH_TIERS.length * 61);
       const legendHeight = 34;
       const legendGroup = makeSvg('g', { transform: `translate(${exportX + 16}, ${exportY + Math.max(16, height - legendHeight - 16)})` });
       legendGroup.appendChild(makeSvg('rect', {

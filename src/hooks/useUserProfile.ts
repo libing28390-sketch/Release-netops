@@ -64,7 +64,9 @@ export const useUserProfile = ({
       oldPassword: '',
       password: '',
       confirmPassword: '',
-      fixedPin: currentUserRecord?.fixed_pin || '',
+      // The backend never returns the bcrypt hash.  Keep this field empty so
+      // a saved PIN can only be replaced intentionally, never echoed back.
+      fixedPin: '',
       displayName: currentUserRecord?.display_name || '',
       phone: currentUserRecord?.phone || '',
       email: currentUserRecord?.email || '',
@@ -162,7 +164,10 @@ export const useUserProfile = ({
 
       const response = await fetch(`/api/users/${profileUserId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(localStorage.getItem('netops_token') ? { Authorization: `Bearer ${localStorage.getItem('netops_token')}` } : {}),
+        },
         body: JSON.stringify(payload),
       });
       const data = await response.json();

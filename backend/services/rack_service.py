@@ -168,7 +168,7 @@ def get_rack(conn, rack_id: str) -> dict:
     return _row_to_dict(row)
 
 
-def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
+def create_rack(conn, *, name: str, datacenter: str = '', floor: str = '', room: str = '',
                 row: str = '', total_u: int = 42, description: str = '',
                 status: str = 'active', power_capacity_watts: int = 0,
                 site_id: str = 'site-default', rack_code: str = '',
@@ -212,14 +212,14 @@ def create_rack(conn, *, name: str, datacenter: str = '', room: str = '',
     now = _utc_now()
     conn.execute(
         """INSERT INTO racks (
-            id, site_id, rack_code, rack_name, name, datacenter, room, row, room_name, row_name,
+            id, site_id, rack_code, rack_name, name, datacenter, floor, room, row, room_name, row_name,
             total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
             current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
             placement_strategy, rack_type_id, width_mm, depth_mm, allow_front_rear_mount, created_at, updated_at
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            rack_id, site_id, rack_code, rack_name, name, site_code, room, row, room_name, row_name,
+            rack_id, site_id, rack_code, rack_name, name, site_code, floor, room, row, room_name, row_name,
             total_u, used_u, available_u, power_capacity_w, power_capacity_watts, status, remarks, description,
             current_power_w, power_utilization, max_weight_kg, current_weight_kg, cooling_zone,
             placement_strategy, rack_type_id, width_mm, depth_mm, 1 if allow_front_rear_mount else 0, now, now
@@ -247,7 +247,7 @@ def update_rack(conn, rack_id: str, **fields) -> dict:
     
     # We should support updating both sets of fields
     supported_keys = (
-        'name', 'datacenter', 'room', 'row', 'total_u', 'description', 'status', 'power_capacity_watts',
+        'name', 'datacenter', 'floor', 'room', 'row', 'total_u', 'description', 'status', 'power_capacity_watts',
         'site_id', 'rack_code', 'rack_name', 'room_name', 'row_name', 'used_u', 'available_u',
         'power_capacity_w', 'current_power_w', 'power_utilization', 'max_weight_kg', 'current_weight_kg',
         'cooling_zone', 'remarks', 'placement_strategy', 'rack_type_id', 'width_mm', 'depth_mm',
