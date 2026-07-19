@@ -81,7 +81,7 @@ jobs:
           rm -f -- "--version"
 
           rm -rf desktop/
-          rm -f NetOps.exe NetOps.spec start.bat netops_logo.png
+          rm -f NetOps.exe NetOps.spec NexoraTerminalAgent.exe NexoraTerminalAgent.spec start.bat netops_logo.png
           rm -rf .github/
 
           # TLS keys and certificates are deployment inputs, never release content.

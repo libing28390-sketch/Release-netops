@@ -3,6 +3,7 @@
 ## 完成内容
 
 - Windows 发布流水线新增 PyInstaller 单文件构建，产物为 `NexoraTerminalAgent.exe`，使用 `--noconsole`，普通用户双击即可启动。
+- 当前源码仓库同时保留本机生成的 `NexoraTerminalAgent.exe`；Windows 发布分支会直接携带该文件，CI 也会在发布时重新构建校验。
 - Ubuntu 仍使用 `install-terminal-agent.sh`，由 systemd user service 管理生命周期。
 - `/api/system/download-terminal-agent` 增加平台参数：`windows` 返回 EXE，`ubuntu` 返回 shell 安装脚本。
 - Docker 通过 `TERMINAL_AGENT_WINDOWS_URL` 指向 Windows 发布分支；不把 Windows 二进制塞入 Linux 镜像。
