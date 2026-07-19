@@ -193,6 +193,26 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_interfaces_device_id ON interfaces(device_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_interfaces_mac ON interfaces(mac_address)')
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_interfaces_device_name ON interfaces(device_id, interface_name)')
+    # Keep the baseline aligned with the canonical Interface model and the
+    # topology/graph readers. Older installations may have only the original
+    # interface_name column; the versioned migration below backfills them.
+    ensure_column('interfaces', 'name_raw', "TEXT DEFAULT ''")
+    ensure_column('interfaces', 'name_display', "TEXT DEFAULT ''")
+    ensure_column('interfaces', 'primary_ip', "TEXT DEFAULT ''")
+    ensure_column('interfaces', 'ip_address', "TEXT DEFAULT ''")
+    ensure_column('interfaces', 'ip_prefix_length', 'INTEGER')
+    ensure_column('interfaces', 'ip_version', 'INTEGER')
+    ensure_column('interfaces', 'is_l3', 'INTEGER DEFAULT 0')
+    ensure_column('interfaces', 'last_change', 'TEXT')
+    ensure_column('interfaces', 'last_seen', 'TEXT')
+    ensure_column('interfaces', 'lag_id', "TEXT DEFAULT ''")
+    ensure_column('interfaces', 'vlan_mode', "TEXT DEFAULT 'access'")
+    cursor.execute(
+        "UPDATE interfaces SET name_raw = interface_name WHERE COALESCE(name_raw, '') = ''"
+    )
+    cursor.execute(
+        "UPDATE interfaces SET name_display = interface_name WHERE COALESCE(name_display, '') = ''"
+    )
     
     # Create tenants table if not exists
     cursor.execute('''
