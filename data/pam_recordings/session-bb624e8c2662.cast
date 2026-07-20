@@ -1,7 +1,0 @@
-{"version": 2, "width": 80, "height": 24, "timestamp": 1778380939, "title": "PAM Session: user@192.168.204.128", "env": {"TERM": "xterm-256color"}}
-[0.01970195770263672, "o", "To run a command as administrator (user \"root\"), use \"sudo <command>\".\r\nSee \"man sudo_root\" for details.\r\n\r\n"]
-[0.0704185962677002, "o", "\u001b[?2004h\u001b]0;user@devops: ~\u0007\u001b[01;32muser@devops\u001b[00m:\u001b[01;34m~\u001b[00m$ "]
-[17.861632823944092, "o", "\r\n\u001b[?2004l\r\u001b[?2004h\u001b]0;user@devops: ~\u0007\u001b[01;32muser@devops\u001b[00m:\u001b[01;34m~\u001b[00m$ "]
-[18.042847156524658, "o", "\r\n\u001b[?2004l\r\u001b[?2004h\u001b]0;user@devops: ~\u0007\u001b[01;32muser@devops\u001b[00m:\u001b[01;34m~\u001b[00m$ "]
-[18.18251943588257, "o", "\r\n\u001b[?2004l\r\u001b[?2004h\u001b]0;user@devops: ~\u0007\u001b[01;32muser@devops\u001b[00m:\u001b[01;34m~\u001b[00m$ "]
-[18.342265605926514, "o", "\r\n\u001b[?2004l\r\u001b[?2004h\u001b]0;user@devops: ~\u0007\u001b[01;32muser@devops\u001b[00m:\u001b[01;34m~\u001b[00m$ "]

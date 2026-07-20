@@ -126,3 +126,8 @@ tools/node/
 !**/docs/fixes/**/*.md
 !**/docs/introduction.md
 !**/docs/cmdb_development.md
+
+# Exclude compiled agent binaries and backup data
+scripts/nexora.exe
+backend/static/nexora.exe
+*.db.bak
