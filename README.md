@@ -1,22 +1,22 @@
 <div align="center">
- 
+
 # NEXORA
- 
+
 ### Modern Network Operations Platform
- 
+
 **Everything your network team needs.**  
 **One Platform. Total Network Control.**
- 
+
 `CMDB` • `IPAM` • `Monitoring` • `Automation` • `Configuration` • `Topology` • `Compliance` • `Audit`
- 
+
 <br/>
- 
+
 [![Quick Start](https://img.shields.io/badge/🚀_Quick_Start-111111?style=for-the-badge&logo=docker&logoColor=white)](#-quick-start)
 [![Documentation](https://img.shields.io/badge/📚_Documentation-007ACC?style=for-the-badge&logo=readthedocs&logoColor=white)](#-documentation)
 [![Roadmap](https://img.shields.io/badge/🗺️_Roadmap-10AEFF?style=for-the-badge)](#-roadmap)
- 
+
 <br/>
- 
+
 ```text
 ═════════════════════════════════════════════════════════════════════════════════
  
@@ -32,24 +32,24 @@
  
 ═════════════════════════════════════════════════════════════════════════════════
 ```
- 
+
 </div>
- 
+
 <br/>
- 
+
 ---
- 
+
 ## Why Nexora?
- 
+
 Many organizations still maintain network inventory in spreadsheets, monitor devices using independent systems, back up configurations with separate tools, execute scripts from engineers' laptops, and document everything somewhere else.
- 
+
 As infrastructure grows, operational complexity grows even faster.
- 
+
 **Nexora was built to bring everything together.**  
 A unified platform for network inventory, monitoring, automation, configuration management, topology, CMDB, IPAM, and operational workflows.
- 
+
 <br/>
- 
+
 ```text
 ┌───────────────────────────────────────┐       ┌───────────────────────────────────────┐
 │     Traditional Network Operations    │       │                 Nexora                │
@@ -72,19 +72,19 @@ A unified platform for network inventory, monitoring, automation, configuration 
 └───────────────────────────────────────┘       │         [ Everything Connected ]      │
                                                 └───────────────────────────────────────┘
 ```
- 
+
 <div align="center">
- 
+
 > **Modern network operations should not rely on disconnected tools.**
- 
+
 </div>
- 
+
 <br/>
- 
+
 ---
- 
+
 ## Features / 核心特性
- 
+
 ### 📦 Device Inventory (CMDB 资产与机架)
 *   **Unified CMDB / 统一资产建模**：纳管网络硬件设备、板卡、接口和标签，全面覆盖设备物理生命周期。
 *   **Rack Layouts / 三维机柜可视化**：提供 2D/3D 可视化机架拖拽、功耗和空间利用率计算，实现物理空间精准把控。
@@ -115,31 +115,41 @@ A unified platform for network inventory, monitoring, automation, configuration 
 *   **Statistical Reports / 自动巡检与分析报表**：导出全局设备健康度指标、子网分配率快照及资产合规扫描分析报告。
 
 <br/>
- 
+
 ---
- 
+
 ## Architecture / 系统架构
- 
+
+Nexora 采用前后端分离的分层架构，通过 Nginx 反向代理统一入口，后端 FastAPI 引擎承担 API 服务、定时调度、设备接入和遥测采集，前端 React 19 + TypeScript SPA 提供全交互式操作体验。
+
+| 层级 | 技术栈 | 职责 |
+| :--- | :--- | :--- |
+| **接入层** | Nginx Reverse Proxy | HTTPS 终结、静态资源分发、API 反向代理、WebSocket 透传 |
+| **前端** | React 19 · TypeScript · Zustand · Recharts | 交互式仪表盘、拓扑可视化、Web Terminal、IPAM 前缀树、机架 3D 视图 |
+| **后端引擎** | FastAPI · APScheduler · Pydantic | RESTful API、RBAC 鉴权、定时任务调度、配置备份、告警通知 |
+| **设备驱动** | Netmiko · SNMP · TextFSM | 多厂商 SSH 连接池、CLI 命令并发执行、SNMP 遥测轮询、结构化解析 |
+| **数据层** | PostgreSQL 17（生产）/ SQLite（开发） | CMDB 资产、凭证加密存储、IPAM 子网、遥测时序、审计日志、配置版本 |
+
 ```mermaid
 flowchart TD
-    Browser[Browser / Web Terminal] --> Nginx[Nginx Reverse Proxy]
-    Nginx --> React[React 19 + TypeScript Frontend]
-    Nginx --> FastAPI[FastAPI Engine & Scheduler]
-    FastAPI --> PostgreSQL[(PostgreSQL 17 Database)]
-    FastAPI --> SSH[Netmiko Multi-Vendor Drivers]
-    FastAPI --> SNMP[SNMP Telemetry & TextFSM Parsing]
-    SSH --> Network((Network Devices & Racks))
+    Browser["🌐 Browser / Web Terminal"] --> Nginx["⚡ Nginx Reverse Proxy"]
+    Nginx --> React["⚛️ React 19 + TypeScript Frontend"]
+    Nginx --> FastAPI["🚀 FastAPI Engine & Scheduler"]
+    FastAPI --> PostgreSQL[("🐘 PostgreSQL 17 Database")]
+    FastAPI --> SSH["🔒 Netmiko Multi-Vendor Drivers"]
+    FastAPI --> SNMP["📡 SNMP Telemetry & TextFSM Parsing"]
+    SSH --> Network(("🖧 Network Devices & Racks"))
     SNMP --> Network
 ```
- 
+
 <br/>
- 
+
 ---
- 
+
 ## Screenshots / 系统界面
- 
+
 <div align="center">
- 
+
 | **Dashboard** | **Device Inventory** |
 | :---: | :---: |
 | *Real-time operational overview & health status*<br/>![Dashboard](./docs/images/dashboard.png) | *Multi-vendor hardware & lifecycle management*<br/>![Device Inventory](./docs/images/assets_devices.png) |
@@ -147,31 +157,31 @@ flowchart TD
 | *Auto-discovered visual network map*<br/>![Topology](./docs/images/topology.png) | *Continuous SNMP telemetry & alert center*<br/>![Monitoring](./docs/images/monitor_overview.png) |
 | **Configuration** | **Terminal** |
 | *Automated backups & visual diff baseline comparison*<br/>![Configuration](./docs/images/config_backup.png) | *Integrated secure Web SSH terminal*<br/>![Terminal](./docs/images/terminal.png) |
- 
+
 </div>
- 
+
 <br/>
- 
+
 ---
- 
+
 ## Quick Start / 快速部署
- 
+
 ```bash
 git clone https://github.com/libing28390-sketch/Release-netops.git
 cd Release-netops
 bash scripts/deploy-docker.sh install
 ```
- 
+
 <div align="center">
- 
+
 > **Ready in minutes.**
- 
+
 </div>
- 
+
 <br/>
- 
+
 ---
- 
+
 ## Environment Variables / 环境变量说明
 
 部署项目时，请将 `.env.example` 复制为 `.env` 并按需调整参数值：
@@ -254,11 +264,11 @@ sudo systemctl restart netops
 一键安装脚本 `deploy-ubuntu.sh` 内置容器化环境检测。当发现没有 systemd 时，会自动回退使用系统 `service` 或以 `nohup` 守护方式在后台拉起 Python 和 Postgres 进程。如果在某些特殊云主机中失败，建议改用 **Docker Compose 一键部署**。
 
 <br/>
- 
+
 ---
- 
+
 ## Documentation / 关联详细文档导航
- 
+
 *   **[Deployment Guide / 生产环境详尽部署指南](./DEPLOY.md)**：包含国内镜像网络加速、SSL/HTTPS 安全证书管理、数据卷持久化及安全防护。
 *   **[Quick Start Guide / 快速开始](./docs/deploy/docker.md)**：5分钟利用 Docker 容器搭建本平台的保姆级教程。
 *   **[User Manual / 关联功能用户使用手册](./docs/walkthrough/)**：设备资产录入指南、物理机架三维上架、自动拓扑关系图、配置 Diff 比较等。
@@ -266,9 +276,9 @@ sudo systemctl restart netops
 <br/>
 
 ---
- 
+
 ## Roadmap / 开发路线规划
- 
+
 | 规划版本 | 核心开发功能规划 | 当前状态 |
 | :---: | :--- | :---: |
 | **1.1** | **AI Copilot** —— 智能网络命令生成、AI 解析 CLI 输出与配置差异异常分析 | 🚧 *In Progress* |
@@ -276,13 +286,13 @@ sudo systemctl restart netops
 | **1.3** | **Streaming Telemetry** —— 支持 gRPC 遥测数据流高速采集，实现秒级高频流量采样 | 📅 *Planned* |
 | **1.4** | **RESTCONF / NETCONF** —— 多厂商网络设备标准接口对接与结构化 XML/JSON 下发 | 📅 *Planned* |
 | **2.0** | **High Availability Cluster** —— 多节点分布式采集网络拓扑与高可用主备冗余引擎 | 📅 *Planned* |
- 
+
 <br/>
- 
+
 ---
- 
+
 <div align="center">
- 
+
 ## **Nexora —— One Platform. Total Network Control.**
- 
+
 </div>

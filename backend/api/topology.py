@@ -121,12 +121,13 @@ async def trigger_discovery(
 def get_links(
     limit: int = Query(default=5000, ge=1, le=20000),
     site_id: str | None = Query(default=None),
-    include_stale: bool = Query(default=True),
+    include_stale: bool = Query(default=False),
 ):
-    """Return all topology links, optionally capped to `limit`.
+    """Return current topology links, optionally including stale evidence.
 
     The default 5000 cap protects against meshed-DC blowups; the Topology
-    canvas filters client-side anyway so a hard cap is acceptable.
+    canvas asks explicitly for stale links when the historical-evidence toggle
+    is enabled. Current topology must not silently render expired neighbors.
     """
     managed_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
     unmanaged = get_unmanaged_neighbors(site_id=site_id)

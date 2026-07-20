@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, Future
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from netmiko import ConnectHandler
+from netmiko import ConnectHandler, NetmikoAuthenticationException
 
 from database import get_db_connection, _SERIAL_PK, init_db
 from core.crypto import decrypt_credential
@@ -307,25 +307,37 @@ def _load_eligible_devices(role_filter: list[str] | None = None) -> list[dict]:
         auth_model = (d.get('auth_model') or 'single').lower()
 
         # dual 模式：优先用 admin 账号登录（与 operational_data_service 保持一致）
-        if auth_model == 'dual':
-            username = creds.get('admin_username') or ''
-            password = creds.get('admin_password') or ''
-        else:
-            username = creds.get('normal_username') or ''
-            password = creds.get('normal_password') or ''
-
-        if not username or not password:
+        # Match Playbooks: use the normal account first, then an admin fallback
+        # for dual-auth devices whose normal account is unavailable.
+        credential_attempts = _credential_attempts(creds, auth_model)
+        if not credential_attempts:
             continue
         if role_filter:
             dev_role = (d.get('role') or '').lower().strip()
             if dev_role not in role_filter:
                 continue
         # 把解析好的登录凭据写回 dict，供 _build_ssh_params 直接使用
-        d['_ssh_username'] = username
-        d['_ssh_password'] = password
+        d['_ssh_username'], d['_ssh_password'] = credential_attempts[0]
+        d['_ssh_fallback_credentials'] = credential_attempts[1:]
         d['_ssh_enable'] = creds.get('enable_password') or ''
         devices.append(d)
     return devices
+
+
+def _credential_attempts(creds: dict[str, str], auth_model: str) -> list[tuple[str, str]]:
+    """Return ordered SSH credential pairs for a collector connection."""
+    pairs = [
+        (creds.get('normal_username') or '', creds.get('normal_password') or ''),
+    ]
+    if auth_model == 'dual':
+        pairs.append((creds.get('admin_username') or '', creds.get('admin_password') or ''))
+
+    attempts: list[tuple[str, str]] = []
+    for pair in pairs:
+        if not all(pair) or pair in attempts:
+            continue
+        attempts.append(pair)
+    return attempts
 
 
 def _build_ssh_params(device_info: dict) -> dict[str, Any]:
@@ -367,22 +379,48 @@ def _send_command(device_info: dict, command: str) -> str:
         logger.warning("SSH port %s is closed/unreachable for %s", port, device_ip)
         return ""
 
-    conn_params = _build_ssh_params(device_info)
-    with limited_connect_handler(device_info, ConnectHandler, **conn_params) as client:
-        if conn_params.get('secret'):
-            try:
-                client.enable()
-            except Exception:
-                pass
-        output = client.send_command(
-            command,
-            cmd_verify=False,
-            strip_prompt=True,
-            strip_command=True,
-            read_timeout=30,
-        )
-        set_cached_command(device_ip, command, output)
-        return output
+    credential_attempts = [
+        (device_info.get('_ssh_username') or device_info.get('username') or '',
+         device_info.get('_ssh_password') or device_info.get('password') or ''),
+        *(device_info.get('_ssh_fallback_credentials') or []),
+    ]
+    credential_attempts = [pair for pair in credential_attempts if all(pair)]
+    last_auth_error = None
+
+    for attempt_index, (username, password) in enumerate(credential_attempts):
+        attempt_device = dict(device_info)
+        attempt_device['_ssh_username'] = username
+        attempt_device['_ssh_password'] = password
+        conn_params = _build_ssh_params(attempt_device)
+        try:
+            with limited_connect_handler(attempt_device, ConnectHandler, **conn_params) as client:
+                if conn_params.get('secret'):
+                    try:
+                        client.enable()
+                    except Exception:
+                        pass
+                output = client.send_command(
+                    command,
+                    cmd_verify=False,
+                    strip_prompt=True,
+                    strip_command=True,
+                    read_timeout=30,
+                )
+                set_cached_command(device_ip, command, output)
+                return output
+        except NetmikoAuthenticationException as exc:
+            last_auth_error = exc
+            if attempt_index + 1 < len(credential_attempts):
+                logger.warning(
+                    "Normal SSH authentication failed for %s; retrying with configured fallback",
+                    device_ip,
+                )
+                continue
+            raise
+
+    if last_auth_error:
+        raise last_auth_error
+    return ""
 
 
 # ── 精确 ARP 查询 ─────────────────────────────────────
@@ -1896,7 +1934,11 @@ def _collect_device_interface_ips(device_info: dict) -> list[dict]:
         # If no records parsed (perhaps command succeeded but output empty/unparsed), raise to fallback
         raise ValueError("No interface IP records parsed from detailed command.")
     except Exception as exc:
-        logger.debug(f"[IP Inventory] Detailed interface IP collection failed for {device_info.get('ip_address')}, falling back to brief: {exc}")
+        logger.warning(
+            "[IP Inventory] Detailed interface IP collection failed for %s (%s); falling back to brief",
+            device_info.get('hostname') or device_info.get('ip_address'),
+            type(exc).__name__,
+        )
         if platform in ('huawei_vrp', 'h3c_comware'):
             cmd_fallback = 'display ip interface brief'
         else:
@@ -1905,7 +1947,11 @@ def _collect_device_interface_ips(device_info: dict) -> list[dict]:
             output = _send_command(device_info, cmd_fallback)
             return _parse_brief_interface_ips(output, device_info)
         except Exception as fallback_exc:
-            logger.debug(f"[IP Inventory] Fallback brief command also failed for {device_info.get('ip_address')}: {fallback_exc}")
+            logger.warning(
+                "[IP Inventory] Interface IP collection failed for %s (%s)",
+                device_info.get('hostname') or device_info.get('ip_address'),
+                type(fallback_exc).__name__,
+            )
             return []
 
 
@@ -1984,17 +2030,25 @@ def sync_ip_inventory():
         if all_devices:
             workers = min(5, len(all_devices))
             device_ips: list[dict] = []
+            device_record_counts: dict[str, int] = {}
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 future_map = {
                     executor.submit(_collect_device_interface_ips, dev): dev
                     for dev in all_devices
                 }
                 for future in as_completed(future_map):
+                    dev = future_map[future]
                     try:
                         records = future.result()
                         device_ips.extend(records)
+                        device_record_counts[dev['id']] = len(records)
                     except Exception as exc:
-                        logger.debug(f"[IP Inventory Sync] Device collection error: {exc}")
+                        device_record_counts[dev['id']] = 0
+                        logger.warning(
+                            "[IP Inventory Sync] Device collection failed for %s (%s)",
+                            dev.get('hostname') or dev.get('ip_address'),
+                            type(exc).__name__,
+                        )
 
             if device_ips:
                 conn = get_db_connection()
@@ -2028,7 +2082,18 @@ def sync_ip_inventory():
                         )
                         total_device += 1
                     conn.commit()
-                    logger.info(f"[IP Inventory Sync] Phase 2 (Devices): synced {total_device} IPs from {len(all_devices)} devices.")
+                    successful_devices = sum(1 for count in device_record_counts.values() if count > 0)
+                    logger.info(
+                        "[IP Inventory Sync] Phase 2 (Devices): synced %d IPs from %d/%d devices; no usable records from %s",
+                        total_device,
+                        successful_devices,
+                        len(all_devices),
+                        ', '.join(
+                            dev.get('hostname') or dev.get('ip_address') or dev['id']
+                            for dev in all_devices
+                            if device_record_counts.get(dev['id'], 0) == 0
+                        ) or 'none',
+                    )
                 finally:
                     conn.close()
     except Exception as e:

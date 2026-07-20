@@ -151,6 +151,18 @@ async def lifespan(app: FastAPI):
         synchronized_scheduler_job('device_telemetry_sampler', expire_seconds=55)(record_device_telemetry_snapshot),
         'interval', minutes=1, id='device_telemetry_sampler', replace_existing=True
     )
+
+    from services.outbound_probe_service import record_outbound_egress_snapshot, run_outbound_probe_once
+    scheduler.add_job(
+        synchronized_scheduler_job('outbound_probe_sampler', expire_seconds=55)(run_outbound_probe_once),
+        'interval', minutes=1, id='outbound_probe_sampler', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('outbound_egress_sampler', expire_seconds=290)(record_outbound_egress_snapshot),
+        'interval', minutes=5, id='outbound_egress_sampler', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
     
     reschedule_backup(schedule_cfg)
     

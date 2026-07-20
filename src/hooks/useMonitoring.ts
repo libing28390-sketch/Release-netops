@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useMonitoringStore } from '../store/monitoringStore';
+import type { OutboundTarget } from '../types/outbound';
 
 interface UseMonitoringProps {
   isAuthenticated: boolean;
   activeTab: string;
   language: string;
+  pollOutbound?: boolean;
 }
 
 const isAbortError = (error: unknown) => {
@@ -13,7 +15,7 @@ const isAbortError = (error: unknown) => {
   return typeof error === 'object' && (error as { name?: string }).name === 'AbortError';
 };
 
-export const useMonitoring = ({ isAuthenticated, activeTab }: UseMonitoringProps) => {
+export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true }: UseMonitoringProps) => {
   const {
     monitorSearch,
     monitorSearchResults,
@@ -43,6 +45,12 @@ export const useMonitoring = ({ isAuthenticated, activeTab }: UseMonitoringProps
     monitorDashboardSiteFilter,
     monitorDashboardAlertFilter,
     hostResources,
+    outboundHealth,
+    outboundLoading,
+    outboundModalOpen,
+    outboundTargetHistory,
+    outboundTargetHistoryLoading,
+    outboundHistoryHours,
     setMonitorSearch,
     setMonitorSearchResults,
     setMonitorSearching,
@@ -70,6 +78,12 @@ export const useMonitoring = ({ isAuthenticated, activeTab }: UseMonitoringProps
     setMonitorDashboardSiteFilter,
     setMonitorDashboardAlertFilter,
     setHostResources,
+    setOutboundHealth,
+    setOutboundLoading,
+    setOutboundModalOpen,
+    setOutboundTargetHistory,
+    setOutboundTargetHistoryLoading,
+    setOutboundHistoryHours,
     resetMonitoringState,
   } = useMonitoringStore();
 
@@ -99,6 +113,94 @@ export const useMonitoring = ({ isAuthenticated, activeTab }: UseMonitoringProps
       if (isAbortError(error)) return;
     }
   }, [setHostResources]);
+
+  const outboundHeaders = useCallback(() => {
+    const token = localStorage.getItem('netops_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
+
+  const fetchOutboundHealth = useCallback(async (signal?: AbortSignal, historyHours?: number) => {
+    const range = historyHours ?? useMonitoringStore.getState().outboundHistoryHours;
+    try {
+      const resp = await fetch(`/api/monitoring/outbound-status?history_hours=${range}`, {
+        signal,
+        headers: outboundHeaders(),
+      });
+      if (!resp.ok) return null;
+      const payload = await resp.json();
+      setOutboundHealth(payload);
+      return payload;
+    } catch (error) {
+      if (isAbortError(error)) return null;
+      return null;
+    }
+  }, [outboundHeaders, setOutboundHealth]);
+
+  const triggerOutboundProbe = useCallback(async () => {
+    setOutboundLoading(true);
+    try {
+      const resp = await fetch('/api/monitoring/outbound-trigger', {
+        method: 'POST',
+        headers: { ...outboundHeaders(), 'Content-Type': 'application/json' },
+      });
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        const detail = payload?.detail?.message || payload?.detail || 'Outbound probe failed';
+        throw new Error(String(detail));
+      }
+      await fetchOutboundHealth();
+      return payload;
+    } finally {
+      setOutboundLoading(false);
+    }
+  }, [fetchOutboundHealth, outboundHeaders, setOutboundLoading]);
+
+  const saveOutboundTarget = useCallback(async (target: Partial<OutboundTarget>) => {
+    const method = target.id ? 'PATCH' : 'POST';
+    const path = target.id ? `/api/monitoring/outbound-targets/${encodeURIComponent(target.id)}` : '/api/monitoring/outbound-targets';
+    const resp = await fetch(path, {
+      method,
+      headers: { ...outboundHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(target),
+    });
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(String(payload?.detail?.message || payload?.detail || 'Unable to save target'));
+    }
+    await fetchOutboundHealth();
+    return payload;
+  }, [fetchOutboundHealth, outboundHeaders]);
+
+  const deleteOutboundTarget = useCallback(async (targetId: string) => {
+    const resp = await fetch(`/api/monitoring/outbound-targets/${encodeURIComponent(targetId)}`, {
+      method: 'DELETE',
+      headers: outboundHeaders(),
+    });
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(String(payload?.detail?.message || payload?.detail || 'Unable to delete target'));
+    await fetchOutboundHealth();
+  }, [fetchOutboundHealth, outboundHeaders]);
+
+  const fetchOutboundTargetHistory = useCallback(async (targetId: string, signal?: AbortSignal, historyHours?: number) => {
+    if (!targetId) return null;
+    const range = historyHours ?? useMonitoringStore.getState().outboundHistoryHours;
+    setOutboundTargetHistoryLoading(true);
+    try {
+      const resp = await fetch(`/api/monitoring/outbound-targets/${encodeURIComponent(targetId)}/history?history_hours=${range}`, {
+        signal,
+        headers: outboundHeaders(),
+      });
+      if (!resp.ok) return null;
+      const payload = await resp.json();
+      setOutboundTargetHistory(payload);
+      return payload;
+    } catch (error) {
+      if (isAbortError(error)) return null;
+      return null;
+    } finally {
+      setOutboundTargetHistoryLoading(false);
+    }
+  }, [outboundHeaders, setOutboundTargetHistory, setOutboundTargetHistoryLoading]);
 
   const fetchMonitoringAlerts = useCallback(async (signal?: AbortSignal) => {
     const reqEpoch = monitorRequestEpochRef.current;
@@ -155,7 +257,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab }: UseMonitoringProps
   // Reset monitoring state when leaving monitoring tab
   useEffect(() => {
     monitorRequestEpochRef.current += 1;
-    if (activeTab === 'monitoring' || activeTab === 'health') return;
+    if (activeTab === 'monitoring' || activeTab === 'outbound-monitoring' || activeTab === 'health') return;
     resetMonitoringState();
   }, [activeTab, resetMonitoringState]);
 
@@ -204,6 +306,26 @@ export const useMonitoring = ({ isAuthenticated, activeTab }: UseMonitoringProps
       if (currentController) currentController.abort();
     };
   }, [isAuthenticated, activeTab, fetchMonitoringOverview, monitorPageVisible]);
+
+  // Outbound health is sampled by the backend every minute. Polling the latest
+  // aggregate more slowly keeps the dashboard responsive without duplicating
+  // probe traffic from the browser.
+  useEffect(() => {
+    if (!isAuthenticated || !pollOutbound || !['monitoring', 'outbound-monitoring'].includes(activeTab)) return;
+    let controller: AbortController | null = null;
+    const run = () => {
+      if (controller) controller.abort();
+      controller = new AbortController();
+      fetchOutboundHealth(controller.signal, useMonitoringStore.getState().outboundHistoryHours);
+    };
+    run();
+    if (!monitorPageVisible) return () => { if (controller) controller.abort(); };
+    const timer = window.setInterval(run, 30000);
+    return () => {
+      window.clearInterval(timer);
+      if (controller) controller.abort();
+    };
+  }, [activeTab, fetchOutboundHealth, isAuthenticated, monitorPageVisible, outboundHistoryHours, pollOutbound]);
 
   // Alerts polling
   useEffect(() => {
@@ -363,9 +485,22 @@ export const useMonitoring = ({ isAuthenticated, activeTab }: UseMonitoringProps
     monitorDashboardSiteFilter, setMonitorDashboardSiteFilter,
     monitorDashboardAlertFilter, setMonitorDashboardAlertFilter,
     hostResources,
+    outboundHealth,
+    outboundLoading,
+    outboundModalOpen,
+    setOutboundModalOpen,
+    outboundTargetHistory,
+    outboundTargetHistoryLoading,
+    outboundHistoryHours,
+    setOutboundHistoryHours,
     fetchMonitoringOverview,
     fetchMonitoringAlerts,
     fetchMonitoringRealtime,
     fetchHostResources,
+    fetchOutboundHealth,
+    triggerOutboundProbe,
+    saveOutboundTarget,
+    deleteOutboundTarget,
+    fetchOutboundTargetHistory,
   };
 };

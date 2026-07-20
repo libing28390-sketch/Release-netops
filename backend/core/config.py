@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     TELEMETRY_RAW_RETENTION_HOURS: int = 48
     TELEMETRY_ROLLUP_RETENTION_DAYS: int = 365
+    # Outbound probe samples are operational history and remain queryable for
+    # one month by default, independently of the generic telemetry cleanup.
+    OUTBOUND_PROBE_RETENTION_DAYS: int = 30
     ALERT_INTERFACE_DOWN_ENABLED: bool = True
     ALERT_INTERFACE_UTIL_THRESHOLD: float = 85.0
     ALERT_CPU_THRESHOLD: float = 90.0

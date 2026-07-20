@@ -172,12 +172,16 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
   const [topologyDiscoveryDevices, setTopologyDiscoveryDevices] = useState<any[]>([]);
   const [topologySites, setTopologySites] = useState<TopologySiteSummary[]>([]);
   const [topologyDataError, setTopologyDataError] = useState('');
-  const [hideStaleLinks, setHideStaleLinks] = useState(false);
+  // A topology canvas represents the currently verified graph. Historical
+  // links remain available through the explicit stale-link toggle, but must
+  // not look like live neighbors by default.
+  const [hideStaleLinks, setHideStaleLinks] = useState(true);
   const [hideOrphanDevices, setHideOrphanDevices] = useState(false);
   const topologyRef = React.useRef<HTMLDivElement>(null);
 
   const refreshTopologyData = useCallback(async () => {
     const params = new URLSearchParams({ limit: '10000' });
+    params.set('include_stale', hideStaleLinks ? 'false' : 'true');
     if (topologySiteFilter !== 'all') params.set('site_id', topologySiteFilter);
     const [linksResponse, sitesResponse] = await Promise.all([
       fetch(`/api/topology/links?${params.toString()}`, { headers: topologyAuthHeaders() }),
@@ -191,7 +195,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       setTopologySites(Array.isArray(sitesPayload?.items) ? sitesPayload.items : []);
     }
     setTopologyDataError(sitesResponse.ok ? '' : `topology_sites_${sitesResponse.status}`);
-  }, [topologySiteFilter]);
+  }, [hideStaleLinks, topologySiteFilter]);
 
   React.useEffect(() => {
     let active = true;

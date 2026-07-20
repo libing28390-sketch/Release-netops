@@ -77,11 +77,9 @@ SCRAPLI_LEGACY_SSH_SKIP_PLATFORMS = frozenset({
 DISCOVERY_COMMANDS = {
     'cisco_ios': [
         ('lldp', 'show lldp neighbors detail'),
-        ('cdp', 'show cdp neighbors detail'),
     ],
     'cisco_nxos': [
         ('lldp', 'show lldp neighbors detail'),
-        ('cdp', 'show cdp neighbors detail'),
     ],
     'juniper_junos': [('lldp', 'show lldp neighbors detail')],
     'arista_eos': [('lldp', 'show lldp neighbors detail')],

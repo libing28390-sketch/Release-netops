@@ -143,6 +143,7 @@ def list_cmdb_interfaces(conn) -> list[dict]:
             d.status AS device_status,
             i.interface_name,
             i.description,
+            COALESCE(NULLIF(i.primary_ip, ''), NULLIF(i.ip_address, '')) AS interface_ip,
             i.admin_status,
             i.oper_status,
             i.mac_address,

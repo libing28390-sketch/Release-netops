@@ -19,6 +19,7 @@ import {
   ClipboardList,
   Clock,
   FileText,
+  Globe2,
   Home,
   Key,
   Lock,
@@ -45,7 +46,7 @@ import { useSystem } from '../../hooks/useSystem';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Key, Lock, Monitor, Server, Settings, Shield, ShieldAlert, Terminal, User, Zap,
+  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Globe2, Key, Lock, Monitor, Server, Settings, Shield, ShieldAlert, Terminal, User, Zap,
 };
 
 /** RBAC role hierarchy levels */
@@ -298,15 +299,19 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
             hasActiveChild={hasActive}
             badge={groupBadge}
           >
-            {visibleChildren.map(child => (
-              <NavItem
-                key={child.id}
-                label={L(child.label, child.labelEn)}
-                active={isActive(child)}
-                indent
-                onClick={() => handleNav(child.path)}
-              />
-            ))}
+            {visibleChildren.map(child => {
+              const CIcon = child.icon ? iconMap[child.icon] : undefined;
+              return (
+                <NavItem
+                  key={child.id}
+                  label={L(child.label, child.labelEn)}
+                  active={isActive(child)}
+                  icon={CIcon}
+                  indent
+                  onClick={() => handleNav(child.path)}
+                />
+              );
+            })}
           </NavSection>
         );
       })}

@@ -305,7 +305,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     fetchMonitoringAlerts,
     fetchMonitoringRealtime,
     fetchHostResources,
-  } = useMonitoring({ isAuthenticated, activeTab: 'monitoring', language });
+  } = useMonitoring({ isAuthenticated, activeTab: 'monitoring', language, pollOutbound: false });
 
   const fetchHostResourceHistory = useCallback(async (rangeHours = hostResourceRange) => {
     setHostResourceHistoryLoading(true);

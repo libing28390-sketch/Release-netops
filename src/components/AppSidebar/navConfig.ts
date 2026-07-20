@@ -18,6 +18,7 @@ export const navConfig: NavGroup[] = [
     children: [
       { id: 'dashboard',         label: '运营总览',   labelEn: 'Overview',          path: '/monitor/overview',    icon: 'LayoutDashboard' },
       { id: 'monitoring',        label: '监控中心',  labelEn: 'Monitoring',        path: '/monitor/telemetry',   icon: 'Activity' },
+      { id: 'outbound-monitoring', label: '互联网出口', labelEn: 'Internet Outbound', path: '/monitor/outbound', icon: 'Globe2' },
       { id: 'server-monitoring', label: '服务器监控', labelEn: 'Server Monitoring', path: '/monitor/servers',     icon: 'Server' },
       { id: 'network-monitoring', label: '网络监控', labelEn: 'Network Monitoring', path: '/monitor/networks',    icon: 'Router' },
       { id: 'topology',          label: '网络拓扑',  labelEn: 'Topology',          path: '/monitor/topology',    icon: 'Network' },

@@ -89,6 +89,7 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
     assert _resolve_commands("h3c_comware", ["interface_description"]) == {
         "interface_description": ["display interface brief description"],
     }
+
     assert _resolve_commands("h3c_comware9", ["bgp", "bgp_routes"]) == {
         "bgp": ["display bgp peer ipv4 unicast"],
         "bgp_routes": ["display bgp routing-table ipv4"],
@@ -122,6 +123,15 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
 
     assert NTC_PLATFORM_MAP["cisco_xe"] == "cisco_ios"
     assert NTC_PLATFORM_MAP["h3c_comware9"] == "hp_comware"
+
+
+def test_cisco_neighbor_collection_uses_lldp_only():
+    assert _resolve_commands("cisco_ios", ["neighbors"]) == {
+        "neighbors": ["show lldp neighbors detail"],
+    }
+    assert _resolve_commands("cisco_nxos", ["neighbors"]) == {
+        "neighbors": ["show lldp neighbors detail"],
+    }
 
 
 @pytest.mark.parametrize(

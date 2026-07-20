@@ -2,6 +2,7 @@ import React, { createContext, useContext, ReactNode } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 import type { Device, User as UserType, SessionUser } from '../types';
 import type { Language } from '../i18n.tsx';
+import type { OutboundHealthResponse, OutboundTarget, OutboundTargetHistoryResponse } from '../types/outbound';
 
 // ========== Core App Context ==========
 interface CoreAppContextValue {
@@ -29,6 +30,19 @@ interface CoreAppContextValue {
   devices: Device[];
   fetchDevicesData: () => Promise<void>;
   devicesLastUpdatedAt: number;
+
+  // Internet outbound health
+  outboundHealth: OutboundHealthResponse | null;
+  outboundLoading: boolean;
+  outboundTargetHistory: OutboundTargetHistoryResponse | null;
+  outboundTargetHistoryLoading: boolean;
+  outboundHistoryHours: number;
+  setOutboundHistoryHours: (hours: number) => void;
+  fetchOutboundHealth: (signal?: AbortSignal, historyHours?: number) => Promise<unknown>;
+  fetchOutboundTargetHistory: (targetId: string, signal?: AbortSignal, historyHours?: number) => Promise<unknown>;
+  triggerOutboundProbe: () => Promise<unknown>;
+  saveOutboundTarget: (target: Partial<OutboundTarget>) => Promise<unknown>;
+  deleteOutboundTarget: (targetId: string) => Promise<void>;
 }
 
 const CoreAppContext = createContext<CoreAppContextValue | null>(null);

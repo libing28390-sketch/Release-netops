@@ -7,7 +7,7 @@ asset model: tenants, sites, VRFs and VLANs. All routes are mounted under
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from database import get_db_connection
 from core.rbac import require_role
 from schemas.schemas import (
@@ -224,6 +224,22 @@ def api_list_cmdb_interfaces(_user=require_role("Viewer")):
         return {"success": True, "data": cmdb_service.list_cmdb_interfaces(conn), "message": ""}
     finally:
         conn.close()
+
+
+@router.post("/cmdb/interfaces/sync", status_code=202)
+def api_trigger_cmdb_interface_sync(
+    background_tasks: BackgroundTasks,
+    _user=require_role("Operator"),
+):
+    """Start an on-demand interface and topology inventory collection."""
+    from services.scheduler_service import sync_topology_and_interfaces_job
+
+    background_tasks.add_task(sync_topology_and_interfaces_job)
+    return {
+        "success": True,
+        "data": {"started": True, "collector": "topology_interface_sync"},
+        "message": "Interface collection started in the background",
+    }
 
 
 @router.get("/cmdb/data-quality/field-authority")

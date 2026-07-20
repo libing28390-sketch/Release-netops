@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { HostResourceSnapshot } from '../types';
+import type { OutboundHealthResponse, OutboundTargetHistoryResponse } from '../types/outbound';
 
 interface MonitoringState {
   // Search
@@ -44,6 +45,14 @@ interface MonitoringState {
   // Host resources
   hostResources: HostResourceSnapshot | null;
 
+  // Internet outbound health
+  outboundHealth: OutboundHealthResponse | null;
+  outboundLoading: boolean;
+  outboundModalOpen: boolean;
+  outboundTargetHistory: OutboundTargetHistoryResponse | null;
+  outboundTargetHistoryLoading: boolean;
+  outboundHistoryHours: number;
+
   // Actions
   setMonitorSearch: (v: string) => void;
   setMonitorSearchResults: (v: any[]) => void;
@@ -72,6 +81,12 @@ interface MonitoringState {
   setMonitorDashboardSiteFilter: (v: string) => void;
   setMonitorDashboardAlertFilter: (v: 'all' | 'critical' | 'major' | 'warning') => void;
   setHostResources: (v: HostResourceSnapshot | null) => void;
+  setOutboundHealth: (v: OutboundHealthResponse | null) => void;
+  setOutboundLoading: (v: boolean) => void;
+  setOutboundModalOpen: (v: boolean) => void;
+  setOutboundTargetHistory: (v: OutboundTargetHistoryResponse | null) => void;
+  setOutboundTargetHistoryLoading: (v: boolean) => void;
+  setOutboundHistoryHours: (v: number) => void;
 
   /** Reset all transient monitoring state (called when leaving the monitoring tab) */
   resetMonitoringState: () => void;
@@ -115,6 +130,12 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
   monitorDashboardSiteFilter: 'all',
   monitorDashboardAlertFilter: 'all',
   hostResources: null,
+  outboundHealth: null,
+  outboundLoading: false,
+  outboundModalOpen: false,
+  outboundTargetHistory: null,
+  outboundTargetHistoryLoading: false,
+  outboundHistoryHours: 24,
 
   setMonitorSearch: (v) => set({ monitorSearch: v }),
   setMonitorSearchResults: (v) => set({ monitorSearchResults: v }),
@@ -148,6 +169,12 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
   setMonitorDashboardSiteFilter: (v) => set({ monitorDashboardSiteFilter: v }),
   setMonitorDashboardAlertFilter: (v) => set({ monitorDashboardAlertFilter: v }),
   setHostResources: (v) => set({ hostResources: v }),
+  setOutboundHealth: (v) => set({ outboundHealth: v }),
+  setOutboundLoading: (v) => set({ outboundLoading: v }),
+  setOutboundModalOpen: (v) => set({ outboundModalOpen: v }),
+  setOutboundTargetHistory: (v) => set({ outboundTargetHistory: v }),
+  setOutboundTargetHistoryLoading: (v) => set({ outboundTargetHistoryLoading: v }),
+  setOutboundHistoryHours: (v) => set({ outboundHistoryHours: v }),
 
   resetMonitoringState: () => set({
     monitorSearch: '',
@@ -174,5 +201,11 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
     monitorLoading: false,
     monitorDashboardSiteFilter: 'all',
     monitorDashboardAlertFilter: 'all',
+    outboundHealth: null,
+    outboundLoading: false,
+    outboundModalOpen: false,
+    outboundTargetHistory: null,
+    outboundTargetHistoryLoading: false,
+    outboundHistoryHours: 24,
   }),
 }));

@@ -1387,6 +1387,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const [rows, setRows] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [interfaceSyncing, setInterfaceSyncing] = useState(false);
   const [error, setError] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
@@ -1595,6 +1596,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       { key: 'link_count', label: '链路数', labelEn: 'Links', hideInForm: true },
     ],
     interfaces: [
+      { key: 'interface_ip', label: '接口IP', labelEn: 'Interface IP', hideInForm: true },
       { key: 'interface_name', label: '接口名称', labelEn: 'Interface', hideInForm: true },
       { key: 'device_hostname', label: '所属设备', labelEn: 'Device', hideInForm: true },
       { key: 'device_ip', label: '设备IP', labelEn: 'Device IP', hideInForm: true },
@@ -1662,6 +1664,28 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
+
+  const triggerInterfaceSync = useCallback(async () => {
+    if (tab !== 'interfaces') return;
+    setInterfaceSyncing(true);
+    setError('');
+    try {
+      const res = await fetch('/api/cmdb/interfaces/sync', {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.success === false) {
+        throw new Error(formatErrorDetail(json.detail || json.message));
+      }
+      setError(zh ? '接口采集已启动，完成后请刷新列表；认证失败的设备会在日志中标明。' : 'Interface collection started. Refresh after it completes; authentication failures are logged per device.');
+      window.setTimeout(() => { void load(); }, 15000);
+    } catch (e: any) {
+      setError(e.message || String(e));
+    } finally {
+      setInterfaceSyncing(false);
+    }
+  }, [load, tab, zh]);
 
   // Preload sites so the VLAN form's site dropdown is ready.
   useEffect(() => { apiList<any>('/api/cmdb/sites').then(setSites).catch(() => {}); }, []);
@@ -2040,7 +2064,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       );
     }
 
-    const isMono = ['vlan_id', 'rd', 'username', 'ip_address', 'device_ip', 'mac_address', 'access_vlan'].includes(fd.key);
+    const isMono = ['vlan_id', 'rd', 'username', 'ip_address', 'device_ip', 'interface_ip', 'mac_address', 'access_vlan'].includes(fd.key);
     const val = row[fd.key];
     if (val === '' || val == null) return <span className="text-black/30 dark:text-white/30">—</span>;
     if (isMono) {
@@ -2095,6 +2119,16 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
               >
                 <Plus size={14} />
                 {zh ? '新建记录' : 'New Record'}
+              </button>
+            )}
+            {tab === 'interfaces' && (
+              <button
+                onClick={triggerInterfaceSync}
+                disabled={interfaceSyncing}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-cyan-200 bg-cyan-50 px-4 text-sm font-semibold text-cyan-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={interfaceSyncing ? 'animate-spin' : ''} />
+                {zh ? '立即采集接口' : 'Collect Interfaces'}
               </button>
             )}
             <button

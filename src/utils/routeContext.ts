@@ -33,6 +33,8 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'overview';
     } else if (second === 'telemetry') {
       activeTab = 'monitoring';
+    } else if (second === 'outbound') {
+      activeTab = 'outbound-monitoring';
     } else if (second === 'servers') {
       activeTab = 'server-monitoring';
     } else if (second === 'networks') {

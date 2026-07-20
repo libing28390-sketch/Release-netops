@@ -999,6 +999,8 @@ const App: React.FC = () => {
     monitorDashboardSiteFilter, setMonitorDashboardSiteFilter,
     monitorDashboardAlertFilter, setMonitorDashboardAlertFilter,
     hostResources,
+    outboundHealth, outboundLoading, outboundTargetHistory, outboundTargetHistoryLoading, outboundHistoryHours, setOutboundHistoryHours,
+    fetchOutboundHealth, fetchOutboundTargetHistory, triggerOutboundProbe, saveOutboundTarget, deleteOutboundTarget,
     fetchMonitoringOverview, fetchMonitoringAlerts,
     fetchMonitoringRealtime, fetchHostResources,
   } = useMonitoring({ isAuthenticated, activeTab, language });
@@ -1512,6 +1514,8 @@ const App: React.FC = () => {
     activeTab, inventorySubPage, configPage, automationPage, changeOrderPage, ipamPage, cmdbPage, language, t, navigate, navTo, showToast, setActiveTab, isAuthenticated,
     currentUser, users,
     devices, fetchDevicesData, devicesLastUpdatedAt,
+    outboundHealth, outboundLoading, outboundTargetHistory, outboundTargetHistoryLoading, outboundHistoryHours, setOutboundHistoryHours,
+    fetchOutboundHealth, fetchOutboundTargetHistory, triggerOutboundProbe, saveOutboundTarget, deleteOutboundTarget,
   };
 
   const dashboardValue = {

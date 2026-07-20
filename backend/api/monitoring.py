@@ -2,17 +2,23 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 import heapq
 import json
+import logging
 import threading
+import time
+from pydantic import BaseModel, Field
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from api.users import validate_session_token
+from core.rbac import require_role
 from database import get_db_connection, fetch_interface_data
+from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health, build_health_overview
 from services.collection_status_service import collection_status_summary, list_collection_status
 from services.collection_diagnostics_service import diagnose_device_collection
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _require_monitoring_session(request: Request) -> dict:
@@ -853,3 +859,184 @@ def monitoring_alerts(
         }
     finally:
         conn.close()
+
+
+# ── Internet outbound health APIs ──
+
+
+class OutboundTargetPayload(BaseModel):
+    id: Optional[str] = None
+    target_name: str = Field(min_length=1, max_length=100)
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=443, ge=1, le=65535)
+    probe_type: str = Field(default="TCP_CONNECT", max_length=32)
+    group_name: str = Field(default="business", max_length=32)
+    url: str = Field(default="", max_length=2048)
+    expected_status_code: int = Field(default=200, ge=100, le=599)
+    expected_keyword: str = Field(default="", max_length=128)
+    timeout_ms: int = Field(default=2000, ge=100, le=10000)
+    enabled: bool = True
+
+
+_manual_probe_lock = threading.Lock()
+_manual_probe_last_at: dict[str, float] = {}
+_MANUAL_PROBE_COOLDOWN_SECONDS = 5.0
+
+
+def _outbound_audit(request: Request, user: dict, event_type: str, summary: str, **kwargs) -> None:
+    try:
+        log_audit_event(
+            event_type=event_type,
+            category="monitoring",
+            severity="medium",
+            status="success",
+            summary=summary,
+            actor_id=user.get("id"),
+            actor_username=user.get("username"),
+            actor_role=user.get("role"),
+            source_ip=request.client.host if request.client else None,
+            **kwargs,
+        )
+    except Exception:
+        logger.warning("Failed to write outbound probe audit event", exc_info=True)
+
+@router.get('/monitoring/outbound-status')
+def get_monitoring_outbound_status(
+    history_hours: int = Query(default=24, ge=1, le=168),
+    user=require_role("Viewer"),
+):
+    from services.outbound_probe_service import get_outbound_status
+    return get_outbound_status(history_hours=history_hours)
+
+
+@router.get('/monitoring/outbound-targets')
+def get_monitoring_outbound_targets(user=require_role("Viewer")):
+    from services.outbound_probe_service import list_outbound_targets
+    items = list_outbound_targets()
+    return {"items": items, "total": len(items)}
+
+
+@router.get('/monitoring/outbound-targets/{target_id}/history')
+def get_monitoring_outbound_target_history(
+    target_id: str,
+    history_hours: int = Query(default=24, ge=1, le=168),
+    user=require_role("Viewer"),
+):
+    from services.outbound_probe_service import get_outbound_target_history
+    item = get_outbound_target_history(target_id=target_id, history_hours=history_hours)
+    if item is None:
+        raise HTTPException(status_code=404, detail={"code": "TARGET_NOT_FOUND", "message": "Target not found"})
+    return item
+
+
+@router.post('/monitoring/outbound-targets')
+def upsert_monitoring_outbound_target(
+    request: Request,
+    payload: OutboundTargetPayload = Body(...),
+    user=require_role("Operator"),
+):
+    from services.outbound_probe_service import upsert_outbound_target
+    try:
+        item = upsert_outbound_target(payload.model_dump(exclude_none=True), target_id=payload.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_TARGET", "message": str(exc)}) from exc
+    except Exception as exc:
+        if "UNIQUE" in str(exc).upper():
+            raise HTTPException(status_code=409, detail={"code": "TARGET_NAME_EXISTS", "message": "Target name must be unique"}) from exc
+        raise HTTPException(status_code=500, detail="Unable to save outbound probe target") from exc
+    _outbound_audit(
+        request,
+        user,
+        "OUTBOUND_TARGET_UPSERT",
+        f"Updated outbound probe target {item.get('target_name')}",
+        target_type="outbound_probe_target",
+        target_id=item.get("id"),
+        target_name=item.get("target_name"),
+        after={key: item.get(key) for key in ("target_name", "host", "port", "probe_type", "group_name", "enabled")},
+    )
+    return {"success": True, "item": item}
+
+
+@router.patch('/monitoring/outbound-targets/{target_id}')
+def patch_monitoring_outbound_target(
+    target_id: str,
+    request: Request,
+    payload: OutboundTargetPayload = Body(...),
+    user=require_role("Operator"),
+):
+    from services.outbound_probe_service import upsert_outbound_target
+    try:
+        item = upsert_outbound_target(payload.model_dump(exclude_none=True), target_id=target_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_TARGET", "message": str(exc)}) from exc
+    except Exception as exc:
+        if "UNIQUE" in str(exc).upper():
+            raise HTTPException(status_code=409, detail={"code": "TARGET_NAME_EXISTS", "message": "Target name must be unique"}) from exc
+        raise HTTPException(status_code=500, detail="Unable to update outbound probe target") from exc
+    _outbound_audit(
+        request,
+        user,
+        "OUTBOUND_TARGET_UPDATE",
+        f"Updated outbound probe target {item.get('target_name')}",
+        target_type="outbound_probe_target",
+        target_id=target_id,
+        target_name=item.get("target_name"),
+    )
+    return {"success": True, "item": item}
+
+
+@router.delete('/monitoring/outbound-targets/{target_id}')
+def delete_monitoring_outbound_target(target_id: str, request: Request, user=require_role("Operator")):
+    from services.outbound_probe_service import delete_outbound_target
+    if not delete_outbound_target(target_id):
+        raise HTTPException(status_code=404, detail={"code": "TARGET_NOT_FOUND", "message": "Target not found"})
+    _outbound_audit(
+        request,
+        user,
+        "OUTBOUND_TARGET_DELETE",
+        f"Deleted outbound probe target {target_id}",
+        target_type="outbound_probe_target",
+        target_id=target_id,
+    )
+    return {"success": True, "id": target_id}
+
+
+@router.get('/monitoring/outbound-egress-events')
+def get_monitoring_outbound_egress_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    user=require_role("Viewer"),
+):
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM outbound_egress_ip_events ORDER BY observed_at DESC LIMIT %s",
+            (limit,),
+        ).fetchall()
+        return {"items": [dict(row) for row in rows], "total": len(rows)}
+    finally:
+        conn.close()
+
+
+@router.post('/monitoring/outbound-trigger')
+def trigger_outbound_probe_manual(request: Request, user=require_role("Operator")):
+    actor_key = str(user.get("id") or user.get("username") or (request.client.host if request.client else "unknown"))
+    now = time.monotonic()
+    with _manual_probe_lock:
+        last_at = _manual_probe_last_at.get(actor_key, 0.0)
+        if now - last_at < _MANUAL_PROBE_COOLDOWN_SECONDS:
+            raise HTTPException(status_code=429, detail={"code": "PROBE_RATE_LIMITED", "message": "Please wait before triggering another probe"})
+        _manual_probe_last_at[actor_key] = now
+    if not _manual_probe_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail={"code": "PROBE_ALREADY_RUNNING", "message": "An outbound probe is already running"})
+    try:
+        from services.outbound_probe_service import run_outbound_probe_once
+        result = run_outbound_probe_once(include_egress_ip=True)
+        _outbound_audit(request, user, "OUTBOUND_PROBE_TRIGGER", "Manually triggered outbound probe", details={"run_id": result.get("run_id")})
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"code": "PROBE_INVALID", "message": str(exc)}) from exc
+    except Exception as exc:
+        logger.exception("Manual outbound probe failed")
+        raise HTTPException(status_code=500, detail={"code": "PROBE_FAILED", "message": "Outbound probe failed"}) from exc
+    finally:
+        _manual_probe_lock.release()

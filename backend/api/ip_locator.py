@@ -71,11 +71,16 @@ async def api_trigger_arp_sweep(user=require_role("Operator")):
 async def api_trigger_nsot_sweep(background_tasks: BackgroundTasks, user=require_role("Operator")):
     """手动触发全量网络事实库同步任务（包括 ARP Sweep、交换机 MAC 采集、普通路由表采集、BGP 协议路由与邻居同步）。"""
     from services.ip_locator_service import run_endpoint_collector, run_route_collector
-    from services.scheduler_service import sync_routing_neighbors_job, sync_bgp_routes_job
+    from services.scheduler_service import (
+        sync_routing_neighbors_job,
+        sync_bgp_routes_job,
+        sync_topology_and_interfaces_job,
+    )
     background_tasks.add_task(run_endpoint_collector)
     background_tasks.add_task(run_route_collector)
     background_tasks.add_task(sync_routing_neighbors_job)
     background_tasks.add_task(sync_bgp_routes_job)
+    background_tasks.add_task(sync_topology_and_interfaces_job)
     return {'success': True, 'message': '数据采集任务已在后台启动，同步过程可能需要 1~2 分钟，请稍后刷新查看。'}
 
 

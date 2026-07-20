@@ -6,9 +6,6 @@ NAME = "site_timestamps"
 
 def upgrade(cursor, use_pg: bool) -> None:
     definitions = {
-        # The legacy baseline stores these lifecycle values as TEXT on both
-        # SQLite and PostgreSQL. Keep that contract so existing PostgreSQL
-        # installations do not hit a text/timestamp COALESCE type error.
         "created_at": "TEXT DEFAULT ''",
         "updated_at": "TEXT DEFAULT ''",
     }
@@ -24,6 +21,8 @@ def upgrade(cursor, use_pg: bool) -> None:
     # Existing installations did not retain site creation time. Populate a
     # stable migration timestamp so the UI never renders an empty column.
     if use_pg:
+        # The baseline stores these lifecycle values as TEXT on PostgreSQL too.
+        # Keep the migration compatible with that legacy contract.
         cursor.execute(
             "UPDATE sites SET created_at = COALESCE(NULLIF(created_at, ''), CURRENT_TIMESTAMP::text)"
         )

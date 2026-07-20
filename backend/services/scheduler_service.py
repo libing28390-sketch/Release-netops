@@ -11,6 +11,7 @@ from services.notification_service import dispatch_to_all_users
 from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
 from services.network_access_limiter import limited_connect_handler
+from core.interface_utils import normalize_interface_name
 # Import inspection service to handle specialized inspection jobs
 from services.inspection_service import run_inspection
 
@@ -523,6 +524,49 @@ def parse_cisco_interfaces_status(output: str) -> list[dict]:
         logger.debug("NTC templates show interfaces status parse failed: %s", e)
     return []
 
+
+def normalize_collected_interface_status(value: object) -> str:
+    """Map vendor status phrases to the CMDB contract: up/down/unknown."""
+    text = str(value or '').strip().lower()
+    if not text:
+        return 'unknown'
+    if 'administratively down' in text or text == 'down' or 'down' in text:
+        return 'down'
+    if text == 'up' or text.endswith(' up') or ' up' in text:
+        return 'up'
+    return 'unknown'
+
+
+def parse_cisco_ip_interface_brief(output: str) -> list[dict]:
+    """Parse Cisco ``show ip interface brief`` without relying on TextFSM.
+
+    The command has a stable column contract, but the Status column may be
+    either ``up`` or ``administratively down``. Parsing from the first two
+    columns and the final Protocol column avoids treating the second word of
+    that status as a new field.
+    """
+    records: list[dict] = []
+    for raw_line in str(output or '').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(('Interface', '---', 'Building', 'Router')):
+            continue
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        name, address = parts[0], parts[1]
+        if not re.match(r'^[A-Za-z][A-Za-z0-9./:-]*$', name):
+            continue
+        protocol = parts[-1]
+        # Columns: interface, address, OK?, method, status..., protocol.
+        status_text = ' '.join(parts[4:-1])
+        records.append({
+            'interface': name,
+            'ip_address': '' if address.lower() in {'unassigned', 'unset', 'unknown'} else address,
+            'admin_status': normalize_collected_interface_status(status_text),
+            'oper_status': normalize_collected_interface_status(protocol),
+        })
+    return records
+
 def parse_huawei_interfaces(output: str) -> list[dict]:
     try:
         from ntc_templates.parse import parse_output
@@ -738,7 +782,7 @@ def sync_topology_and_interfaces_job():
         return
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from services.topology_service import normalize_interface_name, PLATFORM_MAP
+    from services.topology_service import PLATFORM_MAP
     from netmiko import ConnectHandler
     from drivers.ssh_compat import build_netmiko_compatibility_kwargs
     
@@ -772,7 +816,7 @@ def sync_topology_and_interfaces_job():
 
         commands = []
         if 'cisco' in platform:
-            commands = ['show interfaces', 'show interfaces status']
+            commands = ['show interfaces', 'show interfaces status', 'show ip interface brief']
         elif 'huawei' in platform or 'h3c' in platform:
             commands = ['display interface']
         else:
@@ -802,6 +846,14 @@ def sync_topology_and_interfaces_job():
                     parsed_show_status = parse_cisco_interfaces_status(show_status_output)
                     if not parsed_show_status:
                         parsed_show_status = parse_cisco_interfaces_status_regex(show_status_output)
+
+                    parsed_ip_brief = parse_cisco_ip_interface_brief(outputs.get('show ip interface brief', ''))
+                    ip_brief_available = bool(parsed_ip_brief)
+                    ip_by_name = {
+                        normalize_interface_name(item.get('interface')).lower(): item
+                        for item in parsed_ip_brief
+                        if item.get('interface')
+                    }
                         
                     status_by_name = {normalize_interface_name(x.get('port')).lower(): x for x in parsed_show_status}
                     for item in parsed_show_int:
@@ -823,8 +875,16 @@ def sync_topology_and_interfaces_job():
                             'device_id': dev_id,
                             'name': iname,
                             'description': item.get('description', ''),
-                            'admin_status': item.get('link_status', 'down'),
-                            'oper_status': item.get('protocol_status', 'down'),
+                            'admin_status': normalize_collected_interface_status(item.get('link_status', 'down')),
+                            'oper_status': normalize_collected_interface_status(item.get('protocol_status', 'down')),
+                            # ``None`` means the command returned no usable
+                            # rows, so the DB writer can retain the last
+                            # known IP instead of erasing it on a transient
+                            # command/parser failure. An empty string is a
+                            # real result for an unassigned interface.
+                            'primary_ip': (ip_by_name.get(norm_iname) or {}).get('ip_address', '') if ip_brief_available else None,
+                            'ip_address': (ip_by_name.get(norm_iname) or {}).get('ip_address', '') if ip_brief_available else None,
+                            'is_l3': bool((ip_by_name.get(norm_iname) or {}).get('ip_address')) if ip_brief_available else None,
                             'mac_address': item.get('address', ''),
                             'mtu': item.get('mtu', 1500),
                             'speed': item.get('bandwidth', 0.0),
@@ -844,8 +904,8 @@ def sync_topology_and_interfaces_job():
                             'device_id': dev_id,
                             'name': item.get('interface'),
                             'description': item.get('description', ''),
-                            'admin_status': item.get('link_status', 'down'),
-                            'oper_status': item.get('protocol_status', 'down'),
+                            'admin_status': normalize_collected_interface_status(item.get('link_status', 'down')),
+                            'oper_status': normalize_collected_interface_status(item.get('protocol_status', 'down')),
                             'mac_address': item.get('address', ''),
                             'mtu': item.get('mtu', 1500),
                             'speed': item.get('bandwidth', 0.0),
@@ -862,8 +922,8 @@ def sync_topology_and_interfaces_job():
                             'device_id': dev_id,
                             'name': item.get('interface'),
                             'description': item.get('description', ''),
-                            'admin_status': item.get('link_status', 'down'),
-                            'oper_status': item.get('protocol_status', 'down'),
+                            'admin_status': normalize_collected_interface_status(item.get('link_status', 'down')),
+                            'oper_status': normalize_collected_interface_status(item.get('protocol_status', 'down')),
                             'mac_address': item.get('address', ''),
                             'mtu': item.get('mtu', 1500),
                             'speed': item.get('bandwidth', 0.0),
@@ -889,28 +949,48 @@ def sync_topology_and_interfaces_job():
     if all_interfaces:
         db_conn = get_db_connection()
         try:
+            existing_rows = db_conn.execute(
+                "SELECT id, device_id, interface_name FROM interfaces"
+            ).fetchall()
+            existing_by_name = {}
+            for row in existing_rows:
+                row_device_id = row['device_id']
+                normalized_name = normalize_interface_name(row['interface_name']).lower()
+                if normalized_name:
+                    existing_by_name[(row_device_id, normalized_name)] = row['id']
+
             for iface in all_interfaces:
-                db_conn.execute('''
-                    INSERT INTO interfaces (
-                        id, device_id, interface_name, description, admin_status, oper_status,
-                        mac_address, speed, bandwidth, duplex, interface_type, switchport_mode, access_vlan
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'physical', ?, ?)
-                    ON CONFLICT(device_id, interface_name) DO UPDATE SET
-                        description = excluded.description,
-                        admin_status = excluded.admin_status,
-                        oper_status = excluded.oper_status,
-                        mac_address = excluded.mac_address,
-                        speed = excluded.speed,
-                        bandwidth = excluded.bandwidth,
-                        duplex = excluded.duplex,
-                        switchport_mode = excluded.switchport_mode,
-                        access_vlan = excluded.access_vlan
-                ''', (
-                    f"intf-{uuid.uuid4().hex[:12]}", iface['device_id'], iface['name'], iface['description'],
-                    iface['admin_status'], iface['oper_status'], iface['mac_address'],
-                    iface['speed'], iface['bandwidth'], iface['duplex'],
-                    iface['switchport_mode'], iface['access_vlan']
-                ))
+                normalized_name = normalize_interface_name(iface['name']).lower()
+                existing_id = existing_by_name.get((iface['device_id'], normalized_name))
+                values = (
+                    iface['description'], iface['admin_status'], iface['oper_status'],
+                    iface['mac_address'], iface['speed'], iface['bandwidth'], iface['duplex'],
+                    iface['switchport_mode'], iface['access_vlan'],
+                    iface.get('primary_ip'), iface.get('ip_address'),
+                    None if iface.get('is_l3') is None else (1 if iface.get('is_l3') else 0),
+                )
+                if existing_id:
+                    db_conn.execute('''
+                        UPDATE interfaces SET
+                            description = ?, admin_status = ?, oper_status = ?,
+                            mac_address = ?, speed = ?, bandwidth = ?, duplex = ?,
+                            switchport_mode = ?, access_vlan = ?, primary_ip = COALESCE(?, primary_ip),
+                            ip_address = COALESCE(?, ip_address), is_l3 = COALESCE(?, is_l3)
+                        WHERE id = ?
+                    ''', values + (existing_id,))
+                else:
+                    new_id = f"intf-{uuid.uuid4().hex[:12]}"
+                    db_conn.execute('''
+                        INSERT INTO interfaces (
+                            id, device_id, interface_name, description, admin_status, oper_status,
+                            mac_address, speed, bandwidth, duplex, interface_type, switchport_mode,
+                            access_vlan, primary_ip, ip_address, is_l3
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'physical', ?, ?, ?, ?, ?)
+                    ''', (
+                        new_id, iface['device_id'], iface['name'],
+                        *tuple(value if value is not None else '' for value in values)
+                    ))
+                    existing_by_name[(iface['device_id'], normalized_name)] = new_id
             db_conn.commit()
             logger.info("Successfully updated %d interfaces in DB.", len(all_interfaces))
         except Exception as db_err:
