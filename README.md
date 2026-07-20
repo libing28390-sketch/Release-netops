@@ -142,11 +142,11 @@ flowchart TD
  
 | **Dashboard** | **Device Inventory** |
 | :---: | :---: |
-| *Real-time operational overview & health status*<br/>![Dashboard](./docs/images/placeholder_dashboard.png) | *Multi-vendor hardware & lifecycle management*<br/>![Device Inventory](./docs/images/placeholder_inventory.png) |
+| *Real-time operational overview & health status*<br/>![Dashboard](./docs/images/dashboard.png) | *Multi-vendor hardware & lifecycle management*<br/>![Device Inventory](./docs/images/assets_devices.png) |
 | **Topology** | **Monitoring** |
-| *Auto-discovered visual network map*<br/>![Topology](./docs/images/placeholder_topology.png) | *Continuous SNMP telemetry & alert center*<br/>![Monitoring](./docs/images/placeholder_monitoring.png) |
+| *Auto-discovered visual network map*<br/>![Topology](./docs/images/topology.png) | *Continuous SNMP telemetry & alert center*<br/>![Monitoring](./docs/images/monitor_overview.png) |
 | **Configuration** | **Terminal** |
-| *Automated backups & visual diff baseline comparison*<br/>![Configuration](./docs/images/placeholder_configuration.png) | *Integrated secure Web SSH terminal*<br/>![Terminal](./docs/images/placeholder_terminal.png) |
+| *Automated backups & visual diff baseline comparison*<br/>![Configuration](./docs/images/config_backup.png) | *Integrated secure Web SSH terminal*<br/>![Terminal](./docs/images/terminal.png) |
  
 </div>
  
