@@ -4,7 +4,7 @@ import {
   Save, ShieldAlert, Trash2, X, XCircle,
 } from 'lucide-react';
 import {
-  Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend,
+  Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend, ReferenceArea,
 } from 'recharts';
 import type {
   OutboundHealthResponse,
@@ -13,18 +13,13 @@ import type {
   OutboundTarget,
 } from '../types/outbound';
 
-const FailureDot = (props: any) => {
-  const { cx, cy, payload } = props;
-  if (payload.availability != null && payload.availability < 100) {
-    return <circle cx={cx} cy={cy} r={4} fill="#ef4444" stroke="#ffffff" strokeWidth={1} />;
-  }
-  return null;
-};
-
 const CustomTooltip = ({ active, payload, label, zh }: any) => {
   if (active && payload && payload.length) {
-    const lat = payload.find((p: any) => p.dataKey === 'latency')?.value;
-    const avail = payload.find((p: any) => p.dataKey === 'availability' || p.dataKey === 'result')?.value;
+    const pData = payload[0].payload;
+    const lat = pData.latency;
+    const avail = pData.availability ?? pData.result;
+    const successCount = pData.success_count;
+    const totalTargets = pData.total_targets;
     return (
       <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)]/95 px-3 py-2 text-[11px] shadow-xl backdrop-blur-sm">
         <p className="font-extrabold text-[var(--app-text)] mb-1">{label}</p>
@@ -37,6 +32,14 @@ const CustomTooltip = ({ active, payload, label, zh }: any) => {
             <span className="text-[var(--muted-text)]">{zh ? '可用率：' : 'Availability: '}</span>
             <span className="text-emerald-500">{avail != null ? `${Math.round(Number(avail))}%` : '--'}</span>
           </p>
+          {successCount != null && totalTargets != null && (
+            <p className="flex items-center justify-between gap-4 border-t border-[var(--card-border)] pt-1 mt-1 text-[10px]">
+              <span className="text-[var(--muted-text)]">{zh ? '成功目标：' : 'Success Rate: '}</span>
+              <span className={successCount === totalTargets ? 'text-emerald-600' : 'text-yellow-600'}>
+                {successCount} / {totalTargets}
+              </span>
+            </p>
+          )}
         </div>
       </div>
     );
@@ -84,7 +87,7 @@ const EMPTY_FORM: TargetForm = {
 
 const statusTone = (status?: OutboundStatus | null) => {
   if (status === 'healthy') return { text: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200', dot: 'bg-emerald-500' };
-  if (status === 'degraded') return { text: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200', dot: 'bg-amber-500' };
+  if (status === 'degraded') return { text: 'text-yellow-600', bg: 'bg-yellow-50/40', border: 'border-yellow-200', dot: 'bg-yellow-500' };
   if (status === 'unavailable') return { text: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200', dot: 'bg-red-500' };
   return { text: 'text-slate-500', bg: 'bg-slate-50', border: 'border-slate-200', dot: 'bg-slate-400' };
 };
@@ -154,6 +157,8 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
       time: formatTime(point.finished_at, zh),
       latency: point.average_latency_ms == null ? null : Number(point.average_latency_ms),
       availability: Number(point.availability_percent ?? 100),
+      success_count: point.success_count,
+      total_targets: point.total_targets,
       status: point.status,
     })).sort((a, b) => a.timestamp - b.timestamp);
 
@@ -161,6 +166,8 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
       time: string;
       latency: number | null;
       availability: number | null;
+      success_count?: number;
+      total_targets?: number;
       status?: string;
     }> = [];
 
@@ -411,14 +418,14 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
                     <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                       <defs>
                         <linearGradient id="outboundLatencyFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.25} />
+                          <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.12} />
                           <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,.15)" />
                       <XAxis dataKey="time" tick={{ fontSize: 10 }} minTickGap={24} />
                       <YAxis yAxisId="latency" tick={{ fontSize: 10 }} unit="ms" />
-                      <YAxis yAxisId="availability" orientation="right" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+                      <YAxis yAxisId="availability" orientation="right" domain={[0, 110]} ticks={[0, 25, 50, 75, 100]} tick={{ fontSize: 10 }} unit="%" />
                       <Tooltip content={<CustomTooltip zh={zh} />} />
                       <Legend verticalAlign="top" height={36} content={(props) => {
                         const { payload } = props;
@@ -426,7 +433,7 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
                           <div className="flex justify-end gap-4 text-[10px] font-bold text-[var(--muted-text)] mb-2">
                             {payload?.map((entry: any, index: number) => {
                               const color = entry.color;
-                              const label = entry.value === 'latency' ? (zh ? '平均时延' : 'Average Latency') : (zh ? '可用率' : 'Availability');
+                              const label = entry.value === 'latency' ? (zh ? '平均时延(ms)' : 'Average Latency (ms)') : (zh ? '可用率(%)' : 'Availability (%)');
                               return (
                                 <span key={`item-${index}`} className="flex items-center gap-1.5">
                                   <span className="h-1.5 w-3 rounded-full" style={{ backgroundColor: color }} />
@@ -437,8 +444,24 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
                           </div>
                         );
                       }} />
-                      <Area yAxisId="latency" type="monotone" dataKey="latency" name="latency" stroke="#0ea5e9" fill="url(#outboundLatencyFill)" connectNulls={false} dot={<FailureDot />} activeDot={{ r: 4 }} />
-                      <Area yAxisId="availability" type="linear" dataKey="availability" name="availability" stroke="#10b981" fill="none" strokeWidth={2} connectNulls={false} dot={<FailureDot />} activeDot={{ r: 4 }} />
+                      {chartData.map((point, idx) => {
+                        if (point.availability != null && point.availability < 100) {
+                          return (
+                            <ReferenceArea
+                              key={`ref-${idx}`}
+                              x1={point.time}
+                              x2={point.time}
+                              yAxisId="availability"
+                              fill="rgba(234, 179, 8, 0.12)"
+                              stroke="rgba(234, 179, 8, 0.20)"
+                              strokeWidth={1}
+                            />
+                          );
+                        }
+                        return null;
+                      })}
+                      <Area yAxisId="latency" type="monotone" dataKey="latency" name="latency" stroke="#0ea5e9" fill="url(#outboundLatencyFill)" connectNulls={false} dot={false} activeDot={{ r: 4 }} />
+                      <Area yAxisId="availability" type="linear" dataKey="availability" name="availability" stroke="#10b981" fill="none" strokeWidth={2} connectNulls={false} dot={false} activeDot={{ r: 4 }} />
                     </AreaChart>
                   </ResponsiveContainer>
                 ) : (
