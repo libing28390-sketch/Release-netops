@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "npm run dev:internal",
     "wait:backend": "node -e \"const path=require('path');const port=process.env.BACKEND_PORT||'5010';const waitOn=path.join(process.cwd(),'node_modules','wait-on','bin','wait-on');require('child_process').execFileSync(process.execPath,[waitOn,'tcp:127.0.0.1:'+port,'--interval','500','--timeout','120000'],{stdio:'inherit'})\"",
-    "dev:backend:win": "node scripts/dev-backend.mjs",
-    "dev:backend:linux": "node scripts/dev-backend.mjs",
-    "dev:backend": "node scripts/dev-backend.mjs",
+    "dev:backend:win": "node -e \"require('child_process').execSync('cross-env NODE_ENV=development .venv/Scripts/python.exe backend/main.py',{stdio:'inherit'})\"",
+    "dev:backend:linux": "node -e \"require('child_process').execSync('cross-env NODE_ENV=development .venv/bin/python backend/main.py',{stdio:'inherit'})\"",
+    "dev:backend": "node -e \"const p=process.platform==='win32'?'.venv/Scripts/python.exe':'.venv/bin/python';require('child_process').execSync('cross-env NODE_ENV=development '+p+' backend/main.py',{stdio:'inherit'})\"",
     "dev:frontend": "vite",
     "start:win": "npm run build && cross-env PYTHONUNBUFFERED=1 NODE_ENV=production .venv/Scripts/python.exe backend/main.py",
     "start:linux": "npm run build && cross-env PYTHONUNBUFFERED=1 NODE_ENV=production .venv/bin/python backend/main.py",
