@@ -1,0 +1,11 @@
+Value FAN_ID (\d+)
+Value STATUS (\S+)
+Value AIRFLOW (.+)
+
+Start
+  ^\s*Fan\s+${FAN_ID}: -> Fan
+
+Fan
+  ^\s*Fan\s+${FAN_ID}: -> Fan
+  ^\s*State\s*:\s*${STATUS}
+  ^\s*Airflow\s+Direction\s*:\s*${AIRFLOW} -> Record Start
