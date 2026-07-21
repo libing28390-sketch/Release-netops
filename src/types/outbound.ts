@@ -51,6 +51,24 @@ export interface OutboundHistoryPoint {
   public_ip_changed?: boolean | number;
 }
 
+export interface StatusReason {
+  type: string;
+  severity: 'info' | 'warning' | 'critical';
+  message: string;
+}
+
+export interface EgressIpInfo {
+  address: string;
+  source: 'detected' | 'static_override' | 'cached' | 'unknown';
+  verified: boolean;
+  confidence: 'high' | 'medium' | 'low';
+  expected: string[];
+  match: boolean;
+  status: 'match' | 'mismatch' | 'none';
+  providers_succeeded: number;
+  providers_total: number;
+}
+
 export interface OutboundStatusPayload {
   run_id?: string;
   node_id?: string;
@@ -69,6 +87,10 @@ export interface OutboundStatusPayload {
   checked_at: string;
   groups: Record<string, OutboundGroupStatus>;
   targets: OutboundTargetResult[];
+  connectivity_status: OutboundStatus;
+  overall_status: OutboundStatus;
+  egress_ip?: EgressIpInfo;
+  status_reasons?: StatusReason[];
 }
 
 export interface OutboundHealthResponse {

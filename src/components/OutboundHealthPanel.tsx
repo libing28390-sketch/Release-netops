@@ -163,7 +163,10 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
             {zh ? '互联网出口' : 'Internet Outbound'}
             <span className={`h-2 w-2 rounded-full ${tone.dot}`} />
           </span>
-          <span className={`mt-2 block text-2xl font-extrabold ${tone.text}`}>{statusLabel(current?.status, zh)}</span>
+          <span className={`mt-2 block text-2xl font-extrabold ${tone.text}`}>
+            {statusLabel(current?.status, zh)}
+            {current?.public_ip_changed && <span className="ml-1 text-sm font-semibold text-amber-500">⚠️ {zh ? 'IP 漂移' : 'IP drift'}</span>}
+          </span>
           <span className="mt-1 block truncate text-[11px] text-[var(--muted-text)]">
             {current?.availability_percent != null ? `${Math.round(current.availability_percent)}%` : '--'} · {current?.public_ip || '--'} · {formatTime(current?.checked_at, zh)}
           </span>
@@ -191,17 +194,40 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
               </div>
             </div>
 
+            {current?.status_reasons && current.status_reasons.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {current.status_reasons.map((reason, idx) => {
+                  const borderClass = reason.severity === 'critical' ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800';
+                  return (
+                    <div key={idx} className={`flex items-start gap-2.5 rounded-2xl border p-3.5 text-xs font-semibold ${borderClass}`}>
+                      <ShieldAlert size={16} className="mt-0.5 shrink-0" />
+                      <div>
+                        <span className="font-extrabold">{reason.severity === 'critical' ? (zh ? '【错误/严重告警】' : '[Critical Error] ') : (zh ? '【状态警告】' : '[Warning] ')}</span>
+                        {reason.message}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
               {[
-                [zh ? '状态' : 'Status', statusLabel(current?.status, zh)],
-                [zh ? '可用率' : 'Availability', current ? `${Math.round(current.availability_percent)}%` : '--'],
-                [zh ? '平均时延' : 'Avg latency', current?.average_latency_ms == null ? '--' : `${Math.round(current.average_latency_ms)} ms`],
-                [zh ? '公网 IP' : 'Public IP', current?.public_ip || '--'],
-                [zh ? '连续失败' : 'Failure streak', String(current?.consecutive_failure_count || 0)],
+                [zh ? '综合状态' : 'Overall Status', statusLabel(current?.status, zh)],
+                [zh ? '连通性状态' : 'Connectivity Status', statusLabel(current?.connectivity_status || current?.status, zh)],
+                [zh ? '公网出口 IP' : 'Egress Public IP', current?.public_ip || '--'],
+                [zh ? 'IP 来源与验证' : 'IP Source & Verified', current?.egress_ip ? (
+                  current.egress_ip.source === 'static_override' ? (zh ? '静态配置(未检测)' : 'Static config(unverified)') :
+                  current.egress_ip.source === 'detected' ? (zh ? '在线探测(已验证)' : 'Online detected(verified)') :
+                  current.egress_ip.source === 'cached' ? (zh ? '本地缓存' : 'Cached') : (zh ? '未知' : 'Unknown')
+                ) : '--'],
+                [zh ? 'IP 期望白名单' : 'Expected IP Rules', current?.egress_ip?.expected && current.egress_ip.expected.length > 0 ? (
+                  current.egress_ip.expected.join(', ')
+                ) : (zh ? '未限制' : 'No restrictions')],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-2xl border border-[var(--card-border)] bg-black/[0.02] px-3 py-3">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)]">{label}</p>
-                  <p className="mt-1 truncate text-sm font-extrabold text-[var(--app-text)]">{value}</p>
+                  <p className="mt-1 truncate text-xs font-extrabold text-[var(--app-text)]" title={value}>{value}</p>
                 </div>
               ))}
             </div>

@@ -549,29 +549,93 @@ def delete_outbound_target(target_id: str) -> bool:
         conn.close()
 
 
-def _check_ip_matches_expected(detected_ip: str, expected_raw: str) -> bool:
-    if not expected_raw or not detected_ip:
+_CONFIG_ERRORS: list[str] = []
+_CONFIG_VALID = True
+_EXPECTED_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+_EXPECTED_IPS: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+_LAST_EXPECTED_RAW = None
+
+def validate_expected_egress_ip_config() -> None:
+    global _CONFIG_VALID, _CONFIG_ERRORS, _EXPECTED_NETWORKS, _EXPECTED_IPS
+    expected_raw = os.environ.get("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "").strip()
+    if not expected_raw:
+        _CONFIG_VALID = True
+        _CONFIG_ERRORS = []
+        _EXPECTED_NETWORKS = []
+        _EXPECTED_IPS = []
+        return
+    
+    errors = []
+    networks = []
+    ips = []
+    
+    parts = [item.strip() for item in expected_raw.split(",") if item.strip()]
+    seen = set()
+    unique_parts = []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            unique_parts.append(p)
+            
+    for part in unique_parts:
+        try:
+            if "/" in part:
+                net = ipaddress.ip_network(part, strict=False)
+                networks.append(net)
+            else:
+                addr = ipaddress.ip_address(part)
+                ips.append(addr)
+        except ValueError as exc:
+            errors.append(f"Invalid entry '{part}': {exc}")
+            
+    if errors:
+        _CONFIG_VALID = False
+        _CONFIG_ERRORS = errors
+        _EXPECTED_NETWORKS = []
+        _EXPECTED_IPS = []
+        for err in errors:
+            logger.error("[配置错误] OUTBOUND_PROBE_EXPECTED_EGRESS_IP: %s", err)
+    else:
+        _CONFIG_VALID = True
+        _CONFIG_ERRORS = []
+        _EXPECTED_NETWORKS = networks
+        _EXPECTED_IPS = ips
+
+
+validate_expected_egress_ip_config()
+
+
+def _check_ip_matches_expected(detected_ip: str) -> bool:
+    global _LAST_EXPECTED_RAW
+    expected_raw = os.environ.get("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "").strip()
+    if expected_raw != _LAST_EXPECTED_RAW:
+        _LAST_EXPECTED_RAW = expected_raw
+        validate_expected_egress_ip_config()
+        
+    if not _CONFIG_VALID:
+        logger.warning("[警告] 由于配置格式错误，跳过期望出口 IP 校验。")
         return True
+    
+    if not expected_raw:
+        return True
+        
+    if not detected_ip:
+        return False
+        
     try:
         detected_addr = ipaddress.ip_address(detected_ip)
     except ValueError:
         return False
-    
-    expected_parts = [item.strip() for item in expected_raw.split(",") if item.strip()]
-    for part in expected_parts:
-        try:
-            if "/" in part:
-                network = ipaddress.ip_network(part, strict=False)
-                if detected_addr in network:
-                    return True
-            else:
-                expected_addr = ipaddress.ip_address(part)
-                if detected_addr == expected_addr:
-                    return True
-        except ValueError:
-            # Fallback to direct string match
-            if part == detected_ip:
+        
+    for net in _EXPECTED_NETWORKS:
+        if detected_addr.version == net.version:
+            if detected_addr in net:
                 return True
+    for ip in _EXPECTED_IPS:
+        if detected_addr.version == ip.version:
+            if detected_addr == ip:
+                return True
+                
     return False
 
 
@@ -589,11 +653,18 @@ def detect_egress_ip() -> dict:
             "source_b_ip": static_ip,
             "consistent": True,
             "error_message": "",
+            "public_ip_source": "static_override",
+            "public_ip_verified": False,
+            "confidence": "high",
+            "providers_succeeded": 0,
+            "providers_total": 0,
         }
 
     values: list[str] = []
     errors: list[str] = []
-    for url in _egress_sources():
+    sources = _egress_sources()
+    providers_total = len(sources)
+    for url in sources:
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "Nexora-NetOps-OutboundProbe/1.0"})
             with urllib.request.urlopen(request, timeout=2.0) as response:
@@ -604,15 +675,37 @@ def detect_egress_ip() -> dict:
             values.append(str(parsed))
         except Exception as exc:
             errors.append(type(exc).__name__)
+            
     source_a = values[0] if values else ""
     source_b = values[1] if len(values) > 1 else ""
     consistent = bool(source_a and source_b and source_a == source_b)
+    confirmed_ip = source_a if consistent else ""
+    
+    providers_succeeded = len(values)
+    
+    if providers_succeeded > 0:
+        public_ip_source = "detected"
+        public_ip_verified = True
+        if providers_succeeded >= 2 and consistent:
+            confidence = "high"
+        else:
+            confidence = "medium"
+    else:
+        public_ip_source = "unknown"
+        public_ip_verified = False
+        confidence = "low"
+        
     return {
-        "confirmed_ip": source_a if consistent else "",
+        "confirmed_ip": confirmed_ip,
         "source_a_ip": source_a,
         "source_b_ip": source_b,
         "consistent": consistent,
         "error_message": "; ".join(errors[:2]),
+        "public_ip_source": public_ip_source,
+        "public_ip_verified": public_ip_verified,
+        "confidence": confidence,
+        "providers_succeeded": providers_succeeded,
+        "providers_total": providers_total,
     }
 
 
@@ -625,24 +718,65 @@ def _record_egress_event(conn, node_id: str, detected: dict, observed_at: str) -
     previous_ip = str(previous_row[0] or "") if previous_row else ""
     confirmed_ip = str(detected.get("confirmed_ip") or "")
 
+    static_ip = os.environ.get("OUTBOUND_PROBE_STATIC_EGRESS_IP", "").strip()
     expected_ip_raw = os.environ.get("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "").strip()
-    if expected_ip_raw and confirmed_ip:
-        # If expected public IP is configured, 'changed' indicates deviation from the expectation
-        changed = not _check_ip_matches_expected(confirmed_ip, expected_ip_raw)
+    
+    if static_ip:
+        # In static override mode, we skip expected IP drift check
+        changed = False
+    elif expected_ip_raw and confirmed_ip:
+        # Look up the last 2 events to execute the continuous confirmation state machine
+        rows = conn.execute(
+            "SELECT confirmed_ip FROM outbound_egress_ip_events WHERE node_id = %s "
+            "ORDER BY observed_at DESC LIMIT 2",
+            (node_id,),
+        ).fetchall()
+        prev_1 = str(rows[0][0] or "") if len(rows) > 0 else ""
+        prev_2 = str(rows[1][0] or "") if len(rows) > 1 else ""
+        
+        curr_match = _check_ip_matches_expected(confirmed_ip)
+        if not prev_1:
+            changed = False
+        else:
+            prev_1_match = _check_ip_matches_expected(prev_1)
+            prev_2_match = _check_ip_matches_expected(prev_2) if prev_2 else True
+            
+            if not curr_match:
+                if not prev_1_match:
+                    # 连续两次不匹配：确认漂移
+                    changed = True
+                else:
+                    # 第一次不匹配：暂不确认，维持健康状态
+                    changed = False
+            else:
+                if prev_1_match:
+                    # 连续两次匹配：确认恢复/健康
+                    changed = False
+                else:
+                    # 第一次匹配：暂不确认恢复，如果先前已经是已确认的漂移状态则保持，否则健康
+                    if not prev_1_match and prev_2 and not prev_2_match:
+                        changed = True
+                    else:
+                        changed = False
     else:
-        # Otherwise, 'changed' indicates normal drift from the previous state
         changed = bool(confirmed_ip and previous_ip and confirmed_ip != previous_ip)
 
     conn.execute(
         """
         INSERT INTO outbound_egress_ip_events
-            (id, node_id, observed_at, previous_ip, confirmed_ip, source_a_ip, source_b_ip, consistent, error_message)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (id, node_id, observed_at, previous_ip, confirmed_ip, source_a_ip, source_b_ip, consistent, error_message, public_ip_source, public_ip_verified)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (str(uuid.uuid4()), node_id, observed_at, previous_ip, confirmed_ip, detected.get("source_a_ip", ""),
-         detected.get("source_b_ip", ""), bool(detected.get("consistent")), detected.get("error_message", "")),
+         detected.get("source_b_ip", ""), bool(detected.get("consistent")), detected.get("error_message", ""),
+         detected.get("public_ip_source", "unknown"), bool(detected.get("public_ip_verified"))),
     )
-    return {"public_ip": confirmed_ip or previous_ip, "public_ip_changed": changed}
+    return {
+        "public_ip": confirmed_ip or previous_ip,
+        "public_ip_changed": changed,
+        "public_ip_source": detected.get("public_ip_source", "unknown"),
+        "public_ip_verified": bool(detected.get("public_ip_verified")),
+    }
 
 
 def record_outbound_egress_snapshot() -> None:
@@ -656,8 +790,14 @@ def record_outbound_egress_snapshot() -> None:
         latest = _latest_run(conn, node["id"])
         if latest:
             conn.execute(
-                "UPDATE outbound_probe_runs SET public_ip = %s, public_ip_changed = %s WHERE id = %s",
-                (ip_info["public_ip"], bool(ip_info["public_ip_changed"]), latest["id"]),
+                """
+                UPDATE outbound_probe_runs 
+                SET public_ip = %s, public_ip_changed = %s, public_ip_source = %s, public_ip_verified = %s 
+                WHERE id = %s
+                """,
+                (ip_info["public_ip"], bool(ip_info["public_ip_changed"]), 
+                 ip_info.get("public_ip_source", "unknown"), bool(ip_info.get("public_ip_verified")), 
+                 latest["id"]),
             )
         conn.commit()
     except Exception:
@@ -677,17 +817,38 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
         ).fetchall()
         targets = [dict(row) for row in rows]
         previous = _latest_run(conn, node["id"])
-        egress_info = {"public_ip": "", "public_ip_changed": False}
+        egress_info = {
+            "public_ip": "",
+            "public_ip_changed": False,
+            "public_ip_source": "unknown",
+            "public_ip_verified": False,
+        }
         if include_egress_ip:
             egress_info = _record_egress_event(conn, node["id"], detect_egress_ip(), started_at)
         else:
             ip_row = conn.execute(
-                "SELECT confirmed_ip FROM outbound_egress_ip_events WHERE node_id = %s AND consistent IS TRUE "
+                "SELECT confirmed_ip, public_ip_source, public_ip_verified "
+                "FROM outbound_egress_ip_events WHERE node_id = %s "
                 "ORDER BY observed_at DESC LIMIT 1",
                 (node["id"],),
             ).fetchone()
             if ip_row:
                 egress_info["public_ip"] = str(ip_row[0] or "")
+                egress_info["public_ip_source"] = str(ip_row[1] or "unknown")
+                egress_info["public_ip_verified"] = bool(ip_row[2])
+                
+                static_ip = os.environ.get("OUTBOUND_PROBE_STATIC_EGRESS_IP", "").strip()
+                expected_ip_raw = os.environ.get("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "").strip()
+                if static_ip:
+                    egress_info["public_ip_changed"] = False
+                elif expected_ip_raw and egress_info["public_ip"]:
+                    if previous:
+                        egress_info["public_ip_changed"] = bool(previous.get("public_ip_changed"))
+                    else:
+                        egress_info["public_ip_changed"] = not _check_ip_matches_expected(egress_info["public_ip"])
+                else:
+                    if previous:
+                        egress_info["public_ip_changed"] = bool(previous.get("public_ip_changed"))
     finally:
         conn.close()
 
@@ -710,17 +871,20 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
     raw_status = _raw_status(success_count, total_targets)
     status, failure_count, recovery_count = _status_with_hysteresis(previous, raw_status)
     
+    # Check if the mismatch affects overall health
+    mismatch_affects_health = os.environ.get("OUTBOUND_PROBE_EGRESS_IP_MISMATCH_AFFECT_HEALTH", "true").lower() == "true"
+    
     # If the public IP is mismatched with the expected IP block, degrade status and set custom warning reason
     if egress_info.get("public_ip_changed"):
-        if raw_status == STATUS_HEALTHY:
-            raw_status = STATUS_DEGRADED
-            status = STATUS_DEGRADED
-        
         expected_raw = os.environ.get("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "").strip()
         if expected_raw:
             reason = f"警告：当前公网出口 IP ({egress_info['public_ip']}) 与期望静态 IP ({expected_raw}) 不匹配，可能发生出口切换！"
         else:
             reason = f"提示：公网出口 IP 发生变更 (当前为 {egress_info['public_ip']})"
+            
+        if mismatch_affects_health and raw_status == STATUS_HEALTHY:
+            raw_status = STATUS_DEGRADED
+            status = STATUS_DEGRADED
     else:
         reason = f"{success_count} of {total_targets} targets available" if total_targets else "No enabled targets"
 
@@ -739,13 +903,14 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
                 id, node_id, started_at, finished_at, status, raw_status, status_reason,
                 success_count, total_targets, availability_percent, average_latency_ms,
                 public_ip, public_ip_changed, consecutive_failure_count, consecutive_recovery_count,
-                group_status_json, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                group_status_json, created_at, public_ip_source, public_ip_verified
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (run_id, node["id"], started_at, finished_at, status, raw_status, reason, success_count, total_targets,
              availability, round(sum(latencies) / len(latencies), 2) if latencies else None, egress_info["public_ip"],
              bool(egress_info["public_ip_changed"]), failure_count, recovery_count,
-             json.dumps(group_statuses, ensure_ascii=True), finished_at),
+             json.dumps(group_statuses, ensure_ascii=True), finished_at,
+             egress_info.get("public_ip_source", "unknown"), bool(egress_info.get("public_ip_verified"))),
         )
         for result in results:
             conn.execute(
@@ -843,6 +1008,87 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
                 item["group"] = item.pop("group_name", "business")
                 item["success"] = bool(item.get("success"))
                 targets.append(item)
+            # connectivity_status calculation:
+            if current["status"] == STATUS_DEGRADED and bool(current.get("public_ip_changed")):
+                if int(current["success_count"]) == int(current["total_targets"]) and int(current["total_targets"]) > 0:
+                    connectivity_status = STATUS_HEALTHY
+                else:
+                    connectivity_status = STATUS_DEGRADED
+            else:
+                connectivity_status = current["status"]
+
+            # Load the latest event to fetch detailed egress IP source / verified / confidence
+            latest_event_row = conn.execute(
+                "SELECT * FROM outbound_egress_ip_events WHERE node_id = %s "
+                "ORDER BY observed_at DESC LIMIT 1",
+                (node["id"],),
+            ).fetchone()
+            latest_event = dict(latest_event_row) if latest_event_row else {}
+            
+            source_a = latest_event.get("source_a_ip") or ""
+            source_b = latest_event.get("source_b_ip") or ""
+            consistent = bool(latest_event.get("consistent"))
+            
+            providers_succeeded = sum(1 for ip in (source_a, source_b) if ip)
+            if latest_event.get("public_ip_source") == "static_override":
+                confidence = "high"
+            elif providers_succeeded >= 2 and consistent:
+                confidence = "high"
+            elif providers_succeeded >= 1:
+                confidence = "medium"
+            else:
+                confidence = "low"
+                
+            expected_raw = os.environ.get("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "").strip()
+            expected_list = [item.strip() for item in expected_raw.split(",") if item.strip()]
+            
+            match_ok = True
+            mismatch_status = "none"
+            if expected_raw and current.get("public_ip"):
+                match_ok = _check_ip_matches_expected(current["public_ip"])
+                mismatch_status = "match" if match_ok else "mismatch"
+                
+            egress_payload = {
+                "address": current.get("public_ip") or "",
+                "source": latest_event.get("public_ip_source") or "unknown",
+                "verified": bool(latest_event.get("public_ip_verified")),
+                "confidence": confidence,
+                "expected": expected_list,
+                "match": match_ok,
+                "status": mismatch_status,
+                "providers_succeeded": providers_succeeded,
+                "providers_total": 2,
+            }
+            
+            status_reasons = []
+            if current.get("public_ip_changed"):
+                severity = os.environ.get("OUTBOUND_PROBE_EGRESS_IP_MISMATCH_SEVERITY", "warning").lower()
+                if severity not in ("info", "warning", "critical"):
+                    severity = "warning"
+                if expected_raw:
+                    msg = f"互联网访问正常，但当前公网出口 IP ({current.get('public_ip')}) 与期望静态 IP 不匹配，可能发生出口切换！"
+                else:
+                    msg = f"公网出口 IP 发生变更 (当前为 {current.get('public_ip')})"
+                status_reasons.append({
+                    "type": "egress_ip_mismatch",
+                    "severity": severity,
+                    "message": msg
+                })
+            
+            if not _CONFIG_VALID and _CONFIG_ERRORS:
+                status_reasons.append({
+                    "type": "configuration_error",
+                    "severity": "critical",
+                    "message": f"配置错误：OUTBOUND_PROBE_EXPECTED_EGRESS_IP 格式非法 — {_CONFIG_ERRORS[0]}"
+                })
+                
+            if current["status"] in (STATUS_DEGRADED, STATUS_UNAVAILABLE) and not current.get("public_ip_changed"):
+                status_reasons.append({
+                    "type": "connectivity_failure",
+                    "severity": "warning" if current["status"] == STATUS_DEGRADED else "critical",
+                    "message": current["status_reason"]
+                })
+
             current_payload = {
                 "run_id": current["id"],
                 "node_id": node["id"],
@@ -861,6 +1107,10 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
                 "checked_at": current["finished_at"],
                 "groups": groups,
                 "targets": targets,
+                "connectivity_status": connectivity_status,
+                "overall_status": current["status"],
+                "egress_ip": egress_payload,
+                "status_reasons": status_reasons,
             }
         history = []
         for row in runs:
