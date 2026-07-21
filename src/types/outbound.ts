@@ -80,6 +80,12 @@ export interface OutboundStatusPayload {
   total_count: number;
   availability_percent: number;
   average_latency_ms?: number | null;
+  p95_latency_ms?: number | null;
+  max_latency_ms?: number | null;
+  status_duration_seconds?: number;
+  next_check_at?: string | null;
+  scheduler_is_running?: boolean;
+  scheduler_interrupted_minutes?: number;
   public_ip?: string;
   public_ip_changed?: boolean;
   consecutive_failure_count: number;

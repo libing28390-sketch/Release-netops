@@ -1086,12 +1086,56 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
                     "message": f"配置错误：OUTBOUND_PROBE_EXPECTED_EGRESS_IP 格式非法 — {_CONFIG_ERRORS[0]}"
                 })
                 
-            if current["status"] in (STATUS_DEGRADED, STATUS_UNAVAILABLE) and not current.get("public_ip_changed"):
-                status_reasons.append({
-                    "type": "connectivity_failure",
-                    "severity": "warning" if current["status"] == STATUS_DEGRADED else "critical",
-                    "message": current["status_reason"]
-                })
+            # Calculate P95 and Max latency dynamically
+            latencies = [float(item["latency_ms"]) for item in targets if item["success"] and item.get("latency_ms") is not None]
+            p95_latency = _percentile(latencies, 0.95) if latencies else None
+            max_latency = max(latencies) if latencies else None
+
+            # Calculate overall status duration
+            status_duration_seconds = 0
+            current_status = current["status"]
+            if current_status:
+                diff_row = conn.execute(
+                    "SELECT finished_at FROM outbound_probe_runs WHERE node_id = %s AND status != %s "
+                    "ORDER BY finished_at DESC LIMIT 1",
+                    (node["id"], current_status),
+                ).fetchone()
+                if diff_row and diff_row[0]:
+                    transition_time = datetime.fromisoformat(diff_row[0].replace('Z', '+00:00'))
+                else:
+                    earliest_row = conn.execute(
+                        "SELECT started_at FROM outbound_probe_runs WHERE node_id = %s "
+                        "ORDER BY finished_at ASC LIMIT 1",
+                        (node["id"],),
+                    ).fetchone()
+                    if earliest_row and earliest_row[0]:
+                        transition_time = datetime.fromisoformat(earliest_row[0].replace('Z', '+00:00'))
+                    else:
+                        transition_time = None
+                
+                if transition_time:
+                    now = datetime.now(timezone.utc)
+                    status_duration_seconds = max(0, int((now - transition_time).total_seconds()))
+
+            # Scheduler next check time and watchdog
+            next_check_at = None
+            try:
+                from core.scheduler_manager import scheduler
+                job = scheduler.get_job('outbound_probe_sampler')
+                if job and job.next_run_time:
+                    next_check_at = job.next_run_time.isoformat()
+            except Exception:
+                pass
+
+            scheduler_is_running = True
+            scheduler_interrupted_minutes = 0
+            if current.get("finished_at"):
+                last_checked = datetime.fromisoformat(current["finished_at"].replace('Z', '+00:00'))
+                now = datetime.now(timezone.utc)
+                diff_minutes = (now - last_checked).total_seconds() / 60
+                if diff_minutes > 3.0:
+                    scheduler_is_running = False
+                    scheduler_interrupted_minutes = int(diff_minutes)
 
             current_payload = {
                 "run_id": current["id"],
@@ -1104,6 +1148,12 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
                 "total_count": int(current["total_targets"]),
                 "availability_percent": float(current["availability_percent"]),
                 "average_latency_ms": current["average_latency_ms"],
+                "p95_latency_ms": p95_latency,
+                "max_latency_ms": max_latency,
+                "status_duration_seconds": status_duration_seconds,
+                "next_check_at": next_check_at,
+                "scheduler_is_running": scheduler_is_running,
+                "scheduler_interrupted_minutes": scheduler_interrupted_minutes,
                 "public_ip": current.get("public_ip") or "",
                 "public_ip_changed": bool(current.get("public_ip_changed")),
                 "consecutive_failure_count": int(current["consecutive_failure_count"]),

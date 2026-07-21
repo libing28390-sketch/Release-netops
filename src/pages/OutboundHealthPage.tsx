@@ -1,10 +1,42 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Globe2, Loader2, Plus } from 'lucide-react';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from 'recharts';
 import PageHero from '../components/PageHero';
 import OutboundHealthPanel from '../components/OutboundHealthPanel';
 import { useCoreApp } from '../contexts/AppDomainContext';
 import type { OutboundTargetHistoryResponse } from '../types/outbound';
+
+const FailureDot = (props: any) => {
+  const { cx, cy, payload } = props;
+  if (payload.result != null && payload.result < 100) {
+    return <circle cx={cx} cy={cy} r={4} fill="#ef4444" stroke="#ffffff" strokeWidth={1} />;
+  }
+  return null;
+};
+
+const CustomTooltip = ({ active, payload, label, zh }: any) => {
+  if (active && payload && payload.length) {
+    const lat = payload.find((p: any) => p.dataKey === 'latency')?.value;
+    const resVal = payload.find((p: any) => p.dataKey === 'result')?.value;
+    return (
+      <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)]/95 px-3 py-2 text-[11px] shadow-xl backdrop-blur-sm">
+        <p className="font-extrabold text-[var(--app-text)] mb-1">{label}</p>
+        <div className="space-y-0.5 font-bold">
+          <p className="flex items-center justify-between gap-4">
+            <span className="text-[var(--muted-text)]">{zh ? '时延：' : 'Latency: '}</span>
+            <span className="text-sky-500">{lat != null ? `${Math.round(Number(lat))} ms` : '--'}</span>
+          </p>
+          <p className="flex items-center justify-between gap-4">
+            <span className="text-[var(--muted-text)]">{zh ? '检测结果：' : 'Result: '}</span>
+            <span className="text-emerald-500">{resVal != null ? `${Math.round(Number(resVal))}%` : '--'}</span>
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
 
 const HISTORY_RANGES = [
   { hours: 1, zh: '1小时', en: '1h' },
@@ -135,16 +167,46 @@ const TargetHistoryCard: React.FC<{
         ].map(([label, value]) => <div key={label} className="rounded-xl border border-[var(--card-border)] bg-black/[0.02] px-3 py-2.5"><p className="text-[10px] font-bold text-[var(--muted-text)]">{label}</p><p className="mt-1 text-sm font-extrabold text-[var(--app-text)]">{value}</p></div>)}
       </div>
       <div className="mt-4 h-60 w-full">
-        {chartData.length > 0 ? <ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-          <defs><linearGradient id="outboundSingleTargetLatencyFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.25} /><stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} /></linearGradient></defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,.15)" />
-          <XAxis dataKey="time" tick={{ fontSize: 10 }} minTickGap={24} />
-          <YAxis yAxisId="latency" tick={{ fontSize: 10 }} unit="ms" />
-          <YAxis yAxisId="result" orientation="right" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
-          <Tooltip formatter={(value: number, name: string) => [name === 'result' ? `${value}%` : `${value} ms`, name === 'result' ? (zh ? '检测结果' : 'Result') : (zh ? '时延' : 'Latency')]} />
-          <Area yAxisId="latency" type="monotone" dataKey="latency" stroke="#8b5cf6" fill="url(#outboundSingleTargetLatencyFill)" connectNulls={false} />
-          <Area yAxisId="result" type="stepAfter" dataKey="result" stroke="#10b981" fill="none" strokeWidth={2} connectNulls={false} />
-        </AreaChart></ResponsiveContainer> : <div className="flex h-full items-center justify-center text-xs text-[var(--muted-text)]">{loading ? (zh ? '正在加载历史结果…' : 'Loading history…') : (zh ? '暂无历史样本' : 'No history yet')}</div>}
+        {chartData.length > 0 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+              <defs>
+                <linearGradient id="outboundSingleTargetLatencyFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,116,139,.15)" />
+              <XAxis dataKey="time" tick={{ fontSize: 10 }} minTickGap={24} />
+              <YAxis yAxisId="latency" tick={{ fontSize: 10 }} unit="ms" />
+              <YAxis yAxisId="result" orientation="right" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+              <Tooltip content={<CustomTooltip zh={zh} />} />
+              <Legend verticalAlign="top" height={36} content={(props) => {
+                const { payload } = props;
+                return (
+                  <div className="flex justify-end gap-4 text-[10px] font-bold text-[var(--muted-text)] mb-2">
+                    {payload?.map((entry: any, index: number) => {
+                      const color = entry.color;
+                      const label = entry.value === 'latency' ? (zh ? '平均时延' : 'Average Latency') : (zh ? '检测结果' : 'Result');
+                      return (
+                        <span key={`item-${index}`} className="flex items-center gap-1.5">
+                          <span className="h-1.5 w-3 rounded-full" style={{ backgroundColor: color }} />
+                          {label}
+                        </span>
+                      );
+                    })}
+                  </div>
+                );
+              }} />
+              <Area yAxisId="latency" type="monotone" dataKey="latency" name="latency" stroke="#8b5cf6" fill="url(#outboundSingleTargetLatencyFill)" connectNulls={false} dot={<FailureDot />} activeDot={{ r: 4 }} />
+              <Area yAxisId="result" type="stepAfter" dataKey="result" name="result" stroke="#10b981" fill="none" strokeWidth={2} connectNulls={false} dot={<FailureDot />} activeDot={{ r: 4 }} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="flex h-full items-center justify-center text-xs text-[var(--muted-text)]">
+            {loading ? (zh ? '正在加载历史结果…' : 'Loading history…') : (zh ? '暂无历史样本' : 'No history yet')}
+          </div>
+        )}
       </div>
       {data.latest && !data.latest.success && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{zh ? '最近一次失败：' : 'Latest failure: '}{data.latest.error_type || (zh ? '未知错误' : 'Unknown error')}{data.latest.error_message ? ` · ${data.latest.error_message}` : ''}</p>}
     </section>
