@@ -184,7 +184,11 @@ def normalize_target_payload(payload: dict, *, target_id: str | None = None) -> 
         # ordinary DNS names to be validated again immediately before connect.
         if str(exc) == "Target address is not allowed":
             raise
-    if not 1 <= port <= 65535:
+    if probe_type == "ICMP_PING":
+        port = int(payload.get("port") or 0)
+        if not 0 <= port <= 65535:
+            raise ValueError("Port must be between 0 and 65535")
+    elif not 1 <= port <= 65535:
         raise ValueError("Port must be between 1 and 65535")
     try:
         timeout_ms = int(payload.get("timeout_ms", 2000))
@@ -248,6 +252,36 @@ def _base_result(target: dict) -> dict:
         "http_status": None,
         "dns_answers": [],
     }
+
+
+def _probe_icmp(target: dict) -> dict:
+    import subprocess
+    import platform
+    result = _base_result(target)
+    started = time.perf_counter()
+    host = target["host"]
+    timeout_ms = int(target.get("timeout_ms", 2000))
+    try:
+        # Check SSRF/Allowed destination first (resolve IP)
+        addresses = _resolve_and_validate(host, 80)
+        ip_addr = addresses[0]
+        
+        system = platform.system().lower()
+        if system == "windows":
+            cmd = ["ping", "-n", "1", "-w", str(timeout_ms), ip_addr]
+        else:
+            timeout_sec = max(1, int(timeout_ms / 1000))
+            cmd = ["ping", "-c", "1", "-W", str(timeout_sec), ip_addr]
+            
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout_ms / 1000 + 1)
+        if proc.returncode == 0:
+            result.update(success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2), resolved_ip=ip_addr)
+        else:
+            result["error_type"] = "PING_FAILED"
+            result["error_message"] = proc.stderr.strip() or proc.stdout.strip() or f"Ping failed with exit code {proc.returncode}"
+    except BaseException as exc:
+        result["error_type"], result["error_message"] = _classify_error(exc)
+    return result
 
 
 def _probe_tcp(target: dict) -> dict:
@@ -345,8 +379,8 @@ def _probe_target(target: dict) -> dict:
         return _probe_dns(target)
     if probe_type in {"HTTP_GET", "HTTPS_GET"}:
         return _http_request(target)
-    # ICMP is optional; retain a safe TCP fallback until an authorized raw
-    # socket implementation is available on the deployment platform.
+    if probe_type == "ICMP_PING":
+        return _probe_icmp(target)
     return _probe_tcp(target)
 
 
@@ -423,6 +457,34 @@ def _latest_run(conn, node_id: str) -> dict | None:
 def list_outbound_targets() -> list[dict]:
     conn = get_db_connection()
     try:
+        # Check if default ICMP ping targets exist, if not, add them automatically
+        cursor = conn.cursor()
+        cursor.execute("SELECT target_name FROM outbound_probe_targets WHERE probe_type = 'ICMP_PING'")
+        existing_pings = {str(row[0]) for row in cursor.fetchall()}
+        
+        now = datetime.now(timezone.utc).isoformat()
+        default_pings = [
+            ("default-aliyun-ping", "Aliyun Ping", "223.5.5.5", 0, "ICMP_PING", "domestic", "", 200),
+            ("default-tencent-ping", "Tencent Ping", "119.29.29.29", 0, "ICMP_PING", "domestic", "", 200),
+            ("default-google-ping", "Google DNS Ping", "8.8.8.8", 0, "ICMP_PING", "international", "", 200),
+        ]
+        seeded_any = False
+        for target_id, name, host, port, probe_type, group_name, url, expected_status in default_pings:
+            if name not in existing_pings:
+                cursor.execute(
+                    """
+                    INSERT INTO outbound_probe_targets (
+                        id, target_name, host, port, probe_type, enabled, created_at, group_name,
+                        url, expected_status_code, expected_keyword, timeout_ms, is_active, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    (target_id, name, host, port, probe_type, True, now, group_name, url, expected_status, "", 2500, True, now),
+                )
+                seeded_any = True
+        if seeded_any:
+            conn.commit()
+
         rows = conn.execute(
             "SELECT id, target_name, host, port, probe_type, group_name, url, expected_status_code, "
             "expected_keyword, timeout_ms, enabled, is_active, created_at, updated_at "
@@ -773,7 +835,7 @@ def _percentile(values: list[float], percentile: float) -> float | None:
     return round(ordered[lower] + (ordered[upper] - ordered[lower]) * weight, 2)
 
 
-def get_outbound_target_history(*, target_id: str, history_hours: int = 24) -> dict | None:
+def get_outbound_target_history(*, target_id: str, history_hours: int = 24, start_time: str | None = None, end_time: str | None = None) -> dict | None:
     """Return per-target samples and latency/availability summary."""
     conn = get_db_connection()
     try:
@@ -789,21 +851,42 @@ def get_outbound_target_history(*, target_id: str, history_hours: int = 24) -> d
         if not target_row:
             return None
 
-        requested_history_hours = _bounded_history_hours(history_hours)
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=requested_history_hours)).isoformat()
-        rows = conn.execute(
-            """
-            SELECT result.id, result.run_id, result.target_id, result.target_name, result.group_name,
-                   result.probe_type, result.sampled_at, result.success, result.latency_ms,
-                   result.error_type, result.error_message, result.resolved_ip, result.http_status,
-                   result.dns_answers_json, run.status AS run_status, run.public_ip
-            FROM outbound_probe_results AS result
-            JOIN outbound_probe_runs AS run ON run.id = result.run_id
-            WHERE result.target_id = %s AND result.sampled_at >= %s
-            ORDER BY result.sampled_at ASC
-            """,
-            (target_id, cutoff),
-        ).fetchall()
+        if start_time and end_time:
+            rows = conn.execute(
+                """
+                SELECT result.id, result.run_id, result.target_id, result.target_name, result.group_name,
+                       result.probe_type, result.sampled_at, result.success, result.latency_ms,
+                       result.error_type, result.error_message, result.resolved_ip, result.http_status,
+                       result.dns_answers_json, run.status AS run_status, run.public_ip
+                FROM outbound_probe_results AS result
+                JOIN outbound_probe_runs AS run ON run.id = result.run_id
+                WHERE result.target_id = %s AND result.sampled_at >= %s AND result.sampled_at <= %s
+                ORDER BY result.sampled_at ASC
+                """,
+                (target_id, start_time, end_time),
+            ).fetchall()
+            try:
+                start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                requested_history_hours = int((end_dt - start_dt).total_seconds() / 3600)
+            except Exception:
+                requested_history_hours = 24
+        else:
+            requested_history_hours = _bounded_history_hours(history_hours)
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=requested_history_hours)).isoformat()
+            rows = conn.execute(
+                """
+                SELECT result.id, result.run_id, result.target_id, result.target_name, result.group_name,
+                       result.probe_type, result.sampled_at, result.success, result.latency_ms,
+                       result.error_type, result.error_message, result.resolved_ip, result.http_status,
+                       result.dns_answers_json, run.status AS run_status, run.public_ip
+                FROM outbound_probe_results AS result
+                JOIN outbound_probe_runs AS run ON run.id = result.run_id
+                WHERE result.target_id = %s AND result.sampled_at >= %s
+                ORDER BY result.sampled_at ASC
+                """,
+                (target_id, cutoff),
+            ).fetchall()
 
         samples: list[dict] = []
         latencies: list[float] = []

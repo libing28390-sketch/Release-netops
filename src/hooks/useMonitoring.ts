@@ -181,12 +181,24 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
     await fetchOutboundHealth();
   }, [fetchOutboundHealth, outboundHeaders]);
 
-  const fetchOutboundTargetHistory = useCallback(async (targetId: string, signal?: AbortSignal, historyHours?: number) => {
+  const fetchOutboundTargetHistory = useCallback(async (
+    targetId: string,
+    signal?: AbortSignal,
+    historyHours?: number,
+    startTime?: string,
+    endTime?: string
+  ) => {
     if (!targetId) return null;
-    const range = historyHours ?? useMonitoringStore.getState().outboundHistoryHours;
     setOutboundTargetHistoryLoading(true);
     try {
-      const resp = await fetch(`/api/monitoring/outbound-targets/${encodeURIComponent(targetId)}/history?history_hours=${range}`, {
+      let url = `/api/monitoring/outbound-targets/${encodeURIComponent(targetId)}/history`;
+      if (startTime && endTime) {
+        url += `?start_time=${encodeURIComponent(startTime)}&end_time=${encodeURIComponent(endTime)}`;
+      } else {
+        const range = historyHours ?? useMonitoringStore.getState().outboundHistoryHours;
+        url += `?history_hours=${range}`;
+      }
+      const resp = await fetch(url, {
         signal,
         headers: outboundHeaders(),
       });

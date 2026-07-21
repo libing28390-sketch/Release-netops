@@ -169,7 +169,7 @@ ROLE_EXCLUDED_CATEGORIES: dict[str, set[str]] = {
 COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
     'cisco_ios': {
         'interfaces': ['show ip interface brief'],
-        'neighbors': ['show lldp neighbors detail'],
+        'neighbors': ['show lldp neighbors'],
         'arp': ['show arp'],
         'mac_table': ['show mac address-table'],
         'vlan': ['show vlan brief'],

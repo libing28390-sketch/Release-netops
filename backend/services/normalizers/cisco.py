@@ -232,15 +232,15 @@ class CiscoNormalizer(BaseNormalizer):
         return list(interfaces_map.values())
 
     def parse_neighbors(self, device_id: str, raw_lldp: str) -> List[Neighbor]:
-        """Parse Cisco show lldp neighbors detail."""
-        records = parse_with_textfsm(platform="cisco_ios", command="show lldp neighbors detail", output=raw_lldp)
+        """Parse Cisco show lldp neighbors."""
+        records = parse_with_textfsm(platform="cisco_ios", command="show lldp neighbors", output=raw_lldp)
         neighbors = []
         
         if records:
             for r_raw in records:
                 r = {k.lower(): v for k, v in r_raw.items()}
-                local_port = r.get("local_interface", "")
-                remote_port = r.get("neighbor_interface", "") or r.get("neighbor_port_id", "") or r.get("remote_port_id", "")
+                local_port = r.get("local_interface", "") or r.get("interface", "")
+                remote_port = r.get("neighbor_interface", "") or r.get("neighbor_port_id", "") or r.get("remote_port_id", "") or r.get("remote_interface", "")
                 remote_dev = r.get("neighbor_name", "") or r.get("neighbor_device", "") or r.get("system_name", "")
                 
                 if local_port and remote_port and remote_dev:

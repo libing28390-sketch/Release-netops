@@ -920,10 +920,29 @@ def get_monitoring_outbound_targets(user=require_role("Viewer")):
 def get_monitoring_outbound_target_history(
     target_id: str,
     history_hours: int = Query(default=24, ge=1, le=168),
+    start_time: str | None = Query(default=None),
+    end_time: str | None = Query(default=None),
     user=require_role("Viewer"),
 ):
     from services.outbound_probe_service import get_outbound_target_history
-    item = get_outbound_target_history(target_id=target_id, history_hours=history_hours)
+    if start_time and end_time:
+        try:
+            from datetime import datetime, timedelta
+            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            if end_dt < start_dt:
+                raise HTTPException(status_code=400, detail={"code": "INVALID_TIME_RANGE", "message": "End time must be after start time"})
+            if (end_dt - start_dt) > timedelta(days=7):
+                raise HTTPException(status_code=400, detail={"code": "TIME_SPAN_EXCEEDED", "message": "Query span cannot exceed 7 days"})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"code": "INVALID_TIME_FORMAT", "message": "Time must be in ISO 8601 format"}) from exc
+
+    item = get_outbound_target_history(
+        target_id=target_id,
+        history_hours=history_hours,
+        start_time=start_time,
+        end_time=end_time,
+    )
     if item is None:
         raise HTTPException(status_code=404, detail={"code": "TARGET_NOT_FOUND", "message": "Target not found"})
     return item

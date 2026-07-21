@@ -39,7 +39,7 @@ interface CoreAppContextValue {
   outboundHistoryHours: number;
   setOutboundHistoryHours: (hours: number) => void;
   fetchOutboundHealth: (signal?: AbortSignal, historyHours?: number) => Promise<unknown>;
-  fetchOutboundTargetHistory: (targetId: string, signal?: AbortSignal, historyHours?: number) => Promise<unknown>;
+  fetchOutboundTargetHistory: (targetId: string, signal?: AbortSignal, historyHours?: number, startTime?: string, endTime?: string) => Promise<unknown>;
   triggerOutboundProbe: () => Promise<unknown>;
   saveOutboundTarget: (target: Partial<OutboundTarget>) => Promise<unknown>;
   deleteOutboundTarget: (targetId: string) => Promise<void>;

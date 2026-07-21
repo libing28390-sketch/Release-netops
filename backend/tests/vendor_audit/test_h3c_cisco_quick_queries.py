@@ -127,7 +127,7 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
 
 def test_cisco_neighbor_collection_uses_lldp_only():
     assert _resolve_commands("cisco_ios", ["neighbors"]) == {
-        "neighbors": ["show lldp neighbors detail"],
+        "neighbors": ["show lldp neighbors"],
     }
     assert _resolve_commands("cisco_nxos", ["neighbors"]) == {
         "neighbors": ["show lldp neighbors detail"],

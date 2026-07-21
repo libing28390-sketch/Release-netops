@@ -36,13 +36,67 @@ const TargetHistoryCard: React.FC<{
   historyHours: number;
 }> = ({ data, loading, language, historyHours }) => {
   const zh = language === 'zh';
+  const [granularity, setGranularity] = useState<1 | 5>(5);
   const selectedHours = data?.history_hours ?? historyHours;
   const rangeLabel = HISTORY_RANGES.find((range) => range.hours === selectedHours)?.[zh ? 'zh' : 'en'] || `${selectedHours}h`;
-  const chartData = useMemo(() => (data?.history || []).map((point) => ({
-    time: formatTime(point.sampled_at, zh),
-    latency: point.latency_ms == null ? null : Number(point.latency_ms),
-    result: point.success ? 100 : 0,
-  })), [data?.history, zh]);
+
+  const chartData = useMemo(() => {
+    if (!data?.history || data.history.length === 0) return [];
+    
+    // 1. Parse and sort all history points
+    const points = data.history.map((point) => ({
+      timestamp: new Date(point.sampled_at).getTime(),
+      latency: point.latency_ms == null ? null : Number(point.latency_ms),
+      success: point.success,
+    })).sort((a, b) => a.timestamp - b.timestamp);
+
+    const lastPointTime = points[points.length - 1].timestamp;
+    const durationMs = selectedHours * 3600 * 1000;
+    const startTime = lastPointTime - durationMs;
+    const endTime = lastPointTime;
+    
+    const stepMs = granularity * 60 * 1000;
+    
+    // Normalize grid boundaries to clean step intervals (e.g. minute alignments)
+    const roundedStartTime = Math.floor(startTime / stepMs) * stepMs;
+    const roundedEndTime = Math.floor(endTime / stepMs) * stepMs;
+
+    const steps: Array<{
+      time: string;
+      latency: number | null;
+      result: number | null;
+    }> = [];
+
+    for (let t = roundedStartTime; t <= roundedEndTime; t += stepMs) {
+      // Use centered nearest-neighbor window to group points to their closest tick
+      const bucketStart = t - stepMs / 2;
+      const bucketEnd = t + stepMs / 2;
+      
+      const bucketPoints = points.filter((p) => p.timestamp >= bucketStart && p.timestamp < bucketEnd);
+      
+      if (bucketPoints.length > 0) {
+        const latencies = bucketPoints.map((p) => p.latency).filter((l): l is number => l !== null);
+        const averageLatency = latencies.length > 0 ? latencies.reduce((a, b) => a + b, 0) / latencies.length : null;
+        const successes = bucketPoints.filter((p) => p.success).length;
+        const successRate = (successes / bucketPoints.length) * 100;
+        
+        steps.push({
+          time: formatTime(new Date(t).toISOString(), zh),
+          latency: averageLatency == null ? null : Math.round(averageLatency * 100) / 100,
+          result: successRate,
+        });
+      } else {
+        steps.push({
+          time: formatTime(new Date(t).toISOString(), zh),
+          latency: null,
+          result: null,
+        });
+      }
+    }
+    
+    return steps;
+  }, [data?.history, selectedHours, granularity, zh]);
+
   if (!data) return null;
 
   return (
@@ -51,8 +105,23 @@ const TargetHistoryCard: React.FC<{
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-600">{zh ? '单指标监控' : 'Single-target monitoring'}</p>
           <h2 className="mt-1 text-lg font-extrabold text-[var(--app-text)]">{data.target.target_name}</h2>
-          <span className="mt-1 inline-flex rounded-md bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">{zh ? `查询范围：${rangeLabel}` : `Range: ${rangeLabel}`}</span>
-          <p className="mt-1 text-xs text-[var(--muted-text)]">{data.target.probe_type} · {data.target.host}:{data.target.port} · {zh ? '最近 24 小时' : 'Last 24 hours'}</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <span className="inline-flex rounded-md bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">{zh ? `查询范围：${rangeLabel}` : `Range: ${rangeLabel}`}</span>
+            <span className="text-[10px] font-semibold text-[var(--muted-text)]">{zh ? '数据颗粒度' : 'Granularity'}:</span>
+            {[1, 5].map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setGranularity(g as 1 | 5)}
+                className={`rounded-md border px-2 py-0.5 text-[10px] font-bold transition-colors ${granularity === g ? 'border-violet-400 bg-violet-100 text-violet-800' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)] hover:border-violet-300 hover:text-violet-700'}`}
+              >
+                {zh ? `${g}分钟` : `${g}m`}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-xs text-[var(--muted-text)]">
+            {data.target.probe_type} · {data.target.host}{data.target.port ? `:${data.target.port}` : ''} · {zh ? `最近 ${selectedHours} 小时` : `Last ${selectedHours} hours`}
+          </p>
         </div>
         {loading && <Loader2 size={16} className="animate-spin text-violet-600" />}
       </div>
@@ -73,8 +142,8 @@ const TargetHistoryCard: React.FC<{
           <YAxis yAxisId="latency" tick={{ fontSize: 10 }} unit="ms" />
           <YAxis yAxisId="result" orientation="right" domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
           <Tooltip formatter={(value: number, name: string) => [name === 'result' ? `${value}%` : `${value} ms`, name === 'result' ? (zh ? '检测结果' : 'Result') : (zh ? '时延' : 'Latency')]} />
-          <Area yAxisId="latency" type="monotone" dataKey="latency" stroke="#8b5cf6" fill="url(#outboundSingleTargetLatencyFill)" connectNulls />
-          <Area yAxisId="result" type="stepAfter" dataKey="result" stroke="#10b981" fill="none" strokeWidth={2} />
+          <Area yAxisId="latency" type="monotone" dataKey="latency" stroke="#8b5cf6" fill="url(#outboundSingleTargetLatencyFill)" connectNulls={false} />
+          <Area yAxisId="result" type="stepAfter" dataKey="result" stroke="#10b981" fill="none" strokeWidth={2} connectNulls={false} />
         </AreaChart></ResponsiveContainer> : <div className="flex h-full items-center justify-center text-xs text-[var(--muted-text)]">{loading ? (zh ? '正在加载历史结果…' : 'Loading history…') : (zh ? '暂无历史样本' : 'No history yet')}</div>}
       </div>
       {data.latest && !data.latest.success && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{zh ? '最近一次失败：' : 'Latest failure: '}{data.latest.error_type || (zh ? '未知错误' : 'Unknown error')}{data.latest.error_message ? ` · ${data.latest.error_message}` : ''}</p>}
@@ -102,6 +171,10 @@ const OutboundHealthPage: React.FC = () => {
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
   const [addTargetRequest, setAddTargetRequest] = useState(0);
 
+  const [customRange, setCustomRange] = useState<{ start: string; end: string } | null>(null);
+  const [showCustomPicker, setShowCustomPicker] = useState(false);
+  const [customQueryDates, setCustomQueryDates] = useState<{ start: string; end: string } | null>(null);
+
   useEffect(() => {
     const firstTargetId = outboundHealth?.targets[0]?.id || '';
     if (!selectedTargetId || !outboundHealth?.targets.some((target) => target.id === selectedTargetId)) {
@@ -112,13 +185,47 @@ const OutboundHealthPage: React.FC = () => {
   useEffect(() => {
     if (!selectedTargetId) return;
     const controller = new AbortController();
-    fetchOutboundTargetHistory(selectedTargetId, controller.signal, outboundHistoryHours);
+    if (showCustomPicker && customQueryDates?.start && customQueryDates?.end) {
+      fetchOutboundTargetHistory(
+        selectedTargetId,
+        controller.signal,
+        undefined,
+        customQueryDates.start,
+        customQueryDates.end
+      );
+    } else {
+      fetchOutboundTargetHistory(selectedTargetId, controller.signal, outboundHistoryHours);
+    }
     return () => controller.abort();
-  }, [fetchOutboundTargetHistory, outboundHistoryHours, selectedTargetId]);
+  }, [fetchOutboundTargetHistory, outboundHistoryHours, selectedTargetId, showCustomPicker, customQueryDates]);
 
   const selectHistoryRange = (hours: number) => {
+    setShowCustomPicker(false);
+    setCustomQueryDates(null);
     setOutboundHistoryHours(hours);
     fetchOutboundHealth(undefined, hours);
+  };
+
+  const handleCustomQuery = () => {
+    if (!customRange?.start || !customRange?.end) {
+      showToast(zh ? '请选择完整的起止时间' : 'Please select start and end times', 'error');
+      return;
+    }
+    const startMs = new Date(customRange.start).getTime();
+    const endMs = new Date(customRange.end).getTime();
+    if (endMs < startMs) {
+      showToast(zh ? '结束时间必须在开始时间之后' : 'End time must be after start time', 'error');
+      return;
+    }
+    const spanDays = (endMs - startMs) / (1000 * 60 * 60 * 24);
+    if (spanDays > 7) {
+      showToast(zh ? '每次查询的时间跨度不能超过 7 天' : 'Query time span cannot exceed 7 days', 'error');
+      return;
+    }
+    setCustomQueryDates({
+      start: new Date(customRange.start).toISOString(),
+      end: new Date(customRange.end).toISOString(),
+    });
   };
 
   return (
@@ -142,11 +249,70 @@ const OutboundHealthPage: React.FC = () => {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="mr-1 text-[10px] font-semibold text-[var(--muted-text)]">{zh ? '历史范围' : 'History range'}</span>
           {HISTORY_RANGES.map((range) => (
-            <button key={range.hours} type="button" onClick={() => selectHistoryRange(range.hours)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-colors ${outboundHistoryHours === range.hours ? 'border-sky-400 bg-sky-50 text-sky-800' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)] hover:border-sky-300 hover:text-sky-700'}`}>
+            <button key={range.hours} type="button" onClick={() => selectHistoryRange(range.hours)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-colors ${(!showCustomPicker && outboundHistoryHours === range.hours) ? 'border-sky-400 bg-sky-50 text-sky-800' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)] hover:border-sky-300 hover:text-sky-700'}`}>
               {zh ? range.zh : range.en}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => {
+              setShowCustomPicker(!showCustomPicker);
+              if (!showCustomPicker && !customRange) {
+                const now = new Date();
+                const yesterday = new Date(now.getTime() - 24 * 3600 * 1000);
+                const formatForInput = (d: Date) => {
+                  const pad = (n: number) => String(n).padStart(2, '0');
+                  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                };
+                const formattedNow = formatForInput(now);
+                const formattedYesterday = formatForInput(yesterday);
+                setCustomRange({
+                  start: formattedYesterday,
+                  end: formattedNow,
+                });
+                setCustomQueryDates({
+                  start: new Date(formattedYesterday).toISOString(),
+                  end: new Date(formattedNow).toISOString(),
+                });
+              }
+            }}
+            className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-colors ${showCustomPicker ? 'border-violet-400 bg-violet-50 text-violet-800' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)] hover:border-violet-300 hover:text-violet-700'}`}
+          >
+            {zh ? '自定义时间' : 'Custom range'}
+          </button>
         </div>
+        {showCustomPicker && customRange && (
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-violet-100 bg-violet-50/30 p-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-[var(--muted-text)]">{zh ? '开始时间' : 'Start Time'}</span>
+              <input
+                type="datetime-local"
+                value={customRange.start}
+                onChange={(e) => setCustomRange({ ...customRange, start: e.target.value })}
+                className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1 text-xs text-[var(--app-text)] font-semibold"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-[var(--muted-text)]">{zh ? '结束时间' : 'End Time'}</span>
+              <input
+                type="datetime-local"
+                value={customRange.end}
+                onChange={(e) => setCustomRange({ ...customRange, end: e.target.value })}
+                className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1 text-xs text-[var(--app-text)] font-semibold"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleCustomQuery}
+              className="rounded-lg bg-violet-600 px-3 py-1.5 text-[10px] font-bold text-white shadow-sm hover:bg-violet-700 transition-colors"
+            >
+              {zh ? '查询' : 'Query'}
+            </button>
+            <span className="text-[9px] text-[var(--muted-text)]">
+              💡 {zh ? '注意：起止跨度不能超过7天' : 'Note: Span cannot exceed 7 days'}
+            </span>
+          </div>
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
           {(outboundHealth?.targets || []).map((target) => {
             const result = outboundHealth?.current?.targets.find((item) => item.target_id === target.id);

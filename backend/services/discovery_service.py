@@ -27,7 +27,7 @@ _logger = logging.getLogger(__name__)
 COMMAND_PROFILES = {
     'cisco_ios': {
         'version': 'show version', 'interfaces': 'show interfaces',
-        'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbors detail',
+        'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbors',
         'normalizer': 'cisco_ios',
     },
     'huawei_vrp': {

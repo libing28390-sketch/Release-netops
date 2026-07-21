@@ -76,7 +76,7 @@ SCRAPLI_LEGACY_SSH_SKIP_PLATFORMS = frozenset({
 
 DISCOVERY_COMMANDS = {
     'cisco_ios': [
-        ('lldp', 'show lldp neighbors detail'),
+        ('lldp', 'show lldp neighbors'),
     ],
     'cisco_nxos': [
         ('lldp', 'show lldp neighbors detail'),
@@ -1244,7 +1244,7 @@ def _rebuild_links_from_observations_unlocked() -> int:
         device_meta_rows = conn.execute("SELECT id, vendor, platform FROM devices").fetchall()
         device_meta = {str(row['id']): dict(row) for row in device_meta_rows}
         intf_rows = conn.execute(
-            "SELECT id, device_id, interface_name, name_display, interface_type FROM interfaces"
+            "SELECT id, device_id, interface_name, name_display, interface_type, speed, bandwidth FROM interfaces"
         ).fetchall()
         interface_map: dict[tuple[str, str], dict[str, Any]] = {}
         for raw_row in intf_rows:
@@ -1258,6 +1258,8 @@ def _rebuild_links_from_observations_unlocked() -> int:
             current = interface_map.get(key)
             if current is None or _interface_display_score(row, device_meta.get(dev_id, {})) > _interface_display_score(current, device_meta.get(dev_id, {})):
                 row['display_name'] = _clean_interface_display_name(row.get('name_display') or intf_name)
+                row['speed'] = row.get('speed')
+                row['bandwidth'] = row.get('bandwidth')
                 interface_map[key] = row
 
         site_aliases, _ = _load_site_identity_maps(conn)
@@ -1424,7 +1426,14 @@ def _rebuild_links_from_observations_unlocked() -> int:
                     aggregation.get('aggregation_protocol') if is_aggregation else '',
                     int(aggregation.get('member_count') or 0) if is_aggregation else 0,
                     int(aggregation.get('active_member_count') or 0) if is_aggregation else 0,
-                    float(aggregation.get('bandwidth_mbps') or 0) if is_aggregation else 0,
+                    float(aggregation.get('bandwidth_mbps') or 0) if is_aggregation else (
+                        min(
+                            float((src_interface or {}).get('speed') or (src_interface or {}).get('bandwidth') or 0),
+                            float((tgt_interface or {}).get('speed') or (tgt_interface or {}).get('bandwidth') or 0)
+                        ) / 1_000_000.0 if (src_interface and tgt_interface and ((src_interface.get('speed') or src_interface.get('bandwidth') or 0) and (tgt_interface.get('speed') or tgt_interface.get('bandwidth') or 0))) else (
+                            float((src_interface or {}).get('speed') or (src_interface or {}).get('bandwidth') or (tgt_interface or {}).get('speed') or (tgt_interface or {}).get('bandwidth') or 0) / 1_000_000.0
+                        )
+                    ),
                     _safe_json(member_rows),
                 ),
             )
