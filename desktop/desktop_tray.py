@@ -1938,7 +1938,7 @@ class NetOpsAgentUI(QMainWindow):
         
         # Fields details
         self.meta_fields = [
-            ("meta_addr", "127.0.0.1:5010"),
+            ("meta_addr", "0.0.0.0:5010"),
             ("meta_port", "5010"),
             ("meta_dir", PROJECT_ROOT),
             ("meta_cfg", os.path.join(DESKTOP_DIR, "desktop_settings.ini")),

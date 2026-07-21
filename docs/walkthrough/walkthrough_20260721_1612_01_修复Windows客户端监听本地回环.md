@@ -4,8 +4,10 @@
 
 ## 完成摘要
 
-* **修改内容**：将 [desktop_tray.py](file:///d:/nexora/nexora-private/desktop/desktop_tray.py) 中通过 subprocess 启动 uvicorn 时的 `--host` 参数由原来的 `127.0.0.1` 修正为 `0.0.0.0`。
-* **效果**：Windows 客户端启动后，后端服务除了支持 `127.0.0.1` 回环访问，也同时支持局域网 IP、物理网卡 IP 访问，解决了其他客户端无法跨机访问的系统缺陷。
+* **修改内容**：
+  1. 将 [desktop_tray.py](file:///d:/nexora/nexora-private/desktop/desktop_tray.py) 中通过 subprocess 启动 uvicorn 时的 `--host` 参数由原来的 `127.0.0.1` 修正为 `0.0.0.0`。
+  2. 同步将 UI 中“运行信息”区域展示的“监听地址”的静态默认值由 `127.0.0.1:5010` 修正为真实的绑定网段 `0.0.0.0:5010`。
+* **效果**：Windows 客户端启动后，后端服务除了支持 `127.0.0.1` 回环访问，也同时支持局域网 IP、物理网卡 IP 访问，且 UI 控制台能正确显示服务正运行于 `0.0.0.0:5010`，避免用户误判。
 
 ## 实际修改文件清单
 
