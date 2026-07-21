@@ -30,7 +30,17 @@ const CustomTooltip = ({ active, payload, label, zh }: any) => {
   }
   return null;
 };
-
+const translateErrorType = (type: string) => {
+  const dict: Record<string, string> = {
+    'CONNECT_TIMEOUT': '连接超时',
+    'CONNECTION_REFUSED': '连接被拒绝',
+    'NETWORK_UNREACHABLE': '网络不可达',
+    'DNS_TIMEOUT': 'DNS 解析超时',
+    'HTTP_STATUS_ERROR': 'HTTP 状态码错误',
+    'PING_FAILED': 'Ping 失败',
+  };
+  return dict[type] || type;
+};
 
 const HISTORY_RANGES = [
   { hours: 1, zh: '1小时', en: '1h' },
@@ -66,6 +76,18 @@ const TargetHistoryCard: React.FC<{
   const selectedHours = data?.history_hours ?? historyHours;
   const rangeLabel = HISTORY_RANGES.find((range) => range.hours === selectedHours)?.[zh ? 'zh' : 'en'] || `${selectedHours}h`;
 
+  const errorCounts = useMemo(() => {
+    if (!data?.history) return {};
+    const counts: Record<string, number> = {};
+    data.history.forEach((point) => {
+      if (!point.success) {
+        const type = point.error_type || (zh ? '未知错误' : 'Unknown Error');
+        counts[type] = (counts[type] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [data?.history, zh]);
+
   const chartData = useMemo(() => {
     if (!data?.history || data.history.length === 0) return [];
     
@@ -75,6 +97,18 @@ const TargetHistoryCard: React.FC<{
       latency: point.latency_ms == null ? null : Number(point.latency_ms),
       success: point.success,
     })).sort((a, b) => a.timestamp - b.timestamp);
+
+    // Compute 5-sample sliding window success rate for each raw point
+    const pointsWithWindow = points.map((p, idx) => {
+      const windowStart = Math.max(0, idx - 4);
+      const windowPoints = points.slice(windowStart, idx + 1);
+      const successCount = windowPoints.filter((wp) => wp.success).length;
+      const slidingAvail = (successCount / windowPoints.length) * 100;
+      return {
+        ...p,
+        slidingAvail,
+      };
+    });
 
     const lastPointTime = points[points.length - 1].timestamp;
     const durationMs = selectedHours * 3600 * 1000;
@@ -98,18 +132,19 @@ const TargetHistoryCard: React.FC<{
       const bucketStart = t - stepMs / 2;
       const bucketEnd = t + stepMs / 2;
       
-      const bucketPoints = points.filter((p) => p.timestamp >= bucketStart && p.timestamp < bucketEnd);
+      const bucketPoints = pointsWithWindow.filter((p) => p.timestamp >= bucketStart && p.timestamp < bucketEnd);
       
       if (bucketPoints.length > 0) {
         const latencies = bucketPoints.map((p) => p.latency).filter((l): l is number => l !== null);
         const averageLatency = latencies.length > 0 ? latencies.reduce((a, b) => a + b, 0) / latencies.length : null;
-        const successes = bucketPoints.filter((p) => p.success).length;
-        const successRate = (successes / bucketPoints.length) * 100;
+        
+        const avails = bucketPoints.map((p) => p.slidingAvail);
+        const avgAvail = avails.reduce((a, b) => a + b, 0) / avails.length;
         
         steps.push({
           time: formatTime(new Date(t).toISOString(), zh),
           latency: averageLatency == null ? null : Math.round(averageLatency * 100) / 100,
-          result: successRate,
+          result: Math.round(avgAvail),
         });
       } else {
         steps.push({
@@ -133,7 +168,22 @@ const TargetHistoryCard: React.FC<{
           <h2 className="mt-1 text-lg font-extrabold text-[var(--app-text)]">{data.target.target_name}</h2>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-md bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700">{zh ? `查询范围：${rangeLabel}` : `Range: ${rangeLabel}`}</span>
-            <span className="text-[10px] font-semibold text-[var(--muted-text)]">{zh ? '数据颗粒度' : 'Granularity'}:</span>
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold border ${
+              data.latest?.success 
+                ? (data.summary.availability_percent < 95 ? 'bg-yellow-50 text-yellow-700 border-yellow-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200')
+                : 'bg-red-50 text-red-700 border-red-200'
+            }`}>
+              {zh ? '当前状态：' : 'Current: '}
+              {data.latest?.success ? (zh ? '可用' : 'Available') : (zh ? '不可用' : 'Unavailable')}
+            </span>
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-extrabold border ${
+              data.summary.availability_percent < 95 ? 'bg-yellow-50 text-yellow-700 border-yellow-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+            }`}>
+              {zh ? `近 ${selectedHours} 小时可用率：` : `Last ${selectedHours}h Avail: `}
+              {Math.round(data.summary.availability_percent)}%
+              {data.latest?.success && data.summary.availability_percent < 95 && (zh ? ' (不稳定)' : ' (Unstable)')}
+            </span>
+            <span className="text-[10px] font-semibold text-[var(--muted-text)] ml-2">{zh ? '数据颗粒度' : 'Granularity'}:</span>
             {[1, 5].map((g) => (
               <button
                 key={g}
@@ -218,7 +268,51 @@ const TargetHistoryCard: React.FC<{
           </div>
         )}
       </div>
-      {data.latest && !data.latest.success && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{zh ? '最近一次失败：' : 'Latest failure: '}{data.latest.error_type || (zh ? '未知错误' : 'Unknown error')}{data.latest.error_message ? ` · ${data.latest.error_message}` : ''}</p>}
+      {data.latest && !data.latest.success && (
+        <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">
+          {zh ? '最近一次失败原因：' : 'Latest failure: '}
+          {translateErrorType(data.latest.error_type || '') || (zh ? '未知错误' : 'Unknown error')}
+          {data.latest.error_message ? ` · ${data.latest.error_message}` : ''}
+        </p>
+      )}
+
+      {/* Failure reason stats */}
+      {Object.keys(errorCounts).length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2 items-center">
+          <span className="text-[10px] font-bold text-[var(--muted-text)] uppercase tracking-wider">{zh ? '失败原因统计:' : 'Failures:'}</span>
+          {Object.entries(errorCounts).map(([type, count]) => (
+            <span key={type} className="inline-flex items-center gap-1.5 rounded-full bg-red-50 border border-red-100 px-2.5 py-0.5 text-[10px] font-extrabold text-red-700">
+              {zh ? translateErrorType(type) : type}: <span className="font-extrabold text-red-950 bg-red-100 px-1.5 py-0.2 rounded ml-1">{count} {zh ? '次' : 'times'}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Uptime Timeline Bar */}
+      {data.history && data.history.length > 0 && (
+        <div className="mt-4 border-t border-[var(--card-border)] pt-4">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] font-bold text-[var(--app-text)]">{zh ? '最近 40 次拨测序列（从旧到新）' : 'Recent 40 Probes (Oldest to Newest)'}</span>
+            <div className="flex gap-4 text-[10px] font-semibold text-[var(--muted-text)]">
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-emerald-500" />{zh ? '成功' : 'Success'}</span>
+              <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-red-500" />{zh ? '失败' : 'Failure'}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-thin">
+            {data.history.slice(-40).map((point, idx) => (
+              <div
+                key={idx}
+                className={`h-5 min-w-[10px] flex-1 rounded-md transition-all ${
+                  point.success ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-red-500 hover:bg-red-600'
+                }`}
+                title={`${formatTime(point.sampled_at, zh)}: ${
+                  point.success ? (zh ? '探测成功' : 'Success') : `${zh ? '探测失败' : 'Failed'}: ${translateErrorType(point.error_type || '')}`
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 };

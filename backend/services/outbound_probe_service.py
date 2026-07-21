@@ -16,6 +16,7 @@ import os
 import re
 import socket
 import ssl
+import struct
 import time
 import urllib.request
 import uuid
@@ -308,12 +309,53 @@ def _probe_dns(target: dict) -> dict:
     started = time.perf_counter()
     try:
         host = _validate_host_syntax(target["host"])
-        answers = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-        ips = list(dict.fromkeys(str(item[4][0]) for item in answers if item[4]))
-        allowed = [ip for ip in ips if _is_allowed_ip(ip)]
-        if not allowed:
-            raise PermissionError("SSRF_BLOCKED")
-        result.update(success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2), resolved_ip=allowed[0], dns_answers=allowed[:8])
+        
+        is_ip = False
+        try:
+            ipaddress.ip_address(host)
+            is_ip = True
+        except ValueError:
+            pass
+            
+        if is_ip:
+            if not _is_allowed_ip(host):
+                raise PermissionError("SSRF_BLOCKED")
+            timeout = float(target.get("timeout_ms") or 2000) / 1000.0
+            
+            # Send UDP DNS query for www.baidu.com
+            domain = "www.baidu.com"
+            header = struct.pack("!HHHHHH", 0x1a2b, 0x0100, 1, 0, 0, 0)
+            qname = b""
+            for part in domain.split("."):
+                if not part:
+                    continue
+                part_bytes = part.encode("utf-8")
+                qname += struct.pack("B", len(part_bytes)) + part_bytes
+            qname += b"\x00"
+            question = qname + struct.pack("!HH", 1, 1)
+            packet = header + question
+            
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(timeout)
+            try:
+                sock.sendto(packet, (host, int(target.get("port") or 53)))
+                data, _ = sock.recvfrom(512)
+                if len(data) >= 12:
+                    tx_id, flags = struct.unpack("!HH", data[:4])
+                    if tx_id == 0x1a2b:
+                        latency = round((time.perf_counter() - started) * 1000, 2)
+                        result.update(success=True, latency_ms=latency, resolved_ip=host)
+                        return result
+                raise ValueError("Invalid DNS response")
+            finally:
+                sock.close()
+        else:
+            answers = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+            ips = list(dict.fromkeys(str(item[4][0]) for item in answers if item[4]))
+            allowed = [ip for ip in ips if _is_allowed_ip(ip)]
+            if not allowed:
+                raise PermissionError("SSRF_BLOCKED")
+            result.update(success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2), resolved_ip=allowed[0], dns_answers=allowed[:8])
     except BaseException as exc:
         result["error_type"], result["error_message"] = _classify_error(exc)
     return result
@@ -998,6 +1040,25 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
                 groups = json.loads(current.get("group_status_json") or "{}")
             except (TypeError, ValueError):
                 groups = {}
+            recent_cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+            recent_stats = conn.execute(
+                """
+                SELECT target_id, 
+                       COUNT(*) as total_count,
+                       SUM(CASE WHEN success IS TRUE THEN 1 ELSE 0 END) as success_count
+                FROM outbound_probe_results
+                WHERE sampled_at >= %s
+                GROUP BY target_id
+                """,
+                (recent_cutoff,)
+            ).fetchall()
+            recent_avail_map = {}
+            for row in recent_stats:
+                total_cnt = int(row["total_count"])
+                success_cnt = int(row["success_count"])
+                avail = round(success_cnt / total_cnt * 100, 2) if total_cnt > 0 else 100.0
+                recent_avail_map[row["target_id"]] = avail
+
             result_rows = conn.execute(
                 "SELECT * FROM outbound_probe_results WHERE run_id = %s ORDER BY group_name, target_name",
                 (current["id"],),
@@ -1011,6 +1072,8 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
                     item["dns_answers"] = []
                 item["group"] = item.pop("group_name", "business")
                 item["success"] = bool(item.get("success"))
+                tid = item.get("target_id")
+                item["recent_availability"] = recent_avail_map.get(tid, 100.0)
                 targets.append(item)
             # connectivity_status calculation:
             if current["status"] == STATUS_DEGRADED and bool(current.get("public_ip_changed")):

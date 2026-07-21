@@ -156,11 +156,22 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
       timestamp: new Date(point.finished_at).getTime(),
       time: formatTime(point.finished_at, zh),
       latency: point.average_latency_ms == null ? null : Number(point.average_latency_ms),
-      availability: Number(point.availability_percent ?? 100),
+      raw_avail: Number(point.availability_percent ?? 100),
       success_count: point.success_count,
       total_targets: point.total_targets,
       status: point.status,
     })).sort((a, b) => a.timestamp - b.timestamp);
+
+    const sortedWithWindow = sorted.map((p, idx) => {
+      const windowStart = Math.max(0, idx - 4);
+      const windowPoints = sorted.slice(windowStart, idx + 1);
+      const sumAvail = windowPoints.reduce((sum, item) => sum + item.raw_avail, 0);
+      const avgAvail = sumAvail / windowPoints.length;
+      return {
+        ...p,
+        availability: Math.round(avgAvail),
+      };
+    });
 
     const filled: Array<{
       time: string;
@@ -171,11 +182,11 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
       status?: string;
     }> = [];
 
-    for (let i = 0; i < sorted.length; i++) {
-      filled.push(sorted[i]);
-      if (i < sorted.length - 1) {
-        const currentMs = sorted[i].timestamp;
-        const nextMs = sorted[i + 1].timestamp;
+    for (let i = 0; i < sortedWithWindow.length; i++) {
+      filled.push(sortedWithWindow[i]);
+      if (i < sortedWithWindow.length - 1) {
+        const currentMs = sortedWithWindow[i].timestamp;
+        const nextMs = sortedWithWindow[i + 1].timestamp;
         const gapMs = nextMs - currentMs;
         if (gapMs > 180000) { // Gap > 3 minutes
           filled.push({
@@ -478,8 +489,55 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
               <div className="space-y-2">
                 {(data?.targets || []).map((target) => {
                   const result = current?.targets.find((item) => item.target_id === target.id);
-                  const targetTone = result?.success ? statusTone('healthy') : result ? statusTone('unavailable') : statusTone('unknown');
-                  return <div key={target.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--card-border)] px-3 py-2.5"><span className={`h-2 w-2 rounded-full ${targetTone.dot}`} /><span className="min-w-[150px] flex-1"><span className="block text-xs font-bold text-[var(--app-text)]">{target.target_name}</span><span className="block text-[10px] text-[var(--muted-text)]">{groupLabel(target.group_name, zh)} · {target.probe_type} · {target.host}:{target.port}</span></span><span className={`text-[11px] font-bold ${targetTone.text}`}>{result ? (result.success ? (zh ? '成功' : 'Success') : (result.error_type || (zh ? '失败' : 'Failed'))) : (zh ? '待检测' : 'Pending')}</span><span className="w-16 text-right text-[11px] text-[var(--muted-text)]">{result?.latency_ms != null ? `${Math.round(result.latency_ms)} ms` : '--'}</span><button type="button" onClick={() => openEdit(target)} className="rounded-lg p-1.5 text-[var(--muted-text)] hover:bg-sky-50 hover:text-sky-700" aria-label={zh ? '编辑' : 'Edit'}><Pencil size={13} /></button><button type="button" onClick={async () => { if (!window.confirm(zh ? `确认删除 ${target.target_name}？` : `Delete ${target.target_name}?`)) return; try { await onDeleteTarget(target.id); showToast(zh ? '目标已删除' : 'Target deleted', 'success'); } catch (error) { showToast(error instanceof Error ? error.message : (zh ? '删除失败' : 'Delete failed'), 'error'); } }} className="rounded-lg p-1.5 text-[var(--muted-text)] hover:bg-red-50 hover:text-red-700" aria-label={zh ? '删除' : 'Delete'}><Trash2 size={13} /></button></div>;
+                  
+                  let statusText = zh ? '待检测' : 'Pending';
+                  let targetToneText = 'text-slate-500';
+                  let targetToneDot = 'bg-slate-400';
+                  let borderClass = 'border-[var(--card-border)]';
+                  let bgClass = 'bg-black/[0.01]';
+                  
+                  if (result) {
+                    const avail = result.recent_availability ?? 100;
+                    if (!result.success) {
+                      statusText = result.error_type ? (zh ? `故障 (${result.error_type})` : `Failed (${result.error_type})`) : (zh ? '故障' : 'Failed');
+                      targetToneText = 'text-red-600 font-extrabold';
+                      targetToneDot = 'bg-red-500';
+                      borderClass = 'border-red-200';
+                      bgClass = 'bg-red-50/10';
+                    } else if (avail < 95) {
+                      statusText = zh ? `不稳定 · 近1小时可用率 ${Math.round(avail)}%` : `Unstable · Last 1h ${Math.round(avail)}%`;
+                      targetToneText = 'text-yellow-600 font-extrabold';
+                      targetToneDot = 'bg-yellow-500 animate-pulse';
+                      borderClass = 'border-yellow-200';
+                      bgClass = 'bg-yellow-50/15';
+                    } else {
+                      statusText = zh ? '可用' : 'Available';
+                      targetToneText = 'text-emerald-600 font-extrabold';
+                      targetToneDot = 'bg-emerald-500';
+                      borderClass = 'border-emerald-200';
+                      bgClass = 'bg-emerald-50/10';
+                    }
+                  }
+
+                  return (
+                    <div key={target.id} className={`flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2.5 transition-colors ${borderClass} ${bgClass}`}>
+                      <span className={`h-2.5 w-2.5 rounded-full ${targetToneDot}`} />
+                      <span className="min-w-[150px] flex-1">
+                        <span className="block text-xs font-extrabold text-[var(--app-text)]">{target.target_name}</span>
+                        <span className="block text-[10px] text-[var(--muted-text)] font-semibold mt-0.5">
+                          {groupLabel(target.group_name, zh)} · {target.probe_type} · {target.host}:{target.port}
+                        </span>
+                      </span>
+                      <span className={`text-[11px] ${targetToneText}`}>
+                        {statusText}
+                      </span>
+                      <span className="w-16 text-right text-[11px] font-bold text-[var(--muted-text)]">
+                        {result?.latency_ms != null ? `${Math.round(result.latency_ms)} ms` : '--'}
+                      </span>
+                      <button type="button" onClick={() => openEdit(target)} className="rounded-lg p-1.5 text-[var(--muted-text)] hover:bg-sky-50 hover:text-sky-700" aria-label={zh ? '编辑' : 'Edit'}><Pencil size={13} /></button>
+                      <button type="button" onClick={async () => { if (!window.confirm(zh ? `确认删除 ${target.target_name}？` : `Delete ${target.target_name}?`)) return; try { await onDeleteTarget(target.id); showToast(zh ? '目标已删除' : 'Target deleted', 'success'); } catch (error) { showToast(error instanceof Error ? error.message : (zh ? '删除失败' : 'Delete failed'), 'error'); } }} className="rounded-lg p-1.5 text-[var(--muted-text)] hover:bg-red-50 hover:text-red-700" aria-label={zh ? '删除' : 'Delete'}><Trash2 size={13} /></button>
+                    </div>
+                  );
                 })}
               </div>
             </div>

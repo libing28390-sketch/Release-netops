@@ -31,6 +31,7 @@ export interface OutboundTargetResult {
   resolved_ip?: string | null;
   http_status?: number | null;
   dns_answers?: string[];
+  recent_availability?: number;
 }
 
 export interface OutboundGroupStatus {

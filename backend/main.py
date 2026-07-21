@@ -650,6 +650,16 @@ def seed_data():
 
         # Seed demo racks if empty (mock seeding removed per user request)
         pass
+
+        # Migrate Aliyun DNS and Tencent DNS default targets to DNS_RESOLVE
+        conn.execute(
+            """
+            UPDATE outbound_probe_targets
+            SET probe_type = 'DNS_RESOLVE'
+            WHERE target_name IN ('Tencent DNS', 'Aliyun DNS') AND probe_type = 'TCP_CONNECT'
+            """
+        )
+
         conn.commit()
     finally:
         conn.close()
