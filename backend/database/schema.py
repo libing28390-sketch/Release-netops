@@ -2618,6 +2618,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('physical_assets', 'admin_password_expires_at', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'enable_password_last_rotated', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'enable_password_expires_at', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'credential_id', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'admin_credential_id', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'credential_source', "TEXT DEFAULT 'local'")
     ensure_column('physical_assets', 'vault_path', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'requires_strict_audit', "INTEGER DEFAULT 1")
@@ -2645,6 +2647,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('physical_assets', 'power_watts', "INTEGER DEFAULT 0")
 
     ensure_column('devices', 'credential_id', 'TEXT')
+    ensure_column('devices', 'admin_credential_id', "TEXT DEFAULT ''")
     ensure_column('devices', 'asset_id', 'TEXT')
     ensure_column('devices', 'vendor', "TEXT DEFAULT ''")
     ensure_column('devices', 'lifecycle_status', "TEXT DEFAULT 'staging'")

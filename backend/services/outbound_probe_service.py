@@ -480,7 +480,7 @@ def _group_statuses(results: list[dict]) -> dict[str, dict]:
 
 def _latest_node(conn) -> dict:
     row = conn.execute(
-        "SELECT * FROM outbound_probe_nodes WHERE node_name = %s AND enabled IS TRUE LIMIT 1",
+        "SELECT * FROM outbound_probe_nodes WHERE node_name = ? AND enabled IS TRUE LIMIT 1",
         ("platform-server",),
     ).fetchone()
     if row:
@@ -490,7 +490,7 @@ def _latest_node(conn) -> dict:
 
 def _latest_run(conn, node_id: str) -> dict | None:
     row = conn.execute(
-        "SELECT * FROM outbound_probe_runs WHERE node_id = %s ORDER BY finished_at DESC LIMIT 1",
+        "SELECT * FROM outbound_probe_runs WHERE node_id = ? ORDER BY finished_at DESC LIMIT 1",
         (node_id,),
     ).fetchone()
     return dict(row) if row else None
@@ -518,7 +518,7 @@ def list_outbound_targets() -> list[dict]:
                     INSERT INTO outbound_probe_targets (
                         id, target_name, host, port, probe_type, enabled, created_at, group_name,
                         url, expected_status_code, expected_keyword, timeout_ms, is_active, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT (id) DO NOTHING
                     """,
                     (target_id, name, host, port, probe_type, True, now, group_name, url, expected_status, "", 2500, True, now),
@@ -541,15 +541,15 @@ def upsert_outbound_target(payload: dict, *, target_id: str | None = None) -> di
     target = normalize_target_payload(payload, target_id=target_id)
     conn = get_db_connection()
     try:
-        existing = conn.execute("SELECT * FROM outbound_probe_targets WHERE id = %s", (target["id"],)).fetchone()
+        existing = conn.execute("SELECT * FROM outbound_probe_targets WHERE id = ?", (target["id"],)).fetchone()
         if existing:
             conn.execute(
                 """
                 UPDATE outbound_probe_targets
-                SET target_name = %s, host = %s, port = %s, probe_type = %s, group_name = %s, url = %s,
-                    expected_status_code = %s, expected_keyword = %s, timeout_ms = %s, enabled = %s,
-                    is_active = %s, updated_at = %s
-                WHERE id = %s
+                SET target_name = ?, host = ?, port = ?, probe_type = ?, group_name = ?, url = ?,
+                    expected_status_code = ?, expected_keyword = ?, timeout_ms = ?, enabled = ?,
+                    is_active = ?, updated_at = ?
+                WHERE id = ?
                 """,
                 (target["target_name"], target["host"], target["port"], target["probe_type"], target["group_name"],
                  target["url"], target["expected_status_code"], target["expected_keyword"], target["timeout_ms"],
@@ -561,7 +561,7 @@ def upsert_outbound_target(payload: dict, *, target_id: str | None = None) -> di
                 INSERT INTO outbound_probe_targets
                     (id, target_name, host, port, probe_type, is_active, created_at, group_name, url,
                      expected_status_code, expected_keyword, timeout_ms, enabled, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (target["id"], target["target_name"], target["host"], target["port"], target["probe_type"],
                  target["enabled"], target["updated_at"], target["group_name"], target["url"],
@@ -569,7 +569,7 @@ def upsert_outbound_target(payload: dict, *, target_id: str | None = None) -> di
                  target["enabled"], target["updated_at"]),
             )
         conn.commit()
-        row = conn.execute("SELECT * FROM outbound_probe_targets WHERE id = %s", (target["id"],)).fetchone()
+        row = conn.execute("SELECT * FROM outbound_probe_targets WHERE id = ?", (target["id"],)).fetchone()
         return dict(row)
     except Exception:
         conn.rollback()
@@ -581,10 +581,10 @@ def upsert_outbound_target(payload: dict, *, target_id: str | None = None) -> di
 def delete_outbound_target(target_id: str) -> bool:
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT id FROM outbound_probe_targets WHERE id = %s", (target_id,)).fetchone()
+        row = conn.execute("SELECT id FROM outbound_probe_targets WHERE id = ?", (target_id,)).fetchone()
         if not row:
             return False
-        conn.execute("DELETE FROM outbound_probe_targets WHERE id = %s", (target_id,))
+        conn.execute("DELETE FROM outbound_probe_targets WHERE id = ?", (target_id,))
         conn.commit()
         return True
     finally:
@@ -753,7 +753,7 @@ def detect_egress_ip() -> dict:
 
 def _record_egress_event(conn, node_id: str, detected: dict, observed_at: str) -> dict:
     previous_row = conn.execute(
-        "SELECT confirmed_ip FROM outbound_egress_ip_events WHERE node_id = %s AND consistent IS TRUE "
+        "SELECT confirmed_ip FROM outbound_egress_ip_events WHERE node_id = ? AND consistent IS TRUE "
         "ORDER BY observed_at DESC LIMIT 1",
         (node_id,),
     ).fetchone()
@@ -769,7 +769,7 @@ def _record_egress_event(conn, node_id: str, detected: dict, observed_at: str) -
     elif expected_ip_raw and confirmed_ip:
         # Look up the last 2 events to execute the continuous confirmation state machine
         rows = conn.execute(
-            "SELECT confirmed_ip FROM outbound_egress_ip_events WHERE node_id = %s "
+            "SELECT confirmed_ip FROM outbound_egress_ip_events WHERE node_id = ? "
             "ORDER BY observed_at DESC LIMIT 2",
             (node_id,),
         ).fetchall()
@@ -807,7 +807,7 @@ def _record_egress_event(conn, node_id: str, detected: dict, observed_at: str) -
         """
         INSERT INTO outbound_egress_ip_events
             (id, node_id, observed_at, previous_ip, confirmed_ip, source_a_ip, source_b_ip, consistent, error_message, public_ip_source, public_ip_verified)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (str(uuid.uuid4()), node_id, observed_at, previous_ip, confirmed_ip, detected.get("source_a_ip", ""),
          detected.get("source_b_ip", ""), bool(detected.get("consistent")), detected.get("error_message", ""),
@@ -828,14 +828,14 @@ def record_outbound_egress_snapshot() -> None:
         observed_at = utc_now_iso()
         detected = detect_egress_ip()
         ip_info = _record_egress_event(conn, node["id"], detected, observed_at)
-        conn.execute("UPDATE outbound_probe_nodes SET last_seen_at = %s, updated_at = %s WHERE id = %s", (observed_at, observed_at, node["id"]))
+        conn.execute("UPDATE outbound_probe_nodes SET last_seen_at = ?, updated_at = ? WHERE id = ?", (observed_at, observed_at, node["id"]))
         latest = _latest_run(conn, node["id"])
         if latest:
             conn.execute(
                 """
                 UPDATE outbound_probe_runs 
-                SET public_ip = %s, public_ip_changed = %s, public_ip_source = %s, public_ip_verified = %s 
-                WHERE id = %s
+                SET public_ip = ?, public_ip_changed = ?, public_ip_source = ?, public_ip_verified = ? 
+                WHERE id = ?
                 """,
                 (ip_info["public_ip"], bool(ip_info["public_ip_changed"]), 
                  ip_info.get("public_ip_source", "unknown"), bool(ip_info.get("public_ip_verified")), 
@@ -870,7 +870,7 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
         else:
             ip_row = conn.execute(
                 "SELECT confirmed_ip, public_ip_source, public_ip_verified "
-                "FROM outbound_egress_ip_events WHERE node_id = %s "
+                "FROM outbound_egress_ip_events WHERE node_id = ? "
                 "ORDER BY observed_at DESC LIMIT 1",
                 (node["id"],),
             ).fetchone()
@@ -950,7 +950,7 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
                 success_count, total_targets, availability_percent, average_latency_ms,
                 public_ip, public_ip_changed, consecutive_failure_count, consecutive_recovery_count,
                 group_status_json, created_at, public_ip_source, public_ip_verified
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (run_id, node["id"], started_at, finished_at, status, raw_status, reason, success_count, total_targets,
              availability, round(sum(latencies) / len(latencies), 2) if latencies else None, egress_info["public_ip"],
@@ -964,7 +964,7 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
                 INSERT INTO outbound_probe_results (
                     id, run_id, target_id, target_name, group_name, probe_type, sampled_at,
                     success, latency_ms, error_type, error_message, resolved_ip, http_status, dns_answers_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (str(uuid.uuid4()), run_id, result["target_id"], result["target_name"], result["group"], result["probe_type"],
                  finished_at, bool(result["success"]), result["latency_ms"], result["error_type"],
@@ -976,7 +976,7 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
             INSERT INTO outbound_probe_samples
                 (id, timestamp, success_count, total_targets, success_rate, egress_ip, avg_latency_ms,
                  node_id, status, status_reason, public_ip_changed, consecutive_failure_count, consecutive_recovery_count)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (run_id, finished_at, success_count, total_targets, availability / 100, egress_info["public_ip"],
              round(sum(latencies) / len(latencies), 2) if latencies else 0, node["id"], status, reason,
@@ -985,10 +985,10 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
         retention_days = max(1, int(getattr(settings, "OUTBOUND_PROBE_RETENTION_DAYS", 30) or 30))
         retention_hours = retention_days * 24
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=retention_hours)).isoformat()
-        conn.execute("DELETE FROM outbound_probe_results WHERE sampled_at < %s", (cutoff,))
-        conn.execute("DELETE FROM outbound_probe_runs WHERE finished_at < %s", (cutoff,))
-        conn.execute("DELETE FROM outbound_probe_samples WHERE timestamp < %s", (cutoff,))
-        conn.execute("UPDATE outbound_probe_nodes SET last_seen_at = %s, updated_at = %s WHERE id = %s", (finished_at, finished_at, node["id"]))
+        conn.execute("DELETE FROM outbound_probe_results WHERE sampled_at < ?", (cutoff,))
+        conn.execute("DELETE FROM outbound_probe_runs WHERE finished_at < ?", (cutoff,))
+        conn.execute("DELETE FROM outbound_probe_samples WHERE timestamp < ?", (cutoff,))
+        conn.execute("UPDATE outbound_probe_nodes SET last_seen_at = ?, updated_at = ? WHERE id = ?", (finished_at, finished_at, node["id"]))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1031,7 +1031,7 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
         requested_history_hours = _bounded_history_hours(history_hours)
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=requested_history_hours)).isoformat()
         runs = conn.execute(
-            "SELECT * FROM outbound_probe_runs WHERE node_id = %s AND finished_at >= %s ORDER BY finished_at ASC",
+            "SELECT * FROM outbound_probe_runs WHERE node_id = ? AND finished_at >= ? ORDER BY finished_at ASC",
             (node["id"], cutoff),
         ).fetchall()
         current_payload = None
@@ -1047,7 +1047,7 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
                        COUNT(*) as total_count,
                        SUM(CASE WHEN success IS TRUE THEN 1 ELSE 0 END) as success_count
                 FROM outbound_probe_results
-                WHERE sampled_at >= %s
+                WHERE sampled_at >= ?
                 GROUP BY target_id
                 """,
                 (recent_cutoff,)
@@ -1060,7 +1060,7 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
                 recent_avail_map[row["target_id"]] = avail
 
             result_rows = conn.execute(
-                "SELECT * FROM outbound_probe_results WHERE run_id = %s ORDER BY group_name, target_name",
+                "SELECT * FROM outbound_probe_results WHERE run_id = ? ORDER BY group_name, target_name",
                 (current["id"],),
             ).fetchall()
             targets = []
@@ -1086,7 +1086,7 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
 
             # Load the latest event to fetch detailed egress IP source / verified / confidence
             latest_event_row = conn.execute(
-                "SELECT * FROM outbound_egress_ip_events WHERE node_id = %s "
+                "SELECT * FROM outbound_egress_ip_events WHERE node_id = ? "
                 "ORDER BY observed_at DESC LIMIT 1",
                 (node["id"],),
             ).fetchone()
@@ -1159,7 +1159,7 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
             current_status = current["status"]
             if current_status:
                 diff_row = conn.execute(
-                    "SELECT finished_at FROM outbound_probe_runs WHERE node_id = %s AND status != %s "
+                    "SELECT finished_at FROM outbound_probe_runs WHERE node_id = ? AND status != ? "
                     "ORDER BY finished_at DESC LIMIT 1",
                     (node["id"], current_status),
                 ).fetchone()
@@ -1167,7 +1167,7 @@ def get_outbound_status(*, history_hours: int = 24) -> dict:
                     transition_time = datetime.fromisoformat(diff_row[0].replace('Z', '+00:00'))
                 else:
                     earliest_row = conn.execute(
-                        "SELECT started_at FROM outbound_probe_runs WHERE node_id = %s "
+                        "SELECT started_at FROM outbound_probe_runs WHERE node_id = ? "
                         "ORDER BY finished_at ASC LIMIT 1",
                         (node["id"],),
                     ).fetchone()
@@ -1269,7 +1269,7 @@ def get_outbound_target_history(*, target_id: str, history_hours: int = 24, star
             SELECT id, target_name, host, port, probe_type, group_name, url, expected_status_code,
                    expected_keyword, timeout_ms, enabled, is_active, created_at, updated_at
             FROM outbound_probe_targets
-            WHERE id = %s
+            WHERE id = ?
             """,
             (target_id,),
         ).fetchone()
@@ -1285,7 +1285,7 @@ def get_outbound_target_history(*, target_id: str, history_hours: int = 24, star
                        result.dns_answers_json, run.status AS run_status, run.public_ip
                 FROM outbound_probe_results AS result
                 JOIN outbound_probe_runs AS run ON run.id = result.run_id
-                WHERE result.target_id = %s AND result.sampled_at >= %s AND result.sampled_at <= %s
+                WHERE result.target_id = ? AND result.sampled_at >= ? AND result.sampled_at <= ?
                 ORDER BY result.sampled_at ASC
                 """,
                 (target_id, start_time, end_time),
@@ -1307,7 +1307,7 @@ def get_outbound_target_history(*, target_id: str, history_hours: int = 24, star
                        result.dns_answers_json, run.status AS run_status, run.public_ip
                 FROM outbound_probe_results AS result
                 JOIN outbound_probe_runs AS run ON run.id = result.run_id
-                WHERE result.target_id = %s AND result.sampled_at >= %s
+                WHERE result.target_id = ? AND result.sampled_at >= ?
                 ORDER BY result.sampled_at ASC
                 """,
                 (target_id, cutoff),

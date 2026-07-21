@@ -375,7 +375,9 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
     },
     # Keep registered domestic platforms isolated until an official output
     # fixture proves the command grammar for the exact platform family.
-    'zte_zxros': {},
+    'zte_zxros': {
+        'neighbors': ['show lldp neighbor brief'],
+    },
     'maipu': {},
 }
 

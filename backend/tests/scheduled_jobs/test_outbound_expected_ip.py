@@ -86,7 +86,7 @@ def test_detect_egress_ip_override(monkeypatch):
     assert res["confidence"] == "high"
 
 
-def test_consecutive_confirmation_mismatch(monkeypatch):
+def test_consecutive_confirmation_mismatch(isolated_db, monkeypatch):
     monkeypatch.setenv("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "202.96.128.8")
     
     # We will test the status transition logic using _record_egress_event
@@ -95,7 +95,7 @@ def test_consecutive_confirmation_mismatch(monkeypatch):
         node_id = "test-node"
         
         # Clear out older events to start fresh
-        conn.execute("DELETE FROM outbound_egress_ip_events WHERE node_id = %s", (node_id,))
+        conn.execute("DELETE FROM outbound_egress_ip_events WHERE node_id = ?", (node_id,))
         
         # 1st mismatch: expected 202.96.128.8, got 210.22.84.5
         detected = {
@@ -138,7 +138,7 @@ def test_consecutive_confirmation_mismatch(monkeypatch):
         conn.close()
 
 
-def test_status_severity_and_affect_health(monkeypatch):
+def test_status_severity_and_affect_health(isolated_db, monkeypatch):
     monkeypatch.setenv("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "202.96.128.8")
     
     # 1. Mismatch affects health (default = true)

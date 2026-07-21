@@ -61,6 +61,14 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const [sites, setSites] = React.useState<any[]>([]);
   const [uValidationError, setUValidationError] = React.useState<string | null>(null);
   const [legacyExemptReason, setLegacyExemptReason] = React.useState('');
+  const [credentials, setCredentials] = React.useState<any[]>([]);
+  const [credMode, setCredMode] = React.useState<'manual' | 'existing'>('manual');
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setCredMode(form.credential_id ? 'existing' : 'manual');
+    }
+  }, [isOpen, form.credential_id]);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -69,13 +77,17 @@ export const AssetModal: React.FC<AssetModalProps> = ({
       Promise.all([
         fetch('/api/racks', { headers }).then(res => res.json()),
         fetch('/api/cmdb/sites', { headers }).then(res => res.json()),
+        fetch('/api/credentials', { headers }).then(res => res.json()),
       ])
-      .then(([rackData, siteData]) => {
+      .then(([rackData, siteData, credData]) => {
         if (rackData && rackData.success && Array.isArray(rackData.data)) {
           setRacks(rackData.data);
         }
         if (siteData && siteData.success && Array.isArray(siteData.data)) {
           setSites(siteData.data);
+        }
+        if (credData && credData.success && Array.isArray(credData.data)) {
+          setCredentials(credData.data);
         }
       })
       .catch(err => console.error('Failed to load asset location data:', err));
@@ -435,19 +447,143 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   </div>
                 </div>
 
-                {/* Dual-account credential inputs */}
-                <div className="grid grid-cols-2 gap-3 p-3 rounded-xl border border-black/5 bg-slate-50/30">
-                  <div className="space-y-2">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-blue-500">{zh ? '普通账户' : 'Normal Account'}</p>
-                    <Field label={zh ? '用户名' : 'Username'} value={form.normal_username} onChange={v => setForm(f => ({ ...f, normal_username: v }))} placeholder="user" />
-                    <PasswordField label={zh ? '密码' : 'Password'} value={form.normal_password} onChange={v => setForm(f => ({ ...f, normal_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : ''} />
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-orange-500">{zh ? '特权账户' : 'Admin Account'}</p>
-                    <Field label={zh ? '用户名' : 'Username'} value={form.admin_username} onChange={v => setForm(f => ({ ...f, admin_username: v }))} placeholder={form.asset_type === 'network_device' ? 'admin' : 'root'} />
-                    <PasswordField label={zh ? '密码' : 'Password'} value={form.admin_password} onChange={v => setForm(f => ({ ...f, admin_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : ''} />
-                  </div>
+                {/* Mode Selector */}
+                <div className="flex gap-2 mb-2 p-1 bg-slate-100 rounded-lg text-[9px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCredMode('manual');
+                      setForm(f => ({ ...f, credential_id: '', admin_credential_id: '' }));
+                    }}
+                    className={`flex-1 py-1 rounded text-center transition-colors ${credMode === 'manual' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    {zh ? '手动录入新凭据' : 'Manual Entry'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCredMode('existing');
+                    }}
+                    className={`flex-1 py-1 rounded text-center transition-colors ${credMode === 'existing' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                  >
+                    {zh ? '绑定已有凭据 (推荐)' : 'Select Existing'}
+                  </button>
                 </div>
+
+                {credMode === 'existing' ? (
+                  <div className="p-3 rounded-xl border border-black/5 bg-slate-50/30 space-y-2.5">
+                    {form.auth_model === 'dual' ? (
+                      <>
+                        <div>
+                          <label className="block text-[10px] font-bold text-black/50 mb-1">
+                            {zh ? '选择普通账号凭据' : 'Select Normal Credential'}
+                          </label>
+                          <select
+                            value={form.credential_id || ''}
+                            onChange={e => {
+                              const selectedId = e.target.value;
+                              setForm(f => ({ ...f, credential_id: selectedId }));
+                              const selected = credentials.find(c => c.id === selectedId);
+                              if (selected) {
+                                setForm(f => ({
+                                  ...f,
+                                  credential_id: selectedId,
+                                  normal_username: selected.username || '',
+                                }));
+                              }
+                            }}
+                            className="w-full text-[10px] px-2.5 py-1.5 rounded-lg border border-black/8 bg-white focus:outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20"
+                          >
+                            <option value="">{zh ? '-- 请选择普通凭据 --' : '-- Select Normal Credential --'}</option>
+                            {credentials.map(c => (
+                              <option key={c.id} value={c.id}>
+                                {c.credential_name} ({c.username || 'no user'} - {c.credential_type})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-black/50 mb-1">
+                            {zh ? '选择特权账号凭据' : 'Select Admin Credential'}
+                          </label>
+                          <select
+                            value={form.admin_credential_id || ''}
+                            onChange={e => {
+                              const selectedId = e.target.value;
+                              setForm(f => ({ ...f, admin_credential_id: selectedId }));
+                              const selected = credentials.find(c => c.id === selectedId);
+                              if (selected) {
+                                setForm(f => ({
+                                  ...f,
+                                  admin_credential_id: selectedId,
+                                  admin_username: selected.username || '',
+                                }));
+                              }
+                            }}
+                            className="w-full text-[10px] px-2.5 py-1.5 rounded-lg border border-black/8 bg-white focus:outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20"
+                          >
+                            <option value="">{zh ? '-- 请选择特权凭据 --' : '-- Select Admin Credential --'}</option>
+                            {credentials.map(c => (
+                              <option key={c.id} value={c.id}>
+                                {c.credential_name} ({c.username || 'no user'} - {c.credential_type})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        <label className="block text-[10px] font-bold text-black/50 mb-1">
+                          {zh ? '选择已有凭据' : 'Select Credential'}
+                        </label>
+                        <select
+                          value={form.credential_id || ''}
+                          onChange={e => {
+                            const selectedId = e.target.value;
+                            setForm(f => ({ ...f, credential_id: selectedId }));
+                            const selected = credentials.find(c => c.id === selectedId);
+                            if (selected) {
+                              setForm(f => ({
+                                ...f,
+                                credential_id: selectedId,
+                                normal_username: selected.username || '',
+                                admin_username: selected.username || '',
+                              }));
+                            }
+                          }}
+                          className="w-full text-[10px] px-2.5 py-1.5 rounded-lg border border-black/8 bg-white focus:outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20"
+                        >
+                          <option value="">{zh ? '-- 请选择凭据 --' : '-- Select a Credential --'}</option>
+                          {credentials.map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.credential_name} ({c.username || 'no user'} - {c.credential_type})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {(form.credential_id || form.admin_credential_id) && (
+                      <p className="text-[8px] text-emerald-600">
+                        {zh ? '✓ 已成功选择并关联现有凭据' : '✓ Successfully linked to existing credential'}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  /* Dual-account credential inputs */
+                  <div className="grid grid-cols-2 gap-3 p-3 rounded-xl border border-black/5 bg-slate-50/30">
+                    <div className="space-y-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-blue-500">{zh ? '普通账户' : 'Normal Account'}</p>
+                      <Field label={zh ? '用户名' : 'Username'} value={form.normal_username} onChange={v => setForm(f => ({ ...f, normal_username: v }))} placeholder="user" />
+                      <PasswordField label={zh ? '密码' : 'Password'} value={form.normal_password} onChange={v => setForm(f => ({ ...f, normal_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : ''} />
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-orange-500">{zh ? '特权账户' : 'Admin Account'}</p>
+                      <Field label={zh ? '用户名' : 'Username'} value={form.admin_username} onChange={v => setForm(f => ({ ...f, admin_username: v }))} placeholder={form.asset_type === 'network_device' ? 'admin' : 'root'} />
+                      <PasswordField label={zh ? '密码' : 'Password'} value={form.admin_password} onChange={v => setForm(f => ({ ...f, admin_password: v }))} placeholder={editingAsset ? (zh ? '留空不变' : 'Leave empty to keep') : ''} />
+                    </div>
+                  </div>
+                )}
 
                 {/* Enable Secret */}
                 {form.asset_type === 'network_device' && form.platform.startsWith('cisco') && (

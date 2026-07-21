@@ -64,12 +64,20 @@ def _normalize_username(value: str | None) -> str:
     return (value or '').strip().lower()
 
 
-def _infer_device_account_role(credential_username: str, device: dict) -> str:
+def _infer_device_account_role(credential_id: str, credential_username: str, device: dict) -> str:
     """Infer how the credential username is used by a linked device.
 
     The credential vault stores the actual login username, not a role. For legacy
     single-account devices or incomplete dual-account data, keep the role generic.
     """
+    dev_cred_id = device.get('credential_id')
+    dev_admin_cred_id = device.get('admin_credential_id')
+
+    if dev_admin_cred_id == credential_id:
+        return 'admin'
+    if dev_cred_id == credential_id:
+        return 'normal'
+
     username = _normalize_username(credential_username)
     normal_username = _normalize_username(device.get('normal_username'))
     admin_username = _normalize_username(device.get('admin_username'))
@@ -81,12 +89,12 @@ def _infer_device_account_role(credential_username: str, device: dict) -> str:
     return 'login'
 
 
-def _account_role_from_devices(credential_username: str, devices: list[dict]) -> str:
+def _account_role_from_devices(credential_id: str, credential_username: str, devices: list[dict]) -> str:
     if not devices:
         return 'unbound'
 
     roles = {
-        _infer_device_account_role(credential_username, device)
+        _infer_device_account_role(credential_id, credential_username, device)
         for device in devices
     }
     if len(roles) > 1:
@@ -95,7 +103,7 @@ def _account_role_from_devices(credential_username: str, devices: list[dict]) ->
 
 
 def _with_account_role(view: dict, devices: list[dict]) -> dict:
-    role = _account_role_from_devices(view.get('username') or '', devices)
+    role = _account_role_from_devices(view.get('id') or '', view.get('username') or '', devices)
     view['account_role'] = role
     view['account_role_label'] = _ACCOUNT_ROLE_LABELS.get(role, role)
     return view
@@ -251,11 +259,11 @@ def _list_devices_using_rows(conn, cred_id: str) -> list[dict]:
     """Return device info needed for safe credential metadata inference."""
     try:
         rows = conn.execute(
-            """SELECT id, hostname, ip_address, username, normal_username, admin_username, auth_model
+            """SELECT id, hostname, ip_address, username, normal_username, admin_username, auth_model, credential_id, admin_credential_id
                FROM devices
-               WHERE credential_id = ?
+               WHERE credential_id = ? OR admin_credential_id = ?
                ORDER BY hostname""",
-            (cred_id,),
+            (cred_id, cred_id),
         ).fetchall()
     except Exception:
         return []

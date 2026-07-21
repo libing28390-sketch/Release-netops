@@ -171,17 +171,24 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     if resolved is None:
         # Check if credential_id is set to retrieve from credentials table
         credential_id = device.get('credential_id')
+        admin_credential_id = device.get('admin_credential_id')
         db_creds = {}
-        if credential_id:
+        db_admin_creds = {}
+        if credential_id or admin_credential_id:
             try:
                 from database import get_db_connection
                 conn = get_db_connection()
                 try:
-                    row = conn.execute('SELECT * FROM credentials WHERE id = ?', (credential_id,)).fetchone()
-                    if row:
-                        db_creds = dict(row)
+                    if credential_id:
+                        row = conn.execute('SELECT * FROM credentials WHERE id = ?', (credential_id,)).fetchone()
+                        if row:
+                            db_creds = dict(row)
+                    if admin_credential_id:
+                        row = conn.execute('SELECT * FROM credentials WHERE id = ?', (admin_credential_id,)).fetchone()
+                        if row:
+                            db_admin_creds = dict(row)
                 except Exception as e:
-                    logger.warning(f"Failed to fetch credentials for id {credential_id}: {e}")
+                    logger.warning(f"Failed to fetch credentials in resolve_device_credentials: {e}")
                 finally:
                     conn.close()
             except Exception as e:
@@ -191,7 +198,7 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
         resolved = {
             'username': db_creds.get('username') or device.get('username') or '',
             'password': decrypt_credential(db_creds.get('encrypted_password') or device.get('password')) or '',
-            'enable_password': decrypt_credential(db_creds.get('enable_password') or device.get('enable_password')) or '',
+            'enable_password': decrypt_credential(db_admin_creds.get('enable_password') or db_creds.get('enable_password') or device.get('enable_password')) or '',
             'priv_username': device.get('priv_username') or '',
             'normal_username': device.get('normal_username') or '',
             'normal_password': decrypt_credential(device.get('normal_password')) or '',

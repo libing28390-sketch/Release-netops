@@ -358,6 +358,25 @@ def smart_parse_cli(
     clean_output = '\n'.join(cleaned_lines).strip('\r\n')
     if not clean_output:
         clean_output = output.strip()
+
+    # For ZTE ZXROS show lldp neighbor brief, merge wrapped Port ID lines
+    if platform == 'zte_zxros' and command and 'show lldp neighbor' in command.lower():
+        lines = clean_output.splitlines()
+        processed_lines = []
+        for line in lines:
+            match = re.match(r'^(\s{38,44})(\S+)\s*$', line)
+            if match and processed_lines:
+                port_cont = match.group(2)
+                prev_line = processed_lines[-1]
+                parts = prev_line.split()
+                if len(parts) >= 5:
+                    parts[3] = parts[3] + port_cont
+                    system_name = " ".join(parts[5:]) if len(parts) > 5 else ""
+                    new_line = f"{parts[0]:<17} {parts[1]:<5} {parts[2]:<17} {parts[3]:<30} {parts[4]:<8} {system_name}".strip()
+                    processed_lines[-1] = new_line
+                    continue
+            processed_lines.append(line)
+        clean_output = '\n'.join(processed_lines)
         
     # 2. 检测设备返回的命令错误（功能未启用、不支持等）
     err_line = _looks_like_device_error(clean_output)

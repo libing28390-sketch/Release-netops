@@ -1,0 +1,10 @@
+Value Required LOCAL_INTERFACE (\S+)
+Value Scope (\S+)
+Value CHASSIS_ID (\S+)
+Value Required NEIGHBOR_INTERFACE (\S+)
+Value HOLDTIME (\d+)
+Value NEIGHBOR_NAME (\S*)
+
+Start
+  ^${LOCAL_INTERFACE}\s+${Scope}\s+${CHASSIS_ID}\s+${NEIGHBOR_INTERFACE}\s+${HOLDTIME}\s+${NEIGHBOR_NAME}\s*$$ -> Record
+  ^${LOCAL_INTERFACE}\s+${Scope}\s+${CHASSIS_ID}\s+${NEIGHBOR_INTERFACE}\s+${HOLDTIME}\s*$$ -> Record

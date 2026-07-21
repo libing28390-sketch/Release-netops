@@ -35,6 +35,8 @@ export const EMPTY_FORM = {
   management_port: '22',
   device_category: '',   
   power_watts: '',       
+  credential_id: '',
+  admin_credential_id: '',
 };
 
 export const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
@@ -112,6 +114,8 @@ export const COL_MAP: Record<string, string> = {
   '设备来源（必填：new=新设备，legacy=存量设备）': 'asset_origin',
   '录入来源（必填：新设备或存量设备）': 'asset_origin',
   'Asset Origin (Required: new or legacy)': 'asset_origin',
+  '绑定凭据': 'credential_id', '凭据名称': 'credential_id', '凭据ID': 'credential_id', 'Credential': 'credential_id', 'credential_id': 'credential_id',
+  '绑定特权凭据': 'admin_credential_id', '特权凭据': 'admin_credential_id', 'Admin Credential': 'admin_credential_id', 'admin_credential_id': 'admin_credential_id',
   '免上收投产原因': 'takeover_exempt_reason', 'Takeover Exemption Reason': 'takeover_exempt_reason', 'takeover_exempt_reason': 'takeover_exempt_reason',
 };
 

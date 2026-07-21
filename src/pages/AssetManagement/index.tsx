@@ -425,6 +425,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       management_port: String(a.management_port || '22'),
       device_category: a.device_category || '',
       power_watts: a.power_watts != null ? String(a.power_watts) : '',
+      credential_id: (a as any).credential_id || '',
+      admin_credential_id: (a as any).admin_credential_id || '',
     });
     setShowModal(true);
   };
@@ -567,6 +569,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       management_port: String(a.management_port || '22'),
       device_category: a.device_category || '',
       power_watts: a.power_watts != null ? String(a.power_watts) : '',
+      credential_id: (a as any).credential_id || '',
+      admin_credential_id: (a as any).admin_credential_id || '',
     });
     setModalError(null);
     setShowModal(true);
@@ -1038,40 +1042,44 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['字段', '是否必填', '填写规则'],
       ['录入来源', '必填', '填写“新设备”或“存量设备”'],
       ['投产状态', '必填', '新设备填写“待投产”；存量设备可填写“待投产”或“已投产”'],
-      ['主机名/资产编号', '至少一项', '主机名和资产编号不能同时为空'],
-      ['普通用户/普通密码', '条件必填', '存量设备直接填写“已投产”时必须填写'],
+      ['主机名/资产编号', '至少一项', '主机名 and 资产编号不能同时为空'],
+      ['普通用户/普通密码', '条件必填', '存量设备直接填写“已投产”时必须填写（若绑定已存凭据则可选填）'],
       ['特权用户/特权密码', '标准投产必填', '标准口令上收和改密使用'],
       ['免上收投产原因', '条件必填', '录入来源为“存量设备”且投产状态为“已投产”时至少填写 5 个字符'],
+      ['绑定凭据', '可选', '普通/登录凭据名称或 ID，如：cred-cisco-core'],
+      ['绑定特权凭据', '可选', '特权/管理员凭据名称或 ID，如：cred-cisco-admin'],
     ] : [
       ['Asset Import Instructions'],
       ['Field', 'Required', 'Rule'],
       ['Asset Origin', 'Yes', 'Use new (new device) or legacy (existing device)'],
       ['Lifecycle', 'Yes', 'Use staging for new devices; legacy devices may use staging or production'],
       ['Hostname / Asset Tag', 'At least one', 'Hostname and Asset Tag cannot both be empty'],
-      ['Normal User / Password', 'Conditional', 'Required for legacy devices imported as production'],
+      ['Normal User / Password', 'Conditional', 'Required for legacy devices imported as production (optional if credential is bound)'],
       ['Admin User / Password', 'Standard production', 'Required for managed password takeover'],
       ['Takeover Exemption Reason', 'Conditional', 'Minimum 5 characters for legacy + production'],
+      ['Credential', 'Optional', 'Existing normal credential name or ID from the vault, e.g. cred-cisco-core'],
+      ['Admin Credential', 'Optional', 'Existing admin credential name or ID from the vault, e.g. cred-cisco-admin'],
     ];
     const wsGuide = XLSX.utils.aoa_to_sheet(guideRows);
     wsGuide['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 72 }];
     XLSX.utils.book_append_sheet(wb, wsGuide, zh ? '填写说明' : 'Instructions');
 
     const srvHeaders = zh
-      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '业务IP', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
-      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Business IP', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '业务IP', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Business IP', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
     const srvExample = zh
-      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '戴尔', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '22', '192.168.1.10', 'SSH（安全外壳）', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT部', '2024-01-15', '待投产', '', '2027-01-15', '服务器备注']
-      : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'web', 'server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'IT Dept', '2024-01-15', 'staging', '', '2027-01-15', 'Production srv'];
+      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '戴尔', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '22', '192.168.1.10', 'SSH（安全外壳）', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', '', 'IT部', '2024-01-15', '待投产', '', '2027-01-15', '服务器备注']
+      : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'web', 'server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', '', 'IT Dept', '2024-01-15', 'staging', '', '2027-01-15', 'Production srv'];
     const wsSrv = XLSX.utils.aoa_to_sheet([srvHeaders, srvExample]);
     wsSrv['!cols'] = srvHeaders.map(() => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, wsSrv, zh ? '服务器模板' : 'Server Template');
 
     const netHeaders = zh
-      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
-      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
     const netExample = zh
-      ? ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '思科', 'C9300-48P', '思科 IOS', '10.0.0.1', '22', 'SSH（安全外壳）', '在用', '核心交换机', '交换机', '存量设备', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', '普通账号密码', '特权账号密码', '', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2026-06-01', '核心交换机']
-      : ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'switch', 'switch', 'legacy', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', 'normal-password', 'admin-password', '', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2026-06-01', 'Core switch'];
+      ? ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '思科', 'C9300-48P', '思科 IOS', '10.0.0.1', '22', 'SSH（安全外壳）', '在用', '核心交换机', '交换机', '存量设备', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', '普通账号密码', '特权账号密码', '', 'cred-cisco-core', 'cred-cisco-admin', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2026-06-01', '核心交换机']
+      : ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'switch', 'switch', 'legacy', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', 'normal-password', 'admin-password', '', 'cred-cisco-core', 'cred-cisco-admin', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2026-06-01', 'Core switch'];
     const wsNet = XLSX.utils.aoa_to_sheet([netHeaders, netExample]);
     wsNet['!cols'] = netHeaders.map(() => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, wsNet, zh ? '网络设备模板' : 'Network Device Template');

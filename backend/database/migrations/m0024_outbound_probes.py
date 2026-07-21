@@ -48,11 +48,12 @@ def upgrade(cursor, _use_pg: bool) -> None:
             (str(uuid.uuid4()), "Baidu Web", "www.baidu.com", 443, "TCP_CONNECT", True, now),
             (str(uuid.uuid4()), "Aliyun Web", "www.aliyun.com", 443, "TCP_CONNECT", True, now),
         ]
+        placeholder = "%s" if _use_pg else "?"
         for row in defaults:
             cursor.execute(
-                """
+                f"""
                 INSERT INTO outbound_probe_targets (id, target_name, host, port, probe_type, is_active, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
                 """,
                 row
             )

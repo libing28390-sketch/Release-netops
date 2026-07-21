@@ -352,6 +352,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const isJuniper = platform === 'juniper_junos';
   const isArista = platform === 'arista_eos';
   const isRuijie = platform === 'ruijie_rgos';
+  const isZte = platform === 'zte_zxros';
   const deviceRole = (singleDevice?.role || '').toLowerCase();
 
   const filteredQuickQueryRecords = useMemo(() => {
@@ -452,6 +453,8 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
           ? 'display lldp neighbor-information list'
           : isJuniper
           ? 'show lldp neighbors'
+          : isZte
+          ? 'show lldp neighbor brief'
           : isCisco || isNxos
           ? 'show lldp neighbors detail\nshow cdp neighbors detail'
           : 'show lldp neighbors detail',

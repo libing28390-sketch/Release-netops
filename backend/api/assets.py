@@ -191,6 +191,48 @@ def _sync_device_type_power(conn, vendor: str, model: str, power_watts: int, dev
         )
 
 
+def _pre_resolve_credential(conn, body) -> None:
+    existing_cred_id = getattr(body, 'credential_id', '') or ''
+    if existing_cred_id:
+        cred_row = conn.execute(
+            'SELECT id, username, encrypted_password, enable_password, snmp_community FROM credentials WHERE id = ? OR credential_name = ?',
+            (existing_cred_id, existing_cred_id)
+        ).fetchone()
+        if cred_row:
+            body.credential_id = cred_row['id']
+            from core.crypto import decrypt_credential
+            c_dict = dict(cred_row)
+            dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
+            dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
+            dec_snmp = decrypt_credential(c_dict.get('snmp_community')) or ''
+            c_user = c_dict.get('username') or ''
+            
+            if not getattr(body, 'username', None): body.username = c_user
+            if not getattr(body, 'normal_username', None): body.normal_username = c_user
+            if not getattr(body, 'normal_password', None): body.normal_password = dec_pwd
+            if not getattr(body, 'enable_password', None): body.enable_password = dec_enable
+            if not getattr(body, 'snmp_community', None) or body.snmp_community == 'public':
+                body.snmp_community = dec_snmp
+
+    existing_admin_cred_id = getattr(body, 'admin_credential_id', '') or ''
+    if existing_admin_cred_id:
+        cred_row = conn.execute(
+            'SELECT id, username, encrypted_password, enable_password FROM credentials WHERE id = ? OR credential_name = ?',
+            (existing_admin_cred_id, existing_admin_cred_id)
+        ).fetchone()
+        if cred_row:
+            body.admin_credential_id = cred_row['id']
+            from core.crypto import decrypt_credential
+            c_dict = dict(cred_row)
+            dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
+            dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
+            c_user = c_dict.get('username') or ''
+            
+            if not getattr(body, 'admin_username', None): body.admin_username = c_user
+            if not getattr(body, 'admin_password', None): body.admin_password = dec_pwd
+            if not getattr(body, 'enable_password', None): body.enable_password = dec_enable
+
+
 def _create_linked_device(conn, asset_id: str, body) -> str:
     """Create a devices row linked to a physical_assets row."""
     device_id = str(uuid.uuid4())
@@ -230,11 +272,59 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     # If credentials are provided during import, mark onboarding as verified
     # so the user doesn't have to manually verify each device before takeover.
     has_creds = bool((uname and pwd) or (admin_user and admin_pwd) or (normal_user and normal_pwd))
-    onboarding = 'verified' if has_creds else 'pending_credentials'
+    
+    existing_cred_id = getattr(body, 'credential_id', '') or ''
+    existing_admin_cred_id = getattr(body, 'admin_credential_id', '') or ''
+    is_bound = False
+    is_admin_bound = False
+    admin_credential_id = ''
+    
+    if existing_cred_id:
+        # Check if credential exists in DB (either by ID or by name)
+        cred_row = conn.execute(
+            'SELECT id, username, encrypted_password, enable_password, snmp_community FROM credentials WHERE id = ? OR credential_name = ?',
+            (existing_cred_id, existing_cred_id)
+        ).fetchone()
+        if cred_row:
+            credential_id = cred_row['id']
+            has_creds = True
+            is_bound = True
+            from core.crypto import decrypt_credential
+            c_dict = dict(cred_row)
+            dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
+            dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
+            dec_snmp = decrypt_credential(c_dict.get('snmp_community')) or ''
+            c_user = c_dict.get('username') or ''
+            
+            # Sync back to local fields
+            if not uname: uname = c_user
+            if not normal_user: normal_user = c_user
+            if not normal_pwd: normal_pwd = dec_pwd
+            if not enable_pwd: enable_pwd = dec_enable
+            if not community or community == 'public': community = dec_snmp
 
-    credential_id = f"cred-{uuid.uuid4().hex[:12]}"
-    cred_name = f"cred-{body.hostname}-{device_id[:8]}"
-    now = datetime.now(timezone.utc).isoformat()
+    if existing_admin_cred_id:
+        # Check if admin credential exists in DB (either by ID or by name)
+        cred_row = conn.execute(
+            'SELECT id, username, encrypted_password, enable_password FROM credentials WHERE id = ? OR credential_name = ?',
+            (existing_admin_cred_id, existing_admin_cred_id)
+        ).fetchone()
+        if cred_row:
+            admin_credential_id = cred_row['id']
+            has_creds = True
+            is_admin_bound = True
+            from core.crypto import decrypt_credential
+            c_dict = dict(cred_row)
+            dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
+            dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
+            c_user = c_dict.get('username') or ''
+            
+            # Sync back to local fields
+            if not admin_user: admin_user = c_user
+            if not admin_pwd: admin_pwd = dec_pwd
+            if not enable_pwd: enable_pwd = dec_enable
+
+    onboarding = 'verified' if has_creds else 'pending_credentials'
 
     resolved_pwd = normal_pwd or pwd or admin_pwd or ''
     enc_pwd = _safe_encrypt(resolved_pwd) if resolved_pwd else ''
@@ -242,10 +332,14 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     enc_snmp = _safe_encrypt(community) if community else ''
     resolved_uname = normal_user or uname or admin_user or ''
 
-    conn.execute('''
-        INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (credential_id, cred_name, 'ssh_password', resolved_uname, enc_pwd, enc_enable, enc_snmp, now))
+    if not is_bound and not is_admin_bound:
+        credential_id = f"cred-{uuid.uuid4().hex[:12]}"
+        cred_name = f"cred-{body.hostname}-{device_id[:8]}"
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute('''
+            INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (credential_id, cred_name, 'ssh_password', resolved_uname, enc_pwd, enc_enable, enc_snmp, now))
 
     conn.execute('''
         INSERT INTO devices (
@@ -254,8 +348,8 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
             connection_method, vendor, snmp_community, snmp_port,
             normal_username, normal_password, admin_username, admin_password,
             enable_password, auth_model, device_category, power_watts,
-            onboarding_status, credential_id, management_port
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            onboarding_status, credential_id, admin_credential_id, management_port
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         device_id, asset_id,
         body.hostname, body.management_ip,
@@ -271,7 +365,8 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         getattr(body, 'device_category', '') or '',
         getattr(body, 'power_watts', 0) or 0,
         onboarding,
-        credential_id,
+        credential_id if (is_bound or not is_admin_bound) else '',
+        admin_credential_id if is_admin_bound else '',
         mgmt_port
     ))
     # The physical asset is the canonical source for CMDB location. Keep the
@@ -284,47 +379,124 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
 
 def _sync_device_from_asset(conn, asset_id: str, body) -> None:
     """Push basic-info changes from asset to its linked device row."""
-    row = conn.execute('SELECT id, credential_id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+    row = conn.execute('SELECT id, credential_id, admin_credential_id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
     if not row:
         return
     device_id = row['id']
     credential_id = row['credential_id']
+    admin_credential_id = row['admin_credential_id']
 
-    # Update credentials if modified in asset update
-    # Keep the compatibility credential row aligned with the normal role.
-    # The asset's normal/admin fields remain the authoritative source for SSH.
-    username = getattr(body, 'normal_username', None) or getattr(body, 'username', None) or getattr(body, 'admin_username', None)
-    pwd = getattr(body, 'normal_password', None) or getattr(body, 'password', None)
+    # Extract manual fields from body
+    username = getattr(body, 'username', None)
+    pwd = getattr(body, 'password', None)
     enable_pwd = getattr(body, 'enable_password', None)
     community = getattr(body, 'snmp_community', None)
 
-    if credential_id:
-        cred_row = conn.execute('SELECT username, encrypted_password, enable_password, snmp_community FROM credentials WHERE id = ?', (credential_id,)).fetchone()
-        if cred_row:
-            stored_uname = username if username is not None else cred_row['username']
-            
-            if pwd is not None and pwd != '':
-                stored_pwd = _safe_encrypt(pwd)
-            else:
-                stored_pwd = cred_row['encrypted_password']
-                
-            if enable_pwd is not None and enable_pwd != '':
-                stored_enable = _safe_encrypt(enable_pwd)
-            else:
-                stored_enable = cred_row['enable_password']
-                
-            if community is not None and community != '':
-                stored_snmp = _safe_encrypt(community)
-            else:
-                stored_snmp = cred_row['snmp_community']
+    input_credential_id = getattr(body, 'credential_id', None)
+    input_admin_credential_id = getattr(body, 'admin_credential_id', None)
+    
+    # If a new credential_id is passed, update binding
+    if input_credential_id is not None:
+        if input_credential_id:
+            # Lookup credential in DB
+            cred_row = conn.execute(
+                'SELECT id, username, encrypted_password, enable_password, snmp_community FROM credentials WHERE id = ? OR credential_name = ?',
+                (input_credential_id, input_credential_id)
+            ).fetchone()
+            if cred_row:
+                input_id = cred_row['id']
+                if input_id != credential_id:
+                    conn.execute('UPDATE devices SET credential_id = ? WHERE id = ?', (input_id, device_id))
+                    conn.execute('UPDATE physical_assets SET credential_id = ? WHERE id = ?', (input_id, asset_id))
+                    credential_id = input_id
+                    
+                    # Decrypt and sync to local fields
+                    from core.crypto import decrypt_credential
+                    c_dict = dict(cred_row)
+                    dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
+                    dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
+                    dec_snmp = decrypt_credential(c_dict.get('snmp_community')) or ''
+                    c_user = c_dict.get('username') or ''
+                    
+                    conn.execute('''
+                        UPDATE devices
+                        SET normal_username = ?, normal_password = ?,
+                            enable_password = ?, snmp_community = ?
+                        WHERE id = ?
+                    ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), _safe_encrypt(dec_snmp), device_id))
+                    
+                    conn.execute('''
+                        UPDATE physical_assets
+                        SET normal_username = ?, normal_password = ?,
+                            enable_password = ?, snmp_community = ?
+                        WHERE id = ?
+                    ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), _safe_encrypt(dec_snmp), asset_id))
+        else:
+            # Clear binding
+            if credential_id:
+                conn.execute('UPDATE devices SET credential_id = NULL WHERE id = ?', (device_id,))
+                conn.execute('UPDATE physical_assets SET credential_id = \'\' WHERE id = ?', (asset_id,))
+                credential_id = None
 
-            conn.execute('''
-                UPDATE credentials
-                SET username = ?, encrypted_password = ?, enable_password = ?, snmp_community = ?
-                WHERE id = ?
-            ''', (stored_uname, stored_pwd, stored_enable, stored_snmp, credential_id))
-    else:
-        # Create credential_id if missing
+    # If a new admin_credential_id is passed, update binding
+    if input_admin_credential_id is not None:
+        if input_admin_credential_id:
+            # Lookup credential in DB
+            cred_row = conn.execute(
+                'SELECT id, username, encrypted_password, enable_password FROM credentials WHERE id = ? OR credential_name = ?',
+                (input_admin_credential_id, input_admin_credential_id)
+            ).fetchone()
+            if cred_row:
+                input_id = cred_row['id']
+                if input_id != admin_credential_id:
+                    conn.execute('UPDATE devices SET admin_credential_id = ? WHERE id = ?', (input_id, device_id))
+                    conn.execute('UPDATE physical_assets SET admin_credential_id = ? WHERE id = ?', (input_id, asset_id))
+                    admin_credential_id = input_id
+                    
+                    # Decrypt and sync to local fields
+                    from core.crypto import decrypt_credential
+                    c_dict = dict(cred_row)
+                    dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
+                    dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
+                    c_user = c_dict.get('username') or ''
+                    
+                    conn.execute('''
+                        UPDATE devices
+                        SET admin_username = ?, admin_password = ?, enable_password = ?
+                        WHERE id = ?
+                    ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), device_id))
+                    
+                    conn.execute('''
+                        UPDATE physical_assets
+                        SET admin_username = ?, admin_password = ?, enable_password = ?
+                        WHERE id = ?
+                    ''', (c_user, _safe_encrypt(dec_pwd), _safe_encrypt(dec_enable), asset_id))
+        else:
+            # Clear binding
+            if admin_credential_id:
+                conn.execute('UPDATE devices SET admin_credential_id = NULL WHERE id = ?', (device_id,))
+                conn.execute('UPDATE physical_assets SET admin_credential_id = \'\' WHERE id = ?', (asset_id,))
+                admin_credential_id = None
+
+    # Sync credential row if it's device-specific
+    if credential_id:
+        cred_row = conn.execute('SELECT credential_name, username, encrypted_password, enable_password, snmp_community FROM credentials WHERE id = ?', (credential_id,)).fetchone()
+        if cred_row:
+            # Check if this credential is device-specific
+            cred_name = cred_row['credential_name'] or ''
+            is_device_specific = cred_name.startswith(f"cred-{body.hostname or ''}-") or cred_name.startswith(f"cred-device-")
+            if is_device_specific:
+                stored_uname = username if username is not None else cred_row['username']
+                stored_pwd = _safe_encrypt(pwd) if pwd is not None and pwd != '' else cred_row['encrypted_password']
+                stored_enable = _safe_encrypt(enable_pwd) if enable_pwd is not None and enable_pwd != '' else cred_row['enable_password']
+                stored_snmp = _safe_encrypt(community) if community is not None and community != '' else cred_row['snmp_community']
+                conn.execute('''
+                    UPDATE credentials
+                    SET username = ?, encrypted_password = ?, enable_password = ?, snmp_community = ?
+                    WHERE id = ?
+                ''', (stored_uname, stored_pwd, stored_enable, stored_snmp, credential_id))
+    elif not admin_credential_id:
+        # Create credential_id if missing and we have local credentials
         if username is not None or (pwd is not None and pwd != '') or (enable_pwd is not None and enable_pwd != '') or (community is not None and community != ''):
             credential_id = f"cred-{uuid.uuid4().hex[:12]}"
             cred_name = f"cred-{body.hostname or 'device'}-{device_id[:8]}"
@@ -564,6 +736,8 @@ class AssetCreate(BaseModel):
     management_port: int = 22
     device_category: str = ''
     power_watts: int = 0
+    credential_id: Optional[str] = ''
+    admin_credential_id: Optional[str] = ''
 
     @field_validator('u_height', mode='before')
     @classmethod
@@ -663,6 +837,8 @@ class AssetUpdate(BaseModel):
     power_watts: Optional[int] = None
     production_mode: Optional[str] = None
     takeover_exempt_reason: Optional[str] = None
+    credential_id: Optional[str] = None
+    admin_credential_id: Optional[str] = None
 
     @field_validator('power_watts', mode='before')
     @classmethod
@@ -941,6 +1117,7 @@ def get_asset(asset_id: str):
 def create_asset(body: AssetCreate):
     conn = get_db_connection()
     try:
+        _pre_resolve_credential(conn, body)
         try:
             body.site_id = resolve_canonical_site_id(conn, body.site_id)
         except ValueError as exc:
@@ -974,8 +1151,9 @@ def create_asset(body: AssetCreate):
                 normal_username, normal_password, admin_username, admin_password,
                 enable_password, auth_model,
                 snmp_community, snmp_port, device_category, power_watts,
+                credential_id, admin_credential_id,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
@@ -993,6 +1171,8 @@ def create_asset(body: AssetCreate):
             _safe_encrypt(getattr(body, 'enable_password', '') or ''),
             getattr(body, 'auth_model', '') or 'single',
             body.snmp_community, body.snmp_port, body.device_category, body.power_watts,
+            body.credential_id or '',
+            body.admin_credential_id or '',
             now, now
         ))
 
@@ -1176,7 +1356,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
             'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
             'normal_username', 'normal_password', 'admin_username', 'admin_password', 'enable_password', 'auth_model',
-            'snmp_community', 'snmp_port', 'management_port', 'device_category', 'power_watts'
+            'snmp_community', 'snmp_port', 'management_port', 'device_category', 'power_watts', 'credential_id', 'admin_credential_id'
         ]
         for field in updatable:
             val = getattr(body, field, None)
@@ -1435,6 +1615,7 @@ def import_assets(items: list[AssetCreate]):
         skipped = 0
         skipped_items = []
         for body in items:
+            _pre_resolve_credential(conn, body)
             try:
                 body.site_id = resolve_canonical_site_id(conn, body.site_id)
             except ValueError as exc:
@@ -1470,6 +1651,7 @@ def import_assets(items: list[AssetCreate]):
                     ),
                 })
                 continue
+
             conn.execute('''
                 INSERT INTO physical_assets (
                     id, asset_type, asset_tag, serial_number, vendor, model, hostname,
@@ -1481,8 +1663,9 @@ def import_assets(items: list[AssetCreate]):
                     enable_password, auth_model,
                     snmp_community, snmp_port, management_port, device_category, power_watts,
                     credential_governance_mode, takeover_exempt_reason, takeover_exempt_at, is_managed,
+                    credential_id, admin_credential_id,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
                 body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
@@ -1505,6 +1688,8 @@ def import_assets(items: list[AssetCreate]):
                 (body.takeover_exempt_reason or '').strip() if legacy_production else '',
                 now if legacy_production else None,
                 0 if legacy_production else 1,
+                body.credential_id or '',
+                body.admin_credential_id or '',
                 now, now
             ))
             # Plan-A: auto-create linked device for managed assets
