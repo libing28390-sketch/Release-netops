@@ -832,23 +832,27 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
                 "ORDER BY observed_at DESC LIMIT 1",
                 (node["id"],),
             ).fetchone()
-            if ip_row:
-                egress_info["public_ip"] = str(ip_row[0] or "")
+            if ip_row and ip_row[0]:
+                egress_info["public_ip"] = str(ip_row[0])
                 egress_info["public_ip_source"] = str(ip_row[1] or "unknown")
                 egress_info["public_ip_verified"] = bool(ip_row[2])
+            else:
+                # Cold start fallback: if no cached IP exists, perform detection immediately
+                detected = detect_egress_ip()
+                egress_info = _record_egress_event(conn, node["id"], detected, started_at)
                 
-                static_ip = os.environ.get("OUTBOUND_PROBE_STATIC_EGRESS_IP", "").strip()
-                expected_ip_raw = os.environ.get("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "").strip()
-                if static_ip:
-                    egress_info["public_ip_changed"] = False
-                elif expected_ip_raw and egress_info["public_ip"]:
-                    if previous:
-                        egress_info["public_ip_changed"] = bool(previous.get("public_ip_changed"))
-                    else:
-                        egress_info["public_ip_changed"] = not _check_ip_matches_expected(egress_info["public_ip"])
+            static_ip = os.environ.get("OUTBOUND_PROBE_STATIC_EGRESS_IP", "").strip()
+            expected_ip_raw = os.environ.get("OUTBOUND_PROBE_EXPECTED_EGRESS_IP", "").strip()
+            if static_ip:
+                egress_info["public_ip_changed"] = False
+            elif expected_ip_raw and egress_info["public_ip"]:
+                if previous:
+                    egress_info["public_ip_changed"] = bool(previous.get("public_ip_changed"))
                 else:
-                    if previous:
-                        egress_info["public_ip_changed"] = bool(previous.get("public_ip_changed"))
+                    egress_info["public_ip_changed"] = not _check_ip_matches_expected(egress_info["public_ip"])
+            else:
+                if previous:
+                    egress_info["public_ip_changed"] = bool(previous.get("public_ip_changed"))
     finally:
         conn.close()
 

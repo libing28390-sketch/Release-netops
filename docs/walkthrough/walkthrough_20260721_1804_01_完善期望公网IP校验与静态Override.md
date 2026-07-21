@@ -23,7 +23,9 @@
 
 7. **IPv6 双栈支持**：`_check_ip_matches_expected()` 使用 `ipaddress` 标准库的 `version` 属性进行 IPv4/IPv6 跨协议隔离匹配，支持压缩格式 IPv6、混合配置。
 
-8. **前端升级**：`OutboundHealthPanel.tsx` 新增告警横幅渲染、连通状态/综合状态分列显示、IP 来源标签、期望白名单展示。TypeScript 类型同步新增 `EgressIpInfo`、`StatusReason` 接口。
+9. **前端默认历史展示时间调整**：将 `src/store/monitoringStore.ts` 中的默认 `outboundHistoryHours` 从 24 小时缩减为 1 小时，使用户在打开互联网出口健康仪表盘时默认看到最近 1 小时的高分辨率图表。
+
+10. **后端冷启动探测兜底**：优化 `run_outbound_probe_once`，当缓存的 `outbound_egress_ip_events` 为空（如全新数据库或冷启动）时，自动触发一次真实的出口 IP 在线检测并写入数据库，解决首次运行时公网 IP 字段显示为 `--` 的问题。
 
 ## 实际修改文件
 
@@ -34,6 +36,7 @@
 | `backend/tests/scheduled_jobs/test_outbound_expected_ip.py` | 重写 |
 | `src/types/outbound.ts` | 扩展 |
 | `src/components/OutboundHealthPanel.tsx` | 升级 |
+| `src/store/monitoringStore.ts` | 修改 |
 | `.env` | 追加配置 |
 | `.env.example` | 追加配置 |
 

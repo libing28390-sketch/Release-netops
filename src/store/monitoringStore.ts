@@ -135,7 +135,7 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
   outboundModalOpen: false,
   outboundTargetHistory: null,
   outboundTargetHistoryLoading: false,
-  outboundHistoryHours: 24,
+  outboundHistoryHours: 1,
 
   setMonitorSearch: (v) => set({ monitorSearch: v }),
   setMonitorSearchResults: (v) => set({ monitorSearchResults: v }),
@@ -206,6 +206,6 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
     outboundModalOpen: false,
     outboundTargetHistory: null,
     outboundTargetHistoryLoading: false,
-    outboundHistoryHours: 24,
+    outboundHistoryHours: 1,
   }),
 }));
