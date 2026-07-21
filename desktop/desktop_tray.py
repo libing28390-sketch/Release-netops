@@ -3086,7 +3086,7 @@ class NetOpsAgentUI(QMainWindow):
                 python_exe = get_python_executable()
                 cmd = [
                     python_exe, "-m", "uvicorn", "backend.main:app",
-                    "--host", "127.0.0.1",
+                    "--host", "0.0.0.0",
                     "--port", "5010",
                     "--log-level", "warning"
                 ]
