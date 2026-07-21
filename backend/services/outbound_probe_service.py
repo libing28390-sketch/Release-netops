@@ -890,7 +890,7 @@ def run_outbound_probe_once(*, include_egress_ip: bool = False) -> dict:
             raw_status = STATUS_DEGRADED
             status = STATUS_DEGRADED
     else:
-        reason = f"{success_count} of {total_targets} targets available" if total_targets else "No enabled targets"
+        reason = f"{success_count} / {total_targets} 个目标可用" if total_targets else "没有已启用的探测目标"
 
     finished_at = utc_now_iso()
     latencies = [float(result["latency_ms"]) for result in results if result["success"] and result["latency_ms"] is not None]

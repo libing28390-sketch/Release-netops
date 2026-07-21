@@ -27,6 +27,8 @@
 
 10. **后端冷启动探测兜底**：优化 `run_outbound_probe_once`，当缓存的 `outbound_egress_ip_events` 为空（如全新数据库或冷启动）时，自动触发一次真实的出口 IP 在线检测并写入数据库，解决首次运行时公网 IP 字段显示为 `--` 的问题。
 
+11. **中文化翻译优化**：将 `.env` 及 `.env.example` 中的所有英文注释与配置说明全部翻译为中文；同时将后端状态输出的默认提示 "X of Y targets available" / "No enabled targets" 翻译为对应的中文提示，并在告警及状态描述中完全汉化。
+
 ## 实际修改文件
 
 | 文件 | 动作 |
