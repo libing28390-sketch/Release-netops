@@ -238,9 +238,13 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
             'normal_password': decrypt_credential(
                 db_creds.get('encrypted_password') if normal_bound and db_creds else device.get('normal_password')
             ) or '',
-            'admin_username': db_admin_creds.get('username') if admin_bound and db_admin_creds else device.get('admin_username') or '',
+            'admin_username': (
+                db_admin_creds.get('username') if admin_bound and db_admin_creds
+                else (db_creds.get('username') if normal_bound and db_creds else device.get('admin_username') or '')
+            ),
             'admin_password': decrypt_credential(
-                db_admin_creds.get('encrypted_password') if admin_bound and db_admin_creds else device.get('admin_password')
+                (db_admin_creds.get('encrypted_password') if admin_bound and db_admin_creds
+                 else (db_creds.get('encrypted_password') if normal_bound and db_creds else device.get('admin_password')))
             ) or '',
             'snmp_community': decrypt_credential(
                 db_creds.get('snmp_community') or device.get('snmp_community')
@@ -252,7 +256,7 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
         # critical anti-stale rule: editing a shared credential in the vault
         # must take effect for every bound asset without a fan-out copy.
         for role in ('normal', 'admin'):
-            role_bound = normal_bound if role == 'normal' else admin_bound
+            role_bound = normal_bound if role == 'normal' else (admin_bound or normal_bound)
             if role_bound:
                 continue
             username_key = f'{role}_username'

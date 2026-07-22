@@ -580,6 +580,54 @@ def parse_cisco_ip_interface_brief(output: str) -> list[dict]:
         })
     return records
 
+def parse_huawei_ip_interface_brief(output: str) -> list[dict]:
+    items = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line or line.lower().startswith('interface') or 'ip-address' in line.lower() or '---' in line or 'physical' in line.lower():
+            continue
+        parts = re.split(r'\s+', line)
+        if len(parts) >= 4:
+            iname = parts[0]
+            ip_raw = parts[1]
+            admin = parts[2]
+            oper = parts[3]
+            if ip_raw.lower() in ('unassigned', 'unset', '*'):
+                ip_addr = ''
+            else:
+                ip_addr = ip_raw.split('/')[0]
+            items.append({
+                'interface': iname,
+                'ip_address': ip_addr,
+                'status': 'up' if 'up' in admin.lower() else 'down',
+                'protocol': 'up' if 'up' in oper.lower() else 'down',
+            })
+    return items
+
+def parse_generic_ip_interface_brief(output: str) -> list[dict]:
+    """Parse IP interface brief outputs for all other vendors (Arista, Juniper, Ruijie, ZTE, Fortinet, etc.)."""
+    records: list[dict] = []
+    for raw_line in str(output or '').splitlines():
+        line = raw_line.strip()
+        if not line or line.lower().startswith(('interface', '---', 'building', 'router', 'port', 'name')):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        iname = parts[0]
+        if not re.match(r'^[A-Za-z][A-Za-z0-9./:-]*$', iname):
+            continue
+        ip_match = re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?\b', line)
+        ip_addr = ip_match.group(0).split('/')[0] if ip_match else ''
+        status = 'up' if 'up' in line.lower() else 'down'
+        records.append({
+            'interface': iname,
+            'ip_address': ip_addr,
+            'status': status,
+            'protocol': status,
+        })
+    return records
+
 def parse_huawei_interfaces(output: str) -> list[dict]:
     try:
         from ntc_templates.parse import parse_output
@@ -831,9 +879,11 @@ def sync_topology_and_interfaces_job():
         if 'cisco' in platform:
             commands = ['show interfaces', 'show interfaces status', 'show ip interface brief']
         elif 'huawei' in platform or 'h3c' in platform:
-            commands = ['display interface']
+            commands = ['display interface', 'display ip interface brief']
+        elif 'juniper' in platform:
+            commands = ['show interfaces', 'show interfaces terse']
         else:
-            commands = ['show interfaces']
+            commands = ['show interfaces', 'show ip interface brief']
 
         try:
             with limited_connect_handler(device, ConnectHandler, **netmiko_device) as client:
@@ -911,40 +961,128 @@ def sync_topology_and_interfaces_job():
                     parsed_disp_int = parse_huawei_interfaces(disp_int_output)
                     if not parsed_disp_int:
                         parsed_disp_int = parse_huawei_interfaces_regex(disp_int_output)
-                        
+
+                    disp_ip_brief_output = outputs.get('display ip interface brief', '')
+                    parsed_ip_brief = parse_huawei_ip_interface_brief(disp_ip_brief_output)
+                    ip_brief_available = bool(parsed_ip_brief)
+                    ip_by_name = {
+                        normalize_interface_name(item.get('interface')).lower(): item
+                        for item in parsed_ip_brief
+                        if item.get('interface')
+                    }
+                    
+                    seen_names = set()
                     for item in parsed_disp_int:
+                        iname = item.get('interface')
+                        if not iname:
+                            continue
+                        norm_iname = normalize_interface_name(iname).lower()
+                        seen_names.add(norm_iname)
+                        ip_info = ip_by_name.get(norm_iname, {})
+                        ip_addr = ip_info.get('ip_address', '') if ip_brief_available else None
+                        
                         parsed_interfaces.append({
                             'device_id': dev_id,
-                            'name': item.get('interface'),
+                            'name': iname,
                             'description': item.get('description', ''),
                             'admin_status': normalize_collected_interface_status(item.get('link_status', 'down')),
                             'oper_status': normalize_collected_interface_status(item.get('protocol_status', 'down')),
+                            'primary_ip': ip_addr,
+                            'ip_address': ip_addr,
+                            'is_l3': bool(ip_addr) if ip_brief_available else None,
                             'mac_address': item.get('address', ''),
                             'mtu': item.get('mtu', 1500),
                             'speed': item.get('bandwidth', 0.0),
                             'bandwidth': item.get('bandwidth', 0.0),
                             'duplex': item.get('duplex', 'auto'),
-                            'switchport_mode': 'access',
+                            'switchport_mode': 'l3' if ip_addr else 'access',
                             'access_vlan': None,
                         })
+
+                    if ip_brief_available:
+                        for norm_name, ip_item in ip_by_name.items():
+                            if norm_name not in seen_names and ip_item.get('interface'):
+                                iname = ip_item.get('interface')
+                                ip_addr = ip_item.get('ip_address', '')
+                                parsed_interfaces.append({
+                                    'device_id': dev_id,
+                                    'name': iname,
+                                    'description': '',
+                                    'admin_status': normalize_collected_interface_status(ip_item.get('status', 'up')),
+                                    'oper_status': normalize_collected_interface_status(ip_item.get('protocol', 'up')),
+                                    'primary_ip': ip_addr,
+                                    'ip_address': ip_addr,
+                                    'is_l3': True,
+                                    'mac_address': '',
+                                    'mtu': 1500,
+                                    'speed': 0.0,
+                                    'bandwidth': 0.0,
+                                    'duplex': 'auto',
+                                    'switchport_mode': 'l3',
+                                    'access_vlan': None,
+                                })
                 else:
                     show_int_output = outputs.get(commands[0], '')
                     parsed_show_int = parse_cisco_interfaces_regex(show_int_output)
+                    show_ip_output = outputs.get(commands[1], '') if len(commands) > 1 else ''
+                    parsed_ip_brief = parse_generic_ip_interface_brief(show_ip_output)
+                    ip_brief_available = bool(parsed_ip_brief)
+                    ip_by_name = {
+                        normalize_interface_name(item.get('interface')).lower(): item
+                        for item in parsed_ip_brief
+                        if item.get('interface')
+                    }
+
+                    seen_names = set()
                     for item in parsed_show_int:
+                        iname = item.get('interface')
+                        if not iname:
+                            continue
+                        norm_iname = normalize_interface_name(iname).lower()
+                        seen_names.add(norm_iname)
+                        ip_info = ip_by_name.get(norm_iname, {})
+                        ip_addr = ip_info.get('ip_address', '') if ip_brief_available else None
+
                         parsed_interfaces.append({
                             'device_id': dev_id,
-                            'name': item.get('interface'),
+                            'name': iname,
                             'description': item.get('description', ''),
                             'admin_status': normalize_collected_interface_status(item.get('link_status', 'down')),
                             'oper_status': normalize_collected_interface_status(item.get('protocol_status', 'down')),
+                            'primary_ip': ip_addr,
+                            'ip_address': ip_addr,
+                            'is_l3': bool(ip_addr) if ip_brief_available else None,
                             'mac_address': item.get('address', ''),
                             'mtu': item.get('mtu', 1500),
                             'speed': item.get('bandwidth', 0.0),
                             'bandwidth': item.get('bandwidth', 0.0),
                             'duplex': item.get('duplex', 'auto'),
-                            'switchport_mode': 'access',
+                            'switchport_mode': 'l3' if ip_addr else 'access',
                             'access_vlan': None,
                         })
+
+                    if ip_brief_available:
+                        for norm_name, ip_item in ip_by_name.items():
+                            if norm_name not in seen_names and ip_item.get('interface'):
+                                iname = ip_item.get('interface')
+                                ip_addr = ip_item.get('ip_address', '')
+                                parsed_interfaces.append({
+                                    'device_id': dev_id,
+                                    'name': iname,
+                                    'description': '',
+                                    'admin_status': normalize_collected_interface_status(ip_item.get('status', 'up')),
+                                    'oper_status': normalize_collected_interface_status(ip_item.get('protocol', 'up')),
+                                    'primary_ip': ip_addr,
+                                    'ip_address': ip_addr,
+                                    'is_l3': True,
+                                    'mac_address': '',
+                                    'mtu': 1500,
+                                    'speed': 0.0,
+                                    'bandwidth': 0.0,
+                                    'duplex': 'auto',
+                                    'switchport_mode': 'l3',
+                                    'access_vlan': None,
+                                })
                 return parsed_interfaces
         except Exception as e:
             logger.error("Failed to collect interfaces for device %s: %s", device.get('hostname'), e)

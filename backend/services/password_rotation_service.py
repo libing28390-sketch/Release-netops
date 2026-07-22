@@ -223,7 +223,7 @@ def check_expiring(days_ahead: int | None = None) -> list[dict[str, Any]]:
         conn.close()
 
 
-def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
+def rotate_password(device_id: str, role: str = 'admin', target_password: str = None) -> dict[str, Any]:
     """
     对单台设备的指定角色执行密码轮换。
     role: 'normal' | 'admin' | 'enable'
@@ -318,7 +318,6 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
     # 2. Select target for rotation
     if role == 'normal':
         target_username = device.get('normal_username') or 'user'
-        # If normal_password is empty, we assume it matches the main password or is unknown
         current_target_pwd = creds.get('normal_password') or creds.get('password')
     elif role == 'admin':
         target_username = device.get('admin_username') or device.get('username')
@@ -327,15 +326,13 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
         target_username = 'enable'
         current_target_pwd = creds.get('enable_password')
 
-    # Generate new random password
-    new_password = _generate_password(20)
+    # Generate or use target password
+    new_password = target_password if target_password else _generate_password(20)
 
     # 3. Choose login strategy
-    # For servers, we ALWAYS use admin to change passwords (more reliable)
     auth_model = device.get('auth_model') or 'single'
     
     if is_server:
-        # In dual mode, we MUST use admin credentials to login for rotation
         if auth_model == 'dual':
             login_user = creds.get('admin_username') or current_admin_user
             login_pwd = creds.get('admin_password') or current_admin_pwd
@@ -343,39 +340,20 @@ def rotate_password(device_id: str, role: str = 'admin') -> dict[str, Any]:
             login_user = current_admin_user
             login_pwd = current_admin_pwd
     else:
-        # For network devices: ALWAYS login as admin (privilege 15) to run config commands.
-        # Using a low-privilege account (e.g. user/privilege 1) requires enable, which
-        # needs a separate enable secret. Logging in as admin avoids this entirely.
         login_user = current_admin_user
         login_pwd = current_admin_pwd
         if not login_user or not login_pwd:
-            # Fallback: if no admin creds, try normal creds
             login_user = creds.get('normal_username') or current_admin_user
             login_pwd = creds.get('normal_password') or current_admin_pwd
         logger.info(f"[Rotation] Network device: using admin login ({login_user}) to avoid enable requirement")
 
-    # ── Network device: write-ahead rotation ──────────────────────────────────
-    #
-    # Reliability guarantee (防止密码丢失):
-    #   1. Generate new passwords
-    #   2. Write them to DB first with status='pending' (commit immediately)
-    #      ← even if everything fails after this, passwords are NOT lost
-    #   3. SSH to device and change both accounts
-    #   4. write memory on device
-    #   5. Mark DB record as 'active' (verified/committed)
-    #   6. On SSH failure: keep the pending passwords in DB + set takeover_error
-    #      ← user can see what the new password was and recover manually
-    #
-    # The previous flow changed the device FIRST, then wrote DB — if SQL failed,
-    # the device's password was silently lost.
     if not is_server:
         handler = _CHANGE_PASSWORD_HANDLERS.get(platform)
         if not handler:
             return {'success': False, 'message': f'No password change handler for platform: {platform}'}
 
         save_cmd = _SAVE_COMMANDS.get(platform, 'write memory')
-
-        new_password = _generate_password(20)
+        # Use new_password as set above (either target_password or generated)
 
         normal_user = creds.get('normal_username') or device.get('normal_username') or 'user'
         admin_user = current_admin_user or 'admin'
@@ -900,3 +878,84 @@ def start_rotation_all(role: str = 'admin') -> str:
         target=run_rotation_all, kwargs={'role': role, 'run_id': run_id}, daemon=True
     ).start()
     return run_id
+
+
+def sync_hardware_device_password_for_credential(
+    cred_id: str,
+    new_password: str = None,
+    new_enable_password: str = None,
+    actor_username: str = None,
+    max_workers: int = 10
+) -> dict:
+    """
+    When a credential's password is updated in Credential Management (CMDB / Vault),
+    automatically SSH into all associated network devices concurrently using ThreadPoolExecutor,
+    issue CLI commands to change the hardware device password on each switch,
+    run 'write memory' / 'save', and log audit events.
+    """
+    if not cred_id or (not new_password and not new_enable_password):
+        return {'success': False, 'message': 'Nothing to sync'}
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, hostname, ip_address, platform, credential_id, admin_credential_id
+            FROM devices
+            WHERE credential_id = ? OR admin_credential_id = ?
+            """,
+            (cred_id, cred_id)
+        ).fetchall()
+        devices = [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+    if not devices:
+        logger.info(f"[CredentialHardwareSync] No bound devices for credential {cred_id}")
+        return {'success': True, 'synced_devices': 0}
+
+    workers = min(max_workers, max(1, len(devices)))
+    logger.info(f"[CredentialHardwareSync] Starting parallel hardware password change on {len(devices)} devices using {workers} thread workers for credential {cred_id}")
+
+    def _sync_single_device(dev: dict) -> bool:
+        dev_id = dev['id']
+        is_admin_cred = (dev.get('admin_credential_id') == cred_id)
+        ok = True
+
+        if new_enable_password:
+            res_enable = rotate_password(dev_id, role='enable', target_password=new_enable_password)
+            if not res_enable.get('success'):
+                ok = False
+
+        if new_password:
+            role = 'admin' if is_admin_cred else 'normal'
+            res = rotate_password(dev_id, role=role, target_password=new_password)
+            if not res.get('success'):
+                ok = False
+
+        return ok
+
+    success_count = 0
+    fail_count = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_dev = {executor.submit(_sync_single_device, dev): dev for dev in devices}
+        for future in as_completed(future_to_dev):
+            dev = future_to_dev[future]
+            try:
+                if future.result():
+                    success_count += 1
+                else:
+                    fail_count += 1
+            except Exception as exc:
+                fail_count += 1
+                logger.error(f"[CredentialHardwareSync] Device {dev.get('hostname')} failed with exception: {exc}")
+
+    logger.info(f"[CredentialHardwareSync] Parallel sync finished for credential {cred_id}: {success_count} success, {fail_count} failed out of {len(devices)} devices")
+
+    return {
+        'success': True,
+        'synced_devices': len(devices),
+        'success_count': success_count,
+        'fail_count': fail_count,
+    }

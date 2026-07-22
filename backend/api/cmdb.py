@@ -7,6 +7,7 @@ asset model: tenants, sites, VRFs and VLANs. All routes are mounted under
 """
 
 import logging
+from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from database import get_db_connection
 from core.rbac import require_role
@@ -262,10 +263,15 @@ def api_list_cmdb_devices(_user=require_role("Viewer")):
 
 
 @router.get("/cmdb/interfaces")
-def api_list_cmdb_interfaces(_user=require_role("Viewer")):
+def api_list_cmdb_interfaces(
+    has_ip: Optional[bool] = Query(default=None),
+    device_id: Optional[str] = Query(default=None),
+    search: Optional[str] = Query(default=None),
+    _user=require_role("Viewer"),
+):
     conn = get_db_connection()
     try:
-        return {"success": True, "data": cmdb_service.list_cmdb_interfaces(conn), "message": ""}
+        return {"success": True, "data": cmdb_service.list_cmdb_interfaces(conn, has_ip=has_ip, device_id=device_id, search=search), "message": ""}
     finally:
         conn.close()
 

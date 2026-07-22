@@ -1415,8 +1415,36 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const [geoError, setGeoError] = useState('');
   const [geoCityError, setGeoCityError] = useState('');
   const [search, setSearch] = useState('');
+  const [interfaceIpFilter, setInterfaceIpFilter] = useState<'has_ip' | 'all'>('has_ip');
+  const [interfaceDeviceFilter, setInterfaceDeviceFilter] = useState<string>('');
   const readOnlyTabs = useMemo(() => new Set<EntityKey>(['devices', 'interfaces']), []);
   const isReadOnlyTab = readOnlyTabs.has(tab);
+
+  const interfaceStats = useMemo(() => {
+    if (tab !== 'interfaces') return { total: 0, withIp: 0, operUp: 0, withLinks: 0 };
+    let total = rows.length;
+    let withIp = 0;
+    let operUp = 0;
+    let withLinks = 0;
+    rows.forEach(r => {
+      const hasIp = Boolean(r.interface_ip || (r.ip_count && Number(r.ip_count) > 0));
+      if (hasIp) withIp++;
+      if (r.oper_status === 'up') operUp++;
+      if (r.link_count && Number(r.link_count) > 0) withLinks++;
+    });
+    return { total, withIp, operUp, withLinks };
+  }, [rows, tab]);
+
+  const interfaceDeviceOptions = useMemo(() => {
+    if (tab !== 'interfaces') return [];
+    const deviceMap = new Map<string, string>();
+    rows.forEach(r => {
+      if (r.device_id && r.device_hostname) {
+        deviceMap.set(r.device_id, r.device_hostname);
+      }
+    });
+    return Array.from(deviceMap.entries()).map(([id, name]) => ({ value: id, label: name }));
+  }, [rows, tab]);
 
   // Pagination states
   const [page, setPage] = useState(1);
@@ -2216,6 +2244,93 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
           <div className="mb-4 px-4 py-3 rounded-2xl text-sm flex items-center gap-2 border bg-rose-50/10 text-rose-500 border-rose-200/30">
             <ShieldAlert size={16} />
             {error}
+          </div>
+        )}
+
+        {tab === 'credentials' && (
+          <div className="mb-4 px-4 py-3 rounded-2xl text-xs flex items-center justify-between gap-3 border bg-cyan-50/70 border-cyan-100 text-cyan-800 dark:bg-cyan-950/20 dark:border-cyan-900/30 dark:text-cyan-300">
+            <div className="flex items-center gap-2">
+              <KeyRound size={15} className="text-cyan-600 shrink-0" />
+              <span>
+                {zh
+                  ? '提示：凭据中心用于管理 Nexora 系统保存的设备登录凭据库。此处编辑密码仅更新系统存储记录。若需通过特权账号登录硬件交换机并下发 CLI 命令修改设备本身的口令，请使用「密码轮换」或「改密剧本」。'
+                  : 'Hint: Credentials Center manages saved device login credentials in Nexora. Editing passwords here updates stored records. To execute CLI commands on hardware switches to change device passwords, use Password Rotation or Playbooks.'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/management/credentials')}
+              className="shrink-0 px-3 py-1 bg-cyan-600 text-white rounded-lg font-semibold hover:bg-cyan-700 transition-colors text-[11px]"
+            >
+              {zh ? '前往密码轮换改密' : 'Open Password Rotation'}
+            </button>
+          </div>
+        )}
+
+        {tab === 'interfaces' && (
+          <div className="mb-5 space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="text-xs font-medium text-slate-500">{zh ? '接口总数' : 'Total Interfaces'}</div>
+                <div className="mt-1 text-2xl font-bold text-slate-800 dark:text-slate-100">{interfaceStats.total}</div>
+              </div>
+              <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/40 p-4 shadow-sm dark:border-emerald-900/30 dark:bg-emerald-950/20">
+                <div className="text-xs font-medium text-emerald-700 dark:text-emerald-400">{zh ? '配置 IP 接口数' : 'Configured IP Interfaces'}</div>
+                <div className="mt-1 text-2xl font-bold text-emerald-800 dark:text-emerald-300">{interfaceStats.withIp}</div>
+              </div>
+              <div className="rounded-2xl border border-cyan-200/80 bg-cyan-50/40 p-4 shadow-sm dark:border-cyan-900/30 dark:bg-cyan-950/20">
+                <div className="text-xs font-medium text-cyan-700 dark:text-cyan-400">{zh ? 'Up 状态接口' : 'Oper Status Up'}</div>
+                <div className="mt-1 text-2xl font-bold text-cyan-800 dark:text-cyan-300">{interfaceStats.operUp}</div>
+              </div>
+              <div className="rounded-2xl border border-purple-200/80 bg-purple-50/40 p-4 shadow-sm dark:border-purple-900/30 dark:bg-purple-950/20">
+                <div className="text-xs font-medium text-purple-700 dark:text-purple-400">{zh ? '关联拓扑接口' : 'Linked Interfaces'}</div>
+                <div className="mt-1 text-2xl font-bold text-purple-800 dark:text-purple-300">{interfaceStats.withLinks}</div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 flex-wrap bg-white dark:bg-slate-900 p-3 rounded-2xl border border-black/5 shadow-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-500 pl-1">{zh ? '视图过滤：' : 'View Filter:'}</span>
+                <button
+                  type="button"
+                  onClick={() => setInterfaceIpFilter('has_ip')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                    interfaceIpFilter === 'has_ip'
+                      ? 'bg-cyan-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                  }`}
+                >
+                  {zh ? `仅看有 IP 接口 (${interfaceStats.withIp})` : `Has IP Only (${interfaceStats.withIp})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInterfaceIpFilter('all')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                    interfaceIpFilter === 'all'
+                      ? 'bg-cyan-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                  }`}
+                >
+                  {zh ? `全部接口 (${interfaceStats.total})` : `All Interfaces (${interfaceStats.total})`}
+                </button>
+              </div>
+
+              {interfaceDeviceOptions.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-slate-500">{zh ? '所属设备：' : 'Device:'}</span>
+                  <select
+                    value={interfaceDeviceFilter}
+                    onChange={e => setInterfaceDeviceFilter(e.target.value)}
+                    className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-cyan-500"
+                  >
+                    <option value="">{zh ? '全部设备' : 'All Devices'}</option>
+                    {interfaceDeviceOptions.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

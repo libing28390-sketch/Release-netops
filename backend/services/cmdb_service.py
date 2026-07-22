@@ -286,10 +286,14 @@ def list_resource_search(
     }
 
 
-def list_cmdb_interfaces(conn) -> list[dict]:
-    """Return interfaces as CMDB skeleton resources with device context."""
-    rows = conn.execute(
-        """
+def list_cmdb_interfaces(
+    conn,
+    has_ip: bool | None = None,
+    device_id: str | None = None,
+    search: str | None = None,
+) -> list[dict]:
+    """Return interfaces as CMDB skeleton resources with optional has_ip, device_id, search filters."""
+    sql = """
         SELECT
             i.id,
             i.device_id,
@@ -328,9 +332,25 @@ def list_cmdb_interfaces(conn) -> list[dict]:
         FROM interfaces i
         LEFT JOIN devices d ON d.id = i.device_id
         LEFT JOIN vrfs v ON v.id = i.vrf_id
-        ORDER BY COALESCE(d.hostname, ''), COALESCE(i.interface_name, '')
-        """
-    ).fetchall()
+        WHERE 1=1
+    """
+    params: list = []
+    if has_ip is True:
+        sql += " AND (NULLIF(i.primary_ip, '') IS NOT NULL OR NULLIF(i.ip_address, '') IS NOT NULL)"
+    elif has_ip is False:
+        sql += " AND (NULLIF(i.primary_ip, '') IS NULL AND NULLIF(i.ip_address, '') IS NULL)"
+
+    if device_id:
+        sql += " AND i.device_id = ?"
+        params.append(device_id)
+
+    if search:
+        s = f"%{search.strip()}%"
+        sql += " AND (i.interface_name LIKE ? OR d.hostname LIKE ? OR d.ip_address LIKE ? OR i.primary_ip LIKE ? OR i.ip_address LIKE ? OR i.description LIKE ?)"
+        params.extend([s, s, s, s, s, s])
+
+    sql += " ORDER BY COALESCE(d.hostname, ''), COALESCE(i.interface_name, '')"
+    rows = conn.execute(sql, tuple(params)).fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
