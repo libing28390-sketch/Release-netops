@@ -105,6 +105,15 @@ export const AssetModal: React.FC<AssetModalProps> = ({
       .sort();
   }, [racks, form.site_id]);
 
+  const normalCredentials = React.useMemo(
+    () => credentials.filter(c => c.id === form.credential_id || ['normal', 'shared', 'unbound', 'mixed', 'login'].includes(String(c.account_role || 'unbound'))),
+    [credentials, form.credential_id],
+  );
+  const adminCredentials = React.useMemo(
+    () => credentials.filter(c => c.id === form.admin_credential_id || ['admin', 'shared', 'unbound', 'mixed', 'login'].includes(String(c.account_role || 'unbound'))),
+    [credentials, form.admin_credential_id],
+  );
+
   // Real-time U-position validation
   React.useEffect(() => {
     const rack = form.rack;
@@ -495,7 +504,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                             className="w-full text-[10px] px-2.5 py-1.5 rounded-lg border border-black/8 bg-white focus:outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20"
                           >
                             <option value="">{zh ? '-- 请选择普通凭据 --' : '-- Select Normal Credential --'}</option>
-                            {credentials.map(c => (
+                            {normalCredentials.map(c => (
                               <option key={c.id} value={c.id}>
                                 {c.credential_name} ({c.username || 'no user'} - {c.credential_type})
                               </option>
@@ -524,7 +533,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                             className="w-full text-[10px] px-2.5 py-1.5 rounded-lg border border-black/8 bg-white focus:outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20"
                           >
                             <option value="">{zh ? '-- 请选择特权凭据 --' : '-- Select Admin Credential --'}</option>
-                            {credentials.map(c => (
+                            {adminCredentials.map(c => (
                               <option key={c.id} value={c.id}>
                                 {c.credential_name} ({c.username || 'no user'} - {c.credential_type})
                               </option>
@@ -555,7 +564,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                           className="w-full text-[10px] px-2.5 py-1.5 rounded-lg border border-black/8 bg-white focus:outline-none focus:border-[#00bceb] focus:ring-1 focus:ring-[#00bceb]/20"
                         >
                           <option value="">{zh ? '-- 请选择凭据 --' : '-- Select a Credential --'}</option>
-                          {credentials.map(c => (
+                          {normalCredentials.map(c => (
                             <option key={c.id} value={c.id}>
                               {c.credential_name} ({c.username || 'no user'} - {c.credential_type})
                             </option>
@@ -630,7 +639,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">SNMP</span>
                 </div>
                 <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
-                  <Field label={zh ? '团体字' : 'Community'} value={form.snmp_community} onChange={v => setForm(f => ({ ...f, snmp_community: v }))} placeholder="public" />
+                  <Field label={zh ? '团体字' : 'Community'} value={form.snmp_community} onChange={v => setForm(f => ({ ...f, snmp_community: v }))} placeholder={zh ? '可选' : 'Optional'} />
                   <Field label={zh ? '端口' : 'Port'} value={form.snmp_port} onChange={v => setForm(f => ({ ...f, snmp_port: v }))} placeholder="161" />
                 </div>
               </div>

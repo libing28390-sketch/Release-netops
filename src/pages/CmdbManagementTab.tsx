@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit2, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 
@@ -165,6 +165,13 @@ const CRED_TYPE_OPTS = [
   { value: 'snmpv2', label: 'snmpv2' },
   { value: 'snmpv3', label: 'snmpv3' },
   { value: 'api_token', label: 'api_token' },
+];
+
+const CRED_ROLE_OPTS = [
+  { value: 'normal', label: '普通账号', labelEn: 'Normal account' },
+  { value: 'admin', label: '特权账号', labelEn: 'Privileged account' },
+  { value: 'shared', label: '通用账号', labelEn: 'Shared account' },
+  { value: 'unbound', label: '未指定', labelEn: 'Unassigned' },
 ];
 
 const VLAN_STATUS_OPTS = [
@@ -1392,6 +1399,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [visiblePasswordFields, setVisiblePasswordFields] = useState<Record<string, boolean>>({});
+  const [credentialDeviceDetails, setCredentialDeviceDetails] = useState<Record<string, any[]>>({});
+  const [expandedCredentialDevices, setExpandedCredentialDevices] = useState<Record<string, boolean>>({});
+  const [credentialDeviceLoading, setCredentialDeviceLoading] = useState<Record<string, boolean>>({});
   const [form, setForm] = useState<Record<string, any>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState<any | null>(null);
@@ -1577,10 +1587,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       { key: 'credential_name', label: '凭据名称', labelEn: 'Name', required: true },
       { key: 'credential_type', label: '类型', labelEn: 'Type', type: 'select', options: CRED_TYPE_OPTS },
       { key: 'username', label: '用户名', labelEn: 'Username' },
-      { key: 'account_role', label: '账号角色', labelEn: 'Account Role', hideInForm: true },
+      { key: 'account_role', label: '账号角色', labelEn: 'Account Role', type: 'select', options: CRED_ROLE_OPTS },
       { key: 'password', label: '密码', labelEn: 'Password', type: 'password', hideInTable: true, secretFlag: 'has_password' },
       { key: 'enable_password', label: 'Enable 密码', labelEn: 'Enable Password', type: 'password', hideInTable: true, secretFlag: 'has_enable_password' },
-      { key: 'snmp_community', label: 'SNMP Community', labelEn: 'SNMP Community', type: 'password', hideInTable: true, secretFlag: 'has_snmp_community' },
       { key: 'devices', label: '关联设备', labelEn: 'Associated Devices', hideInForm: true },
     ],
     devices: [
@@ -1888,8 +1897,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     if (!zh) {
       switch (role) {
         case 'normal': return 'Normal';
-        case 'admin': return 'Admin';
+        case 'admin': return 'Privileged Account';
         case 'mixed': return 'Mixed';
+        case 'shared': return 'Shared';
         case 'unbound': return 'Unbound';
         case 'login':
         default: return 'Login';
@@ -1897,8 +1907,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     }
     switch (role) {
       case 'normal': return '普通账号';
-      case 'admin': return '管理员账号';
+      case 'admin': return '特权账号';
       case 'mixed': return '多角色';
+      case 'shared': return '通用账号';
       case 'unbound': return '未关联';
       case 'login':
       default: return '登录账号';
@@ -1913,6 +1924,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
         return 'bg-rose-50 text-rose-700 border-rose-100 dark:bg-rose-950/20 dark:text-rose-400 dark:border-rose-900/30';
       case 'mixed':
         return 'bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-900/30';
+      case 'shared':
+        return 'bg-violet-50 text-violet-700 border-violet-100 dark:bg-violet-950/20 dark:text-violet-400 dark:border-violet-900/30';
       case 'unbound':
         return 'bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-900/20 dark:text-slate-400 dark:border-slate-800';
       case 'login':
@@ -1968,9 +1981,35 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     if (fd.key === 'devices') {
       const devList = row.devices || [];
       if (devList.length === 0) return <span className="text-black/30 dark:text-white/30">—</span>;
+      const credentialId = String(row.id || '');
+      const isExpanded = Boolean(expandedCredentialDevices[credentialId]);
+      const fullList = credentialDeviceDetails[credentialId];
+      const displayList = isExpanded && fullList ? fullList : devList;
+      const total = Number(row.device_count ?? fullList?.length ?? devList.length);
+      const hiddenCount = Math.max(0, total - displayList.length);
+      const toggleDetails = async () => {
+        if (isExpanded) {
+          setExpandedCredentialDevices(previous => ({ ...previous, [credentialId]: false }));
+          return;
+        }
+        setExpandedCredentialDevices(previous => ({ ...previous, [credentialId]: true }));
+        if (fullList || !row.devices_truncated) return;
+        setCredentialDeviceLoading(previous => ({ ...previous, [credentialId]: true }));
+        try {
+          const response = await fetch(`/api/credentials/${encodeURIComponent(credentialId)}`, { headers: authHeaders() });
+          const payload = await response.json();
+          if (!response.ok || !payload.success) throw new Error(formatErrorDetail(payload.detail || payload.message));
+          setCredentialDeviceDetails(previous => ({ ...previous, [credentialId]: payload.data?.devices || [] }));
+        } catch (error: any) {
+          setError(error.message || String(error));
+          setExpandedCredentialDevices(previous => ({ ...previous, [credentialId]: false }));
+        } finally {
+          setCredentialDeviceLoading(previous => ({ ...previous, [credentialId]: false }));
+        }
+      };
       return (
-        <div className="flex flex-wrap gap-1">
-          {devList.map((d: any) => (
+        <div className="flex max-w-[34rem] flex-wrap items-center gap-1">
+          {displayList.slice(0, isExpanded ? displayList.length : 3).map((d: any) => (
             <span
               key={d.id}
               onClick={() => navigate(`/assets/devices`)}
@@ -1980,6 +2019,17 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
               {d.hostname}
             </span>
           ))}
+          {total > 3 && (
+            <button
+              type="button"
+              onClick={() => { void toggleDetails(); }}
+              className="inline-flex items-center gap-0.5 rounded border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
+              title={zh ? '按需查看全部关联设备' : 'Load all associated devices on demand'}
+            >
+              {credentialDeviceLoading[credentialId] ? <RefreshCw size={10} className="animate-spin" /> : isExpanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+              {isExpanded ? (zh ? '收起' : 'Collapse') : `+${hiddenCount} ${zh ? '台' : 'more'}`}
+            </button>
+          )}
         </div>
       );
     }
@@ -2057,9 +2107,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       return (
         <span
           className={`inline-flex items-center px-2.5 py-0.5 rounded-full border text-[11px] font-semibold tracking-wide ${getAccountRoleStyle(role)}`}
-          title={zh ? '根据绑定设备的普通账号/管理员账号字段推断' : 'Inferred from linked device normal/admin username fields'}
+          title={zh ? '凭据角色由人工设置，历史数据可根据绑定设备兼容推断' : 'Role is explicit when set; legacy data may be inferred from linked devices'}
         >
-          {row.account_role_label || getAccountRoleLabel(role)}
+          {getAccountRoleLabel(role)}
         </span>
       );
     }

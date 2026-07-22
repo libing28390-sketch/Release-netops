@@ -24,11 +24,13 @@ _SECRET_FIELDS = ('encrypted_password', 'enable_password', 'private_key', 'snmp_
 
 _ACCOUNT_ROLE_LABELS = {
     'normal': '普通账号',
-    'admin': '管理员账号',
+    'admin': '特权账号',
     'login': '登录账号',
     'mixed': '多角色',
+    'shared': '通用账号',
     'unbound': '未关联',
 }
+_EXPLICIT_ACCOUNT_ROLES = {'normal', 'admin', 'shared', 'unbound'}
 
 
 def _utc_now() -> str:
@@ -51,6 +53,7 @@ def _to_safe_view(row) -> dict:
         'credential_name': d.get('credential_name'),
         'credential_type': d.get('credential_type'),
         'username': d.get('username') or '',
+        'account_role': d.get('account_role') or 'unbound',
         'created_at': d.get('created_at'),
         'has_password': bool(d.get('encrypted_password')),
         'has_enable_password': bool(d.get('enable_password')),
@@ -103,7 +106,12 @@ def _account_role_from_devices(credential_id: str, credential_username: str, dev
 
 
 def _with_account_role(view: dict, devices: list[dict]) -> dict:
-    role = _account_role_from_devices(view.get('id') or '', view.get('username') or '', devices)
+    stored_role = str(view.get('account_role') or '').strip().lower()
+    role = stored_role if stored_role in _EXPLICIT_ACCOUNT_ROLES else ''
+    if role == 'unbound' and devices:
+        role = _account_role_from_devices(view.get('id') or '', view.get('username') or '', devices)
+    if not role:
+        role = _account_role_from_devices(view.get('id') or '', view.get('username') or '', devices)
     view['account_role'] = role
     view['account_role_label'] = _ACCOUNT_ROLE_LABELS.get(role, role)
     return view
@@ -128,7 +136,9 @@ def list_credentials(conn) -> list[dict]:
     for r in rows:
         view = _to_safe_view(r)
         device_rows = _list_devices_using_rows(conn, view["id"])
-        view["devices"] = _public_device_refs(device_rows)
+        view["device_count"] = len(device_rows)
+        view["devices"] = _public_device_refs(device_rows[:5])
+        view["devices_truncated"] = len(device_rows) > 5
         _with_account_role(view, device_rows)
         res.append(view)
     return res
@@ -140,6 +150,7 @@ def get_credential(conn, cred_id: str) -> dict:
         raise ValueError(f"Credential not found: {cred_id}")
     view = _to_safe_view(row)
     device_rows = _list_devices_using_rows(conn, cred_id)
+    view["device_count"] = len(device_rows)
     view["devices"] = _public_device_refs(device_rows)
     return _with_account_role(view, device_rows)
 
@@ -158,7 +169,7 @@ def _name_exists(conn, name: str, exclude_id: str | None = None) -> bool:
 
 
 def create_credential(conn, *, credential_name: str, credential_type: str = 'ssh_password',
-                      username: str = '', password: str = '', enable_password: str = '',
+                      username: str = '', account_role: str = 'normal', password: str = '', enable_password: str = '',
                       private_key: str = '', snmp_community: str = '') -> dict:
     if _name_exists(conn, credential_name):
         raise ValueError(f"Credential name already exists: {credential_name}")
@@ -167,11 +178,11 @@ def create_credential(conn, *, credential_name: str, credential_type: str = 'ssh
     now = _utc_now()
     conn.execute(
         """INSERT INTO credentials
-           (id, credential_name, credential_type, username, encrypted_password,
+           (id, credential_name, credential_type, username, account_role, encrypted_password,
             enable_password, private_key, snmp_community, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            cred_id, credential_name, credential_type, username,
+            cred_id, credential_name, credential_type, username, account_role,
             encrypt_credential(password) or '',
             encrypt_credential(enable_password) or '',
             encrypt_credential(private_key) or '',
@@ -197,7 +208,7 @@ def update_credential(conn, cred_id: str, **fields) -> dict:
     params: list = []
 
     # Plain (non-secret) columns
-    for key in ('credential_name', 'credential_type', 'username'):
+    for key in ('credential_name', 'credential_type', 'username', 'account_role'):
         if key in fields and fields[key] is not None:
             updates.append(f"{key} = ?")
             params.append(fields[key])

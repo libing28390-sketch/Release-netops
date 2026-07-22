@@ -168,10 +168,39 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
             if resolved is None:
                 logger.warning("Vault read failed for %s, falling back to local", vault_path)
 
+    # Resolve the linked asset before reading the credential vault.  A device
+    # row normally carries these IDs, but callers such as the terminal launch
+    # path may pass a physical_assets row directly.
+    asset = {}
+    asset_id = str(device.get('asset_id') or '').strip()
+    if asset_id:
+        try:
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                row = conn.execute(
+                    '''SELECT credential_id, admin_credential_id,
+                              username, password, normal_username, normal_password,
+                              admin_username, admin_password, enable_password,
+                              snmp_community
+                       FROM physical_assets WHERE id = ?''',
+                    (asset_id,),
+                ).fetchone()
+                asset = dict(row) if row else {}
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning('Failed to load linked asset credentials for %s: %s', asset_id, exc)
+
+    credential_id = device.get('credential_id') or asset.get('credential_id')
+    admin_credential_id = device.get('admin_credential_id') or asset.get('admin_credential_id')
+    normal_bound = bool(credential_id)
+    admin_bound = bool(admin_credential_id)
+
     if resolved is None:
-        # Check if credential_id is set to retrieve from credentials table
-        credential_id = device.get('credential_id')
-        admin_credential_id = device.get('admin_credential_id')
+        # A bound credential is the authority for that account role.  The
+        # asset/device password columns remain only a legacy fallback for
+        # unbound records and must not override a newer vault value.
         db_creds = {}
         db_admin_creds = {}
         if credential_id or admin_credential_id:
@@ -194,45 +223,38 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
             except Exception as e:
                 logger.warning(f"Database error during resolve_device_credentials in vault_service: {e}")
 
-        # Local decryption fallback
+        # Local decryption fallback.  Prefer the vault username/password for
+        # a bound role; otherwise use the legacy device fields.
         resolved = {
             'username': db_creds.get('username') or device.get('username') or '',
             'password': decrypt_credential(db_creds.get('encrypted_password') or device.get('password')) or '',
-            'enable_password': decrypt_credential(db_admin_creds.get('enable_password') or db_creds.get('enable_password') or device.get('enable_password')) or '',
+            'enable_password': decrypt_credential(
+                db_admin_creds.get('enable_password')
+                or db_creds.get('enable_password')
+                or device.get('enable_password')
+            ) or '',
             'priv_username': device.get('priv_username') or '',
-            'normal_username': device.get('normal_username') or '',
-            'normal_password': decrypt_credential(device.get('normal_password')) or '',
-            'admin_username': device.get('admin_username') or '',
-            'admin_password': decrypt_credential(device.get('admin_password')) or '',
+            'normal_username': db_creds.get('username') if normal_bound and db_creds else device.get('normal_username') or '',
+            'normal_password': decrypt_credential(
+                db_creds.get('encrypted_password') if normal_bound and db_creds else device.get('normal_password')
+            ) or '',
+            'admin_username': db_admin_creds.get('username') if admin_bound and db_admin_creds else device.get('admin_username') or '',
+            'admin_password': decrypt_credential(
+                db_admin_creds.get('encrypted_password') if admin_bound and db_admin_creds else device.get('admin_password')
+            ) or '',
             'snmp_community': decrypt_credential(
                 db_creds.get('snmp_community') or device.get('snmp_community')
             ) or '',
         }
 
-    # The CMDB asset is the source of truth for the two supported SSH roles.
-    # Device/credentials.username is a legacy single-account field and must
-    # not override the role-specific credentials stored on physical_assets.
-    asset = {}
-    asset_id = str(device.get('asset_id') or '').strip()
-    if asset_id:
-        try:
-            from database import get_db_connection
-            conn = get_db_connection()
-            try:
-                row = conn.execute(
-                    '''SELECT username, password, normal_username, normal_password,
-                              admin_username, admin_password, enable_password
-                       FROM physical_assets WHERE id = ?''',
-                    (asset_id,),
-                ).fetchone()
-                asset = dict(row) if row else {}
-            finally:
-                conn.close()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning('Failed to load linked asset credentials for %s: %s', asset_id, exc)
-
     if asset:
+        # Only unbound roles may read the legacy asset cache.  This is the
+        # critical anti-stale rule: editing a shared credential in the vault
+        # must take effect for every bound asset without a fan-out copy.
         for role in ('normal', 'admin'):
+            role_bound = normal_bound if role == 'normal' else admin_bound
+            if role_bound:
+                continue
             username_key = f'{role}_username'
             password_key = f'{role}_password'
             asset_username = str(asset.get(username_key) or '').strip()
@@ -241,28 +263,26 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
                 resolved[username_key] = asset_username
             if asset_password:
                 resolved[password_key] = asset_password
-        asset_enable_password = decrypt_credential(asset.get('enable_password')) or ''
-        if asset_enable_password:
-            resolved['enable_password'] = asset_enable_password
 
-        # Keep the generic return keys compatible for callers that have not
-        # yet been migrated, but derive them from the normal role first.
-        # Never use physical_assets.username/password as an SSH fallback.
-        normal_pair = (
-            resolved.get('normal_username') or '',
-            resolved.get('normal_password') or '',
-        )
-        admin_pair = (
-            resolved.get('admin_username') or '',
-            resolved.get('admin_password') or '',
-        )
-        if all(normal_pair):
-            resolved['username'], resolved['password'] = normal_pair
-        elif all(admin_pair):
-            resolved['username'], resolved['password'] = admin_pair
-        else:
-            resolved['username'] = ''
-            resolved['password'] = ''
+        if not normal_bound and not admin_bound:
+            asset_enable_password = decrypt_credential(asset.get('enable_password')) or ''
+            if asset_enable_password:
+                resolved['enable_password'] = asset_enable_password
+
+        if not normal_bound and asset.get('snmp_community'):
+            resolved['snmp_community'] = decrypt_credential(asset.get('snmp_community')) or ''
+
+    # Keep the generic return keys compatible for callers that have not yet
+    # been migrated, but derive them from the explicit role pairs.
+    normal_pair = (resolved.get('normal_username') or '', resolved.get('normal_password') or '')
+    admin_pair = (resolved.get('admin_username') or '', resolved.get('admin_password') or '')
+    if all(normal_pair):
+        resolved['username'], resolved['password'] = normal_pair
+    elif all(admin_pair):
+        resolved['username'], resolved['password'] = admin_pair
+    else:
+        resolved['username'] = ''
+        resolved['password'] = ''
 
     # Older Vault records may not contain SNMP fields. Keep the key stable so
     # collectors can distinguish "not configured" from an unreachable agent.

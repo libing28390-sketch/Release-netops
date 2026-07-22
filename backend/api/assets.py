@@ -198,21 +198,24 @@ def _pre_resolve_credential(conn, body) -> None:
             'SELECT id, username, encrypted_password, enable_password, snmp_community FROM credentials WHERE id = ? OR credential_name = ?',
             (existing_cred_id, existing_cred_id)
         ).fetchone()
-        if cred_row:
-            body.credential_id = cred_row['id']
-            from core.crypto import decrypt_credential
-            c_dict = dict(cred_row)
-            dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
-            dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
-            dec_snmp = decrypt_credential(c_dict.get('snmp_community')) or ''
-            c_user = c_dict.get('username') or ''
-            
-            if not getattr(body, 'username', None): body.username = c_user
-            if not getattr(body, 'normal_username', None): body.normal_username = c_user
-            if not getattr(body, 'normal_password', None): body.normal_password = dec_pwd
-            if not getattr(body, 'enable_password', None): body.enable_password = dec_enable
-            if not getattr(body, 'snmp_community', None) or body.snmp_community == 'public':
-                body.snmp_community = dec_snmp
+        if not cred_row:
+            raise HTTPException(status_code=422, detail=f'普通凭据不存在: {existing_cred_id}')
+        body.credential_id = cred_row['id']
+        from core.crypto import decrypt_credential
+        c_dict = dict(cred_row)
+        dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
+        dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
+        dec_snmp = decrypt_credential(c_dict.get('snmp_community')) or ''
+        c_user = c_dict.get('username') or ''
+
+        # An explicit binding wins over any stale/manual secret in the
+        # request. The vault row is the canonical value for this role.
+        body.username = c_user
+        body.normal_username = c_user
+        body.normal_password = dec_pwd
+        body.enable_password = dec_enable
+        if not getattr(body, 'snmp_community', None) or body.snmp_community == 'public':
+            body.snmp_community = dec_snmp
 
     existing_admin_cred_id = getattr(body, 'admin_credential_id', '') or ''
     if existing_admin_cred_id:
@@ -220,17 +223,20 @@ def _pre_resolve_credential(conn, body) -> None:
             'SELECT id, username, encrypted_password, enable_password FROM credentials WHERE id = ? OR credential_name = ?',
             (existing_admin_cred_id, existing_admin_cred_id)
         ).fetchone()
-        if cred_row:
-            body.admin_credential_id = cred_row['id']
-            from core.crypto import decrypt_credential
-            c_dict = dict(cred_row)
-            dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
-            dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
-            c_user = c_dict.get('username') or ''
-            
-            if not getattr(body, 'admin_username', None): body.admin_username = c_user
-            if not getattr(body, 'admin_password', None): body.admin_password = dec_pwd
-            if not getattr(body, 'enable_password', None): body.enable_password = dec_enable
+        if not cred_row:
+            raise HTTPException(status_code=422, detail=f'特权凭据不存在: {existing_admin_cred_id}')
+        body.admin_credential_id = cred_row['id']
+        from core.crypto import decrypt_credential
+        c_dict = dict(cred_row)
+        dec_pwd = decrypt_credential(c_dict.get('encrypted_password')) or ''
+        dec_enable = decrypt_credential(c_dict.get('enable_password')) or ''
+        c_user = c_dict.get('username') or ''
+
+        body.admin_username = c_user
+        body.admin_password = dec_pwd
+        # A privileged credential owns the enable secret when both roles are
+        # bound. This prevents the normal credential from winning by order.
+        body.enable_password = dec_enable
 
 
 def _create_linked_device(conn, asset_id: str, body) -> str:
@@ -244,7 +250,7 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     method = getattr(body, 'connection_method', '') or 'ssh'
     uname = getattr(body, 'username', '') or ''
     pwd = getattr(body, 'password', '') or ''
-    community = getattr(body, 'snmp_community', '') or 'public'
+    community = getattr(body, 'snmp_community', '') or ''
     port = getattr(body, 'snmp_port', None) or 161
     mgmt_port = getattr(body, 'management_port', None) or 22
 
@@ -731,7 +737,7 @@ class AssetCreate(BaseModel):
     admin_password: str = ''
     enable_password: str = ''
     auth_model: str = 'single'
-    snmp_community: str = 'public'
+    snmp_community: str = ''
     snmp_port: int = 161
     management_port: int = 22
     device_category: str = ''
@@ -1224,6 +1230,11 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                 body.site_id = resolve_canonical_site_id(conn, body.site_id)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
+
+        # Normalize and validate bound credential references before any
+        # lifecycle checks or asset writes. This also refreshes the local
+        # compatibility cache from the authoritative vault row.
+        _pre_resolve_credential(conn, body)
 
         effective_vendor = body.vendor if body.vendor is not None else row['vendor']
         effective_asset_type = body.asset_type if body.asset_type is not None else row['asset_type']

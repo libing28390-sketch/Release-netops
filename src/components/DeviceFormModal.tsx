@@ -354,11 +354,11 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">SNMP Community</label>
               <input
                 type="text"
-                value={form.snmp_community || (isAdd ? 'public' : '')}
+                value={form.snmp_community || ''}
                 title="SNMP community"
                 onChange={(event) => handleFieldChange('snmp_community', event.target.value)}
                 className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
-                placeholder="public"
+                placeholder={language === 'zh' ? '可选' : 'Optional'}
               />
             </div>
             <div>

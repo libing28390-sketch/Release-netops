@@ -420,7 +420,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       admin_password: '',
       enable_password: '',
       auth_model: 'dual',
-      snmp_community: (a as any).snmp_community || 'public',
+      snmp_community: (a as any).snmp_community || '',
       snmp_port: String((a as any).snmp_port || '161'),
       management_port: String(a.management_port || '22'),
       device_category: a.device_category || '',
@@ -564,7 +564,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       admin_password: '',
       enable_password: '',
       auth_model: 'dual',
-      snmp_community: a.snmp_community || 'public',
+      snmp_community: a.snmp_community || '',
       snmp_port: String(a.snmp_port || '161'),
       management_port: String(a.management_port || '22'),
       device_category: a.device_category || '',
@@ -740,7 +740,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         [zh ? 'U高度' : 'U Height']: a.u_height ?? 1,
         [zh ? '规划起始U' : 'Planned Start U']: a.planned_start_u ?? '',
         [zh ? '功耗(W)' : 'Power(W)']: (a as any).power_watts ?? '',
-        [zh ? 'SNMP社区名' : 'SNMP Community']: (a as any).snmp_community || 'public',
+        [zh ? 'SNMP社区名' : 'SNMP Community']: (a as any).snmp_community || '',
         [zh ? 'SNMP端口' : 'SNMP Port']: (a as any).snmp_port || '161',
         [zh ? '普通用户' : 'Normal User']: (a as any).normal_username || '',
         [zh ? '特权用户' : 'Admin User']: (a as any).admin_username || '',
@@ -1068,8 +1068,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '业务IP', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
       : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Business IP', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
     const srvExample = zh
-      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '戴尔', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '22', '192.168.1.10', 'SSH（安全外壳）', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', '', 'IT部', '2024-01-15', '待投产', '', '2027-01-15', '服务器备注']
-      : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'web', 'server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'public', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', '', 'IT Dept', '2024-01-15', 'staging', '', '2027-01-15', 'Production srv'];
+      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '戴尔', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '22', '192.168.1.10', 'SSH（安全外壳）', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', '', 'IT部', '2024-01-15', '待投产', '', '2027-01-15', '服务器备注']
+      : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'web', 'server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', '', '161', 'user', 'admin', '', '', '', 'cred-cisco-core', '', 'IT Dept', '2024-01-15', 'staging', '', '2027-01-15', 'Production srv'];
     const wsSrv = XLSX.utils.aoa_to_sheet([srvHeaders, srvExample]);
     wsSrv['!cols'] = srvHeaders.map(() => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, wsSrv, zh ? '服务器模板' : 'Server Template');
@@ -1078,8 +1078,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注']
       : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes'];
     const netExample = zh
-      ? ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '思科', 'C9300-48P', '思科 IOS', '10.0.0.1', '22', 'SSH（安全外壳）', '在用', '核心交换机', '交换机', '存量设备', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', '普通账号密码', '特权账号密码', '', 'cred-cisco-core', 'cred-cisco-admin', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2026-06-01', '核心交换机']
-      : ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'switch', 'switch', 'legacy', 'BJ-DC1', 'A-02', '40', '1', '40', '200', 'public', '161', 'user', 'admin', 'normal-password', 'admin-password', '', 'cred-cisco-core', 'cred-cisco-admin', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2026-06-01', 'Core switch'];
+      ? ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '思科', 'C9300-48P', '思科 IOS', '10.0.0.1', '22', 'SSH（安全外壳）', '在用', '核心交换机', '交换机', '存量设备', 'BJ-DC1', 'A-02', '40', '1', '40', '', '161', 'user', 'admin', '普通账号密码', '特权账号密码', '', 'cred-cisco-core', 'cred-cisco-admin', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2026-06-01', '核心交换机']
+      : ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'switch', 'switch', 'legacy', 'BJ-DC1', 'A-02', '40', '1', '40', '', '161', 'user', 'admin', 'normal-password', 'admin-password', '', 'cred-cisco-core', 'cred-cisco-admin', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2026-06-01', 'Core switch'];
     const wsNet = XLSX.utils.aoa_to_sheet([netHeaders, netExample]);
     wsNet['!cols'] = netHeaders.map(() => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, wsNet, zh ? '网络设备模板' : 'Network Device Template');

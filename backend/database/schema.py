@@ -114,6 +114,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         credential_name TEXT UNIQUE,
         credential_type TEXT,
         username TEXT DEFAULT '',
+        account_role TEXT DEFAULT 'unbound',
         encrypted_password TEXT DEFAULT '',
         enable_password TEXT DEFAULT '',
         private_key TEXT DEFAULT '',
@@ -121,6 +122,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         created_at TEXT
     )
     ''')
+    ensure_column('credentials', 'account_role', "TEXT DEFAULT 'unbound'")
 
     # Create devices table if not exists
     cursor.execute('''

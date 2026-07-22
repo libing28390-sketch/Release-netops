@@ -621,11 +621,14 @@ _CREDENTIAL_TYPES = {
     'ssh_password', 'ssh_key', 'snmpv2', 'snmpv3', 'api_token',
 }
 
+_CREDENTIAL_ACCOUNT_ROLES = {'normal', 'admin', 'shared', 'unbound'}
+
 
 class CredentialCreate(BaseModel):
     credential_name: str
     credential_type: str = 'ssh_password'
     username: str = ''
+    account_role: str = 'normal'
     password: str = ''          # plaintext on input; stored encrypted
     enable_password: str = ''   # plaintext on input; stored encrypted
     private_key: str = ''       # plaintext on input; stored encrypted
@@ -647,11 +650,20 @@ class CredentialCreate(BaseModel):
             raise ValueError(f'credential_type must be one of {sorted(_CREDENTIAL_TYPES)}')
         return v
 
+    @field_validator('account_role')
+    @classmethod
+    def validate_account_role(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in _CREDENTIAL_ACCOUNT_ROLES:
+            raise ValueError(f'account_role must be one of {sorted(_CREDENTIAL_ACCOUNT_ROLES)}')
+        return v
+
 
 class CredentialUpdate(BaseModel):
     credential_name: Optional[str] = None
     credential_type: Optional[str] = None
     username: Optional[str] = None
+    account_role: Optional[str] = None
     password: Optional[str] = None
     enable_password: Optional[str] = None
     private_key: Optional[str] = None
@@ -675,6 +687,16 @@ class CredentialUpdate(BaseModel):
         v = v.strip()
         if v not in _CREDENTIAL_TYPES:
             raise ValueError(f'credential_type must be one of {sorted(_CREDENTIAL_TYPES)}')
+        return v
+
+    @field_validator('account_role')
+    @classmethod
+    def validate_account_role(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if v not in _CREDENTIAL_ACCOUNT_ROLES:
+            raise ValueError(f'account_role must be one of {sorted(_CREDENTIAL_ACCOUNT_ROLES)}')
         return v
 
 

@@ -61,11 +61,25 @@ def _sync_credential_vault(device: dict, role: str, enc_new: str) -> None:
     historically wrote only to ``devices.*``, so a rotated password never reached
     the vault and config backup would break. This keeps them consistent.
 
-    The vault stores a single account per device, so the stored login password is
-    updated only when the rotated *role* matches the account the vault represents.
-    The ``enable`` role always updates the vault's ``enable_password``.
+    Explicit role bindings are authoritative: normal rotation updates the
+    normal credential, admin rotation updates ``admin_credential_id`` and
+    enable rotation updates the admin credential's ``enable_password``.  The
+    username comparison remains only as a compatibility guard for legacy
+    devices that have no explicit admin binding.
     """
-    cred_id = device.get('credential_id')
+    normal_cred_id = device.get('credential_id')
+    admin_cred_id = device.get('admin_credential_id')
+    if role == 'normal':
+        cred_id = normal_cred_id
+        explicit_role_binding = bool(normal_cred_id)
+    elif role in ('admin', 'enable'):
+        # Enable is a privileged secret and belongs to the admin credential
+        # when one is bound. Fall back to the legacy credential for old rows.
+        cred_id = admin_cred_id or normal_cred_id
+        explicit_role_binding = bool(admin_cred_id)
+    else:
+        return
+
     if not cred_id or not enc_new:
         return
     try:
@@ -80,6 +94,12 @@ def _sync_credential_vault(device: dict, role: str, enc_new: str) -> None:
                 conn.execute('UPDATE credentials SET enable_password = ? WHERE id = ?', (enc_new, cred_id))
                 conn.commit()
                 logger.info("[Rotation] Synced new enable secret into credential vault %s", cred_id)
+                return
+
+            if explicit_role_binding:
+                conn.execute('UPDATE credentials SET encrypted_password = ? WHERE id = ?', (enc_new, cred_id))
+                conn.commit()
+                logger.info("[Rotation] Synced new explicitly bound %s password into credential vault %s", role, cred_id)
                 return
 
             target_user = (

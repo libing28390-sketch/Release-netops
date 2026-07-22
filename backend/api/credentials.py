@@ -34,7 +34,6 @@ def api_get_credential(cred_id: str, _user=require_role("Operator")):
     conn = get_db_connection()
     try:
         cred = credential_service.get_credential(conn, cred_id)
-        cred["devices"] = credential_service.list_devices_using(conn, cred_id)
         return {"success": True, "data": cred, "message": ""}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
