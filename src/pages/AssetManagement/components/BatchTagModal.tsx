@@ -28,11 +28,11 @@ export const BatchTagModal: React.FC<BatchTagModalProps> = ({
   const [search, setSearch] = useState("");
   const groupedTags = useMemo(
     () =>
-      allTags.filter((tag) => tag.category !== "status").reduce<Record<string, TagDefinition[]>>((groups, tag) => {
+      allTags.filter((tag) => tag.category !== "system_auto" && !tag.is_system).reduce<Record<string, TagDefinition[]>>((groups, tag) => {
         const query = search.trim().toLowerCase();
         if (
           query &&
-          ![tag.label, tag.label_zh, tag.value].some((value) =>
+          ![tag.label, tag.label_zh, tag.code].some((value) =>
             String(value || "")
               .toLowerCase()
               .includes(query),
@@ -151,7 +151,7 @@ export const BatchTagModal: React.FC<BatchTagModalProps> = ({
                             <span className="min-w-0 flex-1 truncate text-xs">
                               {zh ? tag.label_zh || tag.label : tag.label}
                               <span className="ml-1 text-[10px] text-slate-400">
-                                {tag.value}
+                                {tag.code}
                               </span>
                             </span>
                             {selected && (

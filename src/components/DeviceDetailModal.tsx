@@ -249,7 +249,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                       <span
                         key={tag.id}
                         className="inline-flex items-center gap-1 rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[11px]"
-                        title={tag.description || tag.value}
+                        title={tag.description || tag.code}
                       >
                         <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tag.color || '#06b6d4' }} />
                         <span className="font-medium text-black/70">{language === 'zh' ? (tag.label_zh || tag.label) : tag.label}</span>

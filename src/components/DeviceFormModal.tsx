@@ -89,7 +89,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   }, [form.tag_ids]);
 
   const toggleTag = (tagId: string) => {
-    if (allTags.find(tag => tag.id === tagId)?.category === 'status') return;
+    if (allTags.find(tag => tag.id === tagId)?.is_system) return;
     const next = selectedTagIds.includes(tagId)
       ? selectedTagIds.filter(id => id !== tagId)
       : [...selectedTagIds, tagId];
@@ -98,10 +98,10 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   };
 
   const filteredTags = allTags.filter(tag => {
-    if (tag.category === 'status') return false;
+    if (tag.is_system) return false;
     if (!tagSearch) return true;
     const q = tagSearch.toLowerCase();
-    return tag.label.toLowerCase().includes(q) || tag.label_zh.toLowerCase().includes(q) || tag.value.toLowerCase().includes(q);
+    return tag.label.toLowerCase().includes(q) || tag.label_zh.toLowerCase().includes(q) || tag.code.toLowerCase().includes(q);
   });
 
   const handleFieldChange = <K extends keyof Device>(key: K, value: Device[K] | string | number | undefined) => {

@@ -283,16 +283,19 @@ class InspectionItem(InspectionItemBase):
 
 # ─── Tag 标签系统 ─────────────────────────────
 
-_TAG_CATEGORIES = {'device_type', 'vendor', 'os', 'role', 'env', 'function', 'custom'}
+_TAG_CATEGORIES = {'business', 'environment', 'network_zone', 'operations', 'security', 'project', 'lifecycle', 'technology'}
 
 class TagDefinitionCreate(BaseModel):
     category: str
-    value: str
+    code: str
     label: str
     label_zh: str = ''
     color: str = ''
     icon: str = ''
     description: str = ''
+    resource_types: List[str] = ['device']
+    exclusive_group: str = ''
+    priority: int = 0
     sort_order: int = 0
 
     @field_validator('category')
@@ -302,14 +305,14 @@ class TagDefinitionCreate(BaseModel):
             raise ValueError(f'category must be one of {_TAG_CATEGORIES}')
         return v
 
-    @field_validator('value')
+    @field_validator('code')
     @classmethod
-    def validate_value(cls, v: str) -> str:
+    def validate_code(cls, v: str) -> str:
         v = v.strip().lower()
-        if not v or len(v) > 64:
-            raise ValueError('value must be 1-64 characters')
-        if not _re.match(r'^[a-z0-9][a-z0-9._-]*$', v):
-            raise ValueError('value must start with a-z/0-9 and contain only a-z, 0-9, dot, dash, underscore')
+        if not v or len(v) > 96:
+            raise ValueError('code must be 1-96 characters')
+        if not _re.match(r'^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$', v):
+            raise ValueError('code must start with a-z and use lowercase letters, digits, dot, dash or underscore')
         return v
 
 
@@ -320,16 +323,9 @@ class TagDefinitionUpdate(BaseModel):
     icon: str | None = None
     description: str | None = None
     sort_order: int | None = None
-    category: str | None = None
-    value: str | None = None
-
-    @field_validator('category')
-    @classmethod
-    def validate_category(cls, v: str | None) -> str | None:
-        if v is not None and v not in _TAG_CATEGORIES:
-            raise ValueError(f'category must be one of {_TAG_CATEGORIES}')
-        return v
-
+    exclusive_group: str | None = None
+    priority: int | None = None
+    is_active: int | None = None
 
 class DeviceTagsUpdate(BaseModel):
     tag_ids: List[str]
@@ -338,6 +334,11 @@ class DeviceTagsUpdate(BaseModel):
 class BatchDeviceTagsUpdate(BaseModel):
     device_ids: List[str]
     tag_ids: List[str]
+
+
+class TagTargetFilter(BaseModel):
+    include_groups: List[List[str]] = []
+    exclude_tag_ids: List[str] = []
 
 
 # ─── Rack Management 机柜管理 ────────────────────────────

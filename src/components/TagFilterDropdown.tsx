@@ -40,12 +40,12 @@ const TagFilterDropdown: React.FC<TagFilterDropdownProps> = ({
   };
 
   const filtered = allTags.filter(t => {
-    if (excludeStatusTags && t.category === 'status') return false;
+    if (excludeStatusTags && (t.category === 'system_auto' || t.is_system)) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return String(t.label || '').toLowerCase().includes(q)
       || String(t.label_zh || '').toLowerCase().includes(q)
-      || String(t.value || '').toLowerCase().includes(q);
+      || t.code.toLowerCase().includes(q);
   });
 
   const grouped = (Object.keys(TAG_CATEGORY_LABELS) as TagCategory[]).reduce<Record<string, TagDefinition[]>>((acc, cat) => {

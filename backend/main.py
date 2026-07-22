@@ -19,7 +19,7 @@ mimetypes.add_type('application/javascript', '.js')
 mimetypes.add_type('text/css', '.css')
 # ----------------------------
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi import FastAPI, BackgroundTasks, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from core.config import settings
@@ -435,10 +435,40 @@ static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static_bin")
 
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+class SPAStaticFiles(StaticFiles):
+    """
+    Custom StaticFiles to support Single Page Application (SPA) routing.
+    If a requested path returns 404 and is not an API request, static download,
+    or a request for a file with a static asset extension (e.g. .js, .css, .ico, .png),
+    it falls back to serving 'index.html'.
+    """
+    async def get_response(self, path: str, scope):
+        norm_path = path.replace("\\", "/").lstrip("/")
+        try:
+            response = await super().get_response(path, scope)
+            if response.status_code == 404:
+                if not norm_path.startswith("api/") and not norm_path.startswith("static/"):
+                    filename = os.path.basename(norm_path)
+                    has_extension = "." in filename and not filename.endswith(".html")
+                    if not has_extension:
+                        return await super().get_response("index.html", scope)
+            return response
+        except (HTTPException, StarletteHTTPException) as exc:
+            if exc.status_code == 404:
+                if not norm_path.startswith("api/") and not norm_path.startswith("static/"):
+                    filename = os.path.basename(norm_path)
+                    has_extension = "." in filename and not filename.endswith(".html")
+                    if not has_extension:
+                        return await super().get_response("index.html", scope)
+            raise exc
+
+
 # Serve static files from dist directory if it exists
 if os.path.exists("dist"):
     logger.info("Serving static files from dist directory")
-    app.mount("/", StaticFiles(directory="dist", html=True), name="static")
+    app.mount("/", SPAStaticFiles(directory="dist", html=True), name="static")
 else:
     logger.warning("dist directory not found. Frontend will not be served.")
 

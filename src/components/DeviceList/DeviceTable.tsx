@@ -279,7 +279,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                           <span
                             key={tag.id}
                             className="inline-flex items-center gap-0.5 rounded-full border border-black/5 dark:border-white/8 bg-black/[0.03] dark:bg-white/[0.06] px-1.5 py-0.5 text-[9px]"
-                            title={tag.description || tag.value}
+                            title={tag.description || tag.code}
                           >
                             <span className="h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color || '#06b6d4' }} />
                             <span className="text-black/60 dark:text-white/60 truncate max-w-[60px]">{zh ? (tag.label_zh || tag.label) : tag.label}</span>

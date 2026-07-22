@@ -39,10 +39,23 @@ async def run_scheduled_automation_job(job_id: str):
         if job['device_scope'] == 'all':
             rows = conn.execute("SELECT id FROM devices").fetchall()
             device_ids = [r['id'] for r in rows]
-        elif job['device_scope'] == 'tags':
-            tag_id = job['device_filter']
-            rows = conn.execute("SELECT device_id FROM device_tags WHERE tag_id = ?", (tag_id,)).fetchall()
-            device_ids = [r['device_id'] for r in rows]
+        elif job['device_scope'] in ('tag', 'tags'):
+            # The tag picker stores an AND-of-ORs filter. Resolve it through
+            # the same service used by the preview API so configuration and
+            # execution cannot disagree.
+            try:
+                config = json.loads(job['device_filter'] or '{}')
+            except (TypeError, ValueError):
+                config = {}
+            groups = config.get('include_groups')
+            if groups is None:
+                groups = [group.get('tag_ids', []) for group in config.get('groups', [])]
+            from services.tag_service import resolve_device_ids_by_filter
+            device_ids = resolve_device_ids_by_filter(
+                conn,
+                groups or [],
+                config.get('exclude_tag_ids', []),
+            )
         elif job['device_scope'] == 'ip':
             # Support targeting by IP address directly
             target_ips = [i.strip() for i in (job['device_filter'] or '').split(',') if i.strip()]

@@ -39,13 +39,13 @@ def _attach_asset_tags(conn, items: list[dict]) -> None:
     if device_ids:
         placeholders = ",".join("?" for _ in device_ids)
         rows = conn.execute(
-            f"""SELECT dt.device_id, td.id, td.category, td.value, td.label,
+            f"""SELECT dt.resource_id AS device_id, td.id, td.category, td.code, td.code AS value, td.label,
                        td.label_zh, td.color, td.icon, td.description,
-                       td.sort_order, td.built_in, td.created_at
-                FROM device_tags dt
+                       td.sort_order, td.built_in, td.created_at, td.source_type, td.is_system
+                FROM tag_assignments dt
                 JOIN tag_definitions td ON td.id = dt.tag_id
-                WHERE dt.device_id IN ({placeholders})
-                ORDER BY td.category, td.sort_order, td.value""",
+                WHERE dt.resource_type='device' AND dt.resource_id IN ({placeholders})
+                ORDER BY td.category, td.sort_order, td.code""",
             device_ids,
         ).fetchall()
         for row in rows:
@@ -126,8 +126,8 @@ def api_cmdb_assets(
         requested_tag_ids = [value.strip() for value in tag_ids.split(",") if value.strip()][:100]
         if requested_tag_ids:
             tag_exists = [
-                "EXISTS (SELECT 1 FROM device_tags dt_filter "
-                "WHERE dt_filter.device_id = d.id AND dt_filter.tag_id = ?)"
+                "EXISTS (SELECT 1 FROM tag_assignments dt_filter "
+                "WHERE dt_filter.resource_type='device' AND dt_filter.resource_id = d.id AND dt_filter.tag_id = ?)"
                 for _ in requested_tag_ids
             ]
             conditions.append(
@@ -184,6 +184,50 @@ def api_cmdb_assets(
             },
             "message": "",
         }
+    finally:
+        conn.close()
+
+
+@router.get("/cmdb/resources")
+def api_cmdb_resources(
+    q: str = "",
+    search_field: str = "all",
+    search_mode: str = "fuzzy",
+    site_id: str = "",
+    asset_type: str = "all",
+    device_category: str = "",
+    vendor: str = "",
+    platform: str = "",
+    status: str = "all",
+    lifecycle_status: str = "all",
+    tag_ids: str = "",
+    tag_match_all: bool = True,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=1000),
+    _user=require_role("Viewer"),
+):
+    """Search the complete device resource population read-only."""
+    conn = get_db_connection()
+    try:
+        result = cmdb_service.list_resource_search(
+            conn,
+            q=q,
+            search_field=search_field,
+            search_mode=search_mode,
+            site_id=site_id,
+            asset_type=asset_type,
+            device_category=device_category,
+            vendor=vendor,
+            platform=platform,
+            status=status,
+            lifecycle_status=lifecycle_status,
+            tag_ids=[value.strip() for value in tag_ids.replace('，', ',').replace(';', ',').split(',') if value.strip()],
+            tag_match_all=tag_match_all,
+            page=page,
+            page_size=page_size,
+        )
+        _attach_asset_tags(conn, result['items'])
+        return {"success": True, "data": result, "message": ""}
     finally:
         conn.close()
 

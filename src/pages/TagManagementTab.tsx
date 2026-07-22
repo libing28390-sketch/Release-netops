@@ -16,17 +16,18 @@ interface TagManagementTabProps {
 
 /* ─── Category icon/color mapping ─── */
 const CATEGORY_META: Record<string, { icon: typeof Tags; color: string; bg: string }> = {
-  device_type: { icon: Server,   color: 'text-violet-600',  bg: 'bg-violet-50 border-violet-200' },
-  vendor:      { icon: Layers,   color: 'text-blue-600',    bg: 'bg-blue-50 border-blue-200' },
-  os:          { icon: Cpu,      color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' },
-  role:        { icon: Shield,   color: 'text-amber-600',   bg: 'bg-amber-50 border-amber-200' },
-  env:         { icon: Globe,    color: 'text-cyan-600',    bg: 'bg-cyan-50 border-cyan-200' },
-  function:    { icon: Settings2, color: 'text-rose-600',   bg: 'bg-rose-50 border-rose-200' },
-  status:      { icon: BarChart3, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' },
-  custom:      { icon: Hash,     color: 'text-slate-600',   bg: 'bg-slate-50 border-slate-200' },
+  business:    { icon: Layers, color: 'text-blue-600', bg: 'bg-blue-50 border-blue-200' },
+  environment: { icon: Globe, color: 'text-cyan-600', bg: 'bg-cyan-50 border-cyan-200' },
+  network_zone:{ icon: Server, color: 'text-violet-600', bg: 'bg-violet-50 border-violet-200' },
+  operations:  { icon: Settings2, color: 'text-rose-600', bg: 'bg-rose-50 border-rose-200' },
+  security:    { icon: Shield, color: 'text-red-600', bg: 'bg-red-50 border-red-200' },
+  project:     { icon: Hash, color: 'text-slate-600', bg: 'bg-slate-50 border-slate-200' },
+  lifecycle:   { icon: BarChart3, color: 'text-amber-600', bg: 'bg-amber-50 border-amber-200' },
+  technology:  { icon: Cpu, color: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-200' },
+  system_auto: { icon: Cpu, color: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' },
 };
 
-const CATEGORIES: TagCategory[] = ['device_type', 'vendor', 'os', 'role', 'env', 'function', 'status'];
+const CATEGORIES: TagCategory[] = ['business', 'environment', 'network_zone', 'operations', 'security', 'project', 'lifecycle', 'technology', 'system_auto'];
 
 /* ─── Helper ─── */
 function getToken() {
@@ -55,8 +56,8 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
   const [showModal, setShowModal] = useState(false);
   const [editingTag, setEditingTag] = useState<TagDefinition | null>(null);
   const [formData, setFormData] = useState({
-    category: 'custom' as TagCategory,
-    value: '',
+    category: 'business' as TagCategory,
+    code: '',
     label: '',
     label_zh: '',
     color: '',
@@ -106,7 +107,7 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
     if (!search.trim()) return tags;
     const q = search.toLowerCase();
     return tags.filter(
-      t => t.value.toLowerCase().includes(q) ||
+      t => t.code.toLowerCase().includes(q) ||
            t.label.toLowerCase().includes(q) ||
            (t.label_zh && t.label_zh.toLowerCase().includes(q)) ||
            (t.description && t.description.toLowerCase().includes(q))
@@ -117,13 +118,13 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
     const m: Record<string, TagDefinition[]> = {};
     for (const cat of CATEGORIES) m[cat] = [];
     for (const tag of filtered) {
-      const cat = tag.category || 'custom';
+      const cat = tag.category || 'business';
       if (!m[cat]) m[cat] = [];
       m[cat].push(tag);
     }
     // sort each group by sort_order, then value
     for (const arr of Object.values(m)) {
-      arr.sort((a, b) => (a.sort_order - b.sort_order) || a.value.localeCompare(b.value));
+      arr.sort((a, b) => (a.sort_order - b.sort_order) || a.code.localeCompare(b.code));
     }
     return m;
   }, [filtered]);
@@ -141,7 +142,7 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
   /* ── Modal: open for create / edit ── */
   const openCreateModal = () => {
     setEditingTag(null);
-    setFormData({ category: 'custom', value: '', label: '', label_zh: '', color: '', icon: '', description: '', sort_order: 0 });
+    setFormData({ category: 'business', code: '', label: '', label_zh: '', color: '', icon: '', description: '', sort_order: 0 });
     setFormError('');
     setShowModal(true);
   };
@@ -150,7 +151,7 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
     setEditingTag(tag);
     setFormData({
       category: tag.category,
-      value: tag.value,
+      code: tag.code,
       label: tag.label,
       label_zh: tag.label_zh || '',
       color: tag.color || '',
@@ -164,8 +165,8 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
 
   /* ── Save (create / update) ── */
   const handleSave = async () => {
-    if (!formData.value.trim() || !formData.label.trim()) {
-      setFormError(zh ? '标签值和英文标签不能为空' : 'Value and label are required');
+    if (!formData.code.trim() || !formData.label.trim()) {
+      setFormError(zh ? '标签代码和英文标签不能为空' : 'Code and label are required');
       return;
     }
     setSaving(true);
@@ -312,7 +313,7 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
             >
               {zh ? '全部' : 'All'}
             </button>
-            {CATEGORIES.filter(c => c !== 'custom').map(cat => {
+            {CATEGORIES.map(cat => {
               const meta = CATEGORY_META[cat];
               const catLabel = TAG_CATEGORY_LABELS[cat];
               return (
@@ -342,7 +343,7 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
           const items = grouped[cat] || [];
           if (categoryFilter && categoryFilter !== cat) return null;
           if (items.length === 0 && categoryFilter !== cat) return null;
-          const meta = CATEGORY_META[cat] || CATEGORY_META.custom;
+          const meta = CATEGORY_META[cat] || CATEGORY_META.business;
           const catLabel = TAG_CATEGORY_LABELS[cat];
           const isExpanded = expandedCategories.has(cat);
           const CatIcon = meta.icon;
@@ -380,7 +381,7 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
                           <TagChip
                             tag={tag}
                             zh={zh}
-                            onEdit={canManageTags && tag.category !== 'status' ? () => openEditModal(tag) : undefined}
+                            onEdit={canManageTags && !tag.is_system ? () => openEditModal(tag) : undefined}
                             onDelete={canManageTags ? () => setDeleteTarget(tag) : undefined}
                           />
                         </div>
@@ -429,14 +430,14 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
                 </select>
               </div>
 
-              {/* Value */}
+              {/* Stable code */}
               <div>
-                <label className="text-xs font-semibold text-black/50">{zh ? '标签值 (唯一标识)' : 'Value (unique ID)'}</label>
+                <label className="text-xs font-semibold text-black/50">{zh ? '标签代码 (唯一标识)' : 'Tag code (stable ID)'}</label>
                 <input
-                  value={formData.value}
-                  onChange={e => setFormData(p => ({ ...p, value: e.target.value.toLowerCase().replace(/[^a-z0-9\-_.]/g, '') }))}
+                  value={formData.code}
+                  onChange={e => setFormData(p => ({ ...p, code: e.target.value.toLowerCase().replace(/[^a-z0-9\-_.]/g, '') }))}
                   disabled={!!editingTag}
-                  placeholder="e.g. cisco-ios-xe"
+                  placeholder="e.g. env.production"
                   className="mt-1 w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm font-mono text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 disabled:opacity-50"
                 />
               </div>
@@ -616,7 +617,7 @@ function TagChip({ tag, zh, onEdit, onDelete }: TagChipProps) {
         style={{ backgroundColor: chipColor }}
       />
       <span className="font-medium text-[#164e63]">{displayLabel}</span>
-      <span className="ml-0.5 text-[10px] font-mono text-black/30">{tag.value}</span>
+      <span className="ml-0.5 text-[10px] font-mono text-black/30">{tag.code}</span>
 
       {/* built-in badge */}
       {tag.built_in === 1 && (
@@ -625,7 +626,7 @@ function TagChip({ tag, zh, onEdit, onDelete }: TagChipProps) {
         </span>
       )}
 
-      {tag.category === 'status' && (
+      {tag.is_system === 1 && (
         <span className="ml-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-emerald-600">
           {zh ? '系统维护' : 'System'}
         </span>

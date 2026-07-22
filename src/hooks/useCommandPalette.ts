@@ -65,6 +65,7 @@ export const useCommandPalette = ({ language, t }: UseCommandPaletteArgs): UseCo
       { path: '/assets/nsot', label: zh ? '网络事实库' : 'Network Facts (NSOT)', group: zh ? '设备清单' : 'Inventory' },
       { path: '/assets/toolbox', label: zh ? 'IP 工具箱' : 'IP Toolbox', group: zh ? '设备清单' : 'Inventory' },
       { path: '/assets', label: zh ? '资产管理' : 'Assets', group: zh ? '设备清单' : 'Inventory' },
+      { path: '/cmdb/resources', label: zh ? '资源检索' : 'Resource Search', group: zh ? 'CMDB' : 'CMDB' },
       { path: '/access', label: zh ? '操作工作台' : 'Operation Workspace', group: zh ? '终端接入' : 'Access' },
       { path: '/alerts', label: zh ? '告警信息' : 'Alert Desk', group: zh ? '告警管理' : 'Alerts' },
       { path: '/alert-history', label: zh ? '历史告警' : 'Alert History', group: zh ? '告警管理' : 'Alerts' },

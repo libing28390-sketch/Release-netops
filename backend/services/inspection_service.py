@@ -1737,12 +1737,12 @@ def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, An
         # In tag_service, find_devices_by_tags takes tag_ids. If tags in filter are just tag values, we might need a custom query
         placeholders = ','.join('?' for _ in tags)
         
-        # We try to match tags by td.value or td.id
+        # Match by stable tag code or ID.
         device_ids = conn.execute(f'''
-            SELECT DISTINCT dt.device_id
-            FROM device_tags dt
+            SELECT DISTINCT dt.resource_id AS device_id
+            FROM tag_assignments dt
             JOIN tag_definitions td ON td.id = dt.tag_id
-            WHERE td.value IN ({placeholders}) OR td.id IN ({placeholders})
+            WHERE dt.resource_type='device' AND (td.code IN ({placeholders}) OR td.id IN ({placeholders}))
         ''', tuple(tags) * 2).fetchall()
         
         ids = [str(r['device_id']) for r in device_ids]

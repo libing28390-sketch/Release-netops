@@ -44,7 +44,9 @@ export interface Asset {
     label: string;
     label_zh: string;
     color: string;
+    code?: string;
   }>;
+  tag_ids?: string[];
   admin_username?: string;
   normal_username?: string;
   management_port?: number;

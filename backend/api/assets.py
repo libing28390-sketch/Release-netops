@@ -383,6 +383,34 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     return device_id
 
 
+def _resolve_asset_tag_ids(conn, body) -> list[str] | None:
+    """Resolve interactive tag IDs and import-friendly stable tag codes."""
+    raw_ids = list(getattr(body, 'tag_ids', None) or [])
+    raw_codes = getattr(body, 'tag_codes', None) or ''
+    tokens = raw_ids + [item.strip() for item in str(raw_codes).replace(';', ',').replace('，', ',').split(',') if item.strip()]
+    if not tokens and getattr(body, 'tag_ids', None) is None and getattr(body, 'tag_codes', None) is None:
+        return None
+    resolved: list[str] = []
+    for token in tokens:
+        row = conn.execute('SELECT id FROM tag_definitions WHERE id = ? OR code = ?', (token, token.lower())).fetchone()
+        if not row:
+            raise HTTPException(status_code=422, detail=f'标签不存在或已停用: {token}')
+        resolved.append(str(row['id']))
+    return list(dict.fromkeys(resolved))
+
+
+def _sync_asset_tags(conn, asset_id: str, tag_ids: list[str] | None) -> None:
+    if tag_ids is None:
+        return
+    device_row = conn.execute('SELECT id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+    if not device_row:
+        raise HTTPException(status_code=422, detail='资产尚未关联设备，无法绑定标签')
+    try:
+        tag_service.set_device_tags(conn, str(device_row['id']), tag_ids, created_by='asset-management')
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 def _sync_device_from_asset(conn, asset_id: str, body) -> None:
     """Push basic-info changes from asset to its linked device row."""
     row = conn.execute('SELECT id, credential_id, admin_credential_id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
@@ -646,11 +674,10 @@ def _sync_rack_device_from_asset(conn, asset_id: str, obj) -> None:
 
 def _delete_linked_device(conn, asset_id: str) -> None:
     """Cascade-delete the devices row linked to the asset, cleaning up all FK references first."""
-    row = conn.execute('SELECT id, credential_id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+    row = conn.execute('SELECT id FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
     if not row:
         return
     device_id = row['id'] if isinstance(row, dict) else row[0]
-    credential_id = row['credential_id'] if isinstance(row, dict) else row[1]
 
     # IPAM prefixes are site-scoped resources, so deleting a device must not
     # delete every prefix at the device's site. It must, however, remove
@@ -688,13 +715,13 @@ def _delete_linked_device(conn, asset_id: str) -> None:
     conn.execute('DELETE FROM inspection_results WHERE device_id = ?', (device_id,))
     # Tags are a many-to-many association and the FK is intentionally kept
     # explicit for compatibility with existing PostgreSQL installations.
-    conn.execute('DELETE FROM device_tags WHERE device_id = ?', (device_id,))
+    conn.execute("DELETE FROM tag_assignments WHERE resource_type='device' AND resource_id = ?", (device_id,))
 
     conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
-    if credential_id:
-        other = conn.execute('SELECT 1 FROM devices WHERE credential_id = ?', (credential_id,)).fetchone()
-        if not other:
-            conn.execute('DELETE FROM credentials WHERE id = ?', (credential_id,))
+    # Credentials are managed resources, not children of an asset. Deleting
+    # an asset only removes the device binding; credential cleanup is an
+    # explicit action from the credential center after all device references
+    # have been cleared.
 
 
 # ── Pydantic Models ──────────────────────────────────────────────────
@@ -744,6 +771,8 @@ class AssetCreate(BaseModel):
     power_watts: int = 0
     credential_id: Optional[str] = ''
     admin_credential_id: Optional[str] = ''
+    tag_ids: list[str] = []
+    tag_codes: str = ''
 
     @field_validator('u_height', mode='before')
     @classmethod
@@ -845,6 +874,8 @@ class AssetUpdate(BaseModel):
     takeover_exempt_reason: Optional[str] = None
     credential_id: Optional[str] = None
     admin_credential_id: Optional[str] = None
+    tag_ids: Optional[list[str]] = None
+    tag_codes: Optional[str] = None
 
     @field_validator('power_watts', mode='before')
     @classmethod
@@ -971,7 +1002,7 @@ def list_assets(
         requested_tag_ids = [item.strip() for item in tag_ids.split(',') if item.strip()][:100]
         if requested_tag_ids:
             tag_exists = [
-                'EXISTS (SELECT 1 FROM device_tags dt_filter WHERE dt_filter.device_id = d.id AND dt_filter.tag_id = ?)'
+                "EXISTS (SELECT 1 FROM tag_assignments dt_filter WHERE dt_filter.resource_type='device' AND dt_filter.resource_id = d.id AND dt_filter.tag_id = ?)"
                 for _ in requested_tag_ids
             ]
             if tag_match_all:
@@ -1031,13 +1062,13 @@ def list_assets(
         if device_ids:
             placeholders = ','.join('?' for _ in device_ids)
             tag_rows = conn.execute(
-                f'''SELECT dt.device_id, td.id, td.category, td.value, td.label,
+                    f'''SELECT dt.resource_id AS device_id, td.id, td.category, td.code, td.code AS value, td.label,
                            td.label_zh, td.color, td.icon, td.description,
-                           td.sort_order, td.built_in, td.created_at
-                    FROM device_tags dt
+                           td.sort_order, td.built_in, td.created_at, td.source_type, td.is_system
+                    FROM tag_assignments dt
                     JOIN tag_definitions td ON td.id = dt.tag_id
-                    WHERE dt.device_id IN ({placeholders})
-                    ORDER BY td.category, td.sort_order, td.value''',
+                    WHERE dt.resource_type='device' AND dt.resource_id IN ({placeholders})
+                    ORDER BY td.category, td.sort_order, td.code''',
                 device_ids,
             ).fetchall()
             for tag_row in tag_rows:
@@ -1124,6 +1155,7 @@ def create_asset(body: AssetCreate):
     conn = get_db_connection()
     try:
         _pre_resolve_credential(conn, body)
+        requested_tag_ids = _resolve_asset_tag_ids(conn, body)
         try:
             body.site_id = resolve_canonical_site_id(conn, body.site_id)
         except ValueError as exc:
@@ -1186,6 +1218,7 @@ def create_asset(body: AssetCreate):
         device_id = None
         if body.asset_type in ('network_device', 'server'):
             device_id = _create_linked_device(conn, asset_id, body)
+            _sync_asset_tags(conn, asset_id, requested_tag_ids)
             if legacy_production:
                 conn.execute(
                     "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', "
@@ -1224,6 +1257,8 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
         row = conn.execute('SELECT * FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Asset not found')
+
+        requested_tag_ids = _resolve_asset_tag_ids(conn, body)
 
         if body.site_id is not None:
             try:
@@ -1408,6 +1443,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                 "is_managed = 0, takeover_error = '' WHERE asset_id = ?",
                 (asset_id,),
             )
+            _sync_asset_tags(conn, asset_id, requested_tag_ids)
             conn.commit()
             return {
                 'ok': True,
@@ -1543,6 +1579,10 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                         ).start()
                     rotation_result = {'pending': True}
 
+        if requested_tag_ids is not None:
+            _sync_asset_tags(conn, asset_id, requested_tag_ids)
+            conn.commit()
+
         return {
             'ok': True,
             'password_rotated': rotation_result is not None and rotation_result.get('success', False),
@@ -1627,6 +1667,7 @@ def import_assets(items: list[AssetCreate]):
         skipped_items = []
         for body in items:
             _pre_resolve_credential(conn, body)
+            requested_tag_ids = _resolve_asset_tag_ids(conn, body)
             try:
                 body.site_id = resolve_canonical_site_id(conn, body.site_id)
             except ValueError as exc:
@@ -1706,6 +1747,7 @@ def import_assets(items: list[AssetCreate]):
             # Plan-A: auto-create linked device for managed assets
             if body.asset_type in ('network_device', 'server'):
                 device_id = _create_linked_device(conn, asset_id, body)
+                _sync_asset_tags(conn, asset_id, requested_tag_ids)
                 if legacy_production:
                     conn.execute(
                         "UPDATE devices SET lifecycle_status = 'production', rotation_status = 'exempt', is_managed = 0 WHERE id = ?",

@@ -50,6 +50,7 @@ const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
 const CmdbManagementTab = lazy(() => import('../pages/CmdbManagementTab'));
 const CmdbAssetManagementTab = lazy(() => import('../pages/CmdbAssetManagementTab'));
+const CmdbResourceSearchTab = lazy(() => import('../pages/CmdbResourceSearchTab'));
 const TagManagementTab = lazy(() => import('../pages/TagManagementTab'));
 const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
 const ConfigScheduleTab = lazy(() => import('../pages/ConfigScheduleTab'));
@@ -626,6 +627,8 @@ const AppMainContent: React.FC = () => {
             <RackManagementTab language={language} t={t} />
           ) : cmdbPage === 'assets' ? (
             <CmdbAssetManagementTab language={language} currentUser={currentUser} />
+          ) : cmdbPage === 'resources' ? (
+            <CmdbResourceSearchTab language={language} />
           ) : (
             <CmdbManagementTab language={language} cmdbPage={cmdbPage} />
           )}

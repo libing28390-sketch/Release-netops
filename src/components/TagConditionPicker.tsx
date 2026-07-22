@@ -86,7 +86,7 @@ const TagDropdown: React.FC<TagDropdownProps> = ({ allTags, excludeIds, onSelect
     if (!search) return base;
     const q = search.toLowerCase();
     return base.filter(t =>
-      t.label.toLowerCase().includes(q) || t.label_zh.toLowerCase().includes(q) || t.value.toLowerCase().includes(q)
+      t.label.toLowerCase().includes(q) || t.label_zh.toLowerCase().includes(q) || t.code.toLowerCase().includes(q)
     );
   }, [allTags, search, excludeIds]);
 

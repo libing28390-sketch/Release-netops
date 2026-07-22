@@ -3091,38 +3091,94 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
 
     ensure_column('scheduled_jobs', 'use_admin_creds', 'INTEGER DEFAULT 0')
 
-    # Tag System
+    # Unified metadata/tag system. This is intentionally a clean schema: the
+    # platform uses stable tag codes and a resource-agnostic assignment table.
+    # The product has explicitly chosen a clean cut-over, so an old tag schema
+    # is removed in-place. No device, credential, user, or asset table is
+    # touched here.
+    try:
+        existing_tag_columns = _table_columns(cursor, 'tag_definitions')
+        if existing_tag_columns and 'code' not in existing_tag_columns:
+            for old_table in ('tag_assignment_history', 'tag_assignments', 'device_tags', 'tag_definitions', 'tag_categories'):
+                cursor.execute(f'DROP TABLE IF EXISTS {old_table}')
+    except Exception:
+        logger.exception('Failed to inspect/reset the legacy tag schema')
+        raise
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS tag_categories (
+        code TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        label_zh TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        exclusive INTEGER DEFAULT 0,
+        sort_order INTEGER DEFAULT 0,
+        is_system INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1
+    )
+    ''')
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS tag_definitions (
         id TEXT PRIMARY KEY,
         category TEXT NOT NULL,
-        value TEXT NOT NULL,
+        code TEXT NOT NULL UNIQUE,
         label TEXT NOT NULL,
         label_zh TEXT DEFAULT '',
         color TEXT DEFAULT '',
         icon TEXT DEFAULT '',
         description TEXT DEFAULT '',
+        resource_types TEXT DEFAULT '["device"]',
+        exclusive_group TEXT DEFAULT '',
+        priority INTEGER DEFAULT 0,
+        source_type TEXT NOT NULL DEFAULT 'manual',
+        is_system INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
         sort_order INTEGER DEFAULT 0,
         built_in INTEGER DEFAULT 0,
         created_at TEXT DEFAULT '',
-        UNIQUE(category, value)
+        updated_at TEXT DEFAULT '',
+        FOREIGN KEY (category) REFERENCES tag_categories(code)
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_definitions_category ON tag_definitions(category)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_definitions_active ON tag_definitions(is_active)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_definitions_source ON tag_definitions(source_type)')
 
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS device_tags (
-        device_id TEXT NOT NULL,
+    CREATE TABLE IF NOT EXISTS tag_assignments (
+        resource_type TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
         tag_id TEXT NOT NULL,
+        source_type TEXT NOT NULL DEFAULT 'manual',
+        rule_id TEXT DEFAULT '',
+        inherited_from_type TEXT DEFAULT '',
+        inherited_from_id TEXT DEFAULT '',
+        expires_at TEXT DEFAULT '',
         created_at TEXT DEFAULT '',
         created_by TEXT DEFAULT '',
-        PRIMARY KEY (device_id, tag_id),
-        FOREIGN KEY (device_id) REFERENCES devices(id),
+        PRIMARY KEY (resource_type, resource_id, tag_id),
         FOREIGN KEY (tag_id) REFERENCES tag_definitions(id)
     )
     ''')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_device_id ON device_tags(device_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_device_tags_tag_id ON device_tags(tag_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_assignments_resource ON tag_assignments(resource_type, resource_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_assignments_tag ON tag_assignments(tag_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_assignments_source ON tag_assignments(source_type)')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS tag_assignment_history (
+        id TEXT PRIMARY KEY,
+        resource_type TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        tag_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        source_type TEXT NOT NULL DEFAULT 'manual',
+        rule_id TEXT DEFAULT '',
+        operator TEXT DEFAULT '',
+        reason TEXT DEFAULT '',
+        occurred_at TEXT DEFAULT ''
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_history_resource ON tag_assignment_history(resource_type, resource_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_history_tag ON tag_assignment_history(tag_id)')
 
     # Rack Management Indexes and Columns
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_racks_name_dc ON racks(name, datacenter)')

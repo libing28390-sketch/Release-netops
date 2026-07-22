@@ -253,6 +253,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
   const [assets, setAssets] = useState<AssetRow[]>([]);
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set(["root"]));
+  const [treeCollapsed, setTreeCollapsed] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState<Record<string, string>>(
     {},
   );
@@ -686,32 +687,47 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
           </button>
         </div>
       )}
-      <div className="grid items-stretch gap-4 xl:grid-cols-[290px_minmax(0,1fr)]">
-        <aside className="min-h-[calc(100vh-250px)] rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-          <div className="mb-3 flex items-center justify-between border-b border-slate-100 px-2 pb-3">
-            <div>
-              <div className="text-sm font-bold text-slate-800">
-                {zh ? "资产分类树" : "Asset tree"}
+      <div className={`grid items-stretch gap-4 ${treeCollapsed ? "xl:grid-cols-[56px_minmax(0,1fr)]" : "xl:grid-cols-[290px_minmax(0,1fr)]"}`}>
+        <aside className={`min-h-[calc(100vh-250px)] rounded-2xl border border-slate-200 bg-white shadow-sm ${treeCollapsed ? "p-2" : "p-3"}`}>
+          <div className={`mb-3 flex items-center border-b border-slate-100 pb-3 ${treeCollapsed ? "justify-center px-0" : "justify-between px-2"}`}>
+            {!treeCollapsed && (
+              <div>
+                <div className="text-sm font-bold text-slate-800">
+                  {zh ? "资产分类树" : "Asset tree"}
+                </div>
+                <div className="mt-0.5 text-[11px] text-slate-400">
+                  {zh
+                    ? "站点 → 类型 → 产品 → 角色"
+                    : "Site → type → product → role"}
+                </div>
               </div>
-              <div className="mt-0.5 text-[11px] text-slate-400">
-                {zh
-                  ? "站点 → 类型 → 产品 → 角色"
-                  : "Site → type → product → role"}
-              </div>
+            )}
+            <div className="flex items-center gap-1">
+              {!treeCollapsed && treeLoading && (
+                <RefreshCw size={14} className="animate-spin text-cyan-600" />
+              )}
+              <button
+                type="button"
+                onClick={() => setTreeCollapsed((current) => !current)}
+                className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-cyan-50 hover:text-cyan-700"
+                title={treeCollapsed ? (zh ? "展开资产分类树" : "Expand asset tree") : (zh ? "折叠资产分类树" : "Collapse asset tree")}
+                aria-label={treeCollapsed ? (zh ? "展开资产分类树" : "Expand asset tree") : (zh ? "折叠资产分类树" : "Collapse asset tree")}
+              >
+                {treeCollapsed ? <FolderTree size={15} /> : <ChevronRight size={15} className="rotate-180" />}
+              </button>
             </div>
-            {treeLoading && (
-              <RefreshCw size={14} className="animate-spin text-cyan-600" />
-            )}
           </div>
-          <div className="max-h-[calc(100vh-300px)] overflow-y-auto">
-            {tree.length ? (
-              tree.map((node) => renderNode(node))
-            ) : (
-              <div className="px-2 py-10 text-center text-xs text-slate-400">
-                {treeLoading ? "Loading…" : zh ? "暂无资产" : "No assets"}
-              </div>
-            )}
-          </div>
+          {!treeCollapsed && (
+            <div className="max-h-[calc(100vh-300px)] overflow-y-auto">
+              {tree.length ? (
+                tree.map((node) => renderNode(node))
+              ) : (
+                <div className="px-2 py-10 text-center text-xs text-slate-400">
+                  {treeLoading ? "Loading…" : zh ? "暂无资产" : "No assets"}
+                </div>
+              )}
+            </div>
+          )}
         </aside>
         <section className="flex min-h-[calc(100vh-250px)] min-w-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="relative flex flex-wrap items-center gap-2 border-b border-slate-100 p-4">

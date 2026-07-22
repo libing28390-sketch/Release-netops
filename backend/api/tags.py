@@ -1,7 +1,8 @@
 """
 Tags API — 设备标签管理
 
-GET    /api/tags/definitions            — 获取所有标签定义 (可选 ?category=vendor)
+GET    /api/tags/categories             — 获取标签分类
+GET    /api/tags/definitions            — 获取所有标签定义 (可选 ?category=environment)
 GET    /api/tags/definitions/{tag_id}   — 获取单个标签定义
 POST   /api/tags/definitions            — 创建自定义标签
 PUT    /api/tags/definitions/{tag_id}   — 更新标签
@@ -30,6 +31,7 @@ from schemas.schemas import (
     TagDefinitionUpdate,
     DeviceTagsUpdate,
     BatchDeviceTagsUpdate,
+    TagTargetFilter,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,14 @@ router = APIRouter(prefix="/tags", tags=["tags"])
 
 # ─── Tag Definitions ─────────────────────────
 
+@router.get("/categories")
+def list_categories(current_user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        return {"success": True, "data": tag_service.list_tag_categories(conn)}
+    finally:
+        conn.close()
+
 @router.get("/definitions")
 def list_definitions(
     category: Optional[str] = Query(default=None, description="Filter by category"),
@@ -45,7 +55,7 @@ def list_definitions(
 ):
     conn = get_db_connection()
     try:
-        rows = tag_service.list_tag_definitions(conn, category)
+        rows = tag_service.list_tag_definitions(conn, category, include_inactive=True)
         return {"success": True, "data": rows}
     finally:
         conn.close()
@@ -70,12 +80,15 @@ def create_definition(req: TagDefinitionCreate, current_user=require_role("Admin
         tag = tag_service.create_tag_definition(
             conn,
             category=req.category,
-            value=req.value,
+            code=req.code,
             label=req.label,
             label_zh=req.label_zh,
             color=req.color,
             icon=req.icon,
             description=req.description,
+            resource_types=req.resource_types,
+            exclusive_group=req.exclusive_group,
+            priority=req.priority,
             sort_order=req.sort_order,
         )
         log_audit_event(
@@ -84,12 +97,12 @@ def create_definition(req: TagDefinitionCreate, current_user=require_role("Admin
             category="tags",
             severity="info",
             status="success",
-            summary=f"Created tag {req.category}/{req.value}",
+            summary=f"Created tag {req.category}/{req.code}",
             actor_username=current_user.get('username', ''),
             actor_role=current_user.get('role', ''),
             target_type="tag_definition",
             target_id=tag["id"],
-            details={"category": req.category, "value": req.value},
+            details={"category": req.category, "code": req.code},
         )
         return {"success": True, "data": tag, "message": "Tag created"}
     except ValueError as e:
@@ -291,6 +304,7 @@ def batch_add_tags(req: BatchDeviceTagsUpdate, current_user=require_role("Admini
 def query_devices_by_tags(
     tag_ids: str = Query(description="Comma-separated tag IDs"),
     match_all: bool = Query(default=True, description="True=AND, False=OR"),
+    exclude_tag_ids: str = Query(default="", description="Comma-separated tag IDs to exclude"),
     current_user=require_role("Viewer"),
 ):
     conn = get_db_connection()
@@ -298,8 +312,20 @@ def query_devices_by_tags(
         ids = [t.strip() for t in tag_ids.split(",") if t.strip()]
         if not ids:
             return {"success": True, "data": []}
-        device_ids = tag_service.find_devices_by_tags(conn, ids, match_all)
+        excluded = [t.strip() for t in exclude_tag_ids.split(",") if t.strip()]
+        groups = [[tag_id] for tag_id in ids] if match_all else [ids]
+        device_ids = tag_service.resolve_device_ids_by_filter(conn, groups, excluded)
         return {"success": True, "data": device_ids}
+    finally:
+        conn.close()
+
+
+@router.post("/resolve-devices")
+def resolve_tag_targets(req: TagTargetFilter, current_user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        device_ids = tag_service.resolve_device_ids_by_filter(conn, req.include_groups, req.exclude_tag_ids)
+        return {"success": True, "data": {"device_ids": device_ids, "count": len(device_ids)}}
     finally:
         conn.close()
 

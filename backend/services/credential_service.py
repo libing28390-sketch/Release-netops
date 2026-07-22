@@ -239,7 +239,10 @@ def update_credential(conn, cred_id: str, **fields) -> dict:
 def count_devices_using(conn, cred_id: str) -> int:
     try:
         row = conn.execute(
-            "SELECT COUNT(*) AS cnt FROM devices WHERE credential_id = ?", (cred_id,)
+            """SELECT COUNT(*) AS cnt
+               FROM devices
+               WHERE credential_id = ? OR admin_credential_id = ?""",
+            (cred_id, cred_id),
         ).fetchone()
     except Exception:
         return 0

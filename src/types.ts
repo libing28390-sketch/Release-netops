@@ -688,18 +688,26 @@ export const getVendorFromPlatform = (platform: string) => {
 
 // ─── Tag System Types ────────────────────────
 
-export type TagCategory = 'device_type' | 'vendor' | 'os' | 'role' | 'env' | 'function' | 'status' | 'custom';
+export type TagCategory = 'business' | 'environment' | 'network_zone' | 'operations' | 'security' | 'project' | 'lifecycle' | 'technology' | 'system_auto';
 
 export interface TagDefinition {
   id: string;
   category: TagCategory;
-  value: string;
+  code: string;
+  /** Deprecated display alias kept only for asset-list payloads. */
+  value?: string;
   label: string;
   label_zh: string;
   color: string;
   icon: string;
   description: string;
   sort_order: number;
+  resource_types?: string;
+  exclusive_group?: string;
+  priority?: number;
+  source_type?: 'manual' | 'system' | 'rule' | 'import';
+  is_system?: number;
+  is_active?: number;
   built_in: number;       // 1=预定义, 0=自定义
   created_at: string;
 }
@@ -718,12 +726,13 @@ export interface TagStatistics {
 }
 
 export const TAG_CATEGORY_LABELS: Record<TagCategory, { en: string; zh: string }> = {
-  device_type: { en: 'Device Type', zh: '设备类型' },
-  vendor:      { en: 'Vendor',      zh: '厂商' },
-  os:          { en: 'OS',          zh: '操作系统' },
-  role:        { en: 'Role',        zh: '角色' },
-  env:         { en: 'Environment', zh: '环境' },
-  function:    { en: 'Function',    zh: '功能' },
-  status:      { en: 'Availability', zh: '在线状态' },
-  custom:      { en: 'Custom',      zh: '自定义' },
+  business:    { en: 'Business',    zh: '业务属性' },
+  environment: { en: 'Environment', zh: '环境' },
+  network_zone:{ en: 'Network Zone',zh: '网络区域' },
+  operations:  { en: 'Operations',  zh: '运维属性' },
+  security:    { en: 'Security',    zh: '安全属性' },
+  project:     { en: 'Project',     zh: '项目' },
+  lifecycle:  { en: 'Lifecycle',   zh: '生命周期' },
+  technology: { en: 'Technology', zh: '技术平台' },
+  system_auto: { en: 'System Auto', zh: '系统自动' },
 };

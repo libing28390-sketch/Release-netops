@@ -130,6 +130,162 @@ def list_cmdb_devices(conn) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+def list_resource_search(
+    conn,
+    *,
+    q: str = '',
+    search_field: str = 'all',
+    search_mode: str = 'fuzzy',
+    site_id: str = '',
+    asset_type: str = 'all',
+    device_category: str = '',
+    vendor: str = '',
+    platform: str = '',
+    status: str = 'all',
+    lifecycle_status: str = 'all',
+    tag_ids: list[str] | None = None,
+    tag_match_all: bool = True,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """Search all technical resources without duplicating the asset model.
+
+    ``devices`` is the resource population; ``physical_assets`` contributes
+    canonical asset fields when the device has an asset record. Search values
+    are always parameterized and secrets are intentionally excluded.
+    """
+    q = (q or '').strip()
+    search_field = search_field if search_field in {
+        'all', 'hostname', 'asset_tag', 'serial_number', 'ip',
+        'management_ip', 'business_ip', 'vendor', 'model', 'platform',
+    } else 'all'
+    search_mode = 'exact' if search_mode == 'exact' else 'fuzzy'
+
+    hostname_expr = "COALESCE(NULLIF(pa.hostname, ''), NULLIF(d.hostname, ''), '')"
+    asset_tag_expr = "COALESCE(NULLIF(pa.asset_tag, ''), '')"
+    serial_expr = "COALESCE(NULLIF(pa.serial_number, ''), NULLIF(d.sn, ''), '')"
+    management_ip_expr = "COALESCE(NULLIF(pa.management_ip, ''), NULLIF(d.ip_address, ''), '')"
+    business_ip_expr = "COALESCE(NULLIF(pa.business_ip, ''), '')"
+    vendor_expr = "COALESCE(NULLIF(pa.vendor, ''), NULLIF(d.vendor, ''), '')"
+    model_expr = "COALESCE(NULLIF(pa.model, ''), NULLIF(d.model, ''), '')"
+    platform_expr = "COALESCE(NULLIF(pa.platform, ''), NULLIF(d.platform, ''), '')"
+    site_expr = "COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), '')"
+    category_expr = "COALESCE(NULLIF(pa.device_category, ''), NULLIF(d.device_category, ''), '')"
+    lifecycle_expr = "COALESCE(NULLIF(pa.lifecycle_status, ''), NULLIF(d.lifecycle_status, ''), '')"
+    online_expr = "COALESCE(NULLIF(d.status, ''), CASE WHEN pa.status = 'active' THEN 'online' WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline' ELSE 'pending' END)"
+
+    field_expressions = {
+        'hostname': [hostname_expr],
+        'asset_tag': [asset_tag_expr],
+        'serial_number': [serial_expr],
+        'ip': [management_ip_expr, business_ip_expr],
+        'management_ip': [management_ip_expr],
+        'business_ip': [business_ip_expr],
+        'vendor': [vendor_expr],
+        'model': [model_expr],
+        'platform': [platform_expr],
+    }
+
+    conditions: list[str] = []
+    params: list[object] = []
+    if site_id:
+        conditions.append(f"{site_expr} = ?")
+        params.append(site_id)
+    if asset_type and asset_type != 'all':
+        conditions.append("COALESCE(NULLIF(pa.asset_type, ''), 'other') = ?")
+        params.append(asset_type)
+    if device_category:
+        conditions.append(f"{category_expr} = ?")
+        params.append(device_category)
+    if vendor:
+        conditions.append(f"LOWER({vendor_expr}) = LOWER(?)")
+        params.append(vendor.strip())
+    if platform:
+        conditions.append(f"LOWER({platform_expr}) = LOWER(?)")
+        params.append(platform.strip())
+    if status and status != 'all':
+        conditions.append(f"{online_expr} = ?")
+        params.append(status)
+    if lifecycle_status and lifecycle_status != 'all':
+        conditions.append(f"{lifecycle_expr} = ?")
+        params.append(lifecycle_status)
+
+    if q:
+        if search_field == 'all':
+            expressions = [value for values in field_expressions.values() for value in values]
+        else:
+            expressions = field_expressions.get(search_field, [hostname_expr])
+        if search_mode == 'exact':
+            conditions.append('(' + ' OR '.join(f"LOWER({expr}) = LOWER(?)" for expr in expressions) + ')')
+            params.extend([q] * len(expressions))
+        else:
+            conditions.append('(' + ' OR '.join(f"{expr} LIKE ?" for expr in expressions) + ')')
+            params.extend([f'%{q}%'] * len(expressions))
+
+    requested_tag_ids = [str(value).strip() for value in (tag_ids or []) if str(value).strip()][:100]
+    if requested_tag_ids:
+        tag_exists = [
+            "EXISTS (SELECT 1 FROM tag_assignments ta_filter "
+            "WHERE ta_filter.resource_type='device' "
+            "AND ta_filter.resource_id = d.id AND ta_filter.tag_id = ?)"
+            for _ in requested_tag_ids
+        ]
+        conditions.append('(' + (' AND '.join(tag_exists) if tag_match_all else ' OR '.join(tag_exists)) + ')')
+        params.extend(requested_tag_ids)
+
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ''
+    from_sql = """
+        FROM devices d
+        LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+        LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+    """
+    total_row = conn.execute(f"SELECT COUNT(*) AS cnt {from_sql} {where}", params).fetchone()
+    total = int(total_row['cnt'] if hasattr(total_row, 'keys') else total_row[0])
+    offset = (page - 1) * page_size
+    rows = conn.execute(
+        f"""
+        SELECT d.id AS device_id,
+               pa.id AS asset_id,
+               {hostname_expr} AS hostname,
+               {asset_tag_expr} AS asset_tag,
+               {serial_expr} AS serial_number,
+               COALESCE(NULLIF(pa.asset_type, ''), 'other') AS asset_type,
+               {category_expr} AS device_category,
+               COALESCE(NULLIF(pa.device_role, ''), NULLIF(d.role, ''), '') AS device_role,
+               {vendor_expr} AS vendor,
+               {model_expr} AS model,
+               {platform_expr} AS platform,
+               {management_ip_expr} AS management_ip,
+               {business_ip_expr} AS business_ip,
+               {online_expr} AS online_status,
+               {lifecycle_expr} AS lifecycle_status,
+               {site_expr} AS site_id,
+               COALESCE(s.site_code, '') AS site_code,
+               COALESCE(s.site_name, '') AS site_name,
+               d.status AS device_status,
+               (
+                 SELECT COUNT(*) FROM interfaces i WHERE i.device_id = d.id
+               ) AS interface_count,
+               (
+                 SELECT COUNT(*) FROM topology_links tl
+                 WHERE tl.source_device_id = d.id OR tl.target_device_id = d.id
+               ) AS link_count
+        {from_sql}
+        {where}
+        ORDER BY {hostname_expr}, {management_ip_expr}, d.id
+        LIMIT ? OFFSET ?
+        """,
+        params + [page_size, offset],
+    ).fetchall()
+    return {
+        'items': [_row_to_dict(row) for row in rows],
+        'total': total,
+        'page': page,
+        'page_size': page_size,
+        'total_pages': max(1, -(-total // page_size)),
+    }
+
+
 def list_cmdb_interfaces(conn) -> list[dict]:
     """Return interfaces as CMDB skeleton resources with device context."""
     rows = conn.execute(

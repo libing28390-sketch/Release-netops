@@ -478,19 +478,20 @@ def _annotate_devices_with_tags(conn, items: list) -> list:
         return items
     placeholders = ','.join('?' * len(device_ids))
     rows = conn.execute(
-        f'''SELECT dt.device_id, td.id, td.category, td.value, td.label, td.label_zh,
-                   td.color, td.icon, td.description, td.sort_order, td.built_in
-            FROM device_tags dt
+        f'''SELECT dt.resource_id AS device_id, td.id, td.category, td.code, td.label, td.label_zh,
+                   td.color, td.icon, td.description, td.sort_order, td.built_in, td.source_type,
+                   td.is_system, td.is_active
+            FROM tag_assignments dt
             JOIN tag_definitions td ON dt.tag_id = td.id
-            WHERE dt.device_id IN ({placeholders})
-            ORDER BY td.sort_order''',
+            WHERE dt.resource_type='device' AND dt.resource_id IN ({placeholders})
+            ORDER BY td.category, td.sort_order, td.code''',
         tuple(device_ids)
     ).fetchall()
     tag_map: dict[str, list] = {}
     for r in rows:
         did = r['device_id']
         tag_map.setdefault(did, []).append({
-            'id': r['id'], 'category': r['category'], 'value': r['value'],
+            'id': r['id'], 'category': r['category'], 'code': r['code'], 'value': r['code'],
             'label': r['label'], 'label_zh': r['label_zh'], 'color': r['color'],
             'icon': r['icon'], 'description': r['description'],
             'sort_order': r['sort_order'], 'built_in': r['built_in'],
@@ -754,7 +755,7 @@ def create_device(device: dict = Body(...)):
 def delete_device(device_id: str):
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT hostname, asset_id, credential_id FROM devices WHERE id = ?', (device_id,)).fetchone()
+        row = conn.execute('SELECT hostname, asset_id FROM devices WHERE id = ?', (device_id,)).fetchone()
         # Plan-A: cascade-delete linked asset
         if row and row['asset_id']:
             # PAM: archive (don't delete) sessions and access requests so the
@@ -775,12 +776,11 @@ def delete_device(device_id: str):
             conn.execute('DELETE FROM physical_assets WHERE id = ?', (row['asset_id'],))
         # Remove many-to-many tag associations before deleting the device row.
         # The FK is not cascade-enabled on older PostgreSQL installations.
-        conn.execute('DELETE FROM device_tags WHERE device_id = ?', (device_id,))
+        conn.execute("DELETE FROM tag_assignments WHERE resource_type='device' AND resource_id = ?", (device_id,))
         conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
-        if row and row['credential_id']:
-            other = conn.execute('SELECT 1 FROM devices WHERE credential_id = ?', (row['credential_id'],)).fetchone()
-            if not other:
-                conn.execute('DELETE FROM credentials WHERE id = ?', (row['credential_id'],))
+        # Credentials are managed resources and must survive asset/device
+        # deletion. They can only be removed explicitly from the credential
+        # center after all normal/admin device references are cleared.
         conn.commit()
         log_audit_event(
             event_type='DEVICE_DELETE',

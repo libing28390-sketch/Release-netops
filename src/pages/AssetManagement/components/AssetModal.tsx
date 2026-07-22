@@ -3,7 +3,9 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Eye, EyeOff, X } from 'lucide-react';
 import DateTimePicker from '../../../components/DateTimePicker';
 import { Asset } from '../types';
+import type { TagDefinition } from '../../../types';
 import { VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, STATUSES, LIFECYCLE_STATUSES } from '../constants';
+import { AssetTagPicker } from './AssetTagPicker';
 
 const TOPOLOGY_ROLE_OPTIONS = [
   { value: 'core', label: { zh: '核心层', en: 'Core' } },
@@ -34,6 +36,7 @@ interface AssetModalProps {
   doSave: (overrides?: Record<string, unknown>) => void;
   language: string;
   setFeedbackMsg: (msg: any) => void;
+  allTags: TagDefinition[];
 }
 
 export const AssetModal: React.FC<AssetModalProps> = ({
@@ -54,6 +57,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   doSave,
   language,
   setFeedbackMsg,
+  allTags,
 }) => {
   const zh = language === 'zh';
 
@@ -113,6 +117,20 @@ export const AssetModal: React.FC<AssetModalProps> = ({
     () => credentials.filter(c => c.id === form.admin_credential_id || ['admin', 'shared', 'unbound', 'mixed', 'login'].includes(String(c.account_role || 'unbound'))),
     [credentials, form.admin_credential_id],
   );
+
+  const withTechnologyTag = (next: any, vendor: string, platform: string) => {
+    const vendorCode = vendor ? `vendor.${vendor.toLowerCase().replace(/\s+/g, '').replace('paloalto', 'paloalto')}` : '';
+    const effectivePlatform = next.asset_type === 'network_device' ? platform : next.platform;
+    const platformCode = effectivePlatform ? `platform.${effectivePlatform}` : '';
+    const vendorTag = allTags.find(tag => tag.code === vendorCode && tag.exclusive_group === 'technology.vendor');
+    const platformTag = allTags.find(tag => tag.code === platformCode && tag.exclusive_group === 'technology.platform');
+    const ids = Array.isArray(next.tag_ids) ? next.tag_ids : [];
+    const withoutTechnology = ids.filter((id: string) => {
+      const tag = allTags.find(item => item.id === id);
+      return !tag?.exclusive_group?.startsWith('technology.');
+    });
+    return { ...next, tag_ids: [...withoutTechnology, ...(vendorTag ? [vendorTag.id] : []), ...(platformTag ? [platformTag.id] : [])] };
+  };
 
   // Real-time U-position validation
   React.useEffect(() => {
@@ -207,14 +225,14 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     onChange={e => {
                       const vendor = e.target.value;
                       const platformOptions = VENDOR_PLATFORMS[vendor] || [];
-                      setForm(f => ({
+                      setForm(f => withTechnologyTag({
                         ...f,
                         vendor,
                         model: f.vendor === vendor ? f.model : '',
                         platform: platformOptions.some(option => option.value === f.platform)
                           ? f.platform
                           : (platformOptions[0]?.value || ''),
-                      }));
+                      }, vendor, f.platform));
                     }}
                     className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
                     title="Vendor"
@@ -230,7 +248,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 ) : (
                   <select
                     value={form.vendor}
-                    onChange={e => setForm(f => ({ ...f, vendor: e.target.value }))}
+                    onChange={e => setForm(f => withTechnologyTag({ ...f, vendor: e.target.value }, e.target.value, f.platform))}
                     className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
                     title="Vendor"
                   >
@@ -383,7 +401,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '平台' : 'Platform'}</label>
                     <select
                       value={form.platform}
-                      onChange={e => setForm(f => ({ ...f, platform: e.target.value }))}
+                      onChange={e => setForm(f => withTechnologyTag({ ...f, platform: e.target.value }, f.vendor, e.target.value))}
                       className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
                       title="Platform"
                     >
@@ -411,6 +429,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     </select>
                   </div>
                 </div>
+
+                <AssetTagPicker tags={allTags} selectedIds={form.tag_ids || []} onChange={ids => setForm(f => ({ ...f, tag_ids: ids }))} onSave={handleSave} language={language} assetType={form.asset_type} />
 
                 {/* PAM Toggle */}
                 <div className="flex items-center justify-between p-2.5 rounded-xl bg-cyan-50 border border-cyan-200/60 mt-1">

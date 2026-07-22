@@ -867,6 +867,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const [hoveredLinkId, setHoveredLinkId] = useState<string | null>(null);
   const [hoverCardPosition, setHoverCardPosition] = useState({ x: 12, y: 12 });
   const hoverHideTimerRef = useRef<number | null>(null);
+  const hoverFocusIdRef = useRef<string | null>(null);
+  const applyHoverFocusRef = useRef<(deviceId: string | null) => void>(() => {});
   const selectedNodeIdsKey = selectedNodeIds.join('|');
   const resolvedDisplayMode = useMemo(
     () => resolveTopologyDisplayMode(devices.length, displayScope),
@@ -905,6 +907,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const scheduleHoverCardHide = () => {
     clearHoverHideTimer();
     hoverHideTimerRef.current = window.setTimeout(() => {
+      hoverFocusIdRef.current = null;
+      applyHoverFocusRef.current(null);
       setHoveredDeviceId(null);
       setHoveredLinkId(null);
       hoverHideTimerRef.current = null;
@@ -921,6 +925,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const x = Math.min(Math.max(event.clientX - rect.left + 14, 8), Math.max(8, rect.width - cardWidth - 8));
     const y = Math.min(Math.max(event.clientY - rect.top + 14, 8), Math.max(8, rect.height - cardHeight - 8));
     setHoverCardPosition({ x, y });
+    hoverFocusIdRef.current = device.id;
+    applyHoverFocusRef.current(device.id);
     setHoveredDeviceId(device.id);
     setHoveredLinkId(null); // hide link hover card
   };
@@ -944,6 +950,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     if (group.group_can_drill && group.group_path?.length) {
       setDrillPath(group.group_path);
       setExpandedGroupIds(new Set());
+      hoverFocusIdRef.current = null;
+      applyHoverFocusRef.current(null);
       setHoveredDeviceId(null);
       return;
     }
@@ -953,18 +961,24 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       else next.add(group.group_id);
       return next;
     });
+    hoverFocusIdRef.current = null;
+    applyHoverFocusRef.current(null);
     setHoveredDeviceId(null);
   };
 
   const resetDrillPath = () => {
     setDrillPath([]);
     setExpandedGroupIds(new Set());
+    hoverFocusIdRef.current = null;
+    applyHoverFocusRef.current(null);
     setHoveredDeviceId(null);
   };
 
   const jumpToDrillPath = (index: number) => {
     setDrillPath((current) => current.slice(0, index));
     setExpandedGroupIds(new Set());
+    hoverFocusIdRef.current = null;
+    applyHoverFocusRef.current(null);
     setHoveredDeviceId(null);
   };
 
@@ -1505,6 +1519,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const selectedNeighbors = selectedNodeId ? (neighborMap.get(selectedNodeId) || new Set<string>()) : new Set<string>();
     const hasFocus = Boolean(selectedNodeId);
     const isNodeSelected = (deviceId: string) => selectedNodeIdSet.has(deviceId);
+    const getHoverEndpointId = (endpoint: any) => String(endpoint?.id || endpoint || '');
+    const isHoverFocusedLink = (item: any, deviceId: string | null) => {
+      if (!deviceId) return true;
+      return getHoverEndpointId(item.source) === deviceId || getHoverEndpointId(item.target) === deviceId;
+    };
     const layerSummary = buildLayerSummary(graphDevices);
     // Repeating ACCESS below every node is useful for a small mixed-layer
     // topology, but becomes visual noise when all devices are in one layer or
@@ -1983,6 +2002,21 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .on('pointerenter', (event: any, d: any) => updateHoverCard(event, d as Device))
       .on('pointermove', (event: any, d: any) => updateHoverCard(event, d as Device))
       .on('pointerleave', () => scheduleHoverCardHide());
+
+    const applyHoverFocus = (deviceId: string | null) => {
+      linkHitArea.style('display', (item: any) => (
+        isHoverFocusedLink(item, deviceId) ? null : 'none'
+      ));
+      link.style('display', (item: any) => (
+        isHoverFocusedLink(item, deviceId) ? null : 'none'
+      ));
+      linkLabelGroup.style('display', 'none');
+      portLabelGroup.style('display', (item: any) => (
+        isHoverFocusedLink(item, deviceId) ? null : 'none'
+      ));
+    };
+    applyHoverFocusRef.current = applyHoverFocus;
+    applyHoverFocus(hoverFocusIdRef.current);
 
     node.append('circle')
       // The device glyph already has its own boundary. An additional outer
@@ -2733,6 +2767,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
             <div className="mt-1 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.08em] text-sky-700">
               <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: getLayerTone(hoveredDevice).color }} />
               {hoveredDevice.is_group ? `${getLayerTone(hoveredDevice).label} GROUP` : getLayerTone(hoveredDevice).label}
+            </div>
+            <div className="mt-2 rounded-lg border border-cyan-100 bg-cyan-50 px-2 py-1.5 text-[10px] font-semibold leading-4 text-cyan-700">
+              悬停聚焦：仅显示直接邻居与关联链路
             </div>
           </div>
           {hoveredDevice.is_group ? (
