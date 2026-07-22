@@ -24,7 +24,9 @@ export const copyTextWithFallback = async (text: string): Promise<boolean> => {
     textarea.select();
     textarea.setSelectionRange(0, textarea.value.length);
     const copied = document.execCommand('copy');
-    document.body.removeChild(textarea);
+    if (textarea.parentNode === document.body) {
+      document.body.removeChild(textarea);
+    }
     return copied;
   } catch {
     return false;

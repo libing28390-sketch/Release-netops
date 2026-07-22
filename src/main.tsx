@@ -5,6 +5,31 @@ import App from './App.tsx';
 import './index.css';
 import { I18nProvider } from './i18n.tsx';
 
+// 防御性拦截 Node 原生 removeChild 与 insertBefore，防止浏览器/Webview 自动翻译或扩展篡改 DOM 导致 React 运行时崩溃
+if (typeof window !== 'undefined') {
+  const originalRemoveChild = Node.prototype.removeChild;
+  Node.prototype.removeChild = function <T extends Node>(child: T): T {
+    if (child.parentNode !== this) {
+      if (console && console.warn) {
+        console.warn('Prevented invalid removeChild: node parent mismatch', child, this);
+      }
+      return child;
+    }
+    return originalRemoveChild.call(this, child) as T;
+  };
+
+  const originalInsertBefore = Node.prototype.insertBefore;
+  Node.prototype.insertBefore = function <T extends Node>(newNode: T, referenceNode: Node | null): T {
+    if (referenceNode && referenceNode.parentNode !== this) {
+      if (console && console.warn) {
+        console.warn('Prevented invalid insertBefore: reference node parent mismatch', referenceNode, this);
+      }
+      return newNode;
+    }
+    return originalInsertBefore.call(this, newNode, referenceNode) as T;
+  };
+}
+
 interface RootErrorBoundaryState {
   hasError: boolean;
   errorMessage: string;
