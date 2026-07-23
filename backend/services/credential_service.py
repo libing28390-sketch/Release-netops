@@ -13,9 +13,10 @@ Security:
 
 import uuid
 import logging
+import hmac
 from datetime import datetime, timezone
 
-from core.crypto import encrypt_credential
+from core.crypto import decrypt_credential, encrypt_credential
 
 logger = logging.getLogger(__name__)
 
@@ -112,17 +113,39 @@ def _with_account_role(view: dict, devices: list[dict]) -> dict:
         role = _account_role_from_devices(view.get('id') or '', view.get('username') or '', devices)
     if not role:
         role = _account_role_from_devices(view.get('id') or '', view.get('username') or '', devices)
+
+    # Device-local rows created by asset entry historically stored the generic
+    # device username (often ``admin``), even when the row was referenced by
+    # the normal-account slot.  The binding slot is authoritative for the
+    # public view, so expose the username that is actually used by that slot.
+    # This changes display metadata only; it never changes the encrypted secret.
+    if stored_role == 'unbound' and devices and role in ('normal', 'admin'):
+        credential_id = str(view.get('id') or '')
+        candidates = []
+        for device in devices:
+            binding_role = _infer_device_account_role(credential_id, view.get('username') or '', device)
+            username_key = 'normal_username' if binding_role == 'normal' else 'admin_username'
+            username = str(device.get(username_key) or '').strip()
+            if username:
+                candidates.append(username)
+        if candidates and len(set(candidates)) == 1:
+            view['username'] = candidates[0]
+
     view['account_role'] = role
     view['account_role_label'] = _ACCOUNT_ROLE_LABELS.get(role, role)
     return view
 
 
-def _public_device_refs(devices: list[dict]) -> list[dict]:
+def _public_device_refs(devices: list[dict], credential_id: str | None = None) -> list[dict]:
     return [
         {
             'id': d.get('id'),
             'hostname': d.get('hostname'),
             'ip_address': d.get('ip_address'),
+            'binding_role': (
+                'admin' if credential_id and str(d.get('admin_credential_id') or '') == str(credential_id)
+                else 'normal'
+            ),
         }
         for d in devices
     ]
@@ -137,7 +160,7 @@ def list_credentials(conn) -> list[dict]:
         view = _to_safe_view(r)
         device_rows = _list_devices_using_rows(conn, view["id"])
         view["device_count"] = len(device_rows)
-        view["devices"] = _public_device_refs(device_rows[:5])
+        view["devices"] = _public_device_refs(device_rows[:5], view["id"])
         view["devices_truncated"] = len(device_rows) > 5
         _with_account_role(view, device_rows)
         res.append(view)
@@ -151,7 +174,7 @@ def get_credential(conn, cred_id: str) -> dict:
     view = _to_safe_view(row)
     device_rows = _list_devices_using_rows(conn, cred_id)
     view["device_count"] = len(device_rows)
-    view["devices"] = _public_device_refs(device_rows)
+    view["devices"] = _public_device_refs(device_rows, cred_id)
     return _with_account_role(view, device_rows)
 
 
@@ -234,6 +257,40 @@ def update_credential(conn, cred_id: str, **fields) -> dict:
     conn.commit()
     logger.info(f"[CredentialService] Updated credential {cred_id}")
     return get_credential(conn, cred_id)
+
+
+def validate_secret_change_confirmation(
+    conn,
+    cred_id: str,
+    *,
+    old_password: str | None = None,
+    old_enable_password: str | None = None,
+    new_password: str | None = None,
+    new_enable_password: str | None = None,
+) -> dict:
+    """Validate the old secret before a password change is accepted.
+
+    The comparison happens server-side against the encrypted vault value.  The
+    returned record is only the raw database row for internal callers; secret
+    values must never be returned from an API response or written to logs.
+    """
+    row = conn.execute("SELECT * FROM credentials WHERE id = ?", (cred_id,)).fetchone()
+    if not row:
+        raise ValueError(f"Credential not found: {cred_id}")
+
+    checks = (
+        (new_password, old_password, 'encrypted_password', 'old_password'),
+        (new_enable_password, old_enable_password, 'enable_password', 'old_enable_password'),
+    )
+    for new_value, old_value, column, field_name in checks:
+        if new_value is None:
+            continue
+        if old_value is None:
+            raise ValueError(f"{field_name} is required when changing the credential secret")
+        stored_value = decrypt_credential(row[column] or '')
+        if not stored_value or not hmac.compare_digest(stored_value, old_value):
+            raise ValueError(f"{field_name} is incorrect")
+    return dict(row)
 
 
 def count_devices_using(conn, cred_id: str) -> int:

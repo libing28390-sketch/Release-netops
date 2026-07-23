@@ -18,6 +18,7 @@ from database import get_db_connection
 from core.crypto import encrypt_credential, decrypt_credential
 from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
 from services import tag_service
+from services.vault_service import credential_is_shared
 from services.site_identity_service import resolve_canonical_site_id
 
 import ping3
@@ -159,6 +160,48 @@ def _safe_encrypt(plaintext: str) -> str:
         return ''
 
 
+def _create_device_local_credential(
+    conn,
+    *,
+    hostname: str,
+    device_id: str,
+    suffix: str = '',
+    username: str = '',
+    password: str = '',
+    enable_password: str = '',
+    snmp_community: str = '',
+) -> str:
+    """Create a device-local credential record for one account role.
+
+    These records are deliberately marked ``unbound``: they are storage and
+    display metadata for credentials entered on one device, not shared
+    credential-center authorities.  The device/asset fields remain the source
+    used for local connection and rotation workflows.
+    """
+    credential_id = f"cred-{uuid.uuid4().hex[:12]}"
+    name_suffix = suffix.strip()
+    credential_name = f"cred-{hostname or 'device'}-{device_id[:8]}{name_suffix}"
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        '''INSERT INTO credentials
+           (id, credential_name, credential_type, username, account_role,
+            encrypted_password, enable_password, snmp_community, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        (
+            credential_id,
+            credential_name,
+            'ssh_password',
+            username or '',
+            'unbound',
+            _safe_encrypt(password) if password else '',
+            _safe_encrypt(enable_password) if enable_password else '',
+            _safe_encrypt(snmp_community) if snmp_community else '',
+            now,
+        ),
+    )
+    return credential_id
+
+
 def _sync_device_type_power(conn, vendor: str, model: str, power_watts: int, device_role: str = 'switch', u_height: int = 1) -> None:
     """Sync power_watts and role to device_types table to ensure rack power calculation is accurate."""
     if not model:
@@ -283,6 +326,7 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     existing_admin_cred_id = getattr(body, 'admin_credential_id', '') or ''
     is_bound = False
     is_admin_bound = False
+    credential_id = ''
     admin_credential_id = ''
     
     if existing_cred_id:
@@ -338,14 +382,29 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     enc_snmp = _safe_encrypt(community) if community else ''
     resolved_uname = normal_user or uname or admin_user or ''
 
-    if not is_bound and not is_admin_bound:
-        credential_id = f"cred-{uuid.uuid4().hex[:12]}"
-        cred_name = f"cred-{body.hostname}-{device_id[:8]}"
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute('''
-            INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (credential_id, cred_name, 'ssh_password', resolved_uname, enc_pwd, enc_enable, enc_snmp, now))
+    # Manual dual-account entry creates two separate device-local records so
+    # the credential center can distinguish the normal and privileged account.
+    # They remain ``unbound`` and therefore do not expose a shared vault secret.
+    if not is_bound and (normal_user or normal_pwd or (auth_model != 'dual' and (uname or pwd or community))):
+        credential_id = _create_device_local_credential(
+            conn,
+            hostname=body.hostname,
+            device_id=device_id,
+            username=normal_user or uname,
+            password=normal_pwd or (pwd if auth_model != 'dual' else ''),
+            enable_password=enable_pwd if auth_model != 'dual' else '',
+            snmp_community=community,
+        )
+    if not is_admin_bound and auth_model == 'dual' and (admin_user or admin_pwd):
+        admin_credential_id = _create_device_local_credential(
+            conn,
+            hostname=body.hostname,
+            device_id=device_id,
+            suffix='-admin',
+            username=admin_user,
+            password=admin_pwd,
+            enable_password=enable_pwd,
+        )
 
     conn.execute('''
         INSERT INTO devices (
@@ -371,14 +430,18 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         getattr(body, 'device_category', '') or '',
         getattr(body, 'power_watts', 0) or 0,
         onboarding,
-        credential_id if (is_bound or not is_admin_bound) else '',
-        admin_credential_id if is_admin_bound else '',
+        credential_id or '',
+        admin_credential_id or '',
         mgmt_port
     ))
     # The physical asset is the canonical source for CMDB location. Keep the
     # normalized foreign-key-style field populated for device inventory and
     # topology consumers; ``site`` remains only as a legacy display field.
     conn.execute('UPDATE devices SET site_id = ? WHERE id = ?', (body.site_id, device_id))
+    conn.execute(
+        'UPDATE physical_assets SET credential_id = ?, admin_credential_id = ? WHERE id = ?',
+        (credential_id or '', admin_credential_id or '', asset_id),
+    )
     tag_service.sync_device_status_tag(conn, device_id, 'pending')
     return device_id
 
@@ -425,6 +488,10 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
     pwd = getattr(body, 'password', None)
     enable_pwd = getattr(body, 'enable_password', None)
     community = getattr(body, 'snmp_community', None)
+    normal_username = getattr(body, 'normal_username', None)
+    admin_username = getattr(body, 'admin_username', None)
+    normal_pwd = getattr(body, 'normal_password', None)
+    admin_pwd = getattr(body, 'admin_password', None)
 
     input_credential_id = getattr(body, 'credential_id', None)
     input_admin_credential_id = getattr(body, 'admin_credential_id', None)
@@ -520,8 +587,12 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
             cred_name = cred_row['credential_name'] or ''
             is_device_specific = cred_name.startswith(f"cred-{body.hostname or ''}-") or cred_name.startswith(f"cred-device-")
             if is_device_specific:
-                stored_uname = username if username is not None else cred_row['username']
-                stored_pwd = _safe_encrypt(pwd) if pwd is not None and pwd != '' else cred_row['encrypted_password']
+                # A device-local credential referenced by credential_id belongs
+                # to the normal-account slot.  Do not overwrite its username
+                # with the generic/privileged device username (often ``admin``).
+                stored_uname = normal_username if normal_username is not None else cred_row['username']
+                local_password = normal_pwd if normal_pwd is not None else pwd
+                stored_pwd = _safe_encrypt(local_password) if local_password is not None and local_password != '' else cred_row['encrypted_password']
                 stored_enable = _safe_encrypt(enable_pwd) if enable_pwd is not None and enable_pwd != '' else cred_row['enable_password']
                 stored_snmp = _safe_encrypt(community) if community is not None and community != '' else cred_row['snmp_community']
                 conn.execute('''
@@ -531,21 +602,37 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
                 ''', (stored_uname, stored_pwd, stored_enable, stored_snmp, credential_id))
     elif not admin_credential_id:
         # Create credential_id if missing and we have local credentials
-        if username is not None or (pwd is not None and pwd != '') or (enable_pwd is not None and enable_pwd != '') or (community is not None and community != ''):
-            credential_id = f"cred-{uuid.uuid4().hex[:12]}"
-            cred_name = f"cred-{body.hostname or 'device'}-{device_id[:8]}"
-            now = datetime.now(timezone.utc).isoformat()
-            
-            enc_pwd = _safe_encrypt(pwd) if pwd else ''
-            enc_enable = _safe_encrypt(enable_pwd) if enable_pwd else ''
-            enc_snmp = _safe_encrypt(community) if community else ''
-            
-            conn.execute('''
-                INSERT INTO credentials (id, credential_name, credential_type, username, encrypted_password, enable_password, snmp_community, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (credential_id, cred_name, 'ssh_password', username or '', enc_pwd, enc_enable, enc_snmp, now))
+        if normal_username not in (None, '') or normal_pwd not in (None, '') or username not in (None, '') or (pwd is not None and pwd != '') or (enable_pwd is not None and enable_pwd != '') or (community is not None and community != ''):
+            credential_id = _create_device_local_credential(
+                conn,
+                hostname=body.hostname or 'device',
+                device_id=device_id,
+                username=normal_username or username or '',
+                password=normal_pwd or (pwd or ''),
+                enable_password=enable_pwd or '',
+                snmp_community=community or '',
+            )
             
             conn.execute('UPDATE devices SET credential_id = ? WHERE id = ?', (credential_id, device_id))
+
+    # A normal credential may already exist while the privileged account was
+    # entered manually later.  Create the missing device-local admin record and
+    # bind it to the admin slot instead of leaving the privileged password only
+    # in the device columns.
+    if not admin_credential_id and (
+        admin_username not in (None, '') or admin_pwd not in (None, '')
+    ):
+        admin_credential_id = _create_device_local_credential(
+            conn,
+            hostname=body.hostname or 'device',
+            device_id=device_id,
+            suffix='-admin',
+            username=admin_username or '',
+            password=admin_pwd or '',
+            enable_password=enable_pwd or '',
+        )
+        conn.execute('UPDATE devices SET admin_credential_id = ? WHERE id = ?', (admin_credential_id, device_id))
+        conn.execute('UPDATE physical_assets SET admin_credential_id = ? WHERE id = ?', (admin_credential_id, asset_id))
 
     updates = {
         'hostname': body.hostname,
@@ -1521,7 +1608,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                             auth_model = dev_state['auth_model'] if dev_state else 'single'
                             hostname = dev_state['hostname'] if dev_state else dev_id
                             
-                            # Scheme A: Start atomic takeover
+                            # Start the atomic takeover sequence.
                             logger.info(f"[Takeover] Starting Admin role for {hostname}")
                             admin_result = rotate_password(dev_id, role='admin')
                             if not admin_result or not admin_result.get('success'):
@@ -1641,7 +1728,7 @@ def get_rotation_status(asset_id: str):
     conn = get_db_connection()
     try:
         row = conn.execute(
-            'SELECT d.rotation_status, d.lifecycle_status, d.password_last_rotated '
+            'SELECT d.rotation_status, d.lifecycle_status, d.password_last_rotated, d.takeover_error '
             'FROM devices d WHERE d.asset_id = ?', (asset_id,)
         ).fetchone()
         if not row:
@@ -1650,6 +1737,7 @@ def get_rotation_status(asset_id: str):
             'rotation_status': row['rotation_status'] or '',
             'lifecycle_status': row['lifecycle_status'] or 'staging',
             'password_last_rotated': row['password_last_rotated'] or '',
+            'takeover_error': row['takeover_error'] or '',
         }
     finally:
         conn.close()
@@ -1948,7 +2036,7 @@ def _run_batch_takeover(tasks: list[dict]):
             auth_model = dev_state['auth_model'] if dev_state else 'single'
             hostname = dev_state['hostname'] if dev_state else dev_id
             
-            # Scheme A: Start atomic takeover
+            # Start the atomic takeover sequence.
             logger.info(f"[Takeover] Starting Admin role for {hostname}")
             admin_result = rotate_password(dev_id, role='admin')
             if not admin_result or not admin_result.get('success'):
@@ -2029,11 +2117,48 @@ def batch_takeover(body: BatchTakeoverRequest):
                 old_lc = row['lifecycle_status']
                 
                 # Check linked device
-                device_row = conn.execute('SELECT id, hostname FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+                device_row = conn.execute(
+                    'SELECT id, hostname, ip_address, credential_id, admin_credential_id '
+                    'FROM devices WHERE asset_id = ?',
+                    (asset_id,),
+                ).fetchone()
                 if not device_row:
                     raise HTTPException(status_code=404, detail='Linked device not found')
                 dev_id = device_row['id']
                 hostname = device_row['hostname']
+
+                # A device bound to the credential center must be changed through
+                # the credential sync workflow.  Starting takeover here would
+                # only fail later in the background worker and leave the user
+                # with a misleading "started" message.
+                credential_ids = [
+                    value for value in (device_row['credential_id'], device_row['admin_credential_id'])
+                    if value
+                ]
+                shared_credential_ids: list[str] = []
+                shared_credential_names: list[str] = []
+                for credential_id in credential_ids:
+                    credential_row = conn.execute(
+                        'SELECT id, credential_name, account_role FROM credentials WHERE id = ?',
+                        (credential_id,),
+                    ).fetchone()
+                    if credential_is_shared(conn, credential_id, dict(credential_row) if credential_row else None, device_hostname=hostname):
+                        shared_credential_ids.append(credential_id)
+                        if credential_row:
+                            shared_credential_names.append(str(credential_row['credential_name'] or credential_id))
+
+                if shared_credential_ids:
+                    results.append({
+                        'id': asset_id,
+                        'status': 'blocked_credential',
+                        'hostname': hostname,
+                        'management_ip': device_row['ip_address'] or '',
+                        'credential_id': device_row['credential_id'] if device_row['credential_id'] in shared_credential_ids else '',
+                        'admin_credential_id': device_row['admin_credential_id'] if device_row['admin_credential_id'] in shared_credential_ids else '',
+                        'credential_name': '、'.join(shared_credential_names),
+                        'message': '该设备已绑定凭据，不能执行批量口令上收；请从凭据中心发起密码同步',
+                    })
+                    continue
                 
                 # Run update_asset with run_bg_rotate=False
                 update_asset(asset_id, AssetUpdate(lifecycle_status='production'), run_bg_rotate=False)
@@ -2048,6 +2173,8 @@ def batch_takeover(body: BatchTakeoverRequest):
                 results.append({
                     'id': asset_id,
                     'status': 'triggered',
+                    'hostname': hostname,
+                    'management_ip': device_row['ip_address'] or '',
                     'message': 'Takeover process started in background'
                 })
             except HTTPException as e:
@@ -2073,4 +2200,8 @@ def batch_takeover(body: BatchTakeoverRequest):
             daemon=True
         ).start()
         
-    return {'results': results}
+    return {
+        'results': results,
+        'triggered_count': sum(1 for item in results if item['status'] == 'triggered'),
+        'blocked_count': sum(1 for item in results if item['status'] == 'blocked_credential'),
+    }

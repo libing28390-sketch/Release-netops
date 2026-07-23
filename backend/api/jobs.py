@@ -133,8 +133,12 @@ def retry_job(job_id: str, user=require_permission('job', 'execute')):
 @router.post('/jobs/{job_id}/run')
 def run_queued_job(job_id: str, background_tasks: BackgroundTasks, _user=require_permission('job', 'execute')):
     try:
-        job_service.get_job(job_id)
+        job = job_service.get_job(job_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    background_tasks.add_task(run_job, job_id)
+    if job.get('job_type') == 'credential_password_sync':
+        from services.credential_password_sync_service import run_credential_password_sync_job
+        background_tasks.add_task(run_credential_password_sync_job, job_id)
+    else:
+        background_tasks.add_task(run_job, job_id)
     return {'job_id': job_id, 'status': 'queued'}

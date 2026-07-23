@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit2, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff, Copy, ChevronDown, ChevronUp } from 'lucide-react';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 
@@ -13,6 +13,7 @@ import Pagination from '../components/Pagination';
 interface Props {
   language?: string;
   cmdbPage?: string;
+  currentUser?: { role?: string };
 }
 
 type EntityKey = 'credentials' | 'devices' | 'interfaces' | 'sites' | 'vrfs' | 'vlans' | 'tenants';
@@ -37,6 +38,27 @@ function formatErrorDetail(detail: any): string {
   return 'Request failed';
 }
 
+function humanizeCredentialError(message: string, zh: boolean): string {
+  const value = String(message || '').trim();
+  const normalized = value.toLowerCase();
+  if (normalized.includes('old_password is incorrect')) {
+    return zh ? '当前密码不正确，请确认输入的是凭据中心中保存的旧密码。' : 'The current password is incorrect. Check the old password stored in the credential center.';
+  }
+  if (normalized.includes('old_enable_password is incorrect')) {
+    return zh ? '当前 Enable 密码不正确，请确认输入的是凭据中心中保存的旧 Enable 密码。' : 'The current Enable password is incorrect. Check the old Enable password stored in the credential center.';
+  }
+  if (normalized.includes('old_password is required')) {
+    return zh ? '修改登录密码前必须填写当前密码。' : 'Enter the current password before changing the login password.';
+  }
+  if (normalized.includes('old_enable_password is required')) {
+    return zh ? '修改 Enable 密码前必须填写当前 Enable 密码。' : 'Enter the current Enable password before changing the Enable password.';
+  }
+  if (normalized.includes('username or account role changes must be submitted separately')) {
+    return zh ? '密码修改不能同时修改用户名或账号角色，请先单独保存身份信息，再修改密码。' : 'Save username or account role changes separately before changing the password.';
+  }
+  return value;
+}
+
 async function apiList<T>(url: string): Promise<T[]> {
   const res = await fetch(url, { headers: authHeaders() });
   const json = await res.json();
@@ -44,7 +66,7 @@ async function apiList<T>(url: string): Promise<T[]> {
   return (json.data || []) as T[];
 }
 
-async function apiSend(url: string, method: 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>): Promise<void> {
+async function apiSend(url: string, method: 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>): Promise<any> {
   const res = await fetch(url, {
     method,
     headers: authHeaders(),
@@ -52,6 +74,7 @@ async function apiSend(url: string, method: 'POST' | 'PUT' | 'DELETE', body?: Re
   });
   const json = await res.json().catch(() => ({ success: res.ok }));
   if (!res.ok || json.success === false) throw new Error(formatErrorDetail(json.detail || json.message));
+  return json;
 }
 
 interface FieldDef {
@@ -69,6 +92,8 @@ interface FieldDef {
   hideInTable?: boolean;
   /** Hidden from the edit/create form */
   hideInForm?: boolean;
+  /** Hidden when creating a record but shown while editing */
+  hideInCreate?: boolean;
   /** Shown as a masked presence flag in table (e.g. has_password) */
   secretFlag?: string;
 }
@@ -1381,7 +1406,7 @@ function matchesGeoValue(value: string, ...candidates: string[]): boolean {
 
 const CHINA_LEGACY_COUNTRY_VALUES = new Set(['中国', 'China', 'CN', '台湾', 'Taiwan', 'TW', '香港', 'Hong Kong', 'HK', '澳门', 'Macau', 'MO']);
 
-const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
+const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser }) => {
   const zh = language !== 'en';
   const navigate = useNavigate();
   const [tab, setTab] = useState<EntityKey>((cmdbPage as EntityKey) || 'credentials');
@@ -1395,13 +1420,24 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const [sites, setSites] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [interfaceSyncing, setInterfaceSyncing] = useState(false);
+  const [interfaceJobStatus, setInterfaceJobStatus] = useState<any | null>(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [credentialJobStatus, setCredentialJobStatus] = useState<any | null>(null);
+  const [credentialJobDetailsOpen, setCredentialJobDetailsOpen] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [visiblePasswordFields, setVisiblePasswordFields] = useState<Record<string, boolean>>({});
   const [credentialDeviceDetails, setCredentialDeviceDetails] = useState<Record<string, any[]>>({});
   const [expandedCredentialDevices, setExpandedCredentialDevices] = useState<Record<string, boolean>>({});
   const [credentialDeviceLoading, setCredentialDeviceLoading] = useState<Record<string, boolean>>({});
+  const [revealedCredentialSecret, setRevealedCredentialSecret] = useState<{ id: string; type: 'password' | 'enable_password'; secret: string } | null>(null);
+  const [credentialSecretLoading, setCredentialSecretLoading] = useState<string | null>(null);
+  const [credentialSecretCopied, setCredentialSecretCopied] = useState(false);
+  const [bindingModal, setBindingModal] = useState<{ credentialId: string; credentialName: string; deviceId: string; deviceName: string; bindingRole: 'normal' | 'admin' } | null>(null);
+  const [bindingAction, setBindingAction] = useState<'replace' | 'unbind'>('replace');
+  const [replacementCredentialId, setReplacementCredentialId] = useState('');
+  const [bindingSaving, setBindingSaving] = useState(false);
   const [form, setForm] = useState<Record<string, any>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [confirmDelete, setConfirmDelete] = useState<any | null>(null);
@@ -1415,10 +1451,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const [geoError, setGeoError] = useState('');
   const [geoCityError, setGeoCityError] = useState('');
   const [search, setSearch] = useState('');
-  const [interfaceIpFilter, setInterfaceIpFilter] = useState<'has_ip' | 'all'>('has_ip');
   const [interfaceDeviceFilter, setInterfaceDeviceFilter] = useState<string>('');
+  const [expandedInterfaceDevices, setExpandedInterfaceDevices] = useState<Record<string, boolean>>({});
   const readOnlyTabs = useMemo(() => new Set<EntityKey>(['devices', 'interfaces']), []);
   const isReadOnlyTab = readOnlyTabs.has(tab);
+  const isAdministrator = currentUser?.role === 'Administrator';
 
   const interfaceStats = useMemo(() => {
     if (tab !== 'interfaces') return { total: 0, withIp: 0, operUp: 0, withLinks: 0 };
@@ -1449,6 +1486,38 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   // Pagination states
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  useEffect(() => {
+    const jobId = credentialJobStatus?.job_id;
+    if (!jobId) return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { headers: authHeaders() });
+        const payload = await response.json().catch(() => ({}));
+        if (cancelled || !response.ok || payload.success === false) return;
+        // /api/jobs/{id} returns the job object directly; accept the wrapped
+        // shape too so this page remains compatible with proxy adapters.
+        const job = payload.data || payload;
+        const next = { ...job, job_id: jobId };
+        setCredentialJobStatus(next);
+        const terminal = ['succeeded', 'partially_failed', 'failed', 'cancelled', 'timeout'].includes(next.status);
+        if (terminal) {
+          setNotice(zh
+            ? `密码同步任务 ${jobId}：${next.status}，成功 ${next.success_count || 0} 台，失败 ${next.failed_count || 0} 台。${next.status === 'succeeded' ? '凭据中心已更新。' : '凭据中心仍保持原值。'}`
+            : `Password sync job ${jobId}: ${next.status}; ${next.success_count || 0} succeeded, ${next.failed_count || 0} failed.`);
+        }
+      } catch {
+        // The task remains durable; a transient polling failure must not hide it.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => { void poll(); }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [credentialJobStatus?.job_id, zh]);
 
   const tabs: { key: EntityKey; label: string; labelEn: string; icon: React.ReactNode }[] = [
     { key: 'credentials', label: '凭据中心', labelEn: 'Credentials', icon: <KeyRound size={14} /> },
@@ -1616,6 +1685,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       { key: 'credential_type', label: '类型', labelEn: 'Type', type: 'select', options: CRED_TYPE_OPTS },
       { key: 'username', label: '用户名', labelEn: 'Username' },
       { key: 'account_role', label: '账号角色', labelEn: 'Account Role', type: 'select', options: CRED_ROLE_OPTS },
+      { key: 'old_password', label: '旧密码', labelEn: 'Current Password', type: 'password', hideInTable: true, hideInCreate: true, hint: '修改密码时必须输入当前密码' },
+      { key: 'old_enable_password', label: '旧 Enable 密码', labelEn: 'Current Enable Password', type: 'password', hideInTable: true, hideInCreate: true, hint: '修改 Enable 密码时必须输入当前密码' },
       { key: 'password', label: '密码', labelEn: 'Password', type: 'password', hideInTable: true, secretFlag: 'has_password' },
       { key: 'enable_password', label: 'Enable 密码', labelEn: 'Enable Password', type: 'password', hideInTable: true, secretFlag: 'has_enable_password' },
       { key: 'devices', label: '关联设备', labelEn: 'Associated Devices', hideInForm: true },
@@ -1633,10 +1704,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       { key: 'link_count', label: '链路数', labelEn: 'Links', hideInForm: true },
     ],
     interfaces: [
+      { key: 'device_ip', label: '设备IP', labelEn: 'Device IP', hideInForm: true },
       { key: 'interface_ip', label: '接口IP', labelEn: 'Interface IP', hideInForm: true },
       { key: 'interface_name', label: '接口名称', labelEn: 'Interface', hideInForm: true },
       { key: 'device_hostname', label: '所属设备', labelEn: 'Device', hideInForm: true },
-      { key: 'device_ip', label: '设备IP', labelEn: 'Device IP', hideInForm: true },
       { key: 'oper_status', label: '运行状态', labelEn: 'Oper Status', hideInForm: true },
       { key: 'admin_status', label: '管理状态', labelEn: 'Admin Status', hideInForm: true },
       { key: 'mac_address', label: 'MAC', labelEn: 'MAC', hideInForm: true },
@@ -1687,7 +1758,14 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     setLoading(true);
     setError('');
     try {
-      const data = await apiList<any>(endpointFor(tab));
+      let endpoint = endpointFor(tab);
+      if (tab === 'interfaces') {
+        const params = new URLSearchParams({ has_ip: 'true' });
+        if (search.trim()) params.set('search', search.trim());
+        if (interfaceDeviceFilter) params.set('device_id', interfaceDeviceFilter);
+        endpoint = `${endpoint}?${params.toString()}`;
+      }
+      const data = await apiList<any>(endpoint);
       setRows(data);
       if (tab === 'vlans' && sites.length === 0) {
         setSites(await apiList<any>('/api/cmdb/sites').catch(() => []));
@@ -1698,7 +1776,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     } finally {
       setLoading(false);
     }
-  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, search, interfaceDeviceFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
@@ -1715,14 +1793,50 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       if (!res.ok || json.success === false) {
         throw new Error(formatErrorDetail(json.detail || json.message));
       }
-      setError(zh ? '接口采集已启动，完成后请刷新列表；认证失败的设备会在日志中标明。' : 'Interface collection started. Refresh after it completes; authentication failures are logged per device.');
-      window.setTimeout(() => { void load(); }, 15000);
+      const job = json.data?.job || json.data || {};
+      const jobId = json.data?.job_id || job.job_id || job.id;
+      if (!jobId) throw new Error(zh ? '接口采集任务未返回任务编号' : 'Interface collection did not return a job id');
+      setInterfaceJobStatus({ ...job, job_id: jobId });
+      setNotice(zh ? `接口采集任务已启动，共 ${job.total_targets || job.targets?.length || 0} 台设备；进度和失败原因会显示在本页。` : `Interface collection started for ${job.total_targets || job.targets?.length || 0} device(s); progress and failures will appear here.`);
     } catch (e: any) {
       setError(e.message || String(e));
-    } finally {
       setInterfaceSyncing(false);
+    } finally {
+      // Keep the button busy until the durable job reaches a terminal state.
     }
   }, [load, tab, zh]);
+
+  useEffect(() => {
+    const jobId = interfaceJobStatus?.job_id;
+    if (!jobId || tab !== 'interfaces') return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/cmdb/interfaces/sync/${encodeURIComponent(jobId)}`, { headers: authHeaders() });
+        const payload = await response.json().catch(() => ({}));
+        if (cancelled || !response.ok || payload.success === false) return;
+        const next = payload.data || payload;
+        setInterfaceJobStatus({ ...next, job_id: jobId });
+        const terminal = ['succeeded', 'partially_failed', 'failed', 'cancelled', 'timeout'].includes(String(next.status || '').toLowerCase());
+        if (terminal) {
+          setInterfaceSyncing(false);
+          void load();
+          const failed = Number(next.failed_count || 0);
+          setNotice(zh
+            ? `接口采集${failed ? `完成，成功 ${next.success_count || 0} 台，失败 ${failed} 台` : '已完成'}；详情已显示在本页。`
+            : `Interface collection ${failed ? `finished: ${next.success_count || 0} succeeded, ${failed} failed` : 'completed'}; details are shown on this page.`);
+        }
+      } catch {
+        // Keep the durable job id; a transient polling failure must not hide it.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => { void poll(); }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [interfaceJobStatus?.job_id, tab, zh, load]);
 
   // Preload sites so the VLAN form's site dropdown is ready.
   useEffect(() => { apiList<any>('/api/cmdb/sites').then(setSites).catch(() => {}); }, []);
@@ -1736,7 +1850,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     if (isReadOnlyTab) return;
     const defaults: Record<string, any> = {};
     fieldDefs[tab].forEach(f => {
-      if (f.hideInForm) return;
+      if (f.hideInForm || f.hideInCreate) return;
       if (f.type === 'select' && f.options?.length) defaults[f.key] = f.options[0].value;
       else if (f.key === 'timezone') defaults[f.key] = 'Asia/Shanghai';
       else defaults[f.key] = '';
@@ -1744,6 +1858,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     setForm(defaults);
     setEditing(null);
     setError('');
+    setNotice('');
     setFieldErrors({});
     setVisiblePasswordFields({});
     setModalOpen(true);
@@ -1761,6 +1876,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     setForm(f);
     setEditing(row);
     setError('');
+    setNotice('');
     setFieldErrors({});
     setVisiblePasswordFields({});
     setModalOpen(true);
@@ -1771,7 +1887,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
   const submit = async () => {
     if (isReadOnlyTab) return;
     setError('');
-    const defs = fieldDefs[tab].filter(fd => !fd.hideInForm);
+    setNotice('');
+    setFieldErrors({});
+    const defs = fieldDefs[tab].filter(fd => !fd.hideInForm && (!fd.hideInCreate || Boolean(editing)));
     // New site records require contact data. Existing records remain
     // editable without backfilling columns introduced later.
     for (const fd of defs) {
@@ -1804,21 +1922,42 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
         && String(editing[fd.key] ?? '').trim() === String(v ?? '').trim()) return;
       if (fd.type === 'number') v = v === '' ? undefined : Number(v);
       if (fd.secretFlag && editing && (v === '' || v == null)) return; // keep existing secret
+      if (editing && !fd.secretFlag
+        && String(editing[fd.key] ?? '').trim() === String(v ?? '').trim()) return;
       if (fd.key === 'site_id' && v === '') { payload[fd.key] = null; return; }
       if (v !== undefined) payload[fd.key] = v;
     });
     try {
-      if (editing) await apiSend(endpointFor(tab, idOf(editing)), 'PUT', payload);
-      else await apiSend(endpointFor(tab), 'POST', payload);
+      const response = editing
+        ? await apiSend(endpointFor(tab, idOf(editing)), 'PUT', payload)
+        : await apiSend(endpointFor(tab), 'POST', payload);
       setModalOpen(false);
+      if (tab === 'credentials' && response?.job_id) {
+        setCredentialJobStatus({ job_id: response.job_id, status: 'queued', total_targets: response.device_count || 0 });
+        setCredentialJobDetailsOpen(true);
+        setNotice(zh
+          ? `密码同步任务已创建：${response.job_id}，正在处理 ${response.device_count || 0} 台设备。凭据中心将在全部设备验证成功后更新。`
+          : `Password sync job ${response.job_id} started for ${response.device_count || 0} devices. The vault updates after all devices verify successfully.`);
+      }
       await load();
     } catch (e: any) {
       const message = e.message || String(e);
+      const displayMessage = tab === 'credentials' ? humanizeCredentialError(message, zh) : message;
       const contactField = tab === 'sites'
         ? (['contact_name', 'contact_phone', 'contact_email'] as SiteContactField[]).find(field => message.includes(field))
         : undefined;
       if (contactField) setFieldErrors(previous => ({ ...previous, [contactField]: message }));
-      else setError(message);
+      else {
+        if (tab === 'credentials') {
+          const credentialField = /old_enable_password/i.test(message)
+            ? 'old_enable_password'
+            : /old_password/i.test(message)
+              ? 'old_password'
+              : '';
+          if (credentialField) setFieldErrors(previous => ({ ...previous, [credentialField]: displayMessage }));
+        }
+        setError(displayMessage);
+      }
     }
   };
 
@@ -1962,6 +2101,98 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     }
   };
 
+  const handleRevealCredentialSecret = async (row: any, type: 'password' | 'enable_password') => {
+    if (!isAdministrator) return;
+    const id = String(row.id || '');
+    if (!id) return;
+    if (revealedCredentialSecret?.id === id && revealedCredentialSecret.type === type) {
+      setRevealedCredentialSecret(null);
+      setCredentialSecretCopied(false);
+      return;
+    }
+    const key = `${id}:${type}`;
+    setCredentialSecretLoading(key);
+    setCredentialSecretCopied(false);
+    try {
+      const response = await fetch(`/api/credentials/${encodeURIComponent(id)}/secret?type=${encodeURIComponent(type)}`, {
+        headers: authHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) throw new Error(formatErrorDetail(payload.detail || payload.message));
+      setRevealedCredentialSecret({ id, type, secret: String(payload.data?.secret || '') });
+    } catch (error: any) {
+      setError(error.message || String(error));
+    } finally {
+      setCredentialSecretLoading(null);
+    }
+  };
+
+  const handleCopyCredentialSecret = async () => {
+    if (!revealedCredentialSecret?.secret) return;
+    const { id, type, secret } = revealedCredentialSecret;
+    try {
+      const auditResponse = await fetch(`/api/credentials/${encodeURIComponent(id)}/secret/copy?type=${encodeURIComponent(type)}`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const auditPayload = await auditResponse.json().catch(() => ({}));
+      if (!auditResponse.ok || !auditPayload.success) throw new Error(formatErrorDetail(auditPayload.detail || auditPayload.message));
+      await navigator.clipboard.writeText(secret);
+      setCredentialSecretCopied(true);
+      window.setTimeout(() => setCredentialSecretCopied(false), 2000);
+    } catch (error: any) {
+      setError(error.message || String(error));
+    }
+  };
+
+  const openBindingModal = (row: any, device: any) => {
+    if (!isAdministrator) return;
+    setBindingModal({
+      credentialId: String(row.id || ''),
+      credentialName: String(row.credential_name || row.id || ''),
+      deviceId: String(device.id || ''),
+      deviceName: String(device.hostname || device.ip_address || device.id || ''),
+      bindingRole: device.binding_role === 'admin' ? 'admin' : 'normal',
+    });
+    setBindingAction('replace');
+    setReplacementCredentialId('');
+  };
+
+  const submitBindingChange = async () => {
+    if (!bindingModal || bindingSaving) return;
+    if (bindingAction === 'replace' && !replacementCredentialId) {
+      setError(zh ? '请选择替换凭据' : 'Select a replacement credential');
+      return;
+    }
+    setBindingSaving(true);
+    setError('');
+    try {
+      await apiSend(
+        `/api/credentials/${encodeURIComponent(bindingModal.credentialId)}/bindings/${encodeURIComponent(bindingModal.deviceId)}`,
+        'POST',
+        {
+          action: bindingAction,
+          replacement_credential_id: bindingAction === 'replace' ? replacementCredentialId : undefined,
+        },
+      );
+      setBindingModal(null);
+      setNotice(bindingAction === 'replace'
+        ? (zh ? '设备凭据已替换，原凭据已保留。' : 'Device credential binding replaced; the original credential was kept.')
+        : (zh ? '设备已解除绑定，将按独立设备凭据管理。' : 'Device unbound; it will use independent device credential management.'));
+      setExpandedCredentialDevices(previous => ({ ...previous, [bindingModal.credentialId]: false }));
+      setCredentialDeviceDetails(previous => {
+        const next = { ...previous };
+        delete next[bindingModal.credentialId];
+        return next;
+      });
+      await load();
+    } catch (error: any) {
+      setError(error.message || String(error));
+    } finally {
+      setBindingSaving(false);
+    }
+  };
+
   const renderCell = (row: any, fd: FieldDef) => {
     if (fd.key === 'created_at' || fd.key === 'updated_at') {
       const raw = String(row[fd.key] || '').trim();
@@ -2038,13 +2269,25 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       return (
         <div className="flex max-w-[34rem] flex-wrap items-center gap-1">
           {displayList.slice(0, isExpanded ? displayList.length : 3).map((d: any) => (
-            <span
-              key={d.id}
-              onClick={() => navigate(`/assets/devices`)}
-              className="cursor-pointer inline-flex items-center gap-1 text-slate-700 dark:text-slate-350 bg-slate-100 dark:bg-slate-800 border border-slate-200/50 dark:border-slate-700 px-2 py-0.5 rounded text-xs font-medium hover:bg-slate-200 dark:hover:bg-slate-750 transition-colors"
-            >
-              <Server size={11} className="text-slate-400" />
-              {d.hostname}
+            <span key={d.id} className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => navigate(`/assets/devices`)}
+                className="inline-flex items-center gap-1 rounded-l border border-slate-200/50 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-350 dark:hover:bg-slate-750"
+              >
+                <Server size={11} className="text-slate-400" />
+                {d.hostname || d.ip_address || d.id}
+              </button>
+              {isAdministrator && (
+                <button
+                  type="button"
+                  onClick={() => openBindingModal(row, d)}
+                  className="-ml-1 inline-flex items-center gap-0.5 rounded-r border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-100"
+                  title={zh ? '替换或解除该设备的凭据绑定' : 'Replace or unbind this device credential'}
+                >
+                  {d.binding_role === 'admin' ? (zh ? '特权' : 'Priv') : (zh ? '普通' : 'Normal')}
+                </button>
+              )}
             </span>
           ))}
           {total > 3 && (
@@ -2062,6 +2305,40 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       );
     }
     if (fd.secretFlag) {
+      if (!row[fd.secretFlag]) return <span className="text-black/30 dark:text-white/30">—</span>;
+      if (tab === 'credentials' && isAdministrator) {
+        const type = fd.secretFlag === 'has_enable_password' ? 'enable_password' : 'password';
+        const credentialId = String(row.id || '');
+        const key = `${credentialId}:${type}`;
+        const isRevealed = revealedCredentialSecret?.id === credentialId && revealedCredentialSecret.type === type;
+        return (
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30 px-2 py-0.5 rounded text-xs font-medium">
+              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+              {zh ? '已配置' : 'Configured'}
+            </span>
+            <button
+              type="button"
+              onClick={() => { void handleRevealCredentialSecret(row, type); }}
+              className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${isRevealed ? 'border-cyan-500 bg-cyan-500 text-white' : 'border-slate-200 bg-white text-slate-400 hover:border-cyan-300 hover:text-cyan-600'}`}
+              title={isRevealed ? (zh ? '隐藏密码' : 'Hide secret') : (zh ? '查看凭据密码' : 'Reveal credential secret')}
+            >
+              {credentialSecretLoading === key ? <RefreshCw size={11} className="animate-spin" /> : isRevealed ? <EyeOff size={11} /> : <Eye size={11} />}
+            </button>
+            {isRevealed && (
+              <button
+                type="button"
+                onClick={() => { void handleCopyCredentialSecret(); }}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:border-cyan-300 hover:text-cyan-600"
+                title={zh ? '复制并记录审计' : 'Copy and audit'}
+              >
+                {credentialSecretCopied ? <Check size={11} /> : <Copy size={11} />}
+              </button>
+            )}
+            {isRevealed && <span className="max-w-36 truncate rounded bg-slate-900 px-2 py-1 font-mono text-[10px] text-cyan-300" title={revealedCredentialSecret.secret}>{revealedCredentialSecret.secret}</span>}
+          </div>
+        );
+      }
       return row[fd.secretFlag] ? (
         <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/30 px-2 py-0.5 rounded text-xs font-medium">
           <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
@@ -2110,6 +2387,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     }
     if (fd.key === 'oper_status' || fd.key === 'admin_status') {
       const val = row[fd.key] || 'unknown';
+      const statusLabel = val === 'unknown' ? (zh ? '未采集' : 'Not collected') : val;
       const badgeClass = val === 'up'
         ? 'bg-emerald-50 text-emerald-700 border-emerald-100 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/30'
         : val === 'down'
@@ -2117,7 +2395,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
           : 'bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-900/20 dark:text-slate-400 dark:border-slate-800';
       return (
         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${badgeClass}`}>
-          {val}
+          {statusLabel}
         </span>
       );
     }
@@ -2181,6 +2459,51 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
     return filteredRows.slice(start, start + pageSize);
   }, [filteredRows, page, pageSize]);
 
+  const interfaceGroups = useMemo(() => {
+    if (tab !== 'interfaces') return [] as Array<{ key: string; hostname: string; deviceIp: string; rows: any[] }>;
+    const grouped = new Map<string, { key: string; hostname: string; deviceIp: string; rows: any[] }>();
+    paginatedRows.forEach(row => {
+      const key = String(row.device_id || row.device_ip || row.device_hostname || 'unknown-device');
+      const current = grouped.get(key) || {
+        key,
+        hostname: String(row.device_hostname || 'Unknown device'),
+        deviceIp: String(row.device_ip || ''),
+        rows: [],
+      };
+      current.rows.push(row);
+      grouped.set(key, current);
+    });
+    return Array.from(grouped.values());
+  }, [paginatedRows, tab]);
+
+  const renderDataRow = (row: any, index: number | string) => (
+    <tr key={idOf(row) || index} className="hover:bg-slate-50/80 transition-colors group">
+      {tableColumns.map(c => (
+        <td key={c.key} className="px-6 py-4">{renderCell(row, c)}</td>
+      ))}
+      {!isReadOnlyTab && (
+        <td className="px-6 py-4 text-right whitespace-nowrap align-middle">
+          <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={() => openEdit(row)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-[#164e63] shadow-sm hover:border-black/10 hover:bg-[#ecfeff] hover:text-[#0891b2] transition-all"
+              title={zh ? '编辑' : 'Edit'}
+            >
+              <Edit2 size={13} />
+            </button>
+            <button
+              onClick={() => openDeleteConfirm(row)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-rose-400 shadow-sm hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 transition-all"
+              title={zh ? '删除' : 'Delete'}
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        </td>
+      )}
+    </tr>
+  );
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <PageHero
@@ -2224,7 +2547,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
-                placeholder={zh ? '搜索当前列表...' : 'Search current list...'}
+                placeholder={tab === 'interfaces'
+                  ? (zh ? '搜索设备名、设备 IP、接口名或接口 IP...' : 'Search device name/IP, interface name/IP...')
+                  : (zh ? '搜索当前列表...' : 'Search current list...')}
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="pl-10 pr-9 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
@@ -2240,32 +2565,159 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       />
 
       <div className="flex-1 overflow-auto px-6 py-5" style={{ background: 'rgba(248, 250, 252, 0.5)' }}>
-        {error && (
+        {error && tab !== 'credentials' && (
           <div className="mb-4 px-4 py-3 rounded-2xl text-sm flex items-center gap-2 border bg-rose-50/10 text-rose-500 border-rose-200/30">
             <ShieldAlert size={16} />
             {error}
           </div>
         )}
-
-        {tab === 'credentials' && (
-          <div className="mb-4 px-4 py-3 rounded-2xl text-xs flex items-center justify-between gap-3 border bg-cyan-50/70 border-cyan-100 text-cyan-800 dark:bg-cyan-950/20 dark:border-cyan-900/30 dark:text-cyan-300">
-            <div className="flex items-center gap-2">
-              <KeyRound size={15} className="text-cyan-600 shrink-0" />
-              <span>
-                {zh
-                  ? '提示：凭据中心用于管理 Nexora 系统保存的设备登录凭据库。此处编辑密码仅更新系统存储记录。若需通过特权账号登录硬件交换机并下发 CLI 命令修改设备本身的口令，请使用「密码轮换」或「改密剧本」。'
-                  : 'Hint: Credentials Center manages saved device login credentials in Nexora. Editing passwords here updates stored records. To execute CLI commands on hardware switches to change device passwords, use Password Rotation or Playbooks.'}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => navigate('/management/credentials')}
-              className="shrink-0 px-3 py-1 bg-cyan-600 text-white rounded-lg font-semibold hover:bg-cyan-700 transition-colors text-[11px]"
-            >
-              {zh ? '前往密码轮换改密' : 'Open Password Rotation'}
-            </button>
+        {notice && (
+          <div className="mb-4 px-4 py-3 rounded-2xl text-sm flex items-center gap-2 border bg-emerald-50 text-emerald-700 border-emerald-200">
+            <Check size={16} />
+            {notice}
           </div>
         )}
+
+        {tab === 'interfaces' && interfaceJobStatus?.job_id && (() => {
+          const targets = Array.isArray(interfaceJobStatus.targets) ? interfaceJobStatus.targets : [];
+          const failedTargets = targets.filter((target: any) => ['failed', 'timeout'].includes(String(target.status || '').toLowerCase()));
+          const totalCount = Number(interfaceJobStatus.total_targets || targets.length || 0);
+          const successCount = Number(interfaceJobStatus.success_count || 0);
+          const failedCount = Number(interfaceJobStatus.failed_count || 0);
+          const completedCount = successCount + failedCount + Number(interfaceJobStatus.cancelled_count || 0);
+          const progress = Math.max(0, Math.min(100, Number(interfaceJobStatus.progress || (totalCount ? (completedCount / totalCount) * 100 : 0))));
+          const jobStatus = String(interfaceJobStatus.status || 'queued').toLowerCase();
+          const statusLabel = jobStatus === 'succeeded'
+            ? (zh ? '已完成' : 'Succeeded')
+            : jobStatus === 'partially_failed'
+              ? (zh ? '部分失败' : 'Partially failed')
+              : jobStatus === 'failed'
+                ? (zh ? '失败' : 'Failed')
+                : jobStatus === 'running'
+                  ? (zh ? '采集中' : 'Collecting')
+                  : (zh ? '排队中' : 'Queued');
+          return (
+            <div className={`mb-4 rounded-2xl border px-4 py-3 ${failedTargets.length ? 'border-rose-200 bg-rose-50/70' : 'border-cyan-200 bg-cyan-50/70'}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Network size={16} className={failedTargets.length ? 'text-rose-600' : 'text-cyan-600'} />
+                  <div>
+                    <div className="text-sm font-semibold text-[#164e63]">
+                      {zh ? '接口状态采集进度' : 'Interface status collection'}
+                      <span className="ml-2 rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-medium text-slate-500">{statusLabel}</span>
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-500">
+                      {zh ? `任务 ${interfaceJobStatus.job_id} · 使用 Playbook 接口状态 TextFSM · ${successCount} 成功 / ${failedCount} 失败 / ${totalCount} 总计` : `Job ${interfaceJobStatus.job_id} · Playbook interface-status TextFSM · ${successCount} succeeded / ${failedCount} failed / ${totalCount} total`}
+                    </div>
+                  </div>
+                </div>
+                <span className="text-sm font-bold text-cyan-700">{Math.round(progress)}%</span>
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/80">
+                <div className={`h-full rounded-full transition-all ${failedTargets.length ? 'bg-rose-500' : 'bg-cyan-500'}`} style={{ width: `${progress}%` }} />
+              </div>
+              {targets.length > 0 && (
+                <div className="mt-3 max-h-44 space-y-1.5 overflow-y-auto pr-1">
+                  {targets.map((target: any) => {
+                    const targetStatus = String(target.status || 'queued').toLowerCase();
+                    const failed = ['failed', 'timeout'].includes(targetStatus);
+                    const targetLabel = target.target_hostname || target.target_ip || target.target_id;
+                    const targetStatusLabel = targetStatus === 'succeeded'
+                      ? (zh ? '成功' : 'Succeeded')
+                      : failed
+                        ? (zh ? '失败' : 'Failed')
+                        : targetStatus === 'running'
+                          ? (zh ? '采集中' : 'Collecting')
+                          : (zh ? '等待中' : 'Queued');
+                    return (
+                      <div key={target.id || target.target_id} className={`rounded-lg border px-3 py-2 text-xs ${failed ? 'border-rose-200 bg-white text-rose-700' : 'border-white/80 bg-white/70 text-slate-600'}`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-medium">{targetLabel}</span>
+                          <span className="font-semibold">{targetStatusLabel}</span>
+                        </div>
+                        {failed && target.error_message && <div className="mt-1 leading-5 text-rose-600">{target.error_message}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {tab === 'credentials' && credentialJobStatus?.job_id && (() => {
+          const targets = Array.isArray(credentialJobStatus.targets) ? credentialJobStatus.targets : [];
+          const failedTargets = targets.filter((target: any) => ['failed', 'timeout'].includes(String(target.status || '').toLowerCase()));
+          const completedCount = Number(credentialJobStatus.success_count || 0)
+            + Number(credentialJobStatus.failed_count || 0)
+            + Number(credentialJobStatus.cancelled_count || 0);
+          const totalCount = Number(credentialJobStatus.total_targets || targets.length || 0);
+          const progress = Math.max(0, Math.min(100, Number(credentialJobStatus.progress || (totalCount ? (completedCount / totalCount) * 100 : 0))));
+          const jobStatus = String(credentialJobStatus.status || 'queued').toLowerCase();
+          const statusLabel = jobStatus === 'succeeded'
+            ? (zh ? '已完成' : 'Succeeded')
+            : jobStatus === 'partially_failed'
+              ? (zh ? '部分失败' : 'Partially failed')
+              : jobStatus === 'failed'
+                ? (zh ? '失败' : 'Failed')
+                : jobStatus === 'running'
+                  ? (zh ? '执行中' : 'Running')
+                  : (zh ? '排队中' : 'Queued');
+          return (
+            <div className={`mb-4 rounded-2xl border px-4 py-3 ${failedTargets.length ? 'border-rose-200 bg-rose-50/70' : 'border-cyan-200 bg-cyan-50/70'}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <KeyRound size={16} className={failedTargets.length ? 'text-rose-600' : 'text-cyan-600'} />
+                  <div>
+                    <div className="text-sm font-semibold text-[#164e63]">
+                      {zh ? '密码同步进度' : 'Password sync progress'}
+                      <span className="ml-2 rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-medium text-slate-500">{statusLabel}</span>
+                    </div>
+                    <div className="mt-0.5 font-mono text-[10px] text-black/45">{credentialJobStatus.job_id}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-600">{credentialJobStatus.success_count || 0} / {totalCount} {zh ? '成功' : 'succeeded'}</span>
+                  <button type="button" onClick={() => navigate('/automation/history')} className="rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-700 hover:bg-cyan-50">
+                    {zh ? '执行历史' : 'Execution history'}
+                  </button>
+                  <button type="button" onClick={() => setCredentialJobDetailsOpen(previous => !previous)} className="rounded-lg border border-black/10 bg-white p-1.5 text-black/45 hover:bg-black/[0.03]" title={credentialJobDetailsOpen ? (zh ? '收起详情' : 'Collapse') : (zh ? '展开详情' : 'Expand')}>
+                    {credentialJobDetailsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/80">
+                <div className={`h-full rounded-full transition-all ${failedTargets.length ? 'bg-rose-500' : 'bg-cyan-500'}`} style={{ width: `${progress}%` }} />
+              </div>
+              <div className="mt-1 flex justify-between text-[10px] text-black/45">
+                <span>{zh ? `已完成 ${completedCount} / ${totalCount} 台` : `${completedCount} / ${totalCount} targets completed`}</span>
+                <span>{Math.round(progress)}%</span>
+              </div>
+              {credentialJobDetailsOpen && (
+                <div className="mt-3 space-y-1.5">
+                  <div className="flex flex-wrap gap-3 text-[11px] font-medium text-slate-500">
+                    <span className="text-emerald-600">✓ {zh ? '成功' : 'Succeeded'} {credentialJobStatus.success_count || 0}</span>
+                    <span className="text-rose-600">✕ {zh ? '失败' : 'Failed'} {credentialJobStatus.failed_count || 0}</span>
+                    <span className="text-slate-500">◷ {zh ? '运行中/排队' : 'Running/queued'} {Math.max(0, totalCount - completedCount)}</span>
+                  </div>
+                  {failedTargets.length > 0 ? (
+                    <div className="rounded-xl border border-rose-200 bg-white/80 p-2.5">
+                      <div className="mb-1.5 text-xs font-semibold text-rose-700">{zh ? '失败设备（凭据中心未更新）' : 'Failed targets (vault unchanged)'}</div>
+                      {failedTargets.map((target: any) => (
+                        <div key={target.id || target.target_id} className="flex flex-wrap items-start justify-between gap-2 border-t border-rose-100 py-1.5 text-[11px]">
+                          <span className="font-medium text-slate-700">{target.target_hostname || target.target_id}{target.target_ip ? ` · ${target.target_ip}` : ''}</span>
+                          <span className="max-w-full text-rose-600 sm:max-w-[68%]">{target.error_message || (zh ? '设备执行失败，请查看后端日志。' : 'Target execution failed; check backend logs.')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-black/45">{jobStatus === 'succeeded' ? (zh ? '全部设备验证成功，凭据中心已提交新密码。' : 'All devices verified; the vault has committed the new password.') : (zh ? '任务正在处理，完成后会在这里显示每台设备结果。' : 'The job is still processing; target results will appear here.')}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {tab === 'interfaces' && (
           <div className="mb-5 space-y-4">
@@ -2290,29 +2742,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
 
             <div className="flex items-center justify-between gap-4 flex-wrap bg-white dark:bg-slate-900 p-3 rounded-2xl border border-black/5 shadow-sm">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-slate-500 pl-1">{zh ? '视图过滤：' : 'View Filter:'}</span>
-                <button
-                  type="button"
-                  onClick={() => setInterfaceIpFilter('has_ip')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                    interfaceIpFilter === 'has_ip'
-                      ? 'bg-cyan-600 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
-                  }`}
-                >
-                  {zh ? `仅看有 IP 接口 (${interfaceStats.withIp})` : `Has IP Only (${interfaceStats.withIp})`}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInterfaceIpFilter('all')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                    interfaceIpFilter === 'all'
-                      ? 'bg-cyan-600 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
-                  }`}
-                >
-                  {zh ? `全部接口 (${interfaceStats.total})` : `All Interfaces (${interfaceStats.total})`}
-                </button>
+                <span className="text-xs font-semibold text-cyan-700 pl-1">{zh ? `仅展示已配置 IP 的三层接口 (${interfaceStats.withIp})；状态来自接口采集` : `L3 interfaces with IP only (${interfaceStats.withIp}); status comes from interface collection`}</span>
               </div>
 
               {interfaceDeviceOptions.length > 0 && (
@@ -2367,33 +2797,34 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                     </td>
                   </tr>
                 )}
-                {paginatedRows.map((row, i) => (
-                  <tr key={idOf(row) || i} className="hover:bg-slate-50/80 transition-colors group">
-                    {tableColumns.map(c => (
-                      <td key={c.key} className="px-6 py-4">{renderCell(row, c)}</td>
-                    ))}
-                    {!isReadOnlyTab && (
-                      <td className="px-6 py-4 text-right whitespace-nowrap align-middle">
-                        <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => openEdit(row)}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-[#164e63] shadow-sm hover:border-black/10 hover:bg-[#ecfeff] hover:text-[#0891b2] transition-all"
-                            title={zh ? '编辑' : 'Edit'}
-                          >
-                            <Edit2 size={13} />
-                          </button>
-                          <button
-                            onClick={() => openDeleteConfirm(row)}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-rose-400 shadow-sm hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 transition-all"
-                            title={zh ? '删除' : 'Delete'}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
+                {tab === 'interfaces'
+                  ? interfaceGroups.flatMap(group => {
+                    const expanded = Boolean(expandedInterfaceDevices[group.key]);
+                    return [
+                      <tr
+                        key={`device-${group.key}`}
+                        onClick={() => setExpandedInterfaceDevices(previous => ({ ...previous, [group.key]: !expanded }))}
+                        className="cursor-pointer bg-cyan-50/45 hover:bg-cyan-50 transition-colors"
+                      >
+                        <td colSpan={tableColumns.length} className="px-6 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-3">
+                              {expanded ? <ChevronUp size={15} className="shrink-0 text-cyan-600" /> : <ChevronDown size={15} className="shrink-0 text-cyan-600" />}
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-[#164e63]">{group.hostname}</div>
+                                {group.deviceIp && <div className="font-mono text-[11px] text-slate-400">{group.deviceIp}</div>}
+                              </div>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-cyan-700 shadow-sm">
+                              {group.rows.length} {zh ? '个三层接口' : 'L3 interfaces'}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>,
+                      ...(expanded ? group.rows.map((row, index) => renderDataRow(row, `${group.key}-${index}`)) : []),
+                    ];
+                  })
+                  : paginatedRows.map((row, i) => renderDataRow(row, i))}
               </tbody>
             </table>
           </div>
@@ -2416,15 +2847,15 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
       {modalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setModalOpen(false)} />
-          <div className="relative w-full max-w-md rounded-3xl border border-black/8 bg-white p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="relative flex max-h-[88vh] w-full max-w-md flex-col rounded-3xl border border-black/8 bg-white p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between mb-4 border-b border-black/5 pb-3">
               <h2 className="text-lg font-semibold text-[#164e63]">
                 {editing ? (zh ? '编辑记录' : 'Edit Record') : (zh ? '新建记录' : 'New Record')} · {zh ? tabs.find(t => t.key === tab)?.label : tabs.find(t => t.key === tab)?.labelEn}
               </h2>
               <button onClick={() => setModalOpen(false)} className="rounded-xl border border-black/10 p-1.5 text-black/55 hover:bg-black/[0.03] transition-colors"><X size={16} /></button>
             </div>
-            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
-              {fieldDefs[tab].filter(fd => !fd.hideInForm).map(fd => {
+            <div className={`${tab === 'credentials' ? 'grid grid-cols-2 items-start gap-x-3 gap-y-4' : 'space-y-4'} min-h-0 flex-1 overflow-y-auto pr-1`}>
+              {fieldDefs[tab].filter(fd => !fd.hideInForm && (!fd.hideInCreate || Boolean(editing))).map(fd => {
                 const opts = fd.key === 'site_id' ? siteOptions : fd.options;
                 const isGeoField = tab === 'sites' && ['country', 'state_province', 'city', 'district'].includes(fd.key);
                 const geoOpts = isGeoField ? geoSelectOptions[fd.key as 'country' | 'state_province' | 'city' | 'district'] : [];
@@ -2434,7 +2865,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                   || (fd.key === 'district' && (!selectedGeoCountry || !selectedGeoState || !selectedGeoCity));
                 const isSiteContact = tab === 'sites' && ['contact_name', 'contact_phone', 'contact_email'].includes(fd.key);
                 const contactKey = isSiteContact ? fd.key as SiteContactField : null;
-                const fieldError = contactKey ? fieldErrors[contactKey] : '';
+                const fieldError = contactKey
+                  ? fieldErrors[contactKey]
+                  : tab === 'credentials'
+                    ? fieldErrors[fd.key]
+                    : '';
                 const phoneRule = phoneRuleForCountry(selectedGeoCountry?.isoCode);
                 const phoneLocal = fd.key === 'contact_phone' ? phoneLocalValue(form.contact_phone, phoneRule) : '';
                 const updateContactError = (nextValue: string) => {
@@ -2450,8 +2885,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                     [contactKey]: siteContactError(contactKey, nextValue, required, zh, phoneRule),
                   }));
                 };
+                const isCredentialSecret = tab === 'credentials'
+                  && ['old_password', 'old_enable_password', 'password', 'enable_password'].includes(fd.key);
                 return (
-                  <div key={fd.key}>
+                  <div key={fd.key} className={tab === 'credentials' && !isCredentialSecret ? 'col-span-2' : ''}>
                     <label className="block text-xs font-semibold mb-1 text-black/50">
                       {zh ? fd.label : fd.labelEn}{fd.required && <span className="text-rose-500"> *</span>}
                       {fd.secretFlag && editing && (
@@ -2531,7 +2968,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
                           required={fd.required && !editing}
                           autoComplete="new-password"
                           onChange={e => setForm({ ...form, [fd.key]: e.target.value })}
-                          className="w-full px-3 py-2 pr-10 rounded-xl text-sm border border-black/10 bg-white text-[#164e63] outline-none focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
+                          className={`w-full px-3 py-2 pr-10 rounded-xl text-sm border bg-white text-[#164e63] outline-none transition-all ${fieldError ? 'border-rose-400 focus:border-rose-400 focus:ring-2 focus:ring-rose-500/10' : 'border-black/10 focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10'}`}
                         />
                         <button
                           type="button"
@@ -2578,13 +3015,13 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
             )}
             
             {error && (
-              <div className="mt-4 px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 border bg-rose-50/10 text-rose-500 border-rose-200/30">
+              <div className="mt-4 max-h-24 shrink-0 overflow-y-auto rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-600 flex items-start gap-1.5" role="alert">
                 <ShieldAlert size={14} className="flex-shrink-0" />
-                {error}
+                <span><strong className="font-semibold">{zh ? '保存失败：' : 'Save failed: '}</strong>{error}</span>
               </div>
             )}
             
-            <div className="flex justify-end gap-2 mt-6 pt-3 border-t border-black/5">
+            <div className="mt-6 flex shrink-0 justify-end gap-2 border-t border-black/5 pt-3">
               <button
                 onClick={() => setModalOpen(false)}
                 className="h-10 px-4 rounded-xl border border-black/10 bg-white text-sm font-semibold text-black/60 hover:bg-black/[0.02] transition-colors"
@@ -2597,6 +3034,92 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage }) => {
               >
                 <Check size={14} />
                 {zh ? '保存' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bindingModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/45 backdrop-blur-sm"
+            onClick={() => { if (!bindingSaving) setBindingModal(null); }}
+          />
+          <div className="relative w-full max-w-lg rounded-3xl border border-black/8 bg-white p-6 shadow-2xl dark:bg-slate-900">
+            <div className="flex items-start justify-between gap-4 border-b border-black/5 pb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-[#164e63] dark:text-cyan-300">
+                  {zh ? '管理设备凭据绑定' : 'Manage device credential binding'}
+                </h3>
+                <p className="mt-1 text-xs text-black/50 dark:text-white/50">
+                  {bindingModal.deviceName} · {bindingModal.bindingRole === 'admin' ? (zh ? '特权账号' : 'Privileged account') : (zh ? '普通账号' : 'Normal account')}
+                </p>
+              </div>
+              <button type="button" disabled={bindingSaving} onClick={() => setBindingModal(null)} className="text-black/35 hover:text-black/65 disabled:opacity-40">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setBindingAction('replace')}
+                className={`rounded-2xl border p-3 text-left transition-colors ${bindingAction === 'replace' ? 'border-cyan-400 bg-cyan-50 text-cyan-800' : 'border-slate-200 bg-white text-slate-600 hover:border-cyan-200'}`}
+              >
+                <div className="text-sm font-semibold">{zh ? '替换为新凭据' : 'Replace credential'}</div>
+                <div className="mt-1 text-[11px] leading-4 opacity-70">{zh ? '仅切换绑定关系，原凭据不会删除' : 'Switch binding only; the original credential is kept'}</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBindingAction('unbind')}
+                className={`rounded-2xl border p-3 text-left transition-colors ${bindingAction === 'unbind' ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-slate-200 bg-white text-slate-600 hover:border-amber-200'}`}
+              >
+                <div className="text-sm font-semibold">{zh ? '解除绑定' : 'Unbind credential'}</div>
+                <div className="mt-1 text-[11px] leading-4 opacity-70">{zh ? '设备改为独立凭据管理，不删除当前凭据' : 'Use independent device credentials; keep the current credential'}</div>
+              </button>
+            </div>
+
+            {bindingAction === 'replace' && (
+              <div className="mt-5">
+                <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                  {zh ? '选择替换凭据' : 'Replacement credential'}
+                </label>
+                <select
+                  value={replacementCredentialId}
+                  onChange={event => setReplacementCredentialId(event.target.value)}
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/10"
+                >
+                  <option value="">{zh ? '请选择凭据' : 'Select a credential'}</option>
+                  {rows
+                    .filter(candidate => {
+                      const candidateId = String(candidate.id || '');
+                      const role = String(candidate.account_role || 'unbound').toLowerCase();
+                      if (!candidateId || candidateId === bindingModal.credentialId) return false;
+                      return bindingModal.bindingRole === 'admin' ? role !== 'normal' : role !== 'admin';
+                    })
+                    .map(candidate => (
+                      <option key={candidate.id} value={candidate.id}>
+                        {candidate.credential_name || candidate.id} · {candidate.username || '-'} · {getAccountRoleLabel(candidate.account_role || 'unbound')}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
+
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50/70 p-3 text-xs leading-5 text-amber-900">
+              {bindingAction === 'replace'
+                ? (zh ? '注意：本操作只修改 Nexora 中的设备—凭据绑定，不会登录设备或修改交换机上的密码。若新凭据的实际密码尚未在设备生效，后续连接可能失败。' : 'This changes only the Nexora device-to-credential binding. It does not log in to the device or change its hardware password.')
+                : (zh ? '注意：解除后设备进入独立凭据管理。当前凭据仍保留，设备上的实际密码不会被修改；请在设备/资产密码管理中维护独立密码。' : 'After unbinding, the device uses independent credential management. The current credential is kept and the hardware password is not changed.')}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2 border-t border-black/5 pt-4">
+              <button type="button" disabled={bindingSaving} onClick={() => setBindingModal(null)} className="h-10 rounded-xl border border-black/10 bg-white px-4 text-sm font-semibold text-black/60 hover:bg-black/[0.02] disabled:opacity-40">
+                {zh ? '取消' : 'Cancel'}
+              </button>
+              <button type="button" disabled={bindingSaving || (bindingAction === 'replace' && !replacementCredentialId)} onClick={() => { void submitBindingChange(); }} className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-cyan-500 px-5 text-sm font-semibold text-white shadow-md hover:bg-cyan-600 disabled:cursor-not-allowed disabled:opacity-50">
+                {bindingSaving ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                {bindingAction === 'replace' ? (zh ? '确认替换' : 'Confirm replace') : (zh ? '确认解除' : 'Confirm unbind')}
               </button>
             </div>
           </div>

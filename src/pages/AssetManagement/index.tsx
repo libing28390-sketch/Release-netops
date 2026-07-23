@@ -4,10 +4,10 @@ import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 import {
   Package, Plus, Trash2, Search, X, RefreshCw, Download, Pencil, Copy,
-  Server, Router, AlertTriangle, Network, SlidersHorizontal,
-  Wifi, Building2, Upload, FileText, ChevronDown, ChevronRight, ChevronUp,
-  Zap, AlertCircle, CheckCircle2, Info,
-  Flame, LayoutList, LayoutGrid, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker, Settings2, Check
+  Server, Router, AlertTriangle, SlidersHorizontal,
+  Wifi, Upload, FileText,
+  AlertCircle, CheckCircle2, Info,
+  Flame, LayoutList, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker, Settings2, Check
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
@@ -19,7 +19,7 @@ import { fetchAllPaginatedItems } from '../../utils/pagination';
 import { useSystem } from '../../hooks/useSystem';
 import type { TagDefinition } from '../../types';
 
-import { Asset, AssetSummary, AssetManagementTabProps, ViewMode, GroupBy } from './types';
+import { Asset, AssetSummary, AssetManagementTabProps } from './types';
 import { STATUSES, TYPES, LIFECYCLE_STATUSES, EMPTY_FORM, VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, COL_MAP, IMPORT_VALUE_MAP } from './constants';
 import { statusMeta, typeMeta, severityOf } from './helpers';
 
@@ -38,23 +38,15 @@ type AssetImportSkippedItem = {
   duplicate_values?: string[];
 };
 
-type AssetTreeRow = {
-  asset_type: string;
-  device_category: string;
-  site_id: string;
-  site_name: string;
-  device_role: string;
-  online_status: 'online' | 'offline' | 'pending' | string;
-  asset_count: number;
-};
-
-type AssetTreeNode = {
-  key: string;
-  label: string;
-  kind: 'root' | 'category' | 'site' | 'status';
-  count: number;
-  filters: { asset_type?: string; device_category?: string; site_id?: string; device_role?: string; status?: string };
-  children: AssetTreeNode[];
+type BatchTakeoverResult = {
+  id: string;
+  hostname?: string;
+  management_ip?: string;
+  status: 'blocked_credential' | 'triggered' | 'running' | 'completed' | 'failed' | 'error' | 'timeout' | string;
+  message?: string;
+  credential_name?: string;
+  device_count?: number;
+  device_names?: string[];
 };
 
 type AssetColumnKey =
@@ -202,8 +194,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [lifecycleFilter, setLifecycleFilter] = useState('all');
 
-  const [viewMode, setViewMode]         = useState<ViewMode>('table');
-  const [groupBy, setGroupBy]           = useState<GroupBy>('site_id');
   const [selectedIds, setSelectedIds]   = useState<Set<string>>(new Set());
   const [drawerAsset, setDrawerAsset]   = useState<Asset | null>(null);
 
@@ -212,14 +202,16 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [form, setForm]                 = useState({ ...EMPTY_FORM });
   const [saving, setSaving]             = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Asset | null>(null);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [showProductionConfirm, setShowProductionConfirm] = useState(false);
+  const [showBatchTakeoverConfirm, setShowBatchTakeoverConfirm] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [showEnableSecret, setShowEnableSecret] = useState(false);
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
   const [rotatingAssetId, setRotatingAssetId] = useState<string | null>(null);
+  const [batchTakeoverResults, setBatchTakeoverResults] = useState<BatchTakeoverResult[]>([]);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const rotationPollRef = React.useRef<any>(null);
+  const batchTakeoverPollRef = React.useRef<any>(null);
 
   const [allRacks, setAllRacks] = useState<any[]>([]);
   const [showValidationModal, setShowValidationModal] = useState(false);
@@ -227,9 +219,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [pendingImportPayload, setPendingImportPayload] = useState<any[]>([]);
   const [validationModalSaving, setValidationModalSaving] = useState(false);
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
-  const [assetTreeRows, setAssetTreeRows] = useState<AssetTreeRow[]>([]);
-  const [assetTreeLoading, setAssetTreeLoading] = useState(false);
-  const [expandedTreeNodes, setExpandedTreeNodes] = useState<Set<string>>(new Set());
   const [columnsOpen, setColumnsOpen] = useState(false);
   const columnsMenuRef = React.useRef<HTMLDivElement>(null);
   const [visibleColumns, setVisibleColumns] = useState<Record<AssetColumnKey, boolean>>(() => {
@@ -289,7 +278,10 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       .catch(() => setAllTags([]));
   }, []);
 
-  useEffect(() => () => { if (rotationPollRef.current) clearInterval(rotationPollRef.current); }, []);
+  useEffect(() => () => {
+    if (rotationPollRef.current) clearInterval(rotationPollRef.current);
+    if (batchTakeoverPollRef.current) clearInterval(batchTakeoverPollRef.current);
+  }, []);
 
   const fetchSummary = useCallback(async () => {
     try { const r = await fetch('/api/assets/summary'); if (r.ok) setSummary(await r.json()); } catch { /* noop */ }
@@ -330,23 +322,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   useEffect(() => { fetchSites(); }, [fetchSites]);
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
   useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, tagFilter, pageSize]);
-
-  const fetchAssetTree = useCallback(async () => {
-    setAssetTreeLoading(true);
-    try {
-      const response = await fetch('/api/assets/tree');
-      const payload = await response.json();
-      setAssetTreeRows(Array.isArray(payload?.data?.items) ? payload.data.items : Array.isArray(payload?.items) ? payload.items : []);
-    } catch {
-      setAssetTreeRows([]);
-    } finally {
-      setAssetTreeLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (viewMode === 'tree') void fetchAssetTree();
-  }, [viewMode, fetchAssetTree]);
 
   useEffect(() => {
     if (!drawerAsset) return;
@@ -604,7 +579,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
   const handleBatchTakeover = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(zh ? `确定要批量上收这 ${selectedIds.size} 台资产的口令并投产吗？（方案A：将执行改密与回连测试）` : `Confirm batch takeover and production for ${selectedIds.size} assets? (Scheme A: Rotation and post-check will be executed)`)) return;
 
     setLoading(true);
     try {
@@ -615,20 +589,85 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       });
       if (r.ok) {
         const data = await r.json();
-        const errors = data.results.filter((res: any) => res.status === 'error');
-        if (errors.length > 0) {
-          setFeedbackMsg({ type: 'warning', text: zh ? `部分上收任务启动失败 (${errors.length}台)` : `Some takeover tasks failed to start (${errors.length})` });
-        } else {
-          setFeedbackMsg({ type: 'success', text: zh ? '批量上收任务已在后台启动，请刷新列表查看进度。' : 'Batch takeover tasks started in background. Refresh to see progress.' });
+        const results = Array.isArray(data.results) ? data.results as BatchTakeoverResult[] : [];
+        setBatchTakeoverResults(results.map(item => item.status === 'triggered' ? { ...item, status: 'running' } : item));
+
+        const blocked = results.filter(item => item.status === 'blocked_credential');
+        const triggered = results.filter(item => item.status === 'triggered');
+        const failedToStart = results.filter(item => item.status === 'error');
+        // The result panel is the persistent status surface. Avoid stacking a
+        // large fixed warning toast on top of it, especially when many devices
+        // are blocked by the same shared credential.
+        setFeedbackMsg(null);
+
+        if (batchTakeoverPollRef.current) clearInterval(batchTakeoverPollRef.current);
+        if (triggered.length) {
+          const startedAt = Date.now();
+          batchTakeoverPollRef.current = setInterval(async () => {
+            const snapshots = await Promise.all(triggered.map(async item => {
+              try {
+                const response = await fetch(`/api/assets/${encodeURIComponent(item.id)}/rotation-status`);
+                const statusData = await response.json().catch(() => ({}));
+                const rotationStatus = String(statusData.rotation_status || '').toLowerCase();
+                if (rotationStatus === 'completed') return { ...item, status: 'completed', message: zh ? '口令上收成功，设备已投产' : 'Takeover completed; device is in production', rotation_status: rotationStatus };
+                if (rotationStatus === 'failed') return { ...item, status: 'failed', message: statusData.takeover_error || (zh ? '口令上收失败，已回滚' : 'Takeover failed and was rolled back'), rotation_status: rotationStatus };
+                return { ...item, status: 'running', message: zh ? '后台处理中...' : 'Processing in background...', rotation_status: rotationStatus };
+              } catch {
+                return { ...item, status: 'running', message: zh ? '正在等待设备返回结果...' : 'Waiting for device result...' };
+              }
+            }));
+            setBatchTakeoverResults(previous => {
+              const snapshotById = new Map(snapshots.map(item => [item.id, item]));
+              return previous.map(item => snapshotById.get(item.id) || item);
+            });
+            const done = snapshots.every(item => item.status === 'completed' || item.status === 'failed');
+            if (done || Date.now() - startedAt > 120000) {
+              clearInterval(batchTakeoverPollRef.current);
+              batchTakeoverPollRef.current = undefined;
+              if (!done) {
+                setBatchTakeoverResults(previous => previous.map(item => item.status === 'running'
+                  ? { ...item, status: 'timeout', message: zh ? '等待超时，请查看后端日志和设备状态' : 'Polling timed out; check backend logs and device status' }
+                  : item));
+              }
+              fetchAssets();
+            }
+          }, 2000);
         }
         clearSel();
         fetchAssets();
+      } else {
+        const data = await r.json().catch(() => ({}));
+        setFeedbackMsg({ type: 'error', text: data?.detail || (zh ? '批量上收请求失败' : 'Batch takeover request failed') });
       }
     } catch (e) {
       setFeedbackMsg({ type: 'error', text: zh ? '批量操作失败' : 'Batch operation failed' });
     }
     setLoading(false);
   };
+
+  const requestBatchTakeover = () => {
+    if (selectedIds.size > 0) setShowBatchTakeoverConfirm(true);
+  };
+
+  const batchTakeoverDisplayResults = useMemo(() => {
+    const rows: BatchTakeoverResult[] = [];
+    const blockedGroups = new Map<string, BatchTakeoverResult>();
+    batchTakeoverResults.forEach(result => {
+      if (result.status !== 'blocked_credential') {
+        rows.push(result);
+        return;
+      }
+      const key = result.credential_name || 'bound-credential';
+      const existing = blockedGroups.get(key);
+      if (existing) {
+        existing.device_count = (existing.device_count || 1) + 1;
+        existing.device_names = [...(existing.device_names || []), result.hostname || result.id];
+      } else {
+        blockedGroups.set(key, { ...result, id: `blocked:${key}`, device_count: 1, device_names: [result.hostname || result.id] });
+      }
+    });
+    return [...rows, ...blockedGroups.values()];
+  }, [batchTakeoverResults]);
 
   const requestTerminalAccess = async () => {
     if (!terminalTarget) return;
@@ -1186,19 +1225,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     XLSX.writeFile(wb, zh ? '资产导入模板.xlsx' : 'asset_import_template.xlsx');
   };
 
-  const groupedAssets = useMemo<Record<string, Asset[]>>(() => {
-    const g: Record<string, Asset[]> = {};
-    const keyFn = (a: Asset) => {
-      if (groupBy === 'site_id') return a.site_name || a.site_code || a.site_id || (zh ? '未分配站点' : 'Unassigned site');
-      if (groupBy === 'department') return a.department || (zh ? '未分配' : 'Unassigned');
-      if (groupBy === 'device_category') return a.device_category || typeMeta(a.asset_type).label[zh ? 'zh' : 'en'];
-      if (groupBy === 'status') return statusMeta(a.status).label[zh ? 'zh' : 'en'];
-      return a.vendor || (zh ? '未知厂商' : 'Unknown');
-    };
-    displayAssets.forEach(a => { const k = keyFn(a); (g[k] ||= []).push(a); });
-    return g;
-  }, [displayAssets, groupBy, zh]);
-
   const typeDisplay = (a: Asset) => typeMeta(a.asset_type).label[zh ? 'zh' : 'en'];
 
   const categoryDisplay = (a: Asset) => {
@@ -1218,55 +1244,6 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       other: { zh: '其他', en: 'Other' },
     };
     return labels[a.device_category || '']?.[zh ? 'zh' : 'en'] || a.device_category || '—';
-  };
-
-  const assetTree = useMemo<AssetTreeNode[]>(() => {
-    const roots: AssetTreeNode[] = [];
-    const ensureNode = (nodes: AssetTreeNode[], key: string, label: string, kind: AssetTreeNode['kind'], filters: AssetTreeNode['filters'], count: number) => {
-      let node = nodes.find(item => item.key === key);
-      if (!node) {
-        node = { key, label, kind, filters, count: 0, children: [] };
-        nodes.push(node);
-      }
-      node.count += count;
-      return node;
-    };
-    for (const row of assetTreeRows) {
-      const typeNode = ensureNode(roots, `type:${row.asset_type}`, typeMeta(row.asset_type).label[zh ? 'zh' : 'en'], 'root', { asset_type: row.asset_type }, row.asset_count);
-      const categoryNode = ensureNode(typeNode.children, `${typeNode.key}:category:${row.device_category}`, categoryDisplay({ device_category: row.device_category } as Asset), 'category', { asset_type: row.asset_type, device_category: row.device_category }, row.asset_count);
-      const siteNode = ensureNode(categoryNode.children, `${categoryNode.key}:site:${row.site_id}`, row.site_id === 'unassigned' ? (zh ? '未分配站点' : 'Unassigned Site') : row.site_name, 'site', { asset_type: row.asset_type, device_category: row.device_category, site_id: row.site_id === 'unassigned' ? '' : row.site_id }, row.asset_count);
-      ensureNode(siteNode.children, `${siteNode.key}:role:${row.device_role}`, row.device_role === 'unassigned' ? (zh ? '未分配角色' : 'Unassigned role') : row.device_role, 'status', { asset_type: row.asset_type, device_category: row.device_category, site_id: row.site_id === 'unassigned' ? '' : row.site_id, device_role: row.device_role === 'unassigned' ? '' : row.device_role }, row.asset_count);
-    }
-    return roots;
-  }, [assetTreeRows, categoryDisplay, zh]);
-
-  const applyTreeFilter = (filters: AssetTreeNode['filters']) => {
-    setTypeFilter(filters.asset_type || 'all');
-    setDeviceCategoryFilter(filters.device_category || '');
-    setDcFilter(filters.site_id || 'all');
-    setStatusFilter(filters.status || 'all');
-    setPage(1);
-    setViewMode('table');
-  };
-
-  const renderTreeNode = (node: AssetTreeNode, depth = 0): React.ReactNode => {
-    const expanded = depth < 2 || expandedTreeNodes.has(node.key);
-    const statusColor = node.kind !== 'status' ? 'bg-cyan-500' : node.label === (zh ? '在线' : 'Online') ? 'bg-emerald-500' : node.label === (zh ? '离线' : 'Offline') ? 'bg-red-500' : 'bg-amber-400';
-    return (
-      <div key={node.key}>
-        <div className="flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-cyan-50/70">
-          <button type="button" onClick={() => setExpandedTreeNodes(prev => { const next = new Set(prev); next.has(node.key) ? next.delete(node.key) : next.add(node.key); return next; })} className="h-5 w-5 shrink-0 rounded text-black/30 hover:bg-white hover:text-cyan-600" aria-label={expanded ? 'Collapse' : 'Expand'}>
-            {node.children.length > 0 ? (expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="block w-3" />}
-          </button>
-          <button type="button" onClick={() => applyTreeFilter(node.filters)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${statusColor}`} />
-            <span className="truncate text-[11px] font-medium text-black/70">{node.label}</span>
-            <span className="ml-auto rounded-full bg-black/[0.04] px-1.5 text-[9px] tabular-nums text-black/40">{node.count}</span>
-          </button>
-        </div>
-        {expanded && node.children.length > 0 && <div className="ml-4 border-l border-cyan-100 pl-2">{node.children.map(child => renderTreeNode(child, depth + 1))}</div>}
-      </div>
-    );
   };
 
   const hasFilters = typeFilter !== 'all' || statusFilter !== 'all' || vendorFilter !== 'all' || dcFilter !== 'all' || deptFilter !== 'all' || lifecycleFilter !== 'all' || deviceCategoryFilter !== '' || tagFilter.length > 0;
@@ -1341,6 +1318,56 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           )}
         </AnimatePresence>
 
+        {batchTakeoverResults.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5">
+              <div>
+                <div className="text-xs font-bold text-slate-700">{zh ? '批量口令上收结果' : 'Batch takeover results'}</div>
+                <div className="mt-0.5 text-[10px] text-slate-400">{zh ? '绑定凭据的设备已在任务创建前拦截，不会修改设备口令。' : 'Credential-bound devices are blocked before task creation and will not be modified.'}</div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[10px] font-medium">
+                {[
+                  { key: 'running', label: zh ? '处理中' : 'Running', cls: 'text-cyan-600' },
+                  { key: 'completed', label: zh ? '成功' : 'Completed', cls: 'text-emerald-600' },
+                  { key: 'failed', label: zh ? '失败' : 'Failed', cls: 'text-red-600' },
+                  { key: 'blocked_credential', label: zh ? '已拦截' : 'Blocked', cls: 'text-amber-600' },
+                ].map(item => {
+                  const count = batchTakeoverResults.filter(result => result.status === item.key).length;
+                  return <span key={item.key} className={item.cls}>{item.label} {count}</span>;
+                })}
+              </div>
+            </div>
+            <div className="max-h-56 overflow-auto divide-y divide-slate-100">
+              {batchTakeoverDisplayResults.map(result => {
+                const statusMeta = result.status === 'completed'
+                  ? { label: zh ? '成功' : 'Completed', cls: 'bg-emerald-50 text-emerald-700', Icon: CheckCircle2 }
+                  : result.status === 'failed' || result.status === 'error' || result.status === 'timeout'
+                    ? { label: result.status === 'timeout' ? (zh ? '超时' : 'Timeout') : (zh ? '失败' : 'Failed'), cls: 'bg-red-50 text-red-700', Icon: AlertCircle }
+                    : result.status === 'blocked_credential'
+                      ? { label: zh ? '绑定凭据，未执行' : 'Blocked', cls: 'bg-amber-50 text-amber-700', Icon: Lock }
+                      : { label: zh ? '处理中' : 'Running', cls: 'bg-cyan-50 text-cyan-700', Icon: Loader2 };
+                const StatusIcon = statusMeta.Icon;
+                return (
+                  <div key={result.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-[10px]">
+                    <div className="min-w-[170px] flex-1">
+                      <div className="font-semibold text-slate-700">{result.status === 'blocked_credential' ? (zh ? `${result.device_count || 1} 台设备` : `${result.device_count || 1} devices`) : (result.hostname || result.id)}</div>
+                      <div className="font-mono text-slate-400">{result.status === 'blocked_credential' ? (result.device_names || []).slice(0, 3).join('、') + ((result.device_count || 0) > 3 ? ` +${(result.device_count || 0) - 3}` : '') : (result.management_ip || '—')}</div>
+                    </div>
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-semibold ${statusMeta.cls}`}>
+                      <StatusIcon size={11} className={result.status === 'running' ? 'animate-spin' : ''} />
+                      {statusMeta.label}
+                    </span>
+                    <div className="min-w-[260px] flex-[2] text-slate-500">
+                      {result.status === 'blocked_credential' && result.credential_name ? <span className="font-medium text-amber-700">{zh ? '关联凭据：' : 'Credential: '}{result.credential_name} · </span> : null}
+                      {result.message || '—'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           {([
             { key: 'critical', value: criticalCount, label: zh ? '严重故障' : 'Critical', sub: 'P1', Icon: Flame, gradient: 'from-red-600 to-red-700', filterVal: 'critical', pulse: true },
@@ -1382,30 +1409,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         <div className="relative z-20 bg-white rounded-xl border border-black/5 shadow-sm overflow-visible">
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-black/5 bg-black/[0.008]">
             <div className="flex items-center gap-0.5">
-              {([
-                { mode: 'table' as ViewMode, Icon: LayoutList, label: zh ? '表格' : 'Table' },
-                { mode: 'tree' as ViewMode, Icon: LayoutGrid, label: zh ? '分组树' : 'Group Tree' },
-                { mode: 'topology' as ViewMode, Icon: Network, label: zh ? '拓扑' : 'Topo' },
-              ]).map(v => (
-                <button
-                  key={v.mode} onClick={() => setViewMode(v.mode)}
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors ${viewMode === v.mode ? 'bg-[#00bceb]/10 text-[#0088b0] font-semibold' : 'text-black/30 hover:text-black/50 hover:bg-black/[0.02]'}`}
-                >
-                  <v.Icon size={12} />{v.label}
-                </button>
-              ))}
-              {viewMode === 'group' && (
-                <select
-                  value={groupBy} onChange={e => setGroupBy(e.target.value as GroupBy)} title={zh ? '分组依据' : 'Group by'}
-                  className="ml-1 text-[10px] px-1.5 py-1 rounded border border-[#00bceb]/20 bg-[#00bceb]/5 text-[#0088b0] font-medium focus:outline-none cursor-pointer"
-                >
-                  <option value="site_id">{zh ? '站点' : 'Site'}</option>
-                  <option value="department">{zh ? '业务/部门' : 'Service'}</option>
-                  <option value="vendor">{zh ? '厂商' : 'Vendor'}</option>
-                  <option value="device_category">{zh ? '产品类型' : 'Product Type'}</option>
-                  <option value="status">{zh ? '在线状态' : 'Online Status'}</option>
-                </select>
-              )}
+              <span className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-[#00bceb]/10 text-[#0088b0] text-[11px] font-semibold">
+                <LayoutList size={12} />{zh ? '表格' : 'Table'}
+              </span>
             </div>
 
             <div className="flex items-center gap-1">
@@ -1413,7 +1419,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 {selectedIds.size > 0 && (
                   <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} className="flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-black/8">
                     <span className="text-[10px] font-bold text-[#00bceb] tabular-nums mr-1">{selectedIds.size}</span>
-                    <button onClick={handleBatchTakeover} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-cyan-500 text-[9px] font-medium hover:bg-cyan-50 hover:text-cyan-600 transition-colors"><Shield size={10} />{zh ? '批量上收' : 'Takeover'}</button>
+                    <button onClick={requestBatchTakeover} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-cyan-500 text-[9px] font-medium hover:bg-cyan-50 hover:text-cyan-600 transition-colors"><Shield size={10} />{zh ? '批量上收' : 'Takeover'}</button>
                     <button onClick={handleBatchDelete} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-black/35 text-[9px] font-medium hover:bg-red-50 hover:text-red-600 transition-colors"><Trash2 size={10} />{zh ? '删除' : 'Delete'}</button>
                     <button onClick={clearSel} className="p-0.5 ml-0.5 text-black/20 hover:text-black/45" title="Clear"><X size={10} /></button>
                   </motion.div>
@@ -1558,8 +1564,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             </AnimatePresence>
           </div>
 
-          {viewMode === 'table' && (
-            <div className="overflow-x-auto">
+          <div className="overflow-x-auto">
               <table className="w-full text-[11px]">
                 <thead>
                   <tr className="border-b border-black/5 bg-black/[0.008]">
@@ -1631,32 +1636,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 </tbody>
               </table>
             </div>
-          )}
 
-          {viewMode === 'tree' && (
-            <div className="grid grid-cols-1 gap-3 p-3 lg:grid-cols-[300px_minmax(0,1fr)]">
-              <aside className="rounded-xl border border-cyan-100 bg-gradient-to-b from-cyan-50/70 to-white p-3">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-bold text-[#164e63]">{zh ? '资产分类树' : 'Asset Classification Tree'}</p>
-                    <p className="mt-0.5 text-[9px] text-black/35">{zh ? '类型 → 产品 → 站点 → 在线状态' : 'Type → Product → Site → Online status'}</p>
-                  </div>
-                  <button type="button" onClick={() => { setTypeFilter('all'); setDeviceCategoryFilter(''); setDcFilter('all'); setStatusFilter('all'); setViewMode('table'); }} className="text-[10px] font-semibold text-cyan-600 hover:underline">{zh ? '全部' : 'All'}</button>
-                </div>
-                {assetTreeLoading ? <div className="py-8 text-center text-[10px] text-black/30"><RefreshCw size={15} className="mx-auto mb-2 animate-spin" />{zh ? '加载分类…' : 'Loading tree…'}</div> : assetTree.length === 0 ? <div className="py-8 text-center text-[10px] text-black/30">{zh ? '暂无分类数据' : 'No classification data'}</div> : <div className="space-y-0.5">{assetTree.map(node => renderTreeNode(node))}</div>}
-              </aside>
-              <div className="rounded-xl border border-black/5 bg-white p-4">
-                <div className="flex h-full min-h-[260px] items-center justify-center text-center">
-                  <div>
-                    <LayoutGrid size={28} className="mx-auto mb-2 text-cyan-300" />
-                    <p className="text-sm font-semibold text-[#164e63]">{zh ? '选择左侧分类查看资产' : 'Select a category to view assets'}</p>
-                    <p className="mt-1 text-[11px] text-black/35">{zh ? '点击任意节点会自动切换到资产列表并应用筛选条件。' : 'Click any node to open the asset table with its filters applied.'}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
+          {/* Legacy grouped view removed; assets are now shown only in the table view.
           {viewMode === 'group' && false && (
             <div className="divide-y divide-black/[0.03]">
               {loading ? (
@@ -1728,6 +1709,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               })}
             </div>
           )}
+          */}
 
           {terminalSession && (
             <motion.div
@@ -1863,6 +1845,28 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       />
 
       {/* Delete Confirmation */}
+      {showBatchTakeoverConfirm && (
+        <div className="fixed inset-0 z-[230] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-950/45 backdrop-blur-sm" onClick={() => setShowBatchTakeoverConfirm(false)} />
+          <motion.div initial={{ opacity: 0, scale: 0.96, y: 8 }} animate={{ opacity: 1, scale: 1, y: 0 }} className="relative w-full max-w-md rounded-2xl border border-black/10 bg-white p-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600"><Shield size={18} /></div>
+              <div>
+                <h3 className="text-base font-bold text-slate-800">{zh ? '确认批量口令上收' : 'Confirm batch takeover'}</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">{zh ? `将检查并处理已选择的 ${selectedIds.size} 台资产。已绑定凭据的设备会自动跳过，不会修改设备口令。` : `The selected ${selectedIds.size} asset(s) will be checked and processed. Credential-bound devices will be skipped without changing their passwords.`}</p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-xl border border-cyan-100 bg-cyan-50/70 px-3 py-2 text-[11px] leading-5 text-cyan-800">
+              {zh ? '未绑定凭据的设备才会进入后台上收，并在下方显示逐设备结果。' : 'Only unbound devices enter the background takeover task; per-device results will appear below.'}
+            </div>
+            <div className="mt-5 flex justify-end gap-2 border-t border-black/5 pt-4">
+              <button type="button" onClick={() => setShowBatchTakeoverConfirm(false)} className="h-9 rounded-xl border border-black/10 px-4 text-sm font-semibold text-slate-500 hover:bg-slate-50">{zh ? '取消' : 'Cancel'}</button>
+              <button type="button" onClick={() => { setShowBatchTakeoverConfirm(false); void handleBatchTakeover(); }} className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-cyan-500 px-4 text-sm font-semibold text-white shadow-sm hover:bg-cyan-600"><Shield size={14} />{zh ? '确认上收' : 'Start takeover'}</button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       <DeleteConfirmModal
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}

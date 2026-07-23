@@ -30,7 +30,7 @@ from typing import Any
 from database import get_db_connection
 from core.config import settings
 from core.crypto import encrypt_credential, decrypt_credential
-from services.vault_service import resolve_device_credentials, write_credentials as vault_write, vault_available
+from services.vault_service import credential_is_shared, resolve_device_credentials, write_credentials as vault_write, vault_available
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +116,16 @@ def _sync_credential_vault(device: dict, role: str, enc_new: str) -> None:
     except Exception as exc:
         logger.error("[Rotation] Failed to sync credential vault for %s: %s",
                      device.get('hostname') or device.get('id'), exc, exc_info=True)
+
+
+def _commit_vault_after_rotation(device: dict, role: str, enc_new: str, sync_vault: bool) -> None:
+    """Commit a successful single-device rotation to the vault when authorized.
+
+    Credential-wide synchronization deliberately passes ``sync_vault=False``:
+    the vault is committed once, centrally, only after every target verifies.
+    """
+    if sync_vault:
+        _sync_credential_vault(device, role, enc_new)
 
 
 # ── 厂商改密命令生成 ──────────────────────────────
@@ -223,7 +233,18 @@ def check_expiring(days_ahead: int | None = None) -> list[dict[str, Any]]:
         conn.close()
 
 
-def rotate_password(device_id: str, role: str = 'admin', target_password: str = None) -> dict[str, Any]:
+def rotate_password(
+    device_id: str,
+    role: str = 'admin',
+    target_password: str = None,
+    *,
+    credential_snapshot: dict[str, Any] | None = None,
+    sync_vault: bool = True,
+    login_username: str | None = None,
+    login_password: str | None = None,
+    connection_timeout: int | None = None,
+    command_read_timeout: int | None = None,
+) -> dict[str, Any]:
     """
     对单台设备的指定角色执行密码轮换。
     role: 'normal' | 'admin' | 'enable'
@@ -261,7 +282,34 @@ def rotate_password(device_id: str, role: str = 'admin', target_password: str = 
     finally:
         conn.close()
 
-    creds = resolve_device_credentials(device)
+    creds = credential_snapshot or resolve_device_credentials(device)
+
+    # A bound device is not an independent password-rotation target. Rotating
+    # it here would make a shared credential point at one device's new password
+    # while the other bound devices still use the old password. The credential
+    # center's durable synchronization job is the only supported path.
+    if sync_vault and (device.get('credential_id') or device.get('admin_credential_id')):
+        binding_conn = get_db_connection()
+        try:
+            shared_binding = False
+            for binding_id in (device.get('credential_id'), device.get('admin_credential_id')):
+                if not binding_id:
+                    continue
+                binding_row = binding_conn.execute(
+                    'SELECT id, account_role FROM credentials WHERE id = ?',
+                    (binding_id,),
+                ).fetchone()
+                if credential_is_shared(binding_conn, binding_id, dict(binding_row) if binding_row else None, device_hostname=device.get('hostname')):
+                    shared_binding = True
+                    break
+        finally:
+            binding_conn.close()
+        if shared_binding:
+            return {
+                'success': False,
+                'code': 'credential_bound_use_credential_sync',
+                'message': 'Device is bound to a credential; change the password from the credential center so all bound devices stay consistent',
+            }
     
     # [LOGIC] Determine login credentials vs target credentials
     platform = (device.get('platform') or '').lower()
@@ -317,10 +365,10 @@ def rotate_password(device_id: str, role: str = 'admin', target_password: str = 
     
     # 2. Select target for rotation
     if role == 'normal':
-        target_username = device.get('normal_username') or 'user'
+        target_username = creds.get('normal_username') or device.get('normal_username') or 'user'
         current_target_pwd = creds.get('normal_password') or creds.get('password')
     elif role == 'admin':
-        target_username = device.get('admin_username') or device.get('username')
+        target_username = creds.get('admin_username') or device.get('admin_username') or device.get('username')
         current_target_pwd = creds.get('admin_password') or creds.get('password')
     else: # enable
         target_username = 'enable'
@@ -346,6 +394,11 @@ def rotate_password(device_id: str, role: str = 'admin', target_password: str = 
             login_user = creds.get('normal_username') or current_admin_user
             login_pwd = creds.get('normal_password') or current_admin_pwd
         logger.info(f"[Rotation] Network device: using admin login ({login_user}) to avoid enable requirement")
+
+    if login_username is not None:
+        login_user = login_username
+    if login_password is not None:
+        login_pwd = login_password
 
     if not is_server:
         handler = _CHANGE_PASSWORD_HANDLERS.get(platform)
@@ -423,7 +476,7 @@ def rotate_password(device_id: str, role: str = 'admin', target_password: str = 
             # Do NOT fall back to the login password — devices with no enable
             # password will fail if a non-empty secret is passed (Netmiko
             # expects a "Password:" prompt that never comes).
-            'enable_password': decrypt_credential(device.get('enable_password') or '') or '',
+            'enable_password': creds.get('enable_password') or decrypt_credential(device.get('enable_password') or '') or '',
         }
 
         ssh_error = None
@@ -507,7 +560,7 @@ def rotate_password(device_id: str, role: str = 'admin', target_password: str = 
                             (enc_new, asset_id)
                         )
                 conn_post.commit()
-                _sync_credential_vault(device, role, enc_new)
+                _commit_vault_after_rotation(device, role, enc_new, sync_vault)
                 logger.info(
                     f"[Rotation] Completed for {device.get('hostname')} "
                     f"({role} written to DB and device)"
@@ -577,7 +630,10 @@ def rotate_password(device_id: str, role: str = 'admin', target_password: str = 
         'platform': platform,
         'port': device.get('management_port') or device.get('ssh_port') or 22,
         'secret': current_admin_pwd if 'cisco' in platform else '',
+        'conn_timeout': connection_timeout,
+        'command_read_timeout': command_read_timeout,
     }
+    device_info = {key: value for key, value in device_info.items() if value is not None}
 
     try:
         from drivers.factory import DriverFactory
@@ -622,12 +678,14 @@ def rotate_password(device_id: str, role: str = 'admin', target_password: str = 
                 if not res.success:
                     raise Exception(f"Server password change failed: {res.error}")
             else:
-                res = driver.send_config(commands)
+                res = driver.send_config(commands, read_timeout=command_read_timeout) if command_read_timeout else driver.send_config(commands)
                 if not res.success:
                     raise Exception(f"Config change failed: {res.error}")
             
             if not is_server:
-                driver.send_command(save_cmd)
+                save_result = driver.send_command(save_cmd, read_timeout=command_read_timeout) if command_read_timeout else driver.send_command(save_cmd)
+                if not save_result.success:
+                    raise Exception(f"Save configuration failed: {save_result.error}")
                 
             logger.info(f"[Rotation] Success for {device.get('hostname')} ({role})")
         finally:
@@ -636,6 +694,54 @@ def rotate_password(device_id: str, role: str = 'admin', target_password: str = 
     except Exception as e:
         logger.error(f"Rotation failed for {device.get('hostname')}: {e}")
         return {'success': False, 'message': f"Rotation failed: {str(e)}"}
+
+    # Reconnect with the changed secret before updating local state. This is
+    # the hardware-side commit check used by credential synchronization.
+    verify_user = target_username if role in ('normal', 'admin') else (current_admin_user or login_user)
+    verify_pwd = new_password if role in ('normal', 'admin') else (current_admin_pwd or login_pwd)
+    verify_enable = new_password if role == 'enable' else (creds.get('enable_password') or '')
+    verify_info = {
+        'ip_address': device_info.get('ip_address'),
+        'username': verify_user,
+        'password': verify_pwd,
+        'platform': platform,
+        'port': device_info.get('port'),
+        'enable_password': verify_enable,
+        'secret': verify_enable,
+        'conn_timeout': connection_timeout,
+        'command_read_timeout': command_read_timeout,
+    }
+    verify_info = {key: value for key, value in verify_info.items() if value is not None}
+    verify_attempt = None
+    try:
+        verify_attempt = DriverFactory.get_driver('netmiko', verify_info)
+        verify_attempt.__enter__()
+    except Exception:
+        logger.error("[Rotation] New credential verification failed for %s", device.get('hostname'), exc_info=True)
+        rollback_conn = get_db_connection()
+        try:
+            if role == 'normal':
+                rollback_conn.execute(
+                    "UPDATE devices SET normal_password = ?, rotation_status = 'failed', takeover_error = ? WHERE id = ?",
+                    (old_enc_normal, 'New credential verification failed', device_id),
+                )
+            elif role == 'admin':
+                rollback_conn.execute(
+                    "UPDATE devices SET admin_password = ?, username = ?, password = ?, rotation_status = 'failed', takeover_error = ? WHERE id = ?",
+                    (old_enc_admin, device.get('admin_username') or device.get('username') or '', old_enc_admin, 'New credential verification failed', device_id),
+                )
+            else:
+                rollback_conn.execute(
+                    "UPDATE devices SET enable_password = ?, rotation_status = 'failed', takeover_error = ? WHERE id = ?",
+                    (old_enc_enable, 'New credential verification failed', device_id),
+                )
+            rollback_conn.commit()
+        finally:
+            rollback_conn.close()
+        return {'success': False, 'message': 'New credential verification failed'}
+    finally:
+        if verify_attempt:
+            verify_attempt.__exit__(None, None, None)
 
     # Update DB
     now_str = datetime.now(timezone.utc).isoformat()
@@ -688,7 +794,7 @@ def rotate_password(device_id: str, role: str = 'admin', target_password: str = 
     finally:
         conn2.close()
 
-    _sync_credential_vault(device, role, enc_new)
+    _commit_vault_after_rotation(device, role, enc_new, sync_vault)
     logger.info("Password rotated for device %s (%s)", device.get('hostname'), device_id)
 
     return {
@@ -705,16 +811,32 @@ def get_rotation_status() -> list[dict[str, Any]]:
     try:
         try:
             rows = conn.execute(
-                "SELECT id, hostname, ip_address, platform, auth_model, "
-                "normal_username, normal_password_last_rotated, normal_password_expires_at, "
-                "admin_username, admin_password_last_rotated, admin_password_expires_at, "
-                "enable_password_last_rotated, enable_password_expires_at, "
-                "password_last_rotated, password_expires_at "
-                "FROM devices WHERE status != 'decommissioned'"
+                "SELECT d.id, d.hostname, d.ip_address, d.platform, d.auth_model, "
+                "d.credential_id, d.admin_credential_id, "
+                "c_normal.credential_name AS credential_name, "
+                "c_normal.username AS credential_username, "
+                "c_normal.account_role AS credential_account_role, "
+                "c_admin.credential_name AS admin_credential_name, "
+                "c_admin.username AS admin_credential_username, "
+                "c_admin.account_role AS admin_credential_account_role, "
+                "d.normal_username, d.normal_password_last_rotated, d.normal_password_expires_at, "
+                "d.admin_username, d.admin_password_last_rotated, d.admin_password_expires_at, "
+                "d.enable_password_last_rotated, d.enable_password_expires_at, "
+                "d.password_last_rotated, d.password_expires_at "
+                "FROM devices d "
+                "LEFT JOIN credentials c_normal ON c_normal.id = d.credential_id "
+                "LEFT JOIN credentials c_admin ON c_admin.id = d.admin_credential_id "
+                "WHERE d.status != 'decommissioned'"
             ).fetchall()
         except Exception as e:
             # Fallback to basic columns if PAM columns are missing
             logger.warning(f"Failed to fetch detailed rotation status (likely missing columns): {e}")
+            # PostgreSQL marks the current transaction as failed after a
+            # malformed/legacy-column query; clear it before using fallback.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             rows = conn.execute(
                 "SELECT id, hostname, ip_address, platform, "
                 "password_last_rotated, password_expires_at "
@@ -887,75 +1009,14 @@ def sync_hardware_device_password_for_credential(
     actor_username: str = None,
     max_workers: int = 10
 ) -> dict:
+    """Compatibility guard for callers of the pre-job implementation.
+
+    Password changes must be created through the credential API so the old
+    password can be verified and the vault is not changed before hardware
+    verification. Keeping this function as a hard failure prevents an older
+    integration from silently reintroducing the unsafe fire-and-forget flow.
     """
-    When a credential's password is updated in Credential Management (CMDB / Vault),
-    automatically SSH into all associated network devices concurrently using ThreadPoolExecutor,
-    issue CLI commands to change the hardware device password on each switch,
-    run 'write memory' / 'save', and log audit events.
-    """
-    if not cred_id or (not new_password and not new_enable_password):
-        return {'success': False, 'message': 'Nothing to sync'}
-
-    conn = get_db_connection()
-    try:
-        rows = conn.execute(
-            """
-            SELECT id, hostname, ip_address, platform, credential_id, admin_credential_id
-            FROM devices
-            WHERE credential_id = ? OR admin_credential_id = ?
-            """,
-            (cred_id, cred_id)
-        ).fetchall()
-        devices = [dict(r) for r in rows]
-    finally:
-        conn.close()
-
-    if not devices:
-        logger.info(f"[CredentialHardwareSync] No bound devices for credential {cred_id}")
-        return {'success': True, 'synced_devices': 0}
-
-    workers = min(max_workers, max(1, len(devices)))
-    logger.info(f"[CredentialHardwareSync] Starting parallel hardware password change on {len(devices)} devices using {workers} thread workers for credential {cred_id}")
-
-    def _sync_single_device(dev: dict) -> bool:
-        dev_id = dev['id']
-        is_admin_cred = (dev.get('admin_credential_id') == cred_id)
-        ok = True
-
-        if new_enable_password:
-            res_enable = rotate_password(dev_id, role='enable', target_password=new_enable_password)
-            if not res_enable.get('success'):
-                ok = False
-
-        if new_password:
-            role = 'admin' if is_admin_cred else 'normal'
-            res = rotate_password(dev_id, role=role, target_password=new_password)
-            if not res.get('success'):
-                ok = False
-
-        return ok
-
-    success_count = 0
-    fail_count = 0
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_to_dev = {executor.submit(_sync_single_device, dev): dev for dev in devices}
-        for future in as_completed(future_to_dev):
-            dev = future_to_dev[future]
-            try:
-                if future.result():
-                    success_count += 1
-                else:
-                    fail_count += 1
-            except Exception as exc:
-                fail_count += 1
-                logger.error(f"[CredentialHardwareSync] Device {dev.get('hostname')} failed with exception: {exc}")
-
-    logger.info(f"[CredentialHardwareSync] Parallel sync finished for credential {cred_id}: {success_count} success, {fail_count} failed out of {len(devices)} devices")
-
     return {
-        'success': True,
-        'synced_devices': len(devices),
-        'success_count': success_count,
-        'fail_count': fail_count,
+        'success': False,
+        'message': 'Direct credential hardware sync is deprecated; create a credential password sync job instead',
     }

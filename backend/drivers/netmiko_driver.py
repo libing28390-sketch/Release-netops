@@ -357,7 +357,7 @@ class NetmikoDriver(BaseDriver):
                 'cmd_verify': False,
                 'strip_prompt': True,
                 'strip_command': True,
-                'read_timeout': 120,
+                'read_timeout': self.device_info.get('command_read_timeout', 120),
                 'delay_factor': 2
             }
             # Override with kwargs (e.g. expect_string)
@@ -412,7 +412,7 @@ class NetmikoDriver(BaseDriver):
                 execution_time=elapsed,
             )
 
-    def send_config(self, configs: List[str]) -> CommandResult:
+    def send_config(self, configs: List[str], **kwargs) -> CommandResult:
         import logging
         logger = logging.getLogger(__name__)
         start_time = time.time()
@@ -437,27 +437,27 @@ class NetmikoDriver(BaseDriver):
                 output = ""
                 for cmd in configs:
                     self.conn.write_channel(cmd + '\n')
-                    out = self.conn.read_channel_timing(read_timeout=10)
+                    out = self.conn.read_channel_timing(read_timeout=kwargs.get('read_timeout', 10))
                     output += out
                     if 'old password' in out.lower() or 'password:' in out.lower():
                         self.conn.write_channel(self.password + '\n')
-                        out2 = self.conn.read_channel_timing(read_timeout=10)
+                        out2 = self.conn.read_channel_timing(read_timeout=kwargs.get('read_timeout', 10))
                         output += out2
                 
                 # Dynamic context and candidate-config cleanup for Huawei VRP8
                 prompt = self.conn.find_prompt()
                 if '-aaa' in prompt:
                     self.conn.write_channel('quit\n')
-                    output += self.conn.read_channel_timing(read_timeout=5)
+                    output += self.conn.read_channel_timing(read_timeout=kwargs.get('read_timeout', 5))
                     prompt = self.conn.find_prompt()
                 
                 if prompt.startswith('*'):
                     self.conn.write_channel('commit\n')
-                    output += self.conn.read_channel_timing(read_timeout=10)
+                    output += self.conn.read_channel_timing(read_timeout=kwargs.get('read_timeout', 10))
                 
                 self.conn.exit_config_mode()
             else:
-                per_cmd_timeout = max(30, len(configs) * 3)
+                per_cmd_timeout = max(30, kwargs.get('read_timeout', len(configs) * 3))
                 output = self.conn.send_config_set(
                     configs,
                     exit_config_mode=True,

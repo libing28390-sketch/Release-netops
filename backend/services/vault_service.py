@@ -18,6 +18,51 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def credential_is_shared(
+    conn,
+    credential_id: str | None,
+    credential_row: dict | None = None,
+    *,
+    device_hostname: str | None = None,
+) -> bool:
+    """Return whether a credential is a shared credential-center binding.
+
+    ``credentials.id`` is also used for device-local records created from a
+    password typed in the asset form.  Those records intentionally have the
+    ``unbound`` role and must continue to resolve from the device/asset cache.
+    For legacy rows without an explicit role, more than one device reference
+    is treated as shared.
+    """
+    if not credential_id:
+        return False
+    row = credential_row
+    if row is None:
+        fetched = conn.execute(
+            'SELECT account_role, credential_name FROM credentials WHERE id = ?',
+            (credential_id,),
+        ).fetchone()
+        row = dict(fetched) if fetched else {}
+    role = str(row.get('account_role') or 'unbound').strip().lower()
+    if role != 'unbound':
+        return True
+    name = str(row.get('credential_name') or '').strip().lower()
+    hostname = str(device_hostname or '').strip().lower()
+    is_generated_device_record = name.startswith('cred-device-') or (
+        hostname and name.startswith(f'cred-{hostname}-')
+    )
+    if not is_generated_device_record:
+        # Explicitly referenced, named credentials from older schemas did not
+        # always carry account_role. Treat them as shared unless they match the
+        # device-local naming convention used by asset-form password entry.
+        return True
+    count_row = conn.execute(
+        'SELECT COUNT(*) AS reference_count FROM devices '
+        'WHERE credential_id = ? OR admin_credential_id = ?',
+        (credential_id, credential_id),
+    ).fetchone()
+    return int((dict(count_row).get('reference_count') if count_row else 0) or 0) > 1
+
 # Lazy-import hvac to make it an optional dependency
 _client = None
 
@@ -194,8 +239,8 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
 
     credential_id = device.get('credential_id') or asset.get('credential_id')
     admin_credential_id = device.get('admin_credential_id') or asset.get('admin_credential_id')
-    normal_bound = bool(credential_id)
-    admin_bound = bool(admin_credential_id)
+    normal_bound = False
+    admin_bound = False
 
     if resolved is None:
         # A bound credential is the authority for that account role.  The
@@ -222,6 +267,22 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
                     conn.close()
             except Exception as e:
                 logger.warning(f"Database error during resolve_device_credentials in vault_service: {e}")
+
+        # A device-local record also has a credentials.id, but its explicit
+        # ``unbound`` role means the device/asset password remains authoritative.
+        # Only shared credential-center records may suppress that fallback.
+        try:
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                normal_bound = credential_is_shared(conn, credential_id, db_creds, device_hostname=device.get('hostname')) if credential_id else False
+                admin_bound = credential_is_shared(conn, admin_credential_id, db_admin_creds, device_hostname=device.get('hostname')) if admin_credential_id else False
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning('Failed to classify credential binding for %s: %s', device.get('hostname') or device.get('id'), exc)
+            normal_bound = False
+            admin_bound = False
 
         # Local decryption fallback.  Prefer the vault username/password for
         # a bound role; otherwise use the legacy device fields.
@@ -250,6 +311,21 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
                 db_creds.get('snmp_community') or device.get('snmp_community')
             ) or '',
         }
+
+    # Vault-backed records still need the same shared-vs-device-local
+    # classification before deciding whether the linked asset cache may be
+    # used below.
+    if resolved is not None and (credential_id or admin_credential_id) and not (normal_bound or admin_bound):
+        try:
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                normal_bound = credential_is_shared(conn, credential_id, device_hostname=device.get('hostname')) if credential_id else False
+                admin_bound = credential_is_shared(conn, admin_credential_id, device_hostname=device.get('hostname')) if admin_credential_id else False
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning('Failed to classify vault credential binding for %s: %s', device.get('hostname') or device.get('id'), exc)
 
     if asset:
         # Only unbound roles may read the legacy asset cache.  This is the

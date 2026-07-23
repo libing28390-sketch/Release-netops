@@ -1230,13 +1230,22 @@ def reveal_device_password(device_id: str, role: str = Query(default='admin'), u
              return {"success": False, "message": f"无效的角色类型: {role}"}
         
         row = conn.execute(
-            f'SELECT hostname, ip_address, {target_col} as target_pwd FROM devices WHERE id = ?',
+            f'SELECT id, asset_id, hostname, ip_address, {target_col} as target_pwd FROM devices WHERE id = ?',
             (device_id,),
         ).fetchone()
         if not row:
             return {"success": False, "message": "设备不存在"}
         
         pwd_to_decrypt = row['target_pwd']
+        # Asset-management records keep the encrypted local role passwords on
+        # physical_assets.  Fall back there for Plan-A linked devices whose
+        # devices.* password columns are intentionally blank.
+        if not pwd_to_decrypt and row['asset_id']:
+            asset_row = conn.execute(
+                f'SELECT {target_col} as target_pwd FROM physical_assets WHERE id = ?',
+                (row['asset_id'],),
+            ).fetchone()
+            pwd_to_decrypt = asset_row['target_pwd'] if asset_row else ''
         
         if not pwd_to_decrypt:
             return {"success": False, "message": f"该角色 ({role}) 尚未设置或轮换密码"}
@@ -1255,8 +1264,59 @@ def reveal_device_password(device_id: str, role: str = Query(default='admin'), u
             target_type='device',
             target_id=device_id,
             device_id=device_id,
+            details={'role': role, 'source': 'device_local'},
         )
         return {"success": True, "data": {"password": decrypted, "role": role}}
+    finally:
+        conn.close()
+
+
+@router.post("/devices/{device_id}/reveal-password/copy")
+def audit_device_password_copy(device_id: str, role: str = Query(default='admin'), user: dict = require_role("Administrator")):
+    """Audit copying a device-local password without returning the secret."""
+    valid_roles = {'normal', 'admin', 'enable'}
+    if role not in valid_roles:
+        return {"success": False, "message": f"无效的角色类型: {role}"}
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT id, hostname, asset_id FROM devices WHERE id = ?',
+            (device_id,),
+        ).fetchone()
+        if not row:
+            return {"success": False, "message": "设备不存在"}
+
+        col = {'normal': 'normal_password', 'admin': 'admin_password', 'enable': 'enable_password'}[role]
+        secret_row = conn.execute(
+            f'SELECT {col} as target_pwd FROM devices WHERE id = ?',
+            (device_id,),
+        ).fetchone()
+        target_pwd = secret_row['target_pwd'] if secret_row else ''
+        if not target_pwd and row['asset_id']:
+            asset_row = conn.execute(
+                f'SELECT {col} as target_pwd FROM physical_assets WHERE id = ?',
+                (row['asset_id'],),
+            ).fetchone()
+            target_pwd = asset_row['target_pwd'] if asset_row else ''
+        if not target_pwd:
+            return {"success": False, "message": f"该角色 ({role}) 尚未设置或轮换密码"}
+
+        log_audit_event(
+            event_type='PASSWORD_COPY',
+            category='security',
+            severity='high',
+            status='success',
+            summary=f"管理员复制了设备 {row['hostname']} 的 {role} 账号密码",
+            actor_username=user.get('username', 'admin'),
+            actor_role=user.get('role', 'Administrator'),
+            target_type='device',
+            target_id=device_id,
+            device_id=device_id,
+            details={'role': role, 'source': 'device_local'},
+            conn=conn,
+        )
+        conn.commit()
+        return {"success": True, "message": "已记录设备本地密码复制审计"}
     finally:
         conn.close()
 

@@ -1,11 +1,10 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Pagination from './Pagination';
 import PageHero from './PageHero';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import {
-  RefreshCw, Shield, AlertTriangle, CheckCircle2, Clock, Loader2, RotateCcw,
-  Search, X, ShieldCheck, ShieldAlert, ShieldX, Key, KeyRound, Server, Filter,
-  Eye, EyeOff, Copy, Check, ChevronDown, User,
+  RefreshCw, Shield, Loader2, Search, ShieldCheck, ShieldAlert, ShieldX,
+  Key, KeyRound, Server, User, Eye, EyeOff, Copy, Check, X,
 } from 'lucide-react';
 
 interface RotationDevice {
@@ -15,6 +14,8 @@ interface RotationDevice {
   platform: string;
   auth_model: string;
   username?: string;
+  credential_id?: string;
+  admin_credential_id?: string;
   
   // Normal
   normal_username: string;
@@ -39,6 +40,7 @@ interface RotationDevice {
 
 interface PasswordRotationPanelProps {
   language: string;
+  currentUser?: { role?: string };
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
@@ -72,25 +74,202 @@ const isServer = (p: string): boolean => {
 
 type StatusFilter = 'all' | 'healthy' | 'expiring' | 'expired' | 'unconfigured';
 
-export default function PasswordRotationPanel({ language }: PasswordRotationPanelProps) {
+export default function PasswordRotationPanel({ language, currentUser }: PasswordRotationPanelProps) {
   const zh = language === 'zh';
+  const isAdministrator = String(currentUser?.role || '').trim().toLowerCase() === 'administrator';
   const [devices, setDevices] = useState<RotationDevice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rotating, setRotating] = useState<string | null>(null); // deviceId:role
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [revealKey, setRevealKey] = useState<string | null>(null); // deviceId:role
-  const [revealedPwd, setRevealedPwd] = useState<string | null>(null);
-  const [revealLoading, setRevealLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [rotateAllRole, setRotateAllRole] = useState<'admin' | 'normal'>('admin');
-  const [rotateAllRunning, setRotateAllRunning] = useState(false);
-  const [rotateAllProgress, setRotateAllProgress] = useState<{ done: number; total: number | null; rotated: number; failed: number } | null>(null);
-  const [rotateAllSummary, setRotateAllSummary] = useState<{ total: number; rotated: number; failed: number; results: Array<{ hostname: string; success: boolean; message: string }> } | null>(null);
+  const [revealedSecret, setRevealedSecret] = useState<{ id: string; type: 'password' | 'enable_password'; secret: string } | null>(null);
+  const [secretLoading, setSecretLoading] = useState<string | null>(null);
+  const [secretCopied, setSecretCopied] = useState(false);
+  const [localRevealedSecret, setLocalRevealedSecret] = useState<{ deviceId: string; role: 'normal' | 'admin' | 'enable'; secret: string } | null>(null);
+  const [localSecretLoading, setLocalSecretLoading] = useState<string | null>(null);
+  const [localSecretCopied, setLocalSecretCopied] = useState(false);
+  const [editingCredential, setEditingCredential] = useState<{ id: string; type: 'password' | 'enable_password'; label: string; username: string; deviceName: string } | null>(null);
+  const [credentialForm, setCredentialForm] = useState({ oldSecret: '', newSecret: '' });
+  const [credentialSaving, setCredentialSaving] = useState(false);
+  const [credentialError, setCredentialError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const credentialRoleFor = (account: any): string => {
+    if (account.roleKey === 'admin' || account.roleKey === 'enable') {
+      return String(account.admin_credential_account_role || 'unbound').trim().toLowerCase();
+    }
+    return String(account.credential_account_role || 'unbound').trim().toLowerCase();
+  };
+
+  const isSharedCredentialAccount = (account: any): boolean => {
+    const id = account.roleKey === 'admin' || account.roleKey === 'enable'
+      ? account.admin_credential_id
+      : account.credential_id;
+    return Boolean(id && credentialRoleFor(account) !== 'unbound');
+  };
+
+  const credentialIdFor = (account: any): string => {
+    if (!isSharedCredentialAccount(account)) return '';
+    if (account.roleKey === 'admin' || account.roleKey === 'enable') {
+      return String(account.admin_credential_id || '');
+    }
+    return String(account.credential_id || '');
+  };
+
+  const credentialNameFor = (account: any): string => {
+    if (account.roleKey === 'admin' || account.roleKey === 'enable') {
+      return String(account.admin_credential_name || '');
+    }
+    return String(account.credential_name || '');
+  };
+
+  const revealCredentialSecret = async (account: any, type: 'password' | 'enable_password') => {
+    if (!isAdministrator) return;
+    const id = credentialIdFor(account);
+    if (!id) return;
+    if (revealedSecret?.id === id && revealedSecret.type === type) {
+      setRevealedSecret(null);
+      setSecretCopied(false);
+      return;
+    }
+    const key = `${id}:${type}`;
+    setSecretLoading(key);
+    setSecretCopied(false);
+    setCredentialError('');
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const response = await fetch(`${API_BASE}/api/credentials/${encodeURIComponent(id)}/secret?type=${encodeURIComponent(type)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) throw new Error(payload.detail || payload.message || (zh ? '凭据密码读取失败' : 'Unable to read credential secret'));
+      setRevealedSecret({ id, type, secret: String(payload.data?.secret || '') });
+    } catch (error: any) {
+      setCredentialError(error.message || String(error));
+    } finally {
+      setSecretLoading(null);
+    }
+  };
+
+  const copyRevealedSecret = async () => {
+    if (!revealedSecret?.secret) return;
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const response = await fetch(`${API_BASE}/api/credentials/${encodeURIComponent(revealedSecret.id)}/secret/copy?type=${encodeURIComponent(revealedSecret.type)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) throw new Error(payload.detail || payload.message || (zh ? '复制审计失败' : 'Copy audit failed'));
+      await navigator.clipboard.writeText(revealedSecret.secret);
+      setSecretCopied(true);
+      window.setTimeout(() => setSecretCopied(false), 2000);
+    } catch (error: any) {
+      setCredentialError(error.message || String(error));
+    }
+  };
+
+  const revealDeviceLocalSecret = async (account: any) => {
+    if (!isAdministrator || !account?.id) return;
+    const role = account.roleKey as 'normal' | 'admin' | 'enable';
+    const key = `${account.id}:${role}`;
+    if (localRevealedSecret?.deviceId === account.id && localRevealedSecret.role === role) {
+      setLocalRevealedSecret(null);
+      setLocalSecretCopied(false);
+      return;
+    }
+    setLocalSecretLoading(key);
+    setLocalSecretCopied(false);
+    setCredentialError('');
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const response = await fetch(`${API_BASE}/api/devices/${encodeURIComponent(account.id)}/reveal-password?role=${encodeURIComponent(role)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) throw new Error(payload.detail || payload.message || (zh ? '设备本地密码读取失败' : 'Unable to read device-local password'));
+      setLocalRevealedSecret({ deviceId: account.id, role, secret: String(payload.data?.password || '') });
+    } catch (error: any) {
+      setCredentialError(error.message || String(error));
+    } finally {
+      setLocalSecretLoading(null);
+    }
+  };
+
+  const copyDeviceLocalSecret = async () => {
+    if (!localRevealedSecret?.secret) return;
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const response = await fetch(`${API_BASE}/api/devices/${encodeURIComponent(localRevealedSecret.deviceId)}/reveal-password/copy?role=${encodeURIComponent(localRevealedSecret.role)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) throw new Error(payload.detail || payload.message || (zh ? '复制审计失败' : 'Copy audit failed'));
+      await navigator.clipboard.writeText(localRevealedSecret.secret);
+      setLocalSecretCopied(true);
+      window.setTimeout(() => setLocalSecretCopied(false), 2000);
+    } catch (error: any) {
+      setCredentialError(error.message || String(error));
+    }
+  };
+
+  const openCredentialEditor = (account: any, type: 'password' | 'enable_password') => {
+    if (!isAdministrator) return;
+    const id = credentialIdFor(account);
+    if (!id) return;
+    setCredentialError('');
+    setNotice('');
+    setCredentialForm({ oldSecret: '', newSecret: '' });
+    setEditingCredential({
+      id,
+      type,
+      label: type === 'enable_password' ? (zh ? 'Enable 密码' : 'Enable password') : (account.roleKey === 'admin' ? (zh ? '特权账号密码' : 'Privileged password') : (zh ? '普通账号密码' : 'Normal account password')),
+      username: String(account.currentUsername || '-'),
+      deviceName: String(account.hostname || account.ip_address || account.id || ''),
+    });
+  };
+
+  const submitCredentialUpdate = async () => {
+    if (!editingCredential || credentialSaving) return;
+    if (!credentialForm.oldSecret || !credentialForm.newSecret) {
+      setCredentialError(zh ? '请输入旧密码和新密码。' : 'Enter both the current and new passwords.');
+      return;
+    }
+    setCredentialSaving(true);
+    setCredentialError('');
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const body = editingCredential.type === 'enable_password'
+        ? { old_enable_password: credentialForm.oldSecret, enable_password: credentialForm.newSecret }
+        : { old_password: credentialForm.oldSecret, password: credentialForm.newSecret };
+      const response = await fetch(`${API_BASE}/api/credentials/${encodeURIComponent(editingCredential.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) throw new Error(payload.detail || payload.message || (zh ? '凭据密码更新失败' : 'Credential password update failed'));
+      setEditingCredential(null);
+      setCredentialForm({ oldSecret: '', newSecret: '' });
+      setNotice(payload.job_id
+        ? (zh ? `凭据密码更新任务已提交，将同步 ${payload.device_count || 0} 台关联设备。` : `Credential password update queued for ${payload.device_count || 0} bound devices.`)
+        : (zh ? '凭据中心密码已更新。' : 'Credential center password updated.'));
+      await fetchStatus();
+    } catch (error: any) {
+      const raw = String(error.message || error);
+      setCredentialError(raw.includes('old_password is incorrect')
+        ? (zh ? '当前密码不正确，请确认输入的是凭据中心中保存的旧密码。' : 'The current password is incorrect.')
+        : raw.includes('old_enable_password is incorrect')
+          ? (zh ? '当前 Enable 密码不正确，请确认输入的是凭据中心中保存的旧 Enable 密码。' : 'The current Enable password is incorrect.')
+          : raw);
+    } finally {
+      setCredentialSaving(false);
+    }
+  };
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -113,145 +292,6 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
   useEffect(() => { setPage(1); }, [search, statusFilter]);
-
-  const handleRotate = async (deviceId: string, role: string = 'admin') => {
-    const key = `${deviceId}:${role}`;
-    setRotating(key);
-    try {
-      const token = localStorage.getItem('netops_token') || '';
-      const resp = await fetch(`${API_BASE}/api/devices/${deviceId}/rotate-password?role=${role}`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (!data.success) throw new Error(data.data?.message || 'Rotation failed');
-      
-      setRevealKey(null); // Clear revealed password after rotation
-      setRevealedPwd(null);
-      
-      // Delay fetch to allow backend async tasks to settle
-      setTimeout(fetchStatus, 1500);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRotating(null);
-    }
-  };
-
-  const handleRotateAll = async () => {
-    if (rotateAllRunning) return;
-    const roleLabel = rotateAllRole === 'admin' ? (zh ? '特权(admin)' : 'admin') : (zh ? '普通(normal)' : 'normal');
-    const ok = window.confirm(
-      zh
-        ? `确认要一键轮换【全部设备】的${roleLabel}密码吗？\n\n这会逐台 SSH 登录并修改密码，过程不可撤销，请确保设备当前凭据正确。`
-        : `Rotate the ${roleLabel} password for ALL devices?\n\nThis SSH-connects to every device and changes its password. It cannot be undone.`
-    );
-    if (!ok) return;
-
-    setRotateAllRunning(true);
-    setRotateAllProgress({ done: 0, total: null, rotated: 0, failed: 0 });
-    setRotateAllSummary(null);
-    setError(null);
-    const token = localStorage.getItem('netops_token') || '';
-    try {
-      const resp = await fetch(`${API_BASE}/api/devices/rotation/rotate-all?role=${rotateAllRole}`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (!data.success || !data.data?.run_id) throw new Error(data.message || 'Failed to start');
-      const runId = data.data.run_id;
-
-      // Poll progress until completed.
-      await new Promise<void>((resolve) => {
-        const timer = setInterval(async () => {
-          try {
-            const pr = await fetch(`${API_BASE}/api/devices/rotation/rotate-all/${runId}/progress`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            const pd = await pr.json();
-            if (pd.success && pd.data) {
-              const d = pd.data;
-              setRotateAllProgress({ done: d.done, total: d.total, rotated: d.rotated, failed: d.failed });
-              if (d.status === 'completed') {
-                clearInterval(timer);
-                setRotateAllSummary({
-                  total: d.total ?? d.done,
-                  rotated: d.rotated,
-                  failed: d.failed,
-                  results: Array.isArray(d.results) ? d.results : [],
-                });
-                resolve();
-              }
-            }
-          } catch {
-            /* transient network error; keep polling */
-          }
-        }, 2000);
-      });
-      // Refresh the status table after completion.
-      setTimeout(fetchStatus, 800);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRotateAllRunning(false);
-    }
-  };
-
-  const handleReveal = async (deviceId: string, role: string = 'admin') => {
-    const key = `${deviceId}:${role}`;
-    if (revealKey === key) { setRevealKey(null); setRevealedPwd(null); return; }
-    setRevealLoading(true);
-    setRevealKey(key);
-    setRevealedPwd(null);
-    setCopied(false);
-    try {
-      const token = localStorage.getItem('netops_token') || '';
-      const resp = await fetch(`${API_BASE}/api/devices/${deviceId}/reveal-password?role=${role}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await resp.json();
-      if (data.success) { setRevealedPwd(data.data.password); }
-      else { setError(data.message || (zh ? '获取密码失败' : 'Failed to reveal password')); setRevealKey(null); }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-      setRevealKey(null);
-    } finally {
-      setRevealLoading(false);
-    }
-  };
-
-  const handleCopyPwd = () => {
-    if (!revealedPwd) return;
-    
-    // Modern API
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(revealedPwd)
-        .then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        })
-        .catch(() => {
-          // Fallback to legacy if modern fails
-          legacyCopy(revealedPwd);
-        });
-    } else {
-      legacyCopy(revealedPwd);
-    }
-  };
-
-  const legacyCopy = (text: string) => {
-    try {
-      const textArea = document.createElement("textarea");
-      textArea.value = text;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textArea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Fallback copy failed', err);
-    }
-  };
 
   /* ── computed stats ── */
   const stats = useMemo(() => {
@@ -353,6 +393,37 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
     return accountList.slice(start, start + pageSize);
   }, [accountList, page, pageSize]);
 
+  // A shared credential is one operational object even when it is bound to
+  // many devices.  Keep unbound devices as individual rows so the page never
+  // hides the device/IP that still needs local credential management.
+  const rotationGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; credentialId: string; credentialName: string; username: string; isCredential: boolean; accounts: any[]; devices: any[] }>();
+    accountList.forEach(account => {
+      const credentialId = credentialIdFor(account);
+      const key = credentialId ? `credential:${credentialId}` : `device:${account.id}`;
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          key,
+          credentialId,
+          credentialName: credentialNameFor(account),
+          username: String(account.currentUsername || ''),
+          isCredential: Boolean(credentialId),
+          accounts: [],
+          devices: [],
+        };
+        groups.set(key, group);
+      }
+      group.accounts.push(account);
+      if (!group.credentialName) group.credentialName = credentialNameFor(account);
+      if (!group.username) group.username = String(account.currentUsername || '');
+      if (!group.devices.some(device => device.id === account.id)) {
+        group.devices.push({ id: account.id, hostname: account.hostname, ip_address: account.ip_address, platform: account.platform });
+      }
+    });
+    return Array.from(groups.values());
+  }, [accountList]);
+
   /* ══════════ Stat card data ══════════ */
   const statCards = [
     {
@@ -396,6 +467,22 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
+      <div className="flex items-start gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs leading-5 text-cyan-800">
+        <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+        <span>{zh ? '此页面展示口令轮换状态。绑定设备按凭据分组，未绑定设备单独展示；管理员可查看或更新凭据中心的权威密码，绑定凭据的更新会创建同步任务。' : 'This page shows rotation status. Bound devices are grouped by credential while unbound devices remain individual; administrators can view or update the authoritative credential-center secret, and bound updates run as synchronization jobs.'}</span>
+      </div>
+      {error && (
+        <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-700" role="alert">
+          <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+      {notice && (
+        <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-700" role="status">
+          <Check size={14} className="mt-0.5 shrink-0" />
+          <span>{notice}</span>
+        </div>
+      )}
       {/* ═══ Stat Cards ═══ */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {statCards.map(c => {
@@ -479,104 +566,15 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {rotateAllRunning && rotateAllProgress && (
-            <span className="text-[11px] text-black/50 tabular-nums">
-              {zh ? '进度' : 'Progress'} {rotateAllProgress.done}/{rotateAllProgress.total ?? '…'}
-              <span className="text-emerald-600"> ✓{rotateAllProgress.rotated}</span>
-              {rotateAllProgress.failed > 0 && <span className="text-red-500"> ✗{rotateAllProgress.failed}</span>}
-            </span>
-          )}
-          <select
-            value={rotateAllRole}
-            onChange={e => setRotateAllRole(e.target.value as 'admin' | 'normal')}
-            disabled={rotateAllRunning}
-            className="h-7 px-2 rounded-lg bg-black/[0.02] border border-black/[0.04] text-[11px] text-black/60 focus:ring-1 focus:ring-cyan-500/20"
-            title={zh ? '选择要轮换的账号角色' : 'Role to rotate'}
-          >
-            <option value="admin">{zh ? '特权账号' : 'Admin'}</option>
-            <option value="normal">{zh ? '普通账号' : 'Normal'}</option>
-          </select>
-          <button
-            onClick={handleRotateAll}
-            disabled={rotateAllRunning || loading}
-            className="h-7 px-3 rounded-lg bg-cyan-500 text-white text-[11px] font-semibold flex items-center gap-1.5 shadow-sm shadow-cyan-500/20 hover:bg-cyan-600 disabled:opacity-50 transition-all"
-          >
-            {rotateAllRunning
-              ? <Loader2 size={12} className="animate-spin" />
-              : <RotateCcw size={12} />}
-            {zh ? '一键全部轮换' : 'Rotate All'}
-          </button>
-          <button
-            onClick={fetchStatus}
-            disabled={loading}
-            className="h-7 px-2.5 rounded-lg bg-black/[0.02] border border-black/[0.04] text-black/40 hover:bg-black/[0.05] hover:text-cyan-600 transition-all"
-          >
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-          </button>
-        </div>
+        <button
+          onClick={fetchStatus}
+          disabled={loading}
+          className="h-7 px-2.5 rounded-lg bg-black/[0.02] border border-black/[0.04] text-black/40 hover:bg-black/[0.05] hover:text-cyan-600 transition-all"
+          title={zh ? '刷新状态' : 'Refresh status'}
+        >
+          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+        </button>
       </div>
-
-      {/* ═══ Rotate-All Completion Summary ═══ */}
-      {rotateAllSummary && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-black/5 overflow-hidden">
-            <div className="px-5 py-4 border-b border-black/5 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={18} className="text-cyan-600" />
-                <h2 className="text-sm font-bold text-slate-800">{zh ? '批量轮换结果' : 'Bulk Rotation Result'}</h2>
-              </div>
-              <button onClick={() => setRotateAllSummary(null)} className="p-1 rounded hover:bg-black/5 text-black/40">
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="px-5 py-4 flex items-center gap-3">
-              <div className="flex-1 rounded-xl bg-slate-50 border border-black/5 px-3 py-2 text-center">
-                <div className="text-lg font-black text-slate-700">{rotateAllSummary.total}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{zh ? '总数' : 'Total'}</div>
-              </div>
-              <div className="flex-1 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2 text-center">
-                <div className="text-lg font-black text-emerald-600">{rotateAllSummary.rotated}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wide text-emerald-500/70">{zh ? '成功' : 'Success'}</div>
-              </div>
-              <div className="flex-1 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-center">
-                <div className="text-lg font-black text-red-500">{rotateAllSummary.failed}</div>
-                <div className="text-[10px] font-bold uppercase tracking-wide text-red-400">{zh ? '失败' : 'Failed'}</div>
-              </div>
-            </div>
-
-            {rotateAllSummary.failed > 0 && (
-              <div className="px-5 pb-2">
-                <div className="text-[11px] font-bold text-slate-500 mb-1.5 flex items-center gap-1.5">
-                  <ShieldAlert size={12} className="text-red-500" />
-                  {zh ? '失败设备明细' : 'Failed devices'}
-                </div>
-                <div className="max-h-60 overflow-y-auto rounded-lg border border-black/5 divide-y divide-black/[0.04]">
-                  {rotateAllSummary.results.filter(r => !r.success).map((r, i) => (
-                    <div key={i} className="px-3 py-2 flex items-start gap-2">
-                      <ShieldX size={12} className="text-red-400 mt-0.5 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-bold text-slate-700">{r.hostname}</div>
-                        <div className="text-[10px] text-slate-400 break-words">{r.message || (zh ? '未知错误' : 'Unknown error')}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="px-5 py-3 bg-slate-50 border-t border-black/5 flex justify-end">
-              <button
-                onClick={() => setRotateAllSummary(null)}
-                className="h-8 px-4 rounded-lg bg-cyan-500 text-white text-[12px] font-semibold hover:bg-cyan-600 transition-all"
-              >
-                {zh ? '知道了' : 'Done'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ═══ High-Density Pro Table ═══ */}
       <div className="bg-white rounded-xl border border-black/[0.06] shadow-md overflow-hidden">
@@ -584,7 +582,7 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
           <table className="w-full text-left border-collapse table-fixed">
             <thead>
               <tr className="bg-slate-50 border-b border-black/[0.05]">
-                <th className="w-[220px] px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '设备资产' : 'DEVICE ASSET'}</th>
+                <th className="w-[260px] px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '凭据分组 / 未绑定设备' : 'CREDENTIAL / UNBOUND DEVICE'}</th>
                 <th className="px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '普通账号 (Normal)' : 'NORMAL IDENTITY'}</th>
                 <th className="px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '特权账号 (Admin)' : 'PRIVILEGED IDENTITY'}</th>
                 <th className="px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">{zh ? '提权凭据 (Enable)' : 'ENABLE SECRET'}</th>
@@ -597,17 +595,10 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                 <tr><td colSpan={4} className="py-20 text-center text-[11px] text-black/20 font-medium">{zh ? '未检索到凭据数据' : 'No data records found'}</td></tr>
               ) : (
                 (() => {
-                  const deviceGroups: Record<string, any[]> = {};
-                  accountList.forEach(acc => {
-                    if (!deviceGroups[acc.id]) deviceGroups[acc.id] = [];
-                    deviceGroups[acc.id].push(acc);
-                  });
+                  const paginatedGroups = rotationGroups.slice((page - 1) * pageSize, page * pageSize);
 
-                  const groupIds = Object.keys(deviceGroups);
-                  const paginatedGroupIds = groupIds.slice((page - 1) * pageSize, page * pageSize);
-
-                  return paginatedGroupIds.map((devId) => {
-                    const accounts = deviceGroups[devId];
+                  return paginatedGroups.map((group) => {
+                    const accounts = group.accounts;
                     const first = accounts[0];
                     
                     // Map accounts to specific columns
@@ -617,31 +608,54 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                       enable: accounts.find(a => a.roleKey === 'enable')
                     };
 
-                    const isDevServer = isServer(first.platform || '');
+                    const isDevServer = accounts.every(account => isServer(account.platform || ''));
 
                     return (
-                      <tr key={devId} className="group hover:bg-slate-50/50 transition-colors">
+                      <tr key={group.key} className="group hover:bg-slate-50/50 transition-colors">
                         {/* Device Info */}
                         <td className="px-4 py-2 border-r border-black/[0.02]">
                           <div className="flex items-center gap-2.5">
                             <div className="h-8 w-8 rounded-lg bg-white border border-black/5 shadow-sm flex items-center justify-center text-slate-300 group-hover:text-cyan-500 transition-colors">
-                              <Server size={14} />
+                              {group.isCredential ? <KeyRound size={14} /> : <Server size={14} />}
                             </div>
                             <div className="min-w-0">
-                              <div className="text-[12px] font-bold text-slate-700 truncate leading-tight tracking-tight">{first.hostname}</div>
-                              <div className="flex items-center gap-1.5 mt-0.5">
-                                <span className="text-[10px] font-mono text-slate-400">{first.ip_address}</span>
-                                <span className={`px-1 rounded text-[8px] font-black uppercase ${platformColor(first.platform)}`}>
-                                  {platformLabel(first.platform)}
-                                </span>
-                              </div>
+                              {group.isCredential ? (
+                                <>
+                                  <div className="text-[12px] font-bold text-slate-700 truncate leading-tight tracking-tight">{group.credentialName || (zh ? '已绑定凭据' : 'Bound credential')}</div>
+                                  <div className="mt-0.5 flex items-center gap-1.5">
+                                    <span className="text-[10px] font-mono text-cyan-600">{group.username || '—'}</span>
+                                    <span className="rounded bg-cyan-50 px-1 py-0.5 text-[8px] font-bold text-cyan-600">{zh ? `${group.devices.length} 台设备` : `${group.devices.length} devices`}</span>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="text-[12px] font-bold text-slate-700 truncate leading-tight tracking-tight">{first.hostname}</div>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span className="text-[10px] font-mono text-slate-400">{first.ip_address}</span>
+                                    <span className={`px-1 rounded text-[8px] font-black uppercase ${platformColor(first.platform)}`}>
+                                      {platformLabel(first.platform)}
+                                    </span>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           </div>
+                          {group.isCredential ? (
+                            <div className="mt-2 flex flex-wrap gap-1 pl-10">
+                              {group.devices.slice(0, 3).map(device => (
+                                <span key={device.id} className="max-w-[112px] truncate rounded bg-slate-50 px-1.5 py-0.5 text-[8px] text-slate-500" title={`${device.hostname} ${device.ip_address}`}>
+                                  {device.hostname} · {device.ip_address}
+                                </span>
+                              ))}
+                              {group.devices.length > 3 && <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[8px] text-slate-400">+{group.devices.length - 3}</span>}
+                            </div>
+                          ) : null}
                         </td>
 
                         {/* Account Columns */}
                         {['normal', 'admin', 'enable'].map((role) => {
-                          const acc = roles[role as keyof typeof roles];
+                          const roleAccounts = accounts.filter(account => account.roleKey === role);
+                          const acc = roleAccounts[0] || roles[role as keyof typeof roles];
                           
                           // Optimization: Hide Enable column for servers
                           if (role === 'enable' && isDevServer) {
@@ -657,16 +671,18 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
 
                           if (!acc) return <td key={role} className="px-4 py-2 border-r border-black/[0.02] text-center"><span className="text-[10px] text-black/5 font-black">N/A</span></td>;
 
-                          const key = `${acc.id}:${acc.roleKey}`;
-                          const isRevealed = revealKey === key;
-                          const isRotating = rotating === key;
+                          const credentialId = credentialIdFor(acc);
+                          const secretType: 'password' | 'enable_password' = role === 'enable' ? 'enable_password' : 'password';
+                          const secretKey = `${credentialId}:${secretType}`;
+                          const isRevealed = Boolean(credentialId && revealedSecret?.id === credentialId && revealedSecret.type === secretType);
 
                           return (
-                            <td key={role} className={`px-4 py-2 border-r border-black/[0.02] ${acc.currentExpired ? 'bg-red-50/20' : ''}`}>
+                            <td key={role} className={`px-4 py-2 border-r border-black/[0.02] ${roleAccounts.some(account => account.currentExpired) ? 'bg-red-50/20' : ''}`}>
                               <div className="flex items-center justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5">
                                     <span className="text-[11px] font-mono font-bold text-slate-600 truncate">{acc.currentUsername || '—'}</span>
+                                    {group.isCredential && roleAccounts.length > 1 && <span className="rounded bg-slate-100 px-1 py-0.5 text-[8px] font-bold text-slate-400">{zh ? `${roleAccounts.length} 台` : `${roleAccounts.length} devices`}</span>}
                                     {acc.currentExpiresAt && (
                                       <span className={`text-[9px] font-black ${acc.currentExpired ? 'text-red-500' : 'text-emerald-500/60'}`}>
                                         {acc.currentExpired ? 'EXP' : `${acc.currentDays}d`}
@@ -685,37 +701,84 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
                                         : (zh ? '到期时间待定' : 'EXP: PENDING')}
                                     </span>
                                   </div>
+                                  {isAdministrator && credentialId && (
+                                    <div className="mt-1 flex items-center gap-1">
+                                      <span className="text-[9px] font-medium text-slate-300">{zh ? '凭据中心密码' : 'Vault secret'}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => { void revealCredentialSecret(acc, secretType); }}
+                                        className={`inline-flex h-5 w-5 items-center justify-center rounded border ${isRevealed ? 'border-cyan-500 bg-cyan-500 text-white' : 'border-slate-200 bg-white text-slate-400 hover:border-cyan-300 hover:text-cyan-600'}`}
+                                        title={isRevealed ? (zh ? '隐藏密码' : 'Hide password') : (zh ? '查看凭据密码' : 'View credential password')}
+                                      >
+                                        {secretLoading === secretKey ? <RefreshCw size={10} className="animate-spin" /> : isRevealed ? <EyeOff size={10} /> : <Eye size={10} />}
+                                      </button>
+                                      {isRevealed && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            onClick={() => { void copyRevealedSecret(); }}
+                                            className="inline-flex h-5 w-5 items-center justify-center rounded border border-slate-200 bg-white text-slate-400 hover:border-cyan-300 hover:text-cyan-600"
+                                            title={zh ? '复制并记录审计' : 'Copy and audit'}
+                                          >
+                                            {secretCopied ? <Check size={10} /> : <Copy size={10} />}
+                                          </button>
+                                          <span className="max-w-28 truncate rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300" title={revealedSecret.secret}>{revealedSecret.secret}</span>
+                                        </>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => openCredentialEditor(group.isCredential
+                                          ? { ...acc, hostname: `${group.credentialName || '凭据'}（${group.devices.length}台设备）` }
+                                          : acc, secretType)}
+                                        className="rounded border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-700 hover:bg-cyan-100"
+                                        title={zh ? '手动更新凭据密码' : 'Manually update credential password'}
+                                      >
+                                        {zh ? '更新' : 'Update'}
+                                      </button>
+                                    </div>
+                                  )}
+                                  {!credentialId && (
+                                    <div className="mt-1 flex items-center gap-1">
+                                      <span className="text-[9px] font-medium text-slate-300">{zh ? '设备本地密码' : 'Device-local password'}</span>
+                                      {isAdministrator && (
+                                        <>
+                                          {(() => {
+                                            const localRole = acc.roleKey as 'normal' | 'admin' | 'enable';
+                                            const localKey = `${acc.id}:${localRole}`;
+                                            const isLocalRevealed = localRevealedSecret?.deviceId === acc.id && localRevealedSecret.role === localRole;
+                                            return (
+                                              <>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => { void revealDeviceLocalSecret(acc); }}
+                                                  className={`inline-flex h-5 w-5 items-center justify-center rounded border ${isLocalRevealed ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-200 bg-white text-slate-400 hover:border-amber-300 hover:text-amber-600'}`}
+                                                  title={isLocalRevealed ? (zh ? '隐藏设备本地密码' : 'Hide device-local password') : (zh ? '查看设备本地密码' : 'View device-local password')}
+                                                >
+                                                  {localSecretLoading === localKey ? <RefreshCw size={10} className="animate-spin" /> : isLocalRevealed ? <EyeOff size={10} /> : <Eye size={10} />}
+                                                </button>
+                                                {isLocalRevealed && (
+                                                  <>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => { void copyDeviceLocalSecret(); }}
+                                                      className="inline-flex h-5 w-5 items-center justify-center rounded border border-slate-200 bg-white text-slate-400 hover:border-amber-300 hover:text-amber-600"
+                                                      title={zh ? '复制并记录审计' : 'Copy and audit'}
+                                                    >
+                                                      {localSecretCopied ? <Check size={10} /> : <Copy size={10} />}
+                                                    </button>
+                                                    <span className="max-w-28 truncate rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[9px] text-amber-300" title={localRevealedSecret.secret}>{localRevealedSecret.secret}</span>
+                                                  </>
+                                                )}
+                                              </>
+                                            );
+                                          })()}
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
 
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <button
-                                    onClick={() => handleReveal(acc.id, acc.roleKey)}
-                                    className={`h-6 w-6 rounded-md flex items-center justify-center transition-all ${isRevealed ? 'bg-cyan-500 text-white shadow-sm' : 'bg-black/[0.03] text-black/20 hover:text-black/60 hover:bg-black/[0.06]'}`}
-                                  >
-                                    {revealLoading && revealKey === key ? <Loader2 size={10} className="animate-spin" /> : (isRevealed ? <EyeOff size={10} /> : <Eye size={10} />)}
-                                  </button>
-                                  <button
-                                    onClick={() => handleRotate(acc.id, acc.roleKey)}
-                                    disabled={isRotating}
-                                    className={`h-6 px-1.5 rounded-md border text-[9px] font-bold transition-all ${isRotating ? 'bg-black/5 text-black/10' : 'bg-white border-cyan-500/40 text-cyan-600 hover:bg-cyan-500 hover:text-white active:scale-95'}`}
-                                  >
-                                    {isRotating ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
-                                  </button>
-                                </div>
                               </div>
-                              
-                              {isRevealed && revealedPwd && (
-                                <motion.div 
-                                  initial={{ opacity: 0, y: -4 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  className="mt-1.5 inline-flex max-w-full items-center gap-2 bg-slate-900 px-2 py-1 rounded-md text-cyan-400 font-mono text-[10px] shadow-lg border border-white/10 break-all"
-                                >
-                                  <span className="break-all">{revealedPwd}</span>
-                                  <button onClick={handleCopyPwd} className="shrink-0 hover:text-white transition-colors">
-                                    {copied ? <Check size={10} /> : <Copy size={10} />}
-                                  </button>
-                                </motion.div>
-                              )}
                             </td>
                           );
                         })}
@@ -741,7 +804,7 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
           
           <Pagination
             currentPage={page}
-            totalItems={Object.keys(accountList.reduce((acc, curr) => ({...acc, [curr.id]: 1}), {})).length}
+            totalItems={rotationGroups.length}
             itemsPerPage={pageSize}
             onItemsPerPageChange={(v) => { setPage(1); setPageSize(v); }}
             onPageChange={setPage}
@@ -750,6 +813,60 @@ export default function PasswordRotationPanel({ language }: PasswordRotationPane
         </div>
       </div>
       </div>
+      {editingCredential && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => { if (!credentialSaving) setEditingCredential(null); }} />
+          <div className="relative w-full max-w-md rounded-3xl border border-black/10 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-black/5 pb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-[#164e63]">{zh ? '更新凭据密码' : 'Update credential password'}</h3>
+                <p className="mt-1 text-xs text-black/45">{editingCredential.deviceName} · {editingCredential.label} · {editingCredential.username}</p>
+              </div>
+              <button type="button" disabled={credentialSaving} onClick={() => setEditingCredential(null)} className="rounded-xl border border-black/10 p-1.5 text-black/45 hover:bg-black/[0.03] disabled:opacity-40">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="mt-5 space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-black/55">{editingCredential.type === 'enable_password' ? (zh ? '旧 Enable 密码' : 'Current Enable password') : (zh ? '旧密码' : 'Current password')}</label>
+                <input
+                  type="password"
+                  value={credentialForm.oldSecret}
+                  onChange={event => setCredentialForm(previous => ({ ...previous, oldSecret: event.target.value }))}
+                  autoComplete="current-password"
+                  className="w-full rounded-xl border border-black/10 px-3 py-2.5 text-sm text-[#164e63] outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/10"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-black/55">{editingCredential.type === 'enable_password' ? (zh ? '新 Enable 密码' : 'New Enable password') : (zh ? '新密码' : 'New password')}</label>
+                <input
+                  type="password"
+                  value={credentialForm.newSecret}
+                  onChange={event => setCredentialForm(previous => ({ ...previous, newSecret: event.target.value }))}
+                  autoComplete="new-password"
+                  className="w-full rounded-xl border border-black/10 px-3 py-2.5 text-sm text-[#164e63] outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/10"
+                />
+              </div>
+              {credentialError && (
+                <div className="flex items-start gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-5 text-rose-600" role="alert">
+                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                  <span>{credentialError}</span>
+                </div>
+              )}
+              <p className="text-[11px] leading-5 text-black/45">
+                {zh ? '修改绑定凭据后，系统会按凭据关联范围创建同步任务；所有目标设备验证成功后才更新权威值。' : 'For a bound credential, the system creates a synchronization job and updates the authoritative value only after all target devices verify successfully.'}
+              </p>
+            </div>
+            <div className="mt-6 flex justify-end gap-2 border-t border-black/5 pt-4">
+              <button type="button" disabled={credentialSaving} onClick={() => setEditingCredential(null)} className="h-10 rounded-xl border border-black/10 px-4 text-sm font-semibold text-black/60 hover:bg-black/[0.02] disabled:opacity-40">{zh ? '取消' : 'Cancel'}</button>
+              <button type="button" disabled={credentialSaving} onClick={() => { void submitCredentialUpdate(); }} className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-cyan-500 px-5 text-sm font-semibold text-white shadow-md hover:bg-cyan-600 disabled:cursor-not-allowed disabled:opacity-50">
+                {credentialSaving ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                {zh ? '提交更新' : 'Submit update'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

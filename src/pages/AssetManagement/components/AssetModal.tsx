@@ -110,11 +110,11 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   }, [racks, form.site_id]);
 
   const normalCredentials = React.useMemo(
-    () => credentials.filter(c => c.id === form.credential_id || ['normal', 'shared', 'unbound', 'mixed', 'login'].includes(String(c.account_role || 'unbound'))),
+    () => credentials.filter(c => c.id === form.credential_id || ['normal', 'shared', 'mixed', 'login'].includes(String(c.account_role || '').toLowerCase())),
     [credentials, form.credential_id],
   );
   const adminCredentials = React.useMemo(
-    () => credentials.filter(c => c.id === form.admin_credential_id || ['admin', 'shared', 'unbound', 'mixed', 'login'].includes(String(c.account_role || 'unbound'))),
+    () => credentials.filter(c => c.id === form.admin_credential_id || ['admin', 'shared', 'mixed', 'login'].includes(String(c.account_role || '').toLowerCase())),
     [credentials, form.admin_credential_id],
   );
 

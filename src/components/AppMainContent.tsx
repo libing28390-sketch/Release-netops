@@ -630,7 +630,7 @@ const AppMainContent: React.FC = () => {
           ) : cmdbPage === 'resources' ? (
             <CmdbResourceSearchTab language={language} />
           ) : (
-            <CmdbManagementTab language={language} cmdbPage={cmdbPage} />
+            <CmdbManagementTab language={language} cmdbPage={cmdbPage} currentUser={currentUser} />
           )}
         </Suspense>
       )}
@@ -1201,7 +1201,7 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'credentials' && (
         <Suspense fallback={lazyPanelFallback}>
-          <CredentialManagementTab language={language} />
+          <CredentialManagementTab language={language} currentUser={currentUser} />
         </Suspense>
       )}
 

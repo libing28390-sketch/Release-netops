@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     PASSWORD_ROTATION_ENABLED: bool = False
     PASSWORD_ROTATION_INTERVAL_DAYS: int = 90
     PASSWORD_ROTATION_NOTIFY_DAYS: int = 14    # warn N days before expiry
+    PASSWORD_SYNC_MAX_WORKERS: int = 5
+    PASSWORD_SYNC_DEVICE_TIMEOUT_SECONDS: int = 240
+    PASSWORD_SYNC_CONNECT_TIMEOUT_SECONDS: int = 20
+    PASSWORD_SYNC_COMMAND_READ_TIMEOUT_SECONDS: int = 60
+    PASSWORD_SYNC_RETRY_LIMIT: int = 1
 
     class Config:
         # .env.local 优先级高于 .env（后面的文件覆盖前面的）

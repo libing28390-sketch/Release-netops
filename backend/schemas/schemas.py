@@ -667,6 +667,8 @@ class CredentialUpdate(BaseModel):
     account_role: Optional[str] = None
     password: Optional[str] = None
     enable_password: Optional[str] = None
+    old_password: Optional[str] = None
+    old_enable_password: Optional[str] = None
     private_key: Optional[str] = None
     snmp_community: Optional[str] = None
 
@@ -699,6 +701,18 @@ class CredentialUpdate(BaseModel):
         if v not in _CREDENTIAL_ACCOUNT_ROLES:
             raise ValueError(f'account_role must be one of {sorted(_CREDENTIAL_ACCOUNT_ROLES)}')
         return v
+
+    @model_validator(mode='after')
+    def validate_secret_change_confirmation(self):
+        if self.password is not None and not self.password:
+            raise ValueError('password must be omitted when unchanged; clearing a password is not supported')
+        if self.enable_password is not None and not self.enable_password:
+            raise ValueError('enable_password must be omitted when unchanged; clearing a password is not supported')
+        if self.password is not None and self.old_password is None:
+            raise ValueError('old_password is required when changing password')
+        if self.enable_password is not None and self.old_enable_password is None:
+            raise ValueError('old_enable_password is required when changing enable_password')
+        return self
 
 
 # ─── CMDB Core Entities (tenants / sites / vrfs / vlans) ───

@@ -72,6 +72,3 @@ export interface AssetManagementTabProps {
   setActiveTab?: (tab: string) => void;
   currentUser?: Pick<SessionUser, 'role'>;
 }
-
-export type ViewMode = 'table' | 'group' | 'tree' | 'topology';
-export type GroupBy = 'site_id' | 'department' | 'vendor' | 'device_category' | 'status';

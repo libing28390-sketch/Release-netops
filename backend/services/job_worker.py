@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 def _execute_target(job: dict, target: dict) -> dict:
     job_type = job.get('job_type') or 'generic'
+    if job_type == 'credential_password_sync':
+        from services.credential_password_sync_service import execute_credential_sync_target
+        return execute_credential_sync_target(target['id'])
     if job_type == 'discovery':
         result = DiscoveryService().discover_device(
             target['target_id'], requested_by=job.get('created_by') or 'system',
@@ -25,6 +28,9 @@ def _execute_target(job: dict, target: dict) -> dict:
         if not result.get('success'):
             raise RuntimeError(result.get('error') or 'Discovery failed')
         return result
+    if job_type == 'interface_collection':
+        from services.interface_collection_service import collect_interface_status_target
+        return collect_interface_status_target(target['target_id'])
     raise RuntimeError(f"No worker handler registered for job_type '{job_type}'")
 
 
@@ -44,6 +50,8 @@ def run_job(job_id: str) -> dict:
                 target = futures[future]
                 try:
                     result = future.result(timeout=max(1, int(job.get('timeout_seconds') or 300)))
+                    if result.get('success') is False:
+                        raise RuntimeError(result.get('message') or 'Job target failed')
                     complete_target(target['id'], status='succeeded', result=result)
                 except Exception as exc:
                     logger.error("Job %s target %s failed: %s", job_id, target['target_id'], exc, exc_info=True)

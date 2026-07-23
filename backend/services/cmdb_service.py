@@ -303,7 +303,21 @@ def list_cmdb_interfaces(
             d.status AS device_status,
             i.interface_name,
             i.description,
-            COALESCE(NULLIF(i.primary_ip, ''), NULLIF(i.ip_address, '')) AS interface_ip,
+            COALESCE(
+                NULLIF(i.primary_ip, ''),
+                NULLIF(i.ip_address, ''),
+                (
+                    SELECT COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, ''))
+                    FROM ip_addresses ip
+                    WHERE (
+                        ip.interface_id = i.id
+                        OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
+                    )
+                      AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
+                    ORDER BY CASE WHEN ip.interface_id = i.id THEN 0 ELSE 1 END, ip.updated_at DESC NULLS LAST
+                    LIMIT 1
+                )
+            ) AS interface_ip,
             i.admin_status,
             i.oper_status,
             i.mac_address,
@@ -336,9 +350,31 @@ def list_cmdb_interfaces(
     """
     params: list = []
     if has_ip is True:
-        sql += " AND (NULLIF(i.primary_ip, '') IS NOT NULL OR NULLIF(i.ip_address, '') IS NOT NULL)"
+        sql += """ AND (
+            NULLIF(i.primary_ip, '') IS NOT NULL
+            OR NULLIF(i.ip_address, '') IS NOT NULL
+            OR EXISTS (
+                SELECT 1 FROM ip_addresses ip
+                WHERE (
+                    ip.interface_id = i.id
+                    OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
+                )
+                  AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
+            )
+        )"""
     elif has_ip is False:
-        sql += " AND (NULLIF(i.primary_ip, '') IS NULL AND NULLIF(i.ip_address, '') IS NULL)"
+        sql += """ AND (
+            NULLIF(i.primary_ip, '') IS NULL
+            AND NULLIF(i.ip_address, '') IS NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM ip_addresses ip
+                WHERE (
+                    ip.interface_id = i.id
+                    OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
+                )
+                  AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
+            )
+        )"""
 
     if device_id:
         sql += " AND i.device_id = ?"
@@ -346,12 +382,127 @@ def list_cmdb_interfaces(
 
     if search:
         s = f"%{search.strip()}%"
-        sql += " AND (i.interface_name LIKE ? OR d.hostname LIKE ? OR d.ip_address LIKE ? OR i.primary_ip LIKE ? OR i.ip_address LIKE ? OR i.description LIKE ?)"
-        params.extend([s, s, s, s, s, s])
+        sql += """ AND (
+            i.interface_name LIKE ?
+            OR d.hostname LIKE ?
+            OR d.ip_address LIKE ?
+            OR i.primary_ip LIKE ?
+            OR i.ip_address LIKE ?
+            OR i.description LIKE ?
+            OR EXISTS (
+                SELECT 1 FROM ip_addresses ip
+                WHERE (
+                    ip.interface_id = i.id
+                    OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
+                )
+                  AND (
+                    ip.ip_address LIKE ?
+                    OR ip.address LIKE ?
+                  )
+            )
+        )"""
+        params.extend([s, s, s, s, s, s, s, s])
 
     sql += " ORDER BY COALESCE(d.hostname, ''), COALESCE(i.interface_name, '')"
     rows = conn.execute(sql, tuple(params)).fetchall()
-    return [_row_to_dict(r) for r in rows]
+    items = [_row_to_dict(r) for r in rows]
+
+    # NSOT's ip_inventory is populated by the interface-IP collector and can
+    # be fresher than the interface skeleton table. Include those records as
+    # read-only interface resources when the skeleton row has not received the
+    # IP fields yet. This keeps CMDB and /assets/nsot on the same IP authority
+    # without copying or mutating NSOT data here.
+    if has_ip is True:
+        try:
+            inventory_rows = conn.execute(
+                """
+                SELECT inv.ip, inv.device_id, inv.interface, inv.type, inv.last_seen,
+                       d.hostname AS device_hostname, d.ip_address AS device_ip,
+                       d.platform AS device_platform, d.status AS device_status,
+                       i.id AS skeleton_interface_id,
+                       i.admin_status AS skeleton_admin_status,
+                       i.oper_status AS skeleton_oper_status,
+                       i.switchport_mode AS skeleton_switchport_mode,
+                       i.mac_address AS skeleton_mac_address,
+                       i.description AS skeleton_description,
+                       i.speed AS skeleton_speed,
+                       i.bandwidth AS skeleton_bandwidth,
+                       i.vrf_id AS skeleton_vrf_id,
+                       i.ip_enabled AS skeleton_ip_enabled,
+                       i.last_flapped AS skeleton_last_flapped
+                FROM ip_inventory inv
+                LEFT JOIN devices d ON d.id = inv.device_id
+                LEFT JOIN interfaces i
+                  ON i.device_id = inv.device_id
+                 AND LOWER(TRIM(i.interface_name)) = LOWER(TRIM(inv.interface))
+                WHERE COALESCE(inv.ip, '') <> ''
+                ORDER BY COALESCE(d.hostname, ''), COALESCE(inv.interface, ''), inv.ip
+                """
+            ).fetchall()
+        except Exception:
+            inventory_rows = []
+
+        existing_keys = {
+            (str(item.get('device_id') or ''), str(item.get('interface_name') or ''), str(item.get('interface_ip') or ''))
+            for item in items
+        }
+        search_value = search.strip().lower() if search else ''
+        for inventory_row in inventory_rows:
+            inventory = _row_to_dict(inventory_row)
+            ip_value = str(inventory.get('ip') or '').strip()
+            inventory_device_id = str(inventory.get('device_id') or '')
+            interface_name = str(inventory.get('interface') or '').strip()
+            if device_id and inventory_device_id != str(device_id):
+                continue
+            if search_value:
+                searchable = ' '.join(str(inventory.get(key) or '') for key in (
+                    'ip', 'device_hostname', 'device_ip', 'interface', 'type',
+                )).lower()
+                if search_value not in searchable:
+                    continue
+            key = (inventory_device_id, interface_name, ip_value)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            items.append({
+                'id': inventory.get('skeleton_interface_id') or f"ipinv-{inventory_device_id}-{interface_name}-{ip_value}",
+                'device_id': inventory_device_id,
+                'device_hostname': inventory.get('device_hostname') or '',
+                'device_ip': inventory.get('device_ip') or '',
+                'device_platform': inventory.get('device_platform') or '',
+                'device_status': inventory.get('device_status') or '',
+                'interface_name': interface_name,
+                'description': inventory.get('skeleton_description') or '',
+                'interface_ip': ip_value,
+                'interface_ip_source': 'ip_inventory',
+                # ip_inventory only owns the address. Reuse the interface
+                # skeleton's latest CLI-collected state so the NSOT fallback
+                # does not hide admin/oper status behind a synthetic default.
+                'admin_status': inventory.get('skeleton_admin_status') or 'unknown',
+                'oper_status': inventory.get('skeleton_oper_status') or 'unknown',
+                'mac_address': inventory.get('skeleton_mac_address') or '',
+                'speed': inventory.get('skeleton_speed'),
+                'bandwidth': inventory.get('skeleton_bandwidth'),
+                'interface_type': inventory.get('type') or 'unknown',
+                'switchport_mode': inventory.get('skeleton_switchport_mode') or 'routed',
+                'access_vlan': None,
+                'native_vlan': None,
+                'allowed_vlans': '',
+                'vrf_id': inventory.get('skeleton_vrf_id'),
+                'vrf_name': '',
+                'ip_enabled': inventory.get('skeleton_ip_enabled') if inventory.get('skeleton_ip_enabled') is not None else 1,
+                'last_flapped': inventory.get('skeleton_last_flapped'),
+                'ip_count': 1,
+                'link_count': 0,
+                'last_seen': inventory.get('last_seen'),
+            })
+
+        items.sort(key=lambda item: (
+            str(item.get('device_hostname') or ''),
+            str(item.get('interface_name') or ''),
+            str(item.get('interface_ip') or ''),
+        ))
+    return items
 
 
 def get_field_authority_quality(conn) -> dict:

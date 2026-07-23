@@ -18,6 +18,7 @@ from schemas.schemas import (
     VlanCreate, VlanUpdate,
 )
 from services import cmdb_service
+from services import job_service
 from services.audit_service import log_audit_event
 
 logger = logging.getLogger(__name__)
@@ -264,7 +265,7 @@ def api_list_cmdb_devices(_user=require_role("Viewer")):
 
 @router.get("/cmdb/interfaces")
 def api_list_cmdb_interfaces(
-    has_ip: Optional[bool] = Query(default=None),
+    has_ip: bool = Query(default=True, description="Only return interfaces with an assigned IP by default"),
     device_id: Optional[str] = Query(default=None),
     search: Optional[str] = Query(default=None),
     _user=require_role("Viewer"),
@@ -279,17 +280,77 @@ def api_list_cmdb_interfaces(
 @router.post("/cmdb/interfaces/sync", status_code=202)
 def api_trigger_cmdb_interface_sync(
     background_tasks: BackgroundTasks,
-    _user=require_role("Operator"),
+    user=require_role("Operator"),
 ):
-    """Start an on-demand interface and topology inventory collection."""
-    from services.scheduler_service import sync_topology_and_interfaces_job
+    """Queue a durable, device-level TextFSM interface status collection."""
+    conn = get_db_connection()
+    try:
+        active = conn.execute(
+            """SELECT id FROM jobs
+               WHERE job_type = 'interface_collection'
+                 AND status IN ('queued', 'running')
+               ORDER BY created_at DESC LIMIT 1"""
+        ).fetchone()
+        if active:
+            job = job_service.get_job(active['id'], conn=conn)
+            return {
+                "success": True,
+                "data": {"job_id": active['id'], "job": job, "reused": True},
+                "message": "接口采集任务正在执行中",
+            }
 
-    background_tasks.add_task(sync_topology_and_interfaces_job)
+        devices = conn.execute(
+            """SELECT id, site_id, vendor FROM devices
+               WHERE status = 'online'
+               ORDER BY hostname, ip_address"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    targets = [
+        {"target_id": row['id'], "target_type": "device", "site_id": row['site_id'], "vendor": row['vendor']}
+        for row in devices
+    ]
+    if not targets:
+        raise HTTPException(status_code=409, detail="当前没有在线设备可采集接口状态")
+
+    from core.config import settings
+    from services.job_worker import run_job
+
+    job = job_service.create_job(
+        job_type="interface_collection",
+        task_name="CMDB接口状态采集",
+        created_by=user.get("username", "system"),
+        targets=targets,
+        steps=["collect_interface_status"],
+        concurrency_limit=max(1, min(int(getattr(settings, "NETWORK_SSH_GLOBAL_CONCURRENCY", 20)), 20)),
+        retry_limit=0,
+        timeout_seconds=180,
+        scope={"collector": "playbook_interfaces_textfsm"},
+    )
+    background_tasks.add_task(run_job, job['id'])
     return {
         "success": True,
-        "data": {"started": True, "collector": "topology_interface_sync"},
-        "message": "Interface collection started in the background",
+        "data": {
+            "started": True,
+            "job_id": job['id'],
+            "collector": "playbook_interfaces_textfsm",
+            "job": job,
+        },
+        "message": "接口状态采集任务已启动",
     }
+
+
+@router.get("/cmdb/interfaces/sync/{job_id}")
+def api_get_cmdb_interface_sync(job_id: str, _user=require_role("Viewer")):
+    """Return durable device-level progress and failure details for the UI."""
+    try:
+        job = job_service.get_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if job.get('job_type') != 'interface_collection':
+        raise HTTPException(status_code=404, detail="接口采集任务不存在")
+    return {"success": True, "data": job, "message": ""}
 
 
 @router.get("/cmdb/data-quality/field-authority")

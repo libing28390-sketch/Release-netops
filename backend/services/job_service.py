@@ -39,12 +39,13 @@ def create_job(
     targets: list[dict], steps: list[str] | None = None,
     concurrency_limit: int = 5, retry_limit: int = 0,
     timeout_seconds: int = 300, scope: dict | None = None,
+    job_id: str | None = None,
 ) -> dict:
     if not targets:
         raise ValueError('At least one job target is required')
     if concurrency_limit < 1 or concurrency_limit > 200:
         raise ValueError('concurrency_limit must be between 1 and 200')
-    job_id = f"job-{uuid.uuid4().hex[:12]}"
+    job_id = job_id or f"job-{uuid.uuid4().hex[:12]}"
     now = _now()
     conn = get_db_connection()
     try:
@@ -111,9 +112,22 @@ def get_job(job_id: str, *, conn=None) -> dict:
         if not row:
             raise ValueError('Job not found')
         item = dict(row)
-        item['targets'] = [dict(value) for value in conn.execute(
-            "SELECT * FROM job_targets WHERE job_id = ? ORDER BY id", (job_id,)
-        ).fetchall()]
+        try:
+            target_rows = conn.execute(
+                """SELECT jt.*, d.hostname AS target_hostname, d.ip_address AS target_ip
+                   FROM job_targets jt
+                   LEFT JOIN devices d
+                     ON jt.target_type = 'device' AND d.id = jt.target_id
+                   WHERE jt.job_id = ? ORDER BY jt.id""",
+                (job_id,),
+            ).fetchall()
+        except Exception:
+            # Keep generic job reads usable during bootstrap databases where
+            # the devices table has not been created yet.
+            target_rows = conn.execute(
+                "SELECT * FROM job_targets WHERE job_id = ? ORDER BY id", (job_id,)
+            ).fetchall()
+        item['targets'] = [dict(value) for value in target_rows]
         item['steps'] = [dict(value) for value in conn.execute(
             "SELECT * FROM job_steps WHERE job_id = ? ORDER BY step_order", (job_id,)
         ).fetchall()]
