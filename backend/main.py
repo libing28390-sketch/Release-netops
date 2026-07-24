@@ -1,6 +1,10 @@
 import sys
 import os
 
+# Prevent writing .pyc files in development mode to avoid triggering watchfiles reload loops
+if os.environ.get("NODE_ENV") == "development":
+    sys.dont_write_bytecode = True
+
 # Add backend directory to sys.path to resolve core, api, services, etc.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
