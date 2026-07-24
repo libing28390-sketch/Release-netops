@@ -1085,23 +1085,6 @@ def _replace_device_observations(
             protocol_confidence = float(observation.get('confidence') or 0.0)
             identity_confidence = float(evidence.get('confidence') or 0.0)
             final_confidence = min(protocol_confidence, identity_confidence) if target_device else protocol_confidence
-            values = (
-                device.get('hostname') or '',
-                observation['source_port_raw'],
-                observation['neighbor_name_raw'],
-                observation['neighbor_ip_address'],
-                target_device['id'] if target_device else None,
-                target_device.get('hostname') if target_device else observation['neighbor_name_raw'],
-                observation['target_port_raw'],
-                final_confidence,
-                run_id,
-                observation['raw_payload_json'],
-                now,
-                source_site_id,
-                evidence.get('method') or '',
-                match_status,
-                _safe_json(evidence.get('candidates') or []),
-            )
             existing = conn.execute(
                 '''
                 SELECT id, first_seen_at
@@ -1127,7 +1110,26 @@ def _replace_device_observations(
                         match_candidates_json = ?, last_seen_at = ?, miss_count = 0, is_active = 1
                     WHERE id = ?
                     ''',
-                    (*values, now, existing['id']),
+                    (
+                        device.get('hostname') or '',
+                        observation['source_port_raw'],
+                        observation['neighbor_name_raw'],
+                        observation['neighbor_ip_address'],
+                        target_device['id'] if target_device else None,
+                        target_device.get('hostname') if target_device else observation['neighbor_name_raw'],
+                        observation['target_port_raw'],
+                        final_confidence,
+                        run_id,
+                        observation['raw_payload_json'],
+                        now,  # collected_at
+                        now,  # updated_at
+                        source_site_id,
+                        evidence.get('method') or '',
+                        match_status,
+                        _safe_json(evidence.get('candidates') or []),
+                        now,  # last_seen_at
+                        existing['id'],
+                    ),
                 )
             else:
                 conn.execute(
@@ -1165,8 +1167,6 @@ def _replace_device_observations(
                         _safe_json(evidence.get('candidates') or []),
                         now,
                         now,
-                        0,
-                        1,
                     ),
                 )
 

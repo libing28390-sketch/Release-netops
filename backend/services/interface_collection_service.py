@@ -150,7 +150,7 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                 conn.execute(
                     """UPDATE interfaces SET
                            admin_status = ?, oper_status = ?,
-                           primary_ip = ?, ip_address = ?, is_l3 = 1,
+                           primary_ip = ?, ip_address = ?, is_l3 = TRUE,
                            ip_enabled = 1,
                            switchport_mode = COALESCE(NULLIF(switchport_mode, ''), 'routed')
                        WHERE id = ?""",
@@ -165,7 +165,7 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                            id, device_id, interface_name, description,
                            admin_status, oper_status, interface_type,
                            switchport_mode, primary_ip, ip_address, is_l3, ip_enabled
-                       ) VALUES (?, ?, ?, '', ?, ?, 'physical', 'routed', ?, ?, 1, 1)""",
+                       ) VALUES (?, ?, ?, '', ?, ?, 'physical', 'routed', ?, ?, TRUE, 1)""",
                     (
                         f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', item['interface_name']).strip('-').lower()}",
                         device["id"], item["interface_name"], item["admin_status"],
