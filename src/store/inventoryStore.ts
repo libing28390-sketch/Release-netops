@@ -201,6 +201,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
     set({ inventoryLoading: true });
     try {
       const params = new URLSearchParams({
+        mode: 'light',
         search: state.inventorySearch,
         platform: state.inventoryPlatformFilter,
         role: state.inventoryRoleFilter,

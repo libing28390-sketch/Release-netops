@@ -8,6 +8,11 @@ import os
 from database import get_db_connection
 from core.rbac import require_role
 from core.config import settings
+from core.read_cache import (
+    SCHEDULED_JOBS_CACHE_TTL_SECONDS,
+    invalidate_read_cache,
+    read_cache,
+)
 from services.config_approval_service import verify_code, consume_approval
 from services.audit_service import log_audit_event
 
@@ -186,6 +191,12 @@ def list_future_execution_plans(
     """
     计算未来一段时间内所有已启用作业（包括一次性和周期性 Cron 作业）的执行排班。
     """
+    cache_key = '|'.join((time_range or '', start_time or '', end_time or '', query or ''))
+    cache_hit, cached = read_cache.get('scheduled_jobs_future', cache_key)
+    if cache_hit:
+        logger.debug('[Perf] scheduled-jobs/future cache hit key=%s', cache_key)
+        return cached
+
     now = datetime.now()
     if start_time:
         try:
@@ -266,10 +277,17 @@ def list_future_execution_plans(
                         pass
         
         future_runs.sort(key=lambda x: x['run_at'])
-        return {
+        response = {
             'success': True,
             'data': future_runs
         }
+        read_cache.set(
+            'scheduled_jobs_future',
+            cache_key,
+            response,
+            SCHEDULED_JOBS_CACHE_TTL_SECONDS,
+        )
+        return response
     finally:
         conn.close()
 
@@ -397,6 +415,7 @@ def create_scheduled_job(
         
         # Refresh scheduler
         refresh_dynamic_scheduler()
+        invalidate_read_cache('scheduled_jobs_future')
 
         return {
             "success": True,
@@ -458,6 +477,7 @@ def toggle_scheduled_job(
 
         # Refresh scheduler
         refresh_dynamic_scheduler()
+        invalidate_read_cache('scheduled_jobs_future')
 
         return {"success": True, "message": "已更新"}
     finally:
@@ -511,6 +531,7 @@ def delete_scheduled_job(
 
         # Refresh scheduler
         refresh_dynamic_scheduler()
+        invalidate_read_cache('scheduled_jobs_future')
 
         return {"success": True, "message": "已删除"}
     finally:
@@ -648,6 +669,7 @@ def update_scheduled_job(
 
         # Refresh scheduler
         refresh_dynamic_scheduler()
+        invalidate_read_cache('scheduled_jobs_future')
 
         return {"success": True, "message": "作业已成功更新（工单审批已校验）"}
     finally:

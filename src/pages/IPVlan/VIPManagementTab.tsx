@@ -76,7 +76,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
     try {
       const [vipRes, devRes, tenantRes] = await Promise.all([
         fetch('/api/ipam/vips', { headers: hdrs }),
-        fetch('/api/devices', { headers: hdrs }),
+        fetch('/api/devices?mode=light', { headers: hdrs }),
         fetch('/api/cmdb/tenants', { headers: hdrs }),
       ]);
       const unwrap = (j: any) => (Array.isArray(j) ? j : (j?.data ?? j?.items ?? []));

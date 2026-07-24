@@ -1707,7 +1707,7 @@ def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, An
         'cpu_usage, memory_usage, temp, fan_status, psu_status, '
         'username, password, normal_username, normal_password, '
         'admin_username, admin_password, management_port, enable_password, '
-        'credential_source, vault_path, snmp_community, snmp_port'
+        'credential_source, vault_path, snmp_community, snmp_port, collection_policy_json'
     )
     if scope_type == 'all':
         rows = conn.execute(f'SELECT {select} FROM devices ORDER BY hostname').fetchall()

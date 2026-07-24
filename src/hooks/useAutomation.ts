@@ -441,6 +441,10 @@ export const useAutomation = ({
       const token = localStorage.getItem('netops_token');
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       const resp = await fetch('/api/scheduled-jobs/future?time_range=1d', { headers });
+      if (resp.status === 401) {
+        window.dispatchEvent(new Event('netops:auth-expired'));
+        return;
+      }
       if (!resp.ok) return;
       const payload = await resp.json();
       const runs: any[] = Array.isArray(payload?.data) ? payload.data : [];

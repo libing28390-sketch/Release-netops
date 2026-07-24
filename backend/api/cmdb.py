@@ -11,6 +11,11 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from database import get_db_connection
 from core.rbac import require_role
+from core.read_cache import (
+    REFERENCE_CACHE_TTL_SECONDS,
+    invalidate_read_cache,
+    read_cache,
+)
 from schemas.schemas import (
     TenantCreate, TenantUpdate,
     SiteCreate, SiteUpdate,
@@ -432,9 +437,15 @@ def api_delete_tenant(tenant_id: str, user=require_role("Administrator")):
 @router.get("/cmdb/sites")
 def api_list_sites(tenant_id: str = Query('', description="Filter by tenant"),
                    _user=require_role("Viewer")):
+    cache_key = f'sites:{tenant_id}'
+    cache_hit, cached = read_cache.get('references', cache_key)
+    if cache_hit:
+        return cached
     conn = get_db_connection()
     try:
-        return {"success": True, "data": cmdb_service.list_sites(conn, tenant_id=tenant_id), "message": ""}
+        response = {"success": True, "data": cmdb_service.list_sites(conn, tenant_id=tenant_id), "message": ""}
+        read_cache.set('references', cache_key, response, REFERENCE_CACHE_TTL_SECONDS)
+        return response
     finally:
         conn.close()
 
@@ -456,6 +467,8 @@ def api_create_site(body: SiteCreate, user=require_role("Operator")):
     try:
         s = cmdb_service.create_site(conn, **body.model_dump())
         _audit(user, "site.create", "info", f"Created site '{s.get('site_code')}'", "site", s.get("id"), s.get("site_code"))
+        invalidate_read_cache('references')
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": s, "message": "Site created"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -469,6 +482,8 @@ def api_update_site(site_id: str, body: SiteUpdate, user=require_role("Operator"
     try:
         s = cmdb_service.update_site(conn, site_id, **body.model_dump(exclude_unset=True))
         _audit(user, "site.update", "info", f"Updated site {site_id}", "site", site_id)
+        invalidate_read_cache('references')
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": s, "message": "Site updated"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -486,6 +501,8 @@ def api_delete_site(
     try:
         result = cmdb_service.delete_site(conn, site_id, replacement_site_id=replacement_site_id)
         _audit(user, "site.delete", "warning", f"Deleted site {site_id}", "site", site_id)
+        invalidate_read_cache('references')
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": result, "message": "Site deleted"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

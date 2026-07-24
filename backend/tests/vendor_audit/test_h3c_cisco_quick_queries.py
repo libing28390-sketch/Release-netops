@@ -722,6 +722,7 @@ def test_quick_collection_uses_platform_command_and_parses_official_output(
             "vendor": "H3C" if "comware" in platform else "Cisco",
             "platform": platform,
             "role": "distribution",
+            "collection_policy_json": '{"collectors":{"bgp":true,"ospf":true,"bfd":true}}',
         },
         categories=list(category_fixtures),
     )

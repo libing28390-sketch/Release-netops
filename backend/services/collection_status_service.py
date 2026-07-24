@@ -17,6 +17,9 @@ COLLECTOR_STALE_SECONDS = {
     "snmp_metrics": 180,
     "snmp_interfaces": 180,
     "snmp_inventory": 900,
+    "topology_lldp": 900,
+    # Read legacy rows while devices are gradually re-collected under the
+    # canonical LLDP collector name.
     "topology_lldp_cdp": 900,
     "diagnostics": 900,
 }
@@ -71,7 +74,8 @@ def record_collection_result(
 ) -> None:
     """Upsert one collector result without ever storing credential material."""
     now = _utc_now_iso()
-    success_at = now if status == "success" else None
+    successful_statuses = {"success", "no_neighbors"}
+    success_at = now if status in successful_statuses else None
     conn = get_db_connection()
     try:
         conn.execute(
@@ -88,12 +92,12 @@ def record_collection_result(
                 source = excluded.source,
                 last_attempt_at = excluded.last_attempt_at,
                 last_success_at = CASE
-                    WHEN excluded.status = 'success' THEN excluded.last_success_at
+                    WHEN excluded.status IN ('success', 'no_neighbors') THEN excluded.last_success_at
                     ELSE device_collection_status.last_success_at
                 END,
                 duration_ms = excluded.duration_ms,
                 consecutive_failures = CASE
-                    WHEN excluded.status = 'success' THEN 0
+                    WHEN excluded.status IN ('success', 'no_neighbors') THEN 0
                     WHEN excluded.status IN ('failed', 'not_configured')
                         THEN device_collection_status.consecutive_failures + 1
                     ELSE device_collection_status.consecutive_failures
@@ -114,7 +118,7 @@ def record_collection_result(
                 now,
                 success_at,
                 duration_ms,
-                0 if status == "success" else 1,
+                0 if status in successful_statuses else 1,
                 max(0, int(coverage_total or 0)),
                 max(0, int(coverage_supported or 0)),
                 error_code[:80],

@@ -682,6 +682,7 @@ const App: React.FC = () => {
   const [dashBannerCollapsed, setDashBannerCollapsed] = useState(false);
   const [dashLastRefresh, setDashLastRefresh] = useState<Date>(new Date());
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const skipNextRouteRefreshRef = React.useRef(false);
   const [isLoading, setIsLoading] = useState(true);
   const currentUserRecord = users.find(u => u.username === currentUser.username);
   const currentUserLastLogin = currentUserRecord?.lastLogin || 'Never';
@@ -874,9 +875,14 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!isAuthenticated) {
+      skipNextRouteRefreshRef.current = false;
       setIsLoading(false);
       return;
     }
+    // The initial-load effect and the route-change effect run together on the
+    // first authenticated render. Let the initial load own that refresh so the
+    // same lookup/hot/device requests are not issued twice.
+    skipNextRouteRefreshRef.current = true;
     setIsLoading(true);
     // Initial load: lookups (rarely change) + hot data (recent activity) + devices.
     Promise.all([fetchSharedLookups(), fetchHotData(), fetchDevicesData()])
@@ -912,6 +918,10 @@ const App: React.FC = () => {
   // (not on each polling tick) to avoid the prior amplification.
   useEffect(() => {
     if (!isAuthenticated) return;
+    if (skipNextRouteRefreshRef.current) {
+      skipNextRouteRefreshRef.current = false;
+      return;
+    }
     fetchSharedLookups();
     fetchHotData();
     if (!(activeTab === 'inventory' && inventorySubPage === 'devices')) {

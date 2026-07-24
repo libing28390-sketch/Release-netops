@@ -47,7 +47,10 @@ from services.ipam_service import (
     allocate_next_address,
     reserve_address,
     release_address,
+    preview_interface_prefixes,
+    generate_interface_prefixes,
 )
+from services.prefix_discovery_service import get_prefix_classification_summary
 from services.audit_service import log_audit_event
 
 logger = logging.getLogger(__name__)
@@ -73,6 +76,10 @@ class ReservationRequest(AllocationRequest):
 
 class ReleaseRequest(BaseModel):
     released_by: str = ''
+
+
+class InterfacePrefixGenerateRequest(BaseModel):
+    candidate_ids: list[str] = []
 
 
 def _prefix_scope(subnet_id: str) -> dict:
@@ -111,6 +118,45 @@ def api_list_subnets(
     _user=require_role("Viewer"),
 ):
     return list_subnets(site=site, status=status, q=q)
+
+
+@router.get('/ipam/prefixes/interface-candidates')
+def api_preview_interface_prefixes(_user=require_role("Viewer")):
+    """Preview prefixes derived from current L3 interface collection only."""
+    return preview_interface_prefixes()
+
+
+@router.get('/ipam/prefixes/classification-summary')
+def api_prefix_classification_summary(_user=require_role("Viewer")):
+    return get_prefix_classification_summary()
+
+
+@router.post('/ipam/prefixes/generate-from-interfaces')
+def api_generate_interface_prefixes(
+    body: InterfacePrefixGenerateRequest,
+    user=require_permission('prefix', 'create'),
+):
+    try:
+        result = generate_interface_prefixes(body.candidate_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    log_audit_event(
+        event_type="ipam.prefix.generate_from_interfaces",
+        category="ipam",
+        severity="info",
+        status="success",
+        summary=(
+            f"Generated {result['created_prefixes']} prefixes and "
+            f"{result['created_addresses']} addresses from interface collection"
+        ),
+        actor_username=user.get("username"),
+        actor_role=user.get("role"),
+        target_type="ipam",
+        target_id="interface-collection",
+        details=result,
+    )
+    return result
 
 
 @router.post('/ipam/subnets', status_code=201)

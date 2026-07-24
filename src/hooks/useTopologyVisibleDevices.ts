@@ -46,7 +46,7 @@ export const useTopologyVisibleDevices = ({
       return matchesQuery && matchesStatus && matchesRole && matchesSite;
     });
 
-    // Unmanaged LLDP/CDP peers are retained by the discovery API as evidence,
+    // Unmanaged LLDP peers are retained by the discovery API as evidence,
     // but they are not CMDB assets and should not become pseudo-devices on the
     // primary topology canvas. Rendering them as "?" nodes makes a confirmed
     // device chain look disconnected and noisy. They remain available to the

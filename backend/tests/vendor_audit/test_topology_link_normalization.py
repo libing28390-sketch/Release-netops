@@ -31,7 +31,7 @@ def test_grouping_recomputes_normalized_key_from_raw_observation() -> None:
     assert len(_group_link_observations(rows)) == 1
 
 
-def test_lldp_is_preferred_over_contradictory_cdp_for_same_pair() -> None:
+def test_topology_rebuild_drops_cdp_rows_and_keeps_lldp_only() -> None:
     rows = [
         {'source_device_id': 'dev-a', 'target_device_id': 'dev-b', 'protocol': 'lldp'},
         {'source_device_id': 'dev-a', 'target_device_id': 'dev-b', 'protocol': 'cdp'},
@@ -40,7 +40,6 @@ def test_lldp_is_preferred_over_contradictory_cdp_for_same_pair() -> None:
     filtered = _prefer_lldp_rows(rows)
     assert [(row['source_device_id'], row['target_device_id'], row['protocol']) for row in filtered] == [
         ('dev-a', 'dev-b', 'lldp'),
-        ('dev-b', 'dev-c', 'cdp'),
     ]
 
 

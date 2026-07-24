@@ -415,19 +415,7 @@ type LayoutNode = Device & { x: number; y: number };
 const buildGraphLinks = (nodes: LayoutNode[], links: Link[]) => {
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));
   const seen = new Set<string>();
-  const pairKey = (link: Link) => [String(link.source_device_id || ''), String(link.target_device_id || '')].sort().join('::');
-  const lldpPairs = new Set(
-    links
-      .filter((link) => String(link.discovery_source || '').toLowerCase().split('+').includes('lldp'))
-      .map(pairKey),
-  );
-
   return links
-    .filter((link) => {
-      const protocols = String(link.discovery_source || '').toLowerCase().split('+').filter(Boolean);
-      const isCdpOnly = protocols.includes('cdp') && !protocols.includes('lldp');
-      return !(isCdpOnly && lldpPairs.has(pairKey(link)));
-    })
     .map((link) => ({
       ...link,
       source: nodeMap.get(link.source_device_id),
@@ -854,6 +842,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const [zoomPercent, setZoomPercent] = useState(90);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [minimapSnapshot, setMinimapSnapshot] = useState<MinimapSnapshot | null>(null);
+  const [minimapOpen, setMinimapOpen] = useState(false);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(selectedNodeId ? [selectedNodeId] : []);
   const [gridSnapEnabled, setGridSnapEnabled] = useState(true);
   const [spacePanActive, setSpacePanActive] = useState(false);
@@ -915,15 +904,37 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     }, 180);
   };
 
+  const clearDeviceHoverFocus = () => {
+    hoverFocusIdRef.current = null;
+    applyHoverFocusRef.current(null);
+  };
+
+  const updateDeviceHoverFocus = (device: Device) => {
+    clearHoverHideTimer();
+    hoverFocusIdRef.current = device.id;
+    applyHoverFocusRef.current(device.id);
+    setHoveredLinkId(null);
+  };
+
   const updateHoverCard = (event: any, device: Device) => {
     const container = containerRef.current;
     if (!container) return;
     clearHoverHideTimer();
     const rect = container.getBoundingClientRect();
     const cardWidth = 220;
-    const cardHeight = 176;
-    const x = Math.min(Math.max(event.clientX - rect.left + 14, 8), Math.max(8, rect.width - cardWidth - 8));
-    const y = Math.min(Math.max(event.clientY - rect.top + 14, 8), Math.max(8, rect.height - cardHeight - 8));
+    const cardHeight = 390;
+    const gap = 16;
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const rightSpace = rect.width - pointerX;
+    const leftSpace = pointerX;
+    const placeRight = rightSpace >= cardWidth + gap || rightSpace >= leftSpace;
+    const preferredX = placeRight ? pointerX + gap : pointerX - cardWidth - gap;
+    const x = Math.min(Math.max(preferredX, 8), Math.max(8, rect.width - cardWidth - 8));
+    const y = Math.min(
+      Math.max(pointerY - cardHeight / 2, 8),
+      Math.max(8, rect.height - cardHeight - 8),
+    );
     setHoverCardPosition({ x, y });
     hoverFocusIdRef.current = device.id;
     applyHoverFocusRef.current(device.id);
@@ -941,6 +952,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const x = Math.min(Math.max(event.clientX - rect.left + 14, 8), Math.max(8, rect.width - cardWidth - 8));
     const y = Math.min(Math.max(event.clientY - rect.top + 14, 8), Math.max(8, rect.height - cardHeight - 8));
     setHoverCardPosition({ x, y });
+    clearDeviceHoverFocus();
     setHoveredLinkId(link.link_key || link.id || '');
     setHoveredDeviceId(null); // hide device hover card
   };
@@ -1901,6 +1913,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .selectAll('g')
       .data(labelledLinks)
       .join('g')
+      .style('pointer-events', 'none')
       .style('cursor', 'help');
     const sourcePortLabel = portLabelGroup
       .append('text')
@@ -1997,11 +2010,14 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           return;
         }
         setSelectedNodeIds([d.id]);
+        updateHoverCard(event, d as Device);
         if (onNodeClick) onNodeClick(d as Device);
       })
-      .on('pointerenter', (event: any, d: any) => updateHoverCard(event, d as Device))
-      .on('pointermove', (event: any, d: any) => updateHoverCard(event, d as Device))
-      .on('pointerleave', () => scheduleHoverCardHide());
+      // Keep the original topology focus behavior on hover. Only the device
+      // detail card is click-activated.
+      .on('pointerenter', (_event: any, d: any) => updateDeviceHoverFocus(d as Device))
+      .on('pointermove', (_event: any, d: any) => updateDeviceHoverFocus(d as Device))
+      .on('pointerleave', () => clearDeviceHoverFocus());
 
     const applyHoverFocus = (deviceId: string | null) => {
       linkHitArea.style('display', (item: any) => (
@@ -2230,6 +2246,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         const address = String(d.ip_address || '').trim();
         return [d.hostname, tone.label, platform, address].filter(Boolean).join(' | ');
       });
+
+    // Port labels must remain readable above device glyphs, while staying
+    // pointer-transparent so the original device hover focus still works.
+    portLabelGroup.raise();
 
     const svgElement = svgRef.current;
     type SelectionInputEvent = MouseEvent | PointerEvent;
@@ -2706,61 +2726,79 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       </div>
 
       {minimapSnapshot && (
-        <div className="absolute bottom-4 right-4 z-10 overflow-hidden rounded-[22px] border border-white/10 bg-slate-950/80 p-3 shadow-[0_18px_42px_rgba(0,0,0,0.28)] backdrop-blur-sm">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">Navigator</span>
-            <span className="text-[10px] font-semibold text-slate-500">Click to recenter</span>
-          </div>
-          <svg
-            width={minimapSnapshot.panel.width}
-            height={minimapSnapshot.panel.height}
-            viewBox={`0 0 ${minimapSnapshot.panel.width} ${minimapSnapshot.panel.height}`}
-            className="cursor-pointer rounded-2xl bg-[linear-gradient(180deg,#16253a_0%,#0e192b_100%)]"
-            onClick={handleMinimapClick}
-          >
-            <rect x="0" y="0" width={minimapSnapshot.panel.width} height={minimapSnapshot.panel.height} rx="18" fill="transparent" />
-            {minimapSnapshot.links.map((link) => (
-              <line
-                key={link.id}
-                x1={link.sourceX}
-                y1={link.sourceY}
-                x2={link.targetX}
-                y2={link.targetY}
-                stroke={link.color}
-                strokeOpacity="0.72"
-                strokeWidth={link.width}
-              />
-            ))}
-            {minimapSnapshot.nodes.map((node) => (
-              <circle
-                key={node.id}
-                cx={node.x}
-                cy={node.y}
-                r={node.selected ? 4.6 : 3.3}
-                fill={node.fill}
-                stroke={node.selected ? '#0f172a' : 'rgba(255,255,255,0.95)'}
-                strokeWidth={node.selected ? 1.5 : 1}
-              />
-            ))}
-            <rect
-              x={minimapSnapshot.viewport.x}
-              y={minimapSnapshot.viewport.y}
-              width={Math.min(minimapSnapshot.viewport.width, minimapSnapshot.panel.width)}
-              height={Math.min(minimapSnapshot.viewport.height, minimapSnapshot.panel.height)}
-              rx="8"
-              fill="rgba(14,165,233,0.08)"
-              stroke="rgba(2,132,199,0.9)"
-              strokeWidth="1.5"
-            />
-          </svg>
+        <div className="absolute bottom-3 right-3 z-10">
+          {!minimapOpen ? (
+            <button
+              type="button"
+              onClick={() => setMinimapOpen(true)}
+              className="rounded-xl border border-white/10 bg-slate-950/85 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-300 shadow-[0_12px_28px_rgba(0,0,0,0.24)] backdrop-blur-sm transition hover:bg-slate-900 hover:text-white"
+              aria-label="Open topology navigator"
+            >
+              Navigator
+            </button>
+          ) : (
+            <div className="overflow-hidden rounded-[22px] border border-white/10 bg-slate-950/80 p-3 shadow-[0_18px_42px_rgba(0,0,0,0.28)] backdrop-blur-sm">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-300">Navigator</span>
+                <button
+                  type="button"
+                  onClick={() => setMinimapOpen(false)}
+                  className="text-[10px] font-semibold text-slate-500 transition hover:text-white"
+                  aria-label="Collapse topology navigator"
+                >
+                  Hide
+                </button>
+              </div>
+              <svg
+                width={minimapSnapshot.panel.width}
+                height={minimapSnapshot.panel.height}
+                viewBox={`0 0 ${minimapSnapshot.panel.width} ${minimapSnapshot.panel.height}`}
+                className="cursor-pointer rounded-2xl bg-[linear-gradient(180deg,#16253a_0%,#0e192b_100%)]"
+                onClick={handleMinimapClick}
+              >
+                <rect x="0" y="0" width={minimapSnapshot.panel.width} height={minimapSnapshot.panel.height} rx="18" fill="transparent" />
+                {minimapSnapshot.links.map((link) => (
+                  <line
+                    key={link.id}
+                    x1={link.sourceX}
+                    y1={link.sourceY}
+                    x2={link.targetX}
+                    y2={link.targetY}
+                    stroke={link.color}
+                    strokeOpacity="0.72"
+                    strokeWidth={link.width}
+                  />
+                ))}
+                {minimapSnapshot.nodes.map((node) => (
+                  <circle
+                    key={node.id}
+                    cx={node.x}
+                    cy={node.y}
+                    r={node.selected ? 4.6 : 3.3}
+                    fill={node.fill}
+                    stroke={node.selected ? '#0f172a' : 'rgba(255,255,255,0.95)'}
+                    strokeWidth={node.selected ? 1.5 : 1}
+                  />
+                ))}
+                <rect
+                  x={minimapSnapshot.viewport.x}
+                  y={minimapSnapshot.viewport.y}
+                  width={Math.min(minimapSnapshot.viewport.width, minimapSnapshot.panel.width)}
+                  height={Math.min(minimapSnapshot.viewport.height, minimapSnapshot.panel.height)}
+                  rx="8"
+                  fill="rgba(14,165,233,0.08)"
+                  stroke="rgba(2,132,199,0.9)"
+                  strokeWidth="1.5"
+                />
+              </svg>
+            </div>
+          )}
         </div>
       )}
       {hoveredDevice && (
         <div
           className="pointer-events-auto absolute z-30 w-[220px] rounded-2xl border border-slate-200 bg-white/98 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.22)] backdrop-blur-sm"
           style={{ left: hoverCardPosition.x, top: hoverCardPosition.y }}
-          onPointerEnter={clearHoverHideTimer}
-          onPointerLeave={scheduleHoverCardHide}
         >
           <div className="border-b border-slate-100 pb-2.5">
             <div className="truncate text-sm font-extrabold text-slate-900" title={hoveredDevice.hostname}>{hoveredDevice.hostname}</div>
@@ -2769,7 +2807,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
               {hoveredDevice.is_group ? `${getLayerTone(hoveredDevice).label} GROUP` : getLayerTone(hoveredDevice).label}
             </div>
             <div className="mt-2 rounded-lg border border-cyan-100 bg-cyan-50 px-2 py-1.5 text-[10px] font-semibold leading-4 text-cyan-700">
-              悬停聚焦：仅显示直接邻居与关联链路
+              关联链路聚焦：仅显示直接邻居与关联链路
             </div>
           </div>
           {hoveredDevice.is_group ? (

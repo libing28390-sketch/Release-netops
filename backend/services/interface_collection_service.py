@@ -11,12 +11,13 @@ from __future__ import annotations
 import ipaddress
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
 from database import get_db_connection
 from core.interface_utils import normalize_interface_name
-from services.operational_data_service import collect_operational_data
+from services.read_only_collection_adapter import collect_read_only_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,16 @@ def _now() -> str:
 
 
 def _record_value(record: dict[str, Any], *keys: str) -> str:
+    # NTC/TextFSM records commonly use lowercase keys while the legacy
+    # playbook contract uses uppercase names.  Match case-insensitively so
+    # Loopback and other L3 interfaces receive the same status treatment as
+    # physical ports.
+    normalized = {
+        str(record_key).strip().replace('-', '_').upper(): value
+        for record_key, value in record.items()
+    }
     for key in keys:
-        value = record.get(key)
+        value = normalized.get(str(key).strip().replace('-', '_').upper())
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
@@ -171,7 +180,7 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
 
 
 def collect_interface_status_target(device_id: str) -> dict[str, Any]:
-    """Collect one device's Playbook interface status and persist IP rows only."""
+    """Collect one device's interface status and project it into IPAM Prefixes."""
     device = _load_device(device_id)
     inventory = _load_ip_inventory(device_id)
     if not inventory:
@@ -184,7 +193,7 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
         }
 
     try:
-        payload = collect_operational_data(device, categories=["interfaces"], auth_role="auto")
+        payload = collect_read_only_evidence(device, categories=["interfaces"], auth_role="auto")
     except Exception as exc:
         message = _friendly_collection_error(exc)
         logger.warning("Interface status collection failed for %s: %s", device.get("hostname") or device_id, message, exc_info=True)
@@ -224,6 +233,21 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
 
     updated = _upsert_interfaces(device, rows)
     unknown = sum(1 for row in rows if row["admin_status"] == "unknown" or row["oper_status"] == "unknown")
+    try:
+        from services.prefix_discovery_service import discover_prefixes_from_interface_snapshot
+
+        prefix_sync = discover_prefixes_from_interface_snapshot(
+            device_id,
+            collection_run_id=f"interface-collection-{device_id}-{payload.get('collected_at') or _now()}",
+        )
+    except Exception as prefix_exc:
+        logger.warning(
+            "Prefix sync after interface collection failed for %s: %s",
+            device.get("hostname") or device_id,
+            prefix_exc,
+            exc_info=True,
+        )
+        prefix_sync = {"ok": False, "error": str(prefix_exc)}
     return {
         "success": True,
         "device_id": device_id,
@@ -235,4 +259,44 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
         "parser": category.get("parser") or "textfsm",
         "command": (category.get("commands") or [""])[0],
         "collected_at": payload.get("collected_at") or _now(),
+        "prefix_sync": prefix_sync,
     }
+
+
+def collect_interface_status_for_online_devices() -> dict[str, Any]:
+    """Refresh CMDB interface status for every online device.
+
+    This is the interface-status phase of the unified Network Reality refresh.
+    It also materializes interface skeleton rows for IPs that currently exist
+    only in ``ip_inventory``.
+    """
+    conn = get_db_connection()
+    try:
+        device_ids = [str(row['id']) for row in conn.execute(
+            "SELECT id FROM devices WHERE status = 'online' ORDER BY hostname, ip_address"
+        ).fetchall()]
+    finally:
+        conn.close()
+
+    result: dict[str, Any] = {
+        'devices': len(device_ids),
+        'succeeded': 0,
+        'failed': 0,
+        'results': [],
+    }
+    if not device_ids:
+        return result
+
+    with ThreadPoolExecutor(max_workers=min(5, len(device_ids))) as executor:
+        futures = {executor.submit(collect_interface_status_target, device_id): device_id for device_id in device_ids}
+        for future in as_completed(futures):
+            device_id = futures[future]
+            try:
+                item = future.result()
+                result['succeeded'] += 1
+                result['results'].append(item)
+            except Exception as exc:
+                result['failed'] += 1
+                result['results'].append({'device_id': device_id, 'success': False, 'error': str(exc)})
+                logger.warning("Interface status collection failed for %s: %s", device_id, exc, exc_info=True)
+    return result

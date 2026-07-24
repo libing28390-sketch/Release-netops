@@ -12,6 +12,11 @@ from fastapi.responses import JSONResponse
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from core.crypto import decrypt_credential
+from core.read_cache import (
+    PLAYBOOK_CACHE_TTL_SECONDS,
+    invalidate_read_cache,
+    read_cache,
+)
 
 from .builtin_scenarios import PLATFORMS
 from .scenarios import (
@@ -112,13 +117,19 @@ async def create_custom_scenario(request: Request, payload: dict = Body(...)):
 
 
 @router.get("/playbooks")
-async def list_playbooks(
+def list_playbooks(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=500),
     status: str = Query('all'),
     scenario: str = Query(''),
 ):
     """Return paginated playbook execution summaries (no bulky results_json / phases_json)."""
+    cache_key = f'{page}:{page_size}:{status}:{scenario}'
+    cache_hit, cached = read_cache.get('playbooks', cache_key)
+    if cache_hit:
+        logger.debug('[Perf] playbooks cache hit key=%s', cache_key)
+        return cached
+
     conn = get_db_connection()
     try:
         where_clauses = []
@@ -133,7 +144,7 @@ async def list_playbooks(
         total = conn.execute(
             f"SELECT COUNT(*) FROM playbook_executions {where_sql}", params
         ).fetchone()[0]
-        logger.info(f"[Playbooks] Found {total} total executions (status={status}, scenario={scenario})")
+        logger.debug(f"[Playbooks] Found {total} total executions (status={status}, scenario={scenario})")
         offset = (page - 1) * page_size
         rows = conn.execute(
             f'''SELECT id, scenario_id, scenario_name, platform, device_ids,
@@ -153,7 +164,9 @@ async def list_playbooks(
                 except Exception:
                     row_dict['total_devices'] = 0
             items.append(row_dict)
-        return {"items": items, "total": total, "page": page, "page_size": page_size}
+        response = {"items": items, "total": total, "page": page, "page_size": page_size}
+        read_cache.set('playbooks', cache_key, response, PLAYBOOK_CACHE_TTL_SECONDS)
+        return response
     finally:
         conn.close()
 
@@ -180,6 +193,7 @@ async def delete_execution(execution_id: str):
         conn.execute('DELETE FROM execution_device_results WHERE execution_id = ?', (execution_id,))
         conn.execute('DELETE FROM playbook_executions WHERE id = ?', (execution_id,))
         conn.commit()
+        invalidate_read_cache('playbooks')
         return {"ok": True}
     finally:
         conn.close()
@@ -693,6 +707,10 @@ async def execute_playbook(request: Request, payload: dict = Body(...)):
         conn.commit()
     finally:
         conn.close()
+
+    # The list endpoint is cached briefly for dashboard fan-out. Invalidate it
+    # after the new execution is committed so the next refresh sees it.
+    invalidate_read_cache('playbooks')
 
     # Fire-and-forget the execution coroutine
     asyncio.create_task(_run_playbook(execution_id, device_ids, phases_for_execution, variables, dry_run, concurrency, platform, commit_confirmed_ttl))

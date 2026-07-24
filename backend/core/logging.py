@@ -5,6 +5,7 @@ import sys
 import os
 import re
 from logging.handlers import TimedRotatingFileHandler
+from core.config import settings
 
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "logs")
 LOG_FORMAT = "%(asctime)s [%(levelname)s] (PID:%(process)d) [%(context)s] %(name)s: %(message)s"
@@ -71,6 +72,15 @@ class ContextFormatter(logging.Formatter):
                 record.context = "-"
         return super().format(record)
 
+def classify_request_log_level(status_code: int, duration_ms: float) -> int:
+    """Keep routine 2xx requests quiet while retaining operational signals."""
+    if status_code >= 500:
+        return logging.ERROR
+    if status_code >= 400 or duration_ms >= float(settings.LOG_SLOW_REQUEST_MS):
+        return logging.WARNING
+    return logging.DEBUG
+
+
 def setup_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
     log_file = os.path.join(LOG_DIR, "netops.log")
@@ -78,7 +88,8 @@ def setup_logging():
     root = logging.getLogger()
     if root.handlers:
         return
-    root.setLevel(logging.INFO)
+    configured_level = str(settings.LOG_LEVEL or "INFO").strip().upper()
+    root.setLevel(getattr(logging, configured_level, logging.INFO))
     root.addFilter(SanitizeFilter())
 
     fmt = ContextFormatter(LOG_FORMAT)

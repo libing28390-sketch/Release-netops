@@ -456,7 +456,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
           : isZte
           ? 'show lldp neighbor brief'
           : isCisco || isNxos
-          ? 'show lldp neighbors detail\nshow cdp neighbors detail'
+          ? 'show lldp neighbors detail'
           : 'show lldp neighbors detail',
       },
       {

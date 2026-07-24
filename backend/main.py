@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from core.config import settings
 from core.textfsm import configure_ntc_templates
-from core.logging import setup_logging
+from core.logging import setup_logging, classify_request_log_level
 from api.health import router as health_router, record_host_resource_snapshot
 from api.devices import router as devices_router
 from api.jobs import router as jobs_router
@@ -54,6 +54,7 @@ from api.change_orders import router as change_orders_router
 from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
 from api.inspections import router as inspections_router
+from api.collection_plans import router as collection_plans_router
 from api.textfsm_templates import router as textfsm_templates_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
@@ -178,6 +179,7 @@ async def lifespan(app: FastAPI):
     
     from services.scheduler_service import sync_topology_and_interfaces_job, poll_endpoints_job, sync_routing_neighbors_job, sync_bgp_routes_job
     from services.topology_service import TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS
+    from services.prefix_discovery_service import run_prefix_discovery_job
     scheduler.add_job(
         synchronized_scheduler_job(
             'topology_interface_sync',
@@ -185,6 +187,15 @@ async def lifespan(app: FastAPI):
         )(sync_topology_and_interfaces_job),
         'interval', seconds=TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS,
         id='topology_interface_sync', replace_existing=True
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job(
+            'prefix_discovery_sync',
+            expire_seconds=max(30, TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS - 10),
+        )(run_prefix_discovery_job),
+        'interval', seconds=TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS,
+        id='prefix_discovery_sync', replace_existing=True,
+        max_instances=1, coalesce=True,
     )
     scheduler.add_job(
         synchronized_scheduler_job('poll_endpoints', expire_seconds=290)(poll_endpoints_job),
@@ -258,11 +269,13 @@ app = FastAPI(
 
 @app.middleware("http")
 async def add_request_id_and_log(request: Request, call_next):
+    start_time = time.perf_counter()
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     req_token = request_id_var.set(request_id)
     user_token = user_var.set("anonymous")
     route_token = route_var.set(request.url.path)
     
+    auth_start_time = time.perf_counter()
     auth = request.headers.get('Authorization', '')
     if auth.startswith('Bearer '):
         token = auth.replace('Bearer ', '')
@@ -274,25 +287,31 @@ async def add_request_id_and_log(request: Request, call_next):
                     user_var.set(user['username'])
             except Exception:
                 pass
-                
-    start_time = time.time()
+    auth_duration_ms = (time.perf_counter() - auth_start_time) * 1000
+    handler_start_time = time.perf_counter()
     try:
         response = await call_next(request)
-        duration_ms = (time.time() - start_time) * 1000
+        handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
+        duration_ms = (time.perf_counter() - start_time) * 1000
         metrics_registry.record_api_latency(duration_ms)
-        logger.info(
+        request_log_level = classify_request_log_level(response.status_code, duration_ms)
+        logger.log(
+            request_log_level,
             f"Route: {request.method} {request.url.path} | "
             f"Status: {response.status_code} | "
-            f"Duration: {duration_ms:.2f}ms"
+            f"Duration: {duration_ms:.2f}ms | "
+            f"Auth: {auth_duration_ms:.2f}ms | Handler: {handler_duration_ms:.2f}ms"
         )
         response.headers["X-Request-ID"] = request_id
         return response
     except Exception as exc:
-        duration_ms = (time.time() - start_time) * 1000
+        handler_duration_ms = (time.perf_counter() - handler_start_time) * 1000
+        duration_ms = (time.perf_counter() - start_time) * 1000
         logger.error(
             f"Route: {request.method} {request.url.path} | "
             f"Failed: {exc} | "
-            f"Duration: {duration_ms:.2f}ms",
+            f"Duration: {duration_ms:.2f}ms | "
+            f"Auth: {auth_duration_ms:.2f}ms | Handler: {handler_duration_ms:.2f}ms",
             exc_info=True
         )
         raise exc
@@ -397,6 +416,7 @@ app.include_router(graph_router,          prefix="/api")
 app.include_router(reports_router,        prefix="/api")
 app.include_router(compliance_router,     prefix="/api")
 app.include_router(inspections_router,    prefix="/api")
+app.include_router(collection_plans_router, prefix="/api")
 app.include_router(textfsm_templates_router, prefix="/api")
 app.include_router(change_orders_router,  prefix="/api")
 app.include_router(pam_router,            prefix="/api")
@@ -747,9 +767,9 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")
 
     if workers > 1:
-        uvicorn.run("main:app", host=host, port=port, workers=workers, loop=loop_type)
+        uvicorn.run("main:app", host=host, port=port, workers=workers, loop=loop_type, access_log=False)
     else:
-        uvicorn.run("main:app", host=host, port=port, loop=loop_type, **reload_kwargs)
+        uvicorn.run("main:app", host=host, port=port, loop=loop_type, access_log=False, **reload_kwargs)
 
 # Reloader validation check comment
 

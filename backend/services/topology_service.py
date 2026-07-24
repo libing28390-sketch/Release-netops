@@ -12,17 +12,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from netmiko import ConnectHandler
-from scrapli.driver.core import AsyncEOSDriver, AsyncIOSXEDriver, AsyncJunosDriver, AsyncNXOSDriver
-from scrapli_community.hp.comware.async_driver import AsyncHPComwareDriver
-from scrapli_community.huawei.vrp.async_driver import AsyncHuaweiVRPDriver
 
 from core.crypto import decrypt_credential
 from core.interface_utils import normalize_interface_name
 from core.textfsm import configure_ntc_templates, smart_parse_cli
+from core.read_cache import invalidate_read_cache
 from database import get_db_connection
 from services.vault_service import resolve_collector_credentials
-from services.network_access_limiter import get_network_access_limiter, limited_connect_handler
+from services.network_access_limiter import limited_connect_handler
 from services.collection_status_service import record_collection_result
+from services.neighbor_collection_contract import assert_lldp_command, normalize_neighbor_record
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 
 logger = logging.getLogger(__name__)
@@ -58,21 +57,6 @@ PLATFORM_MAP = {
     'hp_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
 }
-
-SCRAPLI_DRIVERS = {
-    'cisco_ios': AsyncIOSXEDriver,
-    'cisco_nxos': AsyncNXOSDriver,
-    'juniper_junos': AsyncJunosDriver,
-    'arista_eos': AsyncEOSDriver,
-    'huawei_vrp': AsyncHuaweiVRPDriver,
-    'huawei_vrpv8': AsyncHuaweiVRPDriver,
-    'h3c_comware': AsyncHPComwareDriver,
-    'h3c_comware9': AsyncHPComwareDriver,
-}
-
-SCRAPLI_LEGACY_SSH_SKIP_PLATFORMS = frozenset({
-    'cisco_ios',
-})
 
 DISCOVERY_COMMANDS = {
     'cisco_ios': [
@@ -268,6 +252,7 @@ def _extract_first(raw: dict[str, Any], *keys: str) -> str:
 
 
 def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str, Any]:
+    common = normalize_neighbor_record(raw, protocol=protocol)
     neighbor_name = _extract_first(
         raw,
         'neighbor_name',        # Cisco IOS/NX-OS detail, Arista EOS, Huawei VRP, H3C Comware
@@ -316,7 +301,14 @@ def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str,
     neighbor_identity = neighbor_name or chassis_id
     confidence = 0.9 if protocol == 'lldp' else 0.82
     return {
-        'protocol': protocol,
+        **common,
+        'protocol': 'lldp',
+        'local_interface': local_port,
+        'neighbor_name': neighbor_identity,
+        'neighbor_interface': remote_port,
+        'neighbor_management_ip': neighbor_ip,
+        'neighbor_platform': common['neighbor_platform'],
+        'neighbor_capabilities': common['neighbor_capabilities'],
         'neighbor_name_raw': neighbor_identity,
         'neighbor_name_normalized': normalize_hostname(neighbor_identity),
         'neighbor_ip_address': neighbor_ip,
@@ -333,7 +325,7 @@ def _extract_observation_fields(raw: dict[str, Any], protocol: str) -> dict[str,
 def _deduplicate_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse parser duplicates while retaining the richest observation.
 
-    LLDP/CDP detail output can repeat the same peer in multiple sections, and
+    LLDP detail output can repeat the same peer in multiple sections, and
     some TextFSM templates expose a partial record followed by a complete one.
     A local port + protocol + remote identity is the safe dedupe boundary; it
     does not collapse parallel links because those use different local ports.
@@ -547,31 +539,15 @@ def _canonical_link_endpoints(observation: dict[str, Any]) -> tuple[tuple[str, s
 
 
 def _prefer_lldp_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Prefer LLDP evidence over contradictory CDP evidence for one device pair.
+    """Keep only LLDP evidence when rebuilding topology links.
 
-    Cisco devices can expose the same physical neighbor through both protocols;
-    emulators and mixed software versions sometimes report different aliases or
-    stale ports for CDP.  LLDP is the canonical topology source when it exists,
-    while CDP remains a fallback for pairs that have no LLDP evidence at all.
+    Historical rows without a protocol are treated as legacy LLDP rows. CDP is
+    never a fallback and cannot re-enter the active topology graph.
     """
-    lldp_pairs = {
-        tuple(sorted((str(row.get('source_device_id') or ''), str(row.get('target_device_id') or ''))))
-        for row in rows
-        if str(row.get('protocol') or '').strip().lower() == 'lldp'
-        and row.get('source_device_id')
-        and row.get('target_device_id')
-    }
-    if not lldp_pairs:
-        return rows
-
-    filtered: list[dict[str, Any]] = []
-    for row in rows:
-        protocol = str(row.get('protocol') or '').strip().lower()
-        pair = tuple(sorted((str(row.get('source_device_id') or ''), str(row.get('target_device_id') or ''))))
-        if protocol == 'cdp' and pair in lldp_pairs:
-            continue
-        filtered.append(row)
-    return filtered
+    return [
+        row for row in rows
+        if str(row.get('protocol') or 'lldp').strip().lower() == 'lldp'
+    ]
 
 
 def _group_link_observations(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -762,7 +738,7 @@ def _load_interface_aggregation_map(conn) -> dict[tuple[str, str], dict[str, Any
 def _sync_aggregation_inventory(device: dict[str, Any]) -> dict[str, int]:
     """Persist vendor-specific LAG membership for the next topology rebuild.
 
-    LLDP/CDP exposes physical member ports, while the aggregation command
+    LLDP exposes physical member ports, while the aggregation command
     exposes the parent/member relationship.  We collect the latter once per
     topology discovery run and keep the raw vendor names in ``interfaces``.
     A failure is intentionally isolated from neighbor discovery.
@@ -991,61 +967,6 @@ def _collapse_aggregation_groups(
     return collapsed
 
 
-async def _collect_neighbors_with_scrapli(device: dict[str, Any], commands: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], str]:
-    platform = normalize_topology_platform(device.get('platform'))
-    driver_class = SCRAPLI_DRIVERS.get(platform)
-    if not driver_class or platform in SCRAPLI_LEGACY_SSH_SKIP_PLATFORMS:
-        raise RuntimeError('scrapli_unavailable')
-
-    scrapli_device = {
-        'host': device.get('ip_address'),
-        'auth_username': device.get('username'),
-        'auth_password': device.get('password'),
-        'auth_strict_key': False,
-        'port': int(device.get('management_port') or device.get('port') or 22),
-        'transport': 'asyncssh',
-        'timeout_socket': 5,
-        'timeout_transport': 5,
-        'timeout_ops': 12,
-    }
-
-    collected: list[dict[str, Any]] = []
-    async with get_network_access_limiter().async_ssh(
-        device,
-        username=device.get('username'),
-        port=scrapli_device['port'],
-        operation='topology:scrapli',
-    ):
-        async with driver_class(**scrapli_device) as client:
-            for protocol, command in commands:
-                response = await client.send_command(command)
-                is_comware = 'comware' in platform or 'hp_comware' in platform
-                parsed = None
-                raw_text = str(getattr(response, 'result', '') or getattr(response, 'text', '') or '')
-                if is_comware or 'huawei' in platform:
-                    parsed = _parse_shared_lldp_output(platform, command, raw_text)
-                else:
-                    try:
-                        parsed = response.textfsm_parse_output() or []
-                    except Exception:
-                        parsed = None
-
-                if isinstance(parsed, list) and parsed:
-                    for item in parsed:
-                        observation = _extract_observation_fields(item, protocol)
-                        if observation['neighbor_name_raw'] and observation['source_port_raw']:
-                            collected.append(observation)
-                elif raw_text.strip():
-                    # TextFSM template not found or Comware bypassed — use regex parser
-                    logger.info('Scrapli TextFSM bypassed/missed for %s %r, using regex parser', platform, command)
-                    regex_entries = _regex_parse_lldp_detail(raw_text)
-                    for item in regex_entries:
-                        observation = _extract_observation_fields(item, protocol)
-                        if observation['neighbor_name_raw'] and observation['source_port_raw']:
-                            collected.append(observation)
-    return collected, 'scrapli'
-
-
 async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], str]:
     platform = normalize_topology_platform(device.get('platform'))
     device_type = PLATFORM_MAP.get(platform)
@@ -1065,6 +986,7 @@ async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list
         collected: list[dict[str, Any]] = []
         with limited_connect_handler(device, ConnectHandler, **netmiko_device) as client:
             for protocol, command in commands:
+                assert_lldp_command(platform, command, scenario_id='topology_lldp')
                 is_comware = 'comware' in device_type or 'hp_comware' in device_type or 'h3c' in str(device.get('platform', '')).lower()
                 parsed = None
                 raw_text = ''
@@ -1084,7 +1006,7 @@ async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list
                         if observation['neighbor_name_raw'] and observation['source_port_raw']:
                             collected.append(observation)
                 else:
-                    # TextFSM template bypassed/missed — try regex fallback for LLDP/CDP detail
+                    # TextFSM template bypassed/missed — try regex fallback for LLDP detail
                     raw_text = raw_text or (parsed if isinstance(parsed, str) else client.send_command(command))
                     logger.info('TextFSM template bypassed/missed for %s %r, using regex parser', device_type, command)
                     regex_entries = _regex_parse_lldp_detail(raw_text)
@@ -1109,23 +1031,14 @@ async def _collect_device_observations(device: dict[str, Any]) -> tuple[list[dic
 
     platform = normalize_topology_platform(device.get('platform'))
     commands = DISCOVERY_COMMANDS[platform]
-    last_error: Exception | None = None
-
-    try:
-        observations, method = await _collect_neighbors_with_scrapli(device, commands)
-        return observations, method
-    except Exception as exc:  # noqa: BLE001
-        last_error = exc
-        logger.warning('Scrapli topology discovery failed for %s: %s', device.get('hostname'), exc)
-
+    for protocol, command in commands:
+        assert_lldp_command(platform, command, scenario_id='topology_lldp')
     try:
         observations, method = await _collect_neighbors_with_netmiko(device, commands)
         return observations, method
     except Exception as exc:  # noqa: BLE001
-        last_error = exc
         logger.error('Netmiko topology discovery failed for %s: %s', device.get('hostname'), exc)
-
-    raise RuntimeError(str(last_error) if last_error else 'topology_discovery_failed')
+        raise RuntimeError(str(exc)) from exc
 
 
 def _replace_device_observations(
@@ -1139,9 +1052,17 @@ def _replace_device_observations(
     unmatched = 0
     conn = get_db_connection()
     try:
-        conn.execute('DELETE FROM topology_observations WHERE source_device_id = ?', (device['id'],))
         source_site_id = str(device.get('site_id') or '')
+        observed_keys: set[tuple[str, str, str, str]] = set()
         for observation in observations:
+            protocol = str(observation.get('protocol') or 'lldp').strip().lower()
+            if protocol != 'lldp':
+                raise ValueError(f'neighbor_protocol_forbidden:{protocol}')
+            source_port = str(observation.get('source_port_normalized') or '').strip()
+            neighbor_name = str(observation.get('neighbor_name_normalized') or '').strip()
+            target_port = str(observation.get('target_port_normalized') or '').strip()
+            identity_key = (source_port, neighbor_name, target_port, protocol)
+            observed_keys.add(identity_key)
             evidence = _match_target_device_with_evidence(
                 conn,
                 observation['neighbor_name_raw'],
@@ -1164,41 +1085,120 @@ def _replace_device_observations(
             protocol_confidence = float(observation.get('confidence') or 0.0)
             identity_confidence = float(evidence.get('confidence') or 0.0)
             final_confidence = min(protocol_confidence, identity_confidence) if target_device else protocol_confidence
+            values = (
+                device.get('hostname') or '',
+                observation['source_port_raw'],
+                observation['neighbor_name_raw'],
+                observation['neighbor_ip_address'],
+                target_device['id'] if target_device else None,
+                target_device.get('hostname') if target_device else observation['neighbor_name_raw'],
+                observation['target_port_raw'],
+                final_confidence,
+                run_id,
+                observation['raw_payload_json'],
+                now,
+                source_site_id,
+                evidence.get('method') or '',
+                match_status,
+                _safe_json(evidence.get('candidates') or []),
+            )
+            existing = conn.execute(
+                '''
+                SELECT id, first_seen_at
+                FROM topology_observations
+                WHERE source_device_id = ?
+                  AND source_port_normalized = ?
+                  AND neighbor_name_normalized = ?
+                  AND target_port_normalized = ?
+                  AND protocol = 'lldp'
+                ORDER BY updated_at DESC
+                LIMIT 1
+                ''',
+                (device['id'], source_port, neighbor_name, target_port),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    '''
+                    UPDATE topology_observations
+                    SET source_hostname = ?, source_port_raw = ?, neighbor_name_raw = ?, neighbor_ip_address = ?,
+                        target_device_id = ?, target_hostname = ?, target_port_raw = ?, confidence = ?,
+                        status = 'active', discovery_run_id = ?, raw_payload_json = ?, collected_at = ?,
+                        updated_at = ?, source_site_id = ?, match_method = ?, match_status = ?,
+                        match_candidates_json = ?, last_seen_at = ?, miss_count = 0, is_active = 1
+                    WHERE id = ?
+                    ''',
+                    (*values, now, existing['id']),
+                )
+            else:
+                conn.execute(
+                    '''
+                    INSERT INTO topology_observations (
+                        id, source_device_id, source_hostname, source_port_raw, source_port_normalized,
+                        neighbor_name_raw, neighbor_name_normalized, neighbor_ip_address,
+                        target_device_id, target_hostname, target_port_raw, target_port_normalized,
+                        protocol, confidence, status, discovery_run_id, raw_payload_json, collected_at, updated_at,
+                        source_site_id, match_method, match_status, match_candidates_json,
+                        first_seen_at, last_seen_at, miss_count, is_active
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'lldp', ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1)
+                    ''',
+                    (
+                        str(uuid.uuid4()),
+                        device['id'],
+                        device.get('hostname') or '',
+                        observation['source_port_raw'],
+                        source_port,
+                        observation['neighbor_name_raw'],
+                        neighbor_name,
+                        observation['neighbor_ip_address'],
+                        target_device['id'] if target_device else None,
+                        target_device.get('hostname') if target_device else observation['neighbor_name_raw'],
+                        observation['target_port_raw'],
+                        target_port,
+                        final_confidence,
+                        run_id,
+                        observation['raw_payload_json'],
+                        now,
+                        now,
+                        source_site_id,
+                        evidence.get('method') or '',
+                        match_status,
+                        _safe_json(evidence.get('candidates') or []),
+                        now,
+                        now,
+                        0,
+                        1,
+                    ),
+                )
+
+        # A successful scan is allowed to age observations. Failed scans never
+        # call this function, so previously valid evidence is preserved.
+        active_rows = conn.execute(
+            '''
+            SELECT id, source_port_normalized, neighbor_name_normalized,
+                   target_port_normalized, protocol, miss_count
+            FROM topology_observations
+            WHERE source_device_id = ? AND protocol = 'lldp' AND COALESCE(is_active, 1) = 1
+            ''',
+            (device['id'],),
+        ).fetchall()
+        for row in active_rows:
+            row_key = (
+                str(row['source_port_normalized'] or ''),
+                str(row['neighbor_name_normalized'] or ''),
+                str(row['target_port_normalized'] or ''),
+                str(row['protocol'] or 'lldp'),
+            )
+            if row_key in observed_keys:
+                continue
+            next_miss_count = int(row['miss_count'] or 0) + 1 if 'miss_count' in row.keys() else 1
+            stale = next_miss_count >= 3
             conn.execute(
                 '''
-                INSERT INTO topology_observations (
-                    id, source_device_id, source_hostname, source_port_raw, source_port_normalized,
-                    neighbor_name_raw, neighbor_name_normalized, neighbor_ip_address,
-                    target_device_id, target_hostname, target_port_raw, target_port_normalized,
-                    protocol, confidence, status, discovery_run_id, raw_payload_json, collected_at, updated_at,
-                    source_site_id, match_method, match_status, match_candidates_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                UPDATE topology_observations
+                SET miss_count = ?, is_active = ?, status = ?, updated_at = ?
+                WHERE id = ?
                 ''',
-                (
-                    str(uuid.uuid4()),
-                    device['id'],
-                    device.get('hostname') or '',
-                    observation['source_port_raw'],
-                    observation['source_port_normalized'],
-                    observation['neighbor_name_raw'],
-                    observation['neighbor_name_normalized'],
-                    observation['neighbor_ip_address'],
-                    target_device['id'] if target_device else None,
-                    target_device.get('hostname') if target_device else observation['neighbor_name_raw'],
-                    observation['target_port_raw'],
-                    observation['target_port_normalized'],
-                    observation['protocol'],
-                    final_confidence,
-                    'active',
-                    run_id,
-                    observation['raw_payload_json'],
-                    now,
-                    now,
-                    source_site_id,
-                    evidence.get('method') or '',
-                    match_status,
-                    _safe_json(evidence.get('candidates') or []),
-                ),
+                (next_miss_count, 0 if stale else 1, 'stale' if stale else 'active', now, row['id']),
             )
         conn.commit()
         return {'matched': matched, 'ambiguous': ambiguous, 'unmatched': unmatched}
@@ -1208,7 +1208,9 @@ def _replace_device_observations(
 
 def rebuild_links_from_observations() -> int:
     with _topology_rebuild_lock:
-        return _rebuild_links_from_observations_unlocked()
+        total_links = _rebuild_links_from_observations_unlocked()
+        invalidate_read_cache('topology')
+        return total_links
 
 
 def _rebuild_links_from_observations_unlocked() -> int:
@@ -1222,22 +1224,13 @@ def _rebuild_links_from_observations_unlocked() -> int:
             WHERE target_device_id IS NOT NULL
               AND COALESCE(source_port_normalized, '') <> ''
               AND COALESCE(match_status, 'matched') = 'matched'
+              AND COALESCE(is_active, 1) = 1
             '''
         ).fetchall()
 
         grouped = _group_link_observations(_prefer_lldp_rows([dict(row) for row in rows]))
         aggregation_map = _load_interface_aggregation_map(conn)
         grouped_with_contract = _collapse_aggregation_groups(grouped, aggregation_map)
-        active_lldp_pairs: set[tuple[str, str]] = set()
-        for bundle in grouped_with_contract.values():
-            observations = bundle.get('observations') or []
-            if observations and any(str(item.get('protocol') or '').lower() == 'lldp' for item in observations):
-                first_observation = observations[0]
-                active_lldp_pairs.add(tuple(sorted((
-                    str(first_observation.get('source_device_id') or ''),
-                    str(first_observation.get('target_device_id') or ''),
-                ))))
-
         # Load all interfaces into memory for fast lookup.  A previous
         # discovery may have stored both short and long aliases for one
         # physical port; retain the best native spelling for display while
@@ -1442,7 +1435,6 @@ def _rebuild_links_from_observations_unlocked() -> int:
         for link_key, existing in existing_by_key.items():
             if link_key in active_link_keys:
                 continue
-            existing_pair = tuple(sorted((str(existing.get('source_device_id') or ''), str(existing.get('target_device_id') or ''))))
             existing_canonical_key = _build_link_key(
                 str(existing.get('source_device_id') or ''),
                 str(existing.get('source_port') or existing.get('source_port_normalized') or ''),
@@ -1453,10 +1445,14 @@ def _rebuild_links_from_observations_unlocked() -> int:
             # different persisted key while representing an active link.
             if existing_canonical_key in active_link_keys:
                 continue
-            # CDP is only a fallback when LLDP is unavailable. Once LLDP is
-            # present for a device pair, do not retain a duplicate CDP edge
-            # through the stale-link grace period.
-            if existing_pair in active_lldp_pairs and 'cdp' in str(existing.get('discovery_source') or '').lower() and 'lldp' not in str(existing.get('discovery_source') or '').lower():
+            # Do not retain historical CDP edges in the active topology. The
+            # grace period applies only to LLDP observations after a successful
+            # collection; failed collections never reach this rebuild path.
+            if 'cdp' in str(existing.get('discovery_source') or '').lower():
+                conn.execute(
+                    "UPDATE topology_links SET status = 'stale', updated_at = ? WHERE id = ?",
+                    (now, existing.get('id')),
+                )
                 continue
             last_seen = str(existing.get('last_seen') or '')
             try:
@@ -1645,7 +1641,7 @@ def create_discovery_run(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
-                run_id, scope, 'pending', requested_by, 'lldp_cdp', now, len(device_ids),
+                run_id, scope, 'pending', requested_by, 'lldp', now, len(device_ids),
                 '{}', site_id, _safe_json(scope_payload or {'device_ids': device_ids}), 0,
                 normalized_key, max(1, min(int(max_attempts or DISCOVERY_DEFAULT_MAX_ATTEMPTS), 5)),
                 max(30, min(int(timeout_seconds or DISCOVERY_DEFAULT_TIMEOUT_SECONDS), 3600)),
@@ -1732,12 +1728,13 @@ async def discover_device_neighbors(
         observations = _deduplicate_observations(observations)
         match_summary = _replace_device_observations(device, observations, run_id)
         total_links = rebuild_links_from_observations() if rebuild_links else None
+        collection_status = 'success' if observations else 'no_neighbors'
         record_collection_result(
             device_id,
-            'topology_lldp_cdp',
-            status='success',
+            'topology_lldp',
+            status=collection_status,
             transport='ssh',
-            source='lldp_cdp_cli',
+            source='lldp_playbook',
             duration_ms=(time.perf_counter() - started) * 1000,
             coverage_total=len(observations),
             coverage_supported=match_summary['matched'],
@@ -1747,6 +1744,8 @@ async def discover_device_neighbors(
                 'unmatched': match_summary['unmatched'],
                 'aggregation': aggregation_summary,
                 'run_id': run_id,
+                'protocol': 'lldp',
+                'collection_status': collection_status,
             },
         )
         return {
@@ -1764,10 +1763,10 @@ async def discover_device_neighbors(
     except Exception as exc:
         record_collection_result(
             device_id,
-            'topology_lldp_cdp',
+            'topology_lldp',
             status='failed',
             transport='ssh',
-            source='lldp_cdp_cli',
+            source='lldp_playbook',
             duration_ms=(time.perf_counter() - started) * 1000,
             error_code=topology_error_code(exc),
             error_message=str(exc)[:500],
@@ -2409,7 +2408,7 @@ def get_topology_generation_status() -> dict[str, Any]:
             'stale_retention_seconds': TOPOLOGY_LINK_STALE_RETENTION_SECONDS,
             'pipeline': [
                 {'stage': 'select', 'description': 'Select online devices with a management IP.'},
-                {'stage': 'collect', 'description': 'Run vendor-specific read-only LLDP/CDP commands over SSH.'},
+                {'stage': 'collect', 'description': 'Run vendor-specific read-only LLDP commands over SSH.'},
                 {'stage': 'normalize', 'description': 'Normalize platform, hostname, chassis ID, and interface names.'},
                 {'stage': 'match', 'description': 'Match peers by management IP, chassis/serial, then exact system name.'},
                 {'stage': 'deduplicate', 'description': 'Merge directional evidence into one canonical physical link.'},
@@ -2528,7 +2527,7 @@ def get_discovery_evidence(
     match_status: str | None = None,
     include_raw: bool = False,
 ) -> dict[str, Any] | None:
-    """Return bounded LLDP/CDP evidence without loading a whole run into memory."""
+    """Return bounded LLDP evidence without loading a whole run into memory."""
     safe_limit = max(1, min(int(limit or 100), 500))
     safe_offset = max(0, int(offset or 0))
     clauses = ['o.discovery_run_id = ?']

@@ -91,6 +91,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [drawerAssetLoading, setDrawerAssetLoading] = useState(false);
   const rackScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const layoutCacheRef = useRef<Map<string, RackLayout>>(new Map());
 
   const [confirmDeleteRack, setConfirmDeleteRack] = useState<{ rackId: string; rackName: string } | null>(null);
   const [blockedDeleteRack, setBlockedDeleteRack] = useState<{ rackName: string; deviceCount: number } | null>(null);
@@ -220,13 +221,18 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const loadRacks = useCallback(async () => {
     try {
+      layoutCacheRef.current.clear();
       const data = await fetchJson<Rack[]>(`${API}/racks`);
       setRacks(data);
       if (!selectedRackId && data.length > 0) setSelectedRackId(data[0].id);
       const layouts = await Promise.all(
         data.map(r => fetchJson<RackLayout>(`${API}/racks/${r.id}/layout`).catch(() => null))
       );
-      setAllLayouts(layouts.filter((l): l is RackLayout => l !== null));
+      const validLayouts = layouts.filter((l): l is RackLayout => l !== null);
+      validLayouts.forEach(loadedLayout => layoutCacheRef.current.set(loadedLayout.id, loadedLayout));
+      setAllLayouts(validLayouts);
+      const initialRackId = selectedRackId || data[0]?.id || '';
+      if (initialRackId) setLayout(layoutCacheRef.current.get(initialRackId) || null);
     } catch (e: any) { setError(e.message); }
   }, [selectedRackId]);
 
@@ -284,9 +290,16 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const loadLayout = useCallback(async (rackId: string) => {
     if (!rackId) return;
+    const cachedLayout = layoutCacheRef.current.get(rackId);
+    if (cachedLayout) {
+      setLayout(cachedLayout);
+      setError('');
+      return;
+    }
     setLoading(true);
     try {
       const data = await fetchJson<RackLayout>(`${API}/racks/${rackId}/layout`);
+      layoutCacheRef.current.set(rackId, data);
       setLayout(data);
       setAllLayouts(prev => {
         const exists = prev.some(l => l.id === rackId);
@@ -323,7 +336,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const installAssetsCanLoadMore = assetTotal > 0 && assets.length < assetTotal;
 
-  const refresh = () => { loadRacks(); loadRackTypes(); loadStats(); if (selectedRackId) loadLayout(selectedRackId); };
+  const refresh = () => { loadRacks(); loadRackTypes(); loadStats(); };
 
   const applyRackTypeToForm = (rackTypeId: string) => {
     const rt = rackTypeById.get(rackTypeId);

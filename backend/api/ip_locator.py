@@ -59,9 +59,26 @@ async def api_get_arp_table(user=require_role("Viewer")):
 async def api_trigger_arp_sweep(user=require_role("Operator")):
     """手动触发一次全量 ARP 采集。"""
     try:
-        await run_arp_sweep_async()
+        sweep = await run_arp_sweep_async()
         table = await get_arp_table_async()
-        return {'success': True, 'message': f'采集完成，共 {table["total"]} 条 ARP 记录', 'data': table}
+        collected = int((sweep or {}).get('collected_entries') or 0)
+        eligible = int((sweep or {}).get('eligible_devices') or 0)
+        device_results = (sweep or {}).get('device_results') or []
+        failed = sum(1 for item in device_results if item.get('status') == 'failed')
+        no_data = sum(1 for item in device_results if item.get('status') == 'no_data')
+        if collected:
+            suffix = f'其中 {failed} 台失败、{no_data} 台无条目。' if failed or no_data else ''
+            message = f'本次从 {eligible} 台设备采集到 {collected} 条 ARP 记录，当前共 {table["total"]} 条。{suffix}'
+        elif eligible:
+            message = f'已检查 {eligible} 台设备，但本次没有解析到新的 ARP 记录（失败 {failed} 台、无条目 {no_data} 台）；当前表保留 {table["total"]} 条历史数据。'
+        else:
+            message = '当前没有配置可用于 ARP 采集的在线设备。'
+        return {
+            'success': True,
+            'message': message,
+            'data': table,
+            'sweep': sweep or {},
+        }
     except Exception as exc:
         logger.error(f"[ARP Sweep] manual trigger failed: {exc}")
         raise HTTPException(status_code=500, detail=f'ARP 采集失败: {exc}')
@@ -70,17 +87,8 @@ async def api_trigger_arp_sweep(user=require_role("Operator")):
 @router.post('/ip-locator/nsot-sweep')
 async def api_trigger_nsot_sweep(background_tasks: BackgroundTasks, user=require_role("Operator")):
     """手动触发全量网络事实库同步任务（包括 ARP Sweep、交换机 MAC 采集、普通路由表采集、BGP 协议路由与邻居同步）。"""
-    from services.ip_locator_service import run_endpoint_collector, run_route_collector
-    from services.scheduler_service import (
-        sync_routing_neighbors_job,
-        sync_bgp_routes_job,
-        sync_topology_and_interfaces_job,
-    )
-    background_tasks.add_task(run_endpoint_collector)
-    background_tasks.add_task(run_route_collector)
-    background_tasks.add_task(sync_routing_neighbors_job)
-    background_tasks.add_task(sync_bgp_routes_job)
-    background_tasks.add_task(sync_topology_and_interfaces_job)
+    from services.ip_locator_service import run_unified_nsot_sync
+    background_tasks.add_task(run_unified_nsot_sync)
     return {'success': True, 'message': '数据采集任务已在后台启动，同步过程可能需要 1~2 分钟，请稍后刷新查看。'}
 
 

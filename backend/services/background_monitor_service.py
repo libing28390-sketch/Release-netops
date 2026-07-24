@@ -20,6 +20,7 @@ from services.operational_data_service import collect_operational_data
 from services.network_access_limiter import get_network_access_limiter
 from services.collection_status_service import record_collection_result
 from services.vault_service import resolve_collector_credentials
+from services.collection_plan_service import should_collect
 from services import tag_service
 from core.crypto import decrypt_credential
 
@@ -943,7 +944,10 @@ async def _process_device_raw(device, cycle_tick: int):
         poll_profile = _device_poll_profile(device)
         collect_intf = _should_collect(cycle_tick, poll_profile['interface'])
         collect_info = _should_collect(cycle_tick, poll_profile['info'])
-        collect_protocol = _should_collect(cycle_tick, poll_profile['protocol'])
+        collect_protocol = (
+            _should_collect(cycle_tick, poll_profile['protocol'])
+            and any(should_collect(device, category) for category in ('bgp', 'ospf', 'bfd'))
+        )
 
         def mark_offline_and_clear_cache():
             # Keep UI consistent with real reachability: when a device is offline,

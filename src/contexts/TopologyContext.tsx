@@ -24,7 +24,7 @@ interface TopologyContextValue {
   topologyRoleFilter: string;
   topologyStatusFilter: 'all' | 'online' | 'offline' | 'pending';
   topologyLinkStatusFilter: 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
-  topologyProtocolFilter: 'all' | 'lldp' | 'cdp';
+  topologyProtocolFilter: 'all' | 'lldp';
   topologySiteOptions: Array<{ id: string; name: string }>;
   topologyDiscoveryProgress: {
     id: string;
@@ -62,7 +62,7 @@ interface TopologyContextValue {
   setTopologyRoleFilter: (role: string) => void;
   setTopologyStatusFilter: (status: "pending" | "offline" | "online" | "all") => void;
   setTopologyLinkStatusFilter: (status: "all" | "up" | "degraded" | "down" | "stale" | "unknown") => void;
-  setTopologyProtocolFilter: (protocol: "all" | "lldp" | "cdp") => void;
+  setTopologyProtocolFilter: (protocol: "all" | "lldp") => void;
   formatTopologyPort: (value?: string) => string;
   formatTopologyInterfaceTelemetry: (snapshot: any) => string;
   formatTopologyLastSeen: (value?: string) => string;

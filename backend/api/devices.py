@@ -401,33 +401,21 @@ def _resolve_connection_target(payload: dict) -> dict:
     resolved['port'] = resolved.get('port') or stored.get('management_port') or stored.get('port')
     return resolved
 
-def _normalize_device_row(row, conn=None):
-    item = dict(row)
-    from core.platform_utils import normalize_device_platform
-    item['platform'] = normalize_device_platform(item.get('vendor'), item.get('platform'))
-    try:
-        item['config_history'] = json.loads(item.get('config_history', '[]'))
-    except Exception:
-        item['config_history'] = []
+def _fetch_interface_data_by_device_ids(conn, device_ids: list[str]) -> dict[str, list[dict]]:
+    """Load interface state and latest telemetry for a device batch.
 
-    try:
-        item['cpu_history'] = json.loads(item.get('cpu_history', '[]'))
-    except Exception:
-        item['cpu_history'] = []
+    The devices endpoint can return many rows at once.  Keeping this query
+    batched avoids one telemetry query per device in the full response mode.
+    """
+    unique_ids = list(dict.fromkeys(str(device_id) for device_id in device_ids if device_id))
+    if not unique_ids:
+        return {}
 
+    placeholders = ','.join('?' for _ in unique_ids)
     try:
-        item['memory_history'] = json.loads(item.get('memory_history', '[]'))
-    except Exception:
-        item['memory_history'] = []
-
-    # Dynamically build interface_data by querying interfaces and joining the latest telemetry
-    opened_here = False
-    if conn is None:
-        conn = get_db_connection()
-        opened_here = True
-    try:
-        intf_rows = conn.execute('''
-            SELECT 
+        rows = conn.execute(f'''
+            SELECT
+                i.device_id,
                 i.interface_name as name,
                 i.description,
                 COALESCE(t.status, i.oper_status) as status,
@@ -447,18 +435,59 @@ def _normalize_device_row(row, conn=None):
                 SELECT latest.*
                 FROM interface_telemetry_raw latest
                 INNER JOIN (
-                    SELECT interface_name, MAX(ts) as max_ts
+                    SELECT device_id, interface_name, MAX(ts) as max_ts
                     FROM interface_telemetry_raw
-                    WHERE device_id = ?
-                    GROUP BY interface_name
-                ) sub ON latest.interface_name = sub.interface_name AND latest.ts = sub.max_ts
-                WHERE latest.device_id = ?
-            ) t ON i.interface_name = t.interface_name
-            WHERE i.device_id = ?
-            ORDER BY i.interface_name
-        ''', (item['id'], item['id'], item['id'])).fetchall()
+                    WHERE device_id IN ({placeholders})
+                    GROUP BY device_id, interface_name
+                ) sub ON latest.device_id = sub.device_id
+                    AND latest.interface_name = sub.interface_name
+                    AND latest.ts = sub.max_ts
+                WHERE latest.device_id IN ({placeholders})
+            ) t ON i.device_id = t.device_id AND i.interface_name = t.interface_name
+            WHERE i.device_id IN ({placeholders})
+            ORDER BY i.device_id, i.interface_name
+        ''', tuple(unique_ids) * 3).fetchall()
+    except Exception as exc:
+        _logger.warning("Failed to fetch interfaces for device batch: %s", exc)
+        return {}
 
-        item['interface_data'] = [dict(r) for r in intf_rows]
+    result: dict[str, list[dict]] = {device_id: [] for device_id in unique_ids}
+    for row in rows:
+        row_dict = dict(row)
+        device_id = str(row_dict.pop('device_id'))
+        result.setdefault(device_id, []).append(row_dict)
+    return result
+
+
+def _normalize_device_row(row, conn=None, interface_data=None):
+    item = dict(row)
+    from core.platform_utils import normalize_device_platform
+    item['platform'] = normalize_device_platform(item.get('vendor'), item.get('platform'))
+    try:
+        item['config_history'] = json.loads(item.get('config_history', '[]'))
+    except Exception:
+        item['config_history'] = []
+
+    try:
+        item['cpu_history'] = json.loads(item.get('cpu_history', '[]'))
+    except Exception:
+        item['cpu_history'] = []
+
+    try:
+        item['memory_history'] = json.loads(item.get('memory_history', '[]'))
+    except Exception:
+        item['memory_history'] = []
+
+    # Dynamically build interface_data by querying interfaces and joining the latest telemetry.
+    # Callers returning a batch may provide the already-loaded data to avoid N+1 queries.
+    opened_here = False
+    if conn is None:
+        conn = get_db_connection()
+        opened_here = True
+    try:
+        if interface_data is None:
+            interface_data = _fetch_interface_data_by_device_ids(conn, [str(item['id'])]).get(str(item['id']), [])
+        item['interface_data'] = interface_data
     except Exception as exc:
         _logger.warning("Failed to fetch interfaces for device %s: %s", item.get('id'), exc)
         item['interface_data'] = []
@@ -607,7 +636,11 @@ def read_devices(
                 f'SELECT {select_clause} {from_clause} {where_sql} ORDER BY {order_col} {order_dir} LIMIT 200',
                 tuple(params)
             ).fetchall()
-            items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d, conn) for d in devices]
+            if str(mode).lower() == 'light':
+                items = [_sanitize_device_item(dict(d)) for d in devices]
+            else:
+                interface_data = _fetch_interface_data_by_device_ids(conn, [str(d['id']) for d in devices])
+                items = [_normalize_device_row(d, conn, interface_data.get(str(d['id']), [])) for d in devices]
             return annotate_devices_with_health(conn, _annotate_devices_with_tags(conn, items))
 
         total_row = conn.execute(
@@ -629,7 +662,11 @@ def read_devices(
             tuple([*params, page_size, offset])
         ).fetchall()
 
-        items = [_sanitize_device_item(dict(d)) for d in devices] if str(mode).lower() == 'light' else [_normalize_device_row(d, conn) for d in devices]
+        if str(mode).lower() == 'light':
+            items = [_sanitize_device_item(dict(d)) for d in devices]
+        else:
+            interface_data = _fetch_interface_data_by_device_ids(conn, [str(d['id']) for d in devices])
+            items = [_normalize_device_row(d, conn, interface_data.get(str(d['id']), [])) for d in devices]
 
         return {
             'items': annotate_devices_with_health(conn, _annotate_devices_with_tags(conn, items)),

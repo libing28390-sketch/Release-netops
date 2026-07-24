@@ -9,6 +9,11 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from database import get_db_connection
 from core.rbac import require_role
+from core.read_cache import (
+    RACK_CACHE_TTL_SECONDS,
+    invalidate_read_cache,
+    read_cache,
+)
 from schemas.schemas import (
     RackCreate, RackUpdate, RackTypeCreate, RackTypeUpdate,
     DeviceTypeCreate, DeviceTypeUpdate,
@@ -27,20 +32,31 @@ router = APIRouter()
 def api_list_racks(site_id: str = Query('', description="Filter by site"),
                    datacenter: str = Query('', include_in_schema=False),
                    _user=require_role("Viewer")):
+    cache_key = f'list:{site_id}:{datacenter}'
+    cache_hit, cached = read_cache.get('rack_page', cache_key)
+    if cache_hit:
+        return cached
     conn = get_db_connection()
     try:
         racks = rack_service.list_racks(conn, site_id=site_id, datacenter=datacenter)
-        return {"success": True, "data": racks, "message": ""}
+        response = {"success": True, "data": racks, "message": ""}
+        read_cache.set('rack_page', cache_key, response, RACK_CACHE_TTL_SECONDS)
+        return response
     finally:
         conn.close()
 
 
 @router.get("/racks/stats")
 def api_rack_stats(_user=require_role("Viewer")):
+    cache_hit, cached = read_cache.get('rack_page', 'stats')
+    if cache_hit:
+        return cached
     conn = get_db_connection()
     try:
         stats = rack_service.get_rack_stats(conn)
-        return {"success": True, "data": stats, "message": ""}
+        response = {"success": True, "data": stats, "message": ""}
+        read_cache.set('rack_page', 'stats', response, RACK_CACHE_TTL_SECONDS)
+        return response
     finally:
         conn.close()
 
@@ -49,10 +65,15 @@ def api_rack_stats(_user=require_role("Viewer")):
 
 @router.get("/rack-types")
 def api_list_rack_types(_user=require_role("Viewer")):
+    cache_hit, cached = read_cache.get('rack_page', 'rack-types')
+    if cache_hit:
+        return cached
     conn = get_db_connection()
     try:
         types = rack_service.list_rack_types(conn)
-        return {"success": True, "data": types, "message": ""}
+        response = {"success": True, "data": types, "message": ""}
+        read_cache.set('rack_page', 'rack-types', response, RACK_CACHE_TTL_SECONDS)
+        return response
     finally:
         conn.close()
 
@@ -74,6 +95,7 @@ def api_create_rack_type(body: RackTypeCreate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
         rt = rack_service.create_rack_type(conn, **body.model_dump())
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": rt, "message": "Rack type created"}
     except (ValueError, Exception) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -86,6 +108,7 @@ def api_update_rack_type(rack_type_id: str, body: RackTypeUpdate, user=require_r
     conn = get_db_connection()
     try:
         rt = rack_service.update_rack_type(conn, rack_type_id, **body.model_dump(exclude_unset=True))
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": rt, "message": "Rack type updated"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -98,6 +121,7 @@ def api_delete_rack_type(rack_type_id: str, user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         rack_service.delete_rack_type(conn, rack_type_id)
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": None, "message": "Rack type deleted"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -175,10 +199,16 @@ def api_get_rack(rack_id: str, _user=require_role("Viewer")):
 @router.get("/racks/{rack_id}/layout")
 def api_get_rack_layout(rack_id: str, _user=require_role("Viewer")):
     """Full rack layout including devices and occupancy stats."""
+    cache_key = f'layout:{rack_id}'
+    cache_hit, cached = read_cache.get('rack_page', cache_key)
+    if cache_hit:
+        return cached
     conn = get_db_connection()
     try:
         layout = rack_service.get_rack_layout(conn, rack_id)
-        return {"success": True, "data": layout, "message": ""}
+        response = {"success": True, "data": layout, "message": ""}
+        read_cache.set('rack_page', cache_key, response, RACK_CACHE_TTL_SECONDS)
+        return response
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     finally:
@@ -190,6 +220,7 @@ def api_create_rack(body: RackCreate, user=require_role("Operator")):
     conn = get_db_connection()
     try:
         rack = rack_service.create_rack(conn, **body.model_dump())
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": rack, "message": "Rack created"}
     except (ValueError, Exception) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -226,6 +257,7 @@ def api_update_rack(rack_id: str, body: RackUpdate, user=require_role("Operator"
     conn = get_db_connection()
     try:
         rack = rack_service.update_rack(conn, rack_id, **body.model_dump(exclude_unset=True))
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": rack, "message": "Rack updated"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -238,6 +270,7 @@ def api_delete_rack(rack_id: str, user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         rack_service.delete_rack(conn, rack_id)
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": None, "message": "Rack deleted"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -249,10 +282,15 @@ def api_delete_rack(rack_id: str, user=require_role("Administrator")):
 
 @router.get("/device-types")
 def api_list_device_types(_user=require_role("Viewer")):
+    cache_hit, cached = read_cache.get('rack_page', 'device-types')
+    if cache_hit:
+        return cached
     conn = get_db_connection()
     try:
         types = rack_service.list_device_types(conn)
-        return {"success": True, "data": types, "message": ""}
+        response = {"success": True, "data": types, "message": ""}
+        read_cache.set('rack_page', 'device-types', response, RACK_CACHE_TTL_SECONDS)
+        return response
     finally:
         conn.close()
 
@@ -274,6 +312,7 @@ def api_create_device_type(body: DeviceTypeCreate, user=require_role("Operator")
     conn = get_db_connection()
     try:
         dt = rack_service.create_device_type(conn, **body.model_dump())
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": dt, "message": "Device type created"}
     except (ValueError, Exception) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -286,6 +325,7 @@ def api_update_device_type(dt_id: str, body: DeviceTypeUpdate, user=require_role
     conn = get_db_connection()
     try:
         dt = rack_service.update_device_type(conn, dt_id, **body.model_dump(exclude_unset=True))
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": dt, "message": "Device type updated"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -298,6 +338,7 @@ def api_delete_device_type(dt_id: str, user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         rack_service.delete_device_type(conn, dt_id)
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": None, "message": "Device type deleted"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -322,6 +363,7 @@ def api_create_rack_device(body: RackDeviceCreate, user=require_role("Operator")
     conn = get_db_connection()
     try:
         device = rack_service.create_rack_device(conn, **body.model_dump())
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": device, "message": "Device installed"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -334,6 +376,7 @@ def api_update_rack_device(device_id: str, body: RackDeviceUpdate, user=require_
     conn = get_db_connection()
     try:
         device = rack_service.update_rack_device(conn, device_id, **body.model_dump(exclude_unset=True))
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": device, "message": "Device updated"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -346,6 +389,7 @@ def api_delete_rack_device(device_id: str, user=require_role("Operator")):
     conn = get_db_connection()
     try:
         rack_service.delete_rack_device(conn, device_id)
+        invalidate_read_cache('rack_page')
         return {"success": True, "data": None, "message": "Device removed"}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

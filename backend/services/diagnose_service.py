@@ -976,14 +976,10 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 last_log += f"Error executing neighbor check: {e}\n"
                 neighbor_output = ""
                 
-            if "not enabled" in neighbor_output or "% LLDP is not enabled" in neighbor_output:
-                try:
-                    last_log += f"[{dev_label}]# show cdp neighbors\n"
-                    neighbor_output = await run_cmd("show cdp neighbors")
-                    last_log += neighbor_output + "\n"
-                except Exception as cdp_e:
-                    last_log += f"CDP fallback error: {cdp_e}\n"
-                    neighbor_output = ""
+            if "not enabled" in neighbor_output.lower() or "% lldp is not enabled" in neighbor_output.lower():
+                # LLDP is the single neighbor protocol. Preserve the explicit
+                # disabled state instead of silently switching to CDP.
+                last_log += f"[{dev_label}]# LLDP disabled; neighbor discovery stopped\n"
 
             branches_results = []
             for nh, egress_intf in unique_paths[:2]:

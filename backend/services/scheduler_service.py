@@ -11,6 +11,11 @@ from services.notification_service import dispatch_to_all_users
 from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
 from services.network_access_limiter import limited_connect_handler
+from services.collection_plan_service import (
+    explicit_collector_override,
+    filter_devices,
+    should_collect,
+)
 from core.interface_utils import normalize_interface_name
 # Import inspection service to handle specialized inspection jobs
 from services.inspection_service import run_inspection
@@ -550,6 +555,26 @@ def normalize_collected_interface_status(value: object) -> str:
     return 'unknown'
 
 
+def normalize_collected_interface_rate(value: object) -> float:
+    """Convert NTC/vendor rate strings such as ``10000 Kbit`` to bps."""
+    if value in (None, ''):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().lower().replace(',', '')
+    match = re.search(r'([-+]?\d+(?:\.\d+)?)\s*(k|m|g|t)?(?:bit/s|bits/s|bit|bps)?', text)
+    if not match:
+        return 0.0
+    number = float(match.group(1))
+    multiplier = {
+        'k': 1_000.0,
+        'm': 1_000_000.0,
+        'g': 1_000_000_000.0,
+        't': 1_000_000_000_000.0,
+    }.get(match.group(2) or '', 1.0)
+    return number * multiplier
+
+
 def parse_cisco_ip_interface_brief(output: str) -> list[dict]:
     """Parse Cisco ``show ip interface brief`` without relying on TextFSM.
 
@@ -829,7 +854,7 @@ def parse_mac_table_regex(output: str) -> list[dict]:
     return entries
 
 def sync_topology_and_interfaces_job():
-    """System periodic task: Collect interfaces and topology LLDP/CDP neighbors."""
+    """System periodic task: Collect interfaces and topology LLDP neighbors."""
     logger.info("[Scheduler Job] Starting sync_topology_and_interfaces_job...")
     conn = get_db_connection()
     try:
@@ -841,6 +866,9 @@ def sync_topology_and_interfaces_job():
     if not devices:
         logger.info("[Scheduler Job] No online devices found for interface and topology sync.")
         return
+
+    interface_devices = filter_devices(devices, "interface_ip")
+    topology_devices = filter_devices(devices, "lldp")
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from services.topology_service import PLATFORM_MAP
@@ -950,8 +978,8 @@ def sync_topology_and_interfaces_job():
                             'is_l3': bool((ip_by_name.get(norm_iname) or {}).get('ip_address')) if ip_brief_available else None,
                             'mac_address': item.get('address', ''),
                             'mtu': item.get('mtu', 1500),
-                            'speed': item.get('bandwidth', 0.0),
-                            'bandwidth': item.get('bandwidth', 0.0),
+                            'speed': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
+                            'bandwidth': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
                             'duplex': item.get('duplex', 'auto'),
                             'switchport_mode': mode,
                             'access_vlan': access_vlan,
@@ -992,8 +1020,8 @@ def sync_topology_and_interfaces_job():
                             'is_l3': bool(ip_addr) if ip_brief_available else None,
                             'mac_address': item.get('address', ''),
                             'mtu': item.get('mtu', 1500),
-                            'speed': item.get('bandwidth', 0.0),
-                            'bandwidth': item.get('bandwidth', 0.0),
+                            'speed': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
+                            'bandwidth': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
                             'duplex': item.get('duplex', 'auto'),
                             'switchport_mode': 'l3' if ip_addr else 'access',
                             'access_vlan': None,
@@ -1054,8 +1082,8 @@ def sync_topology_and_interfaces_job():
                             'is_l3': bool(ip_addr) if ip_brief_available else None,
                             'mac_address': item.get('address', ''),
                             'mtu': item.get('mtu', 1500),
-                            'speed': item.get('bandwidth', 0.0),
-                            'bandwidth': item.get('bandwidth', 0.0),
+                            'speed': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
+                            'bandwidth': normalize_collected_interface_rate(item.get('bandwidth', 0.0)),
                             'duplex': item.get('duplex', 'auto'),
                             'switchport_mode': 'l3' if ip_addr else 'access',
                             'access_vlan': None,
@@ -1090,11 +1118,12 @@ def sync_topology_and_interfaces_job():
 
     # Collect interfaces in parallel
     all_interfaces = []
-    workers = min(5, len(devices))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(collect_device_interfaces, dev) for dev in devices]
-        for f in as_completed(futures):
-            all_interfaces.extend(f.result())
+    if interface_devices:
+        workers = min(5, len(interface_devices))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(collect_device_interfaces, dev) for dev in interface_devices]
+            for f in as_completed(futures):
+                all_interfaces.extend(f.result())
 
     # Write to database sequentially
     if all_interfaces:
@@ -1131,6 +1160,13 @@ def sync_topology_and_interfaces_job():
                     ''', values + (existing_id,))
                 else:
                     new_id = f"intf-{uuid.uuid4().hex[:12]}"
+                    # Keep nullable integer fields as NULL. Converting every
+                    # None to an empty string makes PostgreSQL reject inserts
+                    # for access_vlan and is_l3 with an integer syntax error.
+                    insert_values = tuple(
+                        value if value is not None or index in {8, 11} else ''
+                        for index, value in enumerate(values)
+                    )
                     db_conn.execute('''
                         INSERT INTO interfaces (
                             id, device_id, interface_name, description, admin_status, oper_status,
@@ -1139,7 +1175,7 @@ def sync_topology_and_interfaces_job():
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'physical', ?, ?, ?, ?, ?)
                     ''', (
                         new_id, iface['device_id'], iface['name'],
-                        *tuple(value if value is not None else '' for value in values)
+                        *insert_values
                     ))
                     existing_by_name[(iface['device_id'], normalized_name)] = new_id
             db_conn.commit()
@@ -1152,8 +1188,9 @@ def sync_topology_and_interfaces_job():
     # Collect topology neighbors
     from services.topology_service import discover_lldp_neighbors, rebuild_links_from_observations
     async def run_discovery():
-        tasks = [discover_lldp_neighbors(dev['id']) for dev in devices]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [discover_lldp_neighbors(dev['id']) for dev in topology_devices]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         # Every device replaces only its observations. Rebuild the canonical
         # graph exactly once after the batch to avoid concurrent delete/insert
         # races and transient partial topologies.
@@ -1171,8 +1208,20 @@ def sync_topology_and_interfaces_job():
     logger.info("[Scheduler Job] sync_topology_and_interfaces_job completed.")
 
 def poll_endpoints_job():
-    """System periodic task: Collect ARP and MAC tables, then run localization."""
-    logger.info("[Scheduler Job] Starting poll_endpoints_job...")
+    """Re-index cached ARP/MAC data without opening another device session.
+
+    The 5-minute endpoint collector is the single network source for ARP and
+    MAC snapshots.  This job remains as a cheap projection step for backward
+    compatibility with the scheduler catalog.
+    """
+    logger.info("[Scheduler Job] Starting poll_endpoints_job (cached projection only)...")
+    try:
+        from services.endpoint_tracker_service import track_and_locate_endpoints
+        track_and_locate_endpoints()
+    except Exception as exc:
+        logger.error("Failed to execute cached endpoint localization: %s", exc)
+    logger.info("[Scheduler Job] poll_endpoints_job completed (no device collection).")
+    return
     conn = get_db_connection()
     try:
         rows = conn.execute("SELECT * FROM devices WHERE status = 'online'").fetchall()
@@ -1344,13 +1393,38 @@ def poll_endpoints_job():
     logger.info("[Scheduler Job] poll_endpoints_job completed.")
 
 
+def _routing_record_value(record: dict, *names: str):
+    """Read TextFSM fields independent of template key casing."""
+    if not isinstance(record, dict):
+        return ''
+    normalized = {str(key).lower(): value for key, value in record.items()}
+    for name in names:
+        value = normalized.get(name.lower())
+        if value not in (None, ''):
+            return value
+    return ''
+
+
 def sync_routing_neighbors_job():
-    """System periodic task: Collect dynamic OSPF and BGP neighbor states."""
+    """Collect dynamic routing neighbors using policy plus route evidence.
+
+    Route collection runs immediately before this job in the unified refresh.
+    When a device has a dynamic-protocol route, that is sufficient evidence to
+    inspect the matching neighbor table unless the operator explicitly
+    disabled that protocol. This preserves custom inspection plans while
+    avoiding a second manual enablement step for protocol discovery.
+    """
     logger.info("[Scheduler Job] Starting sync_routing_neighbors_job...")
     conn = get_db_connection()
     try:
         rows = conn.execute("SELECT * FROM devices WHERE status = 'online'").fetchall()
         devices = [dict(row) for row in rows]
+        route_protocol_rows = conn.execute(
+            """
+            SELECT DISTINCT device_id, protocol
+            FROM route_table
+            """
+        ).fetchall()
     finally:
         conn.close()
 
@@ -1358,8 +1432,59 @@ def sync_routing_neighbors_job():
         logger.info("[Scheduler Job] No online devices found for routing neighbors sync.")
         return
 
-    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'aggregation', 'l3switch'}
-    l3_devices = [d for d in devices if (d.get('role') or '').lower().strip() in _L3_ROLES]
+    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch'}
+    protocol_aliases = {
+        'o': 'ospf', 'ospf': 'ospf', 'b': 'bgp', 'bgp': 'bgp',
+        'd': 'eigrp', 'eigrp': 'eigrp', 'i': 'isis', 'isis': 'isis',
+        'r': 'rip', 'rip': 'rip',
+    }
+    route_protocols_by_device: dict[str, set[str]] = {}
+    for row in route_protocol_rows:
+        device_id = str(row['device_id'] or '')
+        protocol = str(row['protocol'] or '').strip().lower()
+        if device_id and protocol:
+            canonical = protocol_aliases.get(protocol, protocol)
+            if canonical in {'bgp', 'ospf', 'eigrp', 'isis', 'rip'}:
+                route_protocols_by_device.setdefault(device_id, set()).add(canonical)
+
+    l3_devices = []
+    enabled_categories: dict[str, list[str]] = {}
+    policy_override_categories: dict[str, set[str]] = {}
+    auto_protocol_devices: dict[str, list[str]] = {}
+    dynamic_protocols = ('bgp', 'ospf', 'eigrp', 'isis', 'rip')
+    for device in devices:
+        if (device.get('role') or '').lower().strip() not in _L3_ROLES:
+            continue
+
+        categories: list[str] = []
+        device_id = str(device.get('id') or '')
+        for protocol in dynamic_protocols:
+            enabled = should_collect(device, protocol)
+            explicit = explicit_collector_override(device, protocol)
+            auto_enabled = (
+                not enabled
+                and explicit is not False
+                and protocol in route_protocols_by_device.get(device_id, set())
+            )
+            if enabled or auto_enabled:
+                categories.append(protocol)
+            if auto_enabled:
+                policy_override_categories.setdefault(device_id, set()).add(protocol)
+                label = device.get('hostname') or device.get('ip_address') or device_id
+                auto_protocol_devices.setdefault(label, []).append(protocol)
+
+        if categories:
+            l3_devices.append(device)
+            enabled_categories[str(device['id'])] = categories
+
+    if auto_protocol_devices:
+        logger.info(
+            "[Scheduler Job] Auto-enabled routing neighbor discovery from route evidence: %s",
+            ', '.join(
+                f"{device}({','.join(sorted(protocols))})"
+                for device, protocols in sorted(auto_protocol_devices.items())
+            ),
+        )
 
     if not l3_devices:
         logger.info("[Scheduler Job] No eligible L3 routing devices found.")
@@ -1382,35 +1507,49 @@ def sync_routing_neighbors_job():
         dev_id = dev['id']
         res = []
         try:
-            payload = collect_operational_data(dev, categories=['bgp', 'ospf'])
+            categories = enabled_categories.get(str(dev_id), [])
+            if not categories:
+                return res
+            payload = collect_operational_data(
+                dev,
+                categories=categories,
+                policy_override_categories=policy_override_categories.get(str(dev_id)),
+            )
             for cat_res in payload.get('categories', []):
                 key = cat_res.get('key')
                 records = cat_res.get('records', [])
                 if key == 'bgp':
                     for r in records:
-                        neigh_ip = r.get('bgp_neigh') or r.get('bgp_neighbor') or r.get('neighbor') or r.get('peer_address') or r.get('peer') or r.get('neighbor_ip') or r.get('peer_ip') or ''
+                        neigh_ip = _routing_record_value(
+                            r, 'bgp_neigh', 'bgp_neighbor', 'neighbor',
+                            'peer_address', 'peer', 'neighbor_ip', 'peer_ip',
+                        )
                         if not neigh_ip:
                             continue
                         
                         remote_as = None
                         for k in ['neigh_as', 'as', 'peer_as', 'remote_as', 'neighbor_as']:
-                            if k in r and r[k] is not None:
+                            value = _routing_record_value(r, k)
+                            if value not in (None, ''):
                                 try:
-                                    remote_as = int(r[k])
+                                    remote_as = int(value)
                                     break
                                 except Exception:
                                     pass
                         
                         local_as = 0
                         for k in ['local_as', 'local_as_num', 'local_as_number', 'my_as']:
-                            if k in r and r[k] is not None:
+                            value = _routing_record_value(r, k)
+                            if value not in (None, ''):
                                 try:
-                                    local_as = int(r[k])
+                                    local_as = int(value)
                                     break
                                 except Exception:
                                     pass
                         
-                        state_raw = r.get('state_pfxrcd') or r.get('state') or r.get('pfx_rcd') or r.get('status') or ''
+                        state_raw = _routing_record_value(
+                            r, 'state_pfxrcd', 'state', 'pfx_rcd', 'status'
+                        )
                         state = 'Established'
                         if state_raw:
                             if str(state_raw).isdigit():
@@ -1420,7 +1559,9 @@ def sync_routing_neighbors_job():
                             else:
                                 state = str(state_raw)
                         
-                        uptime = r.get('up_down') or r.get('uptime') or r.get('elapsed_time') or r.get('time') or ''
+                        uptime = _routing_record_value(
+                            r, 'up_down', 'uptime', 'elapsed_time', 'time'
+                        )
                         
                         res.append({
                             'device_id': dev_id,
@@ -1434,20 +1575,27 @@ def sync_routing_neighbors_job():
                             'area_id': '',
                             'local_interface': ''
                         })
-                elif key == 'ospf':
+                elif key in {'ospf', 'eigrp', 'isis', 'rip'}:
                     for r in records:
-                        neigh_id = r.get('neighbor_id') or r.get('router_id') or ''
-                        neigh_ip = r.get('address') or r.get('neighbor_address') or r.get('neighbor_ip') or r.get('ip_address') or ''
+                        neigh_id = _routing_record_value(
+                            r, 'neighbor_id', 'router_id', 'system_id', 'peer', 'neighbor'
+                        )
+                        neigh_ip = _routing_record_value(
+                            r, 'address', 'ip_address', 'neighbor_address',
+                            'neighbor_ip', 'peer_ip', 'peer_address', 'next_hop'
+                        )
                         if not neigh_id and not neigh_ip:
                             continue
                         
-                        state = r.get('state') or ''
-                        local_intf = r.get('interface') or r.get('interface_name') or r.get('local_interface') or ''
-                        area_id = r.get('area_id') or '0.0.0.0'
+                        state = _routing_record_value(r, 'state', 'status')
+                        local_intf = _routing_record_value(
+                            r, 'interface', 'interface_name', 'local_interface', 'ifname'
+                        )
+                        area_id = _routing_record_value(r, 'area_id') or ('0.0.0.0' if key == 'ospf' else '')
                         
                         res.append({
                             'device_id': dev_id,
-                            'protocol': 'ospf',
+                            'protocol': key,
                             'neighbor_id': neigh_id or neigh_ip,
                             'neighbor_ip': neigh_ip or neigh_id,
                             'state': state,
@@ -1515,6 +1663,11 @@ def sync_bgp_routes_job():
         rows = conn.execute("SELECT * FROM devices WHERE status = 'online'").fetchall()
         devices = [dict(row) for row in rows]
 
+        bgp_route_rows = conn.execute(
+            "SELECT DISTINCT device_id FROM route_table WHERE LOWER(COALESCE(protocol, '')) IN ('b', 'bgp')"
+        ).fetchall()
+        bgp_route_device_ids = {str(row['device_id']) for row in bgp_route_rows if row['device_id']}
+
         # Load VRF names from CMDB
         vrf_rows = conn.execute("SELECT vrf_name FROM vrfs ORDER BY vrf_name").fetchall()
         cmdb_vrfs = [dict(r)['vrf_name'] for r in vrf_rows if dict(r).get('vrf_name')]
@@ -1525,8 +1678,22 @@ def sync_bgp_routes_job():
         logger.info("[Scheduler Job] No online devices found for BGP routes sync.")
         return
 
-    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'aggregation', 'l3switch'}
-    l3_devices = [d for d in devices if (d.get('role') or '').lower().strip() in _L3_ROLES]
+    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch'}
+    l3_devices = []
+    auto_bgp_devices: set[str] = set()
+    for device in devices:
+        if (device.get('role') or '').lower().strip() not in _L3_ROLES:
+            continue
+        explicit_bgp = explicit_collector_override(device, 'bgp')
+        auto_bgp = (
+            not should_collect(device, 'bgp')
+            and explicit_bgp is not False
+            and str(device.get('id')) in bgp_route_device_ids
+        )
+        if should_collect(device, 'bgp') or auto_bgp:
+            l3_devices.append(device)
+            if auto_bgp:
+                auto_bgp_devices.add(device.get('hostname') or device.get('ip_address') or str(device.get('id')))
 
     if not l3_devices:
         logger.info("[Scheduler Job] No eligible L3 routing devices found.")
@@ -1534,6 +1701,11 @@ def sync_bgp_routes_job():
 
     logger.info(f"[Scheduler Job] BGP sync: {len(l3_devices)} devices, "
                 f"VRFs from CMDB: {cmdb_vrfs or ['(none)']}")
+    if auto_bgp_devices:
+        logger.info(
+            "[Scheduler Job] Auto-enabled BGP route collection from route evidence for: %s",
+            ', '.join(sorted(auto_bgp_devices)),
+        )
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from services.operational_data_service import (
@@ -1562,36 +1734,36 @@ def sync_bgp_routes_job():
         """Normalize a set of parsed BGP records into our DB schema."""
         res = []
         for r in records:
-            prefix = r.get('prefix') or r.get('network')
-            next_hop = r.get('next_hop')
+            prefix = _routing_record_value(r, 'prefix', 'network')
+            next_hop = _routing_record_value(r, 'next_hop', 'nexthop')
             if not prefix or not next_hop:
                 continue
 
-            raw_lp = r.get('loc_pref') or r.get('local_pref') or 0
+            raw_lp = _routing_record_value(r, 'loc_pref', 'local_pref', 'local_preference') or 0
             try:
                 loc_pref = int(raw_lp) if raw_lp != '' else 0
             except (ValueError, TypeError):
                 loc_pref = 0
 
-            raw_metric = r.get('metric', 0)
+            raw_metric = _routing_record_value(r, 'metric') or 0
             try:
                 metric = int(raw_metric) if raw_metric != '' else 0
             except (ValueError, TypeError):
                 metric = 0
 
-            raw_weight = r.get('weight', 0)
+            raw_weight = _routing_record_value(r, 'weight') or 0
             try:
                 weight = int(raw_weight) if raw_weight != '' else 0
             except (ValueError, TypeError):
                 weight = 0
 
-            as_path = r.get('as_path', '')
-            origin = r.get('origin', '')
+            as_path = _routing_record_value(r, 'as_path', 'path', 'attributes')
+            origin = _routing_record_value(r, 'origin')
             if origin and origin not in as_path:
                 as_path = f"{as_path} {origin}".strip() if as_path else origin
 
-            is_best = r.get('is_best', 0)
-            if not is_best and r.get('path_selection') == '>':
+            is_best = _routing_record_value(r, 'is_best', 'best') or 0
+            if not is_best and _routing_record_value(r, 'path_selection', 'flags') == '>':
                 is_best = 1
 
             res.append({
@@ -1605,7 +1777,7 @@ def sync_bgp_routes_job():
                 'as_path': as_path,
                 'local_as': local_as,
                 'is_best': is_best,
-                'is_active': r.get('is_active', is_best),
+                'is_active': _routing_record_value(r, 'is_active', 'active') or is_best,
             })
         return res
 
@@ -1618,7 +1790,12 @@ def sync_bgp_routes_job():
 
         # ── 1. Collect default/global BGP table and BGP summary via standard flow ──
         try:
-            payload = collect_operational_data(dev, categories=['bgp', 'bgp_routes'])
+            auto_bgp = str(dev.get('id')) in bgp_route_device_ids and not should_collect(dev, 'bgp')
+            payload = collect_operational_data(
+                dev,
+                categories=['bgp', 'bgp_routes'],
+                policy_override_categories={'bgp', 'bgp_routes'} if auto_bgp else None,
+            )
             bgp_records = []
             bgp_routes_records = []
             for cat_res in payload.get('categories', []):
@@ -1628,7 +1805,9 @@ def sync_bgp_routes_job():
                     bgp_routes_records = cat_res.get('records', [])
 
             if bgp_records:
-                local_as = bgp_records[0].get('local_as', 0)
+                local_as = _routing_record_value(
+                    bgp_records[0], 'local_as', 'local_as_number', 'local_as_num'
+                ) or 0
 
             res.extend(_normalize_records(
                 bgp_routes_records, dev_id, 'default', local_as

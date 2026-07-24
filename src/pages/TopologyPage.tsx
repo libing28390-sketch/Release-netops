@@ -10,7 +10,7 @@ import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatu
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
-type TopologyProtocolFilter = 'all' | 'lldp' | 'cdp';
+type TopologyProtocolFilter = 'all' | 'lldp';
 
 interface TopologyStats {
   nodeCount: number;
@@ -204,7 +204,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   const pipelineLabels: Record<string, string> = language === 'zh'
     ? {
         select: '筛选在线设备',
-        collect: '只读采集 LLDP/CDP',
+        collect: '只读采集 LLDP',
         normalize: '规范化厂商与端口',
         match: '匹配受管设备',
         deduplicate: '合并双向重复证据',
@@ -212,7 +212,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
       }
     : {
         select: 'Select eligible devices',
-        collect: 'Collect LLDP/CDP read-only',
+        collect: 'Collect LLDP read-only',
         normalize: 'Normalize vendor and ports',
         match: 'Match managed devices',
         deduplicate: 'Merge directional evidence',
@@ -227,8 +227,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         icon={Network}
         title={language === 'zh' ? '网络拓扑' : 'Network Topology'}
         subtitle={language === 'zh'
-          ? '基于 LLDP/CDP 邻居证据自动生成连接关系，按站点、角色和状态快速缩小故障域。'
-          : 'Generate network adjacency from LLDP/CDP evidence and reduce the fault domain by site, role, and health state.'}
+          ? '基于 LLDP 邻居证据自动生成连接关系，按站点、角色和状态快速缩小故障域。'
+          : 'Generate network adjacency from LLDP evidence and reduce the fault domain by site, role, and health state.'}
         actions={
           <>
             <button onClick={onTriggerDiscovery} className={secondaryActionBtnClass} disabled={topologyDiscoveryRunning}>
@@ -484,7 +484,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           >
             <option value="all">{language === 'zh' ? '全部协议' : 'All Protocols'}</option>
             <option value="lldp">LLDP</option>
-            <option value="cdp">CDP</option>
           </select>
         </div>
         <div className="flex items-center gap-3 mt-2">

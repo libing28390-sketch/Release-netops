@@ -510,7 +510,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     snmp_metrics: zh ? 'SNMP 整机' : 'SNMP Metrics',
     snmp_interfaces: zh ? 'SNMP 接口' : 'SNMP Interfaces',
     snmp_inventory: zh ? 'SNMP 资产信息' : 'SNMP Inventory',
-    topology_lldp_cdp: zh ? 'LLDP/CDP 拓扑' : 'LLDP/CDP Topology',
+    topology_lldp: zh ? 'LLDP 拓扑' : 'LLDP Topology',
   }[collector] || collector);
   const collectionTone = (status: string) => {
     if (status === 'success') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10';

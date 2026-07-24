@@ -225,7 +225,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       }
 
       // Fetch Network Devices
-      const devRes = await fetch('/api/devices', { headers: hdrs });
+      const devRes = await fetch('/api/devices?mode=light', { headers: hdrs });
       if (devRes.ok) {
         const raw = await devRes.json();
         setDevices(Array.isArray(raw) ? raw : (raw.items || []));

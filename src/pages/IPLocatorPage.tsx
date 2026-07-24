@@ -100,6 +100,11 @@ interface ArpTableData {
   timestamp: string;
 }
 
+interface ArpSweepStatus {
+  kind: 'success' | 'warning';
+  message: string;
+}
+
 function formatRelativeTime(isoStr: string, zhLang: boolean): string {
   try {
     const then = new Date(isoStr);
@@ -333,6 +338,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [arpError, setArpError] = useState('');
   const [arpFilter, setArpFilter] = useState('');
   const [arpSweeping, setArpSweeping] = useState(false);
+  const [arpSweepStatus, setArpSweepStatus] = useState<ArpSweepStatus | null>(null);
   const [arpPage, setArpPage] = useState(1);
   const [arpPageSize, setArpPageSize] = useState(10);
 
@@ -719,6 +725,8 @@ ${rep.repair_commands}
 
   const triggerArpSweep = useCallback(async () => {
     setArpSweeping(true);
+    setArpError('');
+    setArpSweepStatus(null);
     try {
       const resp = await fetch('/api/ip-locator/arp-sweep', {
         method: 'POST',
@@ -730,12 +738,17 @@ ${rep.repair_commands}
       }
       const data = await resp.json();
       if (data.data) setArpTable(data.data);
-    } catch {
+      setArpSweepStatus({
+        kind: Number(data?.sweep?.collected_entries || 0) > 0 ? 'success' : 'warning',
+        message: data.message || (zh ? 'ARP 采集已完成。' : 'ARP collection completed.'),
+      });
+    } catch (e: any) {
+      setArpError(e.message || (zh ? 'ARP 采集失败' : 'ARP collection failed'));
       await fetchArpTable();
     } finally {
       setArpSweeping(false);
     }
-  }, [token, fetchArpTable]);
+  }, [token, fetchArpTable, zh]);
 
   // ── MAC Changes fetch ──
   const fetchMacChanges = useCallback(async () => {
@@ -1558,6 +1571,17 @@ ${rep.repair_commands}
             <span>{zh ? '更新时间' : 'Updated'}: {arpTable.timestamp?.replace('T', ' ').slice(0, 19)}</span>
           </div>
         )}
+
+        {arpSweepStatus && (
+          <div className={`mt-3 rounded-xl border px-3.5 py-2.5 text-xs flex items-start gap-2 ${
+            arpSweepStatus.kind === 'success'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+              : 'border-amber-200 bg-amber-50 text-amber-700'
+          }`}>
+            {arpSweepStatus.kind === 'success' ? <CheckCircle2 size={14} className="mt-0.5 flex-shrink-0" /> : <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />}
+            <span>{arpSweepStatus.message}</span>
+          </div>
+        )}
       </div>
 
       {/* ── Error ── */}
@@ -1585,7 +1609,7 @@ ${rep.repair_commands}
       {!arpLoading && !arpError && arpTable && arpTable.total === 0 && (
         <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-8 text-center">
           <Database size={32} className="mx-auto text-black/15 dark:text-white/15 mb-3" />
-          <p className="text-sm text-black/40 dark:text-white/40">{zh ? '暂无 ARP 缓存数据。点击「立即采集」从网关设备获取 ARP 表。' : 'No ARP cache data. Click "Sweep Now" to collect from gateways.'}</p>
+          <p className="text-sm text-black/40 dark:text-white/40">{zh ? '暂无 ARP 数据。点击「立即采集」从在线设备获取 ARP 表。' : 'No ARP data. Click "Sweep Now" to collect from online devices.'}</p>
         </div>
       )}
 
@@ -2106,9 +2130,15 @@ ${rep.repair_commands}
                   >
                     <option value="all">{zh ? '全部协议' : 'All Protocols'}</option>
                     <option value="connected">{zh ? '直连 (connected)' : 'connected'}</option>
+                    <option value="local">{zh ? '本地 (local)' : 'local'}</option>
                     <option value="static">{zh ? '静态 (static)' : 'static'}</option>
+                    <option value="periodic_static">{zh ? '周期静态 (periodic static)' : 'periodic static'}</option>
+                    <option value="user_static">{zh ? '用户静态 (user static)' : 'user static'}</option>
                     <option value="ospf">OSPF</option>
                     <option value="bgp">BGP</option>
+                    <option value="eigrp">EIGRP</option>
+                    <option value="isis">IS-IS</option>
+                    <option value="rip">RIP</option>
                   </select>
                 </div>
               </>
@@ -2136,6 +2166,9 @@ ${rep.repair_commands}
                     <option value="all">{zh ? '全部协议' : 'All Protocols'}</option>
                     <option value="ospf">OSPF</option>
                     <option value="bgp">BGP</option>
+                    <option value="eigrp">EIGRP</option>
+                    <option value="isis">IS-IS</option>
+                    <option value="rip">RIP</option>
                   </select>
                 </div>
               </>
@@ -2296,10 +2329,24 @@ ${rep.repair_commands}
 
         const normalizeRouteProtocol = (proto: string): string => {
           const p = (proto || '').trim().toLowerCase();
-          if (p === 'connected' || p === 'direct' || p === 'c' || p === 'l') return 'connected';
-          if (p === 'static' || p === 's') return 'static';
-          if (p.startsWith('o')) return 'ospf';
-          if (p.startsWith('b')) return 'bgp';
+          const aliases: Record<string, string> = {
+            c: 'connected', connected: 'connected', direct: 'connected',
+            l: 'local', local: 'local',
+            s: 'static', static: 'static',
+            p: 'periodic_static', periodic_static: 'periodic_static', 'periodic static': 'periodic_static',
+            u: 'user_static', user_static: 'user_static', 'user static': 'user_static',
+            o: 'ospf', ospf: 'ospf',
+            b: 'bgp', bgp: 'bgp',
+            d: 'eigrp', eigrp: 'eigrp',
+            i: 'isis', isis: 'isis', 'is-is': 'isis',
+            r: 'rip', rip: 'rip',
+          };
+          if (aliases[p]) return aliases[p];
+          if (p.startsWith('ospf')) return 'ospf';
+          if (p.startsWith('bgp')) return 'bgp';
+          if (p.startsWith('eigrp')) return 'eigrp';
+          if (p.startsWith('isis') || p.startsWith('is-is')) return 'isis';
+          if (p.startsWith('rip')) return 'rip';
           return p;
         };
 
@@ -2446,7 +2493,19 @@ ${rep.repair_commands}
                             return <td key={col.key} className="px-4 py-2">{val ? <span className="inline-flex items-center gap-1 text-emerald-500 text-[11px]"><CheckCircle2 size={11} />{zh ? '活跃' : 'Active'}</span> : <span className="inline-flex items-center gap-1 text-black/30 dark:text-white/30 text-[11px]"><Minus size={11} />{zh ? '离线' : 'Inactive'}</span>}</td>;
                           }
                           if (col.key === 'protocol') {
-                            const colors: Record<string, string> = { ospf: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400', bgp: 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400', static: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400', connected: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400', direct: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400' };
+                            const colors: Record<string, string> = {
+                              ospf: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400',
+                              bgp: 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400',
+                              eigrp: 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400',
+                              isis: 'bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400',
+                              rip: 'bg-pink-50 dark:bg-pink-900/20 text-pink-600 dark:text-pink-400',
+                              static: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400',
+                              periodic_static: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400',
+                              user_static: 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400',
+                              connected: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400',
+                              local: 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400',
+                              direct: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400',
+                            };
                             const normVal = normalizeRouteProtocol(val);
                             const cls = colors[normVal] || 'bg-gray-50 dark:bg-gray-900/20 text-gray-600 dark:text-gray-400';
                             return <td key={col.key} className="px-4 py-2"><span className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold ${cls}`}>{normVal || '—'}</span></td>;

@@ -24,6 +24,11 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from database import get_db_connection
 from core.rbac import require_role
+from core.read_cache import (
+    REFERENCE_CACHE_TTL_SECONDS,
+    invalidate_read_cache,
+    read_cache,
+)
 from services.audit_service import log_audit_event
 from services import tag_service
 from schemas.schemas import (
@@ -53,10 +58,16 @@ def list_definitions(
     category: Optional[str] = Query(default=None, description="Filter by category"),
     current_user=require_role("Viewer"),
 ):
+    cache_key = f'definitions:{category or ""}'
+    cache_hit, cached = read_cache.get('references', cache_key)
+    if cache_hit:
+        return cached
     conn = get_db_connection()
     try:
         rows = tag_service.list_tag_definitions(conn, category, include_inactive=True)
-        return {"success": True, "data": rows}
+        response = {"success": True, "data": rows}
+        read_cache.set('references', cache_key, response, REFERENCE_CACHE_TTL_SECONDS)
+        return response
     finally:
         conn.close()
 
@@ -104,6 +115,7 @@ def create_definition(req: TagDefinitionCreate, current_user=require_role("Admin
             target_id=tag["id"],
             details={"category": req.category, "code": req.code},
         )
+        invalidate_read_cache('references')
         return {"success": True, "data": tag, "message": "Tag created"}
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -135,6 +147,7 @@ def update_definition(tag_id: str, req: TagDefinitionUpdate, current_user=requir
             target_id=tag_id,
             details=updates,
         )
+        invalidate_read_cache('references')
         return {"success": True, "data": tag}
     except HTTPException:
         raise
@@ -162,6 +175,7 @@ def delete_definition(tag_id: str, current_user=require_role("Administrator")):
             target_type="tag_definition",
             target_id=tag_id,
         )
+        invalidate_read_cache('references')
         return {"success": True, "message": "Tag deleted"}
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -337,6 +351,7 @@ def seed_tags(current_user=require_role("Administrator")):
     conn = get_db_connection()
     try:
         count = tag_service.seed_builtin_tags(conn)
+        invalidate_read_cache('references')
         return {"success": True, "data": {"inserted": count}, "message": f"Seeded {count} new tag(s)"}
     finally:
         conn.close()

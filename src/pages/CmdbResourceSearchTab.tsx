@@ -149,6 +149,7 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
   const [loading, setLoading] = useState(false);
   const [metadataLoading, setMetadataLoading] = useState(true);
   const [error, setError] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const hasSearchCriteria = useMemo(() => (
     Boolean(
@@ -294,6 +295,13 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
 
       <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen(current => !current)}
+            className={`order-3 ml-auto rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition ${advancedOpen ? 'border-cyan-200 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-white text-slate-500 hover:border-cyan-300 hover:text-cyan-700'}`}
+          >
+            {advancedOpen ? (zh ? '收起高级筛选' : 'Hide advanced') : (zh ? '高级筛选' : 'Advanced filters')}
+          </button>
           <div className="flex items-center gap-2 text-sm font-bold text-slate-800"><SlidersHorizontal size={15} className="text-cyan-600" />{zh ? '搜索条件' : 'Search criteria'}</div>
           <div className="flex items-center gap-2 text-[11px] text-slate-400"><Filter size={13} />{activeFilterCount ? `${activeFilterCount} ${zh ? '项条件已启用' : 'active filters'}` : (zh ? '未设置筛选条件' : 'No filters')}</div>
         </div>
@@ -321,6 +329,7 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
           <button onClick={submitSearch} className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-cyan-700"><Search size={14} />{zh ? '搜索' : 'Search'}</button>
           <button onClick={resetSearch} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-500 hover:border-cyan-300 hover:text-cyan-700">{zh ? '重置' : 'Reset'}</button>
         </div>
+        {advancedOpen && <>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           <select value={filters.site_id} onChange={event => updateFilter('site_id', event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
             <option value="">{zh ? '全部站点' : 'All sites'}</option>
@@ -349,7 +358,13 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
           </div>
           <span className="text-[11px] text-slate-400">{zh ? '精确模式适合 SN、IP、资产编号；模糊模式适合设备名、厂商和型号。' : 'Exact mode suits SN, IP and asset tags; fuzzy mode suits names, vendors and models.'}</span>
         </div>
-      </section>
+        </>}
+        {!advancedOpen && activeFilterCount > 0 && (
+          <div className="mt-3 rounded-xl border border-cyan-100 bg-cyan-50/70 px-3 py-2 text-[11px] text-cyan-700">
+            {zh ? '已启用筛选条件；点击“高级筛选”可查看或修改站点、设备类型、状态、标签等条件。' : 'Filters are active. Open Advanced filters to review site, type, status, tag, and lifecycle criteria.'}
+          </div>
+        )}
+       </section>
 
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">

@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from core.rbac import require_role
+from core.read_cache import REFERENCE_CACHE_TTL_SECONDS, invalidate_read_cache, read_cache
 from database import get_db_connection
 from services.notification_service import send_feishu, send_dingtalk, send_wechat
 
@@ -75,17 +76,23 @@ class NotificationTestBody(BaseModel):
 @router.get("/setup/status")
 def get_setup_status(user=require_role("Viewer")):
     """Return whether initial setup has been completed."""
+    cache_hit, cached = read_cache.get('references', 'setup-status')
+    if cache_hit:
+        return cached
     completed = _get_setting("setup_completed") == "true"
     platform = json.loads(_get_setting("platform_settings") or "{}")
-    return {
+    response = {
         "setup_completed": completed,
         "platform_settings": platform,
     }
+    read_cache.set('references', 'setup-status', response, REFERENCE_CACHE_TTL_SECONDS)
+    return response
 
 
 @router.post("/setup/complete")
 def mark_setup_complete(user=require_role("Administrator")):
     _set_setting("setup_completed", "true")
+    invalidate_read_cache('references')
     logger.info("Initial setup wizard completed by %s", user["username"])
     return {"success": True, "message": "Setup completed"}
 

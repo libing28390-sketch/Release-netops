@@ -18,6 +18,13 @@ export const useAuth = ({
   setShowUserMenu,
   setShowNotifications,
 }: UseAuthProps) => {
+  const expireLocalSession = useCallback(() => {
+    localStorage.removeItem('netops_token');
+    setShowUserMenu(false);
+    setShowNotifications(false);
+    setIsAuthenticated(false);
+  }, [setShowUserMenu, setShowNotifications]);
+
   const fetchWithTimeout = useCallback(async (url: string, options: RequestInit = {}, timeoutMs = 12000) => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -50,6 +57,19 @@ export const useAuth = ({
       return;
     }
 
+    const validateCurrentSession = async (currentToken: string) => {
+      try {
+        const response = await fetchWithTimeout('/api/session', { headers: { Authorization: `Bearer ${currentToken}` } }, 10000);
+        if (!response.ok) expireLocalSession();
+        return response.ok;
+      } catch {
+        return true;
+      }
+    };
+
+    const expiryHandler = () => expireLocalSession();
+    window.addEventListener('netops:auth-expired', expiryHandler);
+
     fetchWithTimeout('/api/session', { headers: { Authorization: `Bearer ${token}` } }, 10000)
       .then(async (r) => {
         if (r.ok) {
@@ -73,23 +93,28 @@ export const useAuth = ({
             // ignore setup-status errors
           }
         } else {
-          localStorage.removeItem('netops_token');
+          expireLocalSession();
         }
       })
       .catch(() => {
-        localStorage.removeItem('netops_token');
+        expireLocalSession();
       })
       .finally(() => {
         setAuthChecking(false);
       });
-  }, [fetchWithTimeout, setLanguage, setShowSetupWizard]);
+    const timer = window.setInterval(() => {
+      const currentToken = localStorage.getItem('netops_token');
+      if (currentToken) void validateCurrentSession(currentToken);
+    }, 60000);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('netops:auth-expired', expiryHandler);
+    };
+  }, [expireLocalSession, fetchWithTimeout, setLanguage, setShowSetupWizard]);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem('netops_token');
-    setShowUserMenu(false);
-    setShowNotifications(false);
-    setIsAuthenticated(false);
-  }, [setShowUserMenu, setShowNotifications]);
+    expireLocalSession();
+  }, [expireLocalSession]);
 
   const handleLogin = async () => {
     if (!loginForm.username.trim() || !loginForm.password.trim()) {

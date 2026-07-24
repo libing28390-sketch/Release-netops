@@ -375,6 +375,317 @@ def list_subnets(*, site: str = 'all', status: str = 'all', q: str = '') -> list
         conn.close()
 
 
+def _parse_interface_prefix_length(value) -> Optional[int]:
+    """Normalize an interface prefix length or netmask to an integer."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    if raw.startswith('/'):
+        raw = raw[1:].strip()
+    try:
+        if '.' in raw:
+            mask = ipaddress.IPv4Network(f'0.0.0.0/{raw}').prefixlen
+        else:
+            mask = int(raw)
+    except (ValueError, TypeError):
+        return None
+    return mask if 0 <= mask <= 128 else None
+
+
+def _loopback_prefix_length(interface_name: str, ip_obj: ipaddress._BaseAddress) -> Optional[int]:
+    """Use a host prefix only when the interface is explicitly a loopback."""
+    name = str(interface_name or '').strip().lower()
+    if name.startswith('loopback') or name.startswith('lo'):
+        return 32 if ip_obj.version == 4 else 128
+    return None
+
+
+def _interface_prefix_candidate_id(prefix: str, tenant_id: str, site_id: str, vrf_id: str) -> str:
+    return f'{prefix}|{tenant_id or "tenant-default"}|{site_id or ""}|{vrf_id or ""}'
+
+
+def _load_interface_prefix_candidates(conn) -> dict:
+    """Build IPAM candidates from the current L3 interface collection.
+
+    ``interfaces`` is the authoritative current interface source.  ``ip_inventory``
+    is consulted only for a missing mask because older collectors stored the mask
+    there; it is deliberately never returned as IPAM data and is never migrated by
+    this function.
+    """
+    interface_rows = conn.execute(
+        '''SELECT i.id, i.device_id, i.interface_name, i.primary_ip, i.ip_address,
+                  i.ip_prefix_length, i.ip_version, i.is_l3, i.ip_enabled,
+                  i.vrf_id, i.last_seen, d.hostname, d.ip_address AS device_ip,
+                  d.site_id, d.tenant_id, d.platform, d.device_type_id
+           FROM interfaces i
+           JOIN devices d ON d.id = i.device_id
+           WHERE (COALESCE(i.is_l3, 0) = 1 OR COALESCE(i.ip_enabled, 0) = 1)
+             AND (COALESCE(i.primary_ip, '') <> '' OR COALESCE(i.ip_address, '') <> '')
+           ORDER BY d.hostname, i.interface_name'''
+    ).fetchall()
+
+    inventory_by_interface: dict[tuple[str, str], dict] = {}
+    try:
+        inventory_rows = conn.execute(
+            '''SELECT device_id, interface, mask, last_seen
+               FROM ip_inventory
+               WHERE COALESCE(ip, '') <> ''
+               ORDER BY last_seen DESC'''
+        ).fetchall()
+        for row in inventory_rows:
+            key = (str(row['device_id'] or ''), str(row['interface'] or ''))
+            inventory_by_interface.setdefault(key, dict(row))
+    except Exception:
+        # IPAM generation must still work if the optional collection snapshot is
+        # unavailable on an older installation.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+    existing_rows = conn.execute(
+        'SELECT id, prefix, tenant_id, site_id, vrf_id, name FROM prefixes'
+    ).fetchall()
+    existing_by_scope = {
+        _interface_prefix_candidate_id(
+            str(row['prefix'] or ''),
+            str(row['tenant_id'] or 'tenant-default'),
+            str(row['site_id'] or ''),
+            str(row['vrf_id'] or ''),
+        ): dict(row)
+        for row in existing_rows
+    }
+
+    candidates: dict[str, dict] = {}
+    skipped: list[dict] = []
+    interface_count = 0
+    for row in interface_rows:
+        interface_count += 1
+        raw_address = str(row['primary_ip'] or row['ip_address'] or '').strip()
+        address = raw_address.split('/', 1)[0].strip()
+        try:
+            ip_obj = ipaddress.ip_address(address)
+        except ValueError:
+            skipped.append({
+                'interface_id': row['id'],
+                'device_name': row['hostname'],
+                'interface_name': row['interface_name'],
+                'address': raw_address,
+                'reason': '接口 IP 不是合法地址',
+            })
+            continue
+
+        prefix_len = _parse_interface_prefix_length(row['ip_prefix_length'])
+        if '/' in raw_address and prefix_len is None:
+            prefix_len = _parse_interface_prefix_length(raw_address.rsplit('/', 1)[1])
+        if prefix_len is None:
+            snapshot = inventory_by_interface.get((str(row['device_id']), str(row['interface_name'])))
+            prefix_len = _parse_interface_prefix_length(snapshot.get('mask') if snapshot else None)
+        if prefix_len is None:
+            prefix_len = _loopback_prefix_length(row['interface_name'], ip_obj)
+        if prefix_len is None or (ip_obj.version == 4 and prefix_len > 32):
+            skipped.append({
+                'interface_id': row['id'],
+                'device_name': row['hostname'],
+                'interface_name': row['interface_name'],
+                'address': address,
+                'reason': '接口采集结果缺少前缀长度/掩码',
+            })
+            continue
+
+        try:
+            network = ipaddress.ip_interface(f'{address}/{prefix_len}').network
+        except ValueError:
+            skipped.append({
+                'interface_id': row['id'],
+                'device_name': row['hostname'],
+                'interface_name': row['interface_name'],
+                'address': address,
+                'reason': '接口 IP 与前缀长度无法组成有效网段',
+            })
+            continue
+
+        prefix = str(network)
+        tenant_id = str(row['tenant_id'] or 'tenant-default')
+        site_id = str(row['site_id'] or '')
+        vrf_id = str(row['vrf_id'] or '')
+        candidate_id = _interface_prefix_candidate_id(prefix, tenant_id, site_id, vrf_id)
+        item = candidates.setdefault(candidate_id, {
+            'candidate_id': candidate_id,
+            'prefix': prefix,
+            'tenant_id': tenant_id,
+            'site_id': site_id or None,
+            'vrf_id': vrf_id or None,
+            'status': 'existing' if candidate_id in existing_by_scope else 'to_create',
+            'existing_prefix_id': (existing_by_scope.get(candidate_id) or {}).get('id'),
+            'existing_prefix_name': (existing_by_scope.get(candidate_id) or {}).get('name') or '',
+            'interface_count': 0,
+            'ip_count': 0,
+            'interfaces': [],
+        })
+        item['interface_count'] += 1
+        item['ip_count'] += 1
+        item['interfaces'].append({
+            'interface_id': row['id'],
+            'device_id': row['device_id'],
+            'device_name': row['hostname'],
+            'device_ip': row['device_ip'],
+            'interface_name': row['interface_name'],
+            'address': address,
+        })
+
+    result_candidates = sorted(candidates.values(), key=lambda item: item['prefix'])
+    return {
+        'source': 'interfaces',
+        'source_label': '当前接口采集结果',
+        'interface_count': interface_count,
+        'candidate_count': len(result_candidates),
+        'existing_count': sum(1 for item in result_candidates if item['status'] == 'existing'),
+        'to_create_count': sum(1 for item in result_candidates if item['status'] == 'to_create'),
+        'skipped_count': len(skipped),
+        'candidates': result_candidates,
+        'skipped': skipped,
+    }
+
+
+def preview_interface_prefixes() -> dict:
+    """Preview canonical prefixes that can be generated from current interfaces."""
+    conn = get_db_connection()
+    try:
+        return _load_interface_prefix_candidates(conn)
+    finally:
+        conn.close()
+
+
+def generate_interface_prefixes(candidate_ids: Optional[list[str]] = None) -> dict:
+    """Create canonical prefixes and interface IP records from current interfaces.
+
+    The operation is idempotent: existing prefixes and addresses are preserved,
+    while only missing canonical records are added.  No legacy IPAM table is read
+    as a source and no collection-cache row is deleted.
+    """
+    conn = get_db_connection()
+    created_prefixes = 0
+    created_addresses = 0
+    existing_prefixes = 0
+    existing_addresses = 0
+    skipped_addresses: list[dict] = []
+    try:
+        preview = _load_interface_prefix_candidates(conn)
+        requested = {str(value) for value in (candidate_ids or []) if str(value).strip()}
+        selected = [
+            item for item in preview['candidates']
+            if not requested or item['candidate_id'] in requested
+        ]
+        now = _utc_now()
+        prefix_ids: dict[str, str] = {}
+
+        for candidate in selected:
+            candidate_id = candidate['candidate_id']
+            existing = conn.execute(
+                f'''SELECT id FROM prefixes
+                    WHERE prefix = {_PH}
+                      AND COALESCE(tenant_id, 'tenant-default') = {_PH}
+                      AND COALESCE(site_id, '') = {_PH}
+                      AND COALESCE(vrf_id, '') = {_PH}''',
+                (candidate['prefix'], candidate['tenant_id'], candidate['site_id'] or '', candidate['vrf_id'] or ''),
+            ).fetchone()
+            if existing:
+                prefix_ids[candidate_id] = existing['id']
+                existing_prefixes += 1
+                continue
+
+            normalized, network = _normalize_prefix(candidate['prefix'])
+            _validate_prefix_overlap(
+                conn,
+                prefix=normalized,
+                tenant_id=candidate['tenant_id'],
+                vrf_id=candidate['vrf_id'],
+                site_id=candidate['site_id'],
+            )
+            prefix_id = f'prefix-{uuid.uuid4().hex[:12]}'
+            network_type = 'transit' if (
+                (network.version == 4 and network.prefixlen in (30, 31))
+                or (network.version == 6 and network.prefixlen == 127)
+            ) else 'server'
+            conn.execute(
+                f'''INSERT INTO prefixes
+                   (id, prefix, vrf_id, site_id, tenant_id, status, name,
+                    description, network_type, created_at, updated_at,
+                    prefix_cidr, ip_version, prefix_len, traceable,
+                    source_type, source_ref)
+                   VALUES ({_ph(17)})''',
+                (
+                    prefix_id, normalized, candidate['vrf_id'], candidate['site_id'],
+                    candidate['tenant_id'], 'active', f'接口采集 · {normalized}',
+                    '由当前接口采集结果生成；不会读取旧 IPAM 前缀', network_type,
+                    now, now, normalized, network.version, network.prefixlen, 1,
+                    'interface_collection', 'interface-collection',
+                ),
+            )
+            prefix_ids[candidate_id] = prefix_id
+            created_prefixes += 1
+
+        # Address creation is deliberately scoped to the selected candidate and
+        # leaves existing manually managed address metadata untouched.
+        for candidate in selected:
+            subnet_id = prefix_ids.get(candidate['candidate_id'])
+            if not subnet_id:
+                continue
+            for interface in candidate['interfaces']:
+                existing_address = conn.execute(
+                    f'''SELECT id FROM ip_addresses
+                        WHERE subnet_id = {_PH} AND address = {_PH}''',
+                    (subnet_id, interface['address']),
+                ).fetchone()
+                if existing_address:
+                    existing_addresses += 1
+                    continue
+                try:
+                    _create_address_with_conn(
+                        conn,
+                        subnet_id,
+                        address=interface['address'],
+                        hostname=interface['device_name'],
+                        device_id=interface['device_id'],
+                        interface_name=interface['interface_name'],
+                        interface_id=interface['interface_id'],
+                        device_type='interface',
+                        status='active',
+                        source_type='interface_collection',
+                        source_ref=interface['interface_id'],
+                    )
+                    created_addresses += 1
+                except ValueError as exc:
+                    skipped_addresses.append({
+                        'prefix': candidate['prefix'],
+                        'device_name': interface['device_name'],
+                        'interface_name': interface['interface_name'],
+                        'address': interface['address'],
+                        'reason': str(exc),
+                    })
+
+        conn.commit()
+        rebuild_prefixes_hierarchy(conn)
+        return {
+            'ok': True,
+            'source': 'interfaces',
+            'selected_count': len(selected),
+            'created_prefixes': created_prefixes,
+            'existing_prefixes': existing_prefixes,
+            'created_addresses': created_addresses,
+            'existing_addresses': existing_addresses,
+            'skipped_addresses': skipped_addresses,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def create_subnet(
     *,
     prefix: str,
@@ -467,11 +778,22 @@ def update_subnet(subnet_id: str, **fields) -> bool:
             fields['ip_version'] = _net.version
             fields['prefix_len'] = _net.prefixlen
 
+        # A user changing the primary network type takes ownership of the
+        # classification. Automatic discovery may continue refreshing evidence
+        # but must not overwrite this explicit decision.
+        if 'network_type' in fields and fields['network_type'] is not None:
+            fields['manual_override'] = 1
+            fields['manual_network_type'] = fields['network_type']
+            fields['classification_status'] = 'manual'
+            fields['classification_source'] = 'manual'
+
         allowed_fields = (
             'name', 'vrf_id', 'vlan_id', 'site_id', 'tenant_id', 'status',
             'gateway', 'description', 'prefix', 'network_type',
             'gateway_device_id', 'gateway_interface_id', 'traceable',
             'prefix_cidr', 'ip_version', 'prefix_len',
+            'manual_override', 'manual_network_type', 'classification_status',
+            'classification_source',
         )
         updates = []
         params = []

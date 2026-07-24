@@ -505,6 +505,65 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('prefixes', 'prefix_cidr', "CIDR" if _USE_PG else "TEXT DEFAULT ''")
     ensure_column('prefixes', 'ip_version', "INTEGER DEFAULT 0")
     ensure_column('prefixes', 'prefix_len', "INTEGER DEFAULT 0")
+    for col, dtype in [
+        ('classification_status', "TEXT DEFAULT 'auto'"),
+        ('classification_source', "TEXT DEFAULT 'auto'"),
+        ('classification_confidence', "REAL DEFAULT 0"),
+        ('classification_rule_version', "TEXT DEFAULT 'prefix-classification-v1'"),
+        ('manual_override', "INTEGER DEFAULT 0"),
+        ('manual_network_type', "TEXT DEFAULT ''"),
+        ('mixed_network', "INTEGER DEFAULT 0"),
+        ('address_roles_json', "TEXT DEFAULT '[]'"),
+        ('discovered_devices_json', "TEXT DEFAULT '[]'"),
+        ('observed_interfaces_json', "TEXT DEFAULT '[]'"),
+        ('observed_vlans_json', "TEXT DEFAULT '[]'"),
+        ('observed_vrfs_json', "TEXT DEFAULT '[]'"),
+        ('evidence_json', "TEXT DEFAULT '[]'"),
+        ('candidate_scores_json', "TEXT DEFAULT '{}'"),
+        ('conflict_status', "TEXT DEFAULT ''"),
+        ('conflict_json', "TEXT DEFAULT '{}'"),
+        ('first_seen_at', "TEXT"),
+        ('last_seen_at', "TEXT"),
+        ('miss_count', "INTEGER DEFAULT 0"),
+        ('is_active', "INTEGER DEFAULT 1"),
+    ]:
+        ensure_column('prefixes', col, dtype)
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS prefix_observations (
+        id TEXT PRIMARY KEY,
+        prefix_id TEXT NOT NULL,
+        collection_run_id TEXT NOT NULL,
+        source_device_id TEXT DEFAULT '',
+        source_type TEXT NOT NULL,
+        observed_value TEXT NOT NULL,
+        evidence_json TEXT DEFAULT '{}',
+        confidence REAL DEFAULT 0,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        miss_count INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        FOREIGN KEY (prefix_id) REFERENCES prefixes(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_prefix_observation_identity ON prefix_observations(prefix_id, source_device_id, source_type, observed_value)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_prefix_observations_active ON prefix_observations(prefix_id, is_active, last_seen_at)')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS prefix_classification_history (
+        id TEXT PRIMARY KEY,
+        prefix_id TEXT NOT NULL,
+        collection_run_id TEXT DEFAULT '',
+        previous_type TEXT DEFAULT '',
+        next_type TEXT DEFAULT '',
+        confidence REAL DEFAULT 0,
+        source TEXT DEFAULT '',
+        evidence_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (prefix_id) REFERENCES prefixes(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_prefix_class_history_prefix ON prefix_classification_history(prefix_id, created_at)')
 
     # Create ipam_pools table if not exists
     cursor.execute('''
@@ -555,12 +614,14 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         hostname TEXT DEFAULT '',
         dhcp_server TEXT DEFAULT '',
         lease_state TEXT DEFAULT 'active',
+        tenant_id TEXT DEFAULT 'tenant-default',
         lease_start TEXT DEFAULT '',
         lease_end TEXT DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
     ''')
+    ensure_column('ipam_dhcp_leases', 'tenant_id', "TEXT DEFAULT 'tenant-default'")
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_ipam_dhcp_mac ON ipam_dhcp_leases(mac_address)')
 
 
@@ -652,10 +713,11 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         ('warranty_expire', "TEXT DEFAULT ''"),
         ('owner_team', "TEXT DEFAULT ''"),
         ('criticality', "TEXT DEFAULT 'P3'"),
-        ('monitoring_enabled', "INTEGER DEFAULT 1"),
-        ('config_backup_enabled', "INTEGER DEFAULT 1"),
-        ('last_discovered', "TEXT DEFAULT ''")
-    ]:
+         ('monitoring_enabled', "INTEGER DEFAULT 1"),
+         ('config_backup_enabled', "INTEGER DEFAULT 1"),
+         ('last_discovered', "TEXT DEFAULT ''"),
+         ('collection_policy_json', "TEXT DEFAULT '{}'")
+     ]:
         ensure_column('devices', col, dtype)
 
     # Migration for script management enhancements
@@ -1364,7 +1426,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         scope TEXT NOT NULL DEFAULT 'full',
         status TEXT NOT NULL DEFAULT 'pending',
         requested_by TEXT DEFAULT 'system',
-        protocol_scope TEXT DEFAULT 'lldp_cdp',
+        protocol_scope TEXT DEFAULT 'lldp',
         started_at TEXT NOT NULL,
         completed_at TEXT,
         total_devices INTEGER DEFAULT 0,
@@ -1466,15 +1528,29 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         match_method TEXT DEFAULT '',
         match_status TEXT DEFAULT 'unmatched',
         match_candidates_json TEXT DEFAULT '[]',
+        first_seen_at TEXT,
+        last_seen_at TEXT,
+        miss_count INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
         FOREIGN KEY (source_device_id) REFERENCES devices(id),
         FOREIGN KEY (target_device_id) REFERENCES devices(id),
         FOREIGN KEY (discovery_run_id) REFERENCES topology_discovery_runs(id)
     )
     ''')
+    for col, dtype in [
+        ('first_seen_at', "TEXT"),
+        ('last_seen_at', "TEXT"),
+        ('miss_count', "INTEGER DEFAULT 0"),
+        ('is_active', "INTEGER DEFAULT 1"),
+    ]:
+        # Existing PostgreSQL installations need the additive columns before
+        # the baseline indexes are created; migrations will backfill values.
+        ensure_column('topology_observations', col, dtype)
     cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_topology_obs_unique ON topology_observations(source_device_id, source_port_normalized, neighbor_name_normalized, target_device_id, target_port_normalized, protocol)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_obs_target ON topology_observations(target_device_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_obs_collected_at ON topology_observations(collected_at)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_observations_run_collected ON topology_observations(discovery_run_id, collected_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_topology_observations_active ON topology_observations(source_device_id, is_active, last_seen_at)')
 
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS device_collection_status (

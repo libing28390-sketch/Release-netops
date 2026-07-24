@@ -168,12 +168,51 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
   // ── run inspection ──
   const [isRunning, setIsRunning] = useState(false);
   const [runResult, setRunResult] = useState<Record<string, unknown> | null>(null);
+  const [collectionPlans, setCollectionPlans] = useState<any[]>([]);
+  const [selectedPlanDeviceId, setSelectedPlanDeviceId] = useState('');
+  const [collectionPlansLoading, setCollectionPlansLoading] = useState(false);
+  const [collectionPlanMessage, setCollectionPlanMessage] = useState('');
 
   /* ─── token helper ─── */
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
   }, []);
+
+  const fetchCollectionPlans = useCallback(async () => {
+    setCollectionPlansLoading(true);
+    try {
+      const resp = await fetch('/api/collection-plans/devices', { headers: authHeaders });
+      if (!resp.ok) return;
+      const json = await resp.json();
+      const rows = Array.isArray(json.data) ? json.data : [];
+      setCollectionPlans(rows);
+      setSelectedPlanDeviceId((current) => current || rows[0]?.device?.id || '');
+    } catch {
+      setCollectionPlanMessage(isZh ? '采集计划加载失败' : 'Failed to load collection plans');
+    } finally {
+      setCollectionPlansLoading(false);
+    }
+  }, [authHeaders, isZh]);
+
+  const updateCollectionPlan = useCallback(async (collector: string, enabled: boolean) => {
+    const current = collectionPlans.find((row) => row.device?.id === selectedPlanDeviceId);
+    if (!current) return;
+    const overrides = { ...(current.plan?.overrides || {}), [collector]: enabled };
+    try {
+      const resp = await fetch(`/api/collection-plans/devices/${selectedPlanDeviceId}`, {
+        method: 'PUT',
+        headers: authHeaders,
+        body: JSON.stringify({ policy: { collectors: overrides } }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json.detail || 'update failed');
+      setCollectionPlanMessage(isZh ? '采集计划已更新' : 'Collection plan updated');
+      fetchCollectionPlans();
+    } catch {
+      setCollectionPlanMessage(isZh ? '采集计划更新失败' : 'Failed to update collection plan');
+    }
+  }, [authHeaders, collectionPlans, fetchCollectionPlans, isZh, selectedPlanDeviceId]);
 
   /* ─── data fetchers ─── */
 
@@ -239,6 +278,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
   useEffect(() => { fetchRecentRuns(); }, [fetchRecentRuns]);
+  useEffect(() => { fetchCollectionPlans(); }, [fetchCollectionPlans]);
   useEffect(() => {
     if (subTab === 'records') fetchRuns();
   }, [subTab, fetchRuns]);
@@ -395,6 +435,48 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
       />
 
       <div className="flex-1 flex flex-col overflow-hidden px-6 py-5 space-y-4 min-h-0">
+      <div className="rounded-2xl border border-cyan-100 bg-white p-4 shadow-sm shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <p className="text-sm font-bold text-[#0b2340]">{isZh ? '设备采集计划' : 'Device Collection Plan'}</p>
+            <p className="text-[11px] text-black/40 mt-1">{isZh ? '按角色默认值执行，设备级开关可覆盖默认策略；Cisco 邻居统一使用 LLDP。' : 'Role defaults apply first; device-level switches override them. Cisco neighbors use LLDP only.'}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedPlanDeviceId}
+              onChange={(event) => { setSelectedPlanDeviceId(event.target.value); setCollectionPlanMessage(''); }}
+              className="rounded-lg border border-black/10 bg-white px-3 py-2 text-xs text-[#0b2340] min-w-[210px]"
+              disabled={collectionPlansLoading || collectionPlans.length === 0}
+            >
+              {collectionPlans.map((row) => <option key={row.device?.id} value={row.device?.id}>{row.device?.hostname || row.device?.ip_address}</option>)}
+            </select>
+            <button onClick={fetchCollectionPlans} className={alertSecondaryButtonClass} title={isZh ? '刷新采集计划' : 'Refresh collection plans'}>
+              <RefreshCw className={`w-4 h-4 ${collectionPlansLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+        {(() => {
+          const selected = collectionPlans.find((row) => row.device?.id === selectedPlanDeviceId);
+          const effective = selected?.plan?.effective || {};
+          const keys = ['arp', 'mac_table', 'vlan', 'lldp', 'routes', 'bgp', 'ospf', 'eigrp', 'isis', 'rip', 'endpoint_location'];
+          const labels: Record<string, string> = { arp: 'ARP', mac_table: 'MAC', vlan: 'VLAN', lldp: 'LLDP', routes: '路由', bgp: 'BGP', ospf: 'OSPF', eigrp: 'EIGRP', isis: 'IS-IS', rip: 'RIP', endpoint_location: '终端定位' };
+          return selected ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold text-black/35 mr-1">{selected.plan?.profile || selected.device?.role || 'default'}</span>
+              {keys.map((key) => (
+                <button
+                  key={key}
+                  onClick={() => updateCollectionPlan(key, !Boolean(effective[key]))}
+                  className={`rounded-full px-3 py-1.5 text-[11px] font-semibold border transition-colors ${effective[key] ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}
+                >
+                  {labels[key]} · {effective[key] ? (isZh ? '启用' : 'ON') : (isZh ? '关闭' : 'OFF')}
+                </button>
+              ))}
+              {collectionPlanMessage && <span className="text-[11px] text-cyan-600 ml-2">{collectionPlanMessage}</span>}
+            </div>
+          ) : <span className="text-xs text-black/35">{isZh ? '暂无设备采集计划' : 'No collection plans available'}</span>;
+        })()}
+      </div>
       {/* ═══════ Hero gauge strip ═══════ */}
       <div className="relative rounded-2xl overflow-hidden bg-gradient-to-r from-[#0c1e35] via-[#0e2942] to-[#0a3455] p-5 shadow-lg shrink-0">
         <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '18px 18px' }} />

@@ -148,11 +148,22 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
       cursorBlink: true,
       // Match the AWS/VM terminal style used by the asset access console.
       fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, "Courier New", monospace',
-      fontSize: 12,
+      fontSize: 15,
+      lineHeight: 1.25,
+      letterSpacing: 0.15,
+      fontWeight: 400,
+      fontWeightBold: 600,
+      scrollback: 5000,
       theme: {
-        background: '#000000',
-        foreground: '#cccccc',
-        cursor: '#00ff00',
+        background: '#050505',
+        foreground: '#e5e7eb',
+        cursor: '#22d3ee',
+        cursorAccent: '#050505',
+        selectionBackground: 'rgba(34, 211, 238, 0.28)',
+        black: '#111827',
+        brightBlack: '#4b5563',
+        white: '#e5e7eb',
+        brightWhite: '#ffffff',
       },
       rightClickSelectsWord: true,
     });
@@ -312,8 +323,8 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
   }, [sessionToken, hostname]);
 
   return (
-    <div className="w-full h-full bg-black">
-      <div ref={terminalRef} className="w-full h-full p-2" />
+    <div className="netops-terminal-shell w-full h-full bg-[#050505]">
+      <div ref={terminalRef} className="w-full h-full px-4 py-3" />
     </div>
   );
 }

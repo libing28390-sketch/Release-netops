@@ -43,6 +43,7 @@ export const useInventoryPageData = ({
       setInventoryLoading(true);
       try {
         const params = new URLSearchParams({
+          mode: 'light',
           search: inventorySearch,
           platform: inventoryPlatformFilter,
           role: inventoryRoleFilter,

@@ -37,6 +37,7 @@ from services.operational_data_service import (
 )
 from services.oui_lookup import lookup_vendor
 from core.cmd_cache import get_cached_command, set_cached_command
+from services.collection_plan_service import filter_devices, should_collect
 
 # 并发 SSH 连接上限，避免瞬间打开过多连接
 # 小规模 (≤10 台) 取 5；中规模动态扩展到 10；大规模上限 15
@@ -134,6 +135,91 @@ def _normalize_mac(mac: str) -> str:
         return ''
     cleaned = _MAC_NORMALIZE_RE.sub('', mac.strip()).lower()
     return cleaned if len(cleaned) == 12 else ''
+
+
+def _record_value(record: dict[str, Any], *names: str) -> Any:
+    """Read a parsed CLI field regardless of parser casing/alias conventions."""
+    if not isinstance(record, dict):
+        return ''
+    by_lower_name = {str(key).lower(): value for key, value in record.items()}
+    for name in names:
+        value = record.get(name, by_lower_name.get(name.lower(), ''))
+        if value not in (None, ''):
+            if isinstance(value, (list, tuple)):
+                return value[0] if value else ''
+            return value
+    return ''
+
+
+def _normalize_arp_record(record: dict[str, Any], device_info: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize NTC/TextFSM and vendor fallback records into one ARP shape."""
+    ip_raw = _record_value(record, 'ip', 'ip_address', 'address', 'ipaddr', 'ip_addr')
+    mac_raw = _record_value(
+        record,
+        'mac', 'mac_address', 'hardware_address', 'destination_address',
+        'hardware', 'lladdr',
+    )
+    try:
+        ip_addr = str(ip_raw or '').strip()
+        parsed_ip = ipaddress.ip_address(ip_addr)
+        if parsed_ip.version != 4:
+            return None
+    except ValueError:
+        return None
+
+    mac_norm = _normalize_mac(str(mac_raw or ''))
+    if not mac_norm:
+        return None
+
+    interface = _record_value(
+        record, 'interface', 'intf', 'port', 'local_interface',
+        'destination_port',
+    )
+    return {
+        'ip': ip_addr,
+        'mac': mac_norm,
+        'interface': str(interface or '').strip(),
+        'source_device_id': device_info.get('id'),
+        'source_device': device_info.get('hostname') or device_info.get('ip_address'),
+    }
+
+
+_ARP_OUTPUT_MAC_RE = re.compile(
+    r'(?i)(?:[0-9a-f]{4}[.:-]){2}[0-9a-f]{4}|'
+    r'(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}|'
+    r'(?<![0-9a-f])[0-9a-f]{12}(?![0-9a-f])'
+)
+_ARP_OUTPUT_IP_RE = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+_ARP_INTERFACE_RE = re.compile(
+    r'(?i)^(?:[a-z][a-z0-9-]*(?:[/.:][a-z0-9-]+)+|'
+    r'(?:vlan|vlanif|loopback|lo|bvi|bridge)\d+)$'
+)
+
+
+def _parse_arp_output_fallback(output: str, device_info: dict[str, Any]) -> list[dict[str, Any]]:
+    """Parse common Cisco/Huawei/H3C ARP rows when TextFSM has no match."""
+    records: list[dict[str, Any]] = []
+    for raw_line in str(output or '').splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        ip_match = _ARP_OUTPUT_IP_RE.search(line)
+        mac_match = _ARP_OUTPUT_MAC_RE.search(line)
+        if not ip_match or not mac_match:
+            continue
+        suffix_tokens = line[mac_match.end():].split()
+        interface = ''
+        for token in suffix_tokens:
+            candidate = token.strip('(),[]')
+            if _ARP_INTERFACE_RE.match(candidate):
+                interface = candidate
+        record = _normalize_arp_record(
+            {'ip': ip_match.group(0), 'mac': mac_match.group(0), 'interface': interface},
+            device_info,
+        )
+        if record:
+            records.append(record)
+    return records
 
 
 def _format_mac(mac12: str) -> str:
@@ -487,21 +573,34 @@ def _collect_arp_from_device_for_ip(device_info: dict, target_ip: str) -> dict |
     for cat in payload.get('categories', []):
         if cat.get('key') == 'arp' and cat.get('success'):
             for rec in cat.get('records', []):
-                ip_addr = rec.get('address', '').strip()
+                normalized = _normalize_arp_record(rec, device_info)
+                if not normalized:
+                    continue
+                ip_addr = normalized['ip']
                 if ip_addr != target_ip:
                     continue
-                mac_raw = rec.get('hardware_address', '') or rec.get('mac_address', '') or rec.get('mac', '')
-                iface = rec.get('interface', '')
-                mac_norm = _normalize_mac(mac_raw)
-                if mac_norm:
-                    return {
-                        'ip': target_ip,
-                        'mac': mac_norm,
-                        'mac_display': _format_mac(mac_norm),
-                        'interface': iface,
-                        'source_device_id': device_info.get('id'),
-                        'source_device': device_info.get('hostname') or device_info.get('ip_address'),
-                    }
+                return {
+                    'ip': target_ip,
+                    'mac': normalized['mac'],
+                    'mac_display': _format_mac(normalized['mac']),
+                    'interface': normalized['interface'],
+                    'source_device_id': normalized['source_device_id'],
+                    'source_device': normalized['source_device'],
+                }
+
+            # TextFSM is preferred, but a vendor output variant must not make
+            # an otherwise valid ARP row disappear from the locator.
+            for raw_output in cat.get('raw_outputs') or []:
+                for normalized in _parse_arp_output_fallback(raw_output.get('output', ''), device_info):
+                    if normalized['ip'] == target_ip:
+                        return {
+                            'ip': target_ip,
+                            'mac': normalized['mac'],
+                            'mac_display': _format_mac(normalized['mac']),
+                            'interface': normalized['interface'],
+                            'source_device_id': normalized['source_device_id'],
+                            'source_device': normalized['source_device'],
+                        }
     return None
 
 
@@ -590,7 +689,7 @@ def _collect_mac_from_device_for_mac(device_info: dict, target_mac: str) -> list
 
 
 def _collect_lldp_from_device(device_info: dict) -> list[dict]:
-    """从单台设备采集 LLDP/CDP 邻居信息。"""
+    """Collect LLDP neighbor evidence from one device."""
     try:
         payload = collect_operational_data(device_info, categories=['neighbors'])
     except Exception as exc:
@@ -830,7 +929,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         return result
 
     # ARP 采集不按角色排除——access 路由器同样拥有 ARP 表
-    gateway_devices = all_eligible
+    gateway_devices = filter_devices(all_eligible, "arp")
 
     target_mac: str = ''
     arp_source_info: dict | None = None
@@ -1093,31 +1192,60 @@ def _collect_full_arp_from_device(device_info: dict) -> list[dict]:
     try:
         payload = collect_operational_data(device_info, categories=['arp'])
     except Exception as exc:
-        logger.debug(f"[ARP Sweep] collect failed on {device_info.get('ip_address')}: {exc}")
+        logger.warning(
+            "[ARP Sweep] collection failed on %s: %s",
+            device_info.get('hostname') or device_info.get('ip_address'),
+            exc,
+        )
         return []
 
     entries = []
     dev_label = device_info.get('hostname') or device_info.get('ip_address')
     dev_id = device_info.get('id')
     for cat in payload.get('categories', []):
-        if cat.get('key') == 'arp' and cat.get('success'):
-            for rec in cat.get('records', []):
-                ip_addr = (rec.get('address', '') or '').strip()
-                mac_raw = rec.get('hardware_address', '') or rec.get('mac_address', '') or rec.get('mac', '')
-                iface = rec.get('interface', '')
-                mac_norm = _normalize_mac(mac_raw)
-                if ip_addr and mac_norm:
-                    entries.append({
-                        'ip': ip_addr,
-                        'mac': mac_norm,
-                        'interface': iface,
-                        'source_device_id': dev_id,
-                        'source_device': dev_label,
-                    })
+        if cat.get('key') != 'arp':
+            continue
+        if not cat.get('success'):
+            logger.warning(
+                "[ARP Sweep] %s ARP command failed: %s",
+                dev_label,
+                cat.get('error') or 'unknown error',
+            )
+            continue
+
+        for rec in cat.get('records', []):
+            normalized = _normalize_arp_record(rec, device_info)
+            if normalized:
+                entries.append(normalized)
+
+        # NTC/TextFSM records are normalized first.  If a platform's command
+        # output is valid but its template is incomplete, use the conservative
+        # vendor-neutral row parser as a fallback.
+        if not entries:
+            for raw_output in cat.get('raw_outputs') or []:
+                entries.extend(_parse_arp_output_fallback(raw_output.get('output', ''), device_info))
+
+        if not entries:
+            command = ', '.join(cat.get('commands') or []) or 'unknown'
+            raw_size = sum(len(str(item.get('output') or '')) for item in (cat.get('raw_outputs') or []))
+            logger.warning(
+                "[ARP Sweep] %s returned no parseable ARP entries (command=%s, parser=%s, raw_bytes=%d)",
+                dev_label,
+                command,
+                cat.get('parser') or 'unknown',
+                raw_size,
+            )
+
+    # A device should not produce duplicate IP/MAC rows when both a custom
+    # template and the raw fallback recognize the same line.
+    unique: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for entry in entries:
+        unique[(entry['ip'], entry['mac'], entry.get('interface') or '')] = entry
+    entries = list(unique.values())
     return entries
 
 
-def run_arp_sweep():
+def run_arp_sweep() -> dict[str, Any]:
     """
     后台全量 ARP 采集：并发 SSH 到所有网关设备，采集完整 ARP 表并写入缓存。
     由 APScheduler 定时调度（每 5 分钟）。
@@ -1131,11 +1259,17 @@ def run_arp_sweep():
 
     if not gateway_devices:
         logger.info("[ARP Sweep] No eligible devices, skipping")
-        return
+        return {
+            'eligible_devices': 0,
+            'devices_with_entries': 0,
+            'collected_entries': 0,
+            'device_results': [],
+        }
 
     logger.info(f"[ARP Sweep] {len(gateway_devices)} eligible device(s) found, starting collection")
 
     all_entries: list[dict] = []
+    device_results: list[dict[str, Any]] = []
     workers = _calc_ssh_workers(len(gateway_devices))
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -1145,12 +1279,29 @@ def run_arp_sweep():
             try:
                 entries = future.result()
                 all_entries.extend(entries)
+                device_results.append({
+                    'device_id': dev.get('id'),
+                    'device': dev.get('hostname') or dev.get('ip_address'),
+                    'entry_count': len(entries),
+                    'status': 'success' if entries else 'no_data',
+                })
             except Exception as exc:
-                logger.debug(f"[ARP Sweep] Error from {dev.get('ip_address')}: {exc}")
+                logger.warning("[ARP Sweep] Error from %s: %s", dev.get('hostname') or dev.get('ip_address'), exc)
+                device_results.append({
+                    'device_id': dev.get('id'),
+                    'device': dev.get('hostname') or dev.get('ip_address'),
+                    'entry_count': 0,
+                    'status': 'failed',
+                })
 
     if not all_entries:
         logger.info("[ARP Sweep] No ARP entries collected")
-        return
+        return {
+            'eligible_devices': len(gateway_devices),
+            'devices_with_entries': 0,
+            'collected_entries': 0,
+            'device_results': sorted(device_results, key=lambda item: item.get('device') or ''),
+        }
 
     # ── MAC 变更检测 ──
     # 先读取旧的 ARP 缓存快照，用于和本次采集结果比较
@@ -1269,45 +1420,85 @@ def run_arp_sweep():
             logger.error(f"[ARP Sweep] MAC change log write error: {exc}")
         logger.warning(f"[ARP Sweep] Detected {len(mac_changes)} MAC address changes")
     logger.info(f"[ARP Sweep] Collected {len(all_entries)} entries from {len(gateway_devices)} devices in {elapsed}s")
+    return {
+        'eligible_devices': len(gateway_devices),
+        'devices_with_entries': sum(1 for item in device_results if item.get('entry_count', 0) > 0),
+        'collected_entries': len(all_entries),
+        'device_results': sorted(device_results, key=lambda item: item.get('device') or ''),
+        'elapsed_seconds': elapsed,
+    }
 
 
 async def run_arp_sweep_async():
     """异步包装，供 APScheduler 调度。"""
-    await asyncio.to_thread(run_arp_sweep)
+    return await asyncio.to_thread(run_arp_sweep)
 
 
 # ── 全量 ARP 表查询 ────────────────────────────────────────────────
 
 def get_arp_table() -> dict[str, Any]:
-    """查询配置数据库中所有有效 ARP 缓存条目，供前端展示。"""
+    """查询 PostgreSQL ARP 事实表，并兼容定位缓存中的临时条目。"""
     now_ts = time.time()
+    entries_by_ip: dict[str, dict[str, Any]] = {}
     try:
         conn = get_db_connection()
         try:
-            rows = conn.execute(
-                'SELECT target_ip, mac, arp_source, cached_at, expires_at FROM arp_cache WHERE expires_at > ? ORDER BY target_ip',
+            cache_rows = conn.execute(
+                'SELECT target_ip, mac, arp_source, cached_at, expires_at '
+                'FROM arp_cache WHERE expires_at > ? ORDER BY target_ip',
                 (now_ts,),
+            ).fetchall()
+            for row in cache_rows:
+                source = _json.loads(row['arp_source'] or '{}')
+                mac_raw = _normalize_mac(row['mac'])
+                if not mac_raw:
+                    continue
+                entries_by_ip[row['target_ip']] = {
+                    'ip': row['target_ip'],
+                    'mac': _format_mac(mac_raw),
+                    'mac_raw': mac_raw,
+                    'vendor': lookup_vendor(mac_raw),
+                    'interface': source.get('interface', ''),
+                    'device': source.get('device', ''),
+                    'device_id': source.get('device_id'),
+                    'cached_at': row['cached_at'],
+                    'ttl_remaining': max(0, int(row['expires_at'] - now_ts)),
+                    'source': 'arp_cache',
+                }
+
+            # arp_table is the persistent PostgreSQL source used by NSOT and
+            # scheduled endpoint collection.  Older code only read arp_cache,
+            # which made this page show zero even when arp_table had records.
+            arp_rows = conn.execute(
+                'SELECT a.ip_address, a.mac_address, a.interface_name, a.device_id, '
+                'a.last_updated, d.hostname AS device_hostname '
+                'FROM arp_table a LEFT JOIN devices d ON d.id = a.device_id '
+                'ORDER BY a.ip_address, a.last_updated DESC'
             ).fetchall()
         finally:
             conn.close()
     except Exception:
-        rows = []
+        arp_rows = []
 
-    entries = []
-    for row in rows:
-        source = _json.loads(row['arp_source'] or '{}')
-        mac_raw = row['mac']
-        entries.append({
-            'ip': row['target_ip'],
+    for row in arp_rows:
+        ip_addr = str(row['ip_address'] or '').strip()
+        mac_raw = _normalize_mac(row['mac_address'])
+        if not ip_addr or not mac_raw or ip_addr in entries_by_ip:
+            continue
+        entries_by_ip[ip_addr] = {
+            'ip': ip_addr,
             'mac': _format_mac(mac_raw),
             'mac_raw': mac_raw,
             'vendor': lookup_vendor(mac_raw),
-            'interface': source.get('interface', ''),
-            'device': source.get('device', ''),
-            'device_id': source.get('device_id'),
-            'cached_at': row['cached_at'],
-            'ttl_remaining': max(0, int(row['expires_at'] - now_ts)),
-        })
+            'interface': row['interface_name'] or '',
+            'device': row['device_hostname'] or '',
+            'device_id': row['device_id'],
+            'cached_at': row['last_updated'],
+            'ttl_remaining': 0,
+            'source': 'arp_table',
+        }
+
+    entries = sorted(entries_by_ip.values(), key=lambda item: item['ip'])
 
     return {
         'total': len(entries),
@@ -1957,7 +2148,50 @@ def _collect_device_interface_ips(device_info: dict) -> list[dict]:
 
 # ── IP Inventory 同步 ────────────────────────────────────
 
-def sync_ip_inventory():
+def _sync_prefixes_from_current_interfaces() -> dict[str, int]:
+    """Bridge inventory/full-sync results into automatic Prefix discovery."""
+    try:
+        conn = get_db_connection()
+        try:
+            device_rows = conn.execute(
+                """
+                SELECT DISTINCT i.device_id
+                FROM interfaces i
+                JOIN devices d ON d.id = i.device_id
+                WHERE COALESCE(i.primary_ip, '') <> ''
+                   OR COALESCE(i.ip_address, '') <> ''
+                ORDER BY i.device_id
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.warning("[Prefix Sync] Unable to load interface snapshots: %s", exc, exc_info=True)
+        return {"devices": 0, "created": 0, "updated": 0, "failed": 0}
+
+    from services.prefix_discovery_service import discover_prefixes_from_interface_snapshot
+
+    totals = {"devices": len(device_rows), "created": 0, "updated": 0, "failed": 0}
+    run_id = f"ip-inventory-sync-{uuid.uuid4().hex[:12]}"
+    for row in device_rows:
+        device_id = str(row["device_id"] or "")
+        if not device_id:
+            continue
+        try:
+            result = discover_prefixes_from_interface_snapshot(device_id, collection_run_id=run_id)
+            totals["created"] += int(result.get("created") or 0)
+            totals["updated"] += int(result.get("updated") or 0)
+        except Exception as exc:
+            totals["failed"] += 1
+            logger.warning("[Prefix Sync] Interface snapshot failed for %s: %s", device_id, exc, exc_info=True)
+    logger.info(
+        "[Prefix Sync] Synced interface snapshots: devices=%d created=%d updated=%d failed=%d",
+        totals["devices"], totals["created"], totals["updated"], totals["failed"],
+    )
+    return totals
+
+
+def _sync_ip_inventory_impl():
     """从已登记的 IPAM (ip_addresses) 与设备接口配置中同步 Loopback/物理接口 IP 到 ip_inventory。"""
     logger.info("[IP Inventory Sync] Starting sync from ip_addresses and device interfaces...")
     total_ipam = 0
@@ -2104,12 +2338,54 @@ def sync_ip_inventory():
 
 # ── 终端事实库后台同步 ──────────────────────────────────
 
+def sync_ip_inventory():
+    """Sync IP inventory and immediately project current interfaces to Prefixes."""
+    result = _sync_ip_inventory_impl()
+    _sync_prefixes_from_current_interfaces()
+    return result
+
+
+def run_unified_nsot_sync() -> dict[str, Any]:
+    """Run the Network Reality refresh as one ordered, auditable workflow.
+
+    Prefix projection deliberately runs after topology/interface collection so
+    the final Prefix view uses the same interface snapshot that the CMDB page
+    displays, including Loopback interfaces.
+    """
+    from services.scheduler_service import (
+        sync_bgp_routes_job,
+        sync_routing_neighbors_job,
+        sync_topology_and_interfaces_job,
+    )
+    from services.interface_collection_service import collect_interface_status_for_online_devices
+
+    topology_result: dict[str, Any] = {}
+    interface_status_result: dict[str, Any] = {}
+    prefix_result: dict[str, int] = {"devices": 0, "created": 0, "updated": 0, "failed": 0}
+    try:
+        run_endpoint_collector()
+        run_route_collector()
+        sync_routing_neighbors_job()
+        sync_bgp_routes_job()
+        topology_result = sync_topology_and_interfaces_job() or {}
+        interface_status_result = collect_interface_status_for_online_devices()
+    finally:
+        # Even if an auxiliary collector fails, the interface/IPAM projection
+        # must run against the newest interface snapshot that is available.
+        prefix_result = _sync_prefixes_from_current_interfaces()
+    return {
+        "topology": topology_result if isinstance(topology_result, dict) else {},
+        "interface_status": interface_status_result,
+        "prefixes": prefix_result,
+    }
+
+
 def run_endpoint_collector():
     """
     后台终端事实库同步任务：
     1. 触发 ARP Sweep 以确保本地 ARP 缓存最新。
     2. 获取所有的在线交换机设备，并发采集其完整的 MAC 地址表。
-    3. 获取所有的 LLDP/CDP 拓扑连接，构建上联口白名单。
+    3. 获取所有的 LLDP 拓扑连接，构建上联口白名单。
     4. 对比 ARP 和 MAC，找出每个活跃 IP 的最佳接入端口，写入 network_endpoints 表。
     5. 同步 IP Inventory 表。
     """
@@ -2125,21 +2401,12 @@ def run_endpoint_collector():
     arp_data = get_arp_table()
     arp_entries = arp_data.get('entries', [])
     if not arp_entries:
-        logger.info("[Endpoint Collector] No active ARP entries found, skipping.")
-        # Still sync IP inventory even without ARP
-        try:
-            sync_ip_inventory()
-        except Exception as e:
-            logger.error(f"[Endpoint Collector] Error syncing IP Inventory: {e}")
-        return
+        logger.info("[Endpoint Collector] No active ARP entries found; continuing with eligible L2 MAC collection.")
 
     # 2. 获取所有在线交换机
     all_eligible = _load_eligible_devices()
     _MAC_EXCLUDED_ROLES = frozenset({'router', 'firewall', 'gateway', 'server', 'linux', 'windows'})
-    switch_devices = [
-        d for d in all_eligible
-        if (d.get('role') or '').lower().strip() not in _MAC_EXCLUDED_ROLES
-    ]
+    switch_devices = [d for d in filter_devices(all_eligible, "mac_table") if should_collect(d, "endpoint_location")]
     if not switch_devices:
         logger.info("[Endpoint Collector] No eligible switch devices found.")
         try:
@@ -2163,9 +2430,10 @@ def run_endpoint_collector():
     if not all_mac_records:
         logger.warning("[Endpoint Collector] No MAC entries collected from switches. Proceeding with fallback logic.")
 
-    # 3. 收集 LLDP/CDP 邻居以判定上联口
+    # 3. 收集 LLDP 邻居以判定上联口
     conn = get_db_connection()
     uplink_ports = set()
+    interface_modes: dict[tuple[str, str], str] = {}
     try:
         rows = conn.execute("SELECT source_device_id, source_port, target_device_id, target_port FROM topology_links").fetchall()
         for r in rows:
@@ -2173,19 +2441,34 @@ def run_endpoint_collector():
                 uplink_ports.add((r['source_device_id'], normalize_interface_name(r['source_port']).lower()))
             if r['target_device_id'] and r['target_port']:
                 uplink_ports.add((r['target_device_id'], normalize_interface_name(r['target_port']).lower()))
+        interface_rows = conn.execute(
+            "SELECT device_id, interface_name, switchport_mode FROM interfaces"
+        ).fetchall()
+        for row in interface_rows:
+            key = (str(row['device_id'] or ''), normalize_interface_name(row['interface_name']).lower())
+            interface_modes[key] = str(row['switchport_mode'] or '').strip().lower()
     except Exception as e:
         logger.debug(f"[Endpoint Collector] Error querying topology links: {e}")
     finally:
         conn.close()
 
     # 4. 对比匹配
+    mac_counts: dict[tuple[str, str], int] = {}
+    for item in all_mac_records:
+        key = (str(item.get('switch_id') or ''), normalize_interface_name(item.get('port')).lower())
+        mac_counts[key] = mac_counts.get(key, 0) + 1
+
     mac_to_locations = {}
     for rec in all_mac_records:
         mac = rec['mac']
         switch_id = rec['switch_id']
         port_norm = normalize_interface_name(rec['port']).lower()
 
-        is_uplink = (switch_id, port_norm) in uplink_ports or any(kw in port_norm for kw in ('po', 'port-channel', 'lag', 'eth-trunk'))
+        mode = interface_modes.get((str(switch_id), port_norm), '')
+        is_bundle = any(kw in port_norm for kw in ('po', 'port-channel', 'lag', 'eth-trunk'))
+        is_trunk = mode in {'trunk', 'tagged', 'hybrid'}
+        is_access_with_single_mac = mode in {'access', 'untagged'} and mac_counts.get((str(switch_id), port_norm), 0) <= 1
+        is_uplink = (switch_id, port_norm) in uplink_ports or is_bundle or (is_trunk and not is_access_with_single_mac)
         rec['is_uplink'] = is_uplink
 
         if mac not in mac_to_locations:
@@ -2304,6 +2587,29 @@ def _int_to_netmask(prefix_len: int) -> str:
     return f"{(mask >> 24) & 0xff}.{(mask >> 16) & 0xff}.{(mask >> 8) & 0xff}.{mask & 0xff}"
 
 
+_ROUTE_PROTOCOL_ALIASES = {
+    'c': 'connected', 'connected': 'connected', 'direct': 'connected',
+    'directly connected': 'connected', 'l': 'local', 'local': 'local',
+    's': 'static', 'static': 'static', 'p': 'periodic_static',
+    'periodic static': 'periodic_static', 'u': 'user_static',
+    'user static': 'user_static', 'o': 'ospf', 'ospf': 'ospf',
+    'b': 'bgp', 'bgp': 'bgp', 'd': 'eigrp', 'eigrp': 'eigrp',
+    'r': 'rip', 'rip': 'rip', 'i': 'isis', 'isis': 'isis',
+    'is-is': 'isis', 'h': 'nhrp', 'nhrp': 'nhrp', 'lisp': 'lisp',
+    'a': 'application', 'application': 'application',
+}
+
+
+def normalize_route_protocol(value: object) -> str:
+    """Map Cisco codes and vendor protocol names to one canonical value."""
+    raw = re.sub(r'[^a-z0-9 -]+', ' ', str(value or '').strip().lower())
+    raw = re.sub(r'\s+', ' ', raw).strip()
+    if not raw:
+        return 'unknown'
+    base = raw.split()[0]
+    return _ROUTE_PROTOCOL_ALIASES.get(raw, _ROUTE_PROTOCOL_ALIASES.get(base, base))
+
+
 def parse_routing_table(output: str, platform: str) -> list[dict]:
     """解析完整的 show ip route / display ip routing-table 输出，提取前缀、掩码、下一跳、出接口和协议类型。"""
     platform = platform.lower()
@@ -2321,7 +2627,7 @@ def parse_routing_table(output: str, platform: str) -> list[dict]:
                     'prefix': dest,
                     'mask': netmask,
                     'next_hop': "directly connected" if proto.lower() == 'direct' else next_hop,
-                    'protocol': proto.lower(),
+                    'protocol': normalize_route_protocol(proto),
                     'interface': interface,
                     'metric': 0
                 })
@@ -2331,11 +2637,16 @@ def parse_routing_table(output: str, platform: str) -> list[dict]:
     if 'juniper' in platform or 'junos' in platform:
         current_dest = None
         current_mask = None
+        current_protocol = 'static'
         for line in output.splitlines():
             m_dest = re.search(r'(\d+\.\d+\.\d+\.\d+)/(\d+)', line)
             if m_dest:
                 current_dest = m_dest.group(1)
                 current_mask = _int_to_netmask(int(m_dest.group(2)))
+                protocol_match = re.search(r'\*\[\s*([^/\]]+)', line)
+                current_protocol = normalize_route_protocol(
+                    protocol_match.group(1) if protocol_match else 'static'
+                )
                 continue
             if current_dest and ('Next hop:' in line or 'via' in line):
                 m_nh = re.search(r'Next hop:\s+([^\s,]+)\s+via\s+(\S+)|via\s+(\S+)', line)
@@ -2350,7 +2661,7 @@ def parse_routing_table(output: str, platform: str) -> list[dict]:
                         'prefix': current_dest,
                         'mask': current_mask,
                         'next_hop': nh,
-                        'protocol': 'static',
+                        'protocol': current_protocol,
                         'interface': intf,
                         'metric': 0
                     })
@@ -2370,13 +2681,15 @@ def parse_routing_table(output: str, platform: str) -> list[dict]:
             continue
 
         m_route = re.search(
-            r'^(?P<proto>[C|S|O|B|D|R|L]\*?\s*(?:IA|EX2|E2|E1|L1|L2)?)\s+'
+            r'^(?P<proto>[A-Za-z])\*?(?:\s+(?P<qualifier>IA|EX2|E2|E1|L1|L2))?\s+'
             r'(?P<dest>\d+\.\d+\.\d+\.\d+)(?P<mask_len_part>/\d+)?',
             line
         )
         if m_route:
             gd = m_route.groupdict()
-            proto = gd['proto'].strip().lower()
+            proto = normalize_route_protocol(
+                f"{gd['proto']} {gd.get('qualifier') or ''}"
+            )
             dest = gd['dest']
             mask_len_part = gd['mask_len_part']
             if mask_len_part:
@@ -2525,9 +2838,9 @@ def run_route_collector():
     t0 = time.time()
 
     all_eligible = _load_eligible_devices()
-    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'aggregation', 'l3switch'}
+    _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch'}
     route_devices = [
-        d for d in all_eligible
+        d for d in filter_devices(all_eligible, "routes")
         if (d.get('role') or '').lower().strip() in _L3_ROLES
     ]
 
@@ -2600,7 +2913,7 @@ def run_route_collector():
                     rid = f"{r['device_id']}_{vrf_val}_{r['prefix']}_{r['mask']}_{r['next_hop']}_{r['interface']}"
                     conn.execute(
                         '''INSERT INTO route_cache (id, device_id, vrf_name, prefix, mask, next_hop, protocol, interface, metric, last_update)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                         (rid, r['device_id'], vrf_val, r['prefix'], r['mask'], r['next_hop'], r['protocol'], r['interface'], r['metric'], last_update)
                     )
                     
@@ -2620,19 +2933,25 @@ def run_route_collector():
                     
                     pref_val = 1
                     proto_lower = (r.get('protocol') or '').lower()
-                    if 'direct' in proto_lower or 'connect' in proto_lower:
+                    if proto_lower in {'connected', 'local'}:
                         pref_val = 0
-                    elif 'static' in proto_lower:
+                    elif proto_lower in {'static', 'periodic_static', 'user_static'}:
                         pref_val = 1
-                    elif 'ospf' in proto_lower:
+                    elif proto_lower == 'eigrp':
+                        pref_val = 90
+                    elif proto_lower == 'ospf':
                         pref_val = 110
-                    elif 'bgp' in proto_lower:
+                    elif proto_lower == 'isis':
+                        pref_val = 115
+                    elif proto_lower == 'rip':
+                        pref_val = 120
+                    elif proto_lower == 'bgp':
                         pref_val = 200
 
                     conn.execute(
                         '''INSERT INTO route_table (
                             id, device_id, vrf_name, destination, next_hop, outgoing_interface, protocol, metric, preference, last_updated, active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)''',
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)''',
                         (rid, r['device_id'], vrf_val, dest, r['next_hop'], r['interface'], r['protocol'], r['metric'], pref_val, last_update)
                     )
                 conn.commit()

@@ -15,6 +15,7 @@ import asyncio
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services import notification_service
+from core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ ALLOWED_CHANGE_GROUPS = {'requester', 'initial_reviewer', 'final_approver', 'imp
 
 # Simple in-memory session store: token -> { user_id, username, role, created_at }
 _sessions: dict[str, dict] = {}
-_SESSION_TTL = 28800  # 8 hours (reduced from 24h for security)
+_SESSION_TTL = max(300, int(settings.SESSION_TTL_SECONDS))
 
 # Login failure tracking: username -> { count, locked_until }
 _login_failures: dict[str, dict] = {}
@@ -336,7 +337,7 @@ def _get_session(token: str) -> dict | None:
     try:
         row = conn.execute('SELECT * FROM sessions WHERE token = ?', (token,)).fetchone()
         if not row:
-            logger.warning(f"[Auth Session Debug] Token '{token[:10]}...' NOT found in sessions table")
+            logger.debug("[Auth Session] Token '%s...' not found in sessions table", token[:10])
             return None
         created_at = row['created_at']
         try:
@@ -347,7 +348,10 @@ def _get_session(token: str) -> dict | None:
         
         elapsed = time.time() - created_at_float
         if elapsed > _SESSION_TTL:
-            logger.warning(f"[Auth Session Debug] Token '{token[:10]}...' expired. created_at={created_at_float}, elapsed={elapsed}s, TTL={_SESSION_TTL}s")
+            logger.debug(
+                "[Auth Session] Token '%s...' expired. elapsed=%.2fs TTL=%ss",
+                token[:10], elapsed, _SESSION_TTL,
+            )
             conn.execute('DELETE FROM sessions WHERE token = ?', (token,))
             conn.commit()
             return None

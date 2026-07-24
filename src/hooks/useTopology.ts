@@ -92,7 +92,7 @@ export type TopologyDiscoveryProgress = {
 };
 
 export type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
-export type TopologyProtocolFilter = 'all' | 'lldp' | 'cdp';
+export type TopologyProtocolFilter = 'all' | 'lldp';
 
 const topologyAuthHeaders = (): Record<string, string> => {
   const token = localStorage.getItem('netops_token');
@@ -180,7 +180,10 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
   const topologyRef = React.useRef<HTMLDivElement>(null);
 
   const refreshTopologyData = useCallback(async () => {
-    const params = new URLSearchParams({ limit: '10000' });
+    // The topology canvas is intentionally capped at the backend's normal
+    // graph page size; requesting 10k rows only increases payload and render
+    // work for a view that already filters to one site when needed.
+    const params = new URLSearchParams({ limit: '5000' });
     params.set('include_stale', hideStaleLinks ? 'false' : 'true');
     if (topologySiteFilter !== 'all') params.set('site_id', topologySiteFilter);
     const [linksResponse, sitesResponse] = await Promise.all([

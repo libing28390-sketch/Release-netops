@@ -28,6 +28,9 @@ export async function apiRequest<T>(url: string, init: RequestInit = {}): Promis
   const requestId = response.headers.get('X-Request-ID') || undefined;
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) {
+      window.dispatchEvent(new Event('netops:auth-expired'));
+    }
     const rawDetail = payload?.detail ?? payload?.message ?? `HTTP ${response.status}`;
     let message = typeof rawDetail === 'string' ? rawDetail : rawDetail?.message || JSON.stringify(rawDetail);
     if (requestId) {

@@ -562,16 +562,25 @@ def get_rack_stats(conn) -> dict:
     total_racks = len(racks)
     total_u = sum(r['total_u'] for r in racks)
     total_power_capacity = sum(int(r.get('power_capacity_watts') or 0) for r in racks)
-    total_devices = 0
+    device_rows = conn.execute(
+        """
+        SELECT rd.rack_id, rd.start_u, dt.u_height, dt.power_watts
+        FROM rack_devices rd
+        JOIN device_types dt ON dt.id = rd.device_type_id
+        """
+    ).fetchall()
+    devices_by_rack: dict[str, list] = {}
+    for row in device_rows:
+        devices_by_rack.setdefault(str(row['rack_id']), []).append(row)
+
+    total_devices = len(device_rows)
     total_used_u = 0
     total_power_used = 0
     for r in racks:
-        devices = list_rack_devices(conn, r['id'])
-        total_devices += len(devices)
         occupied = set()
-        for d in devices:
+        for d in devices_by_rack.get(str(r['id']), []):
             occupied |= set(range(d['start_u'], d['start_u'] + d['u_height']))
-            total_power_used += int(d.get('power_watts') or 0)
+            total_power_used += int(d['power_watts'] or 0)
         total_used_u += len(occupied)
 
     return {

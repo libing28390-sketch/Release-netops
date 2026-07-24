@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "supersecret"
     CREDENTIAL_ENCRYPTION_KEY: str = "change-me-to-a-random-secret"
     ENVIRONMENT: str = "development"
+    # Application logs keep operational summaries at INFO. Ordinary successful
+    # HTTP access records are emitted at DEBUG; warnings/errors remain visible.
+    LOG_LEVEL: str = "INFO"
+    LOG_SLOW_REQUEST_MS: float = 500.0
+    SESSION_TTL_SECONDS: int = 7200
     TELEMETRY_RAW_RETENTION_HOURS: int = 48
     TELEMETRY_ROLLUP_RETENTION_DAYS: int = 365
     # Outbound probe samples are operational history and remain queryable for

@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 
 from api.users import validate_session_token
 from database import get_db_connection
+from core.read_cache import (
+    TOPOLOGY_CACHE_TTL_SECONDS,
+    read_cache,
+)
 from services.topology_service import (
     create_discovery_run,
     execute_discovery_run,
@@ -129,20 +133,32 @@ def get_links(
     canvas asks explicitly for stale links when the historical-evidence toggle
     is enabled. Current topology must not silently render expired neighbors.
     """
+    cache_key = f'links:{limit}:{site_id or ""}:{int(include_stale)}'
+    cache_hit, cached = read_cache.get('topology', cache_key)
+    if cache_hit:
+        return cached
+
     managed_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
     unmanaged = get_unmanaged_neighbors(site_id=site_id)
-    return {
+    response = {
         'links': managed_links,
         'unmanaged_nodes': unmanaged.get('unmanaged_nodes', []),
         'unmanaged_links': unmanaged.get('unmanaged_links', []),
         'truncated': len(managed_links) >= limit,
         'limit': limit,
     }
+    read_cache.set('topology', cache_key, response, TOPOLOGY_CACHE_TTL_SECONDS)
+    return response
 
 
 @router.get('/topology/sites')
 def get_topology_sites():
-    return {'items': get_topology_site_summaries()}
+    cache_hit, cached = read_cache.get('topology', 'sites')
+    if cache_hit:
+        return cached
+    response = {'items': get_topology_site_summaries()}
+    read_cache.set('topology', 'sites', response, TOPOLOGY_CACHE_TTL_SECONDS)
+    return response
 
 
 @router.get('/topology/generation-status')

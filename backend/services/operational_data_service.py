@@ -9,6 +9,8 @@ from ntc_templates.parse import parse_output
 
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 from services.network_access_limiter import limited_connect_handler
+from services.neighbor_collection_contract import assert_lldp_command
+from services.collection_plan_service import resolve_collection_plan
 
 
 SUPPORTED_CATEGORIES = (
@@ -20,6 +22,9 @@ SUPPORTED_CATEGORIES = (
     'routing_table',
     'bgp',
     'ospf',
+    'eigrp',
+    'isis',
+    'rip',
     'bfd',
     'bgp_routes',
     'ntp',
@@ -176,6 +181,9 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['show ip route'],
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbor'],
+        'eigrp': ['show ip eigrp neighbors'],
+        'isis': ['show isis neighbors'],
+        'rip': ['show ip rip database'],
         'bfd': ['show bfd neighbors details'],
         'eth_trunk': ['show etherchannel summary'],
         'bgp_routes': ['show ip bgp'],
@@ -196,6 +204,8 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['show ip route'],
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbors'],
+        'isis': ['show isis neighbors'],
+        'rip': ['show ip rip database'],
         'bfd': ['show bfd neighbors'],
         'eth_trunk': ['show port-channel summary'],
         'bgp_routes': ['show ip bgp'],
@@ -216,6 +226,8 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['show route'],
         'bgp': ['show bgp summary'],
         'ospf': ['show ospf neighbor'],
+        'isis': ['show isis adjacency'],
+        'rip': ['show rip neighbor'],
         'bfd': ['show bfd session'],
         'eth_trunk': ['show lacp interfaces'],
         'bgp_routes': ['show route protocol bgp'],
@@ -233,6 +245,8 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['show ip route'],
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbor'],
+        'isis': ['show isis neighbors'],
+        'rip': ['show ip rip'],
         'bfd': ['show bfd neighbors'],
         'eth_trunk': ['show port-channel summary'],
         'bgp_routes': ['show ip bgp'],
@@ -250,6 +264,8 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['display ip routing-table verbose'],
         'bgp': ['display bgp peer'],
         'ospf': ['display ospf peer'],
+        'isis': ['display isis peer'],
+        'rip': ['display rip 1 neighbor'],
         'bfd': ['display bfd session all'],
         'bgp_routes': ['display bgp routing-table'],
         'ntp': ['display ntp-service status'],
@@ -273,6 +289,8 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['display ip routing-table verbose'],
         'bgp': ['display bgp peer'],
         'ospf': ['display ospf peer brief'],
+        'isis': ['display isis peer'],
+        'rip': ['display rip 1 neighbor'],
         'bfd': ['display bfd session all'],
         'bgp_routes': ['display bgp routing-table'],
         'ntp': ['display ntp status'],
@@ -296,6 +314,8 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['display ip routing-table'],
         'bgp': ['display bgp peer ipv4 unicast'],
         'ospf': ['display ospf peer'],
+        'isis': ['display isis peer'],
+        'rip': ['display rip 1 neighbor'],
         'bfd': ['display bfd session'],
         'bgp_routes': ['display bgp routing-table ipv4'],
         'ntp': ['display ntp-service status'],
@@ -343,6 +363,8 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['display ip routing-table'],
         'bgp': ['display bgp peer ipv4 unicast'],
         'ospf': ['display ospf peer'],
+        'isis': ['display isis peer'],
+        'rip': ['display rip 1 neighbor'],
         'bfd': ['display bfd session'],
         'bgp_routes': ['display bgp routing-table ipv4'],
         'ntp': ['display ntp-service status'],
@@ -366,6 +388,9 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['show ip route'],
         'bgp': ['show ip bgp summary'],
         'ospf': ['show ip ospf neighbor'],
+        'eigrp': ['show ip eigrp neighbors'],
+        'isis': ['show isis neighbors'],
+        'rip': ['show ip rip database'],
         'bfd': ['show bfd neighbors', 'show bfd neighbors details'],
         'bgp_routes': ['show ip bgp'],
         'version': ['show version'],
@@ -377,6 +402,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
     # fixture proves the command grammar for the exact platform family.
     'zte_zxros': {
         'neighbors': ['show lldp neighbor brief'],
+        'isis': ['show isis neighbor'],
     },
     'maipu': {},
 }
@@ -386,7 +412,12 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _resolve_categories(categories: list[str] | None, role: str = '') -> list[str]:
+def _resolve_categories(
+    categories: list[str] | None,
+    role: str = '',
+    device_info: dict[str, Any] | None = None,
+    policy_override_categories: set[str] | None = None,
+) -> list[str]:
     if not categories:
         base = list(SUPPORTED_CATEGORIES)
     else:
@@ -398,14 +429,42 @@ def _resolve_categories(categories: list[str] | None, role: str = '') -> list[st
     excluded = ROLE_EXCLUDED_CATEGORIES.get(role.lower().strip(), set()) if role else set()
     if excluded:
         base = [c for c in base if c not in excluded]
+    if device_info:
+        plan = resolve_collection_plan(device_info)["effective"]
+        category_to_collector = {
+            "neighbors": "lldp",
+            "routing_table": "routes",
+            "bgp_routes": "bgp",
+            "bgp": "bgp",
+            "ospf": "ospf",
+            "eigrp": "eigrp",
+            "isis": "isis",
+            "rip": "rip",
+            "bfd": "bfd",
+            "mac_table": "mac_table",
+            "vlan": "vlan",
+            "arp": "arp",
+            "interfaces": "interface_status",
+        }
+        base = [
+            category for category in base
+            if category not in category_to_collector
+            or category in (policy_override_categories or set())
+            or bool(plan.get(category_to_collector[category], True))
+        ]
     return base
 
 
 def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[str]]:
     # Never send Cisco commands to a recognized non-Cisco platform when a
     # catalog entry is missing; surface an empty category instead.
-    catalog = COMMAND_CATALOG.get(_normalize_platform(platform), {})
-    return {category: catalog.get(category, []) for category in categories}
+    normalized_platform = _normalize_platform(platform)
+    catalog = COMMAND_CATALOG.get(normalized_platform, {})
+    resolved = {category: catalog.get(category, []) for category in categories}
+    for command in resolved.get('neighbors', []):
+        # Catch catalog regressions before a transport session is opened.
+        assert_lldp_command(normalized_platform, command, scenario_id='neighbor_lldp')
+    return resolved
 
 
 def _first_complete_pair(*pairs: tuple[str, str]) -> tuple[str, str]:
@@ -469,16 +528,24 @@ def _resolve_ntc_platform(platform: str) -> str:
 
 
 def _normalize_records(parsed: Any) -> list[dict[str, Any]]:
+    """Return parser records with stable, case-insensitive field names.
+
+    Built-in and local TextFSM templates expose headers in uppercase while
+    the raw-parser fallbacks use lowercase names.  Normalizing at this shared
+    boundary keeps downstream collectors independent of the selected parser.
+    """
+    def normalize_record(item: Any) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            return {'value': item}
+        return {
+            str(key).strip().replace('-', '_').lower(): value
+            for key, value in item.items()
+        }
+
     if isinstance(parsed, list):
-        normalized: list[dict[str, Any]] = []
-        for item in parsed:
-            if isinstance(item, dict):
-                normalized.append(item)
-            else:
-                normalized.append({'value': item})
-        return normalized
+        return [normalize_record(item) for item in parsed]
     if isinstance(parsed, dict):
-        return [parsed]
+        return [normalize_record(parsed)]
     return []
 
 
@@ -490,14 +557,14 @@ def _parse_with_ntc(platform: str, command: str, output: str) -> list[dict[str, 
     from core.textfsm import smart_parse_cli
     res = smart_parse_cli(output=output, command=command, platform=platform)
     if res.get('success') and res.get('data'):
-        return res['data']
+        return _normalize_records(res['data'])
     # IOS-XE keeps its asset/platform identity, while TextFSM uses the
     # Cisco IOS grammar family unless a dedicated IOS-XE template exists.
     ntc_platform = _resolve_ntc_platform(platform)
     if ntc_platform != platform:
         res = smart_parse_cli(output=output, command=command, platform=ntc_platform)
         if res.get('success') and res.get('data'):
-            return res['data']
+            return _normalize_records(res['data'])
     return []
 
 
@@ -647,6 +714,53 @@ def _parse_ospf_raw(output: str, platform: str) -> list[dict[str, Any]]:
             neigh_id = None
             neigh_ip = None
             
+    return records
+
+
+def _parse_dynamic_neighbor_raw(output: str, category: str) -> list[dict[str, Any]]:
+    """Conservative fallback for EIGRP/IS-IS/RIP neighbor-style outputs."""
+    records: list[dict[str, Any]] = []
+    error_markers = ('invalid input', 'unrecognized', 'unknown command', 'not found', 'error')
+    interface_pattern = re.compile(r'\b[A-Za-z][A-Za-z0-9./:-]*\d[A-Za-z0-9./:-]*\b')
+    ipv4_pattern = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+    isis_id_pattern = re.compile(r'\b[0-9A-Fa-f]{2}(?:\.[0-9A-Fa-f]{4}){2}\b')
+    state_pattern = re.compile(
+        r'\b(full|up|down|init|established|active|inactive|adjacent|adjacency|two-way|loading|failed)\b',
+        re.IGNORECASE,
+    )
+
+    for raw_line in str(output or '').splitlines():
+        line = raw_line.strip()
+        lowered = line.lower()
+        if not line or any(marker in lowered for marker in error_markers):
+            continue
+        if any(header in lowered for header in ('neighbor', 'address', 'interface', 'holdtime', 'uptime', 'system id')):
+            # Keep data rows such as "Neighbor 10.0.0.1 ..." out of the
+            # header filter only when no peer token is present.
+            if not ipv4_pattern.search(line) and not isis_id_pattern.search(line):
+                continue
+
+        peer_match = ipv4_pattern.search(line)
+        if category == 'rip':
+            via_match = re.search(r'\bvia\s+((?:\d{1,3}\.){3}\d{1,3})', line, re.IGNORECASE)
+            peer = via_match.group(1) if via_match else (peer_match.group(0) if peer_match else '')
+        elif peer_match:
+            peer = peer_match.group(0)
+        else:
+            isis_match = isis_id_pattern.search(line)
+            peer = isis_match.group(0) if isis_match else ''
+        if not peer:
+            continue
+
+        interface_match = interface_pattern.search(line)
+        state_match = state_pattern.search(line)
+        records.append({
+            'neighbor_id': peer,
+            'address': peer,
+            'state': state_match.group(1) if state_match else 'discovered',
+            'interface': interface_match.group(0) if interface_match else '',
+            'area_id': '0.0.0.0',
+        })
     return records
 
 
@@ -918,6 +1032,9 @@ def _parse_command_output(platform: str, category: str, command: str, output: st
     if category == 'ospf' or ' ospf ' in f' {normalized_command} ':
         return _parse_ospf_raw(output, platform)
 
+    if category in {'eigrp', 'isis', 'rip'}:
+        return _parse_dynamic_neighbor_raw(output, category)
+
     return []
 
 
@@ -934,9 +1051,19 @@ def _build_base_payload(device_info: dict[str, Any], platform: str) -> dict[str,
     }
 
 
-def collect_operational_data(device_info: dict[str, Any], categories: list[str] | None = None, auth_role: str = 'auto') -> dict[str, Any]:
+def collect_operational_data(
+    device_info: dict[str, Any],
+    categories: list[str] | None = None,
+    auth_role: str = 'auto',
+    policy_override_categories: set[str] | None = None,
+) -> dict[str, Any]:
     role = str(device_info.get('role') or '').strip()
-    selected_categories = _resolve_categories(categories, role=role)
+    selected_categories = _resolve_categories(
+        categories,
+        role=role,
+        device_info=device_info,
+        policy_override_categories=policy_override_categories,
+    )
     from core.platform_utils import normalize_device_platform
     platform = normalize_device_platform(device_info.get('vendor'), device_info.get('platform') or 'cisco_ios')
     commands_by_category = _resolve_commands(platform, selected_categories)
@@ -944,6 +1071,18 @@ def collect_operational_data(device_info: dict[str, Any], categories: list[str] 
 
 
     payload: dict[str, Any] = _build_base_payload(device_info, platform)
+
+    # A disabled capability must not open an SSH session just to return an
+    # empty category list.  This is important for routers with BGP/OSPF
+    # disabled and for servers receiving a network-only request by mistake.
+    if not selected_categories:
+        payload['summary'] = {
+            'requested_categories': [],
+            'successful_categories': 0,
+            'failed_categories': 0,
+            'total_records': 0,
+        }
+        return payload
 
     with limited_connect_handler(device_info, ConnectHandler, **conn_params) as client:
         if conn_params.get('secret'):
