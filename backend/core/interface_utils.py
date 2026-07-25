@@ -22,6 +22,7 @@ INTERFACE_ALIASES = [
     ("ethernet", "eth"),
     ("eth-trunk", "eth-trunk"),
     ("bridge-aggregation", "bagg"),
+    ("route-aggregation", "ragg"),
     ("port-channel", "po"),
     ("portchannel", "po"),
     ("bundle-ether", "be"),

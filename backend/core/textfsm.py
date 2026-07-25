@@ -229,12 +229,13 @@ _HUAWEI_H3C_COMMAND_MAPPING = [
 
 _COMPATIBLE_PLATFORMS = {
     'cisco_xe': ['cisco_ios'],
+    'huawei_vrp': ['huawei_vrpv8'],
     'huawei_vrpv8': ['huawei_vrp'],
     'huawei_smartax': ['huawei_vrp'],
     'huawei_ont': ['huawei_vrp'],
     'huawei_usg': ['huawei_vrp'],
-    'h3c_comware': ['hp_comware'],
-    'hp_comware': ['h3c_comware'],
+    'h3c_comware': ['hp_comware', 'h3c_comware9'],
+    'hp_comware': ['h3c_comware', 'h3c_comware9'],
     # Prefer dedicated Comware 9 templates, then Comware 7 custom templates,
     # and finally the hp_comware NTC family for stable legacy grammars.
     'h3c_comware9': ['h3c_comware', 'hp_comware'],

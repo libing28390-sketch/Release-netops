@@ -164,6 +164,8 @@ const abbreviateInterface = (value?: string) => {
   if (/^HundredGigabitEthernet/i.test(compact)) return `Hu${compact.slice('HundredGigabitEthernet'.length)}`;
   if (/^FastEthernet/i.test(compact)) return `Fa${compact.slice('FastEthernet'.length)}`;
   if (/^Ethernet/i.test(compact)) return `Et${compact.slice('Ethernet'.length)}`;
+  if (/^Bridge-Aggregation/i.test(compact)) return `BAGG${compact.slice('Bridge-Aggregation'.length)}`;
+  if (/^Route-Aggregation/i.test(compact)) return `RAGG${compact.slice('Route-Aggregation'.length)}`;
   // Keep the device-native vendor prefix while shortening verbose forms for
   // the canvas. The full raw value is attached as a hover title below.
   return compact;
@@ -630,6 +632,7 @@ type PersistedTopologyLayout = {
   transform?: { x: number; y: number; k: number };
   layoutMode?: 'free';
   displayMode?: TopologyLayoutMode;
+  routingMode?: 'straight' | 'orthogonal';
 };
 
 const layoutIsFree = (layout: PersistedTopologyLayout) => layout.layoutMode === 'free';
@@ -697,6 +700,26 @@ const createDefaultTransform = (width: number, height: number, nodes?: { x: numb
   const ty = height / 2 - cy * scale;
 
   return d3.zoomIdentity.translate(tx, ty).scale(scale);
+};
+
+const getStraightRoute = (source: { x: number; y: number }, target: { x: number; y: number }, offset = 0) => {
+  const deltaX = target.x - source.x;
+  const deltaY = target.y - source.y;
+  const dist = Math.max(1, Math.sqrt(deltaX * deltaX + deltaY * deltaY));
+
+  // Perpendicular unit vector for offsetting parallel links
+  const perpX = -deltaY / dist;
+  const perpY = deltaX / dist;
+  const sx = source.x + perpX * offset;
+  const sy = source.y + perpY * offset;
+  const tx = target.x + perpX * offset;
+  const ty = target.y + perpY * offset;
+
+  return {
+    path: `M ${sx} ${sy} L ${tx} ${ty}`,
+    labelX: (sx + tx) / 2,
+    labelY: (sy + ty) / 2,
+  };
 };
 
 const getOrthogonalRoute = (source: { x: number; y: number }, target: { x: number; y: number }, offset = 0) => {
@@ -848,6 +871,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
   const [spacePanActive, setSpacePanActive] = useState(false);
   const [boxSelectMode, setBoxSelectMode] = useState(false);
   const [layoutMode, setLayoutMode] = useState<TopologyLayoutMode>('hierarchy');
+  const [routingMode, setRoutingMode] = useState<'straight' | 'orthogonal'>('straight');
   const [displayScope, setDisplayScope] = useState<'auto' | TopologyDisplayMode>('auto');
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
   const [drillPath, setDrillPath] = useState<TopologyDrillSegment[]>([]);
@@ -1129,7 +1153,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     });
   };
 
-  const persistCurrentLayout = (displayMode: TopologyLayoutMode = layoutMode) => {
+  const persistCurrentLayout = (displayMode: TopologyLayoutMode = layoutMode, nextRoutingMode: 'straight' | 'orthogonal' = routingMode) => {
     if (!hydrationCompleteRef.current) return;
     const transform = zoomTransformRef.current;
     const layout = {
@@ -1137,6 +1161,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       transform: transform ? { x: transform.x, y: transform.y, k: transform.k } : undefined,
       layoutMode: 'free' as const,
       displayMode,
+      routingMode: nextRoutingMode,
     };
     writePersistedLayout(layout);
     if (persistTimerRef.current) {
@@ -1208,6 +1233,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     applyAutoLayout(nextLayoutMode);
   };
 
+  const changeRoutingMode = (nextRoutingMode: 'straight' | 'orthogonal') => {
+    setRoutingMode(nextRoutingMode);
+    persistCurrentLayout(layoutMode, nextRoutingMode);
+    setLayoutVersion((value) => value + 1);
+  };
+
   const undoLayout = () => {
     if (layoutHistoryIndexRef.current <= 0) return;
     layoutHistoryIndexRef.current -= 1;
@@ -1264,6 +1295,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     if (persistedLayout.displayMode && ['hierarchy', 'horizontal', 'force', 'radial'].includes(persistedLayout.displayMode)) {
       setLayoutMode(persistedLayout.displayMode);
     }
+    if (persistedLayout.routingMode && ['straight', 'orthogonal'].includes(persistedLayout.routingMode)) {
+      setRoutingMode(persistedLayout.routingMode);
+    }
     const compatibleLocalLayout = layoutIsFree(persistedLayout)
       && ['hierarchy', 'horizontal', 'force', 'radial'].includes(persistedLayout.displayMode || '');
     persistedPositionsRef.current = compatibleLocalLayout ? (persistedLayout.positions || {}) : {};
@@ -1292,6 +1326,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         if (!layout || typeof layout !== 'object') return;
         if (layout.displayMode && ['hierarchy', 'horizontal', 'force', 'radial'].includes(layout.displayMode)) {
           setLayoutMode(layout.displayMode as TopologyLayoutMode);
+        }
+        if (layout.routingMode && ['straight', 'orthogonal'].includes(layout.routingMode)) {
+          setRoutingMode(layout.routingMode as 'straight' | 'orthogonal');
         }
         const compatibleRemoteLayout = layoutIsFree(layout)
           && ['hierarchy', 'horizontal', 'force', 'radial'].includes(String(layout.displayMode || ''));
@@ -2330,14 +2367,27 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       });
 
       link
-        .attr('d', (d: any, i: number) => getOrthogonalRoute(d.source, d.target, parallelOffsetMap.get(String(i)) || 0).path);
+        .attr('d', (d: any, i: number) => {
+          const offset = parallelOffsetMap.get(String(i)) || 0;
+          return routingMode === 'straight'
+            ? getStraightRoute(d.source, d.target, offset).path
+            : getOrthogonalRoute(d.source, d.target, offset).path;
+        });
 
       linkHitArea
-        .attr('d', (d: any, i: number) => getOrthogonalRoute(d.source, d.target, parallelOffsetMap.get(String(i)) || 0).path);
+        .attr('d', (d: any, i: number) => {
+          const offset = parallelOffsetMap.get(String(i)) || 0;
+          return routingMode === 'straight'
+            ? getStraightRoute(d.source, d.target, offset).path
+            : getOrthogonalRoute(d.source, d.target, offset).path;
+        });
 
       linkLabelGroup
         .attr('transform', (d: any, i: number) => {
-          const route = getOrthogonalRoute(d.source, d.target, parallelOffsetMap.get(String(i)) || 0);
+          const offset = parallelOffsetMap.get(String(i)) || 0;
+          const route = routingMode === 'straight'
+            ? getStraightRoute(d.source, d.target, offset)
+            : getOrthogonalRoute(d.source, d.target, offset);
           return `translate(${route.labelX},${route.labelY - 16})`;
         })
         .attr('opacity', (item: any) => {
@@ -2525,7 +2575,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       window.removeEventListener('mousemove', handleSelectionPointerMove as EventListener, true);
       window.removeEventListener('mouseup', handleSelectionPointerUp as EventListener, true);
     };
-  }, [graphDevices, graphLinks, layoutMode, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
+  }, [graphDevices, graphLinks, layoutMode, routingMode, onLinkClick, onNodeClick, selectedLinkKey, selectedNodeId, selectedNodeIdsKey, viewport.height, viewport.width, layoutVersion]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   return (
@@ -2550,6 +2600,16 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
           <option value="horizontal">Horizontal · chain</option>
           <option value="force">Force · mesh</option>
           <option value="radial">Radial · hub</option>
+        </select>
+        <select
+          value={routingMode}
+          onChange={(event) => changeRoutingMode(event.target.value as 'straight' | 'orthogonal')}
+          className="h-8 rounded-xl border border-slate-200 bg-white px-2 text-[10px] font-bold text-slate-600 outline-none transition-colors hover:border-cyan-300"
+          aria-label="Link routing mode"
+          title="Straight draws direct lines; Orthogonal draws bended paths."
+        >
+          <option value="straight">Straight line</option>
+          <option value="orthogonal">Orthogonal line</option>
         </select>
         <select
           value={displayScope}

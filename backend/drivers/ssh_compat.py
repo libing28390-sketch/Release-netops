@@ -300,3 +300,35 @@ def is_ssh_port_open(ip: str, port: int = 22, timeout: float = 1.0) -> bool:
     except (socket.timeout, ConnectionRefusedError, OSError):
         return False
 
+
+# Monkeypatch Netmiko's BaseConnection.send_command globally to automatically
+# intercept and drain paging output. This is crucial for low-privilege accounts
+# (such as standard user/user read-only accounts) that are denied permission
+# to execute paging disable commands (e.g. `screen-length disable`).
+try:
+    from netmiko.base_connection import BaseConnection
+
+    _orig_send_command = BaseConnection.send_command
+
+    def _patched_send_command(self, command_string: str, *args, **kwargs) -> str:
+        # If the user explicitly provided expect_string, we honor it.
+        # Otherwise, we construct a paging-aware expect_string regex matching
+        # both the device prompt and standard pagination indicators.
+        expect_string = kwargs.get('expect_string')
+        if not expect_string:
+            try:
+                prompt = self.find_prompt()
+                if prompt:
+                    kwargs['expect_string'] = r'({}|----\s*More\s*----|--\s*More\s*--|--More--|<---\s*More\s*--->|Press\s+any\s+key\s+to\s+continue)'.format(re.escape(prompt))
+            except Exception:
+                pass
+
+        output = _orig_send_command(self, command_string, *args, **kwargs)
+        output = drain_paged_output(self, output, read_timeout=kwargs.get('read_timeout', 30))
+        return output
+
+    BaseConnection.send_command = _patched_send_command
+
+except ImportError:
+    pass
+
