@@ -81,28 +81,35 @@ def drain_paged_output(conn: Any, output: str, *, read_timeout: int = 30, max_pa
         return output
 
     collected = PAGING_PROMPT_RE.sub("", output or "")
-    per_read_timeout = max(1, min(int(read_timeout or 30), 10))
+    paging_pattern = r"(?:----\s*More\s*----|--\s*More\s*--|--More--|<---\s*More\s*--->|Press\s+any\s+key\s+to\s+continue)"
+    
     for _ in range(max_pages):
         if not pending:
             break
         try:
             conn.write_channel(" ")
-            chunk = conn.read_channel_timing(read_timeout=per_read_timeout)
+            if hasattr(conn, 'read_until_prompt_or_pattern'):
+                chunk = conn.read_until_prompt_or_pattern(pattern=paging_pattern, read_timeout=2.0)
+            else:
+                chunk = conn.read_channel_timing(read_timeout=2.0)
         except AttributeError:
             break
         except Exception:
             chunk = ""
         if not chunk:
-            time.sleep(0.1)
-            try:
-                chunk = conn.read_channel_timing(read_timeout=1)
-            except Exception:
-                chunk = ""
-        if not chunk:
             break
         pending = contains_paging_prompt(chunk)
         collected += PAGING_PROMPT_RE.sub("", chunk)
-    return collected
+
+    # Clean prompt erasure whitespace lines (leftover from erasing the paging prompt)
+    clean_lines = []
+    for line in collected.splitlines():
+        if line and not line.strip():
+            continue
+        line = line.replace('\r', '')
+        clean_lines.append(line)
+        
+    return '\n'.join(clean_lines)
 
 
 def build_system_ssh_open_cmd() -> List[str]:
