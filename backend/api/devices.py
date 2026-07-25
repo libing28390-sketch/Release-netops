@@ -1786,7 +1786,14 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
     query_name = payload.get('name') or f"Quick Query: {', '.join(categories or [])}"
 
     try:
-        res = collect_operational_data(device_info, categories=categories, auth_role=auth_role)
+        # User-initiated/manual operational-data collection should bypass default background collection plan limits.
+        override_categories = set(categories) if categories else None
+        res = collect_operational_data(
+            device_info,
+            categories=categories,
+            auth_role=auth_role,
+            policy_override_categories=override_categories,
+        )
         _record_instant_execution(
             device_id, query_name, [], 'completed',
             platform=device_info.get('platform', 'unknown'),
