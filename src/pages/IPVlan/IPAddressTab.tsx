@@ -179,6 +179,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [isMatrixView, setIsMatrixView] = useState(false);
 
   // Lookup data
   const [devices, setDevices] = useState<any[]>([]);
@@ -287,6 +288,14 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     navigate(`/ipam/ips?prefix_id=${id}`);
   };
 
+  const prefixMask = useMemo(() => {
+    if (!activePrefix?.prefix || !activePrefix.prefix.includes('/')) return 0;
+    const mask = parseInt(activePrefix.prefix.split('/')[1], 10);
+    return isNaN(mask) ? 0 : mask;
+  }, [activePrefix]);
+
+  const canUseMatrix = prefixMask >= 24 && prefixMask <= 32;
+
   // Filtered IP list
   const filteredAddresses = useMemo(() => {
     return addresses.filter((item) => {
@@ -302,6 +311,46 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       return matchesSearch && matchesStatus && matchesType;
     });
   }, [addresses, search, statusFilter, typeFilter]);
+
+  const matrixData = useMemo(() => {
+    if (!isMatrixView || !canUseMatrix || !activePrefix) return [];
+    const cidr = activePrefix.prefix;
+    const [ipPart, maskPart] = cidr.split('/');
+    const mask = parseInt(maskPart, 10);
+    const ipParts = ipPart.split('.').map(Number);
+    if (ipParts.length !== 4 || ipParts.some(isNaN)) return [];
+    
+    const baseInt = ipParts[0] * 16777216 + ipParts[1] * 65536 + ipParts[2] * 256 + ipParts[3];
+    const numHosts = Math.pow(2, 32 - mask);
+
+    const registeredMap = new Map<string, IPAddress>();
+    addresses.forEach((addr) => {
+      registeredMap.set(addr.address, addr);
+    });
+
+    const list: Array<{ ip: string; data: IPAddress | null; status: string }> = [];
+    for (let i = 0; i < numHosts; i++) {
+      const currentVal = baseInt + i;
+      const p1 = Math.floor(currentVal / 16777216) % 256;
+      const p2 = Math.floor(currentVal / 65536) % 256;
+      const p3 = Math.floor(currentVal / 256) % 256;
+      const p4 = currentVal % 256;
+      const ipStr = `${p1}.${p2}.${p3}.${p4}`;
+      const matchedData = registeredMap.get(ipStr) || null;
+      
+      let status = 'available';
+      if (matchedData) {
+        status = matchedData.status;
+      }
+      
+      list.push({
+        ip: ipStr,
+        data: matchedData,
+        status,
+      });
+    }
+    return list;
+  }, [isMatrixView, canUseMatrix, activePrefix, addresses]);
 
   // Pagination states
   const [page, setPage] = useState(1);
@@ -488,6 +537,34 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 className="w-full pl-10 pr-4 py-1.5 text-xs rounded-xl border border-black/5 bg-gray-50/50 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium"
               />
             </div>
+
+            {/* View Switcher Toggle */}
+            <div className="flex items-center border border-black/5 bg-gray-50 rounded-xl p-0.5 ml-1">
+              <button
+                onClick={() => setIsMatrixView(false)}
+                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                  !isMatrixView 
+                    ? 'bg-white shadow-sm text-cyan-600' 
+                    : 'text-gray-450 hover:text-gray-600'
+                }`}
+              >
+                {zh ? '列表' : 'List'}
+              </button>
+              <button
+                disabled={!canUseMatrix}
+                onClick={() => setIsMatrixView(true)}
+                title={!canUseMatrix ? (zh ? '矩阵仅支持掩码 /24 - /32 的网段' : 'Matrix view requires subnet mask /24 - /32') : ''}
+                className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
+                  isMatrixView 
+                    ? 'bg-white shadow-sm text-cyan-600' 
+                    : !canUseMatrix
+                    ? 'text-gray-250 cursor-not-allowed opacity-50'
+                    : 'text-gray-450 hover:text-gray-600'
+                }`}
+              >
+                {zh ? '矩阵' : 'Matrix'}
+              </button>
+            </div>
           </div>
         }
       />
@@ -498,6 +575,82 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
           {loading ? (
             <div className="h-full flex items-center justify-center text-xs text-gray-400 font-semibold">
               {zh ? '加载中...' : 'Loading IP allocations...'}
+            </div>
+          ) : isMatrixView && canUseMatrix ? (
+            /* Render Grid Matrix View */
+            <div className="p-6 overflow-auto">
+              <div className="mb-4.5 flex flex-wrap items-center justify-between gap-4 text-xs text-gray-500 border-b border-gray-100 pb-3">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3.5 h-3.5 rounded-lg bg-gray-50 border border-gray-150" />
+                    <span>{zh ? '空闲 (Available)' : 'Available'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3.5 h-3.5 rounded-lg bg-emerald-500" />
+                    <span>{zh ? '使用中 (Active)' : 'Active'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3.5 h-3.5 rounded-lg bg-amber-500" />
+                    <span>{zh ? '已保留 (Reserved)' : 'Reserved'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-3.5 h-3.5 rounded-lg bg-rose-500" />
+                    <span>{zh ? '已弃用 (Deprecated)' : 'Deprecated'}</span>
+                  </div>
+                </div>
+                <div className="font-semibold text-gray-400">
+                  {zh ? '点击方块可快捷分配或编辑 IP' : 'Click any square to allocate or edit IP'}
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-8 sm:grid-cols-12 md:grid-cols-16 gap-2">
+                {matrixData.map((cell) => {
+                  let bgClass = "bg-gray-50 hover:bg-cyan-50 text-gray-400 border-gray-150";
+                  if (cell.status === 'active') {
+                    bgClass = "bg-emerald-500 text-white hover:bg-emerald-600 border-emerald-600 shadow-sm";
+                  } else if (cell.status === 'reserved') {
+                    bgClass = "bg-amber-500 text-white hover:bg-amber-600 border-amber-600 shadow-sm";
+                  } else if (cell.status === 'deprecated') {
+                    bgClass = "bg-rose-505 text-white hover:bg-rose-600 border-rose-600 shadow-sm";
+                  }
+                  
+                  const lastOctet = cell.ip.split('.').pop() || '';
+                  const tooltip = cell.data 
+                    ? `${cell.ip} (${cell.data.hostname || (zh ? '无域名' : 'No Hostname')}) - ${roleLabel(cell.data.device_type, zh)} [${statusLabel(cell.data.status, zh)}]`
+                    : `${cell.ip} (${zh ? '空闲' : 'Available'})`;
+                  
+                  return (
+                    <div
+                      key={cell.ip}
+                      onClick={() => {
+                        if (cell.data) {
+                          openForm(cell.data);
+                        } else {
+                          openForm({
+                            id: '',
+                            subnet_id: selectedPrefixId,
+                            address: cell.ip,
+                            hostname: '',
+                            device_id: '',
+                            interface_name: '',
+                            mac_address: '',
+                            device_type: 'host',
+                            status: 'active',
+                            description: '',
+                            last_seen: '',
+                            created_at: '',
+                            updated_at: '',
+                          });
+                        }
+                      }}
+                      title={tooltip}
+                      className={`aspect-square w-full rounded-xl border flex flex-col items-center justify-center text-[10px] font-bold font-mono transition-all duration-150 cursor-pointer active:scale-95 select-none ${bgClass}`}
+                    >
+                      <span>.{lastOctet}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ) : (
             <table className="w-full border-collapse text-left">
@@ -595,16 +748,18 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         </div>
 
         {/* Pagination */}
-        <div className="px-6 py-4 border-t border-gray-100">
-          <Pagination
-            currentPage={page}
-            totalItems={filteredAddresses.length}
-            itemsPerPage={pageSize}
-            onPageChange={setPage}
-            language={language}
-            alwaysVisible={true}
-          />
-        </div>
+        {!isMatrixView && (
+          <div className="px-6 py-4 border-t border-gray-100">
+            <Pagination
+              currentPage={page}
+              totalItems={filteredAddresses.length}
+              itemsPerPage={pageSize}
+              onPageChange={setPage}
+              language={language}
+              alwaysVisible={true}
+            />
+          </div>
+        )}
       </div>
 
       {/* Add / Edit Modal */}

@@ -5,6 +5,10 @@ import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  // Windows may reserve 5124-5223 for Hyper-V/WSL; the historical 5150
+  // default then fails with EACCES before Vite can start.  Keep an explicit
+  // override for deployments while using a non-reserved development port.
+  const frontendPort = Number(env.VITE_PORT || process.env.VITE_PORT || '5300');
   return {
     plugins: [react(), tailwindcss()],
     define: {
@@ -50,7 +54,8 @@ export default defineConfig(({ mode }) => {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
-      port: 5150,
+      port: frontendPort,
+      strictPort: true,
       host: '0.0.0.0',
       watch: {
         // Keep Vite focused on frontend sources so Linux doesn't exhaust inotify

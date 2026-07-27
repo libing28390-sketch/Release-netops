@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Activity, AlertTriangle, Clock3, Database, Download, EyeOff, GitMerge, Globe, Network, RotateCcw, Search } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, LayoutGrid, MapPin, Network, PanelRightClose, PanelRightOpen, RotateCcw, Search } from 'lucide-react';
 import type { Device } from '../types';
 import { darkActionBtnClass, secondaryActionBtnClass } from '../components/shared';
 import TopologyGraph from '../components/TopologyGraph';
@@ -60,6 +60,166 @@ interface TopologyDecoratedLinkLike {
   aggregation_bandwidth_mbps?: number | null;
   members?: Array<{ source?: { name?: string; speed_mbps?: number; up?: boolean }; target?: { name?: string; speed_mbps?: number; up?: boolean } }>;
 }
+
+interface TopologySiteOverviewProps {
+  language: string;
+  sites: any[];
+  devices: Device[];
+  links: TopologyDecoratedLinkLike[];
+  onSelectSite: (siteId: string) => void;
+}
+
+const getTopologySiteKey = (device: Partial<Device>) =>
+  String((device as any).site_id || (device as any).site || (device as any).site_name || '').trim() || 'unassigned';
+
+const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, sites, devices, links, onSelectSite }) => {
+  const overview = React.useMemo(() => {
+    const siteMap = new Map<string, {
+      id: string;
+      name: string;
+      deviceCount: number;
+      linkCount: number;
+      orphanCount: number;
+      offlineCount: number;
+      staleCount: number;
+    }>();
+    sites.forEach((site: any) => {
+      const id = String(site.site_id || site.site_code || site.site_name || 'unassigned');
+      siteMap.set(id, {
+        id,
+        name: String(site.site_name || site.site_code || id),
+        deviceCount: Number(site.device_count || 0),
+        linkCount: Number(site.link_count || 0),
+        orphanCount: Number(site.orphan_devices || 0),
+        offlineCount: Number(site.offline_devices || 0),
+        staleCount: Number(site.stale_links || 0),
+      });
+    });
+    const deviceSite = new Map<string, string>();
+    devices.forEach((device) => {
+      const id = getTopologySiteKey(device);
+      deviceSite.set(device.id, id);
+      const current = siteMap.get(id) || {
+        id,
+        name: id === 'unassigned' ? (language === 'zh' ? '未分配站点' : 'Unassigned site') : id,
+        deviceCount: 0,
+        linkCount: 0,
+        orphanCount: 0,
+        offlineCount: 0,
+        staleCount: 0,
+      };
+      current.deviceCount += 1;
+      if (String(device.status || '').toLowerCase() === 'offline') current.offlineCount += 1;
+      siteMap.set(id, current);
+    });
+    const connectionMap = new Map<string, { source: string; target: string; count: number; down: number }>();
+    links.forEach((link) => {
+      const source = deviceSite.get(link.source_device_id);
+      const target = deviceSite.get(link.target_device_id);
+      if (!source || !target || source === target) return;
+      const [left, right] = [source, target].sort();
+      const key = `${left}::${right}`;
+      const current = connectionMap.get(key) || { source: left, target: right, count: 0, down: 0 };
+      current.count += 1;
+      if (link.operational_state === 'down' || link.operational_state === 'degraded') current.down += 1;
+      connectionMap.set(key, current);
+      if (sites.length === 0) {
+        const sourceSite = siteMap.get(source);
+        const targetSite = siteMap.get(target);
+        if (sourceSite) sourceSite.linkCount += 1;
+        if (targetSite) targetSite.linkCount += 1;
+      }
+    });
+    const sitesById = new Map(siteMap);
+    return {
+      sites: Array.from(sitesById.values()).sort((left, right) => right.deviceCount - left.deviceCount || left.name.localeCompare(right.name)),
+      connections: Array.from(connectionMap.values()).sort((left, right) => right.count - left.count),
+      siteName: (id: string) => sitesById.get(id)?.name || id,
+    };
+  }, [devices, language, links, sites]);
+
+  return (
+    <div className="h-full overflow-auto bg-slate-50/70 p-5">
+      <div className="mx-auto max-w-[1500px]">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.16em] text-sky-700">
+              <LayoutGrid size={14} />
+              {language === 'zh' ? '全网站点总览' : 'Site overview'}
+            </div>
+            <h4 className="mt-1 text-xl font-extrabold tracking-tight text-slate-900">
+              {language === 'zh' ? '先看故障域，再进入站点拓扑' : 'Start with a fault domain, then drill into its topology'}
+            </h4>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+              {language === 'zh' ? '站点之间只保留汇总链路，设备级端口标签在站点详情中查看，避免多站点同时展开造成视觉噪声。' : 'Inter-site links are summarized here; inspect device ports after entering a site to keep the canvas readable.'}
+            </p>
+          </div>
+          <span className="rounded-full border border-sky-200 bg-white px-3 py-1.5 text-[11px] font-bold text-sky-700">
+            {overview.sites.length} {language === 'zh' ? '个站点' : 'sites'} · {overview.connections.length} {language === 'zh' ? '组跨站连接' : 'cross-site paths'}
+          </span>
+        </div>
+
+        {overview.sites.length === 0 ? (
+          <div className="mt-8 rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">
+            {language === 'zh' ? '暂无可用站点数据，请先刷新拓扑发现。' : 'No site data is available. Run topology discovery first.'}
+          </div>
+        ) : (
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {overview.sites.map((site) => {
+              const healthy = site.offlineCount === 0 && site.staleCount === 0 && site.orphanCount === 0;
+              return (
+                <button
+                  key={site.id}
+                  type="button"
+                  onClick={() => onSelectSite(site.id === 'unassigned' ? 'all' : site.id)}
+                  className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-lg"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${healthy ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                        <MapPin size={17} />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-extrabold text-slate-900">{site.name}</div>
+                        <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{site.id}</div>
+                      </div>
+                    </div>
+                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${healthy ? 'bg-emerald-500' : 'bg-amber-500'}`} title={healthy ? 'Healthy' : 'Needs attention'} />
+                  </div>
+                  <div className="mt-4 grid grid-cols-3 gap-2 border-t border-slate-100 pt-3">
+                    <span><b className="block text-lg font-extrabold tabular-nums text-slate-900">{site.deviceCount}</b><small className="text-[10px] font-semibold text-slate-400">{language === 'zh' ? '设备' : 'Devices'}</small></span>
+                    <span><b className="block text-lg font-extrabold tabular-nums text-slate-900">{site.linkCount}</b><small className="text-[10px] font-semibold text-slate-400">{language === 'zh' ? '链路' : 'Links'}</small></span>
+                    <span><b className={`block text-lg font-extrabold tabular-nums ${site.offlineCount || site.orphanCount || site.staleCount ? 'text-rose-600' : 'text-emerald-600'}`}>{site.offlineCount + site.orphanCount + site.staleCount}</b><small className="text-[10px] font-semibold text-slate-400">{language === 'zh' ? '需关注' : 'Attention'}</small></span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between text-[11px] font-bold text-sky-700">
+                    <span>{language === 'zh' ? '进入站点拓扑' : 'Open site topology'}</span>
+                    <ArrowRight size={14} className="transition-transform group-hover:translate-x-1" />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {overview.connections.length > 0 && (
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-extrabold text-slate-900"><GitMerge size={16} className="text-sky-600" />{language === 'zh' ? '跨站连接摘要' : 'Cross-site connections'}</div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {overview.connections.map((connection) => (
+                <div key={`${connection.source}:${connection.target}`} className="flex items-center gap-2 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5 text-xs">
+                  <span className="min-w-0 flex-1 truncate font-bold text-slate-700">{overview.siteName(connection.source)}</span>
+                  <span className="shrink-0 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold text-sky-700">{connection.count} {language === 'zh' ? '条' : 'links'}</span>
+                  <ArrowRight size={13} className={connection.down ? 'text-amber-500' : 'text-slate-300'} />
+                  <span className="min-w-0 flex-1 truncate text-right font-bold text-slate-700">{overview.siteName(connection.target)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 interface TopologyPageProps {
   language: string;
@@ -180,6 +340,18 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   formatTopologyEvidenceLabel,
   getTopologyOperationalTone,
 }) => {
+  const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>(topologySiteFilter === 'all' ? 'overview' : 'site');
+  const [inspectorOpen, setInspectorOpen] = React.useState(false);
+  const handleSiteFilterChange = (value: string) => {
+    onTopologySiteFilterChange(value);
+    setCanvasView(value === 'all' ? 'overview' : 'site');
+  };
+  React.useEffect(() => {
+    setCanvasView(topologySiteFilter === 'all' ? 'overview' : 'site');
+  }, [topologySiteFilter]);
+  React.useEffect(() => {
+    if (selectedTopologyDeviceId || selectedTopologyLinkKey) setInspectorOpen(true);
+  }, [selectedTopologyDeviceId, selectedTopologyLinkKey]);
   const terminalDiscoveryStatus = topologyDiscoveryProgress && ['completed', 'partial', 'failed', 'cancelled'].includes(topologyDiscoveryProgress.status)
     ? `${topologyDiscoveryProgress.id}:${topologyDiscoveryProgress.status}`
     : undefined;
@@ -276,7 +448,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             </div>
             <p className="mt-1 text-[11px] leading-5 text-slate-500">
               {language === 'zh'
-                ? `系统每 ${automaticIntervalLabel} 自动执行一次；“刷新发现”只用于立即校验。设备侧仅执行按厂商选择的只读邻居查询，不写入设备配置。`
+                ? `系统每 ${automaticIntervalLabel} 自动执行一次；“刷新发现”会同时刷新接口摘要、聚合成员和邻居关系，全部为设备只读查询，不写入设备配置。`
                 : `Automatic discovery runs every ${automaticIntervalLabel}; Refresh Discovery is for immediate validation. Device access is limited to vendor-specific read-only neighbor queries.`}
             </p>
           </div>
@@ -323,7 +495,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
               <h3 className="text-sm font-bold text-slate-800">{language === 'zh' ? '站点视图' : 'Site View'}</h3>
               <p className="mt-0.5 text-[11px] text-slate-500">{language === 'zh' ? '先按站点缩小故障域，再进入站点拓扑。' : 'Start with a site fault domain, then inspect its topology.'}</p>
             </div>
-            <button onClick={() => onTopologySiteFilterChange('all')} className="text-xs font-semibold text-sky-600 hover:text-sky-800">
+            <button onClick={() => handleSiteFilterChange('all')} className="text-xs font-semibold text-sky-600 hover:text-sky-800">
               {language === 'zh' ? '查看全部' : 'All Sites'}
             </button>
           </div>
@@ -334,7 +506,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
               return (
                 <button
                   key={site.site_id || site.site_code}
-                  onClick={() => onTopologySiteFilterChange(site.site_id || 'all')}
+                  onClick={() => handleSiteFilterChange(site.site_id || 'all')}
                   className={`rounded-xl border p-3 text-left transition ${active ? 'border-sky-400 bg-sky-50' : 'border-slate-200 bg-slate-50/60 hover:border-sky-300'}`}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -436,7 +608,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           </label>
           <select
             value={topologySiteFilter}
-            onChange={(event) => onTopologySiteFilterChange(event.target.value)}
+            onChange={(event) => handleSiteFilterChange(event.target.value)}
             title={language === 'zh' ? '按站点筛选拓扑' : 'Filter topology by site'}
             className="ops-control rounded-xl px-3 py-2 text-sm outline-none"
           >
@@ -510,7 +682,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,2.35fr)_minmax(320px,0.85fr)]">
+      <div className={`grid min-h-0 flex-1 gap-4 ${inspectorOpen ? 'xl:grid-cols-[minmax(0,2.35fr)_minmax(320px,0.85fr)]' : 'xl:grid-cols-1'}`}>
         <div className="ops-surface relative flex min-h-[480px] flex-col overflow-hidden rounded-2xl" ref={topologyCanvasRef}>
           <div className="absolute inset-0 bg-[radial-gradient(#000_1px,transparent_1px)] bg-[length:20px_20px] opacity-[0.03]" />
           <div className="relative flex items-center justify-between border-b border-black/5 px-5 py-4">
@@ -524,7 +696,33 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                   : 'Offline devices remain visible by default. Stale links mean discovery has not refreshed within the last 30 minutes. Manual discovery is for immediate validation, not the only update path.'}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-black/45">
+            <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-black/45">
+              <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5 normal-case tracking-normal shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => handleSiteFilterChange('all')}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold transition-colors ${canvasView === 'overview' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                >
+                  <LayoutGrid size={12} /> {language === 'zh' ? 'Site 总览' : 'Site overview'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCanvasView('site')}
+                  disabled={topologySiteFilter === 'all'}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold transition-colors ${canvasView === 'site' ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-slate-50'} disabled:cursor-not-allowed disabled:opacity-40`}
+                >
+                  <Network size={12} /> {language === 'zh' ? '站点拓扑' : 'Site topology'}
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspectorOpen((value) => !value)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold normal-case tracking-normal text-slate-600 shadow-sm transition-colors hover:border-sky-300 hover:text-sky-700"
+                title={inspectorOpen ? 'Hide inspector' : 'Show inspector'}
+              >
+                {inspectorOpen ? <PanelRightClose size={13} /> : <PanelRightOpen size={13} />}
+                {inspectorOpen ? (language === 'zh' ? '收起详情' : 'Hide details') : (language === 'zh' ? '展开详情' : 'Show details')}
+              </button>
               <span className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-white/90 px-3 py-1.5">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 {language === 'zh' ? '节点在线 / 链路正常' : 'Node Online / Link Up'}
@@ -549,7 +747,15 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           </div>
 
           <div className="relative flex-1">
-            {topologyVisibleDevices.length === 0 ? (
+            {canvasView === 'overview' ? (
+              <TopologySiteOverview
+                language={language}
+                sites={topologySites}
+                devices={topologyVisibleDevices}
+                links={topologyVisibleLinks}
+                onSelectSite={handleSiteFilterChange}
+              />
+            ) : topologyVisibleDevices.length === 0 ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center">
                 <div className="rounded-full border border-black/10 bg-slate-50 p-4 text-slate-500">
                   <Globe size={26} />
@@ -592,7 +798,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           </div>
         </div>
 
-        <TopologyInspectorPanel
+        {inspectorOpen && <TopologyInspectorPanel
           language={language}
           selectedTopologyDevice={selectedTopologyDevice}
           selectedTopologyLink={selectedTopologyLink}
@@ -612,7 +818,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           formatTopologyOperationalState={formatTopologyOperationalState}
           formatTopologyEvidenceLabel={formatTopologyEvidenceLabel}
           getTopologyOperationalTone={getTopologyOperationalTone}
-        />
+        />}
       </div>
       </div>
     </div>

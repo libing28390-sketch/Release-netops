@@ -123,6 +123,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     )
     ''')
     ensure_column('credentials', 'account_role', "TEXT DEFAULT 'unbound'")
+    ensure_column('credentials', 'snmp_server', "TEXT DEFAULT ''")
 
     # Create devices table if not exists
     cursor.execute('''
@@ -2698,6 +2699,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('physical_assets', 'enable_password_expires_at', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'credential_id', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'admin_credential_id', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'snmp_credential_id', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'credential_source', "TEXT DEFAULT 'local'")
     ensure_column('physical_assets', 'vault_path', "TEXT DEFAULT ''")
     ensure_column('physical_assets', 'requires_strict_audit', "INTEGER DEFAULT 1")
@@ -2726,6 +2728,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
 
     ensure_column('devices', 'credential_id', 'TEXT')
     ensure_column('devices', 'admin_credential_id', "TEXT DEFAULT ''")
+    ensure_column('devices', 'snmp_credential_id', "TEXT DEFAULT ''")
     ensure_column('devices', 'asset_id', 'TEXT')
     ensure_column('devices', 'vendor', "TEXT DEFAULT ''")
     ensure_column('devices', 'lifecycle_status', "TEXT DEFAULT 'staging'")

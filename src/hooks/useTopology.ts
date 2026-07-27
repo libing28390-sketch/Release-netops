@@ -7,6 +7,7 @@ import {
   normalizeTopologyPort,
   type TopologyOperationalState,
 } from '../utils/topologyCore';
+import { buildTopologyExportFilename, getTopologyExportPixelRatio } from '../utils/topologyExport';
 import { useTopologyVisibleDevices } from './useTopologyVisibleDevices';
 import { useTopologySelectionSync } from './useTopologySelectionSync';
 
@@ -154,9 +155,10 @@ interface UseTopologyArgs {
   devices: Device[];
   language: Language;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+  refreshDevices?: () => Promise<unknown>;
 }
 
-export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) => {
+export const useTopology = ({ devices, language, showToast, refreshDevices }: UseTopologyArgs) => {
   const [topologyLinks, setTopologyLinks] = useState<any[]>([]);
   const [topologySearch, setTopologySearch] = useState('');
   const [topologyStatusFilter, setTopologyStatusFilter] = useState<'all' | 'online' | 'offline' | 'pending'>('all');
@@ -192,13 +194,27 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
     ]);
     if (!linksResponse.ok) throw new Error(`topology_links_${linksResponse.status}`);
     const linksPayload = await linksResponse.json();
-    setTopologyLinks(Array.isArray(linksPayload?.links) ? linksPayload.links : []);
+    const nextLinks = Array.isArray(linksPayload?.links) ? linksPayload.links : [];
+    // A device can be added from the asset/CMDB page while this SPA is still
+    // holding the previous device snapshot. In that case the backend returns
+    // valid links, but the frontend would drop them because their endpoint IDs
+    // are not present in the stale local list. Reconcile the device inventory
+    // before publishing the new graph data.
+    if (refreshDevices) {
+      const currentDeviceIds = new Set(devices.map((device) => String(device.id)));
+      const hasUnknownEndpoint = nextLinks.some((link: any) => (
+        !currentDeviceIds.has(String(link.source_device_id || ''))
+        || !currentDeviceIds.has(String(link.target_device_id || ''))
+      ));
+      if (hasUnknownEndpoint) await refreshDevices();
+    }
+    setTopologyLinks(nextLinks);
     if (sitesResponse.ok) {
       const sitesPayload = await sitesResponse.json();
       setTopologySites(Array.isArray(sitesPayload?.items) ? sitesPayload.items : []);
     }
     setTopologyDataError(sitesResponse.ok ? '' : `topology_sites_${sitesResponse.status}`);
-  }, [hideStaleLinks, topologySiteFilter]);
+  }, [devices, hideStaleLinks, refreshDevices, topologySiteFilter]);
 
   React.useEffect(() => {
     let active = true;
@@ -627,6 +643,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       exportOverlay.appendChild(legendGroup);
       topologySvg.appendChild(exportOverlay);
 
+      const exportPixelRatio = getTopologyExportPixelRatio(width, height);
       const dataUrl = await htmlToImage.toPng(topologySvg as unknown as HTMLElement, {
         backgroundColor: '#ffffff',
         cacheBust: true,
@@ -634,18 +651,21 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         height,
         canvasWidth: width,
         canvasHeight: height,
-        // Keep the original layout dimensions, but render a 3x bitmap so the
-        // downloaded PNG remains sharp when users zoom in afterward.
-        pixelRatio: 3,
+        // Render a 4K-class bitmap for readable topology labels while keeping
+        // a safety cap for unusually large canvases.
+        pixelRatio: exportPixelRatio,
         style: {
           backgroundColor: '#ffffff',
           transform: 'scale(1)',
           transformOrigin: 'top left',
         },
       });
+      const selectedSite = topologySites.find((site) => site.site_id === topologySiteFilter);
+      const exportSiteLabel = topologySiteFilter === 'all'
+        ? (topologySites.length === 1 ? topologySites[0].site_name : 'all-sites')
+        : (selectedSite?.site_name || topologySiteFilter);
       const link = document.createElement('a');
-      const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-      link.download = `network-topology-${ts}.png`;
+      link.download = buildTopologyExportFilename(exportSiteLabel, 'png');
       link.href = dataUrl;
       link.click();
       showToast('Topology map exported successfully', 'success');
@@ -660,7 +680,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       }
       if (originalViewBox) topologySvg.setAttribute('viewBox', originalViewBox);
     }
-  }, [showToast]);
+  }, [showToast, topologySiteFilter, topologySites]);
 
   const handleTriggerDiscovery = useCallback(async () => {
     setTopologyDiscoveryRunning(true);
@@ -727,6 +747,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
         if (run && terminalStates.has(run.status)) {
           setTopologyDiscoveryRunning(false);
           setTopologyDiscoveryRunId(null);
+          await refreshDevices?.();
           await refreshTopologyData();
           showToast(
             language === 'zh'
@@ -747,7 +768,7 @@ export const useTopology = ({ devices, language, showToast }: UseTopologyArgs) =
       active = false;
       if (timer != null) window.clearTimeout(timer);
     };
-  }, [language, refreshTopologyData, showToast, topologyDiscoveryRunId]);
+  }, [language, refreshDevices, refreshTopologyData, showToast, topologyDiscoveryRunId]);
 
   const handleCancelDiscovery = useCallback(async () => {
     const runId = topologyDiscoveryRunId || topologyDiscoveryProgress?.id;

@@ -31,12 +31,13 @@ export const EMPTY_FORM = {
   admin_username: '', admin_password: '',
   enable_password: '',   
   auth_model: 'dual',
-  snmp_community: '', snmp_port: '161',
+  snmp_community: '', snmp_community_set: false, snmp_port: '161',
   management_port: '22',
   device_category: '',   
   power_watts: '',       
   credential_id: '',
   admin_credential_id: '',
+  snmp_credential_id: '',
   tag_ids: [] as string[],
 };
 

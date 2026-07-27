@@ -331,7 +331,8 @@ try:
                 pass
 
         output = _orig_send_command(self, command_string, *args, **kwargs)
-        output = drain_paged_output(self, output, read_timeout=kwargs.get('read_timeout', 30))
+        if isinstance(output, str):
+            output = drain_paged_output(self, output, read_timeout=kwargs.get('read_timeout', 30))
         return output
 
     BaseConnection.send_command = _patched_send_command

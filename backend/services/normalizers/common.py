@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from core.interface_utils import normalize_interface_name
-from core.textfsm import parse_with_textfsm
+from core.textfsm import parse_with_textfsm, resolve_textfsm_platform
 from domain.models import Neighbor
 
 
@@ -18,7 +18,11 @@ def textfsm_records(platforms: str | Iterable[str], command: str, output: str) -
         return []
     candidates = (platforms,) if isinstance(platforms, str) else tuple(platforms)
     for platform in candidates:
-        records = parse_with_textfsm(platform=platform, command=command, output=output)
+        records = parse_with_textfsm(
+            platform=resolve_textfsm_platform(platform) or platform,
+            command=command,
+            output=output,
+        )
         if records:
             return [{str(key).lower(): value for key, value in record.items()} for record in records]
     return []
@@ -72,7 +76,10 @@ def interface_type(name: str) -> str:
         return "svi"
     if normalized.startswith(("tunnel", "gr-", "ip-")):
         return "tunnel"
-    if normalized.startswith(("port-channel", "portchannel", "bridge-aggregation", "eth-trunk", "ae")):
+    if normalized.startswith((
+        "port-channel", "portchannel", "bridge-aggregation", "route-aggregation",
+        "eth-trunk", "ae",
+    )):
         return "port_channel"
     if "." in normalized:
         return "sub_interface"

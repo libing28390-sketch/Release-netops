@@ -634,6 +634,7 @@ class CredentialCreate(BaseModel):
     enable_password: str = ''   # plaintext on input; stored encrypted
     private_key: str = ''       # plaintext on input; stored encrypted
     snmp_community: str = ''     # plaintext on input; stored encrypted
+    snmp_server: str = ''        # optional SNMP target override; blank uses device management IP
 
     @field_validator('credential_name')
     @classmethod
@@ -671,6 +672,7 @@ class CredentialUpdate(BaseModel):
     old_enable_password: Optional[str] = None
     private_key: Optional[str] = None
     snmp_community: Optional[str] = None
+    snmp_server: Optional[str] = None
 
     @field_validator('credential_name')
     @classmethod

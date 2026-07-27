@@ -1018,6 +1018,7 @@ async def _process_device_raw(device, cycle_tick: int):
         collection_started = _time.perf_counter()
         collector_credentials = resolve_collector_credentials(device)
         snmp_credentials = collector_credentials['snmp']
+        snmp_ip = snmp_credentials.get('server') or ip
         snmp_community = snmp_credentials.get('community') or ''
         snmp_port = snmp_credentials.get('port') or 161
         platform = device['platform'] or 'cisco_ios'
@@ -1033,7 +1034,7 @@ async def _process_device_raw(device, cycle_tick: int):
         psu = None
         if snmp_community:
             try:
-                metrics = await collect_device_metrics(ip, platform, snmp_community, snmp_port)
+                metrics = await collect_device_metrics(snmp_ip, platform, snmp_community, snmp_port)
                 cpu_usage = metrics.get('cpu_usage')
                 memory_usage = metrics.get('memory_usage')
                 temp = metrics.get('temp')
@@ -1053,7 +1054,7 @@ async def _process_device_raw(device, cycle_tick: int):
         if snmp_community and not snmp_available:
             try:
                 from services.snmp_service import _snmp_get, SYS_UPTIME
-                test_val = await _snmp_get(ip, snmp_community, SYS_UPTIME, snmp_port, timeout=1.5)
+                test_val = await _snmp_get(snmp_ip, snmp_community, SYS_UPTIME, snmp_port, timeout=1.5)
                 if test_val is not None:
                     snmp_available = True
             except Exception:
@@ -1161,7 +1162,7 @@ async def _process_device_raw(device, cycle_tick: int):
         # 3. Device info collection (every ~10 minutes)
         if collect_info and snmp_community:
             try:
-                dev_info = await collect_device_info(ip, snmp_community, snmp_port)
+                dev_info = await collect_device_info(snmp_ip, snmp_community, snmp_port)
                 if any(value is not None for value in dev_info.values()):
                     snmp_available = True
                 updates = {}
@@ -1198,7 +1199,7 @@ async def _process_device_raw(device, cycle_tick: int):
             try:
                 now_ts = _time.monotonic()
                 now_iso = _utc_now_iso()
-                intf_data = await collect_interface_data(ip, snmp_community, snmp_port)
+                intf_data = await collect_interface_data(snmp_ip, snmp_community, snmp_port)
                 if not intf_data:
                     record_collection_result(
                         dev_id,

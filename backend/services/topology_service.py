@@ -14,13 +14,14 @@ from typing import Any
 from netmiko import ConnectHandler
 
 from core.crypto import decrypt_credential
-from core.interface_utils import normalize_interface_name
-from core.textfsm import configure_ntc_templates, smart_parse_cli
+from core.interface_utils import interface_nominal_speed_mbps, normalize_interface_name
+from core.textfsm import configure_ntc_templates, resolve_textfsm_platform, smart_parse_cli
 from core.read_cache import invalidate_read_cache
 from database import get_db_connection
 from services.vault_service import resolve_collector_credentials
 from services.network_access_limiter import limited_connect_handler
 from services.collection_status_service import record_collection_result
+from services.normalizers.common import parse_speed_bps
 from services.neighbor_collection_contract import assert_lldp_command, normalize_neighbor_record
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 
@@ -394,7 +395,11 @@ def _parse_shared_lldp_output(platform: str, command: str, raw_text: str) -> lis
     if not raw_text or not str(raw_text).strip():
         return []
     try:
-        result = smart_parse_cli(str(raw_text), command, platform=platform)
+        result = smart_parse_cli(
+            str(raw_text),
+            command,
+            platform=resolve_textfsm_platform(platform) or platform,
+        )
         if result.get('success') and isinstance(result.get('data'), list):
             return result['data']
     except Exception as exc:  # noqa: BLE001
@@ -604,7 +609,7 @@ def _interface_speed_mbps(row: dict[str, Any]) -> float:
         if value > 0:
             # Inventory stores speed/bandwidth in bits per second.
             return value / 1_000_000 if value >= 100_000 else value
-    return 0.0
+    return float(interface_nominal_speed_mbps(row.get('interface_name') or row.get('name_display')))
 
 
 def _interface_is_up(row: dict[str, Any]) -> bool:
@@ -630,6 +635,17 @@ def _interface_display_score(row: dict[str, Any], device_meta: dict[str, Any]) -
     compact = re.sub(r'\s+', '', raw).lower()
     vendor = str(device_meta.get('vendor') or '').strip().lower()
     score = 0
+    # Topology may have both a raw LLDP alias (for example XGE1/0/49) and a
+    # long-form interface inventory row (Ten-GigabitEthernet1/0/49).  Prefer
+    # the row carrying a real negotiated/configured rate; placeholder rows
+    # created from neighbor evidence often have speed=0 and would otherwise
+    # make a healthy 10G link render as unknown.
+    try:
+        has_rate = float(row.get('speed') or row.get('bandwidth') or 0) > 0
+    except (TypeError, ValueError):
+        has_rate = False
+    if has_rate:
+        score += 10000
     if row.get('name_display'):
         score += 1000
     if vendor == 'cisco' or 'cisco' in str(device_meta.get('platform') or '').lower():
@@ -685,14 +701,27 @@ def _load_interface_aggregation_map(conn) -> dict[tuple[str, str], dict[str, Any
     ).fetchall()]
     by_id = {str(row.get('id') or ''): row for row in rows if row.get('id')}
     logical_by_channel: dict[tuple[str, int], dict[str, Any]] = {}
+    logical_types = {'port_channel', 'port-channel', 'lag', 'aggregation'}
+
+    def is_logical_aggregation(row: dict[str, Any]) -> bool:
+        interface_type = str(row.get('interface_type') or '').strip().lower()
+        if interface_type in logical_types:
+            return True
+        # Older CMDB/interface collectors wrote every row as ``physical``.
+        # The vendor-native name is still authoritative enough to identify
+        # the logical parent, but it must not be used to invent membership.
+        name = re.sub(r'[^a-z0-9-]', '', str(row.get('interface_name') or '').strip().lower())
+        return bool(re.match(
+            r'^(?:bridge-aggregation|route-aggregation|eth-trunk|port-channel|portchannel|bagg|ragg|po|be)\d+$',
+            name,
+        ))
 
     def trailing_number(value: Any) -> int | None:
         match = re.search(r'(\d+)(?:\.\d+)?$', str(value or '').strip())
         return int(match.group(1)) if match else None
 
     for row in rows:
-        interface_type = str(row.get('interface_type') or 'physical').strip().lower()
-        if interface_type not in {'port_channel', 'port-channel', 'lag', 'aggregation'}:
+        if not is_logical_aggregation(row):
             continue
         channel = trailing_number(row.get('interface_name'))
         if channel is not None:
@@ -706,14 +735,14 @@ def _load_interface_aggregation_map(conn) -> dict[tuple[str, str], dict[str, Any
             continue
         interface_type = str(row.get('interface_type') or 'physical').strip().lower()
         parent = by_id.get(str(row.get('parent_interface_id') or ''))
-        if parent is None and interface_type not in {'port_channel', 'port-channel', 'lag', 'aggregation'}:
+        if parent is None and not is_logical_aggregation(row):
             try:
                 channel_group = int(row.get('channel_group')) if row.get('channel_group') is not None else None
             except (TypeError, ValueError):
                 channel_group = None
             if channel_group is not None:
                 parent = logical_by_channel.get((device_id, channel_group))
-        if parent is None and interface_type in {'port_channel', 'port-channel', 'lag', 'aggregation'}:
+        if parent is None and is_logical_aggregation(row):
             parent = row
         if parent is None:
             continue
@@ -748,18 +777,32 @@ def _sync_aggregation_inventory(device: dict[str, Any]) -> dict[str, int]:
     try:
         from services.operational_data_service import collect_operational_data
 
-        payload = collect_operational_data(device, categories=['eth_trunk'], auth_role='admin')
+        # Refresh the interface summary and the aggregation inventory in the
+        # same read-only session used by topology refresh.  This keeps the
+        # graph's port identity/rate data aligned with the LLDP snapshot.
+        payload = collect_operational_data(
+            device,
+            categories=['interfaces', 'eth_trunk'],
+            auth_role='admin',
+            policy_override_categories={'interfaces', 'eth_trunk'},
+        )
         category = next((item for item in payload.get('categories', []) if item.get('key') == 'eth_trunk'), None)
         records = list(category.get('records') or []) if category else []
+        interface_category = next((item for item in payload.get('categories', []) if item.get('key') == 'interfaces'), None)
+        interface_records = list(interface_category.get('records') or []) if interface_category else []
     except Exception as exc:  # noqa: BLE001
         logger.info('Aggregation inventory skipped for %s: %s', device.get('hostname'), exc)
         return {'parents': 0, 'members': 0}
-    if not records:
+    if not records and not interface_records:
         return {'parents': 0, 'members': 0}
 
     def value(record: dict[str, Any], *keys: str) -> str:
+        normalized = {
+            str(record_key).strip().replace('-', '_').upper(): raw_value
+            for record_key, raw_value in record.items()
+        }
         for key in keys:
-            raw = record.get(key)
+            raw = normalized.get(str(key).strip().replace('-', '_').upper())
             if raw is not None and str(raw).strip():
                 return str(raw).strip()
         return ''
@@ -772,15 +815,89 @@ def _sync_aggregation_inventory(device: dict[str, Any]) -> dict[str, int]:
     conn = get_db_connection()
     parents = 0
     members = 0
+    interfaces = 0
     try:
         device_id = str(device.get('id') or '')
         interface_rows = conn.execute(
             'SELECT id, interface_name FROM interfaces WHERE device_id = ?', (device_id,)
         ).fetchall()
+        interface_exact_map = {
+            str(row['interface_name'] or '').strip().lower(): str(row['id'])
+            for row in interface_rows
+            if str(row['interface_name'] or '').strip()
+        }
         interface_map = {
             normalize_interface_name(row['interface_name']).lower(): str(row['id'])
             for row in interface_rows
         }
+        # The aggregation command is an authoritative snapshot.  Do not
+        # leave members from a previous collection attached to the same
+        # parent (for example old GE1/0/3-4 after a migration to XGE1/0/49-52).
+        # Only clear bindings after a non-empty command result; a transport or
+        # parser failure returns above and therefore cannot erase good data.
+        if records:
+            conn.execute(
+                '''
+                UPDATE interfaces
+                SET parent_interface_id = NULL,
+                    channel_group = NULL,
+                    aggregation_protocol = ''
+                WHERE device_id = ?
+                  AND parent_interface_id IN (
+                      SELECT id
+                      FROM interfaces
+                      WHERE device_id = ?
+                        AND interface_type = 'port_channel'
+                  )
+                ''',
+                (device_id, device_id),
+            )
+
+        # Persist the latest interface status/capacity when the command
+        # parser supplied it.  Route-mode rows may not include speed, so a
+        # blank value deliberately preserves the last known rate; topology
+        # rendering also has a name-based capacity fallback.
+        for record in interface_records:
+            interface_name = clean_member(value(record, 'INTERFACE', 'NAME', 'PORT'))
+            if not interface_name:
+                continue
+            normalized_name = normalize_interface_name(interface_name).lower()
+            # Prefer the exact vendor spelling when it already exists.  The
+            # normalized fallback then reuses a long/short alias row instead
+            # of inserting a second row with the same raw name.
+            interface_id = interface_exact_map.get(interface_name.lower()) or interface_map.get(normalized_name)
+            if not interface_id:
+                interface_id = str(uuid.uuid4())
+                conn.execute(
+                    '''
+                    INSERT INTO interfaces (
+                        id, device_id, interface_name, interface_type,
+                        admin_status, oper_status, speed, bandwidth
+                    ) VALUES (?, ?, ?, 'physical', 'unknown', 'unknown', 0, 0)
+                    ''',
+                    (interface_id, device_id, interface_name),
+                )
+                interface_map[normalized_name] = interface_id
+                interface_exact_map[interface_name.lower()] = interface_id
+            link_status = value(record, 'LINK', 'STATUS', 'OPER_STATUS').lower()
+            oper_status = 'up' if link_status in {'up', 'active', 'selected'} else (
+                'down' if link_status in {'down', 'adm', 'stby', 'inactive'} else ''
+            )
+            speed_bps = parse_speed_bps(value(record, 'SPEED', 'BANDWIDTH'))
+            assignments = ['interface_name = ?']
+            params: list[Any] = [interface_name]
+            if oper_status:
+                assignments.append('oper_status = ?')
+                params.append(oper_status)
+            if speed_bps and speed_bps > 0:
+                assignments.extend(['speed = ?', 'bandwidth = ?'])
+                params.extend([speed_bps, speed_bps])
+            params.append(interface_id)
+            conn.execute(
+                f"UPDATE interfaces SET {', '.join(assignments)} WHERE id = ?",
+                params,
+            )
+            interfaces += 1
         grouped: dict[str, list[dict[str, Any]]] = {}
         for record in records:
             parent_name = clean_member(value(record, 'AGGREGATE_INTERFACE', 'ETH_TRUNK', 'PORT_CHANNEL', 'PORTCHANNEL', 'BUNDLE'))
@@ -850,7 +967,7 @@ def _sync_aggregation_inventory(device: dict[str, Any]) -> dict[str, int]:
                 )
                 members += 1
         conn.commit()
-        return {'parents': parents, 'members': members}
+        return {'parents': parents, 'members': members, 'interfaces': interfaces}
     except Exception:
         conn.rollback()
         raise
@@ -1191,7 +1308,12 @@ def _replace_device_observations(
             if row_key in observed_keys:
                 continue
             next_miss_count = int(row['miss_count'] or 0) + 1 if 'miss_count' in row.keys() else 1
-            stale = next_miss_count >= 3
+            # A successful device scan is a complete snapshot for that
+            # device.  Keeping a missing neighbor active for three scans
+            # makes a changed port/LAG appear in the current topology after
+            # the device has already reported the new state.  Retain the row
+            # as stale history, but remove it from active evidence immediately.
+            stale = next_miss_count >= 1
             conn.execute(
                 '''
                 UPDATE topology_observations
@@ -2281,9 +2403,10 @@ def get_topology_site_summaries() -> list[dict[str, Any]]:
         effective_state, _ = _link_operational_state(dict(row), now)
         for site_id in site_ids:
             summary = ensure_site(site_id)
-            summary['link_count'] += 1
             if effective_state == 'stale':
                 summary['stale_links'] += 1
+                continue
+            summary['link_count'] += 1
             if source_site != target_site:
                 summary['cross_site_links'] += 1
 

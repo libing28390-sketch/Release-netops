@@ -27,6 +27,35 @@ _CUSTOM_TEMPLATES_DIR = _PROJECT_ROOT / "data" / "textfsm_templates"
 # templates edited or created by users in data/textfsm_templates.
 _PACKAGED_TEMPLATES_DIR = _PROJECT_ROOT / "release-textfsm-templates"
 
+# TextFSM/NTC Templates uses ``hp_comware`` for the shared HPE/H3C Comware
+# grammar family.  Device records and command catalogs may still use the more
+# precise ``h3c_comware``/``h3c_comware9`` values, but parser entry points must
+# converge on this one namespace.
+TEXTFSM_PLATFORM_MAP = {
+    'h3c': 'hp_comware',
+    'comware': 'hp_comware',
+    'comware5': 'hp_comware',
+    'comware7': 'hp_comware',
+    'comware9': 'hp_comware',
+    'h3c_comware': 'hp_comware',
+    'h3c_comware9': 'hp_comware',
+    'hp_comware': 'hp_comware',
+}
+
+
+def resolve_textfsm_platform(platform: str | None) -> str | None:
+    """Return the canonical parser platform without changing device identity."""
+    raw = str(platform or '').strip().lower()
+    return TEXTFSM_PLATFORM_MAP.get(raw, raw or None)
+
+
+def _canonical_template_filename(filename: str) -> str:
+    """Normalize newly saved H3C template names to the NTC Comware family."""
+    for legacy_prefix in ('h3c_comware9_', 'h3c_comware_'):
+        if filename.startswith(legacy_prefix):
+            return f"hp_comware_{filename[len(legacy_prefix):]}"
+    return filename
+
 # ── 默认命令采集样本映射 ───────────────────────────────────────────
 TEMPLATE_DEFAULT_SAMPLES = {
     'huawei_vrp_display_memory_usage.textfsm': (
@@ -137,26 +166,39 @@ def _find_template(platform: str, command: str) -> Path | None:
     按优先级查找模板文件：自定义目录 > 内置目录。
     返回找到的 Path，未找到返回 None。
     """
+    lookup_command = command
+    # Keep direct template lookups (the playbook parse endpoint uses this
+    # path before calling smart_parse_cli) aligned with the command aliases
+    # understood by the parser.  VRP5 commonly reports optical diagnostics
+    # as ``display transceiver verbose`` while the shared grammar is named
+    # after ``display transceiver interface``.
+    if platform and ('huawei' in platform.lower() or 'comware' in platform.lower()):
+        for regex, canonical in _HUAWEI_H3C_COMMAND_MAPPING:
+            if regex.match(str(lookup_command).strip()):
+                lookup_command = canonical
+                break
+
     packaged = _get_packaged_templates_dir()
     builtin = _get_builtin_templates_dir()
-    for filename in _template_filename_variants(platform, command):
+    for parser_platform in _template_platform_candidates(platform):
+        for filename in _template_filename_variants(parser_platform, lookup_command):
 
     # 1. 自定义目录优先
-        custom_path = _CUSTOM_TEMPLATES_DIR / filename
-        if custom_path.exists():
-            return custom_path
+            custom_path = _CUSTOM_TEMPLATES_DIR / filename
+            if custom_path.exists():
+                return custom_path
 
     # 2. 发布镜像中的模板目录
-        if packaged:
-            packaged_path = packaged / filename
-            if packaged_path.exists():
-                return packaged_path
+            if packaged:
+                packaged_path = packaged / filename
+                if packaged_path.exists():
+                    return packaged_path
 
     # 3. 内置目录
-        if builtin:
-            builtin_path = builtin / filename
-            if builtin_path.exists():
-                return builtin_path
+            if builtin:
+                builtin_path = builtin / filename
+                if builtin_path.exists():
+                    return builtin_path
 
     return None
 
@@ -213,6 +255,9 @@ _HUAWEI_H3C_COMMAND_MAPPING = [
     (re.compile(r'^dis(?:play)?\s+port\s+vlan\b', re.I), 'display port vlan'),
     (re.compile(r'^dis(?:play)?\s+int(?:erface)?\s+br(?:ief)?\b', re.I), 'display interface brief'),
     (re.compile(r'^dis(?:play)?\s+arp(?:\s+all)?\b', re.I), 'display arp all'),
+    (re.compile(r'^dis(?:play)?\s+ip\s+routing-table\s*$', re.I), 'display ip routing-table'),
+    (re.compile(r'^dis(?:play)?\s+bgp\s+peer\s*$', re.I), 'display bgp peer'),
+    (re.compile(r'^dis(?:play)?\s+bgp\s+routing-table\s*$', re.I), 'display bgp routing-table'),
     (re.compile(r'^dis(?:play)?\s+mac-address\b', re.I), 'display mac-address'),
     (re.compile(r'^dis(?:play)?\s+dev(?:ice)?\b', re.I), 'display device'),
     (re.compile(r'^dis(?:play)?\s+temp(?:erature)?\b', re.I), 'display temperature'),
@@ -220,12 +265,71 @@ _HUAWEI_H3C_COMMAND_MAPPING = [
     (re.compile(r'^dis(?:play)?\s+bfd\s+session\b', re.I), 'display bfd session'),
     (re.compile(r'^dis(?:play)?\s+fan\s+verbose\b', re.I), 'display fan verbose'),
     (re.compile(r'^dis(?:play)?\s+fan\b', re.I), 'display fan'),
+    (re.compile(r'^dis(?:play)?\s+eth-trunk\b', re.I), 'display eth-trunk'),
+    (re.compile(r'^dis(?:play)?\s+lldp\s+neighbor\s+brief\b', re.I), 'display lldp neighbor brief'),
     (re.compile(r'^dis(?:play)?\s+pow(?:er)?\b', re.I), 'display power'),
     (re.compile(r'^dis(?:play)?\s+stack\b', re.I), 'display stack'),
     (re.compile(r'^dis(?:play)?\s+irf\b', re.I), 'display irf'),
-    (re.compile(r'^dis(?:play)?\s+trans(?:ceiver)?(?:\s+diag(?:nosis)?)?\s+int(?:erface)?\b', re.I), 'display transceiver interface'),
+    (re.compile(r'^dis(?:play)?\s+trans(?:ceiver)?(?:\s+(?:diag(?:nosis)?|verbose))?\s+int(?:erface)?\b', re.I), 'display transceiver interface'),
+    (re.compile(r'^dis(?:play)?\s+trans(?:ceiver)?\s+(?:diag(?:nosis)?|verbose)\b', re.I), 'display transceiver interface'),
     (re.compile(r'^dis(?:play)?\s+link-aggregation\s+verbose\b', re.I), 'display link-aggregation verbose'),
 ]
+
+
+def _parse_huawei_lldp_brief_table(output: str) -> list[dict[str, str]]:
+    """Parse VRP5/VRP8 LLDP brief tables when a vendor layout drifts.
+
+    Huawei releases use both of these layouts:
+    ``Local Intf Neighbor Dev Neighbor Intf Exptime`` and
+    ``Local Interface Exptime(s) Neighbor Interface Neighbor Device``.
+    The parser intentionally requires numeric interface/expiry columns so
+    legends and unrelated CLI lines cannot become topology edges.
+    """
+    records: list[dict[str, str]] = []
+    layout: str | None = None
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or set(line) <= {'-', '=', ' ', '\t'}:
+            continue
+        low = line.lower()
+        if 'local intf' in low and 'neighbor dev' in low:
+            layout = 'compact'
+            continue
+        if 'local interface' in low and 'neighbor interface' in low:
+            layout = 'expanded'
+            continue
+        if layout is None:
+            continue
+
+        if layout == 'expanded':
+            # local, expiry, remote, device (device may contain spaces)
+            parts = line.split()
+            if len(parts) < 4 or not parts[1].isdigit():
+                continue
+            local_interface, remote_interface = parts[0], parts[2]
+            neighbor_name = ' '.join(parts[3:])
+            expired_time = parts[1]
+        else:
+            # local, device (device may contain spaces), remote, expiry
+            parts = line.split()
+            if len(parts) < 4 or not parts[-1].isdigit():
+                continue
+            local_interface, remote_interface = parts[0], parts[-2]
+            neighbor_name = ' '.join(parts[1:-2])
+            expired_time = parts[-1]
+
+        if not neighbor_name or not any(char.isdigit() for char in local_interface):
+            continue
+        if not any(char.isdigit() for char in remote_interface):
+            continue
+        records.append({
+            'INTERFACE': local_interface,
+            'NEIGHBOR_NAME': neighbor_name,
+            'NEIGHBOR_INTERFACE': remote_interface,
+            'EXPIRED_TIME': expired_time,
+        })
+    return records
 
 _COMPATIBLE_PLATFORMS = {
     'cisco_xe': ['cisco_ios'],
@@ -300,6 +404,7 @@ def smart_parse_cli(
     包含数据清洗、命令标准化、置信度打分与字段映射归一化。
     """
     import json
+    parser_platform = resolve_textfsm_platform(platform)
     
     # 1. 数据清洗与预处理
     # 剥离 ANSI 颜色代码
@@ -315,7 +420,12 @@ def smart_parse_cli(
     ]
     # 仅针对华为、华三和锐捷等设备剥离 <> 提示符，避免对 Junos XML 产生误伤
     if platform and ('huawei' in platform.lower() or 'comware' in platform.lower() or 'ruijie' in platform.lower()):
+        # VRP5 command captures may contain a truncated prompt (for example
+        # ``<LSW6``) when the terminal output was collected at a page or
+        # command boundary.  It is still a prompt fragment, not CLI data.
         prompt_patterns.append(re.compile(r'^<[A-Za-z0-9_\-\.]+>\s*$'))
+        prompt_patterns.append(re.compile(r'^<[A-Za-z0-9_\-\.]+\s*$'))
+        prompt_patterns.append(re.compile(r'^[A-Za-z0-9_\-\.]+>\s*$'))
         
     for line in clean_text.splitlines():
         trimmed = line.strip()
@@ -330,7 +440,7 @@ def smart_parse_cli(
             or 'cisco' in platform.lower()
         ):
             prompt_prefix = re.match(
-                r'^(?:<[^>\r\n]+>|\[[^\]\r\n]+\]|[A-Za-z0-9][^\s#>]*[>#])\s+',
+                r'^(?:<[^>\r\n]+>|\[[^\]\r\n]+\]|[A-Za-z0-9][^\s#>]*[>#])\s*',
                 trimmed,
             )
             if prompt_prefix:
@@ -338,6 +448,12 @@ def smart_parse_cli(
                 line = trimmed
         if trimmed.startswith('#'):
             continue  # Nexora 内部指令标记
+        # Automation exports may wrap each command with a section marker and
+        # a bracketed command heading. These are capture metadata, not output.
+        if re.match(r'^---\s+.+\s+---$', trimmed):
+            continue
+        if re.match(r'^\[(?:dis|display)\s+.+\]$', trimmed, re.I):
+            continue
         if platform and 'huawei' in platform.lower() and re.match(
             r'^huawei\s+versatile\s+routing\s+platform\s+software\s*$',
             trimmed,
@@ -350,6 +466,19 @@ def smart_parse_cli(
             continue  # 分页符
         if command.lower() in trimmed.lower() and len(trimmed) < len(command) + 5:
             continue  # 剥离命令行回显
+        # Netmiko/device captures often abbreviate the echoed command (for
+        # example ``<LSW6>dis ver`` for ``display version``).  Compare CLI
+        # tokens by prefix so abbreviated echoes do not reach TextFSM as data.
+        command_tokens = _command_tokens(command)
+        echo_tokens = _command_tokens(trimmed)
+        if (
+            len(echo_tokens) >= 2
+            and len(echo_tokens) <= len(command_tokens)
+            and command_tokens
+            and command_tokens[0].startswith(echo_tokens[0])
+            and all(command_tokens[i].startswith(token) for i, token in enumerate(echo_tokens))
+        ):
+            continue
         if any(pat.match(trimmed) for pat in prompt_patterns):
             continue  # 剥离命令行提示符
         cleaned_lines.append(line)
@@ -458,43 +587,24 @@ def smart_parse_cli(
     # 5. 优先级模板选择与查找
     # 5. 优先级模板选择与查找（收集候选文件列表）
     candidates = []
-    if platform:
+    if parser_platform:
         packaged_dir = _get_packaged_templates_dir()
         builtin_dir = _get_builtin_templates_dir()
-        for filename in _template_filename_variants(platform, normalized_command):
-            custom_path = _CUSTOM_TEMPLATES_DIR / filename
-            if custom_path.exists():
-                candidates.append((custom_path, platform, 'custom'))
-                break
-            if packaged_dir:
-                packaged_path = packaged_dir / filename
-                if packaged_path.exists():
-                    candidates.append((packaged_path, platform, 'builtin'))
-                    break
-            if builtin_dir:
-                builtin_path = builtin_dir / filename
-                if builtin_path.exists():
-                    candidates.append((builtin_path, platform, 'builtin'))
-                    break
-
-    if platform in _COMPATIBLE_PLATFORMS:
-        for compat_p in _COMPATIBLE_PLATFORMS[platform]:
-            packaged_dir = _get_packaged_templates_dir()
-            builtin_dir = _get_builtin_templates_dir()
-            for filename in _template_filename_variants(compat_p, normalized_command):
+        for template_platform in _template_platform_candidates(parser_platform):
+            for filename in _template_filename_variants(template_platform, normalized_command):
                 custom_path = _CUSTOM_TEMPLATES_DIR / filename
                 if custom_path.exists():
-                    candidates.append((custom_path, compat_p, 'custom'))
+                    candidates.append((custom_path, template_platform, 'custom'))
                     break
                 if packaged_dir:
                     packaged_path = packaged_dir / filename
                     if packaged_path.exists():
-                        candidates.append((packaged_path, compat_p, 'builtin'))
+                        candidates.append((packaged_path, template_platform, 'builtin'))
                         break
                 if builtin_dir:
                     builtin_path = builtin_dir / filename
                     if builtin_path.exists():
-                        candidates.append((builtin_path, compat_p, 'builtin'))
+                        candidates.append((builtin_path, template_platform, 'builtin'))
                         break
 
     # 6. 依次执行 TextFSM 解析并评分，成功匹配记录则直接返回
@@ -566,9 +676,34 @@ def smart_parse_cli(
             continue
             
     # 7. 全失败回退到 ntc_templates 原生 parse_output
+    # Huawei LLDP brief has multiple valid column orders across VRP
+    # releases. Keep this fallback at the shared parser boundary so both
+    # operational collection and topology discovery receive the same shape.
+    if (
+        parser_platform
+        and ('huawei' in parser_platform.lower() or 'comware' in parser_platform.lower())
+        and 'lldp neighbor' in normalized_command.lower()
+        and 'brief' in normalized_command.lower()
+    ):
+        fallback_records = _parse_huawei_lldp_brief_table(clean_output)
+        if fallback_records:
+            normalized_records = post_process_parsed_records(fallback_records)
+            return {
+                'success': True,
+                'platform': platform,
+                'command': normalized_command,
+                'template': 'huawei_lldp_neighbor_brief_fallback',
+                'template_source': 'builtin',
+                'confidence': 0.8,
+                'candidate_rows': len(normalized_records),
+                'matched_rows': len(normalized_records),
+                'data': normalized_records,
+                'message': '解析成功 (Huawei LLDP brief 兼容解析)',
+            }
+
     try:
         from ntc_templates.parse import parse_output
-        parsed = parse_output(platform=platform, command=normalized_command, data=clean_output)
+        parsed = parse_output(platform=parser_platform, command=normalized_command, data=clean_output)
         if isinstance(parsed, list):
             return {
                 'success': True,
@@ -786,7 +921,7 @@ def _template_platform_candidates(platform: str) -> list[str]:
         'ios': 'cisco_ios',
         'iosxe': 'cisco_xe',
     }
-    normalized = aliases.get(raw, raw)
+    normalized = resolve_textfsm_platform(aliases.get(raw, raw)) or ''
     candidates = [normalized] if normalized else []
     # Comware 9 may use hp_comware only as a last-resort parser fallback.
     # Do not expose Comware 5 commands as selectable Comware 9 suggestions.
@@ -981,6 +1116,7 @@ def save_custom_template(filename: str, content: str) -> dict[str, Any]:
     """
     import textfsm
 
+    filename = _canonical_template_filename(filename)
     if not filename.endswith('.textfsm') or '/' in filename or '\\' in filename or '..' in filename:
         raise ValueError(f"非法文件名: {filename}")
 

@@ -50,7 +50,7 @@ async def diagnose_device_collection(device_id: str, timeout_seconds: float = 2.
     try:
         row = conn.execute(
             '''
-            SELECT id, hostname, ip_address, management_port, port, snmp_port,
+            SELECT id, hostname, ip_address, management_port, snmp_port, snmp_credential_id,
                    username, password, credential_id, credential_source, asset_id, snmp_community
             FROM devices WHERE id = ?
             ''',
@@ -66,6 +66,7 @@ async def diagnose_device_collection(device_id: str, timeout_seconds: float = 2.
     ssh_credentials = collector_credentials['ssh']
     snmp_credentials = collector_credentials['snmp']
     host = str(device.get('ip_address') or '').strip()
+    snmp_host = str(snmp_credentials.get('server') or host).strip()
     management_port = int(ssh_credentials['port'])
     snmp_port = int(snmp_credentials['port'])
     result: dict[str, Any] = {
@@ -102,7 +103,7 @@ async def diagnose_device_collection(device_id: str, timeout_seconds: float = 2.
     else:
         started = time.perf_counter()
         try:
-            uptime = await asyncio.wait_for(_snmp_get(host, community, SYS_UPTIME, snmp_port, timeout=timeout_seconds), timeout=timeout_seconds + 0.5)
+            uptime = await asyncio.wait_for(_snmp_get(snmp_host, community, SYS_UPTIME, snmp_port, timeout=timeout_seconds), timeout=timeout_seconds + 0.5)
             result['checks']['snmp_udp'] = {
                 'status': 'success' if uptime is not None else 'failed',
                 'code': 'snmp_response' if uptime is not None else 'snmp_no_response',

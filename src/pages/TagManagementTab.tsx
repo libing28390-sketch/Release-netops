@@ -375,16 +375,15 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
                       {zh ? '暂无标签' : 'No tags in this category'}
                     </p>
                   ) : (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                       {items.map(tag => (
-                        <div key={tag.id} className="contents">
-                          <TagChip
-                            tag={tag}
-                            zh={zh}
-                            onEdit={canManageTags && !tag.is_system ? () => openEditModal(tag) : undefined}
-                            onDelete={canManageTags ? () => setDeleteTarget(tag) : undefined}
-                          />
-                        </div>
+                        <TagCard
+                          key={tag.id}
+                          tag={tag}
+                          zh={zh}
+                          onEdit={canManageTags && !tag.is_system ? () => openEditModal(tag) : undefined}
+                          onDelete={canManageTags ? () => setDeleteTarget(tag) : undefined}
+                        />
                       ))}
                     </div>
                   )}
@@ -595,54 +594,75 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
 
 /* ────────────────────────────────────────── */
 /* Tag chip sub-component */
-interface TagChipProps {
+interface TagCardProps {
   tag: TagDefinition;
   zh: boolean;
   onEdit?: () => void;
   onDelete?: () => void;
 }
 
-function TagChip({ tag, zh, onEdit, onDelete }: TagChipProps) {
+function TagCard({ tag, zh, onEdit, onDelete }: TagCardProps) {
   const displayLabel = zh ? (tag.label_zh || tag.label) : tag.label;
   const chipColor = tag.color || '#64748b';
 
   return (
     <div
-      className="group relative inline-flex items-center gap-1.5 rounded-xl border bg-white px-3 py-2 text-sm shadow-sm transition-all hover:shadow-md"
-      style={{ borderColor: `${chipColor}30` }}
+      className="group relative flex flex-col justify-between rounded-2xl border bg-white p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-black/10 dark:hover:border-white/10"
+      style={{ borderLeftWidth: '5px', borderLeftColor: chipColor, borderColor: `${chipColor}20` }}
     >
-      {/* color dot */}
-      <span
-        className="h-2.5 w-2.5 flex-shrink-0 rounded-full"
-        style={{ backgroundColor: chipColor }}
-      />
-      <span className="font-medium text-[#164e63]">{displayLabel}</span>
-      <span className="ml-0.5 text-[10px] font-mono text-black/30">{tag.code}</span>
+      <div>
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex flex-col min-w-0">
+            <span className="font-bold text-[#164e63] text-xs truncate" title={displayLabel}>
+              {displayLabel}
+            </span>
+            <span className="text-[9px] font-mono text-black/35 font-semibold mt-0.5 truncate">
+              {tag.code}
+            </span>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {tag.built_in === 1 && (
+              <span className="rounded bg-black/[0.04] px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-black/30">
+                {zh ? '内置' : 'Built-in'}
+              </span>
+            )}
+            {tag.is_system === 1 && (
+              <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[8px] font-bold tracking-wider text-emerald-600">
+                {zh ? '系统' : 'System'}
+              </span>
+            )}
+          </div>
+        </div>
+        <p className="text-[10px] text-black/45 leading-relaxed line-clamp-2 mt-1 min-h-[2.5rem]" title={tag.description || ''}>
+          {tag.description || (zh ? '暂无描述说明' : 'No description provided')}
+        </p>
+      </div>
 
-      {/* built-in badge */}
-      {tag.built_in === 1 && (
-        <span className="ml-1 rounded bg-black/[0.04] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-black/30">
-          {zh ? '内置' : 'Built-in'}
+      <div className="mt-3 pt-2 border-t border-black/[0.03] flex items-center justify-between text-[9px] text-black/30">
+        <span className="font-mono">
+          {zh ? `排序: ${tag.sort_order ?? 0}` : `Order: ${tag.sort_order ?? 0}`}
         </span>
-      )}
-
-      {tag.is_system === 1 && (
-        <span className="ml-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-emerald-600">
-          {zh ? '系统维护' : 'System'}
-        </span>
-      )}
-
-      {/* hover action buttons */}
-      <span className="ml-1 hidden items-center gap-0.5 group-hover:inline-flex">
-        {onEdit && <button onClick={onEdit} className="rounded-md p-1 text-black/30 transition-colors hover:bg-[#ecfeff] hover:text-[#0891b2]" title={zh ? '编辑' : 'Edit'}>
-          <Edit3 size={12} />
-        </button>}
-        {tag.built_in !== 1 && (
-          onDelete && <button onClick={onDelete} className="rounded-md p-1 text-black/30 transition-colors hover:bg-red-50 hover:text-red-500" title={zh ? '删除' : 'Delete'}>
-            <Trash2 size={12} />
-          </button>
-        )}
-      </span>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          {onEdit && (
+            <button
+              onClick={onEdit}
+              className="rounded-lg p-1 text-black/35 transition-all hover:bg-cyan-50 hover:text-[#0891b2]"
+              title={zh ? '编辑' : 'Edit'}
+            >
+              <Edit3 size={11} />
+            </button>
+          )}
+          {tag.built_in !== 1 && onDelete && (
+            <button
+              onClick={onDelete}
+              className="rounded-lg p-1 text-black/35 transition-all hover:bg-red-50 hover:text-red-500"
+              title={zh ? '删除' : 'Delete'}
+            >
+              <Trash2 size={11} />
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

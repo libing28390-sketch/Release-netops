@@ -1421,6 +1421,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [loading, setLoading] = useState(false);
   const [interfaceSyncing, setInterfaceSyncing] = useState(false);
   const [interfaceJobStatus, setInterfaceJobStatus] = useState<any | null>(null);
+  const interfaceTerminalHandledRef = useRef<string | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [credentialJobStatus, setCredentialJobStatus] = useState<any | null>(null);
@@ -1689,6 +1690,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       { key: 'old_enable_password', label: '旧 Enable 密码', labelEn: 'Current Enable Password', type: 'password', hideInTable: true, hideInCreate: true, hint: '修改 Enable 密码时必须输入当前密码' },
       { key: 'password', label: '密码', labelEn: 'Password', type: 'password', hideInTable: true, secretFlag: 'has_password' },
       { key: 'enable_password', label: 'Enable 密码', labelEn: 'Enable Password', type: 'password', hideInTable: true, secretFlag: 'has_enable_password' },
+      { key: 'snmp_community', label: 'SNMP Community', labelEn: 'SNMP Community', type: 'password', hideInTable: true, secretFlag: 'has_snmp_community', hint: 'SNMPv2c 团体字；采集使用 UDP 161' },
+      { key: 'snmp_server', label: 'SNMP Server 地址', labelEn: 'SNMP Server Address', hideInTable: true, hint: '可选；不填写时使用设备管理 IP' },
       { key: 'devices', label: '关联设备', labelEn: 'Associated Devices', hideInForm: true },
     ],
     devices: [
@@ -1783,6 +1786,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const triggerInterfaceSync = useCallback(async () => {
     if (tab !== 'interfaces') return;
     setInterfaceSyncing(true);
+    interfaceTerminalHandledRef.current = null;
     setError('');
     try {
       const res = await fetch('/api/cmdb/interfaces/sync', {
@@ -1817,10 +1821,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         if (cancelled || !response.ok || payload.success === false) return;
         const next = payload.data || payload;
         setInterfaceJobStatus({ ...next, job_id: jobId });
-        const terminal = ['succeeded', 'partially_failed', 'failed', 'cancelled', 'timeout'].includes(String(next.status || '').toLowerCase());
-        if (terminal) {
+        const terminal = ['succeeded', 'partially_failed', 'failed', 'cancelled', 'timeout', 'completed', 'complete', 'success', 'finished'].includes(String(next.status || '').toLowerCase());
+        if (terminal && interfaceTerminalHandledRef.current !== jobId) {
+          interfaceTerminalHandledRef.current = jobId;
           setInterfaceSyncing(false);
-          void load();
+          await load();
           const failed = Number(next.failed_count || 0);
           setNotice(zh
             ? `接口采集${failed ? `完成，成功 ${next.success_count || 0} 台，失败 ${failed} 台` : '已完成'}；详情已显示在本页。`
@@ -1889,7 +1894,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     setError('');
     setNotice('');
     setFieldErrors({});
-    const defs = fieldDefs[tab].filter(fd => !fd.hideInForm && (!fd.hideInCreate || Boolean(editing)));
+    const defs = fieldDefs[tab].filter(fd => !fd.hideInForm && (!fd.hideInCreate || Boolean(editing))
+      && !(tab === 'credentials' && form.credential_type === 'snmpv2'
+        && ['username', 'account_role', 'old_password', 'old_enable_password', 'password', 'enable_password'].includes(fd.key))
+      && !(tab === 'credentials' && !String(form.credential_type || '').startsWith('snmp')
+        && ['snmp_community', 'snmp_server'].includes(fd.key)));
     // New site records require contact data. Existing records remain
     // editable without backfilling columns introduced later.
     for (const fd of defs) {
@@ -1913,6 +1922,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         setFieldErrors(previous => ({ ...previous, ...visibleErrors }));
         return;
       }
+    }
+    if (tab === 'credentials' && form.credential_type === 'snmpv2' && !editing && !String(form.snmp_community || '').trim()) {
+      setError(zh ? 'SNMPv2 凭据必须填写 SNMP Community' : 'SNMPv2 credentials require an SNMP Community');
+      return;
     }
     // Build payload; omit blank secrets on edit so they stay unchanged.
     const payload: Record<string, any> = {};
@@ -2855,7 +2868,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               <button onClick={() => setModalOpen(false)} className="rounded-xl border border-black/10 p-1.5 text-black/55 hover:bg-black/[0.03] transition-colors"><X size={16} /></button>
             </div>
             <div className={`${tab === 'credentials' ? 'grid grid-cols-2 items-start gap-x-3 gap-y-4' : 'space-y-4'} min-h-0 flex-1 overflow-y-auto pr-1`}>
-              {fieldDefs[tab].filter(fd => !fd.hideInForm && (!fd.hideInCreate || Boolean(editing))).map(fd => {
+              {fieldDefs[tab].filter(fd => !fd.hideInForm && (!fd.hideInCreate || Boolean(editing))
+                && !(tab === 'credentials' && form.credential_type === 'snmpv2'
+                  && ['username', 'account_role', 'old_password', 'old_enable_password', 'password', 'enable_password'].includes(fd.key))
+                && !(tab === 'credentials' && !String(form.credential_type || '').startsWith('snmp')
+                  && ['snmp_community', 'snmp_server'].includes(fd.key))).map(fd => {
                 const opts = fd.key === 'site_id' ? siteOptions : fd.options;
                 const isGeoField = tab === 'sites' && ['country', 'state_province', 'city', 'district'].includes(fd.key);
                 const geoOpts = isGeoField ? geoSelectOptions[fd.key as 'country' | 'state_province' | 'city' | 'district'] : [];
@@ -2886,7 +2903,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   }));
                 };
                 const isCredentialSecret = tab === 'credentials'
-                  && ['old_password', 'old_enable_password', 'password', 'enable_password'].includes(fd.key);
+                  && ['old_password', 'old_enable_password', 'password', 'enable_password', 'snmp_community'].includes(fd.key);
                 return (
                   <div key={fd.key} className={tab === 'credentials' && !isCredentialSecret ? 'col-span-2' : ''}>
                     <label className="block text-xs font-semibold mb-1 text-black/50">

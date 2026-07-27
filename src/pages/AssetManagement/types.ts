@@ -34,6 +34,8 @@ export interface Asset {
   username: string;
   snmp_community: string;
   snmp_port: string;
+  snmp_credential_id?: string;
+  snmp_community_set?: boolean;
   created_at: string;
   updated_at: string;
   device_id?: string;

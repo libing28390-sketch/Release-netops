@@ -969,7 +969,7 @@ async def run_scheduled_backup(run_id: str | None = None):
         devices = conn.execute(
             "SELECT id, hostname, ip_address, platform, vendor, role, username, password, "
             "normal_username, normal_password, admin_username, admin_password, enable_password, "
-            "credential_id, credential_source, vault_path, management_port "
+            "credential_id, admin_credential_id, credential_source, vault_path, management_port "
             "FROM devices WHERE status = 'online'"
         ).fetchall()
     finally:

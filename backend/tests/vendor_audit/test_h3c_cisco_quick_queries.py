@@ -77,7 +77,7 @@ def test_every_official_h3c_and_cisco_fixture_has_a_working_parser(metadata_path
 def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
     assert _resolve_commands("hp_comware", ["bgp", "bgp_routes"]) == {
         "bgp": ["display bgp peer ipv4 unicast"],
-        "bgp_routes": ["display bgp routing-table"],
+        "bgp_routes": ["display bgp routing-table ipv4"],
     }
     assert _resolve_commands("hp_comware", ["interface_description"]) == {
         "interface_description": ["display interface brief description"],
@@ -190,77 +190,77 @@ def test_cisco_neighbor_collection_uses_lldp_only():
             "h3c_comware",
             ("h3c", "h3c_comware", "display_bgp_peer_ipv4"),
             "comware_v7_s5560",
-            "h3c_comware_display_bgp_peer_ipv4.textfsm",
+            "hp_comware_display_bgp_peer_ipv4.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_bgp_routing_table_ipv4"),
             "comware_v7_router_b",
-            "h3c_comware_display_bgp_routing_table_ipv4.textfsm",
+            "hp_comware_display_bgp_routing_table_ipv4.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_logbuffer"),
             "comware_v7_s5130",
-            "h3c_comware_display_logbuffer.textfsm",
+            "hp_comware_display_logbuffer.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_interface_brief"),
             "comware_v7",
-            "h3c_comware_display_interface_brief.textfsm",
+            "hp_comware_display_interface_brief.textfsm",
             3,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_lldp_neighbor_information_list"),
             "comware_v7_s5130",
-            "h3c_comware_display_lldp_neighbor_information_list.textfsm",
+            "hp_comware_display_lldp_neighbor-information_list.textfsm",
             3,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_vlan_brief"),
             "comware_v7_msr",
-            "h3c_comware_display_vlan_brief.textfsm",
+            "hp_comware_display_vlan_brief.textfsm",
             1,
         ),
         (
             "h3c_comware9",
             ("h3c", "h3c_comware9", "display_bgp_peer_ipv4"),
             "comware_v9_cr16000",
-            "h3c_comware9_display_bgp_peer_ipv4.textfsm",
+            "hp_comware_display_bgp_peer_ipv4.textfsm",
             1,
         ),
         (
             "h3c_comware9",
             ("h3c", "h3c_comware9", "display_bgp_routing_table_ipv4"),
             "comware_v9_cr16000",
-            "h3c_comware9_display_bgp_routing_table_ipv4.textfsm",
+            "hp_comware_display_bgp_routing_table_ipv4.textfsm",
             2,
         ),
         (
             "h3c_comware9",
             ("h3c", "h3c_comware9", "display_interface_brief"),
             "comware_v9_cr16000",
-            "h3c_comware9_display_interface_brief.textfsm",
+            "hp_comware_display_interface_brief.textfsm",
             5,
         ),
         (
             "h3c_comware9",
             ("h3c", "h3c_comware9", "display_link_aggregation_verbose"),
             "comware_v9_msr5680",
-            "h3c_comware9_display_link_aggregation_verbose.textfsm",
+            "hp_comware_display_link_aggregation_verbose.textfsm",
             3,
         ),
         (
             "h3c_comware9",
             ("h3c", "h3c_comware9", "display_vlan_brief"),
             "comware_v9_cr16000",
-            "h3c_comware9_display_vlan_brief.textfsm",
+            "hp_comware_display_vlan_brief.textfsm",
             3,
         ),
         (
@@ -338,8 +338,8 @@ def test_comware9_does_not_collapse_to_comware7_before_dedicated_templates():
     ("platform", "expected_template"),
     [
         ("hp_comware", "hp_comware_display_interface_brief.textfsm"),
-        ("h3c_comware", "h3c_comware_display_interface_brief.textfsm"),
-        ("h3c_comware9", "h3c_comware9_display_interface_brief.textfsm"),
+        ("h3c_comware", "hp_comware_display_interface_brief.textfsm"),
+        ("h3c_comware9", "hp_comware_display_interface_brief.textfsm"),
     ],
 )
 def test_h3c_interface_description_command_reuses_verified_brief_grammar(

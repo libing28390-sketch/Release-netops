@@ -15,6 +15,7 @@ happen inside each mutating function.
 import uuid
 import logging
 from datetime import datetime, timezone
+from core.interface_utils import normalize_interface_name
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +294,15 @@ def list_cmdb_interfaces(
     search: str | None = None,
 ) -> list[dict]:
     """Return interfaces as CMDB skeleton resources with optional has_ip, device_id, search filters."""
+    # Device deletion historically did not remove the legacy IP inventory
+    # projection.  Purge those orphaned rows at the read boundary so stale
+    # ``Unknown device`` groups cannot reappear in the CMDB interface view.
+    conn.execute(
+        """DELETE FROM ip_inventory
+           WHERE device_id IS NULL
+              OR NOT EXISTS (SELECT 1 FROM devices d WHERE d.id = ip_inventory.device_id)"""
+    )
+    conn.commit()
     sql = """
         SELECT
             i.id,
@@ -313,8 +323,13 @@ def list_cmdb_interfaces(
                         ip.interface_id = i.id
                         OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
                     )
+                      AND COALESCE(i.ip_enabled, 0) = 1
                       AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
-                    ORDER BY CASE WHEN ip.interface_id = i.id THEN 0 ELSE 1 END, ip.updated_at DESC NULLS LAST
+                    -- Keep this SQLite/PostgreSQL compatible.  The exact
+                    -- interface_id match is already preferred by the
+                    -- skeleton fields above; the fallback only needs the
+                    -- newest address observation.
+                    ORDER BY ip.updated_at DESC NULLS LAST
                     LIMIT 1
                 )
             ) AS interface_ip,
@@ -359,6 +374,7 @@ def list_cmdb_interfaces(
                     ip.interface_id = i.id
                     OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
                 )
+                  AND COALESCE(i.ip_enabled, 0) = 1
                   AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
             )
         )"""
@@ -372,6 +388,7 @@ def list_cmdb_interfaces(
                     ip.interface_id = i.id
                     OR (ip.device_id = i.device_id AND ip.interface_name = i.interface_name)
                 )
+                  AND COALESCE(i.ip_enabled, 0) = 1
                   AND COALESCE(NULLIF(ip.ip_address, ''), NULLIF(ip.address, '')) IS NOT NULL
             )
         )"""
@@ -405,7 +422,48 @@ def list_cmdb_interfaces(
 
     sql += " ORDER BY COALESCE(d.hostname, ''), COALESCE(i.interface_name, '')"
     rows = conn.execute(sql, tuple(params)).fetchall()
-    items = [_row_to_dict(r) for r in rows]
+    raw_items = [_row_to_dict(r) for r in rows]
+
+    # A device can report the same interface using different presentation
+    # names (for example H3C ``GE1/0/1`` and
+    # ``GigabitEthernet1/0/1``).  The interface table is being converged over
+    # time, so keep the read contract one-row-per-device/interface even while
+    # older aliases are still present in the database.
+    items_by_identity: dict[tuple[str, str], dict] = {}
+    for candidate in raw_items:
+        identity = (
+            str(candidate.get('device_id') or ''),
+            normalize_interface_name(candidate.get('interface_name')).lower(),
+        )
+        if not identity[1]:
+            identity = (identity[0], str(candidate.get('interface_name') or '').strip().lower())
+        current = items_by_identity.get(identity)
+        if current is None:
+            items_by_identity[identity] = candidate
+            continue
+        current_score = (
+            bool(current.get('interface_ip')),
+            str(current.get('oper_status') or '').lower() not in {'', 'unknown'},
+            str(current.get('admin_status') or '').lower() not in {'', 'unknown'},
+            int(current.get('link_count') or 0) > 0,
+            -len(str(current.get('interface_name') or '')),
+        )
+        candidate_score = (
+            bool(candidate.get('interface_ip')),
+            str(candidate.get('oper_status') or '').lower() not in {'', 'unknown'},
+            str(candidate.get('admin_status') or '').lower() not in {'', 'unknown'},
+            int(candidate.get('link_count') or 0) > 0,
+            -len(str(candidate.get('interface_name') or '')),
+        )
+        preferred, secondary = (candidate, current) if candidate_score > current_score else (current, candidate)
+        for field in ('interface_ip', 'description', 'mac_address', 'speed', 'bandwidth', 'vrf_id', 'last_flapped'):
+            if not preferred.get(field) and secondary.get(field):
+                preferred[field] = secondary[field]
+        preferred['ip_count'] = max(int(preferred.get('ip_count') or 0), int(secondary.get('ip_count') or 0))
+        preferred['link_count'] = max(int(preferred.get('link_count') or 0), int(secondary.get('link_count') or 0))
+        items_by_identity[identity] = preferred
+
+    items = list(items_by_identity.values())
 
     # NSOT's ip_inventory is populated by the interface-IP collector and can
     # be fresher than the interface skeleton table. Include those records as
@@ -436,19 +494,28 @@ def list_cmdb_interfaces(
                   ON i.device_id = inv.device_id
                  AND LOWER(TRIM(i.interface_name)) = LOWER(TRIM(inv.interface))
                 WHERE COALESCE(inv.ip, '') <> ''
+                  AND d.id IS NOT NULL
                 ORDER BY COALESCE(d.hostname, ''), COALESCE(inv.interface, ''), inv.ip
                 """
             ).fetchall()
         except Exception:
             inventory_rows = []
 
-        existing_keys = {
-            (str(item.get('device_id') or ''), str(item.get('interface_name') or ''), str(item.get('interface_ip') or ''))
+        existing_by_identity = {
+            (
+                str(item.get('device_id') or ''),
+                normalize_interface_name(item.get('interface_name')).lower(),
+            ): item
             for item in items
         }
         search_value = search.strip().lower() if search else ''
         for inventory_row in inventory_rows:
             inventory = _row_to_dict(inventory_row)
+            # A successful current-state collection can disable a retained
+            # skeleton row when its address disappeared. Do not rehydrate
+            # that deliberately cleared row from the legacy inventory cache.
+            if inventory.get('skeleton_interface_id') and inventory.get('skeleton_ip_enabled') in (0, False, '0'):
+                continue
             ip_value = str(inventory.get('ip') or '').strip()
             inventory_device_id = str(inventory.get('device_id') or '')
             interface_name = str(inventory.get('interface') or '').strip()
@@ -460,11 +527,20 @@ def list_cmdb_interfaces(
                 )).lower()
                 if search_value not in searchable:
                     continue
-            key = (inventory_device_id, interface_name, ip_value)
-            if key in existing_keys:
+            identity = (inventory_device_id, normalize_interface_name(interface_name).lower())
+            existing = existing_by_identity.get(identity)
+            if existing is not None:
+                # ip_inventory owns the freshest address observation. Enrich
+                # the skeleton row instead of appending a second row merely
+                # because the vendor used a long or short alias.
+                if ip_value:
+                    existing['interface_ip'] = ip_value
+                    existing['interface_ip_source'] = 'ip_inventory'
+                    existing['ip_count'] = max(1, int(existing.get('ip_count') or 0))
+                if inventory.get('last_seen'):
+                    existing['last_seen'] = inventory.get('last_seen')
                 continue
-            existing_keys.add(key)
-            items.append({
+            fallback_item = {
                 'id': inventory.get('skeleton_interface_id') or f"ipinv-{inventory_device_id}-{interface_name}-{ip_value}",
                 'device_id': inventory_device_id,
                 'device_hostname': inventory.get('device_hostname') or '',
@@ -495,7 +571,9 @@ def list_cmdb_interfaces(
                 'ip_count': 1,
                 'link_count': 0,
                 'last_seen': inventory.get('last_seen'),
-            })
+            }
+            items.append(fallback_item)
+            existing_by_identity[identity] = fallback_item
 
         items.sort(key=lambda item: (
             str(item.get('device_hostname') or ''),

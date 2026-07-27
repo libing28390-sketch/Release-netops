@@ -224,7 +224,7 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
             conn = get_db_connection()
             try:
                 row = conn.execute(
-                    '''SELECT credential_id, admin_credential_id,
+                    '''SELECT credential_id, admin_credential_id, snmp_credential_id,
                               username, password, normal_username, normal_password,
                               admin_username, admin_password, enable_password,
                               snmp_community
@@ -239,8 +239,23 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
 
     credential_id = device.get('credential_id') or asset.get('credential_id')
     admin_credential_id = device.get('admin_credential_id') or asset.get('admin_credential_id')
+    snmp_credential_id = device.get('snmp_credential_id') or asset.get('snmp_credential_id')
     normal_bound = False
     admin_bound = False
+    db_snmp_creds = {}
+
+    if snmp_credential_id:
+        try:
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                row = conn.execute('SELECT * FROM credentials WHERE id = ?', (snmp_credential_id,)).fetchone()
+                if row:
+                    db_snmp_creds = dict(row)
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning('Failed to fetch SNMP credential for %s: %s', device.get('hostname') or device.get('id'), exc)
 
     if resolved is None:
         # A bound credential is the authority for that account role.  The
@@ -308,8 +323,16 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
                  else (db_creds.get('encrypted_password') if normal_bound and db_creds else device.get('admin_password')))
             ) or '',
             'snmp_community': decrypt_credential(
-                db_creds.get('snmp_community') or device.get('snmp_community')
+                db_snmp_creds.get('snmp_community')
+                or db_creds.get('snmp_community')
+                or device.get('snmp_community')
             ) or '',
+            'snmp_server': str(
+                db_snmp_creds.get('snmp_server')
+                or db_creds.get('snmp_server')
+                or device.get('snmp_server')
+                or ''
+            ).strip(),
         }
 
     # Vault-backed records still need the same shared-vs-device-local
@@ -349,8 +372,16 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
             if asset_enable_password:
                 resolved['enable_password'] = asset_enable_password
 
-        if not normal_bound and asset.get('snmp_community'):
+        # SNMP is independent from the SSH account binding. A shared SSH
+        # credential may have no SNMP secret while the linked asset has a
+        # device-local community. A configured credential-center value wins.
+        if asset.get('snmp_community') and not resolved.get('snmp_community'):
             resolved['snmp_community'] = decrypt_credential(asset.get('snmp_community')) or ''
+
+    # SNMP bindings are independent from Vault/SSH account resolution.
+    if db_snmp_creds:
+        resolved['snmp_community'] = decrypt_credential(db_snmp_creds.get('snmp_community')) or resolved.get('snmp_community') or ''
+        resolved['snmp_server'] = str(db_snmp_creds.get('snmp_server') or resolved.get('snmp_server') or '').strip()
 
     # Keep the generic return keys compatible for callers that have not yet
     # been migrated, but derive them from the explicit role pairs.
@@ -407,6 +438,7 @@ def resolve_collector_credentials(device: dict, *, ssh_role: str = 'normal') -> 
         },
         'snmp': {
             'version': '2c',
+            'server': resolved.get('snmp_server') or str(device.get('ip_address') or '').strip(),
             'community': resolved.get('snmp_community') or '',
             'port': int(device.get('snmp_port') or 161),
             'configured': bool(resolved.get('snmp_community')),

@@ -1,0 +1,35 @@
+Value Required INTERFACE (\S+)
+Value Required LINK ((?:UP|DOWN|ADM|Stby))
+Value PROTOCOL ((?:UP|DOWN|--)(?:\(s\))?)
+Value MAIN_IP (\S+)
+Value SPEED (\S+)
+Value DUPLEX (\S+)
+Value TYPE ((?:A|T|H|-))
+Value VLAN_ID ((?:\d+|-))
+Value DESCRIPTION (.*)
+
+Start
+  ^\s*(?:The\s+)?[Bb]rief\s+information\s+(?:of|on|about)\s+interfaces?(?:\(s\))?\s+(?:under|in)\s+route\s+mode:\s*$$ -> RouteMode
+  ^\s*(?:The\s+)?[Bb]rief\s+information\s+(?:of|on|about)\s+interfaces?(?:\(s\))?\s+(?:under|in)\s+bridge\s+mode:\s*$$ -> BridgeMode
+  ^\s*Link:\s+ADM\s+-\s+administratively\s+down;\s+Stby\s+-\s+standby\s*$$
+  ^\s*Protocol:\s+\(s\)\s+-\s+spoofing\s*$$
+  ^\s*Interface\s+Link\s+Protocol\s+(Main|Primary)\s+IP\s+Description\s*$$ -> RouteMode
+  ^\s*Link:\s+ADM\s+-\s+administratively\s+down;\s+Stby\s+-\s+standby\s*$$
+  ^\s*(Speed(\s+or\s+)?)?(Duplex)?:\s+\(a\)(/A)?\s+-\s+auto(;\s+H\s+-\s+half;\s+F\s+-\s+full)?\s*$$
+  ^\s*Type:\s+A\s+-\s+access;\s+T\s+-\s+trunk;\s+H\s+-\s+hybrid\s*$$
+  ^\s*Interface\s+Link\s+Speed\s+Duplex\s+Type\s+PVID\s+Description\s*$$ -> BridgeMode
+  ^\s*$$
+  ^.*
+
+RouteMode
+  ^\s*(?:The\s+)?[Bb]rief\s+information\s+(?:of|on|about)\s+interfaces?(?:\(s\))?\s+(?:under|in)\s+bridge\s+mode:\s*$$ -> BridgeMode
+  ^\s*${INTERFACE}\s+${LINK}\s+${PROTOCOL}\s+${MAIN_IP}(?:\s+${DESCRIPTION})?\s*$$ -> Record
+  ^\s*$$ -> Start
+  ^\s*[\[<].*$$
+  ^.*
+
+BridgeMode
+  ^\s*${INTERFACE}\s+${LINK}\s+${SPEED}(?:\(a\))?\s+${DUPLEX}(?:\(a\))?\s+${TYPE}\s+${VLAN_ID}(?:\s+${DESCRIPTION})?\s*$$ -> Record
+  ^\s*$$
+  ^\s*[\[<].*$$
+  ^.*

@@ -452,12 +452,17 @@ def _build_ssh_params(device_info: dict) -> dict[str, Any]:
     return params
 
 
-def _send_command(device_info: dict, command: str) -> str:
-    """SSH 到设备执行单条命令并返回原始输出。"""
+def _send_command(device_info: dict, command: str, force_refresh: bool = False) -> str:
+    """SSH 到设备执行单条命令并返回原始输出。
+
+    诊断流程可显式跳过命令缓存；普通定位流程继续使用缓存，避免把
+    常规 IP 定位的性能优化误用到实时故障结论上。
+    """
     device_ip = device_info.get('ip_address') or device_info.get('hostname') or 'unknown'
-    cached = get_cached_command(device_ip, command)
-    if cached is not None:
-        return cached
+    if not force_refresh:
+        cached = get_cached_command(device_ip, command)
+        if cached is not None:
+            return cached
 
     port = int(device_info.get('port') or device_info.get('management_port') or 22)
     from drivers.ssh_compat import is_ssh_port_open
@@ -492,7 +497,8 @@ def _send_command(device_info: dict, command: str) -> str:
                     strip_command=True,
                     read_timeout=30,
                 )
-                set_cached_command(device_ip, command, output)
+                if not force_refresh:
+                    set_cached_command(device_ip, command, output)
                 return output
         except NetmikoAuthenticationException as exc:
             last_auth_error = exc
@@ -2593,7 +2599,8 @@ _ROUTE_PROTOCOL_ALIASES = {
     's': 'static', 'static': 'static', 'p': 'periodic_static',
     'periodic static': 'periodic_static', 'u': 'user_static',
     'user static': 'user_static', 'o': 'ospf', 'ospf': 'ospf',
-    'b': 'bgp', 'bgp': 'bgp', 'd': 'eigrp', 'eigrp': 'eigrp',
+    'b': 'bgp', 'bgp': 'bgp', 'ebgp': 'bgp', 'ibgp': 'bgp',
+    'd': 'eigrp', 'eigrp': 'eigrp',
     'r': 'rip', 'rip': 'rip', 'i': 'isis', 'isis': 'isis',
     'is-is': 'isis', 'h': 'nhrp', 'nhrp': 'nhrp', 'lisp': 'lisp',
     'a': 'application', 'application': 'application',
@@ -2616,21 +2623,40 @@ def parse_routing_table(output: str, platform: str) -> list[dict]:
     routes = []
 
     # ── Huawei/H3C ──
-    if any(p in platform for p in ('huawei', 'vrp', 'comware', 'h3c')):
+    if any(p in platform for p in ('huawei', 'vrp', 'comware', 'h3c', 'hp')):
+        current_destination = ''
         for line in output.splitlines():
-            m = re.search(r'(\d+\.\d+\.\d+\.\d+)/(\d+)\s+(\w+)\s+\d+\s+\d+\s+\w*\s+(\S+)\s+(\S+)', line)
-            if m:
-                dest, mask_len_str, proto, next_hop, interface = m.groups()
-                mask_len = int(mask_len_str)
-                netmask = _int_to_netmask(mask_len)
-                routes.append({
-                    'prefix': dest,
-                    'mask': netmask,
-                    'next_hop': "directly connected" if proto.lower() == 'direct' else next_hop,
-                    'protocol': normalize_route_protocol(proto),
-                    'interface': interface,
-                    'metric': 0
-                })
+            tokens = line.split()
+            if not tokens:
+                continue
+
+            # VRP5/VRP8 tabular output has either a destination column or a
+            # blank continuation row for ECMP routes. Keep the last
+            # destination so all routes in the table reach NSOT.
+            if '/' in tokens[0] and re.match(r'^\d+\.\d+\.\d+\.\d+/\d+$', tokens[0]):
+                destination = tokens[0]
+                fields = tokens[1:]
+                current_destination = destination
+            else:
+                destination = current_destination
+                fields = tokens
+            if not destination or len(fields) < 6:
+                continue
+
+            proto, preference, cost, _flags, next_hop, interface = fields[:6]
+            if not preference.isdigit() or not cost.isdigit():
+                continue
+            dest, mask_len_str = destination.split('/', 1)
+            netmask = _int_to_netmask(int(mask_len_str))
+            routes.append({
+                'prefix': dest,
+                'mask': netmask,
+                'next_hop': "directly connected" if proto.lower() == 'direct' else next_hop,
+                'protocol': normalize_route_protocol(proto),
+                'interface': interface,
+                'metric': int(cost),
+                'preference': int(preference),
+            })
         return routes
 
     # ── Juniper ──
@@ -2865,14 +2891,14 @@ def run_route_collector():
         
         for vrf in vrfs:
             if vrf == 'default':
-                if platform in ('huawei_vrp', 'h3c_comware'):
+                if any(p in platform for p in ('huawei', 'vrp', 'comware', 'h3c', 'hp')):
                     cmd = "display ip routing-table"
                 elif platform in ('juniper_junos',):
                     cmd = "show route"
                 else:
                     cmd = "show ip route"
             else:
-                if platform in ('huawei_vrp', 'h3c_comware'):
+                if any(p in platform for p in ('huawei', 'vrp', 'comware', 'h3c', 'hp')):
                     cmd = f"display ip routing-table vpn-instance {vrf}"
                 elif platform in ('juniper_junos',):
                     cmd = f"show route table {vrf}.inet.0"
@@ -2931,22 +2957,28 @@ def run_route_collector():
                         except Exception:
                             dest = f"{dest}/24"
                     
-                    pref_val = 1
-                    proto_lower = (r.get('protocol') or '').lower()
-                    if proto_lower in {'connected', 'local'}:
-                        pref_val = 0
-                    elif proto_lower in {'static', 'periodic_static', 'user_static'}:
+                    pref_val = r.get('preference')
+                    try:
+                        pref_val = int(pref_val) if pref_val not in (None, '') else None
+                    except (TypeError, ValueError):
+                        pref_val = None
+                    if pref_val is None:
                         pref_val = 1
-                    elif proto_lower == 'eigrp':
-                        pref_val = 90
-                    elif proto_lower == 'ospf':
-                        pref_val = 110
-                    elif proto_lower == 'isis':
-                        pref_val = 115
-                    elif proto_lower == 'rip':
-                        pref_val = 120
-                    elif proto_lower == 'bgp':
-                        pref_val = 200
+                        proto_lower = (r.get('protocol') or '').lower()
+                        if proto_lower in {'connected', 'local'}:
+                            pref_val = 0
+                        elif proto_lower in {'static', 'periodic_static', 'user_static'}:
+                            pref_val = 1
+                        elif proto_lower == 'eigrp':
+                            pref_val = 90
+                        elif proto_lower == 'ospf':
+                            pref_val = 110
+                        elif proto_lower == 'isis':
+                            pref_val = 115
+                        elif proto_lower == 'rip':
+                            pref_val = 120
+                        elif proto_lower == 'bgp':
+                            pref_val = 200
 
                     conn.execute(
                         '''INSERT INTO route_table (

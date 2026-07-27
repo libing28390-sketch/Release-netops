@@ -1,11 +1,12 @@
 import logging
 import asyncio
+import json
 import re
+import uuid
 from datetime import datetime, timezone, timedelta
 from database import get_db_connection
 from services.ip_locator_service import (
     locate_ip_async_with_options,
-    normalize_interface_name,
     _send_command,
     _check_local_device_ip,
     _build_ssh_params,
@@ -13,12 +14,363 @@ from services.ip_locator_service import (
 )
 from services.connectivity_service import run_probe_async, _load_device
 from netmiko import ConnectHandler
-from core.cmd_cache import get_cached_command, set_cached_command
+from core.interface_utils import normalize_interface_name
 
 class DeviceConnectionError(Exception):
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_link_status(value: object) -> str:
+    """Normalize collector/CLI status values to the diagnostic state model."""
+    raw = str(value or '').strip().lower()
+    if not raw:
+        return 'unknown'
+    if any(token in raw for token in ('administratively down', 'admin down', 'shutdown', 'disabled', 'inactive', 'err-disabled')):
+        return 'down'
+    if raw in {'down', 'notconnect', 'not connected', 'unconnected', 'dead'} or 'down' in raw:
+        return 'down'
+    if raw in {'up', 'connected', 'forwarding', 'selected', 'active'} or raw.startswith('up'):
+        return 'up'
+    return 'unknown'
+
+
+def _counter_value(value: object) -> int:
+    try:
+        return max(0, int(float(str(value or '0').strip() or '0')))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _interface_health(raw_phy: str, raw_protocol: str, admin_status: str, oper_status: str) -> tuple[str, list[str]]:
+    """Classify live interface health without treating historical counters as link-up."""
+    reasons: list[str] = []
+    phy = str(raw_phy or '').strip().lower()
+    protocol = str(raw_protocol or '').strip().lower()
+    if admin_status == 'down':
+        reasons.append('PHY/admin 状态为 down（可能是 shutdown）' if '*' in phy or 'admin' in phy else 'PHY 状态为 down')
+    if oper_status == 'down':
+        reasons.append('Protocol/oper 状态为 down')
+    if phy and phy not in {'up', 'down'}:
+        reasons.append(f'PHY 状态异常：{raw_phy}')
+    if protocol and protocol not in {'up', 'down'}:
+        reasons.append(f'Protocol 状态异常：{raw_protocol}')
+    if admin_status == 'down' or oper_status == 'down':
+        return 'down', reasons
+    return ('degraded' if reasons else 'up'), reasons
+
+
+def _record_value(record: dict, *keys: str) -> str:
+    normalized = {
+        str(key).strip().replace('-', '_').upper(): value
+        for key, value in (record or {}).items()
+    }
+    for key in keys:
+        value = normalized.get(str(key).strip().replace('-', '_').upper())
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ''
+
+
+def _endpoint_attachment(conn, target_ip: str) -> dict | None:
+    """Return the persisted endpoint attachment, if one exists.
+
+    This is deliberately treated as a locator hint only.  ``last_seen`` and
+    ``is_active`` identify the record, but do not prove that the access port
+    is currently forwarding.
+    """
+    try:
+        row = conn.execute(
+            """
+            SELECT ip, mac, hostname, switch_id, switch_port, last_seen, is_active
+            FROM network_endpoints
+            WHERE TRIM(ip) = ? AND COALESCE(is_active, 1) = 1
+            ORDER BY last_seen DESC
+            LIMIT 1
+            """,
+            (target_ip.strip(),),
+        ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _resolve_endpoint_device(conn, endpoint: dict | None) -> dict | None:
+    if not endpoint:
+        return None
+    endpoint_id = str(endpoint.get('switch_id') or '').strip()
+    if not endpoint_id:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT id, hostname, ip_address, platform FROM devices WHERE id = ? OR hostname = ? LIMIT 1",
+            (endpoint_id, endpoint_id),
+        ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _persisted_interface_state(conn, device_id: str, interface_name: str) -> dict:
+    """Read the latest persisted interface state using the shared alias key."""
+    wanted = normalize_interface_name(interface_name).lower()
+    if not wanted:
+        return {'state': 'unknown', 'source': 'none'}
+
+    candidates: list[dict] = []
+    try:
+        rows = conn.execute(
+            """
+            SELECT interface_name, admin_status, oper_status, last_seen
+            FROM interfaces
+            WHERE device_id = ?
+            """,
+            (device_id,),
+        ).fetchall()
+        for row in rows:
+            item = dict(row)
+            if normalize_interface_name(item.get('interface_name')).lower() == wanted:
+                candidates.append({
+                    'interface_name': item.get('interface_name') or interface_name,
+                    'admin_status': _normalize_link_status(item.get('admin_status')),
+                    'oper_status': _normalize_link_status(item.get('oper_status')),
+                    'last_seen': item.get('last_seen') or '',
+                    'source': 'interfaces',
+                })
+    except Exception:
+        pass
+
+    # The monitor has a fresher per-interface snapshot than the CMDB row when
+    # it is enabled.  Only the matching interface is selected by canonical key.
+    try:
+        rows = conn.execute(
+            """
+            SELECT interface_name, status, ts
+            FROM interface_telemetry_raw
+            WHERE device_id = ?
+            ORDER BY ts DESC
+            """,
+            (device_id,),
+        ).fetchall()
+        for row in rows:
+            item = dict(row)
+            if normalize_interface_name(item.get('interface_name')).lower() == wanted:
+                candidates.append({
+                    'interface_name': item.get('interface_name') or interface_name,
+                    'admin_status': _normalize_link_status(item.get('status')),
+                    'oper_status': _normalize_link_status(item.get('status')),
+                    'last_seen': item.get('ts') or '',
+                    'source': 'interface_telemetry_raw',
+                })
+                break
+    except Exception:
+        pass
+
+    if not candidates:
+        return {'state': 'unknown', 'source': 'none', 'interface_name': interface_name}
+
+    # A down observation wins over an older up observation.  Otherwise prefer
+    # the newest source (telemetry rows are ordered by timestamp).
+    if any(item['admin_status'] == 'down' or item['oper_status'] == 'down' for item in candidates):
+        selected = next(item for item in candidates if item['admin_status'] == 'down' or item['oper_status'] == 'down')
+        return {'state': 'down', **selected}
+    selected = next(
+        (item for item in candidates if item['admin_status'] == 'up' or item['oper_status'] == 'up'),
+        candidates[-1],
+    )
+    state = 'up' if selected['admin_status'] == 'up' or selected['oper_status'] == 'up' else 'unknown'
+    return {'state': state, **selected}
+
+
+async def _refresh_device_interface_state(device_id: str, interface_name: str) -> dict:
+    """Collect one device's interface brief live and normalize its state."""
+    device_id = str(device_id or '').strip()
+    interface_name = str(interface_name or '').strip()
+    if not device_id or not interface_name:
+        return {'state': 'unknown', 'source': 'interface_target_incomplete'}
+    try:
+        device = await asyncio.to_thread(_load_device, device_id)
+        if not device:
+            return {'state': 'unknown', 'source': 'endpoint_device_not_found'}
+        from services.operational_data_service import collect_operational_data
+
+        payload = await asyncio.to_thread(
+            collect_operational_data,
+            device,
+            categories=['interfaces'],
+            auth_role='auto',
+        )
+        category = next((item for item in payload.get('categories') or [] if item.get('key') == 'interfaces'), {})
+        for record in category.get('records') or []:
+            raw_name = _record_value(record, 'INTERFACE', 'NAME', 'PORT', 'IFNAME')
+            if normalize_interface_name(raw_name).lower() != normalize_interface_name(interface_name).lower():
+                continue
+            raw_phy = _record_value(record, 'PHY', 'STATUS', 'LINK', 'ADMIN_STATUS', 'LINK_STATUS')
+            raw_protocol = _record_value(record, 'PROTO', 'PROTOCOL', 'OPER_STATUS', 'OPERATE_STATUS')
+            admin = _normalize_link_status(raw_phy)
+            oper = _normalize_link_status(raw_protocol)
+            input_errors = _counter_value(_record_value(record, 'INERRORS', 'IN_ERRORS', 'INPUT_ERRORS'))
+            output_errors = _counter_value(_record_value(record, 'OUTERRORS', 'OUT_ERRORS', 'OUTPUT_ERRORS'))
+            health, anomaly_reasons = _interface_health(raw_phy, raw_protocol, admin, oper)
+            if input_errors or output_errors:
+                anomaly_reasons.append(f'错误计数非零：in={input_errors}, out={output_errors}')
+                if health == 'up':
+                    health = 'degraded'
+            state = 'down' if health == 'down' else ('up' if health in {'up', 'degraded'} else 'unknown')
+            return {
+                'state': state,
+                'health': health,
+                'anomaly': bool(anomaly_reasons or input_errors or output_errors),
+                'anomaly_reasons': anomaly_reasons,
+                'source': 'live_textfsm',
+                'device_id': device_id,
+                'device_name': device.get('hostname') or device_id,
+                'interface_name': raw_name or interface_name,
+                'admin_status': admin,
+                'oper_status': oper,
+                'physical_status': raw_phy or 'unknown',
+                'protocol_status': raw_protocol or 'unknown',
+                'error_counters': {
+                    'input_errors': input_errors,
+                    'output_errors': output_errors,
+                },
+                'last_seen': payload.get('collected_at') or '',
+            }
+        return {'state': 'unknown', 'source': 'live_textfsm_no_matching_interface', 'device_id': device_id, 'interface_name': interface_name}
+    except Exception as exc:
+        logger.info('Interface refresh failed for %s %s: %s', device_id, interface_name, exc)
+        return {'state': 'unknown', 'source': 'live_textfsm_error', 'error': str(exc), 'device_id': device_id, 'interface_name': interface_name}
+
+
+async def _refresh_endpoint_interface_state(endpoint: dict | None) -> dict:
+    """Refresh the endpoint switch's access port through the live TextFSM path."""
+    endpoint_device_id = str((endpoint or {}).get('switch_id') or '').strip()
+    endpoint_port = str((endpoint or {}).get('switch_port') or '').strip()
+    if not endpoint_device_id or not endpoint_port:
+        return {'state': 'unknown', 'source': 'endpoint_cache_incomplete'}
+    result = await _refresh_device_interface_state(endpoint_device_id, endpoint_port)
+    result['endpoint_source'] = (endpoint or {}).get('source_type') or 'network_endpoints'
+    return result
+
+
+async def _validate_path_interfaces(hops: list[dict], endpoint_state: dict | None = None) -> dict:
+    """Refresh route egress interfaces concurrently and return path evidence."""
+    targets: dict[tuple[str, str], dict] = {}
+    for hop in hops or []:
+        device_id = str(hop.get('device_id') or '').strip()
+        interfaces = hop.get('egress_interfaces') or [hop.get('interface_name')]
+        for raw_interface_name in interfaces:
+            interface_name = str(raw_interface_name or '').strip()
+            if not device_id or not interface_name:
+                continue
+            targets[(device_id, normalize_interface_name(interface_name).lower())] = {
+                'device_id': device_id,
+                'interface_name': interface_name,
+                'device_name': hop.get('device_name') or device_id,
+                'hop': hop.get('hop'),
+                'kind': 'path_egress',
+            }
+    if endpoint_state and endpoint_state.get('source') != 'live_textfsm' and endpoint_state.get('device_id') and endpoint_state.get('interface_name'):
+        key = (str(endpoint_state['device_id']), normalize_interface_name(endpoint_state['interface_name']).lower())
+        targets.setdefault(key, {
+            'device_id': str(endpoint_state['device_id']),
+            'interface_name': endpoint_state['interface_name'],
+            'device_name': endpoint_state.get('device_name') or endpoint_state['device_id'],
+            'kind': 'target_access',
+        })
+
+    async def collect(item: dict) -> dict:
+        try:
+            result = await asyncio.wait_for(
+                _refresh_device_interface_state(item['device_id'], item['interface_name']),
+                timeout=20,
+            )
+        except Exception as exc:
+            result = {'state': 'unknown', 'source': 'live_textfsm_timeout', 'error': str(exc)}
+        return {**item, **result, 'collected_at': _beijing_now_iso(), 'is_cached': False}
+
+    records = []
+    if endpoint_state and endpoint_state.get('source') == 'live_textfsm':
+        records.append({**endpoint_state, 'kind': 'target_access', 'collected_at': endpoint_state.get('last_seen') or _beijing_now_iso(), 'is_cached': False})
+    if targets:
+        records.extend(await asyncio.gather(*(collect(item) for item in targets.values())))
+    return {
+        'records': records,
+        'down': [item for item in records if item.get('state') == 'down'],
+        'degraded': [item for item in records if item.get('health') == 'degraded'],
+        'unknown': [item for item in records if item.get('state') == 'unknown'],
+        'source': 'live_textfsm',
+        'collected_at': _beijing_now_iso(),
+        'is_cached': False,
+    }
+
+
+async def _evaluate_endpoint_attachment(conn, target_ip: str) -> dict:
+    endpoint = _endpoint_attachment(conn, target_ip)
+    if not endpoint:
+        return {'state': 'unknown', 'source': 'endpoint_not_found'}
+
+    endpoint_device = _resolve_endpoint_device(conn, endpoint)
+    refresh_endpoint = endpoint
+    if endpoint_device and str(endpoint_device.get('id')) != str(endpoint.get('switch_id')):
+        refresh_endpoint = {**endpoint, 'switch_id': endpoint_device['id']}
+    live_state = await _refresh_endpoint_interface_state(refresh_endpoint)
+    if live_state.get('state') in {'up', 'down'}:
+        return {**live_state, 'endpoint': endpoint}
+
+    if endpoint_device:
+        persisted = _persisted_interface_state(conn, endpoint_device['id'], endpoint.get('switch_port') or '')
+        if persisted.get('state') in {'up', 'down'}:
+            return {
+                **persisted,
+                'source': f"{persisted.get('source')}_fallback",
+                'device_id': endpoint_device['id'],
+                'device_name': endpoint_device.get('hostname') or endpoint_device['id'],
+                'endpoint': endpoint,
+            }
+    return {**live_state, 'endpoint': endpoint, 'device_id': endpoint_device.get('id') if endpoint_device else endpoint.get('switch_id')}
+
+
+def _mark_endpoint_down(hops: list[dict], target_ip: str, endpoint_state: dict) -> list[dict]:
+    """Project a live last-hop DOWN observation onto the route result."""
+    endpoint_name = endpoint_state.get('device_name') or endpoint_state.get('device_id') or '最后一跳接入交换机'
+    endpoint_port = endpoint_state.get('interface_name') or '接入端口'
+    detail = (
+        f"最后一跳 {endpoint_name} {endpoint_port} 当前为 DOWN "
+        f"（admin={endpoint_state.get('admin_status', 'unknown')}, oper={endpoint_state.get('oper_status', 'unknown')}）"
+    )
+    target_hop = next((hop for hop in reversed(hops) if str(hop.get('ip') or '').strip() == target_ip.strip()), None)
+    if target_hop:
+        target_hop['status'] = 'timeout'
+        target_hop['detail'] = f"{detail}；历史 ARP/MAC 记录不代表当前可达"
+        previous_hops = hops[:hops.index(target_hop)]
+        if previous_hops:
+            previous_hops[-1]['status'] = 'blocked'
+            previous_hops[-1]['detail'] = detail
+        return hops
+
+    if hops:
+        hops[-1]['status'] = 'blocked'
+        hops[-1]['detail'] = detail
+    hops.append({
+        'hop': (hops[-1].get('hop', 0) + 1) if hops else 1,
+        'ip': target_ip,
+        'device_name': '目标主机',
+        'device_id': None,
+        'device_type': 'unknown',
+        'status': 'timeout',
+        'detail': f"{detail}；历史 ARP/MAC 记录不代表当前可达",
+    })
+    return hops
+
+
+async def _collect_target_endpoint_state(target_ip: str) -> dict:
+    conn = get_db_connection()
+    try:
+        return await _evaluate_endpoint_attachment(conn, target_ip)
+    finally:
+        conn.close()
 
 def parse_route_output(output: str, platform: str) -> list[tuple[str, str]]:
     platform = platform.lower()
@@ -271,7 +623,7 @@ def get_device_vrf_for_ip(conn, device_id: str, ip: str) -> str:
     return 'default'
 
 
-def match_route_offline(device_id: str, target_ip: str, vrf_name: str = 'default') -> list[dict]:
+def match_route_offline(device_id: str, target_ip: str, vrf_name: str = 'default', conn=None) -> list[dict]:
     """
     在本地 route_table 数据库中执行最长前缀匹配 (LPM)，寻找匹配的路由条目。
     如果有多条等价路由 (ECMP)，则全部返回。
@@ -281,17 +633,16 @@ def match_route_offline(device_id: str, target_ip: str, vrf_name: str = 'default
     except Exception:
         return []
 
-    def lookup_in_vrf(vrf: str) -> list[dict]:
+    owns_connection = conn is None
+    if owns_connection:
         conn = get_db_connection()
-        try:
-            rows = conn.execute(
-                "SELECT destination, next_hop, protocol, outgoing_interface, metric, vrf_name "
-                "FROM route_table WHERE device_id = ? AND vrf_name = ?",
-                (device_id, vrf)
-            ).fetchall()
-        finally:
-            conn.close()
 
+    def lookup_in_vrf(vrf: str) -> list[dict]:
+        rows = conn.execute(
+            "SELECT destination, next_hop, protocol, outgoing_interface, metric, vrf_name "
+            "FROM route_table WHERE device_id = ? AND vrf_name = ?",
+            (device_id, vrf)
+        ).fetchall()
         matched = []
         for row in rows:
             dest = row['destination'].strip()
@@ -317,16 +668,20 @@ def match_route_offline(device_id: str, target_ip: str, vrf_name: str = 'default
                 continue
         return matched
 
-    matched_routes = lookup_in_vrf(vrf_name)
-    if not matched_routes and vrf_name != 'default':
-        # Fallback/leak check
-        matched_routes = lookup_in_vrf('default')
+    try:
+        matched_routes = lookup_in_vrf(vrf_name)
+        if not matched_routes and vrf_name != 'default':
+            # Fallback/leak check
+            matched_routes = lookup_in_vrf('default')
 
-    if not matched_routes:
-        return []
+        if not matched_routes:
+            return []
 
-    max_len = max(r['prefix_len'] for r in matched_routes)
-    return [r for r in matched_routes if r['prefix_len'] == max_len]
+        max_len = max(r['prefix_len'] for r in matched_routes)
+        return [r for r in matched_routes if r['prefix_len'] == max_len]
+    finally:
+        if owns_connection:
+            conn.close()
 
 
 async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf: str = None) -> tuple[list[dict], str, str, dict]:
@@ -345,8 +700,23 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
         "route_sources": [],
         "vrf_logs": "",
         "acl_logs": "",
-        "acl_verified": True
+        "acl_verified": True,
+        "endpoint_state": {},
+        "force_live_route": True,
+        "route_cache_hits": 0,
+        "command_cache_hits": 0,
+        "live_commands": [],
+        "path_interface_states": [],
     }
+    device_cache: dict[str, dict] = {}
+
+    def load_trace_device(device_id: str):
+        key = str(device_id)
+        if key not in device_cache:
+            device = _load_device(device_id)
+            if device:
+                device_cache[key] = device
+        return device_cache.get(key)
 
     def merge_hops(hops_a: list[dict], hops_b: list[dict]) -> list[dict]:
         merged = []
@@ -396,7 +766,7 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 "detail": "超出最大诊断跳数 (TTL Exceeded)"
             }], "interrupted"
 
-        dev = _load_device(current_device_id)
+        dev = load_trace_device(current_device_id)
         if not dev:
             return [], "interrupted"
 
@@ -407,7 +777,11 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
         platform_lower = platform.lower()
 
         # Try offline route matching first
-        offline_matches = match_route_offline(current_device_id, target_ip, current_vrf)
+        offline_matches = [] if diag_context.get('force_live_route') else match_route_offline(
+            current_device_id, target_ip, current_vrf, conn=conn
+        )
+        if offline_matches:
+            diag_context['route_cache_hits'] = int(diag_context.get('route_cache_hits') or 0) + 1
         
         if offline_matches:
             matched_vrf = offline_matches[0].get('vrf_name', 'default')
@@ -507,10 +881,11 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                     "device_type": dev.get('role') or 'router',
                     "status": "active",
                     "detail": "directly connected",
+                    "interface_name": unique_paths[0][1] if unique_paths else "",
                     "cpu_usage": dev.get('cpu_usage', 0),
                     "memory_usage": dev.get('memory_usage', 0)
                 }
-                
+
                 if mac_str:
                     return [current_hop, {
                         "hop": hop_count + 1,
@@ -541,6 +916,8 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 "device_type": dev.get('role') or 'router',
                 "status": "active",
                 "detail": current_hop_detail,
+                "interface_name": unique_paths[0][1] if len(unique_paths) == 1 else "",
+                "egress_interfaces": [intf for _, intf in unique_paths],
                 "cpu_usage": dev.get('cpu_usage', 0),
                 "memory_usage": dev.get('memory_usage', 0)
             }
@@ -613,9 +990,16 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
         async def run_cmd(command: str) -> str:
             nonlocal client
             device_ip = dev.get('ip_address') or dev.get('hostname') or 'unknown'
-            cached = get_cached_command(device_ip, command)
-            if cached is not None:
-                return cached
+            # Route/FIB/ARP/LLDP/interface data is volatile and must be live in
+            # a diagnosis. Do not let the generic command cache decide reachability.
+            diag_context['live_commands'].append({
+                'device_id': dev.get('id'),
+                'device_name': dev_label,
+                'command': command,
+                'collected_at': _beijing_now_iso(),
+                'source': 'live_cli',
+                'is_cached': False,
+            })
 
             if client is None:
                 port = int(dev.get('port') or dev.get('management_port') or 22)
@@ -640,7 +1024,6 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 strip_command=True,
                 read_timeout=30
             )
-            set_cached_command(device_ip, command, output)
             return output
 
         try:
@@ -924,7 +1307,8 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                     "device_id": dev['id'],
                     "device_type": dev.get('role') or 'router',
                     "status": "active",
-                    "detail": "directly connected"
+                    "detail": "directly connected",
+                    "interface_name": unique_paths[0][1] if unique_paths else "",
                 }
 
                 if re.search(r'\b' + re.escape(target_ip) + r'\b', arp_output):
@@ -958,7 +1342,9 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 "device_id": dev['id'],
                 "device_type": dev.get('role') or 'router',
                 "status": "active",
-                "detail": current_hop_detail
+                "detail": current_hop_detail,
+                "interface_name": unique_paths[0][1] if len(unique_paths) == 1 else "",
+                "egress_interfaces": [intf for _, intf in unique_paths]
             }
 
             if platform_lower in ('huawei_vrp', 'h3c_comware'):
@@ -1049,6 +1435,54 @@ _BEIJING_TZ = timezone(timedelta(hours=8))
 
 def _beijing_now_iso() -> str:
     return datetime.now(_BEIJING_TZ).isoformat(timespec='seconds')
+
+
+def _new_diagnosis_run_id() -> str:
+    now = datetime.now(_BEIJING_TZ).strftime('%Y%m%d-%H%M%S')
+    return f"NPA-{now}-{uuid.uuid4().hex[:4].upper()}"
+
+
+def _snapshot_meta(run_id: str, source: str, collected_at: str | None = None, is_cached: bool = False, age_seconds: int = 0) -> dict:
+    return {
+        'run_id': run_id,
+        'source': source,
+        'collected_at': collected_at or _beijing_now_iso(),
+        'age_seconds': max(0, int(age_seconds or 0)),
+        'is_cached': bool(is_cached),
+    }
+
+
+async def _run_stabilized_probe(probe_args: dict, max_attempts: int = 3) -> tuple[dict, list[dict]]:
+    """Run a probe immediately, then retry only after failure to observe convergence."""
+    attempts: list[dict] = []
+    last_result: dict = {'tests': {}}
+    delays = (0, 2, 3)
+    for attempt_no in range(max(1, max_attempts)):
+        if attempt_no:
+            await asyncio.sleep(delays[min(attempt_no, len(delays) - 1)])
+        collected_at = _beijing_now_iso()
+        try:
+            last_result = await run_probe_async(**probe_args)
+        except Exception as exc:
+            last_result = {'tests': {}, 'error': str(exc)}
+        ping_result = last_result.get('tests', {}).get('ping', {})
+        tcp_results = last_result.get('tests', {}).get('tcp', [])
+        tcp_result = tcp_results[0] if tcp_results else {}
+        result = ping_result if 'ping' in probe_args.get('tests', []) else tcp_result
+        success = bool(result.get('success'))
+        attempts.append({
+            'attempt': attempt_no + 1,
+            'success': success,
+            'loss_percent': result.get('loss_percent'),
+            'latency_ms': result.get('rtt', {}).get('avg') if isinstance(result.get('rtt'), dict) else result.get('latency_ms'),
+            'detail': result.get('detail') or last_result.get('error') or '',
+            'collected_at': collected_at,
+            'source': 'live_probe',
+            'is_cached': False,
+        })
+        if success:
+            break
+    return last_result, attempts
 
 def _generate_mock_diagnose(source_ip: str, target_ip: str, port: int, protocol: str) -> dict:
     steps = [
@@ -1337,10 +1771,20 @@ async def run_diagnose_async(
     src_vrf: str = None
 ) -> dict:
     active_vrf = vrf or src_vrf
+    diagnosis_run_id = _new_diagnosis_run_id()
+    diagnosis_started_at = _beijing_now_iso()
     
     if source_ip == '10.1.1.10' and target_ip == '172.16.1.100':
         await asyncio.sleep(2.0)
-        return _generate_mock_diagnose(source_ip, target_ip, port, protocol)
+        mock_result = _generate_mock_diagnose(source_ip, target_ip, port, protocol)
+        mock_result['diagnosis_run_id'] = diagnosis_run_id
+        mock_result['snapshot'] = {
+            'run_id': diagnosis_run_id,
+            'started_at': diagnosis_started_at,
+            'finished_at': _beijing_now_iso(),
+            'mode': 'mock',
+        }
+        return mock_result
 
     steps = []
     hops = []
@@ -1459,7 +1903,7 @@ async def run_diagnose_async(
             if "huawei" in platform.lower() or "vrp" in platform.lower():
                 cmd = f"display ip routing-table vpn-instance {active_vrf} {target_ip}" if active_vrf else f"display ip routing-table {target_ip}"
             try:
-                route_out = await asyncio.to_thread(_send_command, dev, cmd)
+                route_out = await asyncio.to_thread(_send_command, dev, cmd, True)
                 if "directly connected" in route_out.lower() or "connected" in route_out.lower():
                     is_direct_subnet = True
             except Exception:
@@ -1478,7 +1922,7 @@ async def run_diagnose_async(
             if "huawei" in platform.lower() or "vrp" in platform.lower():
                 cmd = f"display arp vpn-instance {active_vrf} | include {target_ip}" if active_vrf else f"display arp | include {target_ip}"
             try:
-                arp_out = await asyncio.to_thread(_send_command, dev, cmd)
+                arp_out = await asyncio.to_thread(_send_command, dev, cmd, True)
                 arp_log += f"[{dev.get('hostname')}]# {cmd}\n{arp_out}\n"
                 if re.search(r'\b' + re.escape(target_ip) + r'\b', arp_out):
                     mac_m = re.search(r'([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}|[0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2})', arp_out)
@@ -1491,7 +1935,11 @@ async def run_diagnose_async(
         mac_to_show = target_mac or (arp_row.get('mac') if arp_row else 'N/A')
         steps[3].update({"status": "success", "message": f"ARP 分析成功：在网关上获取到 IP 对应的 MAC 绑定 ({mac_to_show})。", "log": arp_log or f"ARP Cache entry found in database: MAC={mac_to_show}"})
     else:
-        steps[3].update({"status": "warning", "message": "ARP 缺失：未获取到目标的 MAC 记录，目标主机可能静默或离线。", "log": arp_log or "No ARP cache entry found in database or real-time query."})
+        if is_direct_subnet:
+            arp_message = "ARP 缺失：直连网段未获取到目标 MAC，目标可能静默或离线。"
+        else:
+            arp_message = "ARP 未发现：目标属于远程网段，源设备未持有目标主机 ARP；该结果仅作辅助证据，不判定二层正常或异常。"
+        steps[3].update({"status": "warning", "message": arp_message, "log": arp_log or "No ARP cache entry found in database or real-time query.", "snapshot": _snapshot_meta(diagnosis_run_id, 'live_cli', _beijing_now_iso())})
 
     steps.append({"name": "P4. MAC 定位 (MAC Analysis)", "status": "pending", "message": "正在交换机 MAC 转发表中跟踪物理端口与 STP...", "log": ""})
     mac_norm = target_mac.replace('.', '').replace(':', '').replace('-', '').lower() if target_mac else ""
@@ -1501,12 +1949,18 @@ async def run_diagnose_async(
         if dev and (dev.get('role') or '').lower() in ('switch', 'access', 'distribution', 'core', 'l2', 'l3switch'):
             cmd = f"show mac address-table address {target_mac}"
             try:
-                mac_out = await asyncio.to_thread(_send_command, dev, cmd)
+                mac_out = await asyncio.to_thread(_send_command, dev, cmd, True)
                 mac_log += f"[{dev.get('hostname')}]# {cmd}\n{mac_out}\n"
             except Exception as e:
                 mac_log += f"MAC Check Error: {e}\n"
     
-    steps[4].update({"status": "success", "message": "MAC 定位流程执行完毕（二层物理链路及 STP 拓扑核验已通过）。" if mac_log else "未定位到目标主机的二层物理交换机端口，跳过 STP 核验。", "log": mac_log or "No switch port tracking needed for remote subnet route hops."})
+    steps[4].update({"status": "success" if mac_log else "warning", "message": "MAC 定位查询已执行，结果需结合实时接口状态确认。" if mac_log else "未定位到目标主机的二层物理交换机端口，不能据此判定二层链路正常。", "log": mac_log or "No switch port tracking needed for remote subnet route hops.", "snapshot": _snapshot_meta(diagnosis_run_id, 'live_cli' if mac_log else 'derived')})
+
+    steps.append({"name": "P4.5. 实时接口链路验证 (Live Interface Validation)", "status": "pending", "message": "正在实时核验路径出接口及目标接入接口状态...", "log": ""})
+    endpoint_state_task = (
+        asyncio.create_task(_collect_target_endpoint_state(target_ip))
+        if source_dev_id else None
+    )
 
     steps.append({"name": "P5. 路由递归 (Route Recursion)", "status": "pending", "message": "正在执行多跳路由路径递归追踪...", "log": ""})
     trace_success = False
@@ -1526,7 +1980,7 @@ async def run_diagnose_async(
 
     if trace_success:
         if trace_conclusion == "reachable":
-            steps[5].update({
+            steps[6].update({
                 "status": "success",
                 "message": f"路径连通：路径递归成功，共跳转 {len(hops)} 个三层中继节点。",
                 "log": trace_log
@@ -1536,23 +1990,74 @@ async def run_diagnose_async(
             if hops:
                 last_h = hops[-1]
                 interrupted_reason = f"路径停止在第 {last_h['hop']} 跳: {last_h['device_name']} ({last_h['detail']})"
-            steps[5].update({
+            steps[6].update({
                 "status": "warning",
                 "message": f"路径中断：{interrupted_reason}。",
                 "log": trace_log
             })
     else:
-        steps[5].update({
+        steps[6].update({
             "status": "warning",
             "message": "未能执行设备侧递归路由跟踪，回退到全局默认路由表寻路。",
             "log": "Recursive routing trace skipped / failed."
         })
 
+    endpoint_state = {}
+    if endpoint_state_task:
+        try:
+            endpoint_state = await endpoint_state_task
+        except Exception as exc:
+            endpoint_state = {'state': 'unknown', 'source': 'endpoint_refresh_error', 'error': str(exc)}
+    path_interface_evidence = await _validate_path_interfaces(hops, endpoint_state)
+    diag_context['endpoint_state'] = endpoint_state
+    diag_context['path_interface_states'] = path_interface_evidence.get('records', [])
+    interface_down = path_interface_evidence.get('down', [])
+    interface_degraded = path_interface_evidence.get('degraded', [])
+    interface_unknown = path_interface_evidence.get('unknown', [])
+    if interface_down:
+        for item in interface_down:
+            matching_hop = next(
+                (hop for hop in hops if str(hop.get('device_id') or '') == str(item.get('device_id') or '')
+                 and normalize_interface_name(hop.get('interface_name')).lower() == normalize_interface_name(item.get('interface_name')).lower()),
+                None,
+            )
+            if matching_hop:
+                matching_hop['status'] = 'blocked'
+                matching_hop['detail'] = f"实时接口验证失败：{item.get('device_name')} {item.get('interface_name')} 当前 DOWN"
+    p45_lines = [
+        f"[{item.get('device_name')}] {item.get('interface_name')} "
+        f"admin={item.get('admin_status', 'unknown')} oper={item.get('oper_status', 'unknown')} "
+        f"health={item.get('health', item.get('state', 'unknown'))} "
+        f"source={item.get('source', 'unknown')} collected_at={item.get('collected_at', '')}"
+        for item in path_interface_evidence.get('records', [])
+    ]
+    if interface_down:
+        p45_status = 'failed'
+        p45_message = f"实时接口验证失败：发现 {len(interface_down)} 个接口 DOWN，已覆盖历史拓扑/路由可达结论。"
+    elif interface_unknown:
+        p45_status = 'warning'
+        p45_message = f"实时接口验证不完整：{len(interface_unknown)} 个接口无法确认当前状态。"
+    elif interface_degraded:
+        p45_status = 'warning'
+        p45_message = f"实时接口验证完成：接口 UP，但发现 {len(interface_degraded)} 个接口存在错误计数或异常标志。"
+    elif path_interface_evidence.get('records'):
+        p45_status = 'success'
+        p45_message = "实时接口验证完成：路径出接口和目标接入接口状态均已实时确认。"
+    else:
+        p45_status = 'warning'
+        p45_message = "未找到可验证的路径接口，不能把历史拓扑状态当作实时链路结论。"
+    steps[5].update({
+        'status': p45_status,
+        'message': p45_message,
+        'log': '\n'.join(p45_lines) or 'No live path interface evidence collected.',
+        'evidence': path_interface_evidence,
+    })
+
     # ── P5.5: FIB 验证 ──
     steps.append({"name": "P5.5. FIB 验证 (FIB Verification)", "status": "pending", "message": "正在验证控制面路由与转发面 CEF/FIB 的一致性...", "log": ""})
     cef_ok = diag_context.get("cef_verified", True)
     cef_logs = diag_context.get("cef_logs", "No CEF logs collected.")
-    steps[6].update({
+    steps[7].update({
         "status": "success" if cef_ok else "failed",
         "message": "FIB 转发面校验成功：控制面路由条目与 ASIC 转发平面完全匹配。" if cef_ok else "FIB 转发故障：检测到软硬件路由表项失配，硬件转发平面缺失该路由。",
         "log": cef_logs
@@ -1561,7 +2066,7 @@ async def run_diagnose_async(
     # ── P6: 策略分析 ──
     steps.append({"name": "P6. 策略分析 (Policy Analysis)", "status": "pending", "message": "正在匹配链路上的 ACL/NAT/QoS 安全过滤策略...", "log": ""})
     acl_logs = diag_context.get("acl_logs", "No interface access lists applied.")
-    steps[7].update({
+    steps[8].update({
         "status": "success",
         "message": "安全策略校验完成：出接口未绑定任何 ACL 阻断流量规则。",
         "log": acl_logs
@@ -1574,13 +2079,13 @@ async def run_diagnose_async(
     is_bgp_route = any(r.get("source") == "BGP" for r in diag_context.get("route_sources", []))
     
     if is_bgp_route:
-        steps[8].update({
+        steps[9].update({
             "status": "success" if bgp_ok else "warning",
             "message": "BGP 控制平面分析完成：路由已成功在边界自治系统传播接收。" if bgp_ok else "BGP 路由警告：检测到路由前缀被 BGP 策略过滤，未能在本地安装。",
             "log": bgp_logs
         })
     else:
-        steps[8].update({
+        steps[9].update({
             "status": "success",
             "message": "目标网段不是 BGP 路由，跳过 BGP 控制策略校验。",
             "log": "Route source is OSPF/Static. BGP verification skipped."
@@ -1588,7 +2093,7 @@ async def run_diagnose_async(
 
     # ── P7: Overlay 分析 ──
     steps.append({"name": "P7. Overlay 分析 (Overlay Analysis)", "status": "pending", "message": "正在检查底层 VXLAN/IPsec 等隧道封装状态...", "log": ""})
-    steps[9].update({
+    steps[10].update({
         "status": "success",
         "message": "Overlay 核验完成：出接口采用物理原生 IP 二三层路由转发，无 Overlay 隧道封装。",
         "log": "No active tunnel interfaces (Tunnel/VxLAN) detected on egress paths."
@@ -1598,7 +2103,7 @@ async def run_diagnose_async(
     steps.append({"name": "P7.5. HA 分析 (HA Analysis)", "status": "pending", "message": "正在校验设备冗余双机(HSRP/VRRP)健康状态...", "log": ""})
     ha_ok = diag_context.get("ha_verified", True)
     ha_logs = diag_context.get("ha_logs", "No HA brief information.")
-    steps[10].update({
+    steps[11].update({
         "status": "success" if ha_ok else "warning",
         "message": "HA 双机状态正常：网关备用协议工作在健康的 Active/Standby 状态。" if ha_ok else "HA 状态异常警告：检测到双 Master 脑裂或冗余组状态抖动摆动！",
         "log": ha_logs
@@ -1607,12 +2112,20 @@ async def run_diagnose_async(
     # ── P8: 验证探测 ──
     icmp_success = False
     tcp_success = False
+    icmp_attempts: list[dict] = []
+    tcp_attempts: list[dict] = []
     if protocol.upper() == 'ICMP':
         steps.append({"name": "P8. ICMP 验证 (ICMP Validation)", "status": "pending", "message": f"正在向目标 {target_ip} 发起 ICMP Ping 验证探测...", "log": ""})
         icmp_detail = ""
         ping_log = ""
         try:
-            icmp_probe = await run_probe_async(target=target_ip, tests=['ping'])
+            probe_args = {
+                "target": target_ip,
+                "tests": ['ping'],
+                "source_device_id": source_dev_id,
+                "source_interface": source_ip if source_dev_id else '',
+            }
+            icmp_probe, icmp_attempts = await _run_stabilized_probe(probe_args)
             ping_res = icmp_probe.get('tests', {}).get('ping', {})
             icmp_success = ping_res.get('success', False)
             loss_percent = ping_res.get('loss_percent', 100)
@@ -1625,22 +2138,30 @@ async def run_diagnose_async(
             ping_log = f"Error: {e}"
 
         if icmp_success:
-            steps[11].update({
+            steps[12].update({
                 "status": "success",
-                "message": f"ICMP 探测成功：目标主机 {target_ip} Ping 响应正常 ({icmp_detail})。",
-                "log": ping_log or f"Ping to {target_ip} -> Success ({icmp_detail})"
+                "message": f"ICMP 探测成功：目标主机 {target_ip} Ping 响应正常 ({icmp_detail})，共执行 {len(icmp_attempts)} 轮实时验证。",
+                "log": (ping_log or f"Ping to {target_ip} -> Success ({icmp_detail})") + f"\nProbe attempts: {json.dumps(icmp_attempts, ensure_ascii=False)}",
+                "probe_attempts": icmp_attempts,
+                "snapshot": _snapshot_meta(diagnosis_run_id, 'live_probe', icmp_attempts[-1].get('collected_at') if icmp_attempts else None)
             })
         else:
-            steps[11].update({
-                "status": "warning" if trace_conclusion == "reachable" else "failed",
-                "message": f"ICMP 验证失败：Ping 探测未收到响应 ({icmp_detail})。物理路径正常但目标端未响应。" if trace_conclusion == "reachable" else f"ICMP 验证失败：Ping 探测未收到响应 ({icmp_detail})。",
-                "log": ping_log or f"Ping to {target_ip} -> Failed ({icmp_detail})"
+            steps[12].update({
+                "status": "failed",
+                "message": f"ICMP 验证失败：Ping 探测未收到响应 ({icmp_detail})。已以源设备 {source_ip} 的设备侧探测结果为准，不能用历史路由/ARP 记录判定目标当前可达。",
+                "log": (ping_log or f"Ping to {target_ip} -> Failed ({icmp_detail})") + f"\nProbe attempts: {json.dumps(icmp_attempts, ensure_ascii=False)}",
+                "probe_attempts": icmp_attempts,
+                "snapshot": _snapshot_meta(diagnosis_run_id, 'live_probe', icmp_attempts[-1].get('collected_at') if icmp_attempts else None)
             })
     else:
         steps.append({"name": f"P8. {protocol} 验证 ({protocol} Validation)", "status": "pending", "message": f"正在向目标发起 {protocol} 端口 {port} 验证探测...", "log": ""})
         tcp_detail = ""
         try:
-            tcp_probe = await run_probe_async(target=target_ip, tests=['tcp'], tcp_ports=[port])
+            tcp_probe, tcp_attempts = await _run_stabilized_probe({
+                'target': target_ip,
+                'tests': ['tcp'],
+                'tcp_ports': [port],
+            })
             tcp_res_list = tcp_probe.get('tests', {}).get('tcp', [])
             tcp_success = tcp_res_list and tcp_res_list[0].get('success')
             tcp_detail = tcp_res_list[0].get('detail', 'Connection timed out') if tcp_res_list else 'Connection timed out'
@@ -1648,24 +2169,47 @@ async def run_diagnose_async(
             tcp_detail = f"Probe Error: {e}"
 
         if tcp_success:
-            steps[11].update({
+            steps[12].update({
                 "status": "success",
-                "message": f"{protocol} 探测成功：已顺利完成与目标 {target_ip}:{port} 的连接建立。",
-                "log": f"{protocol} Probe to {target_ip}:{port} -> Success"
+                "message": f"{protocol} 探测成功：已顺利完成与目标 {target_ip}:{port} 的连接建立，共执行 {len(tcp_attempts)} 轮实时验证。",
+                "log": f"{protocol} Probe to {target_ip}:{port} -> Success\nProbe attempts: {json.dumps(tcp_attempts, ensure_ascii=False)}",
+                "probe_attempts": tcp_attempts,
+                "snapshot": _snapshot_meta(diagnosis_run_id, 'live_probe', tcp_attempts[-1].get('collected_at') if tcp_attempts else None)
             })
         else:
-            steps[11].update({
-                "status": "warning" if trace_conclusion == "reachable" else "failed",
-                "message": f"{protocol} 验证超时：未能建立 {protocol} 连接 ({tcp_detail})。物理路径正常但目标端未响应。",
-                "log": f"{protocol} Probe to {target_ip}:{port} -> Failed ({tcp_detail})"
+            steps[12].update({
+                "status": "failed",
+                "message": f"{protocol} 验证失败：未能建立 {protocol} 连接 ({tcp_detail})。当前探测未收到响应，不能据此判断物理链路正常。",
+                "log": f"{protocol} Probe to {target_ip}:{port} -> Failed ({tcp_detail})\nProbe attempts: {json.dumps(tcp_attempts, ensure_ascii=False)}",
+                "probe_attempts": tcp_attempts,
+                "snapshot": _snapshot_meta(diagnosis_run_id, 'live_probe', tcp_attempts[-1].get('collected_at') if tcp_attempts else None)
             })
+
+    if endpoint_state.get('state') == 'down':
+        hops = _mark_endpoint_down(hops, target_ip, endpoint_state)
+        trace_conclusion = "interrupted"
 
     # ── P8.5: 性能分析 ──
     steps.append({"name": "P8.5. 性能分析 (Performance Analysis)", "status": "pending", "message": "正在收集出接口计数器错包与 CPU 负荷...", "log": ""})
+    # P5 is a control-plane/path inference step. P8 is the current data-plane
+    # observation. A failed probe must downgrade the rendered target hop even
+    # when an old route/ARP snapshot made P5 look reachable.
+    probe_success = icmp_success if protocol.upper() == 'ICMP' else tcp_success
+    if not probe_success and hops:
+        target_hop = next(
+            (hop for hop in reversed(hops) if str(hop.get('ip') or '').strip() == target_ip.strip()),
+            None,
+        )
+        if target_hop:
+            target_hop['status'] = 'timeout'
+            target_hop['detail'] = (
+                f"当前 {protocol.upper()} 探测未收到响应；控制平面路径或历史 ARP/MAC 命中不代表目标端当前可达。"
+            )
+
     perf_logs = diag_context.get("perf_logs", "No performance data captured.")
     perf_warning = diag_context.get("perf_warning", False)
     
-    steps[12].update({
+    steps[13].update({
         "status": "warning" if perf_warning else "success",
         "message": "端口性能校验警告：路径中某些物理端口存在丢包、错包(CRC)增加，或设备 CPU 过载！" if perf_warning else "链路接口计数正常：无丢包、错包及 CPU 过载（利用率均在 10% 以下）。",
         "log": perf_logs
@@ -1678,38 +2222,132 @@ async def run_diagnose_async(
     evidence = []
     
     has_success = icmp_success if protocol.upper() == 'ICMP' else tcp_success
+    endpoint_state = diag_context.get("endpoint_state") or {}
+    endpoint_down = endpoint_state.get("state") == "down"
+    has_success = bool(has_success)
+    p3_arp_missing = steps[3].get('status') == 'warning'
+    p4_mac_missing = steps[4].get('status') == 'warning'
     p8_desc = f"P8 {protocol} 探测"
-    if trace_conclusion == "reachable" and has_success:
+    p3_evidence = "P3 ARP：缺失/未知（不作为当前二层正常结论）" if p3_arp_missing else "P3 ARP：已获取或对远程目标不适用"
+    p4_evidence = "P4 MAC：未完成精确定位" if p4_mac_missing else "P4 MAC：已执行定位或对远程目标不适用"
+    if endpoint_down:
+        confidence = "99%"
+        endpoint_name = endpoint_state.get('device_name') or endpoint_state.get('device_id') or '最后一跳接入交换机'
+        endpoint_port = endpoint_state.get('interface_name') or '接入端口'
+        evidence = [
+            "P5 路由递归仅证明控制平面存在路径",
+            f"最后一跳 {endpoint_name} {endpoint_port} 已通过实时 TextFSM 接口快照确认 DOWN",
+            f"P8 {protocol} 探测失败",
+        ]
+    elif trace_conclusion == "reachable" and has_success:
         confidence = "95%"
-        evidence = ["P0-P4 二层 ARP/MAC 检验正常", "P5 路由递归路径可达", f"{p8_desc}正常"]
+        evidence = [p3_evidence, p4_evidence, "P5 路由递归路径可达", f"{p8_desc}当前实时探测正常"]
     elif trace_conclusion == "reachable" and not has_success:
         confidence = "90%"
-        evidence = ["P5 路由路径全通", "P3 ARP 学习正常", f"{p8_desc}超时 (推断防火墙安全策略或主机禁用该协议)"]
+        evidence = [
+            "P5 路由递归仅提供控制面路径线索，不能证明当前数据面连通",
+            f"{p8_desc}未收到响应（以源设备实时探测结果为准）",
+            "应优先核查最后一跳接口、上下联链路及 VLAN/Trunk 状态",
+        ]
     elif not cef_ok:
         confidence = "95%"
         evidence = ["P5.5 FIB 验证控制面与 ASIC 转发项失配 (硬件路由黑洞)"]
     elif trace_conclusion == "interrupted":
         confidence = "97%"
-        evidence = ["P5 路由中间节点超时丢包 / 无回程路由", "P3 ARP 表项缺失"]
+        evidence = ["P5 路由中间节点超时丢包 / 无回程路由", p3_evidence, p4_evidence]
         
-    steps[13].update({
+    steps[14].update({
         "status": "success",
         "message": f"AI 根因推导完成：判定置信度为 {confidence}。推导证据链已生成。",
         "log": f"[AI Engine] Analyzing Telemetry...\nEvidence Checklist:\n" + "\n".join([f"- {e}" for e in evidence]) + f"\nConfidence: {confidence}"
     })
 
+    live_interface_down = bool(endpoint_state.get('state') == 'down' or interface_down)
+    evidence_conflicts: list[str] = []
+    if has_success and live_interface_down:
+        evidence_conflicts.append('P8 当前实时探测成功，但 P4.5 实时接口状态发现 DOWN；需要核对目标 IP 到接口的绑定关系。')
+    if has_success and trace_conclusion != 'reachable':
+        evidence_conflicts.append('P8 当前实时探测成功，但 P5 路径递归未得出可达结论；不能把任一历史结果单独作为根因。')
+    if has_success and is_direct_subnet and p3_arp_missing:
+        evidence_conflicts.append('直连网段的 P3 ARP 未发现目标，但 P8 当前实时探测成功；ARP 采集或目标接口定位需要复核。')
+
+    # Every step receives the same run identity.  Older cache/telemetry can be
+    # retained as auxiliary evidence, but it cannot silently enter this run's
+    # primary conclusion.
+    finished_at = _beijing_now_iso()
+    for step in steps:
+        step.setdefault('snapshot', _snapshot_meta(diagnosis_run_id, 'derived', finished_at, is_cached=False))
+        step.setdefault('run_id', diagnosis_run_id)
+    if evidence_conflicts:
+        confidence = '40%'
+        evidence = evidence_conflicts + [
+            f'P8 当前结果：{"成功" if has_success else "失败"}',
+            f'P3 ARP：{"缺失/未知" if p3_arp_missing else "已获取或不适用"}',
+            f'P4 MAC：{"未完成" if p4_mac_missing else "已执行或不适用"}',
+            'P4.5 已执行实时接口复核，冲突状态要求重新刷新关键节点后再确认。',
+        ]
+        steps[14].update({
+            'status': 'warning',
+            'message': '证据一致性检查发现冲突：已降低置信度，禁止生成确定性根因。',
+            'log': '[Evidence Conflict]\n' + '\n'.join(evidence),
+            'evidence_conflicts': evidence_conflicts,
+        })
+
+    steps.append({"name": "P9.5. 证据一致性检查 (Evidence Consistency)", "status": "pending", "message": "正在核对本次实时探测、接口、ARP 与路径证据...", "log": ""})
+    steps[15].update({
+        'status': 'warning' if evidence_conflicts else 'success',
+        'message': '存在证据冲突，已阻止高置信度根因输出。' if evidence_conflicts else '证据一致性检查通过：本次诊断结果使用同一运行快照。',
+        'log': '\n'.join(evidence_conflicts) if evidence_conflicts else 'No evidence conflicts detected.',
+        'evidence_conflicts': evidence_conflicts,
+        'snapshot': _snapshot_meta(diagnosis_run_id, 'derived', finished_at),
+    })
+
     # ── P10: 智能报告 ──
     steps.append({"name": "P10. 智能报告 (Smart Report)", "status": "pending", "message": "正在汇总报告输出...", "log": ""})
-    steps[14].update({
+    steps[16].update({
         "status": "success",
         "message": "智能诊断报告已成功生成。",
         "log": "Smart NPA Report formatted."
     })
+    for step in steps:
+        step.setdefault('snapshot', _snapshot_meta(diagnosis_run_id, 'derived', finished_at, is_cached=False))
+        step.setdefault('run_id', diagnosis_run_id)
 
     blocked_hop = next((h for h in hops if h["status"] == "blocked"), None)
     arp_missing_hop = next((h for h in hops if h["status"] == "timeout" and "ARP Missing" in h["detail"]), None)
+    diagnostic_status = 'confirmed'
     
-    if blocked_hop:
+    if evidence_conflicts:
+        diagnostic_status = 'evidence_conflict'
+        interrupted_at = '证据一致性检查'
+        conclusion = 'interrupted'
+        reason = '；'.join(evidence_conflicts)
+        impact = '当前诊断证据互相矛盾，暂时不能确认唯一根因'
+        suggestion = '请强制刷新路径设备、最后一跳接口和 ARP/MAC 后重新诊断；在冲突消除前，不执行面向主机或策略层的确定性修复。'
+        repair_commands = '# Evidence conflict: refresh live interface/route/ARP/MAC evidence and rerun diagnosis.'
+    elif endpoint_down:
+        endpoint_name = endpoint_state.get('device_name') or endpoint_state.get('device_id') or '最后一跳接入交换机'
+        endpoint_port = endpoint_state.get('interface_name') or '接入端口'
+        interrupted_at = f"{endpoint_name} {endpoint_port}"
+        conclusion = "interrupted"
+        reason = (
+            f"最后一跳接口 {interrupted_at} 当前为 DOWN（admin={endpoint_state.get('admin_status', 'unknown')}, "
+            f"oper={endpoint_state.get('oper_status', 'unknown')}）。此前的 ARP/MAC/拓扑记录属于定位线索，不能证明当前物理链路正常。"
+        )
+        impact = f"目标 {target_ip} 的 {protocol.upper()} 探测被最后一跳接入端口阻断"
+        suggestion = f"请登录 {endpoint_name} 检查 {endpoint_port}，确认是否误执行 shutdown，并恢复接口后重新执行诊断。"
+        repair_commands = f"interface {endpoint_port}\nundo shutdown  # Huawei VRP\nno shutdown    # Cisco/H3C"
+    elif interface_down:
+        failed_interface = interface_down[0]
+        endpoint_name = failed_interface.get('device_name') or failed_interface.get('device_id') or '路径设备'
+        endpoint_port = failed_interface.get('interface_name') or '出接口'
+        interrupted_at = f"{endpoint_name} {endpoint_port}"
+        conclusion = 'interrupted'
+        reason = f"P4.5 实时接口验证确认 {interrupted_at} 当前 DOWN；该实时结果优先于历史路由、ARP 和拓扑记录。"
+        impact = f"路径在 {interrupted_at} 处无法继续转发"
+        suggestion = f"请登录 {endpoint_name} 检查 {endpoint_port} 的 admin/oper 状态、对端接口、VLAN/Trunk 和接口告警，恢复后重新执行三轮验证。"
+        repair_commands = f"interface {endpoint_port}\ndisplay interface {endpoint_port}\nundo shutdown  # Huawei VRP\nno shutdown    # Cisco/H3C"
+    elif blocked_hop:
         interrupted_at = blocked_hop["device_name"]
         conclusion = "interrupted"
         reason = f"在路径节点 {interrupted_at} 处路由不可达 ({blocked_hop['detail']})"
@@ -1719,6 +2357,34 @@ async def run_diagnose_async(
             impact = f"无法访问 {target_ip} 的 {port} 端口服务"
         suggestion = f"请登录设备 {interrupted_at}，检查路由表配置，确保拥有到达目标网段 {target_ip} 的有效静态或动态路由条目。"
         repair_commands = f"configure terminal\n ip route {target_ip} 255.255.255.255 <下一跳地址>\n end\n write memory"
+    elif not has_success and cef_ok:
+        # P8 is the current data-plane observation. It must override a stale
+        # route/ARP snapshot and must never produce a reachable conclusion.
+        last_hop = next((hop for hop in reversed(hops) if hop.get("device_name")), None)
+        endpoint_name = endpoint_state.get('device_name') or (last_hop or {}).get('device_name') or '最后一跳接入链路'
+        endpoint_port = endpoint_state.get('interface_name') or (last_hop or {}).get('interface_name') or '接入接口'
+        interrupted_at = f"{endpoint_name} {endpoint_port}" if endpoint_port else endpoint_name
+        conclusion = "interrupted"
+        if protocol.upper() == 'ICMP':
+            reason = (
+                f"P8 源设备侧 ICMP 探测未收到 {target_ip} 的响应（100% 丢包或超时）。"
+                "P5 路由递归及 ARP/MAC 记录只能作为控制面定位线索，不能覆盖当前数据面失败结果。"
+            )
+            impact = f"目标 {target_ip} 当前不可达，ICMP 探测失败"
+        else:
+            reason = (
+                f"P8 源设备侧 {protocol} {port} 探测未建立连接。"
+                "P5 路由递归及 ARP/MAC 记录只能作为控制面定位线索，不能覆盖当前数据面失败结果。"
+            )
+            impact = f"目标 {target_ip}:{port} 当前不可达或服务未响应"
+        if arp_missing_hop:
+            reason += f" 最后一跳未发现目标主机 {target_ip} 的实时 ARP 记录。"
+        suggestion = (
+            f"1. 先登录最后一跳设备 {endpoint_name}，检查 {endpoint_port} 的 admin/oper 状态，确认没有误执行 shutdown；"
+            "\n2. 检查该接口上下联、VLAN/Trunk、MAC/ARP 学习及链路告警，恢复链路后重新执行诊断；"
+            "\n3. 只有确认链路恢复且探测仍失败时，再检查目标主机防火墙或应用端口监听。"
+        )
+        repair_commands = f"# 请先在最后一跳设备核对接口状态\ninterface {endpoint_port}\ndisplay interface {endpoint_port}\nundo shutdown  # Huawei VRP\nno shutdown    # Cisco/H3C"
     elif arp_missing_hop:
         interrupted_at = "直连网段"
         conclusion = "interrupted"
@@ -1733,25 +2399,14 @@ async def run_diagnose_async(
         impact = f"ASIC 芯片级路由丢包，导致访问 {target_ip} 异常"
         suggestion = "尝试清除并重建 CEF/FIB 状态，或重启设备接口。若依然无效，可能需要升级软件或更换板卡以修复 ASIC 同步问题。"
         repair_commands = "clear ip cef 172.16.1.100"
-    elif trace_conclusion == "reachable" and not has_success:
-        interrupted_at = "目标主机/策略层"
-        conclusion = "interrupted"
-        if protocol.upper() == 'ICMP':
-            reason = "物理路由及邻居转发正常，ARP 在线，但 ICMP Ping 探测超时无响应。"
-            impact = "网际控制报文协议 (ICMP) 不可达"
-            suggestion = "1. 请检查目标服务器是否开启了「禁止 Ping」(例如 Windows 上的 ICMPv4-In 规则未启用，或 Linux 上的 icmp_echo_ignore_all 被设置为 1)。\n2. 检查沿途防火墙等安全设备是否禁用了 ICMP 流量。"
-            repair_commands = "# Windows Firewall 允许 ICMP(Ping) 建议：\nnetsh advfirewall firewall add rule name='Allow ICMPv4-In' protocol=icmpv4:8,any dir=in action=allow"
-        else:
-            reason = f"物理路由及邻居转发正常，ARP 在线，但 {protocol} {port} 端口探测被拒绝或超时。"
-            impact = "应用层业务不可达"
-            suggestion = f"1. 请检查目标服务器上的本地防火墙（如 Windows Defender Firewall 或 Linux iptables）是否限制了端口 {port}。\n2. 确认目标应用服务已启动并正确监听在端口 {port}。"
-            repair_commands = f"# Windows Firewall 允许命令建议：\nNew-NetFirewallRule -DisplayName 'Allow {protocol} Port' -Direction Inbound -LocalPort {port} -Protocol {protocol} -Action Allow"
     elif trace_conclusion == "reachable":
         conclusion = "reachable"
         interrupted_at = ""
-        reason = "网络控制平面路由及邻居转发正常，且目标主机已学习到 ARP 记录（处于在线状态）"
+        reason = "P8 当前源设备实时探测成功；P5 路径递归未发现实时阻断。"
+        if p3_arp_missing:
+            reason += " P3 未获取目标 ARP，当前仅作为未知/辅助证据，不能表述为 ARP 正常。"
         impact = "物理及逻辑网络已连通"
-        suggestion = "链路状态完好，路由递归及 ARP 校验成功。如果业务依然不可用，请检查目标服务器主机内部的防火墙策略或应用服务端口监听状态。"
+        suggestion = "当前实时探测可达；若业务仍异常，请结合目标端口、应用层响应和策略日志继续核查，不把历史 ARP/MAC 快照作为当前结论。"
         repair_commands = "# 链路状态完好，无需配置修复建议。"
     else:
         interrupted_at = "网络核心网关"
@@ -1779,6 +2434,22 @@ async def run_diagnose_async(
     return {
         "success": True,
         "timestamp": _beijing_now_iso(),
+        "diagnosis_run_id": diagnosis_run_id,
+        "snapshot": {
+            "run_id": diagnosis_run_id,
+            "started_at": diagnosis_started_at,
+            "finished_at": _beijing_now_iso(),
+            "primary_sources": {
+                "probe": "live_probe",
+                "interfaces": "live_textfsm",
+                "route": "live_cli" if diag_context.get('force_live_route') else "route_cache",
+                "arp": "live_cli" if source_dev_id else "unknown",
+            },
+            "route_cache_hits": diag_context.get('route_cache_hits', 0),
+            "command_cache_hits": diag_context.get('command_cache_hits', 0),
+            "evidence_conflicts": evidence_conflicts,
+            "is_cached": False,
+        },
         "source_ip": source_ip,
         "target_ip": target_ip,
         "port": port,
@@ -1793,6 +2464,10 @@ async def run_diagnose_async(
             "suggestion": suggestion,
             "confidence": confidence,
             "evidence": evidence,
+            "diagnostic_status": diagnostic_status,
+            "evidence_conflicts": evidence_conflicts,
+            "interface_states": diag_context.get('path_interface_states', []),
+            "probe_attempts": icmp_attempts if protocol.upper() == 'ICMP' else tcp_attempts,
             "repair_commands": repair_commands
         }
     }

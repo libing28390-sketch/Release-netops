@@ -445,6 +445,9 @@ async def _exec_commands(service, device: dict, commands: list, is_config: bool)
                     else:
                         output_lines.append(f"ERROR: {err}")
                     all_ok = False
+            if is_config and all_ok:
+                from core.cmd_cache import clear_cmd_cache
+                clear_cmd_cache(device.get('ip_address') or device.get('hostname') or '')
             return {"success": all_ok, "output": "\n\n".join(output_lines), "commands": commands}
         except Exception as e:
             return {"success": False, "output": str(e), "commands": commands, "error": str(e)}

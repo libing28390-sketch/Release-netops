@@ -146,6 +146,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [interfaceGenerationLoading, setInterfaceGenerationLoading] = useState(false);
   const [interfaceGenerationError, setInterfaceGenerationError] = useState('');
   const [interfaceGenerationResult, setInterfaceGenerationResult] = useState('');
+  const [showSkippedDetails, setShowSkippedDetails] = useState(false);
 
   // Form State
   const [form, setForm] = useState({
@@ -1224,9 +1225,34 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                   </div>
                 )}
                 {interfaceSkipped.length > 0 && (
-                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-700">
-                    <div className="flex items-center gap-1.5 font-bold"><AlertTriangle size={14} />{zh ? `有 ${interfaceSkipped.length} 条接口未纳入` : `${interfaceSkipped.length} interfaces skipped`}</div>
-                    <div className="mt-1 text-[10px]">{interfaceSkipped.slice(0, 3).map((item) => `${item.device_name}/${item.interface_name}: ${item.reason}`).join('；')}</div>
+                  <div className="p-3.5 rounded-2xl bg-amber-50/50 border border-amber-200/60 text-xs text-amber-800">
+                    <div className="flex items-center justify-between font-bold mb-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <AlertTriangle size={14} className="text-amber-500" />
+                        <span>{zh ? `有 ${interfaceSkipped.length} 个接口未纳入` : `${interfaceSkipped.length} interfaces skipped`}</span>
+                      </div>
+                      <button 
+                        onClick={() => setShowSkippedDetails(!showSkippedDetails)}
+                        className="text-[10px] text-amber-600 hover:text-amber-700 underline font-medium"
+                      >
+                        {showSkippedDetails ? (zh ? '收起' : '展开全部') : (zh ? '展开全部' : 'Show All')}
+                      </button>
+                    </div>
+                    {showSkippedDetails ? (
+                      <div className="mt-2 space-y-1 max-h-32 overflow-y-auto pr-1">
+                        {interfaceSkipped.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-white/70 border border-amber-100/60 text-[10px]">
+                            <span className="font-semibold text-slate-700">{item.device_name}/{item.interface_name}</span>
+                            <span className="text-amber-600 font-medium">{item.reason}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-[10px] text-amber-750 truncate">
+                        {interfaceSkipped.slice(0, 3).map((item) => `${item.device_name}/${item.interface_name}`).join(', ')}
+                        {interfaceSkipped.length > 3 && ' ...'}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

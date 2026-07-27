@@ -684,7 +684,10 @@ const AppMainContent: React.FC = () => {
                const workspaceUrl = `/access/workspace?device_id=${encodeURIComponent(device.id)}&auto=normal`;
                const workspaceWindow = window.open(workspaceUrl, '_blank', 'noopener,noreferrer');
                if (!workspaceWindow) {
-                 showToast(language === 'zh' ? '浏览器阻止了新窗口，请允许本站弹窗后重试' : 'The browser blocked the new tab. Allow pop-ups and try again.', 'error');
+                 // Popup blocking must not turn a successful click into a false
+                 // error. Continue in the current tab; the workspace will
+                 // create the session and redirect to the terminal normally.
+                 window.location.assign(workspaceUrl);
                }
              }}
              onOpenDeviceDetail={handleShowDetails}

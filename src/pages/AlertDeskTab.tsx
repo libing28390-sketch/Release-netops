@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Activity, AlertTriangle, Bell, CheckCircle2, CheckSquare, Clock, Download, Eye, ExternalLink, MapPin, RefreshCw, Repeat, Search, Square, UserCheck, Wrench, X } from 'lucide-react';
+import { Activity, AlertTriangle, Bell, CheckCircle2, CheckSquare, Clock, Download, Eye, ExternalLink, MapPin, Network, RefreshCw, Repeat, Search, Square, UserCheck, Wrench, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import type { AlertDetailResponse, AlertListResponse, AlertRecord } from '../types';
 import Pagination from '../components/Pagination';
@@ -482,30 +482,52 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                         <p className="mt-1 line-clamp-1 text-xs text-black/45">{row.message}</p>
                       </button>
                     </td>
-                    <td className="px-5 py-4 align-top text-sm text-black/60">
-                      {row.device_id ? (
-                        <button
-                          onClick={() => onNavigateToDevice?.(row.device_id!)}
-                          className="text-left text-[#2b6b8f] hover:underline"
-                          title={language === 'zh' ? '查看设备详情' : 'View device details'}
-                        >
-                          <div>{row.hostname || row.ip_address || '--'}</div>
-                          <div className="mt-1 text-xs text-black/40">{row.interface_name || row.site || '--'}</div>
-                        </button>
-                      ) : (
-                        <>
-                          <div>{row.hostname || row.ip_address || '--'}</div>
-                          <div className="mt-1 text-xs text-black/40">{row.interface_name || row.site || '--'}</div>
-                        </>
-                      )}
+                     <td className="px-5 py-4 align-top text-sm text-black/60">
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-1.5 font-semibold text-[#164e63]">
+                          <span>{row.hostname || row.ip_address || '--'}</span>
+                          {row.device_id && (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => onNavigateToDevice?.(row.device_id!)}
+                                className="text-cyan-500 hover:text-cyan-700 transition-colors p-0.5"
+                                title={language === 'zh' ? '跳转设备详情' : 'Jump to device details'}
+                              >
+                                <ExternalLink size={12} />
+                              </button>
+                              <button
+                                onClick={() => onNavigateToTopology?.(row.device_id!)}
+                                className="text-indigo-500 hover:text-indigo-700 transition-colors p-0.5"
+                                title={language === 'zh' ? '在拓扑图上定位' : 'Locate on topology'}
+                              >
+                                <Network size={12} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-1 text-xs text-black/40">{row.interface_name || row.site || '--'}</div>
+                      </div>
                     </td>
                     <td className="px-5 py-4 align-top">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${severityBadgeClass(row.severity)}`}>
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase shadow-sm ${
+                        row.severity === 'critical'
+                          ? 'bg-rose-50 text-rose-700 border border-rose-200/50 shadow-rose-100'
+                          : row.severity === 'major'
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200/50 shadow-amber-100'
+                          : 'bg-blue-50 text-blue-700 border border-blue-200/50 shadow-blue-100'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+                          row.severity === 'critical'
+                            ? 'bg-rose-500 shadow-[0_0_8px_#f43f5e]'
+                            : row.severity === 'major'
+                            ? 'bg-amber-500 shadow-[0_0_8px_#f59e0b]'
+                            : 'bg-blue-500 shadow-[0_0_8px_#3b82f6]'
+                        }`} />
                         {severityLabel(row.severity, language)}
                       </span>
                     </td>
                     <td className="px-5 py-4 align-top">
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${alertWorkflowBadgeClass(row.workflow_status)}`}>
+                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${alertWorkflowBadgeClass(row.workflow_status)}`}>
                         {workflowLabel(row.workflow_status, language)}
                       </span>
                     </td>
@@ -603,7 +625,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
             }}
           >
             <motion.div
-              className="relative max-h-[92vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-[0_32px_80px_rgba(0,0,0,0.18)]"
+              className="relative max-h-[92vh] w-full max-w-2xl overflow-hidden rounded-[24px] bg-white/94 dark:bg-[#1e293b]/94 backdrop-blur-xl border border-white/20 dark:border-white/5 shadow-[0_32px_80px_rgba(11,35,64,0.22)]"
               initial={{ y: 24, opacity: 0, scale: 0.97 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
               exit={{ y: 24, opacity: 0, scale: 0.97 }}

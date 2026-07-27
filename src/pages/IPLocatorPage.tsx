@@ -139,6 +139,12 @@ const generateSequenceEvents = (result: any, lanes?: any[]) => {
 
   const srcMac = getMac(result.source_ip, '01');
   const targetMac = getMac(result.target_ip, 'ff');
+  const probeStep = (result.steps || []).find((step: any) => /^P8\.(?!5\.)/.test(String(step?.name || '')));
+  const probeText = `${probeStep?.message || ''}\n${probeStep?.log || ''}`;
+  const probeFailed = Boolean(probeStep && (
+    probeStep.status !== 'success' ||
+    /(?:100(?:\.0+)?%\s*(?:packet\s+loss|loss)|丢包率\s*100(?:\.0+)?%|request\s*time\s*out|request\s*timeout|timeout|未收到响应|探测失败|验证失败)/i.test(probeText)
+  ));
 
   const getColIndex = (id: string, defaultVal: number) => {
     if (lanes) {
@@ -191,7 +197,7 @@ const generateSequenceEvents = (result: any, lanes?: any[]) => {
       deviceName: hop.device_name
     });
 
-    if (!isBlocked && !isTimeout) {
+    if (!isBlocked && !isTimeout && !probeFailed) {
       const latencyStr = hop.rtt_ms && hop.rtt_ms.length > 0 ? ` (${Math.round(hop.rtt_ms[0])}ms)` : '';
       events.push({
         id: `response-${idx}`,
@@ -216,16 +222,16 @@ const generateSequenceEvents = (result: any, lanes?: any[]) => {
     }
   });
 
-  const isPortProbeFailed = result.report && result.report.conclusion === 'interrupted' && result.report.interrupted_at === '目标主机/策略层';
-  
+  const isReachable = Boolean(result.report && result.report.conclusion === 'reachable' && !probeFailed);
+  const isPortProbeFailed = Boolean(probeFailed || (result.report && result.report.conclusion === 'interrupted'));
   const isTimeout = isPortProbeFailed && (
+    proto === 'ICMP' ||
     (result.report.reason || '').toLowerCase().includes('timeout') ||
     (result.report.reason || '').toLowerCase().includes('超时') ||
-    (result.report.reason || '').toLowerCase().includes('no response')
+    (result.report.reason || '').toLowerCase().includes('no response') ||
+    /request\s*time\s*out|request\s*timeout|timeout|未收到响应/i.test(probeText)
   );
-  
   const isRefused = isPortProbeFailed && !isTimeout;
-  const isReachable = result.report && result.report.conclusion === 'reachable';
 
   if (isReachable || isPortProbeFailed) {
     const finalTtl = hops.length + 1;
@@ -291,6 +297,41 @@ const generateSequenceEvents = (result: any, lanes?: any[]) => {
   }
 
   return events;
+};
+
+const reconcileDiagnosticProbeResult = (raw: any) => {
+  if (!raw) return raw;
+  const steps = Array.isArray(raw.steps) ? raw.steps : [];
+  const probeStep = steps.find((step: any) => /^P8\.(?!5\.)/.test(String(step?.name || '')));
+  if (!probeStep) return raw;
+
+  const probeText = `${probeStep.message || ''}\n${probeStep.log || ''}`;
+  const packetLoss100 = /(?:100(?:\.0+)?%\s*(?:packet\s+loss|loss)|丢包率\s*100(?:\.0+)?%)/i.test(probeText);
+  const timeoutText = /request\s*time\s*out|request\s*timeout|timeout|未收到响应|探测失败|验证失败/i.test(probeText);
+  const probeFailed = probeStep.status !== 'success' || packetLoss100 || timeoutText;
+  if (!probeFailed) return raw;
+
+  const targetIp = String(raw.target_ip || '').trim();
+  const hops = (raw.hops || []).map((hop: any) => {
+    if (String(hop?.ip || '').trim() !== targetIp) return hop;
+    return {
+      ...hop,
+      status: 'timeout',
+      detail: 'P8 当前探测未收到响应；控制平面路径或历史 ARP/MAC 记录不代表目标当前可达。',
+    };
+  });
+  const report = {
+    ...(raw.report || {}),
+    conclusion: 'interrupted',
+    interrupted_at: raw.report?.interrupted_at || '目标主机/策略层',
+    reason: 'P8 当前源设备探测失败，目标端未返回响应；不能依据历史路由或 ARP/MAC 记录判定路径可达。',
+    impact: `${raw.protocol || 'ICMP'} 探测不可达`,
+    evidence: [
+      ...(Array.isArray(raw.report?.evidence) ? raw.report.evidence : []),
+      'P8 当前探测失败，已覆盖历史控制面可达结论',
+    ],
+  };
+  return { ...raw, hops, report };
 };
 
 const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
@@ -363,7 +404,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const [nsotSweeping, setNsotSweeping] = useState(false);
   const [nsotSweepSuccessMsg, setNsotSweepSuccessMsg] = useState('');
   const [nsotPage, setNsotPage] = useState(1);
-  const [nsotPageSize, setNsotPageSize] = useState(15);
+  const [nsotPageSize, setNsotPageSize] = useState(10);
 
   // Advanced Search/Filter States
   const [nsotShowAdvanced, setNsotShowAdvanced] = useState(false);
@@ -456,6 +497,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
       "P2. 目标分类 (Target Classification)",
       "P3. ARP 分析 (ARP Analysis)",
       "P4. MAC 定位 (MAC Analysis)",
+      "P4.5. 实时接口链路验证 (Live Interface Validation)",
       "P5. 路由递归 (Route Recursion)",
       "P5.5. FIB 验证 (FIB Verification)",
       "P6. 策略分析 (Policy Analysis)",
@@ -465,6 +507,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
       p8Name,
       "P8.5. 性能分析 (Performance Analysis)",
       "P9. AI 根因推导 (AI Root Cause Engine)",
+      "P9.5. 证据一致性检查 (Evidence Consistency)",
       "P10. 智能报告 (Smart Report)"
     ];
   }, [diagProtocol]);
@@ -525,7 +568,7 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
         const errData = await resp.json().catch(() => ({}));
         throw new Error(errData.detail || `HTTP ${resp.status}`);
       }
-      const data = await resp.json();
+      const data = reconcileDiagnosticProbeResult(await resp.json());
       
       clearInterval(interval);
       setDiagCurrentStep(stepNames.length - 1);
@@ -2550,7 +2593,7 @@ ${rep.repair_commands}
               </div>
             )}
 
-            {filtered.length > nsotPageSize && (
+            {filtered.length > 0 && (
               <Pagination
                 currentPage={safePage}
                 totalItems={filtered.length}
@@ -2789,6 +2832,7 @@ ${rep.repair_commands}
                   { name: "P2. 目标分类 (Target Classification)", desc: zh ? "判定目标为直连还是远程网段" : "Determine subnet classification" },
                   { name: "P3. ARP 分析 (ARP Analysis)", desc: zh ? "查询网关 ARP 获取 MAC 地址" : "Retrieve MAC from gateway ARP table" },
                   { name: "P4. MAC 定位 (MAC Analysis)", desc: zh ? "在二层交换机定位物理接口与STP" : "Track MAC to switch port and check STP" },
+                  { name: "P4.5. 实时接口链路验证 (Live Interface Validation)", desc: zh ? "实时核验路径出接口和目标接入接口 admin/oper 状态" : "Live-check path egress and target access interface state" },
                   { name: "P5. 路由递归 (Route Recursion)", desc: zh ? "多跳路由路径递归跟踪" : "Recursively track routing hops" },
                   { name: "P5.5. FIB 验证 (FIB Verification)", desc: zh ? "控制面与转发面(CEF/FIB)一致性校验" : "Verify CEF/FIB forwarding plane" },
                   { name: "P6. 策略分析 (Policy Analysis)", desc: zh ? "核验接口 ACL 与防火墙策略过滤" : "Check ACLs and firewall security policies" },
@@ -2803,6 +2847,7 @@ ${rep.repair_commands}
                   },
                   { name: "P8.5. 性能分析 (Performance Analysis)", desc: zh ? "收集端口错包(CRC)、丢包与CPU负荷" : "Analyze packet drops, CRC errors and CPU" },
                   { name: "P9. AI 根因推导 (AI Root Cause Engine)", desc: zh ? "多维证据链关联与置信度推算" : "Correlate evidence & calculate confidence" },
+                  { name: "P9.5. 证据一致性检查 (Evidence Consistency)", desc: zh ? "核对实时探测、接口、ARP与路径证据" : "Check probe, interface, ARP and path evidence consistency" },
                   { name: "P10. 智能报告 (Smart Report)", desc: zh ? "生成精确 of CLI配置建议与修复结论" : "Format suggestion report & CLI commands" }
                 ];
 
@@ -2958,7 +3003,11 @@ ${rep.repair_commands}
       {/* ── Path Topology & Sequence Flow Visualization ── */}
       {diagResult && diagResult.hops && (() => {
         const finalHops = diagResult.hops || [];
-        const hasTarget = diagResult.report.conclusion === 'reachable';
+        const icmpOrServiceProbe = (diagResult.steps || []).find((step: any) =>
+          /^P8\.(?!5\.)/.test(String(step?.name || ''))
+        );
+        const hasTarget = diagResult.report.conclusion === 'reachable'
+          && icmpOrServiceProbe?.status === 'success';
         const lastHopIsTarget = finalHops.length > 0 && finalHops[finalHops.length - 1].ip === diagResult.target_ip;
         
         // Construct lanes list
@@ -3524,6 +3573,7 @@ ${rep.repair_commands}
                 </h3>
                 <p className="text-xs text-neutral-400 mt-0.5">
                   {zh ? '报告生成时间' : 'Report generated at'}: {diagResult.timestamp?.replace('T', ' ').slice(0, 19)}
+                  {diagResult.diagnosis_run_id && ` · Run ${diagResult.diagnosis_run_id}`}
                 </p>
               </div>
             </div>
@@ -3564,17 +3614,35 @@ ${rep.repair_commands}
 
               {/* Status Badge */}
               <span className={`text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider border ${
-                diagResult.report.conclusion === 'interrupted'
+                diagResult.report.diagnostic_status === 'evidence_conflict' || diagResult.report.conclusion === 'interrupted'
                   ? "bg-rose-100 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800/30"
                   : "bg-emerald-100 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/30"
               }`}>
-                {diagResult.report.conclusion === 'interrupted' ? (zh ? '检测到阻断' : 'Blocked') : (zh ? '路径可达' : 'Reachable')}
+                {diagResult.report.diagnostic_status === 'evidence_conflict'
+                  ? (zh ? '证据冲突' : 'Evidence Conflict')
+                  : diagResult.report.conclusion === 'interrupted'
+                    ? (zh ? '检测到阻断' : 'Blocked')
+                    : (zh ? '路径可达' : 'Reachable')}
               </span>
             </div>
           </div>
 
           {/* Card Body */}
           <div className="p-6 space-y-6">
+            {(diagResult.snapshot || diagResult.report.diagnostic_status === 'evidence_conflict') && (
+              <div className={`rounded-xl border px-4 py-3 text-xs ${diagResult.report.diagnostic_status === 'evidence_conflict' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-cyan-50 border-cyan-200 text-cyan-800'}`}>
+                <div className="font-bold mb-1">
+                  {diagResult.report.diagnostic_status === 'evidence_conflict'
+                    ? (zh ? '本次诊断存在证据冲突，未生成确定性根因。' : 'Evidence conflict detected; no deterministic root cause was generated.')
+                    : (zh ? '本报告主结论使用本次诊断运行快照。' : 'The primary conclusion uses this diagnosis run snapshot.')}
+                </div>
+                {diagResult.snapshot && (
+                  <div className="font-mono text-[10px] opacity-80">
+                    {zh ? '实时来源' : 'Live sources'}: {Object.entries(diagResult.snapshot.primary_sources || {}).map(([key, value]) => `${key}=${value}`).join(' · ')}
+                  </div>
+                )}
+              </div>
+            )}
             {/* Grid Layout for Checklist and Cause/Impact */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               

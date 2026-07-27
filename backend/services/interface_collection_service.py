@@ -18,6 +18,7 @@ from typing import Any
 from database import get_db_connection
 from core.interface_utils import normalize_interface_name
 from services.read_only_collection_adapter import collect_read_only_evidence
+from services.normalizers.common import interface_type as infer_interface_type
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,22 @@ def _normalize_ip(value: Any) -> str:
             return str(ipaddress.ip_address(candidate.split("/")[0]))
         except ValueError:
             return ""
+
+
+def _normalize_prefix_length(value: Any) -> int | None:
+    """Return a validated prefix length from either CIDR length or netmask."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("/"):
+        raw = raw[1:].strip()
+    try:
+        if "." in raw:
+            return ipaddress.IPv4Network(f"0.0.0.0/{raw}").prefixlen
+        prefix_length = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return prefix_length if 0 <= prefix_length <= 128 else None
 
 
 def _normalize_status(value: Any) -> str:
@@ -116,7 +133,7 @@ def _load_ip_inventory(device_id: str) -> dict[str, dict[str, Any]]:
     conn = get_db_connection()
     try:
         rows = conn.execute(
-            """SELECT ip, interface, type, last_seen
+            """SELECT ip, mask, interface, type, last_seen
                FROM ip_inventory
                WHERE device_id = ? AND COALESCE(ip, '') <> ''""",
             (device_id,),
@@ -127,7 +144,11 @@ def _load_ip_inventory(device_id: str) -> dict[str, dict[str, Any]]:
             key = normalize_interface_name(item.get("interface"))
             ip_value = _normalize_ip(item.get("ip"))
             if key and ip_value:
-                result[key] = {**item, "ip": ip_value}
+                result[key] = {
+                    **item,
+                    "ip": ip_value,
+                    "prefix_length": _normalize_prefix_length(item.get("mask")),
+                }
         return result
     finally:
         conn.close()
@@ -139,24 +160,66 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
     conn = get_db_connection()
     try:
         updated = 0
+        observed_at = _now()
+        current_keys = {
+            normalize_interface_name(item.get("interface_name"))
+            for item in interface_rows
+            if normalize_interface_name(item.get("interface_name"))
+        }
+        existing_rows = conn.execute(
+            "SELECT id, interface_name FROM interfaces WHERE device_id = ?",
+            (device["id"],),
+        ).fetchall()
+        existing_by_key = {
+            normalize_interface_name(row["interface_name"]): row["id"]
+            for row in existing_rows
+            if normalize_interface_name(row["interface_name"])
+        }
+        # ``interfaces`` is a current-state projection, not a history table.
+        # Preserve the row identity for topology references, but remove the
+        # address/status snapshot from interfaces that disappeared from the
+        # authoritative inventory used by this successful collection.
+        for row in existing_rows:
+            if normalize_interface_name(row["interface_name"]) not in current_keys:
+                conn.execute(
+                    """UPDATE interfaces SET
+                           primary_ip = '', ip_address = '', ip_prefix_length = NULL,
+                           is_l3 = FALSE, ip_enabled = 0,
+                           admin_status = 'unknown', oper_status = 'unknown',
+                           last_seen = ?
+                       WHERE id = ?""",
+                    (observed_at, row["id"]),
+                )
         for item in interface_rows:
+            detected_interface_type = infer_interface_type(item.get("interface_name"))
             existing = conn.execute(
                 """SELECT id FROM interfaces
                    WHERE device_id = ? AND LOWER(TRIM(interface_name)) = LOWER(TRIM(?))
                    LIMIT 1""",
                 (device["id"], item["interface_name"]),
             ).fetchone()
-            if existing:
+            existing_id = (
+                existing["id"]
+                if existing
+                else existing_by_key.get(normalize_interface_name(item["interface_name"]))
+            )
+            if existing_id:
                 conn.execute(
                     """UPDATE interfaces SET
                            admin_status = ?, oper_status = ?,
                            primary_ip = ?, ip_address = ?, is_l3 = TRUE,
                            ip_enabled = 1,
-                           switchport_mode = COALESCE(NULLIF(switchport_mode, ''), 'routed')
+                           ip_prefix_length = ?,
+                           interface_type = CASE
+                               WHEN ? = 'port_channel' THEN 'port_channel'
+                               ELSE interface_type
+                           END,
+                           switchport_mode = COALESCE(NULLIF(switchport_mode, ''), 'routed'),
+                           last_seen = ?
                        WHERE id = ?""",
                     (
                         item["admin_status"], item["oper_status"], item["interface_ip"],
-                        item["interface_ip"], existing["id"],
+                        item["interface_ip"], item.get("prefix_length"), detected_interface_type, observed_at, existing_id,
                     ),
                 )
             else:
@@ -164,13 +227,18 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                     """INSERT INTO interfaces (
                            id, device_id, interface_name, description,
                            admin_status, oper_status, interface_type,
-                           switchport_mode, primary_ip, ip_address, is_l3, ip_enabled
-                       ) VALUES (?, ?, ?, '', ?, ?, 'physical', 'routed', ?, ?, TRUE, 1)""",
+                           switchport_mode, primary_ip, ip_address, ip_prefix_length,
+                           is_l3, ip_enabled, last_seen
+                       ) VALUES (?, ?, ?, '', ?, ?, ?, 'routed', ?, ?, ?, TRUE, 1, ?)""",
                     (
                         f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', item['interface_name']).strip('-').lower()}",
                         device["id"], item["interface_name"], item["admin_status"],
-                        item["oper_status"], item["interface_ip"], item["interface_ip"],
+                        item["oper_status"], detected_interface_type, item["interface_ip"],
+                        item["interface_ip"], item.get("prefix_length"), observed_at,
                     ),
+                )
+                existing_by_key[normalize_interface_name(item["interface_name"])] = (
+                    f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', item['interface_name']).strip('-').lower()}"
                 )
             updated += 1
         conn.commit()
@@ -204,12 +272,18 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
         raise RuntimeError(str(category.get("error") or "接口状态采集失败"))
 
     parsed_by_interface: dict[str, dict[str, str]] = {}
+    parser_ip_keys: set[str] = set()
+    inventory_ips = {key: value["ip"] for key, value in inventory.items()}
     for record in category.get("records") or []:
         if not isinstance(record, dict):
             continue
-        interface_name, parsed_ip, admin_status, oper_status = _status_record(record, {key: value["ip"] for key, value in inventory.items()})
+        # Parse the address once without the legacy inventory fallback so we
+        # can tell whether this successful device response is authoritative.
+        interface_name, direct_ip, admin_status, oper_status = _status_record(record, {})
         key = normalize_interface_name(interface_name)
-        ip_value = parsed_ip or (inventory.get(key) or {}).get("ip", "")
+        ip_value = direct_ip or inventory_ips.get(key, "")
+        if direct_ip:
+            parser_ip_keys.add(key)
         if key and ip_value:
             parsed_by_interface[key] = {
                 "interface_name": interface_name,
@@ -218,15 +292,22 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
                 "oper_status": oper_status,
             }
 
-    # NSOT owns the complete IP list.  Keep every IP-bearing interface in the
-    # result, even when a vendor parser omitted a row; that row remains clearly
-    # marked unknown until the next successful status collection.
+    # When the device command includes IPs, that response is the current
+    # snapshot and supersedes stale inventory rows.  If the vendor command is
+    # status-only, retain the inventory fallback so status collection remains
+    # useful for those platforms.
+    current_keys = parser_ip_keys or set(inventory)
     rows = []
-    for key, item in inventory.items():
+    for key in current_keys:
+        item = inventory.get(key, {})
         parsed = parsed_by_interface.get(key, {})
+        interface_ip = parsed.get("interface_ip") or item.get("ip", "")
+        if not interface_ip:
+            continue
         rows.append({
             "interface_name": parsed.get("interface_name") or item.get("interface") or key,
-            "interface_ip": item["ip"],
+            "interface_ip": interface_ip,
+            "prefix_length": item.get("prefix_length"),
             "admin_status": parsed.get("admin_status") or "unknown",
             "oper_status": parsed.get("oper_status") or "unknown",
         })

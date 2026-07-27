@@ -1,6 +1,7 @@
 from typing import Optional, List
 from database.core import get_db_connection
 from domain.models import Interface
+from core.interface_utils import normalize_interface_name
 import logging
 
 _logger = logging.getLogger(__name__)
@@ -127,7 +128,19 @@ class InventoryRepository:
         try:
             # We map allowed_vlans list to comma-separated string
             allowed_vlans_str = ",".join(str(v) for v in interface.allowed_vlans) if interface.allowed_vlans else ""
-            interface_id = f"{interface.device_id}:{interface.name_display}"
+            normalized_name = normalize_interface_name(interface.name_display or interface.name_raw)
+            existing = conn.execute(
+                "SELECT id, interface_name FROM interfaces WHERE device_id = ? ORDER BY id",
+                (interface.device_id,),
+            ).fetchall()
+            existing_id = next(
+                (
+                    row["id"] for row in existing
+                    if normalize_interface_name(row["interface_name"]) == normalized_name
+                ),
+                None,
+            ) if normalized_name else None
+            interface_id = existing_id or f"{interface.device_id}:{normalized_name or interface.name_display}"
             
             # Use standard SQL REPLACE or INSERT OR REPLACE logic
             conn.execute(

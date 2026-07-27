@@ -60,6 +60,7 @@ def _to_safe_view(row) -> dict:
         'has_enable_password': bool(d.get('enable_password')),
         'has_private_key': bool(d.get('private_key')),
         'has_snmp_community': bool(d.get('snmp_community')),
+        'snmp_server': d.get('snmp_server') or '',
     }
     return safe
 
@@ -193,23 +194,26 @@ def _name_exists(conn, name: str, exclude_id: str | None = None) -> bool:
 
 def create_credential(conn, *, credential_name: str, credential_type: str = 'ssh_password',
                       username: str = '', account_role: str = 'normal', password: str = '', enable_password: str = '',
-                      private_key: str = '', snmp_community: str = '') -> dict:
+                      private_key: str = '', snmp_community: str = '', snmp_server: str = '') -> dict:
     if _name_exists(conn, credential_name):
         raise ValueError(f"Credential name already exists: {credential_name}")
+    if credential_type == 'snmpv2' and not str(snmp_community or '').strip():
+        raise ValueError('SNMPv2 credentials require an SNMP Community')
 
     cred_id = f"cred-{uuid.uuid4().hex[:12]}"
     now = _utc_now()
     conn.execute(
         """INSERT INTO credentials
            (id, credential_name, credential_type, username, account_role, encrypted_password,
-            enable_password, private_key, snmp_community, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            enable_password, private_key, snmp_community, snmp_server, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             cred_id, credential_name, credential_type, username, account_role,
             encrypt_credential(password) or '',
             encrypt_credential(enable_password) or '',
             encrypt_credential(private_key) or '',
             encrypt_credential(snmp_community) or '',
+            str(snmp_server or '').strip(),
             now,
         ),
     )
@@ -227,11 +231,18 @@ def update_credential(conn, cred_id: str, **fields) -> dict:
         if _name_exists(conn, fields['credential_name'], exclude_id=cred_id):
             raise ValueError(f"Credential name already exists: {fields['credential_name']}")
 
+    if fields.get('credential_type') == 'snmpv2':
+        community = fields.get('snmp_community')
+        if community is None:
+            community = decrypt_credential(_row_to_dict(existing).get('snmp_community')) or ''
+        if not str(community or '').strip():
+            raise ValueError('SNMPv2 credentials require an SNMP Community')
+
     updates: list[str] = []
     params: list = []
 
     # Plain (non-secret) columns
-    for key in ('credential_name', 'credential_type', 'username', 'account_role'):
+    for key in ('credential_name', 'credential_type', 'username', 'account_role', 'snmp_server'):
         if key in fields and fields[key] is not None:
             updates.append(f"{key} = ?")
             params.append(fields[key])

@@ -14,7 +14,7 @@ from services.operational_data_service import collect_operational_data, collect_
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
 from core.rbac import require_role
-from services.vault_service import resolve_device_credentials, write_credentials as vault_write, vault_available
+from services.vault_service import resolve_device_credentials, resolve_collector_credentials, write_credentials as vault_write, vault_available
 from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
 from datetime import datetime, timezone
 
@@ -814,6 +814,9 @@ def delete_device(device_id: str):
         # Remove many-to-many tag associations before deleting the device row.
         # The FK is not cascade-enabled on older PostgreSQL installations.
         conn.execute("DELETE FROM tag_assignments WHERE resource_type='device' AND resource_id = ?", (device_id,))
+        # ``ip_inventory`` is a legacy derived projection and is not covered
+        # by the foreign-key cascade on all supported PostgreSQL installations.
+        conn.execute('DELETE FROM ip_inventory WHERE device_id = ?', (device_id,))
         conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
         # Credentials are managed resources and must survive asset/device
         # deletion. They can only be removed explicitly from the credential
@@ -1601,12 +1604,13 @@ async def snmp_test(device_id: str):
         raise HTTPException(status_code=404, detail="Device not found")
 
     device_data = dict(device)
-    credentials = resolve_device_credentials(device_data)
+    collector_credentials = resolve_collector_credentials(device_data)
     ip = device_data['ip_address']
-    community = credentials.get('snmp_community') or ''
-    port = device_data['snmp_port'] or 161
+    snmp_ip = collector_credentials['snmp'].get('server') or ip
+    community = collector_credentials['snmp'].get('community') or ''
+    port = collector_credentials['snmp'].get('port') or 161
 
-    if not ip:
+    if not snmp_ip:
         return {"success": False, "error": "No IP address configured"}
     if not community:
         from services.collection_status_service import record_collection_result
@@ -1628,7 +1632,7 @@ async def snmp_test(device_id: str):
     import asyncio as _aio
     from services.snmp_service import _snmp_get, _snmp_walk, collect_device_info, collect_interface_data, collect_device_metrics
 
-    results = {"success": False, "ip": ip, "port": port,
+    results = {"success": False, "ip": snmp_ip, "port": port,
                "sys_name": None, "sys_descr": None, "response_ms": None, "error": None,
                "synced": False}
 
@@ -1636,8 +1640,8 @@ async def snmp_test(device_id: str):
     try:
         # Step 1: 标准 System MIB（sysName + sysDescr）并行查询
         sys_name, sys_descr = await _aio.gather(
-            _snmp_get(ip, community, '1.3.6.1.2.1.1.5.0', port, timeout=3),
-            _snmp_get(ip, community, '1.3.6.1.2.1.1.1.0', port, timeout=3),
+            _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.5.0', port, timeout=3),
+            _snmp_get(snmp_ip, community, '1.3.6.1.2.1.1.1.0', port, timeout=3),
         )
         elapsed = round((time.monotonic() - start) * 1000)
         results['response_ms'] = elapsed
@@ -1648,10 +1652,10 @@ async def snmp_test(device_id: str):
             results['sys_descr'] = sys_descr
         else:
             # Step 2: ifName (ifXTable) — 部分设备/SNMP view 不含 system MIB
-            if_rows = await _snmp_walk(ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=3, max_rows=3)
+            if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.31.1.1.1.1', port, timeout=3, max_rows=3)
             if not if_rows:
                 # Step 3: ifDescr (基础 IF-MIB RFC 1213) — 最广泛兼容
-                if_rows = await _snmp_walk(ip, community, '1.3.6.1.2.1.2.2.1.2', port, timeout=3, max_rows=3)
+                if_rows = await _snmp_walk(snmp_ip, community, '1.3.6.1.2.1.2.2.1.2', port, timeout=3, max_rows=3)
             elapsed = round((time.monotonic() - start) * 1000)
             results['response_ms'] = elapsed
             if if_rows:
@@ -1684,9 +1688,9 @@ async def snmp_test(device_id: str):
             try:
                 platform = device['platform'] or 'cisco_ios'
                 dev_info, intf_data, metrics = await _aio.gather(
-                    collect_device_info(ip, community, port),
-                    collect_interface_data(ip, community, port),
-                    collect_device_metrics(ip, platform, community, port),
+                    collect_device_info(snmp_ip, community, port),
+                    collect_interface_data(snmp_ip, community, port),
+                    collect_device_metrics(snmp_ip, platform, community, port),
                 )
 
                 updates: dict = {}

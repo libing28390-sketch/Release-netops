@@ -681,7 +681,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
       <AnimatePresence>
         {showMaintenanceModal ? (
           <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -693,7 +693,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
             }}
           >
             <motion.div
-              className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-3xl bg-white shadow-2xl"
+              className="relative max-h-[90vh] w-full max-w-4xl overflow-auto rounded-[24px] bg-white/94 dark:bg-[#1e293b]/94 backdrop-blur-xl border border-white/20 dark:border-white/5 shadow-[0_32px_80px_rgba(11,35,64,0.22)]"
               initial={{ y: 18, opacity: 0, scale: 0.98 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
               exit={{ y: 18, opacity: 0, scale: 0.98 }}
@@ -932,7 +932,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
       <AnimatePresence>
         {showAssetPicker ? (
           <motion.div
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4"
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -944,7 +944,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
             }}
           >
             <motion.div
-              className="max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl"
+              className="relative max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-[24px] bg-white/94 dark:bg-[#1e293b]/94 backdrop-blur-xl border border-white/20 dark:border-white/5 shadow-[0_32px_80px_rgba(11,35,64,0.22)]"
               initial={{ y: 18, opacity: 0, scale: 0.98 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
               exit={{ y: 18, opacity: 0, scale: 0.98 }}
@@ -1050,7 +1050,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
       <AnimatePresence>
         {selectedWindow ? (
           <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -1062,7 +1062,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
             }}
           >
             <motion.div
-              className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-3xl bg-white shadow-2xl"
+              className="relative max-h-[90vh] w-full max-w-3xl overflow-auto rounded-[24px] bg-white/94 dark:bg-[#1e293b]/94 backdrop-blur-xl border border-white/20 dark:border-white/5 shadow-[0_32px_80px_rgba(11,35,64,0.22)]"
               initial={{ y: 18, opacity: 0, scale: 0.98 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
               exit={{ y: 18, opacity: 0, scale: 0.98 }}

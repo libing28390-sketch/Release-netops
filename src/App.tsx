@@ -409,7 +409,7 @@ const App: React.FC = () => {
     handleExportMap,
     handleTriggerDiscovery,
     handleCancelDiscovery,
-  } = useTopology({ devices, language, showToast });
+  } = useTopology({ devices, language, showToast, refreshDevices: fetchDevicesData });
 
   // Redirect bare paths and legacy paths to standardized hierarchical paths
   React.useEffect(() => {

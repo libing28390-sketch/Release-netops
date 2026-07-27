@@ -4,21 +4,47 @@ import re
 
 
 INTERFACE_ALIASES = [
-    ("tengigabitethernet", "te"),
-    ("tengigeethernet", "te"),
-    ("twentyfivegige", "tw"),
-    ("twentyfivegigabitethernet", "tw"),
-    ("fortygigabitethernet", "fo"),
-    ("fortyge", "fo"),
+    # 100G vendor spellings.  H3C/Comware commonly reports ``HGE`` while
+    # Huawei reports ``100GE`` and Cisco reports ``HundredGigE``/``Hu``.
     ("hundredgigabitethernet", "hu"),
+    ("hundred-gigabitethernet", "hu"),
     ("hundredge", "hu"),
+    ("100gigabitethernet", "hu"),
+    ("100gige", "hu"),
+    ("hundredgige", "hu"),
+    ("100ge", "hu"),
+    ("hge", "hu"),
+    # 40G vendor spellings.  FGE/40GE/FortyGigE are the same physical
+    # interface family and must compare equal during LLDP/LAG matching.
+    ("fortygigabitethernet", "fo"),
+    ("forty-gigabitethernet", "fo"),
+    ("fortyge", "fo"),
+    ("40gigabitethernet", "fo"),
+    ("40gige", "fo"),
+    ("fortygige", "fo"),
+    ("40ge", "fo"),
+    ("fge", "fo"),
+    # 25G vendor spellings.
+    ("twentyfivegigabitethernet", "tw"),
+    ("twenty-five-gigabitethernet", "tw"),
+    ("twentyfivegige", "tw"),
+    ("25gigabitethernet", "tw"),
+    ("25gige", "tw"),
+    ("25ge", "tw"),
+    # 10G vendor spellings.  H3C uses XGE, while LLDP and some command
+    # outputs use Ten-GigabitEthernet or 10GE for the same port.
+    ("tengigabitethernet", "te"),
+    ("ten-gigabitethernet", "te"),
+    ("tengige", "te"),
+    ("tengigeethernet", "te"),
+    ("10gigabitethernet", "te"),
+    ("10gige", "te"),
+    ("10ge", "te"),
+    ("xgigabitethernet", "te"),
+    ("xge", "te"),
     ("gigabitethernet", "gi"),
     ("gige", "gi"),
     ("fastethernet", "fa"),
-    ("xgigabitethernet", "xge"),
-    ("25gige", "tw"),
-    ("40gige", "fo"),
-    ("100gige", "hu"),
     ("ethernet", "eth"),
     ("eth-trunk", "eth-trunk"),
     ("bridge-aggregation", "bagg"),
@@ -27,6 +53,7 @@ INTERFACE_ALIASES = [
     ("portchannel", "po"),
     ("bundle-ether", "be"),
     ("loopback", "lo"),
+    ("loop", "lo"),
     ("management", "mgmt"),
     ("mgmteth", "mgmt"),
     ("meth", "mgmt"),
@@ -67,3 +94,25 @@ def normalize_interface_name(value: str | None) -> str:
     if raw.startswith("ethernet"):
         raw = raw.replace("ethernet", "eth", 1)
     return raw
+
+
+def interface_nominal_speed_mbps(value: str | None) -> int:
+    """Return the nominal port capacity implied by a canonical interface name.
+
+    This is only a fallback when a collector has not populated negotiated
+    speed yet.  It covers the common vendor-neutral families used by LLDP and
+    topology rendering; an empty result means the name is not sufficient to
+    infer capacity.
+    """
+    normalized = normalize_interface_name(value)
+    for prefix, speed_mbps in (
+        ("hu", 100_000),
+        ("fo", 40_000),
+        ("tw", 25_000),
+        ("te", 10_000),
+        ("gi", 1_000),
+        ("fa", 100),
+    ):
+        if normalized.startswith(prefix) and len(normalized) > len(prefix) and normalized[len(prefix)].isdigit():
+            return speed_mbps
+    return 0

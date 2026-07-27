@@ -431,7 +431,7 @@ async def parse_device_output(execution_id: str, device_id: str, payload: dict =
     请求体：{ "platform": "cisco_ios", "command": "show version", "output": "..." }
     若不传 output，则从数据库中读取该设备的 execute phase 输出。
     """
-    from core.textfsm import parse_with_textfsm, _find_template
+    from core.textfsm import _find_template, parse_with_textfsm, resolve_textfsm_platform
 
     platform = (payload.get('platform') or '').strip()
     command = (payload.get('command') or '').strip()
@@ -468,7 +468,8 @@ async def parse_device_output(execution_id: str, device_id: str, payload: dict =
         return {'success': False, 'message': '需要提供 platform 和 command 参数', 'data': None}
 
     # 检查是否有对应模板
-    template_path = _find_template(platform, command)
+    parser_platform = resolve_textfsm_platform(platform) or platform
+    template_path = _find_template(parser_platform, command)
     if not template_path:
         return {
             'success': False,
@@ -477,7 +478,7 @@ async def parse_device_output(execution_id: str, device_id: str, payload: dict =
             'has_template': False,
         }
 
-    records = parse_with_textfsm(platform, command, raw_output)
+    records = parse_with_textfsm(parser_platform, command, raw_output)
     if not records:
         return {
             'success': True,

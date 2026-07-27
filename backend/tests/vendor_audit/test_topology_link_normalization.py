@@ -1,7 +1,8 @@
-from core.interface_utils import normalize_interface_name
+from core.interface_utils import interface_nominal_speed_mbps, normalize_interface_name
 from services.topology_service import (
     _collapse_aggregation_groups,
     _group_link_observations,
+    _interface_display_score,
     _prefer_lldp_rows,
 )
 from services.operational_data_service import _parse_aggregation_raw
@@ -13,6 +14,25 @@ def test_interface_aliases_are_canonical_for_cross_vendor_adjacencies() -> None:
     assert normalize_interface_name('GE2/0') == 'gi2/0'
     assert normalize_interface_name('GigabitEthernet2/0') == 'gi2/0'
     assert normalize_interface_name('GigabitEthernet3/0 Interface') == 'gi3/0'
+    assert normalize_interface_name('XGE1/0/49') == 'te1/0/49'
+    assert normalize_interface_name('Ten-GigabitEthernet1/0/49') == 'te1/0/49'
+    assert normalize_interface_name('TenGigE1/0/49') == 'te1/0/49'
+    assert normalize_interface_name('FGE1/0/54') == 'fo1/0/54'
+    assert normalize_interface_name('40GE1/0/54') == 'fo1/0/54'
+    assert normalize_interface_name('FortyGigE1/0/54') == 'fo1/0/54'
+    assert normalize_interface_name('HGE1/0/1') == 'hu1/0/1'
+    assert normalize_interface_name('100GE1/0/1') == 'hu1/0/1'
+    assert normalize_interface_name('HundredGigE1/0/1') == 'hu1/0/1'
+    assert interface_nominal_speed_mbps('XGE1/0/49') == 10_000
+    assert interface_nominal_speed_mbps('FGE1/0/54') == 40_000
+    assert interface_nominal_speed_mbps('100GE1/0/1') == 100_000
+
+
+def test_interface_alias_with_real_rate_wins_over_zero_rate_placeholder() -> None:
+    device_meta = {'vendor': 'h3c', 'platform': 'h3c_comware'}
+    populated = {'interface_name': 'Ten-GigabitEthernet1/0/49', 'speed': 10_000_000_000}
+    placeholder = {'interface_name': 'XGE1/0/49', 'speed': 0}
+    assert _interface_display_score(populated, device_meta) > _interface_display_score(placeholder, device_meta)
 
 
 def test_grouping_recomputes_normalized_key_from_raw_observation() -> None:

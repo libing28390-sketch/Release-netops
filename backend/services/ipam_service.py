@@ -10,6 +10,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from core.interface_utils import normalize_interface_name
+
 from database import get_db_connection, _USE_PG
 
 logger = logging.getLogger(__name__)
@@ -435,7 +437,7 @@ def _load_interface_prefix_candidates(conn) -> dict:
                ORDER BY last_seen DESC'''
         ).fetchall()
         for row in inventory_rows:
-            key = (str(row['device_id'] or ''), str(row['interface'] or ''))
+            key = (str(row['device_id'] or ''), normalize_interface_name(row['interface']))
             inventory_by_interface.setdefault(key, dict(row))
     except Exception:
         # IPAM generation must still work if the optional collection snapshot is
@@ -481,7 +483,7 @@ def _load_interface_prefix_candidates(conn) -> dict:
         if '/' in raw_address and prefix_len is None:
             prefix_len = _parse_interface_prefix_length(raw_address.rsplit('/', 1)[1])
         if prefix_len is None:
-            snapshot = inventory_by_interface.get((str(row['device_id']), str(row['interface_name'])))
+            snapshot = inventory_by_interface.get((str(row['device_id']), normalize_interface_name(row['interface_name'])))
             prefix_len = _parse_interface_prefix_length(snapshot.get('mask') if snapshot else None)
         if prefix_len is None:
             prefix_len = _loopback_prefix_length(row['interface_name'], ip_obj)

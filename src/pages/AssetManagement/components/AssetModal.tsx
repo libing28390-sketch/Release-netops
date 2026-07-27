@@ -110,13 +110,19 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   }, [racks, form.site_id]);
 
   const normalCredentials = React.useMemo(
-    () => credentials.filter(c => c.id === form.credential_id || ['normal', 'shared', 'mixed', 'login'].includes(String(c.account_role || '').toLowerCase())),
+    () => credentials.filter(c => c.id === form.credential_id || (!String(c.credential_type || '').toLowerCase().startsWith('snmp') && ['normal', 'shared', 'mixed', 'login'].includes(String(c.account_role || '').toLowerCase()))),
     [credentials, form.credential_id],
   );
   const adminCredentials = React.useMemo(
-    () => credentials.filter(c => c.id === form.admin_credential_id || ['admin', 'shared', 'mixed', 'login'].includes(String(c.account_role || '').toLowerCase())),
+    () => credentials.filter(c => c.id === form.admin_credential_id || (!String(c.credential_type || '').toLowerCase().startsWith('snmp') && ['admin', 'shared', 'mixed', 'login'].includes(String(c.account_role || '').toLowerCase()))),
     [credentials, form.admin_credential_id],
   );
+  const snmpCredentials = React.useMemo(
+    () => credentials.filter(c => c.id === form.snmp_credential_id || String(c.credential_type || '').toLowerCase() === 'snmpv2'),
+    [credentials, form.snmp_credential_id],
+  );
+  const selectedSnmpCredential = snmpCredentials.find(c => c.id === form.snmp_credential_id);
+  const snmpCommunityConfigured = Boolean(form.snmp_community_set || selectedSnmpCredential?.has_snmp_community);
 
   const withTechnologyTag = (next: any, vendor: string, platform: string) => {
     const vendorCode = vendor ? `vendor.${vendor.toLowerCase().replace(/\s+/g, '').replace('paloalto', 'paloalto')}` : '';
@@ -659,8 +665,25 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">SNMP</span>
                 </div>
                 <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
-                  <Field label={zh ? '团体字' : 'Community'} value={form.snmp_community} onChange={v => setForm(f => ({ ...f, snmp_community: v }))} placeholder={zh ? '可选' : 'Optional'} />
+                  <div>
+                    <Field label={zh ? '团体字' : 'Community'} value={form.snmp_community} onChange={v => setForm(f => ({ ...f, snmp_community: v }))} placeholder={snmpCommunityConfigured ? (zh ? '已安全存储，留空保持不变' : 'Configured; leave empty to keep') : (zh ? '可选' : 'Optional')} />
+                    {snmpCommunityConfigured && <p className="mt-1 text-[8px] text-emerald-600">✓ {zh ? '已配置（不会回显明文）' : 'Configured (value is not revealed)'}</p>}
+                  </div>
                   <Field label={zh ? '端口' : 'Port'} value={form.snmp_port} onChange={v => setForm(f => ({ ...f, snmp_port: v }))} placeholder="161" />
+                  <div className="col-span-2">
+                    <label className="block text-[10px] text-black/30 mb-0.5">{zh ? 'SNMP 凭据' : 'SNMP Credential'}</label>
+                    <select
+                      value={form.snmp_credential_id || ''}
+                      onChange={e => setForm(f => ({ ...f, snmp_credential_id: e.target.value }))}
+                      className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+                    >
+                      <option value="">{zh ? '使用资产本地 Community' : 'Use asset-local Community'}</option>
+                      {snmpCredentials.map(c => (
+                        <option key={c.id} value={c.id}>{c.credential_name} (SNMPv2c)</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[8px] text-black/30">{zh ? '选择后使用凭据中心的 Community，不会替换 SSH 登录凭据。' : 'Uses the credential-center Community without replacing the SSH login credential.'}</p>
+                  </div>
                 </div>
               </div>
             )}

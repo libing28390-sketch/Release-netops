@@ -261,7 +261,9 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'arp': ['display arp all'],
         'mac_table': ['display mac-address'],
         'vlan': ['display vlan'],
-        'routing_table': ['display ip routing-table verbose'],
+        # VRP5 S-series returns the usable tabular RIB from the non-verbose
+        # command; the verbose form is a different record-oriented view.
+        'routing_table': ['display ip routing-table'],
         'bgp': ['display bgp peer'],
         'ospf': ['display ospf peer'],
         'isis': ['display isis peer'],
@@ -270,11 +272,15 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp_routes': ['display bgp routing-table'],
         'ntp': ['display ntp-service status'],
         'environment': ['display environment'],
-        'fan': ['display fan'],
+        # VRP5 S-series accepts the abbreviated command while some releases
+        # reject the fully expanded spelling with ``Unrecognized command``.
+        'fan': ['dis fan'],
         'power': ['display power'],
         'stack': ['display stack'],
         'transceiver': ['display transceiver interface'],
-        'eth_trunk': ['display eth-trunk'],
+        # Keep the VRP5-compatible spelling; VRP8 keeps the full command in
+        # its separate catalog below.
+        'eth_trunk': ['dis eth-trunk'],
         'version': ['display version'],
         'logs': ['display logbuffer last 30'],
         'interface_description': ['display interface description'],
@@ -341,7 +347,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'routing_table': ['display ip routing-table'],
         'bgp': ['display bgp peer ipv4 unicast'],
         'ospf': ['display ospf peer'],
-        'bgp_routes': ['display bgp routing-table'],
+        'bgp_routes': ['display bgp routing-table ipv4'],
         'ntp': ['display ntp-service status'],
         'environment': ['display environment'],
         'fan': ['display fan'],
@@ -549,19 +555,73 @@ def _normalize_records(parsed: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _normalize_bgp_route_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Expand Comware/Huawei TextFSM attribute tails into BGP columns.
+
+    Comware's ``Path/Ogn`` tail collapses empty columns when it is captured as
+    one TextFSM value. For example ``0                     0 65008i`` means
+    MED=0, LocalPref=0, Weight=0, AS path=65008i. Normalize it once here so
+    the DB writer and every API consumer see the same semantics.
+    """
+    expanded: list[dict[str, Any]] = []
+    for original in records:
+        record = dict(original)
+        attributes = record.get('attributes') or record.get('ATTRIBUTES')
+        has_route_identity = record.get('network') or record.get('prefix')
+        if attributes and has_route_identity:
+            tokens = str(attributes).split()
+            numeric = lambda value: str(value).isdigit()
+            if tokens and 'metric' not in record:
+                record['metric'] = tokens[0] if numeric(tokens[0]) else 0
+            if len(tokens) >= 4:
+                if 'loc_pref' not in record:
+                    record['loc_pref'] = tokens[1] if numeric(tokens[1]) else 0
+                if 'weight' not in record:
+                    record['weight'] = tokens[2] if numeric(tokens[2]) else 0
+                if 'as_path' not in record:
+                    record['as_path'] = ' '.join(tokens[3:])
+            elif len(tokens) == 3:
+                # H3C's compact form is MED, PrefVal, Path/Ogn when LocPrf
+                # is blank; Cisco's equivalent is Metric, Weight, Path.
+                if 'loc_pref' not in record:
+                    record['loc_pref'] = 0
+                if 'weight' not in record:
+                    record['weight'] = tokens[1] if numeric(tokens[1]) else 0
+                if 'as_path' not in record:
+                    record['as_path'] = tokens[2]
+            elif len(tokens) == 2:
+                if 'loc_pref' not in record:
+                    record['loc_pref'] = 0
+                if 'weight' not in record:
+                    record['weight'] = 0
+                if 'as_path' not in record:
+                    record['as_path'] = tokens[1]
+            if 'attributes' not in record and 'ATTRIBUTES' in record:
+                record['attributes'] = record.pop('ATTRIBUTES')
+
+        flags = str(record.get('flags') or record.get('status') or '')
+        if 'is_best' not in record:
+            record['is_best'] = 1 if '>' in flags else 0
+        if 'is_active' not in record:
+            record['is_active'] = record['is_best']
+        expanded.append(record)
+    return expanded
+
+
 def _normalize_command_for_template_match(command: str) -> str:
     return re.sub(r'\s+', ' ', str(command or '').strip()).lower()
 
 
 def _parse_with_ntc(platform: str, command: str, output: str) -> list[dict[str, Any]]:
-    from core.textfsm import smart_parse_cli
-    res = smart_parse_cli(output=output, command=command, platform=platform)
+    from core.textfsm import resolve_textfsm_platform, smart_parse_cli
+    parser_platform = resolve_textfsm_platform(platform) or platform
+    res = smart_parse_cli(output=output, command=command, platform=parser_platform)
     if res.get('success') and res.get('data'):
         return _normalize_records(res['data'])
-    # IOS-XE keeps its asset/platform identity, while TextFSM uses the
-    # Cisco IOS grammar family unless a dedicated IOS-XE template exists.
+    # IOS-XE and legacy platform aliases keep their asset/platform identity,
+    # while TextFSM uses the canonical parser grammar family.
     ntc_platform = _resolve_ntc_platform(platform)
-    if ntc_platform != platform:
+    if ntc_platform != parser_platform:
         res = smart_parse_cli(output=output, command=command, platform=ntc_platform)
         if res.get('success') and res.get('data'):
             return _normalize_records(res['data'])
@@ -840,11 +900,14 @@ def _parse_bgp_routes_raw(output: str, platform: str) -> list[dict[str, Any]]:
     col_locprf = 47
     col_weight = 54
     col_path = 61
+    token_table_layout = False
 
     for raw_line in lines:
+        # Cisco/Huawei style: "Network   Next Hop   Metric LocPrf Weight Path"
         if 'Network' in raw_line and 'Next Hop' in raw_line:
             col_network = raw_line.index('Network')
             col_nexthop = raw_line.index('Next Hop')
+            token_table_layout = col_network == 0
             m_col = raw_line.find('Metric')
             col_metric = m_col if m_col != -1 else col_nexthop + 20
             lp_col = raw_line.find('LocPrf')
@@ -854,16 +917,36 @@ def _parse_bgp_routes_raw(output: str, platform: str) -> list[dict[str, Any]]:
             p_col = raw_line.find('Path')
             col_path = p_col if p_col != -1 else col_weight + 7
             break
+        # H3C Comware style: "Network   NextHop   MED   LocPrf   PrefVal   Path/Ogn"
+        if 'Network' in raw_line and 'NextHop' in raw_line:
+            col_network = raw_line.index('Network')
+            col_nexthop = raw_line.index('NextHop')
+            token_table_layout = col_network == 0
+            m_col = raw_line.find('MED')
+            if m_col == -1:
+                m_col = raw_line.find('Metric')
+            col_metric = m_col if m_col != -1 else col_nexthop + 20
+            lp_col = raw_line.find('LocPrf')
+            col_locprf = lp_col if lp_col != -1 else col_metric + 7
+            w_col = raw_line.find('PrefVal')
+            if w_col == -1:
+                w_col = raw_line.find('Weight')
+            col_weight = w_col if w_col != -1 else col_locprf + 7
+            p_col = raw_line.find('Path')
+            col_path = p_col if p_col != -1 else col_weight + 7
+            break
 
     # The status-flags field spans from column 0 up to (but not including) the
     # Network column.  Valid flag characters: * > s d h r i (space).
-    flag_chars = set('*>sdhrif ')
+    # Cisco/Huawei/H3C status flags include external ``e`` and stale ``S``;
+    # rejecting either flag silently drops otherwise valid BGP rows.
+    flag_chars = set('*>sdhrifSeE?D ')
     past_header = False
 
     for raw_line in lines:
         # Wait until we pass the header line
         if not past_header:
-            if 'Network' in raw_line and 'Next Hop' in raw_line:
+            if 'Network' in raw_line and ('Next Hop' in raw_line or 'NextHop' in raw_line):
                 past_header = True
             continue
 
@@ -872,6 +955,48 @@ def _parse_bgp_routes_raw(output: str, platform: str) -> list[dict[str, Any]]:
             continue
 
         # ── Parse status flags (everything before col_network) ──
+        # Some Huawei/Comware versions print ``Network`` at column zero,
+        # while data rows still reserve leading status-flag columns. Tokenize
+        # around the first CIDR token instead of treating ``* >e`` as prefix.
+        if token_table_layout:
+            tokens = raw_line.split()
+            prefix_index = next(
+                (idx for idx, token in enumerate(tokens)
+                 if re.match(r'^\d{1,3}(?:\.\d{1,3}){3}/\d{1,3}$', token)),
+                None,
+            )
+            if prefix_index is None or len(tokens) <= prefix_index + 1:
+                continue
+            prefix = tokens[prefix_index]
+            next_hop = tokens[prefix_index + 1]
+            try:
+                ipaddress.ip_address(next_hop)
+            except ValueError:
+                continue
+            attrs = tokens[prefix_index + 2:]
+            if not attrs:
+                continue
+            numeric = lambda value: str(value).isdigit()
+            metric = int(attrs[0]) if numeric(attrs[0]) else 0
+            loc_pref = int(attrs[1]) if len(attrs) >= 4 and numeric(attrs[1]) else 0
+            weight_index = 2 if len(attrs) >= 4 else 1
+            weight = int(attrs[weight_index]) if len(attrs) > weight_index and numeric(attrs[weight_index]) else 0
+            path_index = 3 if len(attrs) >= 4 else 2
+            as_path = ' '.join(attrs[path_index:]) if len(attrs) > path_index else attrs[-1]
+            flags = ''.join(tokens[:prefix_index])
+            records.append({
+                'prefix': prefix,
+                'next_hop': next_hop,
+                'metric': metric,
+                'loc_pref': loc_pref,
+                'weight': weight,
+                'as_path': as_path,
+                'is_best': 1 if '>' in flags else 0,
+                'is_active': 1 if '>' in flags else 0,
+                'status': flags or '*',
+            })
+            continue
+
         flag_zone = raw_line[:col_network] if len(raw_line) > col_network else raw_line
         # Validate that it looks like a status-flag zone (not a random text line)
         if flag_zone.strip() and not all(ch in flag_chars for ch in flag_zone):
@@ -1012,6 +1137,16 @@ def _parse_command_output(platform: str, category: str, command: str, output: st
     except Exception:
         records = []
 
+    if category == 'bgp_routes':
+        # The Huawei/H3C tabular RIB is more accurately parsed from column
+        # positions than from a generic TextFSM attribute tail. Prefer this
+        # canonical parser even when a legacy template returned rows.
+        raw_bgp_routes = _parse_bgp_routes_raw(output, platform)
+        if raw_bgp_routes:
+            return raw_bgp_routes
+        if records:
+            return _normalize_bgp_route_records(records)
+
     if records:
         return records
 
@@ -1021,6 +1156,17 @@ def _parse_command_output(platform: str, category: str, command: str, output: st
 
     if category == 'bfd' or ' bfd ' in f' {normalized_command} ':
         return _parse_bfd_raw(output)
+
+    if category == 'routing_table':
+        # Reuse the authoritative Huawei/H3C/Cisco route parser used by the
+        # Network Source of Truth route collector. This keeps quick queries
+        # and NSOT synchronized instead of returning an empty category when
+        # no TextFSM template exists for the non-verbose Huawei table.
+        try:
+            from services.ip_locator_service import parse_routing_table
+            return parse_routing_table(output, platform)
+        except Exception:
+            return []
 
     # bgp_routes must be checked BEFORE generic bgp to avoid misrouting
     if category == 'bgp_routes' or (' bgp ' in f' {normalized_command} ' and 'summary' not in normalized_command and 'peer' not in normalized_command):

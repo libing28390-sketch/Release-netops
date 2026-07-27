@@ -160,6 +160,25 @@ def _safe_encrypt(plaintext: str) -> str:
         return ''
 
 
+def _resolve_snmp_credential_id(conn, value: str | None) -> str:
+    """Validate and normalize an independent SNMP credential binding."""
+    requested = str(value or '').strip()
+    if not requested:
+        return ''
+    row = conn.execute(
+        '''SELECT id, credential_type, snmp_community
+           FROM credentials WHERE id = ? OR credential_name = ?''',
+        (requested, requested),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=422, detail=f'SNMP凭据不存在: {requested}')
+    if str(row['credential_type'] or '').lower() != 'snmpv2':
+        raise HTTPException(status_code=422, detail='SNMP关联必须选择 SNMPv2 凭据')
+    if not (decrypt_credential(row['snmp_community']) or str(row['snmp_community'] or '').strip()):
+        raise HTTPException(status_code=422, detail='SNMP凭据未配置 Community')
+    return str(row['id'])
+
+
 def _create_device_local_credential(
     conn,
     *,
@@ -257,7 +276,10 @@ def _pre_resolve_credential(conn, body) -> None:
         body.normal_username = c_user
         body.normal_password = dec_pwd
         body.enable_password = dec_enable
-        if not getattr(body, 'snmp_community', None) or body.snmp_community == 'public':
+        # An explicitly entered Community is authoritative.  In particular,
+        # ``public`` is a valid SNMPv2c value and must not be replaced by an
+        # empty value from an SSH credential that has no SNMP secret.
+        if not getattr(body, 'snmp_community', None):
             body.snmp_community = dec_snmp
 
     existing_admin_cred_id = getattr(body, 'admin_credential_id', '') or ''
@@ -351,7 +373,9 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
             if not normal_user: normal_user = c_user
             if not normal_pwd: normal_pwd = dec_pwd
             if not enable_pwd: enable_pwd = dec_enable
-            if not community or community == 'public': community = dec_snmp
+            # Preserve an explicit asset-local Community, including the very
+            # common SNMPv2c value ``public``.
+            if not community: community = dec_snmp
 
     if existing_admin_cred_id:
         # Check if admin credential exists in DB (either by ID or by name)
@@ -422,7 +446,7 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         uname, '', # password column empty
         body.serial_number, body.model, '', body.device_role,
         body.site_id, '0d 0h', method, body.vendor,
-        community, port,
+        _safe_encrypt(community), port,
         normal_user, '', # normal_password column empty
         admin_user,  '', # admin_password column empty
         '', # enable_password column empty
@@ -438,9 +462,10 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     # normalized foreign-key-style field populated for device inventory and
     # topology consumers; ``site`` remains only as a legacy display field.
     conn.execute('UPDATE devices SET site_id = ? WHERE id = ?', (body.site_id, device_id))
+    conn.execute('UPDATE devices SET snmp_credential_id = ? WHERE id = ?', (getattr(body, 'snmp_credential_id', '') or '', device_id))
     conn.execute(
-        'UPDATE physical_assets SET credential_id = ?, admin_credential_id = ? WHERE id = ?',
-        (credential_id or '', admin_credential_id or '', asset_id),
+        'UPDATE physical_assets SET credential_id = ?, admin_credential_id = ?, snmp_credential_id = ? WHERE id = ?',
+        (credential_id or '', admin_credential_id or '', getattr(body, 'snmp_credential_id', '') or '', asset_id),
     )
     tag_service.sync_device_status_tag(conn, device_id, 'pending')
     return device_id
@@ -649,13 +674,16 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
             getattr(body, 'asset_type', None) or 'network_device',
         ) if getattr(body, 'platform', None) is not None else None,
         'connection_method': getattr(body, 'connection_method', None),
-        'snmp_community': getattr(body, 'snmp_community', None),
         'snmp_port': getattr(body, 'snmp_port', None),
+        'snmp_credential_id': getattr(body, 'snmp_credential_id', None),
         'auth_model': getattr(body, 'auth_model', None),
         'device_category': getattr(body, 'device_category', None),
         'power_watts': getattr(body, 'power_watts', None),
         'management_port': getattr(body, 'management_port', None),
     }
+
+    if getattr(body, 'snmp_community', None) not in (None, ''):
+        updates['snmp_community'] = _safe_encrypt(body.snmp_community)
 
     if getattr(body, 'username', None) is not None: updates['username'] = body.username
     if getattr(body, 'normal_username', None) is not None: updates['normal_username'] = body.normal_username
@@ -858,6 +886,7 @@ class AssetCreate(BaseModel):
     power_watts: int = 0
     credential_id: Optional[str] = ''
     admin_credential_id: Optional[str] = ''
+    snmp_credential_id: Optional[str] = ''
     tag_ids: list[str] = []
     tag_codes: str = ''
 
@@ -961,6 +990,7 @@ class AssetUpdate(BaseModel):
     takeover_exempt_reason: Optional[str] = None
     credential_id: Optional[str] = None
     admin_credential_id: Optional[str] = None
+    snmp_credential_id: Optional[str] = None
     tag_ids: Optional[list[str]] = None
     tag_codes: Optional[str] = None
 
@@ -1140,6 +1170,9 @@ def list_assets(
                     item[f'{sensitive}_set'] = bool(item.get(sensitive))
                     # Keep the ciphertext out of the response payload
                     item[sensitive] = ''
+            if 'snmp_community' in item:
+                item['snmp_community_set'] = bool(item.get('snmp_community'))
+                item['snmp_community'] = ''
             items.append(item)
 
         # Return tag definitions alongside assets so the asset inventory can
@@ -1230,6 +1263,9 @@ def get_asset(asset_id: str):
             if sensitive in item:
                 item[f'{sensitive}_set'] = bool(item.get(sensitive))
                 item[sensitive] = ''
+        if 'snmp_community' in item:
+            item['snmp_community_set'] = bool(item.get('snmp_community'))
+            item['snmp_community'] = ''
         return item
     finally:
         conn.close()
@@ -1248,6 +1284,7 @@ def create_asset(body: AssetCreate):
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         asset_id = f"asset-{uuid.uuid4().hex[:12]}"
+        body.snmp_credential_id = _resolve_snmp_credential_id(conn, body.snmp_credential_id)
         now = _utc_now()
         asset_origin = body.asset_origin if body.asset_origin in ('new', 'legacy') else 'new'
         body.platform = _normalize_asset_platform(body.vendor, body.platform, body.asset_type)
@@ -1295,11 +1332,12 @@ def create_asset(body: AssetCreate):
             _safe_encrypt(getattr(body, 'admin_password', '') or ''),
             _safe_encrypt(getattr(body, 'enable_password', '') or ''),
             getattr(body, 'auth_model', '') or 'single',
-            body.snmp_community, body.snmp_port, body.device_category, body.power_watts,
+            _safe_encrypt(body.snmp_community), body.snmp_port, body.device_category, body.power_watts,
             body.credential_id or '',
             body.admin_credential_id or '',
             now, now
         ))
+        conn.execute('UPDATE physical_assets SET snmp_credential_id = ? WHERE id = ?', (body.snmp_credential_id or '', asset_id))
 
         # Plan-A: auto-create linked device for managed assets
         device_id = None
@@ -1489,21 +1527,23 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
             'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
             'normal_username', 'normal_password', 'admin_username', 'admin_password', 'enable_password', 'auth_model',
-            'snmp_community', 'snmp_port', 'management_port', 'device_category', 'power_watts', 'credential_id', 'admin_credential_id'
+            'snmp_community', 'snmp_port', 'management_port', 'device_category', 'power_watts', 'credential_id', 'admin_credential_id', 'snmp_credential_id'
         ]
         for field in updatable:
             val = getattr(body, field, None)
             if val is not None:
+                if field == 'snmp_credential_id':
+                    val = _resolve_snmp_credential_id(conn, val)
                 if field == 'lifecycle_status' and transitioning_to_production:
                     continue
-                if field in ('password', 'normal_password', 'admin_password', 'enable_password'):
+                if field in ('password', 'normal_password', 'admin_password', 'enable_password', 'snmp_community'):
                     # Empty string = "keep existing" — skip the update
                     if val != '':
                         updates.append(f'{field} = ?')
                         params.append(_safe_encrypt(val))
                 else:
                     updates.append(f'{field} = ?')
-                    params.append(val)
+                    params.append(_safe_encrypt(val) if field == 'snmp_community' else val)
 
         if legacy_exempt:
             exempt_reason = (body.takeover_exempt_reason or '').strip()
@@ -1821,7 +1861,7 @@ def import_assets(items: list[AssetCreate]):
                 _safe_encrypt(getattr(body, 'admin_password', '') or ''),
                 _safe_encrypt(getattr(body, 'enable_password', '') or ''),
                 getattr(body, 'auth_model', '') or 'single',
-                body.snmp_community, body.snmp_port,
+                _safe_encrypt(body.snmp_community), body.snmp_port,
                 getattr(body, 'management_port', 22) or 22,
                 body.device_category, body.power_watts,
                 'legacy_exempt' if legacy_production else 'managed',
@@ -1832,6 +1872,7 @@ def import_assets(items: list[AssetCreate]):
                 body.admin_credential_id or '',
                 now, now
             ))
+            conn.execute('UPDATE physical_assets SET snmp_credential_id = ? WHERE id = ?', (body.snmp_credential_id or '', asset_id))
             # Plan-A: auto-create linked device for managed assets
             if body.asset_type in ('network_device', 'server'):
                 device_id = _create_linked_device(conn, asset_id, body)

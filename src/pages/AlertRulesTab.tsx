@@ -1088,7 +1088,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
       <AnimatePresence>
         {ruleDraft ? (
           <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm p-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -1100,7 +1100,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             }}
           >
             <motion.div
-              className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-3xl bg-white shadow-2xl"
+              className="relative max-h-[90vh] w-full max-w-3xl overflow-auto rounded-[24px] bg-white/94 dark:bg-[#1e293b]/94 backdrop-blur-xl border border-white/20 dark:border-white/5 shadow-[0_32px_80px_rgba(11,35,64,0.22)]"
               initial={{ y: 18, opacity: 0, scale: 0.98 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
               exit={{ y: 18, opacity: 0, scale: 0.98 }}
@@ -1439,14 +1439,14 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 backdrop-blur-sm"
           >
-            <div className="fixed inset-0 bg-black/20 backdrop-blur-sm" onClick={() => setDeleteApprovalOpen(false)} />
+            <div className="fixed inset-0" onClick={() => setDeleteApprovalOpen(false)} />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="relative w-full max-w-md rounded-2xl bg-white border border-slate-100 shadow-2xl overflow-hidden z-10"
+              className="relative w-full max-w-md rounded-2xl bg-white/94 dark:bg-[#1e293b]/94 backdrop-blur-xl border border-white/20 dark:border-white/5 shadow-2xl overflow-hidden z-10"
               onClick={e => e.stopPropagation()}
             >
               <div className="bg-rose-50 border-b border-rose-100 px-6 py-4 flex items-center justify-between">

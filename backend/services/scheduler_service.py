@@ -1435,6 +1435,7 @@ def sync_routing_neighbors_job():
     _L3_ROLES = {'router', 'gateway', 'core', 'dist', 'distribution', 'aggregation', 'l3switch'}
     protocol_aliases = {
         'o': 'ospf', 'ospf': 'ospf', 'b': 'bgp', 'bgp': 'bgp',
+        'ebgp': 'bgp', 'ibgp': 'bgp',
         'd': 'eigrp', 'eigrp': 'eigrp', 'i': 'isis', 'isis': 'isis',
         'r': 'rip', 'rip': 'rip',
     }
@@ -1528,7 +1529,7 @@ def sync_routing_neighbors_job():
                             continue
                         
                         remote_as = None
-                        for k in ['neigh_as', 'as', 'peer_as', 'remote_as', 'neighbor_as']:
+                        for k in ['neigh_as', 'asn', 'as', 'peer_as', 'remote_as', 'neighbor_as']:
                             value = _routing_record_value(r, k)
                             if value not in (None, ''):
                                 try:
@@ -1763,8 +1764,10 @@ def sync_bgp_routes_job():
                 as_path = f"{as_path} {origin}".strip() if as_path else origin
 
             is_best = _routing_record_value(r, 'is_best', 'best') or 0
-            if not is_best and _routing_record_value(r, 'path_selection', 'flags') == '>':
-                is_best = 1
+            if not is_best:
+                flags_val = str(_routing_record_value(r, 'path_selection', 'flags', 'status') or '')
+                if '>' in flags_val:
+                    is_best = 1
 
             res.append({
                 'device_id': device_id,

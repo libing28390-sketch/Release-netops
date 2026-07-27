@@ -63,8 +63,15 @@ def get_suggested_ttl(command: str) -> int:
     # 3. Default TTL
     return 60
 
-def clear_cmd_cache():
-    """Clear all cached command outputs."""
+def clear_cmd_cache(device_ip: str | None = None):
+    """Clear cached command outputs globally or for one device after changes."""
+    normalized_ip = (device_ip or '').strip()
     with _CACHE_LOCK:
-        _CMD_CACHE.clear()
-        logger.info("[CmdCache] Command cache cleared.")
+        if not normalized_ip:
+            _CMD_CACHE.clear()
+            logger.info("[CmdCache] Command cache cleared.")
+            return
+        stale_keys = [key for key in _CMD_CACHE if key[0] == normalized_ip]
+        for key in stale_keys:
+            _CMD_CACHE.pop(key, None)
+        logger.info("[CmdCache] Cleared %s cached commands for device %s.", len(stale_keys), normalized_ip)
