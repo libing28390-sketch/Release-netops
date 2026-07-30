@@ -6,6 +6,8 @@ type Updater<T> = T | ((prev: T) => T);
 interface ConfigState {
   retentionDays: number;
   setRetentionDays: (val: Updater<number>) => void;
+  retentionMaxPerDevice: number;
+  setRetentionMaxPerDevice: (val: Updater<number>) => void;
   configSnapshots: ConfigSnapshot[];
   setConfigSnapshots: (val: Updater<ConfigSnapshot[]>) => void;
   configSnapshotsLoading: boolean;
@@ -39,6 +41,8 @@ interface ConfigState {
 export const useConfigStore = create<ConfigState>((set) => ({
   retentionDays: 365,
   setRetentionDays: (val) => set((state) => ({ retentionDays: typeof val === 'function' ? val(state.retentionDays) : val })),
+  retentionMaxPerDevice: 30,
+  setRetentionMaxPerDevice: (val) => set((state) => ({ retentionMaxPerDevice: typeof val === 'function' ? val(state.retentionMaxPerDevice) : val })),
   configSnapshots: [],
   setConfigSnapshots: (val) => set((state) => ({ configSnapshots: typeof val === 'function' ? val(state.configSnapshots) : val })),
   configSnapshotsLoading: false,

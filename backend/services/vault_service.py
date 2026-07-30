@@ -227,7 +227,7 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
                     '''SELECT credential_id, admin_credential_id, snmp_credential_id,
                               username, password, normal_username, normal_password,
                               admin_username, admin_password, enable_password,
-                              snmp_community
+                              snmp_community, auth_model
                        FROM physical_assets WHERE id = ?''',
                     (asset_id,),
                 ).fetchone()
@@ -243,6 +243,9 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     normal_bound = False
     admin_bound = False
     db_snmp_creds = {}
+    db_creds = {}
+    db_admin_creds = {}
+    linked_role_cache_authoritative = False
 
     if snmp_credential_id:
         try:
@@ -261,8 +264,6 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
         # A bound credential is the authority for that account role.  The
         # asset/device password columns remain only a legacy fallback for
         # unbound records and must not override a newer vault value.
-        db_creds = {}
-        db_admin_creds = {}
         if credential_id or admin_credential_id:
             try:
                 from database import get_db_connection
@@ -296,6 +297,20 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
                 conn.close()
         except Exception as exc:
             logger.warning('Failed to classify credential binding for %s: %s', device.get('hostname') or device.get('id'), exc)
+            normal_bound = False
+            admin_bound = False
+
+        # A legacy generic credential_id must not collapse an explicitly
+        # modelled dual-account asset back into one account. Only credentials
+        # whose account_role is declared may override the linked asset's
+        # normal/admin pairs.
+        linked_role_cache_authoritative = (
+            str(asset.get('auth_model') or '').strip().lower() == 'dual'
+            and bool(db_creds)
+            and str(db_creds.get('account_role') or 'unbound').strip().lower() == 'unbound'
+            and not admin_credential_id
+        )
+        if linked_role_cache_authoritative:
             normal_bound = False
             admin_bound = False
 
@@ -349,6 +364,9 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
                 conn.close()
         except Exception as exc:
             logger.warning('Failed to classify vault credential binding for %s: %s', device.get('hostname') or device.get('id'), exc)
+        if linked_role_cache_authoritative:
+            normal_bound = False
+            admin_bound = False
 
     if asset:
         # Only unbound roles may read the legacy asset cache.  This is the
@@ -387,10 +405,13 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     # been migrated, but derive them from the explicit role pairs.
     normal_pair = (resolved.get('normal_username') or '', resolved.get('normal_password') or '')
     admin_pair = (resolved.get('admin_username') or '', resolved.get('admin_password') or '')
+    legacy_pair = (resolved.get('username') or '', resolved.get('password') or '')
     if all(normal_pair):
         resolved['username'], resolved['password'] = normal_pair
     elif all(admin_pair):
         resolved['username'], resolved['password'] = admin_pair
+    elif all(legacy_pair):
+        resolved['username'], resolved['password'] = legacy_pair
     else:
         resolved['username'] = ''
         resolved['password'] = ''
@@ -428,6 +449,16 @@ def resolve_collector_credentials(device: dict, *, ssh_role: str = 'normal') -> 
     resolved = resolve_device_credentials(device)
     role_username = resolved.get(f'{role}_username') or ''
     role_password = resolved.get(f'{role}_password') or ''
+    has_explicit_role_fields = any(
+        resolved.get(key)
+        for key in (
+            'normal_username', 'normal_password',
+            'admin_username', 'admin_password',
+        )
+    )
+    if not has_explicit_role_fields:
+        role_username = resolved.get('username') or ''
+        role_password = resolved.get('password') or ''
     return {
         'ssh': {
             'username': role_username,

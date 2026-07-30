@@ -44,7 +44,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(20);
+  const [totalVips, setTotalVips] = useState(0);
 
   // Modals
   const [showAddEdit, setShowAddEdit] = useState(false);
@@ -75,12 +76,17 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
     const hdrs = authHeaders();
     try {
       const [vipRes, devRes, tenantRes] = await Promise.all([
-        fetch('/api/ipam/vips', { headers: hdrs }),
+        fetch(`/api/ipam/vips?q=${encodeURIComponent(search.trim())}&vip_type=${encodeURIComponent(typeFilter)}&page=${page}&page_size=${pageSize}`, { headers: hdrs }),
         fetch('/api/devices?mode=light', { headers: hdrs }),
         fetch('/api/cmdb/tenants', { headers: hdrs }),
       ]);
       const unwrap = (j: any) => (Array.isArray(j) ? j : (j?.data ?? j?.items ?? []));
-      if (vipRes.ok) setVips(await vipRes.json());
+      if (vipRes.ok) {
+        const payload = await vipRes.json();
+        const data = payload?.data && !Array.isArray(payload.data) ? payload.data : payload;
+        setVips(Array.isArray(data) ? data : (data?.items || []));
+        setTotalVips(Array.isArray(data) ? data.length : Number(data?.total || 0));
+      }
       if (devRes.ok) {
         setDevices(unwrap(await devRes.json()));
       }
@@ -90,7 +96,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
     } finally {
       setLoading(false);
     }
-  }, [authHeaders]);
+  }, [authHeaders, page, pageSize, search, typeFilter]);
 
   useEffect(() => {
     loadData();
@@ -186,17 +192,8 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
     return dev ? dev.hostname : devId;
   };
 
-  const filteredVips = vips.filter((v) => {
-    const matchesSearch =
-      v.address.includes(search) ||
-      (v.description && v.description.toLowerCase().includes(search.toLowerCase())) ||
-      (v.real_servers && v.real_servers.toLowerCase().includes(search.toLowerCase()));
-    
-    const matchesType = typeFilter === 'all' || v.vip_type === typeFilter;
-    return matchesSearch && matchesType;
-  });
-
-  const paginatedVips = filteredVips.slice((page - 1) * pageSize, page * pageSize);
+  const filteredVips = vips;
+  const paginatedVips = vips;
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
@@ -253,7 +250,7 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
               {zh ? '加载中...' : 'Loading VIP configs...'}
             </div>
           ) : (
-            <table className="w-full border-collapse text-left">
+            <table className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? '虚拟IP (VIP)' : 'Virtual IP'}</th>
@@ -338,9 +335,10 @@ const VIPManagementTab: React.FC<VIPManagementTabProps> = ({ language, t }) => {
         <div className="px-6 py-4 border-t border-gray-100">
           <Pagination
             currentPage={page}
-            totalItems={filteredVips.length}
+            totalItems={totalVips}
             itemsPerPage={pageSize}
             onPageChange={setPage}
+            onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }}
             language={language}
             alwaysVisible={true}
           />

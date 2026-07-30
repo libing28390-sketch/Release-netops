@@ -412,7 +412,7 @@ const AnalysisTab: React.FC<{
     )}
 
     {analysis.length > 0 ? (
-      <table className="w-full text-[11px]">
+      <table className="nx-data-table nx-data-table--compact text-[11px]">
         <thead>
           <tr className="text-white/50 border-b border-white/10">
             <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '指标' : 'Metric'}</th>
@@ -465,7 +465,7 @@ const SnapshotTab: React.FC<{ zh: boolean; metricsObj: Record<string, any> }> = 
     {Object.keys(metricsObj).length === 0 ? (
       <div className="text-white/30 text-center py-6 text-xs italic">{zh ? '暂无指标数据' : 'No metrics'}</div>
     ) : (
-      <table className="w-full text-[11px]">
+      <table className="nx-data-table nx-data-table--compact text-[11px]">
         <thead>
           <tr className="text-white/50 border-b border-white/10">
             <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '指标键' : 'Metric Key'}</th>
@@ -503,7 +503,7 @@ const ComplianceTab: React.FC<{ zh: boolean; complianceItems: any[] }> = ({ zh, 
     {complianceItems.length === 0 ? (
       <div className="text-white/30 text-center py-6 text-xs italic">{zh ? '暂无合规检查项' : 'No compliance checks defined'}</div>
     ) : (
-      <table className="w-full text-[11px]">
+      <table className="nx-data-table nx-data-table--compact text-[11px]">
         <thead>
           <tr className="text-white/50 border-b border-white/10">
             <th className="text-left py-2 px-2 font-bold uppercase tracking-wider">{zh ? '合规项' : 'Item'}</th>

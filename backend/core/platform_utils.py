@@ -20,6 +20,8 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         v_key = 'zte'
     elif 'maipu' in v:
         v_key = 'maipu'
+    elif 'dptech' in v:
+        v_key = 'dptech'
     elif 'juniper' in v or 'junos' in v:
         v_key = 'juniper'
     elif 'arista' in v or 'eos' in v:
@@ -34,7 +36,8 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
     explicit_platforms = {
         'huawei_vrp', 'huawei_vrpv8', 'vrp5', 'vrpv5', 'vrp8', 'vrpv8',
         'h3c_comware', 'h3c_comware9', 'hp_comware', 'comware5', 'comware7', 'comware9',
-        'ruijie_rgos', 'ruijie_os', 'zte_zxros', 'maipu', 'maipu_network',
+        'ruijie_rgos', 'ruijie_os', 'zte_zxros', 'maipu', 'maipu_network', 'maipu_mypower',
+        'dptech_ios', 'dptech',
     }
     if p in explicit_platforms:
         if p in {'vrp8', 'vrpv8'}:
@@ -49,8 +52,10 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
             return 'h3c_comware9'
         if p in {'ruijie_os', 'ruijie_rgos'}:
             return 'ruijie_rgos'
-        if p == 'maipu_network':
+        if p in {'maipu_network', 'maipu_mypower'}:
             return 'maipu'
+        if p in {'dptech', 'dptech_ios'}:
+            return 'dptech_ios'
         return p
 
     # If platform is empty or generic/cisco but vendor is specific, override it
@@ -69,6 +74,9 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
     elif v_key == 'maipu':
         if not p or 'cisco' in p or p == 'generic':
             return 'maipu'
+    elif v_key == 'dptech':
+        if not p or 'cisco' in p or p == 'generic':
+            return 'dptech_ios'
     elif v_key == 'juniper':
         if not p or 'cisco' in p or p == 'generic':
             return 'juniper_junos'
@@ -87,6 +95,8 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         return 'zte_zxros'
     elif 'maipu' in p:
         return 'maipu'
+    elif 'dptech' in p:
+        return 'dptech_ios'
     elif 'juniper' in p or 'junos' in p:
         return 'juniper_junos'
     elif 'arista' in p or 'eos' in p:

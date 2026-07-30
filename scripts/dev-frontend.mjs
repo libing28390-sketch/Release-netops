@@ -2,7 +2,9 @@ import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 
-const port = Number(process.env.VITE_PORT || 5300);
+// Keep the default aligned with vite.config.ts. VITE_PORT can still override
+// it explicitly when another environment requires a different port.
+const port = Number(process.env.VITE_PORT || 5400);
 
 function readHttpRoot() {
   return new Promise((resolve) => {

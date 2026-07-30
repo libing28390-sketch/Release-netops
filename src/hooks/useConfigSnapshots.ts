@@ -52,6 +52,10 @@ export const useConfigSnapshots = ({
   const scheduleCron = useConfigStore((s) => s.scheduleCron);
   const setScheduleCron = useConfigStore((s) => s.setScheduleCron);
   const setScheduleLoading = useConfigStore((s) => s.setScheduleLoading);
+  const retentionDays = useConfigStore((s) => s.retentionDays);
+  const setRetentionDays = useConfigStore((s) => s.setRetentionDays);
+  const retentionMaxPerDevice = useConfigStore((s) => s.retentionMaxPerDevice);
+  const setRetentionMaxPerDevice = useConfigStore((s) => s.setRetentionMaxPerDevice);
 
   const loadConfigSnapshots = useCallback(async (
     deviceId?: string,
@@ -113,12 +117,26 @@ export const useConfigSnapshots = ({
     }
   }, [setScheduleEnabled, setScheduleCron]);
 
+  const loadRetentionConfig = useCallback(async () => {
+    try {
+      const resp = await fetch('/api/configs/retention');
+      if (resp.ok) {
+        const cfg = await resp.json();
+        setRetentionDays(Number(cfg.max_days) || 90);
+        setRetentionMaxPerDevice(Number(cfg.max_per_device) || 30);
+      }
+    } catch {
+      // ignore
+    }
+  }, [setRetentionDays, setRetentionMaxPerDevice]);
+
   // Load schedule config once on auth
   useEffect(() => {
     if (isAuthenticated) {
       loadScheduleConfig();
+      loadRetentionConfig();
     }
-  }, [isAuthenticated, loadScheduleConfig]);
+  }, [isAuthenticated, loadScheduleConfig, loadRetentionConfig]);
 
   // Trigger snapshot load when entering relevant config tab.
   useEffect(() => {
@@ -257,17 +275,31 @@ export const useConfigSnapshots = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: scheduleEnabled, cron: scheduleCron }),
       });
-      if (resp.ok) showToast(t('scheduleUpdated'), 'success');
-      else {
+      if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         showToast(err.detail || 'Invalid schedule', 'error');
+        return;
       }
+      const retentionResp = await fetch('/api/configs/retention', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          max_days: Math.max(1, Math.round(retentionDays)),
+          max_per_device: Math.max(1, Math.round(retentionMaxPerDevice)),
+        }),
+      });
+      if (!retentionResp.ok) {
+        const err = await retentionResp.json().catch(() => ({}));
+        showToast(err.detail || 'Invalid retention policy', 'error');
+        return;
+      }
+      showToast(t('scheduleUpdated'), 'success');
     } catch {
       // ignore
     } finally {
       setScheduleLoading(false);
     }
-  }, [scheduleEnabled, scheduleCron, setScheduleLoading, showToast, t]);
+  }, [scheduleEnabled, scheduleCron, retentionDays, retentionMaxPerDevice, setScheduleLoading, showToast, t]);
 
   const handleSearchConfigSnapshots = useCallback(async (query = configSnapshotKeyword) => {
     await loadConfigSnapshots(configCenterDevice?.id, { requireFilter: true, q: query });

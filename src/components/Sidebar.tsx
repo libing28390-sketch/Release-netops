@@ -779,17 +779,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                 v{systemInfo?.version || '0.1.0'}
               </span>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">
-                {language === 'zh' ? '授权版本' : 'EDITION'}
-              </span>
-              <span className={`text-[10px] font-bold ${
-                systemInfo?.edition === 'Enterprise' ? 'text-amber-400' : 
-                systemInfo?.edition === 'Professional' ? 'text-indigo-400' : 'text-slate-400'
-              }`}>
-                {systemInfo?.edition || 'Standard'}
-              </span>
-            </div>
           </div>
         )}
       </aside>

@@ -106,7 +106,7 @@ class H3CNormalizerTests(unittest.TestCase):
         self.assertEqual(len(interfaces), 3)
         self.assertEqual(interfaces["gi1/0/6"].oper_status, "down")
         self.assertEqual(interfaces["lo0"].primary_ip, "2.2.2.9")
-        self.assertEqual(interfaces["vl999"].interface_type, "svi")
+        self.assertEqual(interfaces["vlan999"].interface_type, "svi")
 
     def test_real_lldp_list_fixture(self):
         raw = (

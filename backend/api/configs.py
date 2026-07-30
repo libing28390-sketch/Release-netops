@@ -9,15 +9,18 @@ import uuid
 import json
 import gzip
 import logging
+import hashlib
+import re
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from core.config import settings
 from core.scheduler_manager import scheduler
 from apscheduler.triggers.cron import CronTrigger
+from services import config_backup_policy_service
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,57 @@ class ScheduleUpdate(BaseModel):
     # 兼容旧字段（前端平滑迁移后可移除）
     hour: int | None = None
     minute: int | None = None
+
+
+def _normalize_config_content(content: str) -> str:
+    """Normalize volatile whitespace/timestamps while preserving configuration order."""
+    normalized_lines = []
+    volatile_patterns = (
+        re.compile(r'^\s*!?\s*(last configuration change|current configuration|time source is)', re.I),
+        re.compile(r'^\s*#\s*(last commit|generated at)', re.I),
+    )
+    for raw_line in str(content or '').replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+        line = raw_line.rstrip()
+        if any(pattern.search(line) for pattern in volatile_patterns):
+            continue
+        normalized_lines.append(line)
+    return '\n'.join(normalized_lines).strip() + '\n'
+
+
+def _config_snapshot_metadata(content: str) -> dict:
+    raw = str(content or '')
+    normalized = _normalize_config_content(raw)
+    lines = raw.replace('\r\n', '\n').replace('\r', '\n').splitlines()
+    non_empty = [line for line in lines if line.strip()]
+    error_markers = (
+        '% invalid input',
+        '% authorization failed',
+        'permission denied',
+        'command not found',
+        'connection timed out',
+    )
+    truncation_reason = ''
+    if not non_empty:
+        truncation_reason = 'empty_output'
+    elif any(marker in raw.lower() for marker in error_markers):
+        truncation_reason = 'command_error_output'
+    elif len(raw.encode('utf-8')) < 64 or len(non_empty) < 3:
+        truncation_reason = 'suspiciously_short'
+    integrity_status = 'invalid' if truncation_reason else 'verified'
+    section_count = sum(
+        1 for line in non_empty
+        if line == line.lstrip() and not line.startswith(('!', '#', 'Building configuration'))
+    )
+    return {
+        'raw_hash': hashlib.sha256(raw.encode('utf-8')).hexdigest(),
+        'normalized_hash': hashlib.sha256(normalized.encode('utf-8')).hexdigest(),
+        'line_count': len(lines),
+        'section_count': section_count,
+        'integrity_status': integrity_status,
+        'lifecycle_status': 'fingerprinted' if integrity_status == 'verified' else 'stored_raw',
+        'normalizer_version': 'ncm-v1',
+        'truncation_reason': truncation_reason,
+    }
 
 
 # ──────────────────────────────────────────────
@@ -129,6 +183,125 @@ def _delete_config_file(file_path: str):
 
 def _row_to_dict(row) -> dict:
     return dict(row)
+
+
+def _create_backup_run(
+    run_id: str,
+    *,
+    trigger: str,
+    author: str,
+    devices: list,
+    eligible_ids: set[str],
+    policy_id: str = '',
+    policy_snapshot: str = '',
+) -> dict[str, str]:
+    """Persist a run and its planned device outcomes before network work starts."""
+    now = datetime.now().isoformat()
+    device_rows: dict[str, str] = {}
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            '''INSERT INTO config_backup_runs
+               (id, trigger, author, status, started_at, total_devices,
+                success_count, failed_count, skipped_count, policy_id,
+                policy_snapshot, created_at)
+               VALUES (?, ?, ?, 'running', ?, ?, 0, 0, ?, ?, ?, ?)''',
+            (run_id, trigger, author, now, len(devices),
+             len(devices) - len(eligible_ids), policy_id, policy_snapshot, now),
+        )
+        for device in devices:
+            device_id = str(device['id'])
+            row_id = f"run-device-{uuid.uuid4().hex[:16]}"
+            eligible = device_id in eligible_ids
+            conn.execute(
+                '''INSERT INTO config_backup_run_devices
+                   (id, run_id, device_id, hostname, ip_address, platform, status,
+                    reason, started_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (
+                    row_id,
+                    run_id,
+                    device_id,
+                    device['hostname'] or '',
+                    device['ip_address'] or '',
+                    device['platform'] or '',
+                    'pending' if eligible else 'skipped',
+                    '' if eligible else 'not_eligible',
+                    now,
+                ),
+            )
+            device_rows[device_id] = row_id
+        conn.commit()
+    finally:
+        conn.close()
+    return device_rows
+
+
+def _record_backup_run_device(
+    row_id: str,
+    *,
+    result: dict,
+    finished_at: str,
+    duration_ms: int,
+) -> None:
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            '''UPDATE config_backup_run_devices
+               SET status = ?, reason = ?, detail = ?, snapshot_id = ?,
+                   finished_at = ?, duration_ms = ?
+               WHERE id = ?''',
+            (
+                result.get('status') or 'failed',
+                result.get('reason') or '',
+                result.get('detail') or '',
+                result.get('snapshot_id') or None,
+                finished_at,
+                duration_ms,
+                row_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _finish_backup_run(run_id: str, *, error_message: str = '') -> None:
+    conn = get_db_connection()
+    try:
+        counts = conn.execute(
+            '''SELECT
+                 COUNT(*) AS total,
+                 SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count,
+                 SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                 SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped_count
+               FROM config_backup_run_devices WHERE run_id = ?''',
+            (run_id,),
+        ).fetchone()
+        total = int(counts['total'] or 0)
+        success_count = int(counts['success_count'] or 0)
+        failed_count = int(counts['failed_count'] or 0)
+        skipped_count = int(counts['skipped_count'] or 0)
+        status = 'completed' if failed_count == 0 else 'partial'
+        conn.execute(
+            '''UPDATE config_backup_runs
+               SET status = ?, finished_at = ?, total_devices = ?,
+                   success_count = ?, failed_count = ?, skipped_count = ?,
+                   error_message = ? WHERE id = ?''',
+            (
+                status,
+                datetime.now().isoformat(),
+                total,
+                success_count,
+                failed_count,
+                skipped_count,
+                error_message,
+                run_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ──────────────────────────────────────────────
@@ -275,7 +448,9 @@ def list_latest_backups(
         offset = (page - 1) * page_size
         data_sql = f'''
             SELECT d.id AS device_id, d.hostname, d.vendor, d.ip_address, d.status AS device_status,
-                   d.platform, cs.id AS snapshot_id, cs.timestamp, cs.size, cs.trigger
+                   d.platform, cs.id AS snapshot_id, cs.timestamp, cs.size, cs.trigger,
+                   cs.raw_hash, cs.normalized_hash, cs.line_count, cs.section_count,
+                   cs.integrity_status, cs.lifecycle_status
             FROM devices d
             LEFT JOIN (
                 SELECT cs1.*
@@ -304,9 +479,214 @@ def list_latest_backups(
                 'trigger': r['trigger'] or '',
                 'timestamp': r['timestamp'] or '',
                 'size': r['size'] or 0,
+                'raw_hash': r['raw_hash'] or '',
+                'normalized_hash': r['normalized_hash'] or '',
+                'line_count': r['line_count'] or 0,
+                'section_count': r['section_count'] or 0,
+                'integrity_status': r['integrity_status'] or 'unknown',
+                'lifecycle_status': r['lifecycle_status'] or 'stored_raw',
             })
 
         return {'items': items, 'total': total, 'page': page, 'page_size': page_size}
+    finally:
+        conn.close()
+
+
+@router.get('/configs/backup-runs')
+def list_backup_runs(
+    device_id: str = Query(default=''),
+    date: str = Query(default='', description='Filter batches by start date (YYYY-MM-DD)'),
+    start_date: str = Query(default='', description='Inclusive start date (YYYY-MM-DD)'),
+    end_date: str = Query(default='', description='Inclusive end date (YYYY-MM-DD)'),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+):
+    """Return persisted backup batches for audit/history views."""
+    conn = get_db_connection()
+    try:
+        where = []
+        params: list = []
+        if device_id.strip():
+            where.append(
+                "EXISTS (SELECT 1 FROM config_backup_run_devices rd "
+                "WHERE rd.run_id = r.id AND rd.device_id = ?)"
+            )
+            params.append(device_id.strip())
+        start_date_filter = (start_date.strip() or date.strip())
+        end_date_filter = (end_date.strip() or date.strip())
+        parsed_dates = []
+        for date_filter in (start_date_filter, end_date_filter):
+            if not date_filter:
+                parsed_dates.append(None)
+                continue
+            try:
+                parsed_date = datetime.strptime(date_filter, '%Y-%m-%d')
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail='date must use YYYY-MM-DD') from exc
+            if parsed_date.strftime('%Y-%m-%d') != date_filter:
+                raise HTTPException(status_code=400, detail='date must use YYYY-MM-DD')
+            if parsed_date.date() > datetime.now().date():
+                raise HTTPException(status_code=400, detail='backup date cannot be in the future')
+            parsed_dates.append(parsed_date)
+        if parsed_dates[0] and parsed_dates[1] and parsed_dates[0] > parsed_dates[1]:
+            raise HTTPException(status_code=400, detail='start_date must be before or equal to end_date')
+        if start_date_filter:
+            where.append("SUBSTR(r.started_at, 1, 10) >= ?")
+            params.append(start_date_filter)
+        if end_date_filter:
+            where.append("SUBSTR(r.started_at, 1, 10) <= ?")
+            params.append(end_date_filter)
+        where_sql = (' WHERE ' + ' AND '.join(where)) if where else ''
+        total = conn.execute(
+            f"SELECT COUNT(*) AS c FROM config_backup_runs r{where_sql}",
+            tuple(params),
+        ).fetchone()['c']
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            f'''SELECT r.id, r.trigger, r.author, r.status, r.started_at, r.finished_at,
+                       r.total_devices, r.success_count, r.failed_count, r.skipped_count,
+                       r.policy_id, r.policy_snapshot, r.error_message
+                FROM config_backup_runs r{where_sql}
+                ORDER BY r.started_at DESC LIMIT ? OFFSET ?''',
+            tuple([*params, page_size, offset]),
+        ).fetchall()
+        run_ids = [row['id'] for row in rows]
+        site_summary_map: dict[str, list[dict]] = {run_id: [] for run_id in run_ids}
+        if run_ids:
+            placeholders = ','.join('?' for _ in run_ids)
+            site_rows = conn.execute(
+                f'''SELECT rd.run_id,
+                           COALESCE(NULLIF(TRIM(s.site_name), ''), NULLIF(TRIM(s.site_code), ''), NULLIF(TRIM(d.site), ''), 'Unassigned') AS site,
+                           COUNT(*) AS total,
+                           SUM(CASE WHEN rd.status = 'success' THEN 1 ELSE 0 END) AS success,
+                           SUM(CASE WHEN rd.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                           SUM(CASE WHEN rd.status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+                           SUM(CASE WHEN rd.status IS NULL OR rd.status NOT IN ('success', 'failed', 'skipped') THEN 1 ELSE 0 END) AS unknown
+                    FROM config_backup_run_devices rd
+                    LEFT JOIN devices d ON d.id = rd.device_id
+                    LEFT JOIN sites s ON s.id = d.site_id
+                              OR (COALESCE(NULLIF(TRIM(d.site_id), ''), '') = ''
+                                  AND (s.id = d.site OR s.site_code = d.site OR s.site_name = d.site))
+                    WHERE rd.run_id IN ({placeholders})
+                    GROUP BY rd.run_id, COALESCE(NULLIF(TRIM(s.site_name), ''), NULLIF(TRIM(s.site_code), ''), NULLIF(TRIM(d.site), ''), 'Unassigned')
+                    ORDER BY rd.run_id, site''',
+                tuple(run_ids),
+            ).fetchall()
+            for site_row in site_rows:
+                site_summary_map[site_row['run_id']].append({
+                    'site': site_row['site'] or 'Unassigned',
+                    'total': int(site_row['total'] or 0),
+                    'success': int(site_row['success'] or 0),
+                    'failed': int(site_row['failed'] or 0),
+                    'skipped': int(site_row['skipped'] or 0),
+                    'unknown': int(site_row['unknown'] or 0),
+                })
+        return {
+            'items': [
+                {**dict(row), 'site_summary': site_summary_map.get(row['id'], [])}
+                for row in rows
+            ],
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+        }
+    finally:
+        conn.close()
+
+
+@router.get('/configs/backup-runs/{run_id}')
+def get_backup_run(
+    run_id: str,
+    site: str = Query(default=''),
+    status: str = Query(default='all'),
+    search: str = Query(default=''),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+):
+    """Return a paged, searchable batch detail without loading every device."""
+    conn = get_db_connection()
+    try:
+        run = conn.execute(
+            'SELECT * FROM config_backup_runs WHERE id = ?', (run_id,)
+        ).fetchone()
+        if not run:
+            raise HTTPException(status_code=404, detail='Backup run not found')
+        site_expr = "COALESCE(NULLIF(TRIM(s.site_name), ''), NULLIF(TRIM(s.site_code), ''), NULLIF(TRIM(d.site), ''), 'Unassigned')"
+        site_join = "s.id = d.site_id OR (COALESCE(NULLIF(TRIM(d.site_id), ''), '') = '' AND (s.id = d.site OR s.site_code = d.site OR s.site_name = d.site))"
+        where = ['rd.run_id = ?']
+        params: list = [run_id]
+        requested_site = site.strip()
+        if requested_site and requested_site.lower() not in ('all', '*'):
+            where.append(f'{site_expr} = ?')
+            params.append(requested_site)
+        normalized_status = status.strip().lower()
+        if normalized_status in ('success', 'failed', 'skipped'):
+            where.append('rd.status = ?')
+            params.append(normalized_status)
+        elif normalized_status == 'unknown':
+            where.append("(rd.status IS NULL OR rd.status NOT IN ('success', 'failed', 'skipped'))")
+        elif normalized_status in ('abnormal', 'attention'):
+            where.append("(rd.status = 'failed' OR rd.status IS NULL OR rd.status NOT IN ('success', 'failed', 'skipped'))")
+        if search.strip():
+            term = f"%{search.strip()}%"
+            where.append('(rd.hostname LIKE ? OR rd.ip_address LIKE ? OR rd.platform LIKE ?)')
+            params.extend([term, term, term])
+        where_sql = ' AND '.join(where)
+        total = conn.execute(
+            f'''SELECT COUNT(*) AS c
+                FROM config_backup_run_devices rd
+                LEFT JOIN devices d ON d.id = rd.device_id
+                LEFT JOIN sites s ON {site_join}
+                WHERE {where_sql}''',
+            tuple(params),
+        ).fetchone()['c']
+        offset = (page - 1) * page_size
+        devices = conn.execute(
+            f'''SELECT rd.id, rd.device_id, rd.hostname, rd.ip_address, rd.platform, rd.status,
+                      reason, detail, snapshot_id, started_at, finished_at, duration_ms,
+                      {site_expr} AS site
+               FROM config_backup_run_devices rd
+               LEFT JOIN devices d ON d.id = rd.device_id
+               LEFT JOIN sites s ON {site_join}
+               WHERE {where_sql}
+               ORDER BY {site_expr}, rd.hostname, rd.ip_address
+               LIMIT ? OFFSET ?''',
+            tuple([*params, page_size, offset]),
+        ).fetchall()
+        site_rows = conn.execute(
+            f'''SELECT {site_expr} AS site,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN rd.status = 'success' THEN 1 ELSE 0 END) AS success,
+                       SUM(CASE WHEN rd.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                       SUM(CASE WHEN rd.status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+                       SUM(CASE WHEN rd.status IS NULL OR rd.status NOT IN ('success', 'failed', 'skipped') THEN 1 ELSE 0 END) AS unknown
+                FROM config_backup_run_devices rd
+                LEFT JOIN devices d ON d.id = rd.device_id
+                LEFT JOIN sites s ON {site_join}
+                WHERE rd.run_id = ?
+                GROUP BY {site_expr}
+                ORDER BY site''',
+            (run_id,),
+        ).fetchall()
+        run_payload = dict(run)
+        run_payload['site_summary'] = [
+            {
+                'site': row['site'] or 'Unassigned',
+                'total': int(row['total'] or 0),
+                'success': int(row['success'] or 0),
+                'failed': int(row['failed'] or 0),
+                'skipped': int(row['skipped'] or 0),
+                'unknown': int(row['unknown'] or 0),
+            }
+            for row in site_rows
+        ]
+        return {
+            'run': run_payload,
+            'devices': [dict(row) for row in devices],
+            'total': int(total or 0),
+            'page': page,
+            'page_size': page_size,
+        }
     finally:
         conn.close()
 
@@ -318,16 +698,30 @@ def create_snapshot(body: SnapshotCreate):
     snap_id = f"snap-{uuid.uuid4().hex[:12]}"
     rel_path = _write_config_file(body.vendor, body.hostname, ts, body.trigger, body.content)
     size = len(body.content.encode('utf-8'))
+    metadata = _config_snapshot_metadata(body.content)
+    if metadata['integrity_status'] != 'verified':
+        _delete_config_file(rel_path)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                'message': '配置内容未通过完整性校验，未创建有效版本',
+                'reason': metadata['truncation_reason'],
+            },
+        )
 
     conn = get_db_connection()
     try:
         conn.execute(
             '''INSERT INTO config_snapshots
-               (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+               (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
+                raw_hash, normalized_hash, line_count, section_count, integrity_status,
+                lifecycle_status, normalizer_version, collected_at, task_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (snap_id, body.device_id, body.hostname, body.vendor,
              ts.isoformat(), body.trigger, body.author, body.tag or '',
-             rel_path, size)
+             rel_path, size, metadata['raw_hash'], metadata['normalized_hash'],
+             metadata['line_count'], metadata['section_count'], metadata['integrity_status'],
+             metadata['lifecycle_status'], metadata['normalizer_version'], ts.isoformat(), '')
         )
         conn.commit()
     finally:
@@ -346,7 +740,7 @@ def create_snapshot(body: SnapshotCreate):
         target_name=body.hostname,
         device_id=body.device_id,
         snapshot_id=snap_id,
-        details={'trigger': body.trigger, 'vendor': body.vendor, 'size': size},
+        details={'trigger': body.trigger, 'vendor': body.vendor, 'size': size, **metadata},
     )
 
     return {
@@ -360,6 +754,7 @@ def create_snapshot(body: SnapshotCreate):
         'tag': body.tag,
         'file_path': rel_path,
         'size': size,
+        **metadata,
     }
 
 
@@ -378,6 +773,15 @@ def get_snapshot_content(snap_id: str):
         raise HTTPException(status_code=404, detail='Snapshot not found')
 
     content = _read_config_file(row['file_path'])
+    actual_metadata = _config_snapshot_metadata(content)
+    stored_hash = row['raw_hash'] or ''
+    integrity_status = (
+        'verified'
+        if content and stored_hash and actual_metadata['raw_hash'] == stored_hash
+        else 'legacy_unverified'
+        if content and not stored_hash
+        else 'hash_mismatch'
+    )
     return {
         'id': snap_id,
         'content': content,
@@ -387,6 +791,13 @@ def get_snapshot_content(snap_id: str):
         'trigger': row['trigger'] or '',
         'device_id': row['device_id'],
         'size': row['size'] or 0,
+        'raw_hash': stored_hash,
+        'normalized_hash': row['normalized_hash'] or '',
+        'line_count': row['line_count'] or actual_metadata['line_count'],
+        'section_count': row['section_count'] or actual_metadata['section_count'],
+        'integrity_status': integrity_status,
+        'lifecycle_status': row['lifecycle_status'] or 'stored_raw',
+        'normalizer_version': row['normalizer_version'] or '',
     }
 
 
@@ -471,6 +882,24 @@ def get_backup_stats():
             (today_start,)
         ).fetchone()['c']
 
+        # Prefer the persisted execution ledger when available.  Snapshot
+        # rows represent successes only and cannot distinguish a failure from
+        # an unplanned device.
+        today_run_counts = conn.execute(
+            '''SELECT
+                 COUNT(*) AS total,
+                 SUM(CASE WHEN rd.status = 'success' THEN 1 ELSE 0 END) AS success_count,
+                 SUM(CASE WHEN rd.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+                 SUM(CASE WHEN rd.status = 'skipped' THEN 1 ELSE 0 END) AS skipped_count,
+                 SUM(CASE WHEN r.trigger = 'scheduled' THEN 1 ELSE 0 END) AS scheduled_count,
+                 SUM(CASE WHEN r.trigger = 'manual' THEN 1 ELSE 0 END) AS manual_count
+               FROM config_backup_run_devices rd
+               JOIN config_backup_runs r ON r.id = rd.run_id
+               WHERE r.started_at >= ?''',
+            (today_start,),
+        ).fetchone()
+        has_today_ledger = int(today_run_counts['total'] or 0) > 0
+
         # Last 7 days history (grouped by date)
         seven_days_ago = (now - timedelta(days=7)).isoformat()
         daily_rows = conn.execute(
@@ -488,7 +917,8 @@ def get_backup_stats():
             daily_map[d]['total'] += r['cnt']
         daily_history = sorted(daily_map.values(), key=lambda x: x['date'])
 
-        # Today's failures - online devices without today's backup
+        # Devices without a current snapshot are informational until an
+        # execution ledger records an actual attempt.
         all_device_ids = conn.execute(
             "SELECT id FROM devices WHERE status = 'online'"
         ).fetchall()
@@ -497,7 +927,7 @@ def get_backup_stats():
             (today_start,)
         ).fetchall()
         today_backed_set = {r['device_id'] for r in today_backed_ids}
-        today_failed = sum(1 for r in all_device_ids if r['id'] not in today_backed_set)
+        today_unobserved = sum(1 for r in all_device_ids if r['id'] not in today_backed_set)
 
         # Total snapshots & total storage
         total_snapshots = conn.execute("SELECT COUNT(*) as c FROM config_snapshots").fetchone()['c']
@@ -563,11 +993,13 @@ def get_backup_stats():
             'success': True,
             'data': {
                 'today': {
-                    'total': today_total,
-                    'scheduled': today_scheduled,
-                    'manual': today_manual,
-                    'success': today_total,
-                    'failed': today_failed,
+                    'total': int(today_run_counts['total'] or today_total) if has_today_ledger else today_total,
+                    'scheduled': int(today_run_counts['scheduled_count'] or 0) if has_today_ledger else today_scheduled,
+                    'manual': int(today_run_counts['manual_count'] or 0) if has_today_ledger else today_manual,
+                    'success': int(today_run_counts['success_count'] or 0) if has_today_ledger else today_total,
+                    'failed': int(today_run_counts['failed_count'] or 0) if has_today_ledger else 0,
+                    'skipped': int(today_run_counts['skipped_count'] or 0) if has_today_ledger else 0,
+                    'unobserved': 0 if has_today_ledger else today_unobserved,
                 },
                 'daily_history': daily_history,
                 'total_snapshots': total_snapshots,
@@ -812,8 +1244,8 @@ DEFAULT_RETENTION = {'max_days': 90, 'max_per_device': 30}
 
 
 class RetentionUpdate(BaseModel):
-    max_days: int = 90
-    max_per_device: int = 30
+    max_days: int = Field(default=90, ge=1, le=3650)
+    max_per_device: int = Field(default=30, ge=1, le=5000)
 
 
 def _get_retention_from_db() -> dict:
@@ -823,7 +1255,11 @@ def _get_retention_from_db() -> dict:
             "SELECT value FROM global_vars WHERE key = ?", (RETENTION_KEY,)
         ).fetchone()
         if row:
-            return json.loads(row['value'])
+            raw = json.loads(row['value'])
+            return {
+                'max_days': min(3650, max(1, int(raw.get('max_days', DEFAULT_RETENTION['max_days'])))),
+                'max_per_device': min(5000, max(1, int(raw.get('max_per_device', DEFAULT_RETENTION['max_per_device'])))),
+            }
         return DEFAULT_RETENTION.copy()
     finally:
         conn.close()
@@ -854,33 +1290,54 @@ def update_retention(body: RetentionUpdate):
     return cfg
 
 
-def _cleanup_expired_snapshots():
+def _cleanup_expired_snapshots(
+    *,
+    policy_id: str = '',
+    max_days: int | None = None,
+    max_per_device: int | None = None,
+):
     """Delete snapshots that exceed retention policy (by age and per-device count)."""
-    retention = _get_retention_from_db()
-    max_days = retention.get('max_days', 90)
-    max_per_device = retention.get('max_per_device', 30)
+    if max_days is None or max_per_device is None:
+        retention = _get_retention_from_db()
+        max_days = max_days or retention.get('max_days', 90)
+        max_per_device = max_per_device or retention.get('max_per_device', 30)
+    max_days = max(1, int(max_days))
+    max_per_device = max(1, int(max_per_device))
     deleted = 0
+    policy_clause = ' AND policy_id = ?' if policy_id else ''
 
     conn = get_db_connection()
     try:
         # 1. Delete snapshots older than max_days
         cutoff = (datetime.now() - timedelta(days=max_days)).isoformat()
         old = conn.execute(
-            'SELECT id, file_path FROM config_snapshots WHERE timestamp < ?', (cutoff,)
+            f'SELECT id, file_path FROM config_snapshots WHERE timestamp < ?{policy_clause}',
+            (cutoff, policy_id) if policy_id else (cutoff,),
         ).fetchall()
         for s in old:
             _delete_config_file(s['file_path'])
         if old:
-            conn.execute('DELETE FROM config_snapshots WHERE timestamp < ?', (cutoff,))
+            conn.execute(
+                f'DELETE FROM config_snapshots WHERE timestamp < ?{policy_clause}',
+                (cutoff, policy_id) if policy_id else (cutoff,),
+            )
             deleted += len(old)
 
         # 2. Per-device: keep only max_per_device most recent
-        devs = conn.execute('SELECT DISTINCT device_id FROM config_snapshots').fetchall()
+        devs = conn.execute(
+            f'SELECT DISTINCT device_id FROM config_snapshots WHERE 1 = 1{policy_clause}',
+            (policy_id,) if policy_id else (),
+        ).fetchall()
         for d in devs:
             excess = conn.execute(
-                '''SELECT id, file_path FROM config_snapshots
-                   WHERE device_id = ? ORDER BY timestamp DESC LIMIT 1000 OFFSET ?''',
-                (d['device_id'], max_per_device)
+                f'''SELECT id, file_path FROM config_snapshots
+                    WHERE device_id = ?{policy_clause}
+                    ORDER BY timestamp DESC LIMIT 1000 OFFSET ?''',
+                (
+                    (d['device_id'], policy_id, max_per_device)
+                    if policy_id
+                    else (d['device_id'], max_per_device)
+                ),
             ).fetchall()
             for s in excess:
                 _delete_config_file(s['file_path'])
@@ -897,43 +1354,61 @@ def _cleanup_expired_snapshots():
         conn.close()
 
     if deleted:
-        logger.info(f"[Retention Cleanup] Removed {deleted} expired snapshots")
+        logger.info(
+            "[Retention Cleanup] Removed %d expired snapshots for policy=%s",
+            deleted,
+            policy_id or 'legacy-global',
+        )
+
+
+def reschedule_backup_policies():
+    """Replace all policy-backed backup jobs with the current database state."""
+    for job in scheduler.get_jobs():
+        if job.id == 'daily_backup' or job.id.startswith('config_backup_policy:'):
+            scheduler.remove_job(job.id)
+
+    conn = get_db_connection()
+    try:
+        policies = config_backup_policy_service.list_enabled_policies(conn)
+    finally:
+        conn.close()
+
+    for policy in policies:
+        try:
+            trigger = CronTrigger.from_crontab(
+                policy['cron_expr'],
+                timezone=policy.get('timezone') or 'Asia/Shanghai',
+            )
+            scheduler.add_job(
+                run_scheduled_backup,
+                trigger,
+                kwargs={'policy_id': policy['id']},
+                id=f"config_backup_policy:{policy['id']}",
+                name=f"Config Backup · {policy['name']}",
+                replace_existing=True,
+            )
+        except Exception:
+            logger.exception(
+                "[Scheduler] Could not register config backup policy %s",
+                policy.get('id'),
+            )
 
 
 def reschedule_backup(cfg: dict):
-    """
-    Called when the user changes the schedule settings.
-    Updates the APScheduler job 'daily_backup'.
-    """
-    if scheduler.get_job('daily_backup'):
-        scheduler.remove_job('daily_backup')
-    
-    if cfg.get('enabled', True):
-        cron_expr = cfg.get('cron', '')
-        if not cron_expr:
-            # Fallback for old format
-            h = cfg.get('hour', 2)
-            m = cfg.get('minute', 0)
-            cron_expr = f'{m} {h} * * *'
-            
-        parts = cron_expr.split()
-        if len(parts) >= 5:
-            trigger = CronTrigger(
-                minute=parts[0], hour=parts[1],
-                day=parts[2], month=parts[3], day_of_week=parts[4],
-            )
-        else:
-            trigger = CronTrigger(hour=cfg.get('hour', 2), minute=cfg.get('minute', 0))
-            
-        scheduler.add_job(
-            run_scheduled_backup,
-            trigger,
-            id='daily_backup',
-            name='Scheduled Config Backup',
-            replace_existing=True,
+    """Compatibility bridge from the legacy global schedule to the default policy."""
+    cron_expr = str(cfg.get('cron') or '').strip()
+    if not cron_expr:
+        cron_expr = f"{cfg.get('minute', 0)} {cfg.get('hour', 2)} * * *"
+    conn = get_db_connection()
+    try:
+        config_backup_policy_service.sync_default_policy_from_legacy(
+            conn,
+            enabled=bool(cfg.get('enabled', True)),
+            cron_expr=cron_expr,
         )
-    else:
-        logger.info("[Scheduler] Scheduled backup disabled")
+    finally:
+        conn.close()
+    reschedule_backup_policies()
 
 
 # ──────────────────────────────────────────────
@@ -943,11 +1418,15 @@ def reschedule_backup(cfg: dict):
 MOCK_IPS = {'127.0.0.1', '0.0.0.0', 'localhost'}
 
 
-async def run_scheduled_backup(run_id: str | None = None):
-    """Backup all online network devices. Called by APScheduler or on-demand.
+async def run_scheduled_backup(
+    run_id: str | None = None,
+    policy_id: str | None = None,
+    author: str | None = None,
+):
+    """Back up online devices matched by a saved policy.
 
     Concurrency:
-      - Up to ``BACKUP_CONCURRENCY`` (default 10) devices are backed up in
+      - Up to the policy concurrency limit (default 10) devices are backed up in
         parallel using asyncio.Semaphore + run_in_executor.
       - Each device gets its own AutomationService instance so there is no
         shared state between concurrent workers.
@@ -962,18 +1441,49 @@ async def run_scheduled_backup(run_id: str | None = None):
     from api.devices import _record_instant_execution
     import time as _time
 
+    persisted_run_id = run_id or f"run-{uuid.uuid4().hex[:12]}"
+    run_trigger = 'manual' if run_id else 'scheduled'
+    run_author = author or ('admin' if run_id else 'system')
     start_time = _time.time()
-    logger.info(f"[Scheduled Backup] Starting config backup task. Concurrency limit: {BACKUP_CONCURRENCY} devices at a time.")
     conn = get_db_connection()
     try:
-        devices = conn.execute(
-            "SELECT id, hostname, ip_address, platform, vendor, role, username, password, "
+        policy = (
+            config_backup_policy_service.get_policy(conn, policy_id)
+            if policy_id
+            else None
+        )
+        if policy_id and not policy:
+            logger.error("[Scheduled Backup] Policy %s no longer exists", policy_id)
+            return
+        device_rows = conn.execute(
+            "SELECT id, hostname, ip_address, platform, vendor, role, site, site_id, status, "
+            "config_backup_enabled, username, password, "
             "normal_username, normal_password, admin_username, admin_password, enable_password, "
             "credential_id, admin_credential_id, credential_source, vault_path, management_port "
             "FROM devices WHERE status = 'online'"
         ).fetchall()
+        devices = (
+            config_backup_policy_service.filter_devices_by_scope(
+                conn,
+                device_rows,
+                policy.get('scope'),
+            )
+            if policy
+            else [dict(row) for row in device_rows]
+        )
     finally:
         conn.close()
+
+    run_concurrency = int((policy or {}).get('concurrency') or BACKUP_CONCURRENCY)
+    run_retry_count = int((policy or {}).get('retry_count') or 0)
+    run_timeout_seconds = int((policy or {}).get('timeout_seconds') or 30)
+    change_only = bool((policy or {}).get('change_only', False))
+    logger.info(
+        "[Scheduled Backup] Starting policy=%s targets=%d concurrency=%d",
+        policy_id or 'legacy-all',
+        len(devices),
+        run_concurrency,
+    )
 
     # Platforms we back up (anything producing a textual running-config).
     NETWORK_PLATFORM_KEYWORDS = (
@@ -1002,6 +1512,30 @@ async def run_scheduled_backup(run_id: str | None = None):
         eligible.append(device)
 
     total = len(eligible)
+    run_device_rows: dict[str, str] = {}
+    try:
+        run_device_rows = _create_backup_run(
+            persisted_run_id,
+            trigger=run_trigger,
+            author=run_author,
+            devices=devices,
+            eligible_ids={str(device['id']) for device in eligible},
+            policy_id=policy_id or '',
+            policy_snapshot=json.dumps({
+                'policy_id': policy_id or '',
+                'policy_name': (policy or {}).get('name', 'Legacy all devices'),
+                'scope': (policy or {}).get('scope', {}),
+                'cron_expr': (policy or {}).get('cron_expr', ''),
+                'timezone': (policy or {}).get('timezone', ''),
+                'change_only': change_only,
+                'concurrency': run_concurrency,
+                'retry_count': run_retry_count,
+                'timeout_seconds': run_timeout_seconds,
+                'platform_scope': 'network_devices',
+            }, ensure_ascii=False),
+        )
+    except Exception:
+        logger.exception("[Scheduled Backup] Could not persist backup run %s", persisted_run_id)
 
     # Initialise progress entry
     if run_id:
@@ -1020,7 +1554,7 @@ async def run_scheduled_backup(run_id: str | None = None):
 
     success_count = 0
     failed_count = 0
-    sem = asyncio.Semaphore(BACKUP_CONCURRENCY)
+    sem = asyncio.Semaphore(run_concurrency)
 
     def _looks_like_error(raw: str) -> bool:
         if not raw or not raw.strip():
@@ -1051,7 +1585,7 @@ async def run_scheduled_backup(run_id: str | None = None):
 
         d = dict(device)
         d['platform'] = _platform
-        d['conn_timeout'] = 8  # Use a shorter connection timeout of 8s for backup tasks to fail fast
+        d['conn_timeout'] = run_timeout_seconds
         from services.vault_service import resolve_device_credentials
         creds = resolve_device_credentials(d)
         username = creds.get('admin_username') or creds.get('username') or ''
@@ -1075,32 +1609,58 @@ async def run_scheduled_backup(run_id: str | None = None):
 
         output = ''
         backup_ok = False
+        results = None
 
         async with sem:
-            try:
-                driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
-                service = AutomationService(driver_type=driver_type)
-                commands = [_backup_cmd]
+            for attempt in range(run_retry_count + 1):
+                try:
+                    driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
+                    service = AutomationService(driver_type=driver_type)
+                    commands = [_backup_cmd]
 
-                # Use the built-in ThreadPoolExecutor with 50 workers from ExecutionOrchestrator
-                # instead of the event loop's default thread pool (which is limited by CPU cores)
-                results = await asyncio.get_event_loop().run_in_executor(
-                    service.orchestrator.executor,
-                    lambda: service.execute_commands(d, commands, is_config=False)
-                )
+                    # Use the shared execution pool so policy concurrency and the
+                    # global SSH limiter both remain effective.
+                    results = await asyncio.get_event_loop().run_in_executor(
+                        service.orchestrator.executor,
+                        lambda: service.execute_commands(d, commands, is_config=False)
+                    )
 
-                if results and results[0].get('success', False):
-                    output = results[0].get('output') or results[0].get('stdout') or ''
-                    _record_instant_execution(d['id'], "Scheduled Backup", commands, 'completed',
-                                              platform=d.get('platform'), output=output, device_info=d)
-                else:
-                    err = (results[0].get('error') or results[0].get('stderr') or 'Unknown error') if results else 'Unknown error'
-                    logger.warning(f"[Scheduled Backup] Execution failed for {device['hostname']} ({cred_kind}): {err}")
+                    if results and results[0].get('success', False):
+                        output = results[0].get('output') or results[0].get('stdout') or ''
+                        if not _looks_like_error(output) and not output.startswith('% '):
+                            _record_instant_execution(
+                                d['id'],
+                                f"Config Backup · {(policy or {}).get('name', 'Manual')}",
+                                commands,
+                                'completed',
+                                platform=d.get('platform'),
+                                output=output,
+                                device_info=d,
+                            )
+                            break
+                    err = (
+                        results[0].get('error')
+                        or results[0].get('stderr')
+                        or 'Unknown error'
+                    ) if results else 'Unknown error'
+                    logger.warning(
+                        "[Scheduled Backup] Attempt %d/%d failed for %s (%s): %s",
+                        attempt + 1,
+                        run_retry_count + 1,
+                        device['hostname'],
+                        cred_kind,
+                        err,
+                    )
                     output = ''
-
-            except Exception as e:
-                logger.warning(f"[Scheduled Backup] Logic error for {device['hostname']}: {e}")
-                output = ''
+                except Exception as e:
+                    logger.warning(
+                        "[Scheduled Backup] Attempt %d/%d raised for %s: %s",
+                        attempt + 1,
+                        run_retry_count + 1,
+                        device['hostname'],
+                        e,
+                    )
+                    output = ''
 
         if not _looks_like_error(output) and not output.startswith('% '):
             backup_ok = True
@@ -1142,37 +1702,90 @@ async def run_scheduled_backup(run_id: str | None = None):
             }
 
         try:
-            platform = (device['platform'] or '').lower()
+            metadata = _config_snapshot_metadata(output)
+            if metadata['integrity_status'] != 'verified':
+                failed_count += 1
+                return {
+                    'hostname': device['hostname'],
+                    'status': 'failed',
+                    'reason': '完整性校验失败',
+                    'detail': metadata['truncation_reason'],
+                }
+            if change_only:
+                conn_latest = get_db_connection()
+                try:
+                    latest = conn_latest.execute(
+                        """
+                        SELECT id, normalized_hash
+                        FROM config_snapshots
+                        WHERE device_id = ? AND config_type = 'running'
+                        ORDER BY timestamp DESC
+                        LIMIT 1
+                        """,
+                        (device['id'],),
+                    ).fetchone()
+                finally:
+                    conn_latest.close()
+                if latest and latest['normalized_hash'] == metadata['normalized_hash']:
+                    success_count += 1
+                    return {
+                        'hostname': device['hostname'],
+                        'status': 'success',
+                        'reason': '配置未变化',
+                        'detail': '标准化配置与最近版本一致，按策略未重复归档。',
+                        'snapshot_id': latest['id'],
+                        'unchanged': True,
+                    }
+
+            platform = _platform.lower()
             if 'cisco' in platform:
                 vendor = 'Cisco'
             elif 'juniper' in platform or 'junos' in platform:
                 vendor = 'Juniper'
             elif 'huawei' in platform:
                 vendor = 'Huawei'
+            elif 'h3c' in platform or 'comware' in platform:
+                vendor = 'H3C'
             elif 'arista' in platform or 'eos' in platform:
                 vendor = 'Arista'
+            elif 'ruijie' in platform or 'rgos' in platform:
+                vendor = 'Ruijie'
             else:
-                vendor = 'Other'
+                vendor = str(device.get('vendor') or 'Other')
 
             ts = datetime.now()
-            rel_path = _write_config_file(vendor, device['hostname'], ts, 'scheduled', output)
+            rel_path = _write_config_file(vendor, device['hostname'], ts, run_trigger, output)
             size = len(output.encode('utf-8'))
             snap_id = f"snap-{uuid.uuid4().hex[:12]}"
             conn2 = get_db_connection()
             try:
                 conn2.execute(
                     '''INSERT INTO config_snapshots
-                       (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                       (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
+                        raw_hash, normalized_hash, line_count, section_count, integrity_status,
+                        lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     (snap_id, device['id'], device['hostname'], vendor,
-                     ts.isoformat(), 'scheduled', 'system', '', rel_path, size)
+                     ts.isoformat(), run_trigger, run_author, '', rel_path, size,
+                     metadata['raw_hash'], metadata['normalized_hash'], metadata['line_count'],
+                     metadata['section_count'], metadata['integrity_status'],
+                     metadata['lifecycle_status'], metadata['normalizer_version'],
+                     ts.isoformat(), persisted_run_id, policy_id or '', 'running')
                 )
                 conn2.commit()
             finally:
                 conn2.close()
             success_count += 1
             logger.info(f"[Scheduled Backup] [OK] {device['hostname']}")
-            return {'hostname': device['hostname'], 'status': 'success', 'size': size}
+            return {
+                'hostname': device['hostname'],
+                'status': 'success',
+                'size': size,
+                'snapshot_id': snap_id,
+                'raw_hash': metadata['raw_hash'],
+                'normalized_hash': metadata['normalized_hash'],
+                'integrity_status': metadata['integrity_status'],
+            }
         except Exception as e:
             failed_count += 1
             logger.error(f"[Scheduled Backup] [X] {device['hostname']}: {e}")
@@ -1185,7 +1798,17 @@ async def run_scheduled_backup(run_id: str | None = None):
 
     # Run all eligible devices concurrently (bounded by semaphore)
     async def _run_with_progress(device):
+        device_started = _time.perf_counter()
         result = await _backup_one(device)
+        device_finished = datetime.now().isoformat()
+        row_id = run_device_rows.get(str(device['id']))
+        if row_id:
+            _record_backup_run_device(
+                row_id,
+                result=result,
+                finished_at=device_finished,
+                duration_ms=round((_time.perf_counter() - device_started) * 1000),
+            )
         if run_id and run_id in _backup_runs:
             entry = _backup_runs[run_id]
             entry['done'] += 1
@@ -1196,10 +1819,15 @@ async def run_scheduled_backup(run_id: str | None = None):
 
     await asyncio.gather(*[_run_with_progress(dev) for dev in eligible])
 
+    try:
+        _finish_backup_run(persisted_run_id)
+    except Exception:
+        logger.exception("[Scheduled Backup] Could not finalize backup run %s", persisted_run_id)
+
     duration = round(_time.time() - start_time, 2)
     logger.info(
         f"[Scheduled Backup] Done - {success_count} succeeded, {failed_count} failed, {skipped_count} skipped. "
-        f"Concurrency limit: {BACKUP_CONCURRENCY}. Total elapsed time: {duration} seconds."
+        f"Concurrency limit: {run_concurrency}. Total elapsed time: {duration} seconds."
     )
 
     # Mark run as finished
@@ -1214,6 +1842,10 @@ async def run_scheduled_backup(run_id: str | None = None):
 
     # Run retention cleanup after backup
     try:
-        _cleanup_expired_snapshots()
+        _cleanup_expired_snapshots(
+            policy_id=policy_id or '',
+            max_days=int(policy.get('retention_days', 90)) if policy else None,
+            max_per_device=int(policy.get('max_versions_per_device', 30)) if policy else None,
+        )
     except Exception as e:
         logger.error(f"[Retention Cleanup] Error: {e}")

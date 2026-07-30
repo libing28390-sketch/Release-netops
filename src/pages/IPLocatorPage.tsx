@@ -3,6 +3,8 @@ import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCir
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import * as XLSX from 'xlsx';
+import { formatMacAddress } from '../utils/resourceFormatters';
+import { useSearchParams } from 'react-router-dom';
 
 interface IPLocatorPageProps {
   language: string;
@@ -15,6 +17,7 @@ interface LocationEntry {
   switch_name: string;
   port: string;
   vlan: string;
+  vlan_source?: string;
   type: string;
   is_uplink: boolean;
   uplink_neighbor?: string;
@@ -22,12 +25,77 @@ interface LocationEntry {
   note?: string;
 }
 
+interface LocatorContext {
+  address: {
+    ip: string;
+    type: string;
+    prefix: string;
+    prefix_length?: number | null;
+    netmask: string;
+    network_type: string;
+    purpose: string;
+    status: string;
+    last_seen: string;
+  };
+  l2: {
+    mac: string;
+    vlan: string;
+    vlan_name: string;
+    vlan_source: string;
+    switch_id: string;
+    switch_name: string;
+    port: string;
+    description: string;
+    admin_status: string;
+    oper_status: string;
+    mode: string;
+    native_vlan: string;
+    allowed_vlans: string;
+    last_seen: string;
+  };
+  l3: {
+    gateway: string;
+    gateway_device: string;
+    gateway_interface: string;
+    vrf: string;
+    next_hop: string;
+    route_source: string;
+    route_interface: string;
+    route_last_updated: string;
+    upstream_devices?: Array<{ device: string; device_id?: string; port?: string; peer_port?: string }>;
+    downstream_devices?: Array<{ device: string; device_id?: string; port?: string; peer_port?: string }>;
+    adjacent_devices?: Array<{ device: string; device_id?: string; port?: string; peer_port?: string }>;
+  };
+  business: {
+    hostname: string;
+    asset_type: string;
+    department: string;
+    tenant: string;
+    site: string;
+    owner: string;
+    criticality: string;
+    description: string;
+    config_backup_at: string;
+    business_systems?: string[];
+    business_level?: string;
+    open_alerts: Array<{ id: string; severity: string; title: string; created_at: string; interface: string }>;
+  };
+  freshness: {
+    endpoint_last_seen: string;
+    arp_last_updated: string;
+    mac_last_updated: string;
+    interface_last_seen: string;
+    collected_at: string;
+  };
+  path: Array<{ kind: string; label: string; detail: string }>;
+}
+
 interface LocateResult {
   target_ip: string;
   found: boolean;
   mac: string | null;
   mac_display: string | null;
-  arp_source: { device_id: string; device: string; interface: string } | null;
+  arp_source: { device_id: string; device: string; interface: string; vlan?: string } | null;
   locations: LocationEntry[];
   searched_devices: { arp: string[]; mac: string[]; lldp: string[] };
   cache?: {
@@ -36,9 +104,12 @@ interface LocateResult {
     ttl_seconds: number;
     force_refresh: boolean;
     cached_at: string | null;
+    endpoint_cache_stale?: boolean;
+    endpoint_cache_age_seconds?: number | null;
   };
   timestamp: string;
   errors: string[];
+  context?: LocatorContext;
 }
 
 // ── Connectivity Probe Types ──
@@ -62,6 +133,60 @@ interface ProbeResult {
 type TabMode = 'locate' | 'probe' | 'arp-table' | 'mac-changes' | 'diagnose' | 'nsot';
 type NsotSubTab = 'endpoints' | 'inventory' | 'routes' | 'neighbors' | 'bgp_routes';
 
+const PATH_KIND_LABELS: Record<string, [string, string]> = {
+  ip: ['IP 地址', 'IP Address'],
+  mac: ['MAC 地址', 'MAC Address'],
+  access: ['接入设备', 'Access Device'],
+  vlan: ['二层 VLAN', 'Layer 2 VLAN'],
+  transit: ['中间设备', 'Transit Device'],
+  gateway: ['网关设备', 'Gateway Device'],
+  network: ['目标网段', 'Target Network'],
+};
+
+function formatPathKind(kind: string, zhLang: boolean): string {
+  const labels = PATH_KIND_LABELS[kind] || [kind, kind];
+  return labels[zhLang ? 0 : 1];
+}
+
+function formatExactTime(value: string, zhLang: boolean): string {
+  if (!value) return zhLang ? '暂无时间' : 'No timestamp';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(zhLang ? 'zh-CN' : 'en-US', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(date);
+}
+
+const FreshnessItem: React.FC<{ label: string; value: string; thresholdSeconds: number; zhLang: boolean }> = ({ label, value, thresholdSeconds, zhLang }) => {
+  const parsed = value ? new Date(value).getTime() : NaN;
+  const ageSeconds = Number.isNaN(parsed) ? null : Math.max(0, Math.round((Date.now() - parsed) / 1000));
+  const status = ageSeconds === null
+    ? (zhLang ? '未知' : 'Unknown')
+    : ageSeconds <= thresholdSeconds
+      ? (zhLang ? '较新' : 'Fresh')
+      : (zhLang ? '较旧' : 'Stale');
+  const statusClass = ageSeconds === null
+    ? 'text-black/35 dark:text-white/35'
+    : ageSeconds <= thresholdSeconds
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : 'text-amber-600 dark:text-amber-400';
+
+  return (
+    <div className="rounded-lg border border-black/5 dark:border-white/10 bg-white/80 dark:bg-white/[0.04] px-3 py-2" title={value || (zhLang ? '该类数据尚未采集' : 'No observation yet')}>
+      <div className="flex items-center gap-1.5 text-[10px] text-black/45 dark:text-white/45">
+        <Clock size={10} />
+        <span>{label}</span>
+        <span className={`ml-auto font-medium ${statusClass}`}>{status}</span>
+      </div>
+      <div className="mt-1 text-[11px] font-medium text-black/70 dark:text-white/70">
+        {value ? formatExactTime(value, zhLang) : (zhLang ? '暂无采集记录' : 'No observation')}
+      </div>
+      {value && <div className="mt-0.5 text-[10px] text-black/35 dark:text-white/35">{formatRelativeTime(value, zhLang)}</div>}
+    </div>
+  );
+};
+
 interface ArpEntry {
   ip: string;
   mac: string;
@@ -72,6 +197,11 @@ interface ArpEntry {
   cached_at: string;
   ttl_remaining: number;
   vendor: string;
+  vlan?: string;
+  vlan_id?: number | null;
+  vlan_source?: string;
+  age_seconds?: number | null;
+  freshness?: 'fresh' | 'stale' | 'unknown';
 }
 
 interface MacChangeEntry {
@@ -103,6 +233,42 @@ interface ArpTableData {
 interface ArpSweepStatus {
   kind: 'success' | 'warning';
   message: string;
+}
+
+const LocatorContextCard: React.FC<{ title: string; icon: React.ElementType; children: React.ReactNode }> = ({ title, icon: Icon, children }) => (
+  <div className="rounded-xl border border-black/5 dark:border-white/10 bg-white/70 dark:bg-white/[0.04] p-4">
+    <div className="flex items-center gap-2 mb-3">
+      <Icon size={14} className="text-[#0891b2]" />
+      <p className="text-xs font-semibold text-[#164e63] dark:text-[var(--app-text)]">{title}</p>
+    </div>
+    <div className="space-y-2">{children}</div>
+  </div>
+);
+
+const LocatorContextField: React.FC<{ label: string; value?: string | number | null; mono?: boolean; tone?: string }> = ({ label, value, mono, tone }) => (
+  <div className="flex items-start justify-between gap-3 text-xs">
+    <span className="text-black/40 dark:text-white/40 flex-shrink-0">{label}</span>
+    <span className={`${mono ? 'font-mono' : ''} ${tone || 'text-black/70 dark:text-white/70'} text-right break-all`}>{value || '-'}</span>
+  </div>
+);
+
+const ADDRESS_TYPE_LABELS: Record<string, [string, string]> = {
+  management: ['管理网', 'Management'],
+  transit: ['互联/传输网', 'Transit'],
+  loopback: ['环回地址', 'Loopback'],
+  user_access: ['用户接入网', 'User Access'],
+  network_service: ['网络服务网', 'Network Service'],
+  wan: ['广域网', 'WAN'],
+  vpn: ['VPN 网络', 'VPN'],
+  vip: ['虚拟服务地址', 'VIP'],
+  server: ['服务器网', 'Server'],
+  unclassified: ['未分类', 'Unclassified'],
+  unknown: ['未知', 'Unknown'],
+};
+
+function formatAddressType(value: string, zhLang: boolean): string {
+  const labels = ADDRESS_TYPE_LABELS[value] || [value, value];
+  return labels[zhLang ? 0 : 1] || value;
 }
 
 function formatRelativeTime(isoStr: string, zhLang: boolean): string {
@@ -336,6 +502,9 @@ const reconcileDiagnosticProbeResult = (raw: any) => {
 
 const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
   const zh = language === 'zh';
+  const [searchParams] = useSearchParams();
+  const requestedIp = searchParams.get('ip')?.trim() || '';
+  const autoLocateIpRef = useRef('');
   const [activeTab, setActiveTab] = useState<TabMode>(mode === 'diagnose-only' ? 'diagnose' : mode === 'nsot-only' ? 'nsot' : 'locate');
 
   useEffect(() => {
@@ -475,8 +644,8 @@ const IPLocatorPage: React.FC<IPLocatorPageProps> = ({ language, t, mode }) => {
     }
   });
 
-  const [diagSourceIp, setDiagSourceIp] = useState('10.1.1.10');
-  const [diagTargetIp, setDiagTargetIp] = useState('172.16.1.100');
+  const [diagSourceIp, setDiagSourceIp] = useState('');
+  const [diagTargetIp, setDiagTargetIp] = useState('');
   const [diagPort, setDiagPort] = useState('443');
   const [diagProtocol, setDiagProtocol] = useState('TCP');
   const [diagVrf, setDiagVrf] = useState('');
@@ -902,7 +1071,7 @@ ${rep.repair_commands}
       setHistory(prev => [{
         ip: trimmed,
         found: data.found,
-        mac: data.mac_display || '-',
+        mac: formatMacAddress(data.mac_display || '-'),
         switch_name: primary?.switch_name || '-',
         port: primary?.port || '-',
         time: new Date().toLocaleTimeString(),
@@ -913,6 +1082,15 @@ ${rep.repair_commands}
       setLoading(false);
     }
   }, [ip, token]);
+
+  useEffect(() => {
+    if (mode === 'diagnose-only' || mode === 'nsot-only' || !requestedIp || autoLocateIpRef.current === requestedIp) {
+      return;
+    }
+    autoLocateIpRef.current = requestedIp;
+    setActiveTab('locate');
+    void doLocate(requestedIp);
+  }, [doLocate, mode, requestedIp]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !loading) doLocate();
@@ -969,12 +1147,13 @@ ${rep.repair_commands}
 
   const accessLocations = result?.locations?.filter(l => !l.is_uplink) || [];
   const uplinkLocations = result?.locations?.filter(l => l.is_uplink) || [];
+  const locatorContext = result?.context;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <PageHero
         icon={mode === 'diagnose-only' ? ShieldAlert : mode === 'nsot-only' ? Database : MapPin}
-        title={mode === 'diagnose-only' ? (zh ? 'NPA 智能路径诊断' : 'NPA Path Diagnostics') : mode === 'nsot-only' ? (zh ? '网络事实库' : 'Network Source of Truth') : (zh ? 'IP 工具箱' : 'IP Toolbox')}
+        title={mode === 'diagnose-only' ? (zh ? 'NPA 智能路径诊断' : 'NPA Path Diagnostics') : mode === 'nsot-only' ? (zh ? '网络事实库' : 'Network Source of Truth') : (zh ? 'IP 定位' : 'IP Locator')}
         subtitle={mode === 'diagnose-only' ? (zh ? '网络协议与路径全链条故障排查与一键式诊断' : 'End-to-end network protocol and path diagnostics') : mode === 'nsot-only' ? (zh ? '全网终端事实库、IP 资产明细与路由缓存离线数据库' : 'IP endpoints, inventory assets, and route cache database') : (zh ? 'IP 地址定位 · 连通性探测 · 全链路诊断' : 'IP Locate · Connectivity Probe · Full-path Diagnostics')}
       />
 
@@ -1099,6 +1278,13 @@ ${rep.repair_commands}
       {/* ── Result ── */}
       {result && !loading && (
         <div className="space-y-4">
+          {result.cache?.endpoint_cache_stale && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+              {zh
+                ? `历史端点缓存已超过 ${Math.round((result.cache.endpoint_cache_age_seconds || 0) / 60)} 分钟，系统已跳过该缓存并重新查询设备。`
+                : `The endpoint cache is ${Math.round((result.cache.endpoint_cache_age_seconds || 0) / 60)} minutes old; it was skipped and devices were queried again.`}
+            </div>
+          )}
           {result.found && accessLocations.length > 0 ? (
             <div className="bg-gradient-to-r from-emerald-50 to-[#ecfeff] dark:from-emerald-950/40 dark:to-cyan-950/30 border border-emerald-200/60 dark:border-emerald-500/20 rounded-2xl overflow-hidden">
               {/* Path header */}
@@ -1142,7 +1328,7 @@ ${rep.repair_commands}
                     <Cable size={16} className="text-amber-500" />
                     <div>
                       <p className="text-[10px] text-black/40 dark:text-white/40 font-medium uppercase tracking-wide">MAC</p>
-                      <p className="text-base font-bold text-[#164e63] dark:text-[var(--app-text)] font-mono">{result.mac_display}</p>
+                      <p className="text-base font-bold text-[#164e63] dark:text-[var(--app-text)] font-mono">{formatMacAddress(result.mac_display)}</p>
                       {result.arp_source && (
                         <p className="text-[10px] text-black/35 mt-0.5">
                           via {result.arp_source.device} ({result.arp_source.interface})
@@ -1171,7 +1357,7 @@ ${rep.repair_commands}
                             <span className="font-mono text-[#0891b2]">{loc.port}</span>
                           </p>
                           <div className="flex items-center gap-2 mt-1">
-                            {loc.vlan && <span className="text-[10px] bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 rounded px-1.5 py-0.5 font-medium">VLAN {loc.vlan}</span>}
+                            {loc.vlan && <span title={loc.vlan_source || 'unknown'} className="text-[10px] bg-cyan-50 dark:bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 rounded px-1.5 py-0.5 font-medium">VLAN {loc.vlan}</span>}
                             {loc.type === 'ARP_DIRECT'
                               ? <span className="text-[10px] bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded px-1.5 py-0.5 font-medium">{zh ? '直连/网关' : 'Direct/Gateway'}</span>
                               : loc.type && <span className="text-[10px] text-black/35">{loc.type}</span>}
@@ -1217,13 +1403,121 @@ ${rep.repair_commands}
                   ))}
                   {result.mac && (
                     <p className="text-xs text-amber-600 mt-1.5">
-                      {zh ? `MAC 地址 ${result.mac_display} 已从 ARP 表获取，但未在任何交换机 MAC 表中匹配到端口` : `MAC ${result.mac_display} resolved from ARP but not found in any switch MAC table`}
+                      {zh ? `MAC 地址 ${formatMacAddress(result.mac_display)} 已从 ARP 表获取，但未在任何交换机 MAC 表中匹配到端口` : `MAC ${formatMacAddress(result.mac_display)} resolved from ARP but not found in any switch MAC table`}
                     </p>
                   )}
                 </div>
               </div>
             </div>
           ) : null}
+
+          {locatorContext && (
+            <div className="rounded-2xl border border-black/5 dark:border-white/10 bg-slate-50/70 dark:bg-white/[0.025] p-4 space-y-4">
+              <div className="flex items-center gap-2">
+                <Network size={15} className="text-[#0891b2]" />
+                <p className="text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)]">{zh ? '定位上下文' : 'Locator Context'}</p>
+                <span className="text-[10px] text-black/35 dark:text-white/35 ml-auto">
+                  {zh ? '查询时间' : 'Query time'} · {formatExactTime(locatorContext.freshness.collected_at, zh)}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                <LocatorContextCard title={zh ? '基础信息' : 'Address'} icon={Globe}>
+                  <LocatorContextField label="IP" value={locatorContext.address.ip} mono />
+                   <LocatorContextField label={zh ? '地址类型' : 'Type'} value={formatAddressType(locatorContext.address.type || locatorContext.address.network_type, zh)} />
+                  <LocatorContextField label={zh ? '所属网段' : 'Prefix'} value={locatorContext.address.prefix} mono />
+                  <LocatorContextField label={zh ? '掩码' : 'Netmask'} value={locatorContext.address.netmask} mono />
+                  <LocatorContextField label={zh ? '网段用途' : 'Purpose'} value={locatorContext.address.purpose || locatorContext.address.network_type} />
+                  <LocatorContextField label={zh ? '状态' : 'Status'} value={locatorContext.address.status} tone={locatorContext.address.status === 'active' ? 'text-emerald-600' : undefined} />
+                </LocatorContextCard>
+
+                <LocatorContextCard title={zh ? '二层定位' : 'Layer 2'} icon={Cable}>
+                  <LocatorContextField label="MAC" value={formatMacAddress(locatorContext.l2.mac || result.mac_display)} mono />
+                  <LocatorContextField label="VLAN" value={locatorContext.l2.vlan ? `${locatorContext.l2.vlan}${locatorContext.l2.vlan_name ? ` · ${locatorContext.l2.vlan_name}` : ''}` : ''} mono />
+                  <LocatorContextField label={zh ? 'VLAN 来源' : 'VLAN Source'} value={locatorContext.l2.vlan_source} />
+                  <LocatorContextField label={zh ? '接入设备' : 'Switch'} value={locatorContext.l2.switch_name} />
+                  <LocatorContextField label={zh ? '接入接口' : 'Port'} value={locatorContext.l2.port} mono />
+                  <LocatorContextField label={zh ? '接口描述' : 'Description'} value={locatorContext.l2.description} />
+                  <LocatorContextField label={zh ? '状态 / 模式' : 'State / Mode'} value={[locatorContext.l2.admin_status, locatorContext.l2.oper_status, locatorContext.l2.mode].filter(Boolean).join(' / ')} />
+                </LocatorContextCard>
+
+                <LocatorContextCard title={zh ? '三层定位' : 'Layer 3'} icon={Router}>
+                  <LocatorContextField label={zh ? '默认网关' : 'Gateway'} value={locatorContext.l3.gateway} mono />
+                  <LocatorContextField label={zh ? '网关设备' : 'Gateway Device'} value={locatorContext.l3.gateway_device} />
+                  <LocatorContextField label={zh ? '三层接口' : 'L3 Interface'} value={locatorContext.l3.gateway_interface || locatorContext.l3.route_interface} mono />
+                  <LocatorContextField label="VRF" value={locatorContext.l3.vrf} />
+                  <LocatorContextField label={zh ? '路由下一跳' : 'Next Hop'} value={locatorContext.l3.next_hop} mono />
+                  <LocatorContextField label={zh ? '路由来源' : 'Route Source'} value={locatorContext.l3.route_source} />
+                  <LocatorContextField label={zh ? '路由更新时间' : 'Route Updated'} value={locatorContext.l3.route_last_updated ? formatRelativeTime(locatorContext.l3.route_last_updated, zh) : ''} />
+                  <LocatorContextField
+                    label={zh ? '上联设备' : 'Upstream Devices'}
+                    value={locatorContext.l3.upstream_devices?.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ')}
+                  />
+                   <LocatorContextField
+                     label={zh ? '下联设备' : 'Downstream Devices'}
+                     value={locatorContext.l3.downstream_devices?.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ') || (zh ? '未发现可信下联' : 'No verified downstream')}
+                   />
+                   <LocatorContextField
+                     label={zh ? '邻接设备（方向未判定）' : 'Adjacent Devices (direction unknown)'}
+                     value={locatorContext.l3.adjacent_devices?.map(item => `${item.device}${item.port ? ` (${item.port}${item.peer_port ? ` ↔ ${item.peer_port}` : ''})` : ''}`).join(', ')}
+                   />
+                </LocatorContextCard>
+
+                <LocatorContextCard title={zh ? '业务关联' : 'Business'} icon={Users}>
+                  <LocatorContextField label={zh ? '主机名称' : 'Hostname'} value={locatorContext.business.hostname} />
+                  <LocatorContextField label={zh ? '业务/租户' : 'Tenant'} value={locatorContext.business.tenant} />
+                  <LocatorContextField label={zh ? '区域/站点' : 'Site'} value={locatorContext.business.site} />
+                  <LocatorContextField label={zh ? '部门' : 'Department'} value={locatorContext.business.department} />
+                  <LocatorContextField label={zh ? '负责人' : 'Owner'} value={locatorContext.business.owner} />
+                  <LocatorContextField label={zh ? '重要级别' : 'Criticality'} value={locatorContext.business.criticality} />
+                  <LocatorContextField label={zh ? '关联业务系统' : 'Business Systems'} value={locatorContext.business.business_systems?.join(', ')} />
+                  <LocatorContextField label={zh ? '业务等级' : 'Business Level'} value={locatorContext.business.business_level} />
+                  <LocatorContextField label={zh ? '最近配置备份' : 'Last Config Backup'} value={locatorContext.business.config_backup_at ? formatRelativeTime(locatorContext.business.config_backup_at, zh) : ''} />
+                  {locatorContext.business.open_alerts.length > 0 && (
+                    <div className="pt-1 flex items-center gap-1.5 text-amber-600">
+                      <AlertCircle size={12} />
+                      <span>{zh ? `${locatorContext.business.open_alerts.length} 条未恢复告警` : `${locatorContext.business.open_alerts.length} open alert(s)`}</span>
+                    </div>
+                  )}
+                </LocatorContextCard>
+              </div>
+
+              {locatorContext.path.length > 1 && (
+                <div className="rounded-xl border border-cyan-200/60 dark:border-cyan-500/20 bg-cyan-50/40 dark:bg-cyan-500/[0.04] p-3">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Network size={14} className="text-cyan-600" />
+                    <p className="text-xs font-semibold text-cyan-800 dark:text-cyan-300">{zh ? '已确认的网络路径' : 'Evidence-backed Network Path'}</p>
+                    <span className="text-[10px] text-cyan-700/60 dark:text-cyan-300/60 ml-auto">{zh ? '仅展示拓扑库已有证据' : 'Only topology-backed hops are shown'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                    {locatorContext.path.map((node, index) => (
+                      <React.Fragment key={`${node.kind}-${node.label}-${index}`}>
+                        {index > 0 && <ArrowRight size={13} className="text-cyan-500/50 flex-shrink-0" />}
+                        <div className="min-w-[148px] rounded-lg border border-white/80 dark:border-white/10 bg-white/90 dark:bg-white/[0.06] px-3.5 py-3 shadow-sm">
+                          <p className="text-[10px] font-semibold tracking-wide text-cyan-700/70 dark:text-cyan-300/70">{formatPathKind(node.kind, zh)}</p>
+                          <p className="mt-1 text-sm font-semibold text-[#164e63] dark:text-[var(--app-text)] truncate" title={node.label}>{node.label}</p>
+                          {node.detail && <p className="mt-1 text-[11px] text-black/50 dark:text-white/50 truncate" title={node.detail}>{node.detail}</p>}
+                        </div>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-3 border-t border-black/5 dark:border-white/10">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <p className="text-[11px] font-semibold text-black/55 dark:text-white/55">{zh ? '各来源最新观测时间' : 'Latest observation by source'}</p>
+                  <p className="text-[10px] text-black/35 dark:text-white/35">{zh ? '不同采集任务独立运行，时间不必相同' : 'Collectors run independently; timestamps may differ'}</p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+                  <FreshnessItem label={zh ? '端点定位' : 'Endpoint'} value={locatorContext.freshness.endpoint_last_seen} thresholdSeconds={15 * 60} zhLang={zh} />
+                  <FreshnessItem label="ARP" value={locatorContext.freshness.arp_last_updated} thresholdSeconds={10 * 60} zhLang={zh} />
+                  <FreshnessItem label={zh ? '接口快照' : 'Interface'} value={locatorContext.freshness.interface_last_seen} thresholdSeconds={2 * 60 * 60} zhLang={zh} />
+                  <FreshnessItem label={zh ? '路由快照' : 'Route'} value={locatorContext.l3.route_last_updated} thresholdSeconds={15 * 60} zhLang={zh} />
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Detail toggle */}
           {result.searched_devices && (
@@ -1583,7 +1877,8 @@ ${rep.repair_commands}
                 (e.vendor || '').toLowerCase().includes(q)
               ) : arpTable.entries).map(e => ({
                 IP: e.ip,
-                MAC: e.mac,
+                MAC: formatMacAddress(e.mac),
+                VLAN: e.vlan || '',
                 [zh ? '厂商' : 'Vendor']: e.vendor || '',
                 [zh ? '接口' : 'Interface']: e.interface || '',
                 [zh ? '来源设备' : 'Device']: e.device || '',
@@ -1666,6 +1961,7 @@ ${rep.repair_commands}
               e.mac_raw.toLowerCase().includes(q) ||
               e.device.toLowerCase().includes(q) ||
               e.interface.toLowerCase().includes(q) ||
+              String(e.vlan ?? '').toLowerCase().includes(q) ||
               (e.vendor || '').toLowerCase().includes(q)
             )
           : arpTable.entries;
@@ -1675,9 +1971,10 @@ ${rep.repair_commands}
         return (
           <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
             {/* Table header */}
-            <div className="grid grid-cols-[1fr_1fr_6rem_6rem_10rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
+            <div className="grid grid-cols-[1fr_1fr_5rem_6rem_6rem_10rem_8rem] gap-2 px-5 py-2.5 text-[10px] font-bold text-black/40 dark:text-white/40 uppercase tracking-wider border-b border-black/5 dark:border-white/8 bg-black/[0.01] dark:bg-white/[0.02]">
               <span>IP</span>
               <span>MAC</span>
+              <span>VLAN</span>
               <span>{zh ? '厂商' : 'Vendor'}</span>
               <span>{zh ? '接口' : 'Interface'}</span>
               <span>{zh ? '来源设备' : 'Device'}</span>
@@ -1694,16 +1991,19 @@ ${rep.repair_commands}
                 pageEntries.map((entry, idx) => (
                   <div
                     key={entry.ip}
-                    className={`grid grid-cols-[1fr_1fr_6rem_6rem_10rem_8rem] gap-2 px-5 py-2 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] hover:bg-[#ecfeff]/30 dark:hover:bg-cyan-500/5 transition-colors cursor-pointer ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
+                    className={`grid grid-cols-[1fr_1fr_5rem_6rem_6rem_10rem_8rem] gap-2 px-5 py-2 text-xs items-center border-b border-black/[0.03] dark:border-white/[0.05] hover:bg-[#ecfeff]/30 dark:hover:bg-cyan-500/5 transition-colors cursor-pointer ${idx % 2 ? 'bg-black/[0.008] dark:bg-white/[0.015]' : ''}`}
                     onClick={() => { setIp(entry.ip); setActiveTab('locate'); }}
                     title={zh ? '点击定位此 IP' : 'Click to locate this IP'}
                   >
                     <span className="font-mono font-semibold text-[#164e63]">{entry.ip}</span>
-                    <span className="font-mono text-black/50">{entry.mac}</span>
+                    <span className="font-mono text-black/50">{formatMacAddress(entry.mac)}</span>
+                    <span className="font-mono text-cyan-700 dark:text-cyan-400">{entry.vlan || '-'}</span>
                     <span className="text-black/45 truncate" title={entry.vendor}>{entry.vendor || '-'}</span>
                     <span className="text-black/45 truncate" title={entry.interface}>{entry.interface || '-'}</span>
                     <span className="text-[#0891b2] truncate font-medium" title={entry.device}>{entry.device || '-'}</span>
-                    <span className="text-black/30" title={entry.cached_at}>{formatRelativeTime(entry.cached_at, zh)}</span>
+                    <span className={entry.freshness === 'stale' ? 'text-amber-600' : 'text-black/30'} title={`${entry.cached_at} · ${entry.vlan_source || 'unknown VLAN source'}`}>
+                      {formatRelativeTime(entry.cached_at, zh)}{entry.freshness === 'stale' ? (zh ? ' · 已过期' : ' · stale') : ''}
+                    </span>
                   </div>
                 ))
               )}
@@ -1921,9 +2221,9 @@ ${rep.repair_commands}
               <div className="text-[10px] font-mono text-black/30 dark:text-white/30">route_table</div>
             </div>
           </div>
-          <div className="text-3xl font-bold text-violet-500 mb-1">{nsotRoutes?.total ?? '—'}</div>
+          <div className="text-3xl font-bold text-violet-500 mb-1">{nsotRoutes?.site_stats ? Object.keys(nsotRoutes.site_stats).length : (nsotRoutes?.total ?? '—')}</div>
           <div className="text-[11px] text-black/40 dark:text-white/40">
-            {nsotRoutes?.protocol_stats ? Object.entries(nsotRoutes.protocol_stats).map(([k, v]) => `${k}: ${v}`).join(' · ') : `${zh ? '字段' : 'Cols'}: 11`}
+            {nsotRoutes?.site_stats ? `${zh ? '站点' : 'Sites'}: ${Object.keys(nsotRoutes.site_stats).length} · ${zh ? '路由条目' : 'Routes'}: ${nsotRoutes.total ?? 0}` : `${zh ? '字段' : 'Cols'}: 11`}
           </div>
           {nsotRoutes?.timestamp && <div className="text-[10px] text-black/25 dark:text-white/25 mt-1">{zh ? '更新于' : 'Updated'}: {formatRelativeTime(nsotRoutes.timestamp, zh)}</div>}
         </button>
@@ -1939,9 +2239,9 @@ ${rep.repair_commands}
               <div className="text-[10px] font-mono text-black/30 dark:text-white/30">routing_neighbors</div>
             </div>
           </div>
-          <div className="text-3xl font-bold text-indigo-500 mb-1">{nsotNeighbors?.total ?? '—'}</div>
+          <div className="text-3xl font-bold text-indigo-500 mb-1">{nsotNeighbors?.site_stats ? Object.keys(nsotNeighbors.site_stats).length : (nsotNeighbors?.total ?? '—')}</div>
           <div className="text-[11px] text-black/40 dark:text-white/40">
-            {nsotNeighbors?.protocol_stats ? Object.entries(nsotNeighbors.protocol_stats).map(([k, v]) => `${k}: ${v}`).join(' · ') : `${zh ? '字段' : 'Cols'}: 12`}
+            {nsotNeighbors?.site_stats ? `${zh ? '站点' : 'Sites'}: ${Object.keys(nsotNeighbors.site_stats).length} · ${zh ? '邻居条目' : 'Neighbors'}: ${nsotNeighbors.total ?? 0}` : `${zh ? '字段' : 'Cols'}: 12`}
           </div>
           {nsotNeighbors?.timestamp && <div className="text-[10px] text-black/25 dark:text-white/25 mt-1">{zh ? '更新于' : 'Updated'}: {formatRelativeTime(nsotNeighbors.timestamp, zh)}</div>}
         </button>
@@ -1957,9 +2257,9 @@ ${rep.repair_commands}
               <div className="text-[10px] font-mono text-black/30 dark:text-white/30">bgp_route_table</div>
             </div>
           </div>
-          <div className="text-3xl font-bold text-amber-500 mb-1">{nsotBgpRoutes?.total ?? '—'}</div>
+          <div className="text-3xl font-bold text-amber-500 mb-1">{nsotBgpRoutes?.site_stats ? Object.keys(nsotBgpRoutes.site_stats).length : (nsotBgpRoutes?.total ?? '—')}</div>
           <div className="text-[11px] text-black/40 dark:text-white/40">
-            {zh ? '最佳路径' : 'Best'}: {nsotBgpRoutes?.entries ? nsotBgpRoutes.entries.filter((e: any) => e.is_best).length : 0} · {zh ? '字段' : 'Cols'}: 13
+            {nsotBgpRoutes?.site_stats ? `${zh ? '站点' : 'Sites'}: ${Object.keys(nsotBgpRoutes.site_stats).length} · ${zh ? 'BGP条目' : 'BGP routes'}: ${nsotBgpRoutes.total ?? 0}` : `${zh ? '最佳路径' : 'Best'}: ${nsotBgpRoutes?.entries ? nsotBgpRoutes.entries.filter((e: any) => e.is_best).length : 0}`}
           </div>
           {nsotBgpRoutes?.timestamp && <div className="text-[10px] text-black/25 dark:text-white/25 mt-1">{zh ? '更新于' : 'Updated'}: {formatRelativeTime(nsotBgpRoutes.timestamp, zh)}</div>}
         </button>
@@ -2313,7 +2613,8 @@ ${rep.repair_commands}
               { key: 'ip', label: 'IP' },
               { key: 'mac_display', label: 'MAC' },
               { key: 'vendor', label: zh ? '厂商' : 'Vendor' },
-              { key: 'site', label: zh ? '交换机' : 'Switch' },
+              { key: 'switch_name', label: zh ? '交换机' : 'Switch' },
+              { key: 'site', label: zh ? '站点' : 'Site' },
               { key: 'switch_port', label: zh ? '端口' : 'Port' },
               { key: 'vlan', label: 'VLAN' },
               { key: 'confidence', label: zh ? '置信度' : 'Confidence' },
@@ -2325,6 +2626,7 @@ ${rep.repair_commands}
           ? [
               { key: 'ip', label: 'IP' },
               { key: 'mask', label: zh ? '掩码' : 'Mask' },
+              { key: 'site_name', label: zh ? '站点' : 'Site' },
               { key: 'device_name', label: zh ? '设备' : 'Device' },
               { key: 'interface', label: zh ? '接口' : 'Interface' },
               { key: 'type', label: zh ? '类型' : 'Type' },
@@ -2332,6 +2634,7 @@ ${rep.repair_commands}
             ]
           : nsotSubTab === 'neighbors'
           ? [
+              { key: 'site_name', label: zh ? '站点' : 'Site' },
               { key: 'device_name', label: zh ? '设备' : 'Device' },
               { key: 'protocol', label: zh ? '协议' : 'Protocol' },
               { key: 'neighbor_id', label: zh ? '邻居 Router ID' : 'Neighbor ID' },
@@ -2345,6 +2648,7 @@ ${rep.repair_commands}
             ]
           : nsotSubTab === 'bgp_routes'
           ? [
+              { key: 'site_name', label: zh ? '站点' : 'Site' },
               { key: 'device_name', label: zh ? '设备' : 'Device' },
               { key: 'local_as', label: 'Local AS' },
               { key: 'vrf_name', label: 'VRF' },
@@ -2359,6 +2663,7 @@ ${rep.repair_commands}
               { key: 'last_update', label: zh ? '最后更新' : 'Last Update' },
             ]
           : [
+              { key: 'site_name', label: zh ? '站点' : 'Site' },
               { key: 'device_name', label: zh ? '设备' : 'Device' },
               { key: 'vrf_name', label: 'VRF' },
               { key: 'prefix', label: zh ? '前缀' : 'Prefix' },
@@ -2406,7 +2711,7 @@ ${rep.repair_commands}
               if (epFilterIp && !String(e.ip ?? '').toLowerCase().includes(epFilterIp.toLowerCase())) return false;
               const macVal = String(e.mac_display ?? e.mac ?? '').toLowerCase();
               if (epFilterMac && !macVal.includes(epFilterMac.toLowerCase())) return false;
-              if (epFilterSwitch && !String(e.site ?? '').toLowerCase().includes(epFilterSwitch.toLowerCase())) return false;
+              if (epFilterSwitch && !`${String(e.switch_name ?? '')} ${String(e.site ?? '')}`.toLowerCase().includes(epFilterSwitch.toLowerCase())) return false;
               if (epFilterVlan && !String(e.vlan ?? '').toLowerCase().includes(epFilterVlan.toLowerCase())) return false;
               if (epFilterStatus !== 'all') {
                 const isActive = !!e.is_active;
@@ -2474,7 +2779,7 @@ ${rep.repair_commands}
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="nx-data-table text-left text-xs">
                   <thead>
                     <tr className="border-b border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02]">
                       {columns.map(col => (
@@ -2730,7 +3035,7 @@ ${rep.repair_commands}
         <div className="flex items-center justify-between pt-2">
           <div className="text-[11px] text-black/35 dark:text-white/35 flex items-center gap-1.5">
             <Zap size={12} className="text-[#06b6d4]" />
-            <span>{zh ? '提示：输入源 10.1.1.10 与目标 172.16.1.100 可进行 NPA 智能路径诊断效果演示。' : 'Tip: Input source 10.1.1.10 and target 172.16.1.100 for mock NPA Path Diagnostics demo.'}</span>
+            <span>{zh ? '所有结论均来自本次实时采集；未取得的证据会标记为未知并限制置信度。' : 'All conclusions use evidence collected for this run; missing evidence is marked unknown and caps confidence.'}</span>
           </div>
           <button
             onClick={() => doDiagnose()}
@@ -3250,9 +3555,12 @@ ${rep.repair_commands}
                                 <span className={`text-xs font-bold truncate w-full text-center ${
                                   isBlocked ? "text-rose-600 dark:text-rose-400 font-bold" :
                                   isTimeout ? "text-neutral-400" : "text-[#164e63] dark:text-[var(--app-text)]"
-                                }`} title={hop.device_name}>{hop.device_name}</span>
-                                <span className="text-[10px] text-black/35 font-mono mt-0.5">{hop.ip}</span>
-                                <span className={`text-[9px] px-1.5 py-0.5 rounded-full mt-1.5 font-mono font-medium ${
+                                 }`} title={hop.device_name}>{hop.device_name}</span>
+                                 <span className="text-[10px] text-black/35 font-mono mt-0.5">{hop.ip}</span>
+                                 <span className="text-[8px] text-black/40 dark:text-white/40 font-mono mt-1 truncate w-full" title={`ingress=${hop.ingress_interface || 'unknown'} · egress=${hop.egress_interface || 'unknown'}`}>
+                                   in {hop.ingress_interface || '?'} · out {hop.egress_interface || '?'}
+                                 </span>
+                                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full mt-1.5 font-mono font-medium ${
                                   isBlocked ? "bg-rose-50 dark:bg-rose-950/30 text-rose-600" :
                                   isTimeout ? "bg-neutral-50 dark:bg-neutral-950/30 text-neutral-400" :
                                   "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600"
@@ -3554,6 +3862,48 @@ ${rep.repair_commands}
         );
       })()}
 
+      {diagResult?.return_path && (
+        <div className="bg-white dark:bg-[#1f2937]/30 rounded-2xl border border-black/5 dark:border-white/5 shadow-sm p-5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-[#164e63] dark:text-[var(--app-text)]">
+                {zh ? '回程路径实时验证' : 'Return Path Validation'}
+              </h3>
+              <p className="text-[11px] text-black/45 dark:text-white/45 mt-1">
+                {diagResult.return_path.reason}
+              </p>
+            </div>
+            <span className={`text-[10px] px-2.5 py-1 rounded-full border font-bold ${
+              diagResult.return_path.status === 'collected'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-amber-50 text-amber-700 border-amber-200'
+            }`}>
+              {diagResult.return_path.status === 'collected'
+                ? (zh ? '已实时采集' : 'Live collected')
+                : (zh ? '未知 / 未完成' : 'Unknown / incomplete')}
+            </span>
+          </div>
+          {diagResult.return_path.hops?.length > 0 ? (
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {diagResult.return_path.hops.map((hop: any, index: number) => (
+                <div key={`${hop.device_id || hop.ip}-${index}`} className="rounded-xl border border-black/5 dark:border-white/5 px-3 py-2 text-xs">
+                  <div className="font-semibold text-neutral-700 dark:text-neutral-200">
+                    {index + 1}. {hop.device_name || hop.ip}
+                  </div>
+                  <div className="font-mono text-[10px] text-neutral-500 mt-1">
+                    {hop.ip} · in {hop.ingress_interface || '?'} · out {hop.egress_interface || '?'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+              {zh ? '当前没有可验证的回程跳点；这不是“回程正常”，而是证据未知。' : 'No return hops could be verified; this is unknown, not healthy.'}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Diagnostic Report ── */}
       {diagResult && diagResult.report && (
         <div id="npa-report-card" className="bg-white dark:bg-[#1f2937]/20 border border-neutral-200 dark:border-white/5 rounded-2xl overflow-hidden shadow-lg transition-all duration-300 hover:shadow-xl">
@@ -3614,12 +3964,16 @@ ${rep.repair_commands}
 
               {/* Status Badge */}
               <span className={`text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider border ${
-                diagResult.report.diagnostic_status === 'evidence_conflict' || diagResult.report.conclusion === 'interrupted'
+                diagResult.report.diagnostic_status === 'incomplete_evidence'
+                  ? "bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800/30"
+                  : diagResult.report.diagnostic_status === 'evidence_conflict' || diagResult.report.conclusion === 'interrupted'
                   ? "bg-rose-100 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800/30"
                   : "bg-emerald-100 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/30"
               }`}>
                 {diagResult.report.diagnostic_status === 'evidence_conflict'
                   ? (zh ? '证据冲突' : 'Evidence Conflict')
+                  : diagResult.report.diagnostic_status === 'incomplete_evidence'
+                    ? (zh ? '证据不完整' : 'Incomplete Evidence')
                   : diagResult.report.conclusion === 'interrupted'
                     ? (zh ? '检测到阻断' : 'Blocked')
                     : (zh ? '路径可达' : 'Reachable')}
@@ -3630,15 +3984,22 @@ ${rep.repair_commands}
           {/* Card Body */}
           <div className="p-6 space-y-6">
             {(diagResult.snapshot || diagResult.report.diagnostic_status === 'evidence_conflict') && (
-              <div className={`rounded-xl border px-4 py-3 text-xs ${diagResult.report.diagnostic_status === 'evidence_conflict' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-cyan-50 border-cyan-200 text-cyan-800'}`}>
+              <div className={`rounded-xl border px-4 py-3 text-xs ${diagResult.report.diagnostic_status === 'evidence_conflict' || diagResult.report.diagnostic_status === 'incomplete_evidence' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-cyan-50 border-cyan-200 text-cyan-800'}`}>
                 <div className="font-bold mb-1">
                   {diagResult.report.diagnostic_status === 'evidence_conflict'
                     ? (zh ? '本次诊断存在证据冲突，未生成确定性根因。' : 'Evidence conflict detected; no deterministic root cause was generated.')
+                    : diagResult.report.diagnostic_status === 'incomplete_evidence'
+                      ? (zh ? '本次诊断存在证据缺口，候选结论已限制置信度。' : 'This run has evidence gaps; confidence is capped.')
                     : (zh ? '本报告主结论使用本次诊断运行快照。' : 'The primary conclusion uses this diagnosis run snapshot.')}
                 </div>
                 {diagResult.snapshot && (
                   <div className="font-mono text-[10px] opacity-80">
                     {zh ? '实时来源' : 'Live sources'}: {Object.entries(diagResult.snapshot.primary_sources || {}).map(([key, value]) => `${key}=${value}`).join(' · ')}
+                  </div>
+                )}
+                {diagResult.report.evidence_gaps?.length > 0 && (
+                  <div className="mt-2 space-y-0.5">
+                    {diagResult.report.evidence_gaps.map((gap: string) => <div key={gap}>· {gap}</div>)}
                   </div>
                 )}
               </div>

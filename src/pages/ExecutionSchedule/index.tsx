@@ -29,7 +29,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [inspSchedules, setInspSchedules] = useState<ScheduledJob[]>([]);
   const [inspSchedulesLoading, setInspSchedulesLoading] = useState(false);
   const [inspSchedulePage, setInspSchedulePage] = useState(1);
-  const [inspSchedulePageSize, setInspSchedulePageSize] = useState(10);
+  const [inspSchedulePageSize, setInspSchedulePageSize] = useState(20);
   const [inspScheduleTotal, setInspScheduleTotal] = useState(0);
   const [showAddInspSchedule, setShowAddInspSchedule] = useState(false);
   const [form, setForm] = useState<FormState>({ ...INITIAL_FORM });
@@ -60,7 +60,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [inspRuns, setInspRuns] = useState<any[]>([]);
   const [inspRunsLoading, setInspRunsLoading] = useState(false);
   const [inspRunPage, setInspRunPage] = useState(1);
-  const [inspRunPageSize, setInspRunPageSize] = useState(10);
+  const [inspRunPageSize, setInspRunPageSize] = useState(20);
   const [inspRunTotal, setInspRunTotal] = useState(0);
   const [inspSubTab, setInspSubTab] = useState<InspSubTab>(initialTab || 'schedules');
 

@@ -50,7 +50,8 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const [showAuditorDropdown, setShowAuditorDropdown] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalScripts, setTotalScripts] = useState(0);
 
   const zh = language === 'zh';
   const BRAND_COLOR = "#00a9ce";
@@ -86,10 +87,29 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
   const fetchScripts = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/scripts', { headers: getHeaders() });
-      if (res.ok) setScripts(await res.json());
+      const params = new URLSearchParams({
+        q: searchQuery.trim(),
+        platform: platformFilter === 'All' ? '' : platformFilter,
+        category: categoryFilter === 'all' ? '' : categoryFilter,
+        script_type: typeFilter === 'All' ? '' : typeFilter,
+        status: statusFilter === 'All' ? '' : statusFilter,
+        page: String(currentPage),
+        page_size: String(pageSize),
+      });
+      const res = await fetch(`/api/scripts?${params.toString()}`, { headers: getHeaders() });
+      if (res.ok) {
+        const payload = await res.json();
+        if (Array.isArray(payload)) {
+          setScripts(payload);
+          setTotalScripts(payload.length);
+        } else {
+          const data = payload?.data || payload || {};
+          setScripts(Array.isArray(data.items) ? data.items : []);
+          setTotalScripts(Number(data.total || 0));
+        }
+      }
     } catch (err) {} finally { setLoading(false); }
-  }, [getHeaders]);
+  }, [getHeaders, searchQuery, platformFilter, categoryFilter, typeFilter, statusFilter, currentPage, pageSize]);
 
   const fetchUsers = async () => {
     try {
@@ -105,8 +125,11 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
   useEffect(() => {
     fetchScripts();
-    fetchUsers();
   }, [fetchScripts]);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [getHeaders]);
 
   const handleAction = async (targetStatus: string, reason?: string) => {
     const isEdit = modalMode === 'edit';
@@ -181,24 +204,14 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
     return codes.some(c => c.toLowerCase() === p);
   };
 
-  const filteredScripts = useMemo(() => scripts.filter(s => {
-    const matchesSearch = (s.name + (s.id||'') + (s.description||'')).toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesPlatform = matchesPlatformGroup(s.platform || '', platformFilter);
-    const matchesType = typeFilter === 'All' || (s.script_type || '').toLowerCase() === typeFilter.toLowerCase();
-    const matchesStatus = statusFilter === 'All' || (s.status || '').toLowerCase() === statusFilter.toLowerCase();
-    
-    let matchesCategory = true;
-    if (categoryFilter === 'inspection') {
-      matchesCategory = s.category === 'inspection' || s.category === 'standard';
-    } else if (categoryFilter === 'change') {
-      matchesCategory = s.category === 'change';
-    } else if (categoryFilter === 'system') {
-      matchesCategory = s.submitter_name === 'system' || s.author === 'system';
-    }
-    
-    return matchesSearch && matchesPlatform && matchesType && matchesStatus && matchesCategory;
-  }), [scripts, searchQuery, platformFilter, categoryFilter, typeFilter, statusFilter]);
-  const paginatedScripts = useMemo(() => filteredScripts.slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredScripts, currentPage, pageSize]);
+  // Search/filtering and pagination are server-side. The browser keeps only
+  // the current page instead of loading the entire script catalog.
+  const filteredScripts = scripts;
+  const paginatedScripts = scripts;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, platformFilter, categoryFilter, typeFilter, statusFilter]);
 
   const isSystemScript = editForm.submitter_name === 'system' || editForm.author === 'system';
   const isReviewMode = editForm.status === 'pending_audit' && editForm.approver_username === currentUser;
@@ -308,7 +321,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
         <div className="rounded-[24px] border border-slate-100 dark:border-white/5 overflow-hidden bg-white dark:bg-slate-900/20 shadow-lg">
           <div className="overflow-x-auto no-scrollbar">
-            <table className="w-full text-left text-sm border-collapse">
+            <table className="nx-data-table text-left text-sm">
               <thead>
                 <tr className="bg-slate-50/50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-white/5">
                   <th className="px-6 py-4 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">{zh ? '脚本名称' : 'Name'}</th>
@@ -410,7 +423,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
 
 
       <div className="px-10 py-5 bg-transparent border-t border-slate-200/10">
-        <Pagination currentPage={currentPage} totalItems={filteredScripts.length} itemsPerPage={pageSize} onPageChange={setCurrentPage} onItemsPerPageChange={setPageSize} language={language} />
+        <Pagination currentPage={currentPage} totalItems={totalScripts} itemsPerPage={pageSize} onPageChange={setCurrentPage} onItemsPerPageChange={(size) => { setPageSize(size); setCurrentPage(1); }} language={language} />
       </div>
 
       {/* Main Modal */}

@@ -625,6 +625,24 @@ def _parse_with_ntc(platform: str, command: str, output: str) -> list[dict[str, 
         res = smart_parse_cli(output=output, command=command, platform=ntc_platform)
         if res.get('success') and res.get('data'):
             return _normalize_records(res['data'])
+    # Comware releases expose two incompatible interface tables.  The
+    # catalog command is ``display interface brief`` for compatibility with
+    # the standard brief grammar, while some S6850/Comware devices return the
+    # IP-oriented table shown by ``display ip interface brief``.  Retry the
+    # canonical alternate TextFSM grammar only when the first grammar did
+    # not match; never replace a successful standard parse.
+    if (
+        resolve_textfsm_platform(platform) == 'hp_comware'
+        and _normalize_command_for_template_match(command) == 'display interface brief'
+        and re.search(r'interface\s+physical', str(output or ''), re.IGNORECASE)
+    ):
+        alternate = smart_parse_cli(
+            output=output,
+            command='display ip interface brief',
+            platform='hp_comware',
+        )
+        if alternate.get('success') and alternate.get('data'):
+            return _normalize_records(alternate['data'])
     return []
 
 

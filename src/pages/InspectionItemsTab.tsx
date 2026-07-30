@@ -102,7 +102,8 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   });
 
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalItems, setTotalItems] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [methodFilter, setMethodFilter] = useState<string>('All');
@@ -147,22 +148,38 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch('/api/inspections/items/all', { headers: authHeaders });
+      const params = new URLSearchParams({
+        q: searchQuery.trim(),
+        category: categoryFilter === 'All' ? '' : categoryFilter,
+        method: methodFilter === 'All' ? '' : methodFilter,
+        vendor: vendorFilter === 'All' ? '' : vendorFilter,
+        page: String(currentPage),
+        page_size: String(pageSize),
+      });
+      const r = await fetch(`/api/inspections/items/all?${params.toString()}`, { headers: authHeaders });
       if (r.ok) {
         const j = await r.json();
-        setItems(j.data || []);
+        const data = j.data || {};
+        if (Array.isArray(data)) {
+          setItems(data);
+          setTotalItems(data.length);
+        } else {
+          setItems(Array.isArray(data.items) ? data.items : []);
+          setTotalItems(Number(data.total || 0));
+        }
       }
     } finally {
       setLoading(false);
     }
-  }, [authHeaders]);
+  }, [authHeaders, searchQuery, categoryFilter, methodFilter, vendorFilter, currentPage, pageSize]);
 
   const fetchScripts = useCallback(async () => {
     try {
-      const r = await fetch('/api/scripts', { headers: authHeaders });
+      const r = await fetch('/api/scripts?page=1&page_size=100', { headers: authHeaders });
       if (r.ok) {
         const j = await r.json();
-        setScripts(j || []);
+        const data = j?.data || j;
+        setScripts(Array.isArray(data) ? data : (data?.items || []));
       }
     } catch { /* ignore */ }
   }, [authHeaders]);
@@ -396,10 +413,9 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
     setVendorFilter('All');
   }, [categoryFilter]);
 
-  const paginatedItems = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredItems.slice(start, start + pageSize);
-  }, [filteredItems, currentPage, pageSize]);
+  // The API already returns the current page. Keep only that bounded result
+  // in the table instead of slicing a full inspection-item catalog locally.
+  const paginatedItems = filteredItems;
 
   useEffect(() => {
     setCurrentPage(1);
@@ -721,7 +737,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
               {zh ? '暂无匹配的指标项' : 'No items found'}
             </div>
           ) : (
-            <table className="min-w-full border-collapse text-left">
+            <table className="nx-data-table text-left">
               <thead className="sticky top-0 z-10">
                 <tr className="border-y border-black/5 bg-[#f8fafc] text-[10px] font-bold uppercase tracking-widest text-black/40">
                   <th className="px-6 py-4">{zh ? '名称 / ID' : 'Name / ID'}</th>
@@ -1070,7 +1086,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         <div className="flex-shrink-0 bg-white border-t border-black/5 px-6 py-4">
           <Pagination
             currentPage={currentPage}
-            totalItems={filteredItems.length}
+            totalItems={totalItems}
             itemsPerPage={pageSize}
             onPageChange={setCurrentPage}
             onItemsPerPageChange={(size) => { setPageSize(size); setCurrentPage(1); }}

@@ -338,7 +338,11 @@ def query_devices_by_tags(
 def resolve_tag_targets(req: TagTargetFilter, current_user=require_role("Viewer")):
     conn = get_db_connection()
     try:
-        device_ids = tag_service.resolve_device_ids_by_filter(conn, req.include_groups, req.exclude_tag_ids)
+        device_ids = (
+            tag_service.resolve_device_ids_by_expression(conn, req.expression)
+            if req.expression is not None
+            else tag_service.resolve_device_ids_by_filter(conn, req.include_groups, req.exclude_tag_ids)
+        )
         return {"success": True, "data": {"device_ids": device_ids, "count": len(device_ids)}}
     finally:
         conn.close()

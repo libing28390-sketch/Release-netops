@@ -154,7 +154,7 @@ def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str |
                 id, asset_type, asset_tag, serial_number, vendor, model, hostname,
                 site_id, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
-                status, purchase_date, warranty_expiry, department, notes, created_at, updated_at,
+                status, lifecycle_status, purchase_date, warranty_expiry, department, notes, created_at, updated_at,
                 platform, connection_method, username, normal_username, normal_password,
                 admin_username, admin_password, auth_model, enable_password, management_port
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -164,7 +164,7 @@ def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str |
             device.get('site_id') or device.get('site', ''), '', '', 1, None,
             device.get('ip_address', ''), '', device.get('role', ''),
             '', '', '',
-            'active', '', '', '', '', now, now,
+            'active', device.get('lifecycle_status') or 'staging', '', '', '', '', now, now,
             device.get('platform', ''), device.get('connection_method', 'ssh'),
             device.get('username', ''), device.get('normal_username', ''),
             encrypt_credential(normal_password) if normal_password else '',
@@ -950,6 +950,11 @@ def update_device(device_id: str, device: dict = Body(...)):
             'UPDATE devices SET site_id = ? WHERE id = ?',
             (_resolve_device_site_id(conn, device.get('site_id'), device.get('site')), device_id),
         )
+        if existing_row['asset_id']:
+            conn.execute(
+                'UPDATE physical_assets SET lifecycle_status = ?, updated_at = ? WHERE id = ?',
+                (new_lifecycle, _utc_now(), existing_row['asset_id']),
+            )
         conn.commit()
 
         # Track lifecycle transition in audit details

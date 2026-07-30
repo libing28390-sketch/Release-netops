@@ -23,15 +23,15 @@ def test_interface_snapshot_clears_missing_current_rows(monkeypatch):
     connection.executescript(
         """
         CREATE TABLE interfaces (
-            id TEXT PRIMARY KEY, device_id TEXT, interface_name TEXT,
+            id TEXT PRIMARY KEY, device_id TEXT, interface_name TEXT, description TEXT,
             admin_status TEXT, oper_status TEXT, primary_ip TEXT,
             ip_address TEXT, ip_prefix_length INTEGER, is_l3 INTEGER,
             ip_enabled INTEGER, switchport_mode TEXT, interface_type TEXT,
             last_seen TEXT
         );
         INSERT INTO interfaces VALUES
-            ('old', 'dev-1', 'Ethernet0/2', 'up', 'up', '10.0.0.2', '10.0.0.2', 24, 1, 1, 'routed', 'physical', NULL),
-            ('current', 'dev-1', 'LoopBack0', 'down', 'down', '10.0.0.9', '10.0.0.9', 32, 1, 1, 'routed', 'physical', NULL);
+            ('old', 'dev-1', 'Ethernet0/2', '', 'up', 'up', '10.0.0.2', '10.0.0.2', 24, 1, 1, 'routed', 'physical', NULL),
+            ('current', 'dev-1', 'LoopBack0', '', 'down', 'down', '10.0.0.9', '10.0.0.9', 32, 1, 1, 'routed', 'physical', NULL);
         """
     )
     monkeypatch.setattr(interfaces, 'get_db_connection', lambda: _ConnectionProxy(connection))
@@ -74,6 +74,17 @@ def test_device_ip_output_supersedes_legacy_inventory_rows():
 
     assert direct_ip_keys == {'gi1/0/1'}
     assert 'gi1/0/2' not in direct_ip_keys
+
+
+def test_interface_description_uses_dedicated_textfsm_field_and_rejects_mtu_text():
+    assert interfaces._interface_description({
+        'INTERFACE': 'Vlanif10',
+        'DESCRIPTION': 'Finance gateway',
+    }) == 'Finance gateway'
+    assert interfaces._interface_description({
+        'INTERFACE': 'Vlanif10',
+        'DESCRIPTION': 'Route Port,The Maximum Transmit Unit is 1500',
+    }) == ''
 
 
 def test_diagnostics_uses_management_port_column(monkeypatch):

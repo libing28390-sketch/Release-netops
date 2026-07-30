@@ -439,7 +439,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
   // UI status formats
   const getFanStatusLabel = (status: any) => {
-    if (status == null || status === '' || status === 0) return zh ? '正常' : 'OK';
+    if (status == null || status === '' || status === 0) return zh ? '未知' : 'Unknown';
     const s = String(status).toLowerCase();
     if (s === 'fail' || s === 'failed' || s === 'error' || s === 'down') return zh ? '故障' : 'FAIL';
     if (s === 'ok' || s === 'normal' || s === 'up' || s === 'healthy') return zh ? '正常' : 'OK';
@@ -447,11 +447,19 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   };
 
   const getPsuStatusLabel = (status: any) => {
-    if (status == null || status === '' || status === 0) return zh ? '正常' : 'OK';
+    if (status == null || status === '' || status === 0) return zh ? '未知' : 'Unknown';
     const s = String(status).toLowerCase();
     if (s === 'fail' || s === 'failed' || s === 'error' || s === 'down') return zh ? '故障' : 'FAIL';
     if (s === 'ok' || s === 'normal' || s === 'up' || s === 'healthy') return zh ? '正常' : 'OK';
     return String(status).toUpperCase();
+  };
+
+  const hardwareStatusTone = (status: any) => {
+    if (status == null || status === '' || status === 0) return 'text-slate-500';
+    const normalized = String(status).toLowerCase();
+    if (['fail', 'failed', 'error', 'down'].includes(normalized)) return 'text-red-500';
+    if (['ok', 'normal', 'up', 'healthy'].includes(normalized)) return 'text-emerald-500';
+    return 'text-slate-500';
   };
 
   const fmtTime = (ts?: string) => {
@@ -765,7 +773,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                   <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[var(--card-border)] bg-black/[0.015] dark:bg-white/[0.015]">
                     <Wind size={20} className="text-emerald-500 mb-2" />
                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Fan Status</span>
-                    <p className={`text-sm font-extrabold mt-2 ${String(snapshotDevice?.fan_status || '').toLowerCase() === 'fail' ? 'text-red-500' : 'text-emerald-500'}`}>
+                    <p className={`text-sm font-extrabold mt-2 ${hardwareStatusTone(snapshotDevice?.fan_status)}`}>
                       {getFanStatusLabel(snapshotDevice?.fan_status)}
                     </p>
                   </div>
@@ -773,7 +781,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                   <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[var(--card-border)] bg-black/[0.015] dark:bg-white/[0.015]">
                     <Zap size={20} className="text-orange-500 mb-2" />
                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Power (PSU)</span>
-                    <p className={`text-sm font-extrabold mt-2 ${String(snapshotDevice?.psu_status || '').toLowerCase() === 'fail' ? 'text-red-500' : 'text-emerald-500'}`}>
+                    <p className={`text-sm font-extrabold mt-2 ${hardwareStatusTone(snapshotDevice?.psu_status)}`}>
                       {getPsuStatusLabel(snapshotDevice?.psu_status)}
                     </p>
                   </div>

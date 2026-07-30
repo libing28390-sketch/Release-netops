@@ -236,6 +236,11 @@ export interface ConfigTemplate {
   vendor?: string;
   content: string;
   rollback?: string;
+  description?: string;
+  platform_family?: string;
+  software_version?: string;
+  official_reference?: string;
+  validation_status?: 'draft' | 'official_reference_reviewed' | 'device_validated';
 }
 
 export interface ConfigSnapshot {
@@ -709,7 +714,15 @@ export interface TagDefinition {
   is_system?: number;
   is_active?: number;
   built_in: number;       // 1=预定义, 0=自定义
+  assignment_count?: number;
   created_at: string;
+}
+
+export type TopologyTagOperator = 'and' | 'or' | 'not';
+
+export interface TopologyTagCondition {
+  tagId: string;
+  operator: TopologyTagOperator;
 }
 
 export interface DeviceTag extends TagDefinition {
@@ -719,6 +732,8 @@ export interface DeviceTag extends TagDefinition {
 
 export interface TagStatistics {
   total_definitions: number;
+  used_definitions: number;
+  unused_definitions: number;
   total_assignments: number;
   tagged_devices: number;
   categories: Record<string, number>;

@@ -802,6 +802,12 @@ async def forgot_password_reset(request: Request, payload: dict = Body(...)):
 
         # Clear login failures / lockout
         conn.execute("DELETE FROM login_failures WHERE username = ?", (username,))
+        # A password reset must invalidate existing sessions so the old
+        # credential cannot remain usable through an already-issued token.
+        conn.execute(
+            "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)",
+            (username,),
+        )
         conn.commit()
 
         log_audit_event(
@@ -822,6 +828,61 @@ async def forgot_password_reset(request: Request, payload: dict = Body(...)):
         raise
     except Exception as e:
         logger.error(f"Password reset error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
+
+
+@router.post("/forgot-password/mfa-reset")
+@limiter.limit("5/minute")
+async def forgot_password_mfa_reset(request: Request, payload: dict = Body(...)):
+    """Reset a password with the account's enrolled TOTP authenticator."""
+    username = (payload.get('username') or '').strip()
+    code = (payload.get('code') or '').strip()
+    new_password = payload.get('new_password', '')
+
+    if not username or not code or not new_password:
+        raise HTTPException(status_code=400, detail="Username, code, and new_password are required")
+
+    pwd_error = _validate_password_strength(new_password)
+    if pwd_error:
+        raise HTTPException(status_code=400, detail=pwd_error)
+
+    conn = get_db_connection()
+    try:
+        user = conn.execute(
+            'SELECT id, username, role, mfa_enabled, mfa_secret FROM users WHERE username = ?',
+            (username,),
+        ).fetchone()
+        if not user or not user['mfa_enabled'] or not user['mfa_secret'] or not verify_totp(user['mfa_secret'], code):
+            raise HTTPException(status_code=400, detail="Invalid account or MFA code")
+
+        hashed = await _hash_password(new_password)
+        conn.execute('UPDATE users SET password = ? WHERE id = ?', (hashed, user['id']))
+        conn.execute('DELETE FROM login_failures WHERE username = ?', (username,))
+        conn.execute('DELETE FROM sessions WHERE user_id = ?', (user['id'],))
+        conn.commit()
+
+        log_audit_event(
+            event_type='PASSWORD_RESET_COMPLETED',
+            category='identity',
+            severity='high',
+            status='success',
+            summary=f"Password reset completed with MFA for user {username}",
+            actor_id=str(user['id']),
+            actor_username=username,
+            actor_role=user['role'] or 'unknown',
+            source_ip=request.client.host if request and request.client else None,
+            target_type='user',
+            target_id=str(user['id']),
+            target_name=username,
+            details={'method': 'totp'},
+        )
+        return {"success": True, "message": "Password reset successfully. You can now log in with your new password."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"MFA password reset error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         conn.close()

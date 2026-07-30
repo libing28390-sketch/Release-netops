@@ -76,7 +76,7 @@ const HistoryList: React.FC<HistoryListProps> = ({
             <span className="text-sm font-medium">{zh ? '获取流水中...' : 'Loading history...'}</span>
           </div>
         ) : paginatedLogs.length > 0 ? (
-          <table className="w-full text-left border-collapse min-w-[1000px]">
+          <table className="nx-data-table min-w-[1000px] text-left">
             <thead className="sticky top-0 bg-slate-50 border-b border-black/5 z-10">
               <tr className="bg-black/[0.01]">
                 <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '触发时间' : 'Triggered At'}</th>

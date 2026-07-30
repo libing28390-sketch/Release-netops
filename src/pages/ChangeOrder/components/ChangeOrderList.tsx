@@ -447,7 +447,7 @@ export const ChangeOrderList: React.FC<Props> = ({
             </div>
           ) : (
             <div className="overflow-x-auto max-h-[calc(100vh-380px)] overflow-y-auto custom-scrollbar">
-              <table className="w-full text-sm">
+              <table className="nx-data-table text-sm">
                 <thead className="sticky top-0 z-10 bg-[#f8fafc] border-b border-black/5">
                   <tr className="text-black/50 text-xs">
                     <th className="text-left px-4 py-3 font-semibold">{zh ? '工单号' : 'Order #'}</th>

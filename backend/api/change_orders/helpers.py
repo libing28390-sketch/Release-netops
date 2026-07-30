@@ -3,6 +3,8 @@ import json
 import uuid
 import logging
 import sys
+import hashlib
+import re
 from typing import Optional
 from fastapi import HTTPException
 from database import get_db_connection
@@ -13,6 +15,89 @@ logger = logging.getLogger(__name__)
 # ── Base Feature Flags ──────────────────────────────────────────────
 _BASE_FEATURE_TEMPLATE_REQUIRED: bool = os.environ.get('FEATURE_TEMPLATE_REQUIRED', '0').strip() == '1'
 _BASE_FEATURE_CONTROL_SHEET: bool = os.environ.get('FEATURE_CONTROL_SHEET', '0').strip() == '1'
+
+
+_RISK_RANK = {'low': 0, 'medium': 1, 'high': 2, 'critical': 3}
+
+
+def scan_change_commands(commands: list, platform: str = '') -> dict:
+    """Statically scan rendered commands and return explainable guard evidence."""
+    flattened = []
+    for command in commands or []:
+        flattened.extend(str(command or '').splitlines())
+    findings: list[dict] = []
+    blocked_patterns = (
+        (r'\bwrite\s+erase\b', '清空启动配置'),
+        (r'\berase\s+startup-config\b', '清空启动配置'),
+        (r'\breset\s+saved-configuration\b', '清空已保存配置'),
+        (r'\bfactory[- ]?reset\b', '恢复出厂设置'),
+        (r'(^|\s)format(\s|$)', '格式化存储'),
+        (r'\brm\s+-rf\s+/(?:\s|$)', '递归删除根目录'),
+        (r'\bdel\s+/[sq]\b', 'Windows 递归删除'),
+    )
+    high_patterns = (
+        (r'(^|\s)(reload|reboot)(\s|$)', '设备重启'),
+        (r'(^|\s)(shutdown|undo\s+shutdown|no\s+shutdown)(\s|$)', '接口或系统启停'),
+        (r'\b(no|undo|delete)\s+(router|protocols?|bgp|ospf|isis|aaa|ssh)\b', '关键控制面删除'),
+        (r'\b(access-list|acl|firewall|traffic-policy|route-policy)\b', '安全或路由策略变更'),
+        (r'\b(username|local-user|aaa|authentication|authorization)\b', '账号或认证配置变更'),
+        (r'\b(management|mgmt|vty|ssh)\b', '管理通道变更'),
+    )
+    for index, raw_line in enumerate(flattened, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith(('#', '!', '//')):
+            continue
+        lowered = line.lower()
+        for pattern, reason in blocked_patterns:
+            if re.search(pattern, lowered):
+                findings.append({
+                    'line': index,
+                    'command': line,
+                    'risk': 'critical',
+                    'action': 'block',
+                    'reason': reason,
+                })
+                break
+        else:
+            for pattern, reason in high_patterns:
+                if re.search(pattern, lowered):
+                    findings.append({
+                        'line': index,
+                        'command': line,
+                        'risk': 'high',
+                        'action': 'require_approval',
+                        'reason': reason,
+                    })
+                    break
+
+    max_risk = max(
+        (item['risk'] for item in findings),
+        key=lambda item: _RISK_RANK[item],
+        default='low',
+    )
+    return {
+        'platform': platform or 'unknown',
+        'scanned_lines': len(flattened),
+        'max_risk': max_risk,
+        'blocked': any(item['action'] == 'block' for item in findings),
+        'findings': findings,
+    }
+
+
+def approval_snapshot_hash(order: dict) -> str:
+    """Hash the immutable execution scope approved by reviewers."""
+    payload = {
+        'order_type': order.get('order_type') or '',
+        'target_devices': order.get('target_devices') or [],
+        'commands': order.get('commands') or [],
+        'rollback_plan': order.get('rollback_plan') or '',
+        'risk_level': order.get('risk_level') or '',
+        'scheduled_start': order.get('scheduled_start') or '',
+        'scheduled_end': order.get('scheduled_end') or '',
+        'command_template': order.get('command_template') or {},
+    }
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 
 
 def is_template_required() -> bool:
@@ -819,11 +904,33 @@ def _normalize_command_template_payload(payload: dict) -> dict:
         if is_template_required() and status in _TEMPLATE_REQUIRED_STATUSES and order_type == 'config_change':
             raise HTTPException(status_code=400, detail='非草稿状态的配置变更工单必须携带有效的场景化模板')
         normalized['command_template'] = {}
+        guard = scan_change_commands(
+            normalized.get('commands') or [],
+            str(normalized.get('platform') or ''),
+        )
+        if guard['blocked']:
+            raise HTTPException(status_code=400, detail={
+                'message': '命令守卫阻断了不可逆高危命令',
+                'guard': guard,
+            })
+        normalized['command_guard'] = guard
+        if _RISK_RANK[guard['max_risk']] > _RISK_RANK.get(str(normalized.get('risk_level') or 'low'), 0):
+            normalized['risk_level'] = guard['max_risk']
         return normalized
 
     target_devices = normalized.get('target_devices') or []
     snapshot = _build_command_template_snapshot(template_payload, target_devices, status)
+    guard = scan_change_commands(snapshot['preview']['execute'], snapshot.get('platform') or '')
+    if guard['blocked']:
+        raise HTTPException(status_code=400, detail={
+            'message': '命令守卫阻断了不可逆高危命令',
+            'guard': guard,
+        })
+    snapshot['command_guard'] = guard
     normalized['command_template'] = snapshot
     normalized['commands'] = snapshot['preview']['execute']
     normalized['rollback_plan'] = '\n'.join(snapshot['preview']['rollback']) if snapshot['preview']['rollback'] else str(normalized.get('rollback_plan') or '')
+    normalized['command_guard'] = guard
+    if _RISK_RANK[guard['max_risk']] > _RISK_RANK.get(str(normalized.get('risk_level') or 'low'), 0):
+        normalized['risk_level'] = guard['max_risk']
     return normalized

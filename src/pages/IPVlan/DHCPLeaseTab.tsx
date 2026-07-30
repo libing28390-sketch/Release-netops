@@ -38,7 +38,8 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   const [search, setSearch] = useState('');
   const [stateFilter, setStateFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(20);
+  const [totalLeases, setTotalLeases] = useState(0);
 
   // Modals
   const [showAddEdit, setShowAddEdit] = useState(false);
@@ -66,14 +67,19 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
     setLoading(true);
     const hdrs = authHeaders();
     try {
-      const res = await fetch('/api/ipam/leases', { headers: hdrs });
-      if (res.ok) setLeases(await res.json());
+      const res = await fetch(`/api/ipam/leases?q=${encodeURIComponent(search.trim())}&state=${encodeURIComponent(stateFilter)}&page=${page}&page_size=${pageSize}`, { headers: hdrs });
+      if (res.ok) {
+        const payload = await res.json();
+        const data = payload?.data && !Array.isArray(payload.data) ? payload.data : payload;
+        setLeases(Array.isArray(data) ? data : (data?.items || []));
+        setTotalLeases(Array.isArray(data) ? data.length : Number(data?.total || 0));
+      }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [authHeaders]);
+  }, [authHeaders, page, pageSize, search, stateFilter]);
 
   useEffect(() => {
     loadData();
@@ -154,18 +160,8 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
   };
 
   // Filter lease list
-  const filteredLeases = leases.filter((l) => {
-    const matchesSearch =
-      l.address.includes(search) ||
-      l.mac_address.toLowerCase().includes(search.toLowerCase()) ||
-      (l.hostname && l.hostname.toLowerCase().includes(search.toLowerCase())) ||
-      (l.dhcp_server && l.dhcp_server.toLowerCase().includes(search.toLowerCase()));
-
-    const matchesState = stateFilter === 'all' || l.lease_state === stateFilter;
-    return matchesSearch && matchesState;
-  });
-
-  const paginatedLeases = filteredLeases.slice((page - 1) * pageSize, page * pageSize);
+  const filteredLeases = leases;
+  const paginatedLeases = leases;
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden px-6 py-5 space-y-4">
@@ -218,7 +214,7 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
               {zh ? '加载中...' : 'Loading leases...'}
             </div>
           ) : (
-            <table className="w-full border-collapse text-left">
+            <table className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? '动态分配IP' : 'Assigned IP'}</th>
@@ -288,9 +284,10 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
         <div className="px-6 py-4 border-t border-gray-100">
           <Pagination
             currentPage={page}
-            totalItems={filteredLeases.length}
+            totalItems={totalLeases}
             itemsPerPage={pageSize}
             onPageChange={setPage}
+            onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }}
             language={language}
             alwaysVisible={true}
           />

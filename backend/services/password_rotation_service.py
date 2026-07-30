@@ -71,7 +71,7 @@ def _sync_credential_vault(device: dict, role: str, enc_new: str) -> None:
     admin_cred_id = device.get('admin_credential_id')
     if role == 'normal':
         cred_id = normal_cred_id
-        explicit_role_binding = bool(normal_cred_id)
+        explicit_role_binding = False
     elif role in ('admin', 'enable'):
         # Enable is a privileged secret and belongs to the admin credential
         # when one is bound. Fall back to the legacy credential for old rows.
@@ -85,10 +85,19 @@ def _sync_credential_vault(device: dict, role: str, enc_new: str) -> None:
     try:
         conn = get_db_connection()
         try:
-            row = conn.execute('SELECT username FROM credentials WHERE id = ?', (cred_id,)).fetchone()
+            row = conn.execute(
+                'SELECT username, account_role FROM credentials WHERE id = ?',
+                (cred_id,),
+            ).fetchone()
             if not row:
                 return
-            vault_user = (dict(row).get('username') or '').strip().lower()
+            credential = dict(row)
+            vault_user = (credential.get('username') or '').strip().lower()
+            declared_role = str(credential.get('account_role') or 'unbound').strip().lower()
+            if role == 'normal':
+                explicit_role_binding = declared_role == 'normal'
+            elif role == 'admin':
+                explicit_role_binding = bool(admin_cred_id) or declared_role in {'admin', 'privileged'}
 
             if role == 'enable':
                 conn.execute('UPDATE credentials SET enable_password = ? WHERE id = ?', (enc_new, cred_id))

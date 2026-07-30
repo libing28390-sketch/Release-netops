@@ -141,9 +141,16 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const batchTagRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch('/api/tags/definitions')
+    const token = localStorage.getItem('netops_token');
+    fetch('/api/tags/definitions', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
       .then(r => r.json())
-      .then(d => { if (d.success && Array.isArray(d.data)) setAllTags(d.data); })
+      .then(d => {
+        if (d.success && Array.isArray(d.data)) {
+          setAllTags(d.data.filter((tag: TagDefinition) => Number(tag.is_active ?? 1) !== 0));
+        }
+      })
       .catch(() => {});
   }, []);
 

@@ -105,6 +105,93 @@ textarea {
 	box-shadow: 0 4px 14px rgba(15, 35, 60, 0.04);
 }
 
+/* Shared data-table language for list pages. Keep terminal/config diff tables on their own specialized styles. */
+.nx-data-table-frame {
+	overflow-x: auto;
+	border: 1px solid var(--ops-line);
+	border-radius: 16px;
+	background: var(--ops-surface);
+	box-shadow: var(--ops-shadow);
+}
+
+.nx-data-table {
+	width: 100%;
+	min-width: 640px;
+	border-collapse: separate;
+	border-spacing: 0;
+	color: var(--ops-ink);
+	font-size: 13px;
+}
+
+.nx-data-table thead tr {
+	background: color-mix(in srgb, var(--ops-surface) 86%, var(--ops-bg));
+}
+
+.nx-data-table thead th {
+	height: 44px;
+	padding: 0 16px;
+	border-bottom: 1px solid var(--ops-line);
+	color: var(--ops-muted);
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	line-height: 1.2;
+	white-space: nowrap;
+	text-align: left;
+}
+
+.nx-data-table tbody tr {
+	border-bottom: 1px solid var(--ops-line);
+	transition: background-color 140ms ease;
+}
+
+.nx-data-table tbody tr:last-child {
+	border-bottom: 0;
+}
+
+.nx-data-table tbody tr:hover {
+	background: color-mix(in srgb, var(--ops-surface) 88%, var(--ops-bg));
+}
+
+.nx-data-table tbody td {
+	min-height: 52px;
+	padding: 12px 16px;
+	font-size: 13px;
+	line-height: 1.35;
+	vertical-align: middle;
+}
+
+.nx-data-table--compact thead th {
+	height: 38px;
+	padding-inline: 12px;
+	font-size: 10px;
+}
+
+.nx-data-table--compact tbody td {
+	min-height: 44px;
+	padding: 9px 12px;
+	font-size: 12px;
+}
+
+.nx-data-table-frame--compact .nx-data-table thead th {
+	height: 38px;
+	padding-inline: 12px;
+	font-size: 10px;
+}
+
+.nx-data-table-frame--compact .nx-data-table tbody td {
+	min-height: 44px;
+	padding: 9px 12px;
+	font-size: 12px;
+}
+
+.nx-table-pagination {
+	min-height: 56px;
+	border-color: var(--ops-line) !important;
+	background: var(--ops-surface) !important;
+	color: var(--ops-muted) !important;
+}
+
 .monitoring-cockpit-frame {
   width: min(100%, 1720px);
   margin-inline: auto;

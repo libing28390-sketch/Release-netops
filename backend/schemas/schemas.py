@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List
 from datetime import datetime
 import ipaddress as _ipaddress
@@ -339,6 +339,7 @@ class BatchDeviceTagsUpdate(BaseModel):
 class TagTargetFilter(BaseModel):
     include_groups: List[List[str]] = []
     exclude_tag_ids: List[str] = []
+    expression: dict | None = None
 
 
 # ─── Rack Management 机柜管理 ────────────────────────────
@@ -873,6 +874,12 @@ class SiteCreate(BaseModel):
         return v
 
 
+class SiteImportRequest(BaseModel):
+    """Validated site rows submitted by the spreadsheet import workflow."""
+
+    rows: List[SiteCreate] = Field(..., min_length=1, max_length=1000)
+
+
 class SiteUpdate(BaseModel):
     site_code: Optional[str] = None
     site_name: Optional[str] = None
@@ -983,6 +990,104 @@ class VlanUpdate(BaseModel):
         if not (1 <= v <= 4094):
             raise ValueError('vlan_id must be between 1 and 4094')
         return v
+
+
+class VlanBusinessBindingCreate(BaseModel):
+    site_id: str = ''
+    vrf_id: str = ''
+    vlan_id: int
+    business_system: str
+    department: str = ''
+    owner: str = ''
+    business_level: str = 'P3'
+    status: str = 'active'
+    description: str = ''
+
+    @field_validator('vlan_id')
+    @classmethod
+    def validate_binding_vlan_id(cls, v: int) -> int:
+        if not (1 <= v <= 4094):
+            raise ValueError('vlan_id must be between 1 and 4094')
+        return v
+
+    @field_validator('business_system', 'department', 'owner', 'description')
+    @classmethod
+    def normalize_binding_text(cls, v: str) -> str:
+        return str(v or '').strip()
+
+    @field_validator('business_system')
+    @classmethod
+    def validate_business_system(cls, v: str) -> str:
+        if not v or len(v) > 160:
+            raise ValueError('business_system must be 1-160 characters')
+        return v
+
+    @field_validator('business_level')
+    @classmethod
+    def validate_business_level(cls, v: str) -> str:
+        value = str(v or '').strip().upper()
+        if value not in {'P1', 'P2', 'P3', 'P4'}:
+            raise ValueError('business_level must be P1, P2, P3 or P4')
+        return value
+
+    @field_validator('status')
+    @classmethod
+    def validate_business_status(cls, v: str) -> str:
+        value = str(v or '').strip().lower()
+        if value not in {'active', 'planned', 'retired'}:
+            raise ValueError('status must be active, planned or retired')
+        return value
+
+
+class VlanBusinessBindingUpdate(BaseModel):
+    site_id: Optional[str] = None
+    vrf_id: Optional[str] = None
+    vlan_id: Optional[int] = None
+    business_system: Optional[str] = None
+    department: Optional[str] = None
+    owner: Optional[str] = None
+    business_level: Optional[str] = None
+    status: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator('vlan_id')
+    @classmethod
+    def validate_binding_vlan_id(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and not (1 <= v <= 4094):
+            raise ValueError('vlan_id must be between 1 and 4094')
+        return v
+
+    @field_validator('business_system', 'department', 'owner', 'description')
+    @classmethod
+    def normalize_binding_text(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else str(v).strip()
+
+    @field_validator('business_system')
+    @classmethod
+    def validate_business_system(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and (not v or len(v) > 160):
+            raise ValueError('business_system must be 1-160 characters')
+        return v
+
+    @field_validator('business_level')
+    @classmethod
+    def validate_business_level(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        value = v.strip().upper()
+        if value not in {'P1', 'P2', 'P3', 'P4'}:
+            raise ValueError('business_level must be P1, P2, P3 or P4')
+        return value
+
+    @field_validator('status')
+    @classmethod
+    def validate_business_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        value = v.strip().lower()
+        if value not in {'active', 'planned', 'retired'}:
+            raise ValueError('status must be active, planned or retired')
+        return value
 
 
 # ─── New IPAM Schemas (Prefix, Pool, VIP, Lease) ───────────────────

@@ -12,6 +12,8 @@ interface ConfigContextValue {
   scheduleLoading: boolean;
   retentionDays: number;
   setRetentionDays: (days: number) => void;
+  retentionMaxPerDevice: number;
+  setRetentionMaxPerDevice: (count: number) => void;
   saveScheduleConfig: () => Promise<void>;
   configSnapshots: any[];
   handleRunBackupAllOnline: () => Promise<void>;
@@ -25,6 +27,7 @@ interface ConfigContextValue {
   diffFocusChangeIdx: number;
   diffOnlyChanges: boolean;
   diffShowFullBoth: boolean;
+  diffMode: 'normalized' | 'raw';
   renderedDiffLines: any[];
   fullSideBySideRows: any[];
   diffChangeBlocks: any[];
@@ -39,6 +42,7 @@ interface ConfigContextValue {
   jumpToDiff: (direction: 'prev' | 'next') => void;
   setDiffOnlyChanges: React.Dispatch<React.SetStateAction<boolean>>;
   setDiffShowFullBoth: React.Dispatch<React.SetStateAction<boolean>>;
+  setDiffMode: React.Dispatch<React.SetStateAction<'normalized' | 'raw'>>;
   setDiffBlockQuery: React.Dispatch<React.SetStateAction<string>>;
   
   // config workspace

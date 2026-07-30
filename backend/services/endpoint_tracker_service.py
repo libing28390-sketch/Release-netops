@@ -17,6 +17,34 @@ def _normalize_mac(mac: str) -> str:
         return ''
     return mac.replace(':', '').replace('-', '').replace('.', '').lower()
 
+
+def _timestamp_key(value: str | None) -> float:
+    """Return a comparable timestamp for mixed CLI/database time formats."""
+    raw = str(value or '').strip()
+    if not raw:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _prefer_arp_observation(current: dict | None, candidate: dict) -> bool:
+    """Pick the most trustworthy observation when one IP appears on many ARP rows.
+
+    ``network_endpoints`` is keyed by IP, so writing every device's row in table
+    order makes the result nondeterministic.  The newest observation wins; a
+    VLAN-bearing observation wins ties because it provides stronger L2 context.
+    """
+    if current is None:
+        return True
+    current_key = (_timestamp_key(current.get('last_updated')), bool(current.get('vlan_id')))
+    candidate_key = (_timestamp_key(candidate.get('last_updated')), bool(candidate.get('vlan_id')))
+    return candidate_key > current_key
+
 def locate_mac_address(mac: str, mac_entries: list[dict], topology_links: list[dict]) -> dict | None:
     """
     Recursive leaf-node localization algorithm for a MAC address.
@@ -142,7 +170,13 @@ def track_and_locate_endpoints():
     try:
         # Load all ARP table entries
         arp_rows = conn.execute("SELECT device_id, ip_address, mac_address, interface_name, vlan_id, last_updated FROM arp_table").fetchall()
-        arp_entries = [dict(row) for row in arp_rows]
+        arp_entries_by_ip: dict[str, dict] = {}
+        for row in arp_rows:
+            observation = dict(row)
+            ip = str(observation.get('ip_address') or '').strip()
+            if ip and _prefer_arp_observation(arp_entries_by_ip.get(ip), observation):
+                arp_entries_by_ip[ip] = observation
+        arp_entries = list(arp_entries_by_ip.values())
         
         # Load all MAC table entries
         mac_rows = conn.execute("SELECT device_id, mac_address, interface_name, vlan_id, entry_type, last_updated FROM mac_table").fetchall()
@@ -153,7 +187,12 @@ def track_and_locate_endpoints():
         topology_links = [dict(row) for row in link_rows]
         
         # Load all devices for hostname and site name mapping
-        dev_rows = conn.execute("SELECT id, hostname, site FROM devices").fetchall()
+        dev_rows = conn.execute(
+            "SELECT d.id, d.hostname, d.site, d.site_id, "
+            "COALESCE(s.site_name, s.site_code) AS site_name "
+            "FROM devices d "
+            "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, ''))"
+        ).fetchall()
         device_map = {row['id']: dict(row) for row in dev_rows}
         
         if not arp_entries:
@@ -186,7 +225,12 @@ def track_and_locate_endpoints():
                 
             # Get device details for site mapping
             dev_info = device_map.get(switch_id, {})
-            site_name = dev_info.get('site') or dev_info.get('hostname') or 'Default Site'
+            site_name = (
+                dev_info.get('site_name')
+                or dev_info.get('site')
+                or dev_info.get('hostname')
+                or '未分配站点'
+            )
             hostname = dev_info.get('hostname') or ''
             
             endpoints_to_save.append({

@@ -75,16 +75,18 @@ export interface TopologyAggregationResult<
 }
 
 const layerForDevice = (device: TopologyAggregationDevice) => {
-  const fingerprint = [device.role, device.hostname, device.model]
+  const fingerprint = [device.role, device.hostname, device.model, device.platform]
     .map((value) => String(value || '').toLowerCase())
     .join(' ');
+  if (/(firewall|fortigate|forti|palo|pan-|checkpoint|srx|asa|ftd|\bfw\b)/.test(fingerprint)) return 'PERIMETER';
+  if (/(router|gateway|wan|edge router|\bisr\b|\basr\b|\bmx\b)/.test(fingerprint)) return 'PERIMETER';
   if (/(core|backbone|spine|leaf-spine)/.test(fingerprint)) return 'CORE';
   if (/(distribution|aggregation|agg)/.test(fingerprint)) return 'AGGREGATION';
   if (/(access|edge|acc[-_ ]?sw)/.test(fingerprint)) return 'ACCESS';
   return 'DEVICE';
 };
 
-const layerRank: Record<string, number> = { CORE: 0, AGGREGATION: 1, ACCESS: 2, DEVICE: 3 };
+const layerRank: Record<string, number> = { PERIMETER: 0, CORE: 1, AGGREGATION: 2, ACCESS: 3, DEVICE: 4 };
 
 const getSite = (device: TopologyAggregationDevice) => {
   const id = String(device.site_id || device.site || '').trim();

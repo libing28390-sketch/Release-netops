@@ -15,6 +15,8 @@ import {
   RefreshCw,
   Check,
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
@@ -115,6 +117,17 @@ function parseAddressRoles(value: string | undefined): Array<{ address_role?: st
   }
 }
 
+function prefixStatusLabel(status: string, zh: boolean): string {
+  const labels: Record<string, { zh: string; en: string }> = {
+    container: { zh: '容器', en: 'Container' },
+    active: { zh: '使用中', en: 'Active' },
+    reserved: { zh: '已保留', en: 'Reserved' },
+    deprecated: { zh: '已弃用', en: 'Deprecated' },
+  };
+  const label = labels[status];
+  return label ? (zh ? label.zh : label.en) : status;
+}
+
 const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }) => {
   const navigate = useNavigate();
   const zh = language === 'zh';
@@ -125,7 +138,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'tree'>('table');
   const [familyFilter, setFamilyFilter] = useState<'all' | 'ipv4' | 'ipv6'>('all');
+  const [siteFilter, setSiteFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [collapsedSites, setCollapsedSites] = useState<Record<string, boolean>>({});
 
   // CMDB Dropdowns
   const [sites, setSites] = useState<any[]>([]);
@@ -169,6 +185,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
   const [desiredPrefixLen, setDesiredPrefixLen] = useState(24);
   const [excludeNetBroadcast, setExcludeNetBroadcast] = useState(true);
   const [excludeGateway, setExcludeGateway] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalPrefixes, setTotalPrefixes] = useState(0);
 
   const usableIpDetails = useMemo(() => {
     const cidr = form.prefix.trim();
@@ -438,18 +457,30 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     setLoading(true);
     try {
       const headers = authHeaders();
+      const prefixQuery = new URLSearchParams({
+        q: search,
+        site: siteFilter,
+        status: statusFilter,
+        family: familyFilter,
+        page: String(page),
+        page_size: String(pageSize),
+      });
       const [prefixRes, summaryRes] = await Promise.all([
-        fetch(`/api/ipam/subnets?q=${encodeURIComponent(search)}`, { headers }),
+        fetch(`/api/ipam/subnets?${prefixQuery.toString()}`, { headers }),
         fetch('/api/ipam/prefixes/classification-summary', { headers }),
       ]);
-      if (prefixRes.ok) setPrefixes(await prefixRes.json());
+      if (prefixRes.ok) {
+        const payload = await prefixRes.json();
+        setPrefixes(Array.isArray(payload) ? payload : (payload.items || []));
+        setTotalPrefixes(Array.isArray(payload) ? payload.length : Number(payload.total || 0));
+      }
       if (summaryRes.ok) setClassificationSummary(await summaryRes.json());
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [search, authHeaders]);
+  }, [search, siteFilter, statusFilter, familyFilter, page, pageSize, authHeaders]);
 
   const openInterfaceGeneration = async (clearResult = true) => {
     setInterfaceGenerationLoading(true);
@@ -697,10 +728,6 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     }
   };
 
-  // Pagination states
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
-
   // IPv4 / IPv6 family filter (an IPv6 prefix always contains a colon)
   const matchFamily = useCallback(
     (p: Prefix) => {
@@ -710,8 +737,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
     },
     [familyFilter],
   );
-  const filteredPrefixes = prefixes.filter(matchFamily);
-  const paginatedPrefixes = filteredPrefixes.slice((page - 1) * pageSize, page * pageSize);
+  const filteredPrefixes = prefixes;
+  const paginatedPrefixes = prefixes;
 
   const getUtilColor = (util: number) => {
     if (util < 60) return 'from-emerald-400 to-green-500';
@@ -786,20 +813,24 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               <span className={`w-1.5 h-1.5 rounded-full ${
                 node.status === 'active' ? 'bg-emerald-500' : node.status === 'reserved' ? 'bg-amber-500' : 'bg-rose-500'
               }`} />
-              {node.status.toUpperCase()}
+              {prefixStatusLabel(node.status, zh)}
             </span>
           </td>
           <td className="px-4 py-4">
-            <div className="flex flex-col gap-1 w-28">
-              <div className="flex justify-between text-[10px] font-bold text-gray-400">
-                <span>{node.used_ips}/{node.active_ips || 0}/{node.total_ips}</span>
-                <span>{node.utilization}%</span>
+            <div className="flex w-40 flex-col gap-1" title={zh ? '已分配：IPAM 有效分配；活跃发现：最近发现的在线地址；可用容量：扣除保留地址后的网段容量' : 'Allocated: managed IPAM allocations; Active: recently discovered addresses; Capacity: usable prefix capacity.'}>
+              <div className="grid grid-cols-3 gap-1 text-center text-[9px] text-gray-400">
+                <span><b className="block text-[10px] text-gray-600">{node.used_ips}</b>{zh ? '已分配' : 'Allocated'}</span>
+                <span><b className="block text-[10px] text-gray-600">{node.active_ips || 0}</b>{zh ? '活跃发现' : 'Active'}</span>
+                <span><b className="block text-[10px] text-gray-600">{node.total_ips}</b>{zh ? '可用容量' : 'Capacity'}</span>
               </div>
-              <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div className="flex items-center gap-2">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
                 <div 
                   className={`h-full rounded-full bg-gradient-to-r ${getUtilColor(node.utilization)}`} 
                   style={{ width: `${node.utilization}%` }}
                 />
+                </div>
+                <span className="text-[9px] font-bold text-gray-500">{node.utilization}%</span>
               </div>
             </div>
           </td>
@@ -861,7 +892,28 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           </div>
         }
         extras={
-          <div className="flex items-center gap-3 w-full md:w-auto">
+          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+            <select
+              value={siteFilter}
+              onChange={(e) => { setSiteFilter(e.target.value); setPage(1); }}
+              className="min-w-[150px] px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
+            >
+              <option value="all">{zh ? '全部站点' : 'All Sites'}</option>
+              {sites.map((site) => (
+                <option key={site.id} value={site.id}>{site.site_name || site.site_code || site.id}</option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+              className="px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
+            >
+              <option value="all">{zh ? '所有状态' : 'All Status'}</option>
+              <option value="active">{zh ? '使用中' : 'Active'}</option>
+              <option value="reserved">{zh ? '已保留' : 'Reserved'}</option>
+              <option value="deprecated">{zh ? '已弃用' : 'Deprecated'}</option>
+              <option value="container">{zh ? '容器' : 'Container'}</option>
+            </select>
             {/* IPv4 / IPv6 Family Switch */}
             <div className="flex rounded-xl bg-gray-100 p-0.5 border border-black/5">
               {([
@@ -950,7 +1002,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               {zh ? '加载中...' : 'Loading prefixes data...'}
             </div>
           ) : viewMode === 'tree' ? (
-            <table className="w-full border-collapse text-left">
+            <table className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? 'Prefix网段' : 'Prefix / CIDR'}</th>
@@ -979,7 +1031,7 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               </tbody>
             </table>
           ) : (
-            <table className="w-full border-collapse text-left">
+            <table className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4 w-10">
@@ -1005,11 +1057,36 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
               </thead>
               <tbody>
                 {paginatedPrefixes.length > 0 ? (
-                  paginatedPrefixes.map((node) => {
+                  paginatedPrefixes.map((node, index) => {
                     const isSelected = selectedIds.has(node.id);
+                    const siteKey = String(node.site_id || 'unassigned');
+                    const siteLabel = node.site_name || node.site_code || (zh ? '未分配站点' : 'Unassigned');
+                    const previousSiteKey = index > 0 ? String(paginatedPrefixes[index - 1].site_id || 'unassigned') : '';
+                    const showSiteHeader = siteKey !== previousSiteKey;
+                    const collapsed = Boolean(collapsedSites[siteKey]);
                     return (
-                      <tr 
-                        key={node.id} 
+                      <React.Fragment key={node.id}>
+                      {showSiteHeader && (
+                        <tr className="border-b border-cyan-100 bg-cyan-50/60">
+                          <td colSpan={12} className="px-5 py-2.5">
+                            <button
+                              type="button"
+                              onClick={() => setCollapsedSites((current) => ({ ...current, [siteKey]: !current[siteKey] }))}
+                              className="flex w-full items-center justify-between text-left"
+                            >
+                              <span className="inline-flex items-center gap-2 text-xs font-bold text-cyan-800">
+                                {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                                {siteLabel}
+                              </span>
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-cyan-700 shadow-sm">
+                                {zh ? '本页网段' : 'Prefixes on page'}
+                              </span>
+                            </button>
+                          </td>
+                        </tr>
+                      )}
+                      {!collapsed && <tr
+                        key={`${node.id}-row`}
                         className={`hover:bg-gray-50/50 transition-colors border-b border-gray-100 group ${
                           isSelected ? 'bg-cyan-50/10' : ''
                         }`}
@@ -1096,20 +1173,24 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             <span className={`w-1.5 h-1.5 rounded-full ${
                               node.status === 'active' ? 'bg-emerald-500' : node.status === 'reserved' ? 'bg-amber-500' : 'bg-rose-500'
                             }`} />
-                            {node.status.toUpperCase()}
+                            {prefixStatusLabel(node.status, zh)}
                           </span>
                         </td>
                         <td className="px-4 py-4">
-                          <div className="flex flex-col gap-1 w-28">
-                            <div className="flex justify-between text-[10px] font-bold text-gray-400">
-                              <span>{node.used_ips}/{node.active_ips || 0}/{node.total_ips}</span>
-                              <span>{node.utilization}%</span>
+                          <div className="flex w-40 flex-col gap-1" title={zh ? '已分配：IPAM 有效分配；活跃发现：最近发现的在线地址；可用容量：扣除保留地址后的网段容量' : 'Allocated: managed IPAM allocations; Active: recently discovered addresses; Capacity: usable prefix capacity.'}>
+                            <div className="grid grid-cols-3 gap-1 text-center text-[9px] text-gray-400">
+                              <span><b className="block text-[10px] text-gray-600">{node.used_ips}</b>{zh ? '已分配' : 'Allocated'}</span>
+                              <span><b className="block text-[10px] text-gray-600">{node.active_ips || 0}</b>{zh ? '活跃发现' : 'Active'}</span>
+                              <span><b className="block text-[10px] text-gray-600">{node.total_ips}</b>{zh ? '可用容量' : 'Capacity'}</span>
                             </div>
-                            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="flex items-center gap-2">
+                              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
                               <div 
                                 className={`h-full rounded-full bg-gradient-to-r ${getUtilColor(node.utilization)}`} 
                                 style={{ width: `${node.utilization}%` }}
                               />
+                              </div>
+                              <span className="text-[9px] font-bold text-gray-500">{node.utilization}%</span>
                             </div>
                           </div>
                         </td>
@@ -1131,7 +1212,8 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                             </button>
                           </div>
                         </td>
-                      </tr>
+                      </tr>}
+                      </React.Fragment>
                     );
                   })
                 ) : (
@@ -1151,9 +1233,10 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
           <div className="px-6 py-4 border-t border-gray-100">
             <Pagination
               currentPage={page}
-              totalItems={filteredPrefixes.length}
+              totalItems={totalPrefixes}
               itemsPerPage={pageSize}
               onPageChange={setPage}
+              onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }}
               language={language}
               alwaysVisible={true}
             />
@@ -1609,9 +1692,9 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                       onChange={(e) => setForm({ ...form, status: e.target.value })}
                       className="w-full px-4 py-2.5 text-xs rounded-xl border border-gray-150 outline-none focus:border-cyan-400 focus:bg-white transition-all font-medium bg-gray-50/50"
                     >
-                      <option value="active">ACTIVE</option>
-                      <option value="reserved">RESERVED</option>
-                      <option value="deprecated">DEPRECATED</option>
+                      <option value="active">{zh ? '使用中' : 'Active'}</option>
+                      <option value="reserved">{zh ? '已保留' : 'Reserved'}</option>
+                      <option value="deprecated">{zh ? '已弃用' : 'Deprecated'}</option>
                     </select>
                   </div>
 

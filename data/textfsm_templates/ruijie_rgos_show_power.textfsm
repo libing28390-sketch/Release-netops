@@ -1,0 +1,14 @@
+Value POWER_ID (\d+)
+Value MODEL (\S+)
+Value STATUS (ok|fail|absent|\S+)
+Value ATTRIBUTE (\S+)
+Value COEXIST (\S+)
+Value HARDWARE_VERSION (\S+)
+Value SERIAL_NUMBER (\S+)
+Value SUPPLY_WATT (\d+)
+Value EXCEPTION (\S+)
+
+Start
+  ^Power-id\s+Power-type\s+Status
+  ^-+
+  ^${POWER_ID}\s+${MODEL}\s+${STATUS}\s+${ATTRIBUTE}\s+${COEXIST}\s+${HARDWARE_VERSION}\s+${SERIAL_NUMBER}\s+${SUPPLY_WATT}\s+${EXCEPTION}\s*$$ -> Record

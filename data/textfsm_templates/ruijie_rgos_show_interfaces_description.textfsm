@@ -1,0 +1,10 @@
+Value INTERFACE ([\w.-]+(?:\s+\d+(?:/\d+)*(?:\.\d+)?)?|\S+)
+Value STATUS (up|down|administratively down|\S+)
+Value ADMIN_STATUS (up|down|\S+)
+Value DESCRIPTION (.*)
+
+Start
+  ^Interface\s+Status\s+Administrative\s+Description
+  ^-+
+  ^${INTERFACE}\s{2,}${STATUS}\s{2,}${ADMIN_STATUS}\s{2,}${DESCRIPTION}\s*$$ -> Record
+  ^${INTERFACE}\s+${STATUS}\s+${ADMIN_STATUS}\s+${DESCRIPTION}\s*$$ -> Record

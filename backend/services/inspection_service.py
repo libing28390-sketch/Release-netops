@@ -2025,11 +2025,51 @@ def compare_runs(run_id_a: str, run_id_b: str) -> dict[str, Any]:
 # 巡检指标项管理 (Inspection Items)
 # ──────────────────────────────────────────────
 
-def list_inspection_items() -> list[dict[str, Any]]:
+def list_inspection_items(
+    *,
+    q: str = '',
+    category: str = '',
+    method: str = '',
+    vendor: str = '',
+    page: int | None = None,
+    page_size: int = 20,
+) -> list[dict[str, Any]] | dict[str, Any]:
     conn = get_db_connection()
     try:
-        rows = conn.execute('SELECT * FROM inspection_items ORDER BY category ASC, name ASC').fetchall()
-        return [dict(r) for r in rows]
+        clauses: list[str] = []
+        params: list[str] = []
+        if q.strip():
+            clauses.append("(LOWER(name) LIKE ? OR LOWER(COALESCE(name_zh, '')) LIKE ? OR LOWER(COALESCE(check_key, '')) LIKE ? OR LOWER(COALESCE(command, '')) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ? OR LOWER(COALESCE(vendor, '')) LIKE ?)")
+            fuzzy = f"%{q.strip().lower()}%"
+            params.extend([fuzzy] * 6)
+        if category and category.lower() != 'all':
+            clauses.append("LOWER(COALESCE(category, '')) = ?")
+            params.append(category.lower())
+        if method and method.lower() != 'all':
+            clauses.append("LOWER(COALESCE(method, '')) = ?")
+            params.append(method.lower())
+        if vendor and vendor.lower() != 'all':
+            clauses.append("LOWER(COALESCE(vendor, '')) LIKE ?")
+            params.append(f"%{vendor.lower()}%")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
+        if page is None:
+            rows = conn.execute(f'SELECT * FROM inspection_items{where} ORDER BY category ASC, name ASC', tuple(params)).fetchall()
+            return [dict(r) for r in rows]
+        count_row = conn.execute(f'SELECT COUNT(*) AS total FROM inspection_items{where}', tuple(params)).fetchone()
+        total = int(count_row['total'] or 0) if count_row else 0
+        safe_page_size = min(max(int(page_size or 20), 1), 100)
+        offset = (max(int(page or 1), 1) - 1) * safe_page_size
+        rows = conn.execute(
+            f'SELECT * FROM inspection_items{where} ORDER BY category ASC, name ASC LIMIT ? OFFSET ?',
+            tuple(params + [safe_page_size, offset]),
+        ).fetchall()
+        return {
+            'items': [dict(row) for row in rows],
+            'total': total,
+            'page': max(int(page or 1), 1),
+            'page_size': safe_page_size,
+            'total_pages': max(1, (total + safe_page_size - 1) // safe_page_size),
+        }
     finally:
         conn.close()
 

@@ -73,6 +73,8 @@ const isServer = (p: string): boolean => {
 };
 
 type StatusFilter = 'all' | 'healthy' | 'expiring' | 'expired' | 'unconfigured';
+type TargetFilter = 'all' | 'credential' | 'unbound';
+type RoleFilter = 'all' | 'normal' | 'admin' | 'enable';
 
 export default function PasswordRotationPanel({ language, currentUser }: PasswordRotationPanelProps) {
   const zh = language === 'zh';
@@ -82,9 +84,11 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [targetFilter, setTargetFilter] = useState<TargetFilter>('all');
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [revealedSecret, setRevealedSecret] = useState<{ id: string; type: 'password' | 'enable_password'; secret: string } | null>(null);
   const [secretLoading, setSecretLoading] = useState<string | null>(null);
   const [secretCopied, setSecretCopied] = useState(false);
@@ -96,6 +100,11 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
   const [credentialSaving, setCredentialSaving] = useState(false);
   const [credentialError, setCredentialError] = useState('');
   const [notice, setNotice] = useState('');
+  const [pendingRotation, setPendingRotation] = useState<any | null>(null);
+  const [rotatingPassword, setRotatingPassword] = useState(false);
+  const [bulkRole, setBulkRole] = useState<'normal' | 'admin' | 'enable'>('admin');
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<any | null>(null);
 
   const credentialRoleFor = (account: any): string => {
     if (account.roleKey === 'admin' || account.roleKey === 'enable') {
@@ -271,6 +280,75 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
     }
   };
 
+  const rotateDevicePassword = async () => {
+    if (!pendingRotation || rotatingPassword) return;
+    setRotatingPassword(true);
+    setCredentialError('');
+    setNotice('');
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const response = await fetch(
+        `${API_BASE}/api/devices/${encodeURIComponent(pendingRotation.id)}/rotate-password?role=${encodeURIComponent(pendingRotation.roleKey)}`,
+        { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || payload.detail || (zh ? '设备密码轮换失败' : 'Device password rotation failed'));
+      }
+      setNotice(zh
+        ? `${pendingRotation.hostname || pendingRotation.ip_address} 的${pendingRotation.roleLabel}已完成轮换并验证。`
+        : `${pendingRotation.roleLabel} password rotated and verified for ${pendingRotation.hostname || pendingRotation.ip_address}.`);
+      setPendingRotation(null);
+      await fetchStatus();
+    } catch (rotationError: any) {
+      setCredentialError(rotationError.message || String(rotationError));
+    } finally {
+      setRotatingPassword(false);
+    }
+  };
+
+  const startBulkRotation = async () => {
+    if (bulkProgress?.status === 'running' || bulkProgress?.status === 'starting') return;
+    setShowBulkConfirm(false);
+    setCredentialError('');
+    setNotice('');
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const response = await fetch(
+        `${API_BASE}/api/devices/rotation/rotate-all?role=${encodeURIComponent(bulkRole)}`,
+        { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+      );
+      const payload = await response.json().catch(() => ({}));
+      const runId = String(payload.data?.run_id || '');
+      if (!response.ok || !payload.success || !runId) {
+        throw new Error(payload.message || payload.detail || (zh ? '批量轮换启动失败' : 'Failed to start bulk rotation'));
+      }
+      setBulkProgress({ status: 'starting', run_id: runId, total: 0, done: 0, rotated: 0, failed: 0 });
+
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        await new Promise(resolve => window.setTimeout(resolve, 1500));
+        const progressResponse = await fetch(
+          `${API_BASE}/api/devices/rotation/rotate-all/${encodeURIComponent(runId)}/progress`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        const progressPayload = await progressResponse.json().catch(() => ({}));
+        if (!progressResponse.ok || !progressPayload.success) continue;
+        const progress = progressPayload.data || {};
+        setBulkProgress(progress);
+        if (progress.status === 'completed') {
+          setNotice(zh
+            ? `批量轮换完成：成功 ${progress.rotated || 0}，失败 ${progress.failed || 0}。`
+            : `Bulk rotation completed: ${progress.rotated || 0} succeeded, ${progress.failed || 0} failed.`);
+          await fetchStatus();
+          return;
+        }
+      }
+      throw new Error(zh ? '批量轮换仍在后台执行，请稍后刷新状态。' : 'Bulk rotation is still running; refresh status later.');
+    } catch (bulkError: any) {
+      setCredentialError(bulkError.message || String(bulkError));
+    }
+  };
+
   const fetchStatus = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -291,7 +369,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
   }, []);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
-  useEffect(() => { setPage(1); }, [search, statusFilter]);
+  useEffect(() => { setPage(1); }, [roleFilter, search, statusFilter, targetFilter]);
 
   /* ── computed stats ── */
   const stats = useMemo(() => {
@@ -299,6 +377,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
     let expired = 0;
     let healthy = 0;
     let expiring = 0;
+    let unconfigured = 0;
 
     devices.forEach(d => {
       ['normal', 'admin', 'enable'].forEach(role => {
@@ -307,14 +386,16 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
         
         if (days !== null || role === 'admin') {
           total++;
-          if (isExp) expired++;
+          const lastRotated = (d as any)[`${role}_password_last_rotated`];
+          if (days === null && !lastRotated) unconfigured++;
+          else if (isExp) expired++;
           else if (days !== null && days <= 14) expiring++;
           else healthy++;
         }
       });
     });
     
-    return { total, healthy, expiring, expired };
+    return { total, healthy, expiring, expired, unconfigured };
   }, [devices]);
 
   /* ── Flat account list computation & filtering ── */
@@ -380,13 +461,24 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
       list = list.filter(acc => {
         if (statusFilter === 'expired') return acc.currentExpired;
         if (statusFilter === 'expiring') return acc.currentDays !== null && acc.currentDays <= 14 && acc.currentDays >= 0;
-        if (statusFilter === 'healthy') return !acc.currentExpired && (acc.currentDays === null || acc.currentDays > 14);
+        if (statusFilter === 'healthy') return !acc.currentExpired && acc.currentDays !== null && acc.currentDays > 14;
+        if (statusFilter === 'unconfigured') return acc.currentDays === null && !acc.currentLastRotated;
         return true;
       });
     }
 
+    if (roleFilter !== 'all') {
+      list = list.filter(acc => acc.roleKey === roleFilter);
+    }
+
+    if (targetFilter !== 'all') {
+      list = list.filter(acc => targetFilter === 'credential'
+        ? isSharedCredentialAccount(acc)
+        : !isSharedCredentialAccount(acc));
+    }
+
     return list;
-  }, [devices, search, statusFilter, zh]);
+  }, [devices, roleFilter, search, statusFilter, targetFilter, zh]);
 
   const paginatedAccounts = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -456,6 +548,13 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
       iconCls: 'text-white/70', valCls: 'text-white', labelCls: 'text-white/60', subCls: 'bg-white/15 text-white/80',
       pulse: stats.expired > 0,
     },
+    {
+      key: 'unconfigured', value: stats.unconfigured,
+      label: zh ? '未配置周期' : 'Unconfigured', sub: zh ? '待完善' : 'SETUP',
+      Icon: Shield, filter: 'unconfigured' as StatusFilter,
+      gradient: 'from-slate-500 to-slate-600', iconBg: 'bg-white/[0.08]',
+      iconCls: 'text-white/70', valCls: 'text-white', labelCls: 'text-white/60', subCls: 'bg-white/15 text-white/70',
+    },
   ];
 
   return (
@@ -464,6 +563,29 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
         icon={Key}
         title={zh ? '凭据轮换' : 'Credential Rotation'}
         subtitle={zh ? '管理并轮换设备的特权凭据，确保密码周期合规' : 'Manage and rotate privileged credentials across all devices'}
+        actions={isAdministrator ? (
+          <div className="flex items-center gap-2">
+            <select
+              value={bulkRole}
+              onChange={event => setBulkRole(event.target.value as typeof bulkRole)}
+              className="h-10 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold text-slate-600 outline-none"
+              aria-label={zh ? '批量轮换账号类型' : 'Bulk rotation account type'}
+            >
+              <option value="normal">{zh ? '普通账号' : 'Normal'}</option>
+              <option value="admin">{zh ? '特权账号' : 'Privileged'}</option>
+              <option value="enable">Enable</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => setShowBulkConfirm(true)}
+              disabled={bulkProgress?.status === 'running' || bulkProgress?.status === 'starting'}
+              className="inline-flex h-10 items-center gap-2 rounded-xl bg-cyan-500 px-4 text-xs font-bold text-white shadow-md hover:bg-cyan-600 disabled:cursor-wait disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={bulkProgress?.status === 'running' ? 'animate-spin' : ''} />
+              {zh ? '批量轮换' : 'Bulk Rotate'}
+            </button>
+          </div>
+        ) : undefined}
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
@@ -483,8 +605,16 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
           <span>{notice}</span>
         </div>
       )}
+      {bulkProgress && ['starting', 'running'].includes(bulkProgress.status) && (
+        <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+          {zh ? '批量轮换进度' : 'Bulk rotation progress'}：
+          {bulkProgress.done || 0}/{bulkProgress.total || 0}
+          {' · '}{zh ? '成功' : 'Succeeded'} {bulkProgress.rotated || 0}
+          {' · '}{zh ? '失败' : 'Failed'} {bulkProgress.failed || 0}
+        </div>
+      )}
       {/* ═══ Stat Cards ═══ */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {statCards.map(c => {
           const isActive = statusFilter === c.filter;
           return (
@@ -514,36 +644,6 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
         })}
       </div>
 
-      {/* ═══ Stats Cards (Compact) ═══ */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        {statCards.map((c, i) => {
-          const isActive = statusFilter === c.filter;
-          return (
-            <motion.button
-              key={c.key}
-              whileHover={{ y: -2 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => setStatusFilter(isActive ? 'all' : c.filter)}
-              className={`relative overflow-hidden p-3 rounded-xl border transition-all text-left ${
-                isActive 
-                  ? 'bg-slate-900 border-slate-900 shadow-lg ring-2 ring-slate-900/10' 
-                  : 'bg-white border-black/[0.04] hover:border-black/[0.1] shadow-sm'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${isActive ? 'text-white/40' : 'text-black/30'}`}>{c.label}</p>
-                  <p className={`text-xl font-black ${isActive ? 'text-white' : 'text-slate-800'}`}>{c.value}</p>
-                </div>
-                <div className={`p-2 rounded-lg ${isActive ? 'bg-white/10 text-white' : 'bg-black/[0.02] text-black/20'}`}>
-                  <c.Icon size={16} />
-                </div>
-              </div>
-            </motion.button>
-          );
-        })}
-      </div>
-
       {/* ═══ Pro Toolbar ═══ */}
       <div className="flex items-center justify-between gap-3 mb-3 bg-white p-2 rounded-xl border border-black/[0.04] shadow-sm">
         <div className="flex items-center gap-2">
@@ -552,7 +652,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
             <span className="text-[10px] font-black uppercase tracking-tighter">{zh ? '凭据中心' : 'VAULT'}</span>
           </div>
           <div className="h-4 w-[1px] bg-black/5 mx-1" />
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
              <div className="relative">
                 <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-black/20" />
                 <input
@@ -562,7 +662,40 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                   placeholder={zh ? '快速搜索设备或账号...' : 'Quick search...'}
                   className="w-48 pl-8 pr-3 py-1.5 rounded-lg bg-black/[0.02] border-none text-[11px] text-black/70 placeholder:text-black/20 focus:ring-1 focus:ring-cyan-500/20"
                 />
-             </div>
+              </div>
+              <select
+                value={targetFilter}
+                onChange={event => setTargetFilter(event.target.value as TargetFilter)}
+                className="h-7 rounded-lg border border-black/[0.06] bg-white px-2 text-[10px] font-semibold text-slate-600 outline-none"
+              >
+                <option value="all">{zh ? '全部目标' : 'All targets'}</option>
+                <option value="credential">{zh ? '共享凭据' : 'Shared credentials'}</option>
+                <option value="unbound">{zh ? '未绑定设备' : 'Unbound devices'}</option>
+              </select>
+              <select
+                value={roleFilter}
+                onChange={event => setRoleFilter(event.target.value as RoleFilter)}
+                className="h-7 rounded-lg border border-black/[0.06] bg-white px-2 text-[10px] font-semibold text-slate-600 outline-none"
+              >
+                <option value="all">{zh ? '全部账号类型' : 'All account types'}</option>
+                <option value="normal">{zh ? '普通账号' : 'Normal'}</option>
+                <option value="admin">{zh ? '特权账号' : 'Privileged'}</option>
+                <option value="enable">{zh ? 'Enable 凭据' : 'Enable'}</option>
+              </select>
+              {(search || statusFilter !== 'all' || targetFilter !== 'all' || roleFilter !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch('');
+                    setStatusFilter('all');
+                    setTargetFilter('all');
+                    setRoleFilter('all');
+                  }}
+                  className="h-7 rounded-lg px-2 text-[10px] font-bold text-cyan-700 hover:bg-cyan-50"
+                >
+                  {zh ? '清空筛选' : 'Clear'}
+                </button>
+              )}
           </div>
         </div>
 
@@ -731,9 +864,9 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                                           ? { ...acc, hostname: `${group.credentialName || '凭据'}（${group.devices.length}台设备）` }
                                           : acc, secretType)}
                                         className="rounded border border-cyan-200 bg-cyan-50 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-700 hover:bg-cyan-100"
-                                        title={zh ? '手动更新凭据密码' : 'Manually update credential password'}
+                                        title={zh ? '轮换权威密码并同步关联设备' : 'Rotate the authoritative password and synchronize bound devices'}
                                       >
-                                        {zh ? '更新' : 'Update'}
+                                        {zh ? '轮换并同步' : 'Rotate & Sync'}
                                       </button>
                                     </div>
                                   )}
@@ -772,6 +905,14 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                                               </>
                                             );
                                           })()}
+                                          <button
+                                            type="button"
+                                            onClick={() => setPendingRotation(acc)}
+                                            className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 hover:bg-amber-100"
+                                            title={zh ? '在设备上生成新密码、验证后写回权威存储' : 'Generate a new password on the device, verify it, then update authoritative storage'}
+                                          >
+                                            {zh ? '立即轮换' : 'Rotate Now'}
+                                          </button>
                                         </>
                                       )}
                                     </div>
@@ -813,13 +954,50 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
         </div>
       </div>
       </div>
+      {showBulkConfirm && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setShowBulkConfirm(false)} />
+          <div className="relative w-full max-w-md rounded-3xl border border-amber-200 bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-slate-800">{zh ? '确认批量轮换' : 'Confirm Bulk Rotation'}</h3>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              {zh
+                ? `将对全部符合条件设备的${bulkRole === 'admin' ? '特权账号' : bulkRole === 'normal' ? '普通账号' : ' Enable 凭据'}执行真实改密、连接验证和权威值更新。失败设备会保留原凭据并记录原因。`
+                : `This performs real password changes, verification, and authoritative updates for the selected account type on every eligible device. Failed targets retain their previous secret.`}
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setShowBulkConfirm(false)} className="h-10 rounded-xl border border-black/10 px-4 text-sm font-semibold text-slate-600">{zh ? '取消' : 'Cancel'}</button>
+              <button onClick={() => { void startBulkRotation(); }} className="h-10 rounded-xl bg-amber-500 px-5 text-sm font-bold text-white hover:bg-amber-600">{zh ? '确认执行' : 'Confirm'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingRotation && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => !rotatingPassword && setPendingRotation(null)} />
+          <div className="relative w-full max-w-md rounded-3xl border border-amber-200 bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-slate-800">{zh ? '确认设备密码轮换' : 'Confirm Device Rotation'}</h3>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              {zh
+                ? `目标：${pendingRotation.hostname || pendingRotation.ip_address} · ${pendingRotation.roleLabel}。系统会先在设备上修改密码，验证成功后再更新权威存储；验证失败将尝试回滚。`
+                : `Target: ${pendingRotation.hostname || pendingRotation.ip_address} · ${pendingRotation.roleLabel}. The authoritative secret is updated only after the device change is verified; failures trigger rollback.`}
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button disabled={rotatingPassword} onClick={() => setPendingRotation(null)} className="h-10 rounded-xl border border-black/10 px-4 text-sm font-semibold text-slate-600 disabled:opacity-50">{zh ? '取消' : 'Cancel'}</button>
+              <button disabled={rotatingPassword} onClick={() => { void rotateDevicePassword(); }} className="inline-flex h-10 items-center gap-2 rounded-xl bg-amber-500 px-5 text-sm font-bold text-white hover:bg-amber-600 disabled:cursor-wait disabled:opacity-50">
+                {rotatingPassword && <RefreshCw size={14} className="animate-spin" />}
+                {zh ? '执行轮换' : 'Rotate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {editingCredential && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => { if (!credentialSaving) setEditingCredential(null); }} />
           <div className="relative w-full max-w-md rounded-3xl border border-black/10 bg-white p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4 border-b border-black/5 pb-4">
               <div>
-                <h3 className="text-lg font-semibold text-[#164e63]">{zh ? '更新凭据密码' : 'Update credential password'}</h3>
+                <h3 className="text-lg font-semibold text-[#164e63]">{zh ? '轮换并同步凭据密码' : 'Rotate and synchronize credential password'}</h3>
                 <p className="mt-1 text-xs text-black/45">{editingCredential.deviceName} · {editingCredential.label} · {editingCredential.username}</p>
               </div>
               <button type="button" disabled={credentialSaving} onClick={() => setEditingCredential(null)} className="rounded-xl border border-black/10 p-1.5 text-black/45 hover:bg-black/[0.03] disabled:opacity-40">

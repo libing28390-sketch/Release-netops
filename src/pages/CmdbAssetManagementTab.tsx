@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import TagFilterDropdown from "../components/TagFilterDropdown";
 import Pagination from "../components/Pagination";
+import { DataTable } from "../components/DataTable";
 import { BatchTagModal } from "./AssetManagement/components/BatchTagModal";
 import type { SessionUser, TagDefinition } from "../types";
 
@@ -864,7 +865,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
             </span>
           </div>
           <div className="min-h-0 flex-1 overflow-auto">
-            <table className="w-full min-w-[920px] text-left text-xs">
+            <DataTable className="min-w-[920px] text-left text-xs">
               <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                 <tr>
                   <th className="w-10 px-4 py-3">
@@ -941,7 +942,7 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
                   ))
                 )}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="hidden">
             <span>

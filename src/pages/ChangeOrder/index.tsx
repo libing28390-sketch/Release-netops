@@ -110,6 +110,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
     placeholder: string;
     value: string;
     required: boolean;
+    sensitive?: boolean;
     onConfirm: (val: string) => void;
   } | null>(null);
 
@@ -1574,7 +1575,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
                 <h3 className="text-lg font-bold text-[#164e63]">{actionPrompt.title}</h3>
               </div>
               <div className="p-6">
-                <div className="flex flex-wrap gap-1.5 mb-3">
+                {!actionPrompt.sensitive && <div className="flex flex-wrap gap-1.5 mb-3">
                   {(zh ? ['请审核', '同意', '请修改', '不同意'] : ['Please review', 'Agree', 'Please modify', 'Disagree']).map((tag) => (
                     <button
                       key={tag}
@@ -1585,15 +1586,28 @@ const ChangeOrderComponent: React.FC<Props> = ({
                       {tag}
                     </button>
                   ))}
-                </div>
-                <textarea
-                  autoFocus
-                  rows={3}
-                  value={actionPrompt.value}
-                  onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value })}
-                  placeholder={actionPrompt.placeholder}
-                  className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm text-[#164e63] focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all resize-none bg-white"
-                />
+                </div>}
+                {actionPrompt.sensitive ? (
+                  <input
+                    autoFocus
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={actionPrompt.value}
+                    onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value.replace(/\D/g, '').slice(0, 8) })}
+                    placeholder={actionPrompt.placeholder}
+                    className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm tracking-[0.35em] text-[#164e63] focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all bg-white"
+                  />
+                ) : (
+                  <textarea
+                    autoFocus
+                    rows={3}
+                    value={actionPrompt.value}
+                    onChange={(e) => setActionPrompt({ ...actionPrompt, value: e.target.value })}
+                    placeholder={actionPrompt.placeholder}
+                    className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm text-[#164e63] focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all resize-none bg-white"
+                  />
+                )}
               </div>
               <div className="flex items-center justify-end gap-3 px-6 py-4 bg-[#f8fafc] border-t border-black/5">
                 <button

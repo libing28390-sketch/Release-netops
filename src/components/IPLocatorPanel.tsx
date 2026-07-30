@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable } from 'lucide-react';
+import { formatMacAddress } from '../utils/resourceFormatters';
 
 interface IPLocatorProps {
   language: string;
@@ -168,7 +169,7 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
                     <Cable size={14} className="text-amber-500" />
                     <div>
                       <p className="text-[10px] text-black/40 font-medium uppercase tracking-wide">MAC</p>
-                      <p className="text-sm font-bold text-[#164e63] font-mono">{result.mac_display}</p>
+                      <p className="text-sm font-bold text-[#164e63] font-mono">{formatMacAddress(result.mac_display)}</p>
                       {result.arp_source && (
                         <p className="text-[10px] text-black/35 mt-0.5">
                           via {result.arp_source.device} ({result.arp_source.interface})
@@ -234,7 +235,7 @@ const IPLocatorPanel: React.FC<IPLocatorProps> = ({ language }) => {
                   ))}
                   {result.mac && (
                     <p className="text-xs text-amber-600 mt-1">
-                      {zh ? `MAC 地址 ${result.mac_display} 已获取，但未在交换机 MAC 表中匹配到端口` : `MAC ${result.mac_display} resolved but not found in switch MAC tables`}
+                      {zh ? `MAC 地址 ${formatMacAddress(result.mac_display)} 已获取，但未在交换机 MAC 表中匹配到端口` : `MAC ${formatMacAddress(result.mac_display)} resolved but not found in switch MAC tables`}
                     </p>
                   )}
                 </div>

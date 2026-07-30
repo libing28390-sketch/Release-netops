@@ -49,7 +49,8 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const [pageSize, setPageSize] = useState(20);
+  const [totalPools, setTotalPools] = useState(0);
 
   // Modals
   const [showAddEdit, setShowAddEdit] = useState(false);
@@ -78,12 +79,17 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
     const hdrs = authHeaders();
     try {
       const [poolRes, prefRes, tenantRes] = await Promise.all([
-        fetch('/api/ipam/pools', { headers: hdrs }),
+        fetch(`/api/ipam/pools?q=${encodeURIComponent(search.trim())}&page=${page}&page_size=${pageSize}`, { headers: hdrs }),
         fetch('/api/ipam/subnets', { headers: hdrs }),
         fetch('/api/cmdb/tenants', { headers: hdrs }),
       ]);
       const unwrap = (j: any) => (Array.isArray(j) ? j : (j?.data ?? j?.items ?? []));
-      if (poolRes.ok) setPools(await poolRes.json());
+      if (poolRes.ok) {
+        const payload = await poolRes.json();
+        const data = payload?.data && !Array.isArray(payload.data) ? payload.data : payload;
+        setPools(Array.isArray(data) ? data : (data?.items || []));
+        setTotalPools(Array.isArray(data) ? data.length : Number(data?.total || 0));
+      }
       if (prefRes.ok) setPrefixes(await prefRes.json());
       if (tenantRes.ok) setTenants(unwrap(await tenantRes.json()));
     } catch (e) {
@@ -91,7 +97,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
     } finally {
       setLoading(false);
     }
-  }, [authHeaders]);
+  }, [authHeaders, page, pageSize, search]);
 
   useEffect(() => {
     loadData();
@@ -172,15 +178,8 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
   };
 
   // Filter pool list
-  const filteredPools = pools.filter((p) => {
-    return (
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      (p.prefix && p.prefix.includes(search)) ||
-      (p.description && p.description.toLowerCase().includes(search.toLowerCase()))
-    );
-  });
-
-  const paginatedPools = filteredPools.slice((page - 1) * pageSize, page * pageSize);
+  const filteredPools = pools;
+  const paginatedPools = pools;
 
   const getUtilColor = (util: number) => {
     if (util < 60) return 'from-emerald-400 to-green-500';
@@ -225,7 +224,7 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
               {zh ? '加载中...' : 'Loading IP pools...'}
             </div>
           ) : (
-            <table className="w-full border-collapse text-left">
+            <table className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
                   <th className="pl-6 py-4">{zh ? '地址池名称' : 'Pool Name'}</th>
@@ -306,9 +305,10 @@ const IPPoolTab: React.FC<IPPoolTabProps> = ({ language, t }) => {
         <div className="px-6 py-4 border-t border-gray-100">
           <Pagination
             currentPage={page}
-            totalItems={filteredPools.length}
+            totalItems={totalPools}
             itemsPerPage={pageSize}
             onPageChange={setPage}
+            onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }}
             language={language}
             alwaysVisible={true}
           />

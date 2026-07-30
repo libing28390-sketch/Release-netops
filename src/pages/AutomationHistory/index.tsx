@@ -28,6 +28,7 @@ import * as XLSX from 'xlsx';
 import type { Device } from '../../types';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
+import { DataTable } from '../../components/DataTable';
 import OutputActions from '../../components/OutputActions';
 import type { AutomationHistoryTabProps, PlaybookExecution } from './types';
 import {
@@ -718,7 +719,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
               <p className="mt-3 text-sm font-medium">{t('noExecutions')}</p>
             </div>
           ) : (
-            <table className="w-full text-left border-collapse min-w-[900px]">
+            <DataTable className="min-w-[900px] text-left">
               <thead className="sticky top-0 bg-slate-50 border-b border-black/5 z-10">
                 <tr className="bg-black/[0.01]">
                   <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{isZh ? '任务名称' : 'Scenario Name'}</th>
@@ -805,7 +806,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           )}
         </div>
 
@@ -1400,7 +1401,7 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                                           </div>
                                                         </div>
                                                         <div className="overflow-auto rounded-lg border border-black/[0.06]">
-                                                          <table className="w-full text-[11px] font-mono">
+                                                          <table className="nx-data-table nx-data-table--compact text-[11px] font-mono">
                                                             <thead className="bg-[#f6f8fa] border-b border-black/[0.06]">
                                                               <tr>
                                                                 {parseState.data.fields.map((f: string) => (

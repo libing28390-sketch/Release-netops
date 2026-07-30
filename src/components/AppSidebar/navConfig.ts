@@ -57,7 +57,6 @@ export const navConfig: NavGroup[] = [
       { id: 'servers',    label: '服务器',      labelEn: 'Servers',         path: '/assets/servers',     icon: 'Server' },
       { id: 'path-diagnose', label: 'NPA 智能路径诊断', labelEn: 'NPA Path Diagnostics', path: '/assets/diagnose', icon: 'ShieldAlert' },
       { id: 'nsot',          label: '网络事实库',      labelEn: 'Network Facts (NSOT)', path: '/assets/nsot',     icon: 'Database' },
-      { id: 'ip-locator', label: 'IP 工具箱',   labelEn: 'IP Toolbox',      path: '/assets/toolbox',     icon: 'MapPin' },
       { id: 'tags',       label: '标签管理',    labelEn: 'Tags',            path: '/assets/tags',        icon: 'Tag' },
     ],
   },
@@ -76,6 +75,7 @@ export const navConfig: NavGroup[] = [
       { id: 'cmdb-sites',       label: '站点管理', labelEn: 'Sites',       path: '/cmdb/sites',       icon: 'Building2', requiredRole: 'Operator' },
       { id: 'cmdb-vrfs',        label: 'VRF管理',  labelEn: 'VRFs',        path: '/cmdb/vrfs',        icon: 'Network', requiredRole: 'Operator' },
       { id: 'cmdb-vlans',       label: 'VLAN管理', labelEn: 'VLANs',       path: '/cmdb/vlans',       icon: 'Layers', requiredRole: 'Operator' },
+      { id: 'cmdb-vlan-business', label: 'VLAN业务', labelEn: 'VLAN Business', path: '/cmdb/vlan-business', icon: 'Users', requiredRole: 'Operator' },
       { id: 'cmdb-tenants',     label: '租户管理', labelEn: 'Tenants',     path: '/cmdb/tenants',     icon: 'Users', requiredRole: 'Operator' },
     ],
   },
@@ -85,6 +85,7 @@ export const navConfig: NavGroup[] = [
     labelEn: 'IPAM',
     icon: 'Globe',
     children: [
+      { id: 'ipam-locate',   label: 'IP定位',       labelEn: 'IP Locator',      path: '/ipam/locate',        icon: 'MapPin' },
       { id: 'ipam-prefixes', label: 'Prefix管理',  labelEn: 'Prefixes',       path: '/ipam/prefixes',     icon: 'Network' },
       { id: 'ipam-ips',      label: 'IP地址',     labelEn: 'IP Addresses',   path: '/ipam/ips',          icon: 'MapPin' },
       { id: 'ipam-pools',    label: '地址池',     labelEn: 'IP Pools',       path: '/ipam/pools',        icon: 'Package' },

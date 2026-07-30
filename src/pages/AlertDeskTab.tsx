@@ -4,6 +4,7 @@ import { Activity, AlertTriangle, Bell, CheckCircle2, CheckSquare, Clock, Downlo
 import * as XLSX from 'xlsx';
 import type { AlertDetailResponse, AlertListResponse, AlertRecord } from '../types';
 import Pagination from '../components/Pagination';
+import { DataTable } from '../components/DataTable';
 import PageHero from '../components/PageHero';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
 import { fetchAllPaginatedItems } from '../utils/pagination';
@@ -31,7 +32,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [statusFilter, setStatusFilter] = useState('open');
   const [severityFilter, setSeverityFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -427,7 +428,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         )}
 
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <table className="min-w-full border-collapse text-left">
+          <DataTable className="text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="w-10 px-3 py-3">
@@ -589,7 +590,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                 </tr>
               )}
             </tbody>
-          </table>
+          </DataTable>
         </div>
 
         <div className="mt-4">

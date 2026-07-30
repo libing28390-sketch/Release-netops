@@ -45,22 +45,42 @@ async def run_scheduled_automation_job(job_id: str):
             rows = conn.execute("SELECT id FROM devices").fetchall()
             device_ids = [r['id'] for r in rows]
         elif job['device_scope'] in ('tag', 'tags'):
-            # The tag picker stores an AND-of-ORs filter. Resolve it through
-            # the same service used by the preview API so configuration and
-            # execution cannot disagree.
+            # Resolve the saved AND/OR/NOT expression with the same tag
+            # service used by interactive target resolution.
             try:
                 config = json.loads(job['device_filter'] or '{}')
             except (TypeError, ValueError):
                 config = {}
-            groups = config.get('include_groups')
-            if groups is None:
-                groups = [group.get('tag_ids', []) for group in config.get('groups', [])]
-            from services.tag_service import resolve_device_ids_by_filter
-            device_ids = resolve_device_ids_by_filter(
-                conn,
-                groups or [],
-                config.get('exclude_tag_ids', []),
+            from services.tag_service import (
+                resolve_device_ids_by_condition_groups,
+                resolve_device_ids_by_expression,
+                resolve_device_ids_by_filter,
             )
+            condition_groups = None
+            if isinstance(config.get('expression'), dict):
+                device_ids = resolve_device_ids_by_expression(conn, config['expression'])
+            else:
+                condition_groups = config.get('groups')
+            if not isinstance(config.get('expression'), dict) and isinstance(condition_groups, list):
+                device_ids = resolve_device_ids_by_condition_groups(
+                    conn,
+                    condition_groups,
+                    config.get('exclude_tag_ids', []),
+                )
+            elif not isinstance(config.get('expression'), dict):
+                groups = config.get('include_groups')
+                if groups is None:
+                    tag_ids = config.get('tag_ids') or []
+                    groups = (
+                        [[tag_id] for tag_id in tag_ids]
+                        if config.get('match_mode') != 'or'
+                        else ([tag_ids] if tag_ids else [])
+                    )
+                device_ids = resolve_device_ids_by_filter(
+                    conn,
+                    groups or [],
+                    config.get('exclude_tag_ids', []),
+                )
         elif job['device_scope'] == 'ip':
             # Support targeting by IP address directly
             target_ips = [i.strip() for i in (job['device_filter'] or '').split(',') if i.strip()]
@@ -1284,6 +1304,9 @@ def poll_endpoints_job():
                 parsed_arp = parse_arp_table_regex(output)
                 for item in parsed_arp:
                     item['device_id'] = dev_id
+                    if not item.get('vlan'):
+                        from services.vlan_discovery_service import parse_vlan_id_from_interface
+                        item['vlan'] = parse_vlan_id_from_interface(item.get('interface'))
                 return parsed_arp
         except Exception as e:
             logger.error("Failed to collect ARP for device %s: %s", device.get('hostname'), e)

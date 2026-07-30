@@ -104,6 +104,66 @@ def _status_record(record: dict[str, Any], ip_by_interface: dict[str, str]) -> t
     return interface_name, ip_value, _normalize_status(admin_value), _normalize_status(oper_value)
 
 
+def _interface_description(record: dict[str, Any]) -> str | None:
+    normalized_keys = {str(key).strip().replace('-', '_').upper() for key in record}
+    if not normalized_keys & {"DESCRIPTION", "DESC", "DESCR", "INTERFACE_DESCRIPTION", "NAME_DISPLAY"}:
+        return None
+    value = _record_value(record, "DESCRIPTION", "DESC", "DESCR", "INTERFACE_DESCRIPTION", "NAME_DISPLAY")
+    if not value or value.lower() in {"-", "--", "n/a", "none", "null"}:
+        return ""
+    compact = re.sub(r"\s+", " ", value).strip()
+    # The verbose Huawei/H3C interface parser can capture the following
+    # status/MTU line as DESCRIPTION when its free-text tail is misaligned.
+    # It is not an operator description and must never enter CMDB.
+    if re.search(
+        r"(?i)(?:route\s+port|maximum\s+transmit\s+unit|mtu\s*(?:is|:)|"
+        r"line\s+protocol|current\s+state|hardware\s+is|internet\s+address)",
+        compact,
+    ):
+        return ""
+    return compact
+
+
+def _description_records(category: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Normalize dedicated TextFSM interface-description records by port."""
+    result: dict[str, dict[str, str]] = {}
+    for record in category.get("records") or []:
+        if not isinstance(record, dict):
+            continue
+        interface_name = _record_value(record, "INTERFACE", "PORT", "IFNAME", "NAME")
+        key = normalize_interface_name(interface_name)
+        if not key:
+            continue
+        description = _interface_description(record)
+        if description is not None:
+            result[key] = {"interface_name": interface_name, "description": description}
+    return result
+
+
+def _upsert_interface_descriptions(device_id: str, descriptions: dict[str, dict[str, str]]) -> int:
+    """Apply a successful dedicated description snapshot to existing CMDB rows."""
+    if not descriptions:
+        return 0
+    conn = get_db_connection()
+    try:
+        rows = conn.execute("SELECT id, interface_name FROM interfaces WHERE device_id = ?", (device_id,)).fetchall()
+        existing = {
+            normalize_interface_name(row["interface_name"]): row["id"]
+            for row in rows
+            if normalize_interface_name(row["interface_name"])
+        }
+        updated = 0
+        for key, item in descriptions.items():
+            interface_id = existing.get(key)
+            if interface_id:
+                conn.execute("UPDATE interfaces SET description = ? WHERE id = ?", (item["description"], interface_id))
+                updated += 1
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
 def _friendly_collection_error(exc: BaseException) -> str:
     raw = str(exc)
     lowered = raw.lower()
@@ -206,20 +266,26 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
             if existing_id:
                 conn.execute(
                     """UPDATE interfaces SET
+                           description = COALESCE(?, description),
                            admin_status = ?, oper_status = ?,
                            primary_ip = ?, ip_address = ?, is_l3 = TRUE,
                            ip_enabled = 1,
                            ip_prefix_length = ?,
                            interface_type = CASE
+                               WHEN ? = 'svi' THEN 'svi'
                                WHEN ? = 'port_channel' THEN 'port_channel'
                                ELSE interface_type
                            END,
-                           switchport_mode = COALESCE(NULLIF(switchport_mode, ''), 'routed'),
+                           switchport_mode = CASE
+                               WHEN ? = 'svi' THEN 'l3'
+                               ELSE COALESCE(NULLIF(switchport_mode, ''), 'routed')
+                           END,
                            last_seen = ?
                        WHERE id = ?""",
                     (
-                        item["admin_status"], item["oper_status"], item["interface_ip"],
-                        item["interface_ip"], item.get("prefix_length"), detected_interface_type, observed_at, existing_id,
+                        item.get("description"), item["admin_status"], item["oper_status"], item["interface_ip"],
+                        item["interface_ip"], item.get("prefix_length"), detected_interface_type,
+                        detected_interface_type, detected_interface_type, observed_at, existing_id,
                     ),
                 )
             else:
@@ -229,11 +295,12 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                            admin_status, oper_status, interface_type,
                            switchport_mode, primary_ip, ip_address, ip_prefix_length,
                            is_l3, ip_enabled, last_seen
-                       ) VALUES (?, ?, ?, '', ?, ?, ?, 'routed', ?, ?, ?, TRUE, 1, ?)""",
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, 1, ?)""",
                     (
                         f"intf-{device['id']}-{re.sub(r'[^a-zA-Z0-9]+', '-', item['interface_name']).strip('-').lower()}",
-                        device["id"], item["interface_name"], item["admin_status"],
-                        item["oper_status"], detected_interface_type, item["interface_ip"],
+                        device["id"], item["interface_name"], item.get("description") or '', item["admin_status"],
+                        item["oper_status"], detected_interface_type,
+                        'l3' if detected_interface_type == 'svi' else 'routed', item["interface_ip"],
                         item["interface_ip"], item.get("prefix_length"), observed_at,
                     ),
                 )
@@ -251,17 +318,14 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
     """Collect one device's interface status and project it into IPAM Prefixes."""
     device = _load_device(device_id)
     inventory = _load_ip_inventory(device_id)
-    if not inventory:
-        return {
-            "success": True,
-            "device_id": device_id,
-            "hostname": device.get("hostname") or device_id,
-            "interface_count": 0,
-            "message": "设备没有可用的IP接口记录",
-        }
-
     try:
-        payload = collect_read_only_evidence(device, categories=["interfaces"], auth_role="auto")
+        # Status and description use separate vendor TextFSM grammars. The
+        # dedicated description command is authoritative for this field.
+        payload = collect_read_only_evidence(
+            device,
+            categories=["interfaces", "interface_description", "vlan"],
+            auth_role="auto",
+        )
     except Exception as exc:
         message = _friendly_collection_error(exc)
         logger.warning("Interface status collection failed for %s: %s", device.get("hostname") or device_id, message, exc_info=True)
@@ -270,8 +334,25 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
     category = next((item for item in payload.get("categories", []) if item.get("key") == "interfaces"), {})
     if not category.get("success", False):
         raise RuntimeError(str(category.get("error") or "接口状态采集失败"))
+    description_category = next(
+        (item for item in payload.get("categories", []) if item.get("key") == "interface_description"),
+        {},
+    )
+    descriptions = _description_records(description_category) if description_category.get("success") else {}
+    vlan_category = next(
+        (item for item in payload.get("categories", []) if item.get("key") == "vlan"),
+        {},
+    )
+    vlan_projection = {"vlans": 0, "interfaces": 0}
+    if vlan_category.get("success") and vlan_category.get("parse_status") == "matched":
+        try:
+            from services.vlan_discovery_service import project_vlan_records
+            vlan_projection = project_vlan_records(device_id, vlan_category.get("records") or [])
+        except Exception as vlan_exc:
+            logger.warning("VLAN member projection failed for %s: %s", device_id, vlan_exc, exc_info=True)
+            vlan_projection = {"vlans": 0, "interfaces": 0, "error": str(vlan_exc)}
 
-    parsed_by_interface: dict[str, dict[str, str]] = {}
+    parsed_by_interface: dict[str, dict[str, Any]] = {}
     parser_ip_keys: set[str] = set()
     inventory_ips = {key: value["ip"] for key, value in inventory.items()}
     for record in category.get("records") or []:
@@ -290,6 +371,7 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
                 "interface_ip": ip_value,
                 "admin_status": admin_status,
                 "oper_status": oper_status,
+                "description": descriptions.get(key, {}).get("description"),
             }
 
     # When the device command includes IPs, that response is the current
@@ -306,6 +388,7 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
             continue
         rows.append({
             "interface_name": parsed.get("interface_name") or item.get("interface") or key,
+            "description": parsed.get("description"),
             "interface_ip": interface_ip,
             "prefix_length": item.get("prefix_length"),
             "admin_status": parsed.get("admin_status") or "unknown",
@@ -313,6 +396,9 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
         })
 
     updated = _upsert_interfaces(device, rows)
+    description_updated = 0
+    if description_category.get("success") and description_category.get("parse_status") == "matched":
+        description_updated = _upsert_interface_descriptions(device_id, descriptions)
     unknown = sum(1 for row in rows if row["admin_status"] == "unknown" or row["oper_status"] == "unknown")
     try:
         from services.prefix_discovery_service import discover_prefixes_from_interface_snapshot
@@ -329,18 +415,32 @@ def collect_interface_status_target(device_id: str) -> dict[str, Any]:
             exc_info=True,
         )
         prefix_sync = {"ok": False, "error": str(prefix_exc)}
+    try:
+        from services.vlan_discovery_service import sync_observed_vlans
+        vlan_sync = sync_observed_vlans()
+    except Exception as vlan_exc:
+        logger.warning(
+            "VLAN projection after interface collection failed for %s: %s",
+            device.get("hostname") or device_id,
+            vlan_exc,
+            exc_info=True,
+        )
+        vlan_sync = {"observed": 0, "created": 0, "updated": 0, "error": str(vlan_exc)}
     return {
         "success": True,
         "device_id": device_id,
         "hostname": device.get("hostname") or device_id,
         "interface_count": len(rows),
         "updated_count": updated,
+        "description_updated_count": description_updated,
+        "vlan_projection": vlan_projection,
         "unknown_status_count": unknown,
         "parsed_count": len(parsed_by_interface),
-        "parser": category.get("parser") or "textfsm",
+        "parser": "textfsm",
         "command": (category.get("commands") or [""])[0],
         "collected_at": payload.get("collected_at") or _now(),
         "prefix_sync": prefix_sync,
+        "vlan_sync": vlan_sync,
     }
 
 
@@ -366,6 +466,11 @@ def collect_interface_status_for_online_devices() -> dict[str, Any]:
         'results': [],
     }
     if not device_ids:
+        try:
+            from services.vlan_discovery_service import sync_observed_vlans
+            result['vlan_sync'] = sync_observed_vlans()
+        except Exception as exc:
+            logger.warning("VLAN projection after interface collection failed: %s", exc, exc_info=True)
         return result
 
     with ThreadPoolExecutor(max_workers=min(5, len(device_ids))) as executor:
@@ -380,4 +485,10 @@ def collect_interface_status_for_online_devices() -> dict[str, Any]:
                 result['failed'] += 1
                 result['results'].append({'device_id': device_id, 'success': False, 'error': str(exc)})
                 logger.warning("Interface status collection failed for %s: %s", device_id, exc, exc_info=True)
+    try:
+        from services.vlan_discovery_service import sync_observed_vlans
+        result['vlan_sync'] = sync_observed_vlans()
+    except Exception as exc:
+        result['vlan_sync'] = {'observed': 0, 'created': 0, 'updated': 0, 'error': str(exc)}
+        logger.warning("VLAN projection after interface collection failed: %s", exc, exc_info=True)
     return result

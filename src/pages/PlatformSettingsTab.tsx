@@ -6,6 +6,7 @@ import {
   Code2,
   Copy,
   Download,
+  ExternalLink,
   FileCog,
   FileText,
   FolderOpen,
@@ -192,7 +193,9 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   }, [configTemplates, extractVars]);
 
   const officialCount = useMemo(
-    () => configTemplates.filter((tpl) => tpl.category === 'official').length,
+    () => configTemplates.filter(
+      (tpl) => tpl.category === 'official' || tpl.validation_status === 'official_reference_reviewed'
+    ).length,
     [configTemplates]
   );
   const customCount = configTemplates.length - officialCount;
@@ -379,9 +382,9 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${brand.chip}`}>
                               {tpl.vendor || 'Custom'}
                             </span>
-                            {tpl.category === 'official' && (
+                            {(tpl.category === 'official' || tpl.validation_status === 'official_reference_reviewed') && (
                               <span className="text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase bg-blue-50 text-blue-700 border border-blue-100">
-                                {t('official')}
+                                {zh ? '官方参考已审核' : 'Official reference reviewed'}
                               </span>
                             )}
                           </div>
@@ -398,6 +401,11 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-50 text-slate-500">
                           {templateVars.length} {zh ? '变量' : 'vars'}
                         </span>
+                        {tpl.software_version && (
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700">
+                            {tpl.software_version}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </button>
@@ -461,6 +469,37 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
               </button>
             </div>
           </div>
+          {(selectedConfigTemplate?.description
+            || selectedConfigTemplate?.platform_family
+            || selectedConfigTemplate?.software_version
+            || selectedConfigTemplate?.official_reference) && (
+            <div className="px-5 py-2.5 border-b border-slate-100 bg-cyan-50/40 flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
+              {selectedConfigTemplate.description && (
+                <span className="mr-auto">{selectedConfigTemplate.description}</span>
+              )}
+              {selectedConfigTemplate.platform_family && (
+                <span className="px-2 py-1 rounded-full bg-white border border-cyan-100 font-semibold text-cyan-800">
+                  {selectedConfigTemplate.platform_family}
+                </span>
+              )}
+              {selectedConfigTemplate.software_version && (
+                <span className="px-2 py-1 rounded-full bg-white border border-cyan-100 font-semibold text-cyan-800">
+                  {selectedConfigTemplate.software_version}
+                </span>
+              )}
+              {selectedConfigTemplate.official_reference && (
+                <a
+                  href={selectedConfigTemplate.official_reference}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white border border-blue-100 font-semibold text-blue-700 hover:border-blue-300"
+                >
+                  <ExternalLink size={11} />
+                  {zh ? '查看官方依据' : 'Official reference'}
+                </a>
+              )}
+            </div>
+          )}
 
           {/* View tabs + action row */}
           <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">

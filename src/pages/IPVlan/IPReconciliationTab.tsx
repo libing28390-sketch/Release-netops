@@ -25,11 +25,14 @@ interface UndocumentedEndpoint {
   hostname: string;
   vendor: string;
   switch_id: string;
+  switch_name: string;
   switch_port: string;
   vlan: string;
   vrf: string;
   site: string;
   last_seen: string;
+  source_type: string;
+  confidence: string;
   subnet_id: string;
   subnet_prefix: string;
   subnet_name: string;
@@ -89,6 +92,9 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
   const [search, setSearch] = useState('');
   const [apiError, setApiError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [resultTotal, setResultTotal] = useState(0);
 
   // Modals state
   const [registeringItem, setRegisteringItem] = useState<UndocumentedEndpoint | null>(null);
@@ -120,9 +126,18 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
     setApiError('');
     try {
       const hdrs = authHeaders();
-      const res = await fetch('/api/ipam/reconciliation', { headers: hdrs });
+      const params = new URLSearchParams({
+        active_tab: activeTab,
+        q: search.trim(),
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      const res = await fetch(`/api/ipam/reconciliation?${params.toString()}`, { headers: hdrs });
       if (res.ok) {
-        setData(await res.json());
+        const payload = await res.json();
+        setData(payload);
+        const summaryKey = activeTab === 'undocumented' ? 'total_undocumented' : activeTab === 'stale' ? 'total_stale' : 'total_mismatched';
+        setResultTotal(Number(payload.result_total ?? payload.summary?.[summaryKey] ?? 0));
       } else {
         setApiError(zh ? '获取对账数据失败' : 'Failed to fetch reconciliation data');
       }
@@ -130,14 +145,15 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
       // Fetch subnets for the fallback select
       const subRes = await fetch('/api/ipam/subnets', { headers: hdrs });
       if (subRes.ok) {
-        setSubnets(await subRes.json());
+        const payload = await subRes.json();
+        setSubnets(Array.isArray(payload) ? payload : (payload?.items || payload?.data?.items || payload?.data || []));
       }
     } catch (e) {
       setApiError(`Network error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, zh]);
+  }, [authHeaders, zh, activeTab, search, page, pageSize]);
 
   useEffect(() => {
     loadData();
@@ -157,7 +173,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
       hostname: item.hostname,
       device_type: 'host',
       mac_address: item.mac,
-      interface_name: item.switch_port ? `${item.switch_id}:${item.switch_port}` : '',
+      interface_name: item.switch_port ? `${item.switch_name || item.switch_id}:${item.switch_port}` : '',
       status: 'active',
       description: zh ? '从对账中心自动登记' : 'Discovered via reconciliation audit',
     });
@@ -273,11 +289,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
     }
   }, [data, activeTab, search]);
 
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
-  const paginatedList = useMemo(() => {
-    return filteredList.slice((page - 1) * pageSize, page * pageSize);
-  }, [filteredList, page]);
+  const paginatedList = filteredList;
 
   useEffect(() => {
     setPage(1);
@@ -425,7 +437,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
               {zh ? '正在执行网络对账分析...' : 'Auditing databases...'}
             </div>
           ) : (
-            <table className="w-full border-collapse text-left">
+            <table className="nx-data-table text-left">
               {/* Tab 1: Undocumented */}
               {activeTab === 'undocumented' && (
                 <>
@@ -449,7 +461,14 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                           <td className="px-4 py-4 font-mono text-xs text-gray-500">{node.mac}</td>
                           <td className="px-4 py-4 text-xs font-semibold text-gray-600">{node.hostname || '-'}</td>
                           <td className="px-4 py-4 text-xs font-semibold text-cyan-600">
-                            {node.switch_id ? `${node.switch_id} [${node.switch_port}]` : '-'}
+                            {node.switch_name ? (
+                              <div>
+                                <span>{node.switch_name} [{node.switch_port}]</span>
+                                <span className="mt-0.5 block text-[9px] font-medium text-gray-400">
+                                  {node.source_type || 'unknown'} · {node.confidence || (zh ? '置信度未知' : 'unknown confidence')}
+                                </span>
+                              </div>
+                            ) : '-'}
                           </td>
                           <td className="px-4 py-4 text-xs text-gray-500 font-bold">{node.vlan || '-'}</td>
                           <td className="px-4 py-4 text-xs">
@@ -462,7 +481,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                               onClick={() => handleOpenRegister(node)}
                               className="px-2.5 py-1 bg-cyan-50 hover:bg-cyan-500 text-cyan-700 hover:text-white rounded-lg text-[10px] font-extrabold transition-all active:scale-95"
                             >
-                              {zh ? '登记录入' : 'Register IP'}
+                              {zh ? '标准登记' : 'Register'}
                             </button>
                           </td>
                         </tr>
@@ -604,9 +623,10 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
         <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0">
           <Pagination
             currentPage={page}
-            totalItems={filteredList.length}
+            totalItems={resultTotal}
             itemsPerPage={pageSize}
             onPageChange={setPage}
+            onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }}
             language={language}
             alwaysVisible={true}
           />
@@ -630,8 +650,8 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                     <Plus size={20} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-gray-900">{zh ? '将活跃终端登记录入 IPAM' : 'Register Discovered Host'}</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">{zh ? '新建一个IP分配记录并保存入库' : 'Create an IPAM allocation record for the online host.'}</p>
+                    <h3 className="font-bold text-gray-900">{zh ? '将发现终端标准登记到 IPAM' : 'Register Discovered Host'}</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">{zh ? '请核对发现来源、置信度和归属网段后再创建分配记录。' : 'Review the evidence, confidence, and resolved prefix before creating the allocation.'}</p>
                   </div>
                 </div>
                 <button onClick={() => setRegisteringItem(null)} className="p-1.5 rounded-lg hover:bg-gray-50 transition-colors text-gray-400">
@@ -641,6 +661,14 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
 
               {/* Form Content */}
               <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                  <p className="font-bold">{zh ? '风险提示' : 'Risk notice'}</p>
+                  <p className="mt-1 leading-relaxed">
+                    {zh
+                      ? `来源：${registeringItem.source_type || '未知'}；置信度：${registeringItem.confidence || '未知'}；最后发现：${registeringItem.last_seen || '未知'}。登记会写入正式 IPAM 数据，请先核对。`
+                      : `Source: ${registeringItem.source_type || 'unknown'}; confidence: ${registeringItem.confidence || 'unknown'}; last seen: ${registeringItem.last_seen || 'unknown'}. This writes a managed IPAM record.`}
+                  </p>
+                </div>
                 <div className="grid grid-cols-2 gap-4">
                   {/* Select Subnet */}
                   <div className="space-y-1.5 col-span-2">
@@ -743,7 +771,7 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                   onClick={submitRegister}
                   className="px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white text-xs font-extrabold rounded-xl shadow-md transition-all active:scale-95"
                 >
-                  {zh ? '确认录入' : 'Save'}
+                  {zh ? '确认标准登记' : 'Confirm Registration'}
                 </button>
               </div>
             </motion.div>

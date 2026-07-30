@@ -21,6 +21,7 @@ from services.ipam_service import (
     update_subnet,
     delete_subnet,
     list_addresses,
+    list_ip_inventory,
     create_address,
     update_address,
     delete_address,
@@ -115,9 +116,12 @@ def api_list_subnets(
     site: str = 'all',
     status: str = 'all',
     q: str = '',
+    family: str = 'all',
+    page: int | None = None,
+    page_size: int = 20,
     _user=require_role("Viewer"),
 ):
-    return list_subnets(site=site, status=status, q=q)
+    return list_subnets(site=site, status=status, q=q, family=family, page=page, page_size=page_size)
 
 
 @router.get('/ipam/prefixes/interface-candidates')
@@ -267,9 +271,33 @@ def api_batch_delete_subnets(body: dict, user=require_permission('prefix', 'dele
 
 # ── IP Addresses ──────────────────────────────
 
+@router.get('/ipam/addresses')
+def api_list_ip_inventory(
+    site_id: str = 'all',
+    prefix_id: str = '',
+    q: str = '',
+    status: str = 'all',
+    device_type: str = 'all',
+    page: int = 1,
+    page_size: int = 20,
+    _user=require_role("Viewer"),
+):
+    """List manual IPAM records together with active discovered endpoints."""
+    return list_ip_inventory(
+        site_id=site_id,
+        prefix_id=prefix_id,
+        q=q,
+        status=status,
+        device_type=device_type,
+        page=page,
+        page_size=page_size,
+    )
+
 @router.get('/ipam/subnets/{subnet_id}/addresses')
-def api_list_addresses(subnet_id: str, _user=require_role("Viewer")):
-    return list_addresses(subnet_id)
+def api_list_addresses(subnet_id: str, q: str = '', status: str = 'all', device_type: str = 'all',
+                       page: int | None = Query(None, ge=1), page_size: int = Query(20, ge=1, le=100),
+                       _user=require_role("Viewer")):
+    return list_addresses(subnet_id, q=q, status=status, device_type=device_type, page=page, page_size=page_size)
 
 
 @router.post('/ipam/subnets/{subnet_id}/addresses', status_code=201)
@@ -440,8 +468,14 @@ def api_release_address(address_id: str, body: ReleaseRequest | None = None, use
 # ── Dynamic Pools (ipam_pools) ─────────────────
 
 @router.get('/ipam/pools')
-def api_list_pools(_user=require_role("Viewer")):
-    return list_pools()
+def api_list_pools(
+    q: str = Query('', description='Search pool name, prefix or description'),
+    status: str = Query('', description='Filter pool status'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    _user=require_role("Viewer"),
+):
+    return list_pools(q=q, status=status, page=page, page_size=page_size)
 
 
 @router.post('/ipam/pools', status_code=201)
@@ -517,8 +551,15 @@ def api_delete_pool(pool_id: str, user=require_role("Administrator")):
 # ── Virtual IPs (ipam_vips) ───────────────────
 
 @router.get('/ipam/vips')
-def api_list_vips(_user=require_role("Viewer")):
-    return list_vips()
+def api_list_vips(
+    q: str = Query('', description='Search VIP address or description'),
+    vip_type: str = Query('', description='Filter VIP type'),
+    status: str = Query('', description='Filter VIP status'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    _user=require_role("Viewer"),
+):
+    return list_vips(q=q, vip_type=vip_type, status=status, page=page, page_size=page_size)
 
 
 @router.post('/ipam/vips', status_code=201)
@@ -596,8 +637,14 @@ def api_delete_vip(vip_id: str, user=require_role("Administrator")):
 # ── DHCP Leases (ipam_dhcp_leases) ────────────
 
 @router.get('/ipam/leases')
-def api_list_leases(_user=require_role("Viewer")):
-    return list_leases()
+def api_list_leases(
+    q: str = Query('', description='Search lease address, MAC or hostname'),
+    state: str = Query('', description='Filter lease state'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    _user=require_role("Viewer"),
+):
+    return list_leases(q=q, state=state, page=page, page_size=page_size)
 
 
 @router.post('/ipam/leases', status_code=201)
@@ -709,5 +756,11 @@ def api_next_available_prefix(subnet_id: str, prefix_len: int = Query(..., ge=1,
 
 
 @router.get('/ipam/reconciliation')
-def api_ipam_reconciliation(_user=require_role("Viewer")):
-    return get_ipam_reconciliation()
+def api_ipam_reconciliation(
+    active_tab: str = Query('', description='Current reconciliation result tab'),
+    q: str = Query('', description='Search reconciliation findings'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    _user=require_role("Viewer"),
+):
+    return get_ipam_reconciliation(active_tab=active_tab, q=q, page=page, page_size=page_size)

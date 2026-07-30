@@ -157,7 +157,9 @@ export function getRouteContext(pathname: string): RouteContext {
   // 11. IPAM (/ipam/...)
   else if (first === 'ipam') {
     activeTab = 'ipam';
-    if (second === 'prefixes') {
+    if (second === 'locate') {
+      ipamPage = 'locate';
+    } else if (second === 'prefixes') {
       ipamPage = 'prefixes';
     } else if (second === 'ips') {
       ipamPage = 'ips';
@@ -196,6 +198,8 @@ export function getRouteContext(pathname: string): RouteContext {
       cmdbPage = 'vrfs';
     } else if (second === 'vlans') {
       cmdbPage = 'vlans';
+    } else if (second === 'vlan-business') {
+      cmdbPage = 'vlan-business';
     } else if (second === 'tenants') {
       cmdbPage = 'tenants';
     } else {

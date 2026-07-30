@@ -1,0 +1,12 @@
+Value SLOT (\d+)
+Value MODEL (\S+)
+Value TEMP_NAME (\S+)
+Value WARNING_TEMP (\d+)
+Value SHUTDOWN_TEMP (\d+)
+Value CURRENT_TEMP (\d+)
+Value STATUS (ok|warning|alarm|\S+)
+
+Start
+  ^Slot\s+Card_type\s+Temp_name
+  ^-+
+  ^${SLOT}\s+${MODEL}\s+${TEMP_NAME}\s+${WARNING_TEMP}\s+${SHUTDOWN_TEMP}\s+${CURRENT_TEMP}\s+${STATUS}\s*$$ -> Record

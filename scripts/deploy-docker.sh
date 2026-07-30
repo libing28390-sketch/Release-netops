@@ -21,6 +21,9 @@ usage() {
 Usage:
   bash scripts/deploy-docker.sh install [deployment-directory]
   bash scripts/deploy-docker.sh update [deployment-directory] [--force]
+  bash scripts/deploy-docker.sh save-images [archive-path]
+  bash scripts/deploy-docker.sh load-images <archive-path>
+  bash scripts/deploy-docker.sh start-offline
   bash scripts/deploy-docker.sh reset-data [deployment-directory] [--yes]
 
 Commands:
@@ -28,6 +31,11 @@ Commands:
   update     Preserve .env, Docker volumes, and nginx/ssl; sync the public
              release history, show source changes, and rebuild only when the
              release content changed. Use --force to rebuild unconditionally.
+  save-images Save the three Compose images to a gzip-compressed archive and
+             write a SHA-256 checksum alongside it.
+  load-images Load a previously saved image archive and verify all required
+             Compose image tags are available locally.
+  start-offline Start the stack without building or pulling any image.
   reset-data Stop the stack and delete this Compose project's volumes, local
              build images, and generated TLS files. It does not affect other
              Docker projects. Use --yes or NETOPS_CONFIRM=YES for automation.
@@ -185,6 +193,60 @@ build_and_start() {
     docker compose ps
 }
 
+required_images() {
+    printf '%s\n' \
+        "nexora-netops:latest" \
+        "nexora-nginx:latest" \
+        "postgres:17-alpine"
+}
+
+verify_required_images() {
+    local image
+    while IFS= read -r image; do
+        docker image inspect "$image" >/dev/null 2>&1 || die "Required image is missing locally: $image"
+    done < <(required_images)
+}
+
+save_images() {
+    local archive_path="${1:-nexora-images-$(date +%Y%m%d-%H%M%S).tar.gz}"
+    local partial_path="${archive_path}.partial"
+    require_command gzip
+    require_command sha256sum
+    verify_required_images
+    mkdir -p "$(dirname "$archive_path")"
+    rm -f "$partial_path"
+    log "Saving Compose images to $archive_path"
+    required_images | xargs docker save | gzip -c > "$partial_path"
+    mv "$partial_path" "$archive_path"
+    (cd "$(dirname "$archive_path")" && sha256sum "$(basename "$archive_path")") > "${archive_path}.sha256"
+    log "Image archive and checksum created"
+    ls -lh "$archive_path" "${archive_path}.sha256"
+}
+
+load_images() {
+    local archive_path="${1:-}"
+    [[ -n "$archive_path" ]] || die "Usage: bash scripts/deploy-docker.sh load-images <archive-path>"
+    [[ -f "$archive_path" ]] || die "Image archive not found: $archive_path"
+    require_command gzip
+    if [[ -f "${archive_path}.sha256" ]]; then
+        (cd "$(dirname "$archive_path")" && sha256sum -c "$(basename "$archive_path").sha256") || die "Image archive checksum verification failed"
+    fi
+    if [[ "$archive_path" == *.gz ]]; then
+        gzip -dc "$archive_path" | docker load
+    else
+        docker load --input "$archive_path"
+    fi
+    verify_required_images
+    log "All required images are available locally"
+}
+
+start_offline() {
+    validate_compose
+    verify_required_images
+    docker compose up -d --no-build --pull never --remove-orphans
+    docker compose ps
+}
+
 reset_data() {
     local deployment_dir="$1" confirmed="${NETOPS_CONFIRM:-}"
     cd "$deployment_dir"
@@ -205,6 +267,11 @@ shift || true
 DEPLOYMENT_DIR="${NETOPS_DIR:-$PWD}"
 YES_FLAG=""
 FORCE_UPDATE=""
+ARCHIVE_PATH=""
+if [[ "$COMMAND" == "save-images" || "$COMMAND" == "load-images" ]]; then
+    ARCHIVE_PATH="${1:-}"
+    shift || true
+fi
 for argument in "$@"; do
     case "$argument" in
         --yes) YES_FLAG="--yes" ;;
@@ -243,6 +310,18 @@ case "$COMMAND" in
             build_and_start
             log "Docker update complete; .env, volumes, and nginx/ssl were preserved"
         fi
+        ;;
+    save-images)
+        require_docker
+        save_images "$ARCHIVE_PATH"
+        ;;
+    load-images)
+        require_docker
+        load_images "$ARCHIVE_PATH"
+        ;;
+    start-offline)
+        require_docker
+        start_offline
         ;;
     reset-data)
         require_docker

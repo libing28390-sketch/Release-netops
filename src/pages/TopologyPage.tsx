@@ -1,16 +1,34 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, LayoutGrid, MapPin, Network, PanelRightClose, PanelRightOpen, RotateCcw, Search } from 'lucide-react';
-import type { Device } from '../types';
+import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, LayoutGrid, MapPin, Network, PanelRightClose, PanelRightOpen, RotateCcw, Search, Tag, X } from 'lucide-react';
+import type { Device, TagDefinition } from '../types';
 import { darkActionBtnClass, secondaryActionBtnClass } from '../components/shared';
+import TagConditionPicker, { countTagFilterConditions, EMPTY_TAG_FILTER, hasTagFilterConditions, type TagFilterConfig } from '../components/TagConditionPicker';
 import TopologyGraph from '../components/TopologyGraph';
 import TopologyInspectorPanel from '../components/TopologyInspectorPanel';
 import PageHero from '../components/PageHero';
 import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatus';
+import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
 type TopologyProtocolFilter = 'all' | 'lldp';
+
+const TOPOLOGY_ROLE_LABELS: Record<string, { zh: string; en: string }> = {
+  access: { zh: '接入层', en: 'Access' },
+  core: { zh: '核心层', en: 'Core' },
+  distribution: { zh: '汇聚层', en: 'Distribution' },
+  firewall: { zh: '防火墙', en: 'Firewall' },
+  router: { zh: '路由器', en: 'Router' },
+  load_balancer: { zh: '负载均衡', en: 'Load Balancer' },
+  waf: { zh: 'WAF', en: 'WAF' },
+  vpn_gateway: { zh: 'VPN 网关', en: 'VPN Gateway' },
+};
+
+const topologyRoleLabel = (role: string, language: string): string => {
+  const labels = TOPOLOGY_ROLE_LABELS[role];
+  return labels ? (language === 'zh' ? labels.zh : labels.en) : role;
+};
 
 interface TopologyStats {
   nodeCount: number;
@@ -244,11 +262,14 @@ interface TopologyPageProps {
   topologyLinkStats: TopologyLinkStats;
   topologySearch: string;
   topologySiteFilter: string;
+  topologyTagFilter: TagFilterConfig;
   topologyRoleFilter: string;
   topologyStatusFilter: TopologyStatusFilter;
   topologyLinkStatusFilter: TopologyLinkStatusFilter;
   topologyProtocolFilter: TopologyProtocolFilter;
   topologySiteOptions: Array<{ id: string; name: string }>;
+  topologyTagOptions: TagDefinition[];
+  topologyTagCandidateDevices: Device[];
   topologyRoleOptions: string[];
   topologyVisibleDevices: Device[];
   topologyVisibleLinks: TopologyDecoratedLinkLike[];
@@ -266,6 +287,7 @@ interface TopologyPageProps {
   onExportMap: () => void;
   onTopologySearchChange: (value: string) => void;
   onTopologySiteFilterChange: (value: string) => void;
+  onTopologyTagFilterChange: (value: TagFilterConfig) => void;
   onTopologyRoleFilterChange: (value: string) => void;
   onTopologyStatusFilterChange: (value: TopologyStatusFilter) => void;
   onTopologyLinkStatusFilterChange: (value: TopologyLinkStatusFilter) => void;
@@ -298,11 +320,14 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   topologyLinkStats,
   topologySearch,
   topologySiteFilter,
+  topologyTagFilter,
   topologyRoleFilter,
   topologyStatusFilter,
   topologyLinkStatusFilter,
   topologyProtocolFilter,
   topologySiteOptions,
+  topologyTagOptions,
+  topologyTagCandidateDevices,
   topologyRoleOptions,
   topologyVisibleDevices,
   topologyVisibleLinks,
@@ -320,6 +345,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   onExportMap,
   onTopologySearchChange,
   onTopologySiteFilterChange,
+  onTopologyTagFilterChange,
   onTopologyRoleFilterChange,
   onTopologyStatusFilterChange,
   onTopologyLinkStatusFilterChange,
@@ -342,6 +368,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
 }) => {
   const [canvasView, setCanvasView] = React.useState<'overview' | 'site'>(topologySiteFilter === 'all' ? 'overview' : 'site');
   const [inspectorOpen, setInspectorOpen] = React.useState(false);
+  const [tagPickerOpen, setTagPickerOpen] = React.useState(false);
+  const [draftTopologyTagFilter, setDraftTopologyTagFilter] = React.useState<TagFilterConfig>(topologyTagFilter);
   const handleSiteFilterChange = (value: string) => {
     onTopologySiteFilterChange(value);
     setCanvasView(value === 'all' ? 'overview' : 'site');
@@ -349,6 +377,9 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   React.useEffect(() => {
     setCanvasView(topologySiteFilter === 'all' ? 'overview' : 'site');
   }, [topologySiteFilter]);
+  React.useEffect(() => {
+    setDraftTopologyTagFilter(topologyTagFilter);
+  }, [topologyTagFilter]);
   React.useEffect(() => {
     if (selectedTopologyDeviceId || selectedTopologyLinkKey) setInspectorOpen(true);
   }, [selectedTopologyDeviceId, selectedTopologyLinkKey]);
@@ -373,6 +404,11 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   };
   const automaticIntervalLabel = formatTopologyInterval(automaticIntervalSeconds);
   const evidenceTtlLabel = formatTopologyInterval(evidenceTtlSeconds);
+  const tagPreviewDevices = React.useMemo(() => {
+    if (!hasTagFilterConditions(draftTopologyTagFilter)) return [];
+    return topologyTagCandidateDevices.filter((device) => matchesTopologyTagConditions(device, draftTopologyTagFilter));
+  }, [draftTopologyTagFilter, topologyTagCandidateDevices]);
+  const topologyTagConditionCount = countTagFilterConditions(topologyTagFilter);
   const pipelineLabels: Record<string, string> = language === 'zh'
     ? {
         select: '筛选在线设备',
@@ -596,7 +632,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
       </div>
 
       <div className="ops-toolbar rounded-2xl p-4">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_repeat(5,minmax(0,0.8fr))]">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_repeat(6,minmax(0,0.8fr))]">
           <label className="ops-control flex items-center gap-2 rounded-xl px-3 py-2">
             <Search size={15} className="text-black/35" />
             <input
@@ -615,6 +651,54 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             <option value="all">{language === 'zh' ? '全部站点' : 'All Sites'}</option>
             {topologySiteOptions.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
           </select>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                if (!tagPickerOpen) setDraftTopologyTagFilter(topologyTagFilter);
+                setTagPickerOpen((open) => !open);
+              }}
+              className={`ops-control flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm ${topologyTagConditionCount ? 'text-sky-700' : 'text-slate-500'}`}
+              title={language === 'zh' ? '按标签筛选拓扑设备和链路' : 'Filter topology devices and links by tags'}
+            >
+              <span className="flex min-w-0 items-center gap-1.5 truncate"><Tag size={14} />{language === 'zh' ? '设备标签' : 'Device tags'}{topologyTagConditionCount ? ` (${topologyTagConditionCount})` : ''}</span>
+              <span className="text-[10px]">▾</span>
+            </button>
+            {tagPickerOpen && (
+              <div className="absolute left-0 top-full z-40 mt-1 w-[min(560px,calc(100vw-2rem))] rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700">{language === 'zh' ? '标签条件（支持嵌套与 / 或 / 非）' : 'Nested tag conditions (AND / OR / NOT)'}</span>
+                  <button
+                    type="button"
+                    onClick={() => setDraftTopologyTagFilter({
+                      expression: { ...EMPTY_TAG_FILTER.expression, tag_ids: [], groups: [] },
+                      groups: [],
+                      exclude_tag_ids: [],
+                    })}
+                    className="text-[11px] text-slate-400 hover:text-slate-700"
+                  >
+                    {language === 'zh' ? '清空' : 'Clear'}
+                  </button>
+                </div>
+                <TagConditionPicker
+                  value={draftTopologyTagFilter}
+                  onChange={setDraftTopologyTagFilter}
+                  language={language}
+                  tagDefinitions={topologyTagOptions}
+                />
+                {hasTagFilterConditions(draftTopologyTagFilter) && (
+                  <div className="mt-2 rounded-lg bg-sky-50 px-3 py-2 text-[11px] text-sky-800">
+                    {language === 'zh' ? `预览：${tagPreviewDevices.length} 台设备，确认后仅显示这些设备及其内部链路` : `Preview: ${tagPreviewDevices.length} devices; only these devices and their internal links will be shown after applying.`}
+                    {tagPreviewDevices.length > 0 && <div className="mt-1 truncate text-sky-600">{tagPreviewDevices.slice(0, 5).map((device) => device.hostname).join(', ')}{tagPreviewDevices.length > 5 ? ' …' : ''}</div>}
+                  </div>
+                )}
+                <div className="mt-3 flex justify-end gap-2">
+                  <button type="button" onClick={() => { setDraftTopologyTagFilter(topologyTagFilter); setTagPickerOpen(false); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-500"><X size={12} />{language === 'zh' ? '取消' : 'Cancel'}</button>
+                  <button type="button" onClick={() => { onTopologyTagFilterChange(draftTopologyTagFilter); setTagPickerOpen(false); }} className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-sky-700">{language === 'zh' ? '确认筛选' : 'Apply filter'}</button>
+                </div>
+              </div>
+            )}
+          </div>
           <select
             value={topologyRoleFilter}
             onChange={(event) => onTopologyRoleFilterChange(event.target.value)}
@@ -622,7 +706,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             className="ops-control rounded-xl px-3 py-2 text-sm outline-none"
           >
             <option value="all">{language === 'zh' ? '全部角色' : 'All Roles'}</option>
-            {topologyRoleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
+            {topologyRoleOptions.map((role) => <option key={role} value={role}>{topologyRoleLabel(role, language)}</option>)}
           </select>
           <select
             value={topologyStatusFilter}
@@ -647,15 +731,6 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
             <option value="down">{language === 'zh' ? '链路中断' : 'Link Down'}</option>
             <option value="stale">{language === 'zh' ? '链路陈旧' : 'Link Stale'}</option>
             <option value="unknown">{language === 'zh' ? '链路未知' : 'Link Unknown'}</option>
-          </select>
-          <select
-            value={topologyProtocolFilter}
-            onChange={(event) => onTopologyProtocolFilterChange(event.target.value as TopologyProtocolFilter)}
-            title={language === 'zh' ? '按邻居协议筛选拓扑' : 'Filter topology by neighbor protocol'}
-            className="ops-control rounded-xl px-3 py-2 text-sm outline-none"
-          >
-            <option value="all">{language === 'zh' ? '全部协议' : 'All Protocols'}</option>
-            <option value="lldp">LLDP</option>
           </select>
         </div>
         <div className="flex items-center gap-3 mt-2">

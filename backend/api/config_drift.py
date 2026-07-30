@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from database import get_db_connection
+from core.rbac import require_role
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +57,26 @@ def _run_drift_scan_sync():
                 LIMIT 2
             ''', (device_id,)).fetchall()
 
-            if len(snaps) < 2:
+            if not snaps:
                 continue
             current_snap = snaps[0]
-            baseline_snap = snaps[1]
+            designated = conn.execute(
+                """
+                SELECT cs.id, cs.timestamp, cs.trigger, cs.file_path
+                FROM config_baselines cb
+                JOIN config_snapshots cs ON cs.id = cb.snapshot_id
+                WHERE cb.device_id = ? AND cb.config_type = 'running'
+                """,
+                (device_id,),
+            ).fetchone()
+            if designated:
+                baseline_snap = designated
+                baseline_source = 'designated'
+            elif len(snaps) >= 2:
+                baseline_snap = snaps[1]
+                baseline_source = 'previous'
+            else:
+                continue
 
             current_content = _read_config_file(current_snap['file_path']) if current_snap['file_path'] else ''
             baseline_content = _read_config_file(baseline_snap['file_path']) if baseline_snap['file_path'] else ''
@@ -68,7 +85,7 @@ def _run_drift_scan_sync():
                 drift_status = 'error'
                 added = removed = changed = 0
             else:
-                diff_result = _compute_diff(baseline_content, current_content)
+                diff_result = _compute_diff(baseline_content, current_content, normalize=True)
                 added = diff_result['added']
                 removed = diff_result['removed']
                 changed = diff_result['changed']
@@ -78,17 +95,20 @@ def _run_drift_scan_sync():
             conn.execute('''
                 INSERT INTO config_drift_results
                 (id, device_id, hostname, baseline_snapshot_id, current_snapshot_id,
-                 drift_status, added_lines, removed_lines, changed_lines, diff_summary, checked_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 drift_status, added_lines, removed_lines, changed_lines, diff_summary, checked_at,
+                 baseline_source, diff_mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                   device_id=excluded.device_id, hostname=excluded.hostname,
                   baseline_snapshot_id=excluded.baseline_snapshot_id,
                   current_snapshot_id=excluded.current_snapshot_id,
                   drift_status=excluded.drift_status, added_lines=excluded.added_lines,
                   removed_lines=excluded.removed_lines, changed_lines=excluded.changed_lines,
-                  diff_summary=excluded.diff_summary, checked_at=excluded.checked_at
+                  diff_summary=excluded.diff_summary, checked_at=excluded.checked_at,
+                  baseline_source=excluded.baseline_source, diff_mode=excluded.diff_mode
             ''', (drift_id, device_id, dev['hostname'] or '', baseline_snap['id'],
-                  current_snap['id'], drift_status, added, removed, changed, '', now_iso))
+                  current_snap['id'], drift_status, added, removed, changed, '', now_iso,
+                  baseline_source, 'normalized'))
 
         conn.commit()
     except Exception as exc:
@@ -126,6 +146,7 @@ def _read_cached_drift_results() -> list[dict]:
             SELECT r.device_id, r.hostname, r.drift_status, r.added_lines,
                    r.removed_lines, r.changed_lines, r.checked_at,
                    r.baseline_snapshot_id, r.current_snapshot_id,
+                   r.baseline_source, r.diff_mode,
                    d.ip_address, d.platform, d.status as device_status
             FROM config_drift_results r
             LEFT JOIN devices d ON d.id = r.device_id
@@ -162,8 +183,12 @@ def _read_config_file(file_path: str) -> str:
     return data.decode('utf-8')
 
 
-def _compute_diff(old_text: str, new_text: str):
+def _compute_diff(old_text: str, new_text: str, *, normalize: bool = False):
     """Compute unified diff and return structured result."""
+    if normalize:
+        from api.configs import _normalize_config_content
+        old_text = _normalize_config_content(old_text)
+        new_text = _normalize_config_content(new_text)
     old_lines = old_text.splitlines(keepends=True)
     new_lines = new_text.splitlines(keepends=True)
     diff = list(difflib.unified_diff(old_lines, new_lines, fromfile='baseline', tofile='current', lineterm=''))
@@ -257,6 +282,8 @@ def scan_all_devices(force: bool = False):
             'last_checked': r.get('checked_at'),
             'baseline_snapshot_id': r.get('baseline_snapshot_id'),
             'current_snapshot_id': r.get('current_snapshot_id'),
+            'baseline_source': r.get('baseline_source') or 'previous',
+            'diff_mode': r.get('diff_mode') or 'normalized',
         })
 
     return {
@@ -273,12 +300,18 @@ def scan_all_devices(force: bool = False):
 
 
 @router.get('/config-drift/device/{device_id}/diff')
-def get_device_diff(device_id: str, baseline_id: Optional[str] = None, current_id: Optional[str] = None):
+def get_device_diff(
+    device_id: str,
+    baseline_id: Optional[str] = None,
+    current_id: Optional[str] = None,
+    mode: str = Query(default='normalized', pattern='^(raw|normalized)$'),
+):
     """Get detailed line-by-line diff between two snapshots of a device."""
     conn = get_db_connection()
     try:
         if not baseline_id or not current_id:
-            # Use two most recent snapshots
+            # Use the designated baseline when present; otherwise compare the
+            # two latest snapshots for backwards compatibility.
             snaps = conn.execute('''
                 SELECT id, timestamp, trigger, file_path, hostname, vendor
                 FROM config_snapshots
@@ -286,10 +319,26 @@ def get_device_diff(device_id: str, baseline_id: Optional[str] = None, current_i
                 ORDER BY timestamp DESC
                 LIMIT 2
             ''', (device_id,)).fetchall()
-            if len(snaps) < 2:
-                raise HTTPException(status_code=404, detail='Need at least 2 snapshots for diff')
+            if not snaps:
+                raise HTTPException(status_code=404, detail='No snapshots found')
             current_snap = dict(snaps[0])
-            baseline_snap = dict(snaps[1])
+            designated = conn.execute(
+                """
+                SELECT cs.*
+                FROM config_baselines cb
+                JOIN config_snapshots cs ON cs.id = cb.snapshot_id
+                WHERE cb.device_id = ? AND cb.config_type = 'running'
+                """,
+                (device_id,),
+            ).fetchone()
+            if designated:
+                baseline_snap = dict(designated)
+                baseline_source = 'designated'
+            elif len(snaps) >= 2:
+                baseline_snap = dict(snaps[1])
+                baseline_source = 'previous'
+            else:
+                raise HTTPException(status_code=404, detail='No designated baseline and only one snapshot exists')
         else:
             baseline_row = conn.execute('SELECT * FROM config_snapshots WHERE id = ?', (baseline_id,)).fetchone()
             current_row = conn.execute('SELECT * FROM config_snapshots WHERE id = ?', (current_id,)).fetchone()
@@ -297,17 +346,26 @@ def get_device_diff(device_id: str, baseline_id: Optional[str] = None, current_i
                 raise HTTPException(status_code=404, detail='Snapshot not found')
             baseline_snap = dict(baseline_row)
             current_snap = dict(current_row)
+            if baseline_snap.get('device_id') != device_id or current_snap.get('device_id') != device_id:
+                raise HTTPException(status_code=400, detail='Snapshots must belong to the requested device')
+            baseline_source = 'explicit'
     finally:
         conn.close()
 
     baseline_content = _read_config_file(baseline_snap['file_path']) if baseline_snap.get('file_path') else ''
     current_content = _read_config_file(current_snap['file_path']) if current_snap.get('file_path') else ''
 
-    diff_result = _compute_diff(baseline_content, current_content)
+    diff_result = _compute_diff(
+        baseline_content,
+        current_content,
+        normalize=mode == 'normalized',
+    )
 
     return {
         'device_id': device_id,
         'hostname': current_snap.get('hostname', ''),
+        'mode': mode,
+        'baseline_source': baseline_source,
         'baseline': {
             'id': baseline_snap['id'],
             'timestamp': baseline_snap.get('timestamp', ''),
@@ -328,12 +386,77 @@ def list_device_snapshots(device_id: str):
     conn = get_db_connection()
     try:
         rows = conn.execute('''
-            SELECT id, hostname, vendor, timestamp, trigger, author, tag, size
-            FROM config_snapshots
-            WHERE device_id = ?
-            ORDER BY timestamp DESC
+            SELECT cs.id, cs.hostname, cs.vendor, cs.timestamp, cs.trigger, cs.author,
+                   cs.tag, cs.size,
+                   CASE WHEN cb.snapshot_id IS NOT NULL THEN 1 ELSE 0 END AS is_baseline
+            FROM config_snapshots cs
+            LEFT JOIN config_baselines cb
+              ON cb.snapshot_id = cs.id
+             AND cb.device_id = cs.device_id
+             AND cb.config_type = 'running'
+            WHERE cs.device_id = ?
+            ORDER BY cs.timestamp DESC
         ''', (device_id,)).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+class BaselineRequest(BaseModel):
+    snapshot_id: str
+    description: str = ''
+
+
+@router.put('/config-drift/device/{device_id}/baseline')
+def set_device_baseline(
+    device_id: str,
+    body: BaselineRequest,
+    user=require_role('Operator'),
+):
+    conn = get_db_connection()
+    try:
+        snapshot = conn.execute(
+            "SELECT id FROM config_snapshots WHERE id = ? AND device_id = ?",
+            (body.snapshot_id, device_id),
+        ).fetchone()
+        if not snapshot:
+            raise HTTPException(status_code=404, detail='Snapshot not found for device')
+        conn.execute(
+            """
+            INSERT INTO config_baselines
+            (id, device_id, config_type, snapshot_id, description, set_by, set_at)
+            VALUES (?, ?, 'running', ?, ?, ?, ?)
+            ON CONFLICT(device_id, config_type) DO UPDATE SET
+              snapshot_id = excluded.snapshot_id,
+              description = excluded.description,
+              set_by = excluded.set_by,
+              set_at = excluded.set_at
+            """,
+            (
+                f"baseline-{uuid.uuid4().hex[:16]}",
+                device_id,
+                body.snapshot_id,
+                body.description.strip(),
+                user.get('username', ''),
+                datetime.now().isoformat(),
+            ),
+        )
+        conn.commit()
+        return {'success': True, 'device_id': device_id, 'snapshot_id': body.snapshot_id}
+    finally:
+        conn.close()
+
+
+@router.delete('/config-drift/device/{device_id}/baseline')
+def clear_device_baseline(device_id: str, _user=require_role('Operator')):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            "DELETE FROM config_baselines WHERE device_id = ? AND config_type = 'running'",
+            (device_id,),
+        )
+        conn.commit()
+        return {'success': True, 'deleted': bool(getattr(cursor, 'rowcount', 0))}
     finally:
         conn.close()
 
@@ -354,6 +477,14 @@ def rollback_preview(body: RollbackRequest):
         snap = conn.execute('SELECT * FROM config_snapshots WHERE id = ?', (body.snapshot_id,)).fetchone()
         if not snap:
             raise HTTPException(status_code=404, detail='Snapshot not found')
+        if str(snap['device_id'] or '') != str(body.device_id):
+            raise HTTPException(status_code=400, detail='Snapshot does not belong to the requested device')
+        device = conn.execute(
+            'SELECT id, hostname, ip_address, platform, status FROM devices WHERE id = ?',
+            (body.device_id,),
+        ).fetchone()
+        if not device:
+            raise HTTPException(status_code=404, detail='Device not found')
 
         # Get current (latest) snapshot
         current = conn.execute('''
@@ -371,12 +502,33 @@ def rollback_preview(body: RollbackRequest):
     if not baseline_content:
         raise HTTPException(status_code=400, detail='Cannot read baseline snapshot')
 
+    from api.change_orders.helpers import scan_change_commands
+    blockers = []
+    if (snap['integrity_status'] or 'unknown') != 'verified':
+        blockers.append('目标快照尚未通过 SHA-256 完整性校验')
+    if not str(device['ip_address'] or '').strip():
+        blockers.append('设备缺少可验证的备用管理地址')
+    if str(device['status'] or '').lower() not in {'online', 'active'}:
+        blockers.append('设备当前不是在线状态')
+
     if not body.selected_lines:
-        # Full rollback — return the entire baseline config
+        preview_lines = baseline_content.splitlines()
+        guard = scan_change_commands(preview_lines, device['platform'] or '')
         return {
             'mode': 'full',
-            'commands': baseline_content.splitlines(),
-            'line_count': len(baseline_content.splitlines()),
+            'plan_id': f"recovery-{uuid.uuid4().hex}",
+            'commands': preview_lines,
+            'line_count': len(preview_lines),
+            'executable': False,
+            'requires_change_order': True,
+            'requires_mfa': True,
+            'requires_pre_restore_backup': True,
+            'requires_rollback_timer': True,
+            'guard': guard,
+            'blockers': blockers,
+            'snapshot_hash': snap['raw_hash'] or '',
+            'integrity_status': snap['integrity_status'] or 'unknown',
+            'warning': '全量配置不能作为逐行 CLI 直接下发；必须由厂商恢复驱动、审批工单和 Recovery Guard 执行。',
         }
 
     # Selective rollback — compute diff and pick specific removed lines
@@ -390,10 +542,21 @@ def rollback_preview(body: RollbackRequest):
                 if line_idx in body.selected_lines:
                     all_add_lines.append(dl['content'].rstrip())
 
+    guard = scan_change_commands(all_add_lines, device['platform'] or '')
     return {
         'mode': 'selective',
+        'plan_id': f"recovery-{uuid.uuid4().hex}",
         'commands': all_add_lines,
         'line_count': len(all_add_lines),
+        'executable': not blockers and not guard['blocked'],
+        'requires_change_order': True,
+        'requires_mfa': True,
+        'requires_pre_restore_backup': True,
+        'requires_rollback_timer': True,
+        'guard': guard,
+        'blockers': blockers,
+        'snapshot_hash': snap['raw_hash'] or '',
+        'integrity_status': snap['integrity_status'] or 'unknown',
     }
 
 

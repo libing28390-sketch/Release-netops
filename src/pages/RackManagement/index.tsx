@@ -2032,7 +2032,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                 {zh ? '设备型号管理' : 'Device Type Management'}
               </h3>
               <div className="max-h-48 overflow-auto mb-4 rounded-lg" style={{ border: '1px solid var(--card-border)' }}>
-                <table className="w-full text-[11px]">
+                <table className="nx-data-table nx-data-table--compact text-[11px]">
                   <thead>
                     <tr style={{ background: 'var(--app-hover-bg)' }}>
                       <th className="px-2 py-1.5 text-left font-semibold" style={{ color: 'var(--muted-text)' }}>{zh ? '型号' : 'Model'}</th>

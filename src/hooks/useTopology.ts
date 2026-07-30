@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import * as htmlToImage from 'html-to-image';
 import type { Device } from '../types';
+import { EMPTY_TAG_FILTER, type TagFilterConfig } from '../components/TagConditionPicker';
 import type { Language } from '../i18n.tsx';
 import { parseJsonObject } from '../components/shared';
 import {
@@ -164,8 +165,15 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
   const [topologyStatusFilter, setTopologyStatusFilter] = useState<'all' | 'online' | 'offline' | 'pending'>('all');
   const [topologyRoleFilter, setTopologyRoleFilter] = useState('all');
   const [topologySiteFilter, setTopologySiteFilter] = useState('all');
+  const [topologyTagFilter, setTopologyTagFilter] = useState<TagFilterConfig>(() => ({
+    expression: { ...EMPTY_TAG_FILTER.expression, tag_ids: [], groups: [] },
+    groups: [],
+    exclude_tag_ids: [],
+  }));
   const [topologyLinkStatusFilter, setTopologyLinkStatusFilter] = useState<TopologyLinkStatusFilter>('all');
-  const [topologyProtocolFilter, setTopologyProtocolFilter] = useState<TopologyProtocolFilter>('all');
+  // Topology discovery is LLDP-based by default; keep the protocol contract
+  // internal instead of exposing a redundant one-option filter in the toolbar.
+  const [topologyProtocolFilter, setTopologyProtocolFilter] = useState<TopologyProtocolFilter>('lldp');
   const [selectedTopologyDeviceId, setSelectedTopologyDeviceId] = useState<string | null>(null);
   const [selectedTopologyLinkKey, setSelectedTopologyLinkKey] = useState<string | null>(null);
   const [topologyDiscoveryRunning, setTopologyDiscoveryRunning] = useState(false);
@@ -416,6 +424,8 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
   const {
     topologySiteOptions,
     topologyRoleOptions,
+    topologyTagOptions,
+    topologyTagCandidateDevices,
     topologyVisibleDevices,
   } = useTopologyVisibleDevices({
     devices,
@@ -423,6 +433,7 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     topologyStatusFilter,
     topologyRoleFilter,
     topologySiteFilter,
+    topologyTagFilter,
   });
 
   const topologyVisibleDeviceIds = useMemo(
@@ -792,6 +803,8 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     setTopologyRoleFilter,
     topologySiteFilter,
     setTopologySiteFilter,
+    topologyTagFilter,
+    setTopologyTagFilter,
     topologyLinkStatusFilter,
     setTopologyLinkStatusFilter,
     topologyProtocolFilter,
@@ -814,6 +827,8 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     // derived
     topologySiteOptions,
     topologyRoleOptions,
+    topologyTagOptions,
+    topologyTagCandidateDevices,
     topologyVisibleDevices: topologyFilteredDevices,
     topologyVisibleLinks,
     topologyDeviceLinks,

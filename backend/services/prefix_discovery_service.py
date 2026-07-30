@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from database import get_db_connection
+from core.interface_utils import normalize_interface_name
 from services.read_only_collection_adapter import collect_read_only_evidence
 
 
@@ -553,7 +554,9 @@ def discover_prefixes_from_interface_snapshot(
 
     inventory_masks: dict[str, str] = {}
     for row in inventory_rows:
-        inventory_masks.setdefault(str(row['interface'] or ''), str(row['mask'] or ''))
+        interface_key = normalize_interface_name(row['interface'])
+        if interface_key:
+            inventory_masks.setdefault(interface_key, str(row['mask'] or ''))
 
     # CMDB intentionally renders ip_inventory rows when the interface skeleton
     # has not been materialized yet.  Use the same fallback here so Prefix
@@ -593,7 +596,10 @@ def discover_prefixes_from_interface_snapshot(
         raw_ip = str(row['primary_ip'] or row['ip_address'] or '').strip()
         if not raw_ip:
             continue
-        prefix_length = str(row['ip_prefix_length'] or '').strip() or inventory_masks.get(interface_name, '')
+        prefix_length = str(row['ip_prefix_length'] or '').strip() or inventory_masks.get(
+            normalize_interface_name(interface_name),
+            '',
+        )
         record: dict[str, Any] = {
             'INTERFACE': interface_name,
             'IP_ADDRESS': raw_ip,

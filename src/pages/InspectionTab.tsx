@@ -664,7 +664,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
               </div>
 
               <div className="flex-1 min-h-0">
-                <table className="w-full text-left text-sm border-collapse">
+                <table className="nx-data-table text-left text-sm">
                   <thead className="sticky top-0 bg-white border-b border-black/[0.05] z-10">
                     <tr className="bg-slate-50/50">
                       <Th>{isZh ? '时间' : 'Time'}</Th>
@@ -753,7 +753,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
 
               <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
+                  <table className="nx-data-table text-left text-sm">
                     <thead className="bg-slate-50 border-b border-black/[0.05]">
                       <tr>
                         <Th>{isZh ? '设备' : 'Device'}</Th>

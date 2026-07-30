@@ -78,6 +78,25 @@ def _calculate_total_ips(prefix_str: str) -> int:
         return min(total, 2**63)
 
 
+def _capacity_exclusion_reason(prefix_str: str, status: str = '') -> str:
+    """Return why a prefix must not contribute to allocatable capacity."""
+    if (status or '').strip().lower() == 'container':
+        return 'container_prefix'
+    try:
+        net = ipaddress.ip_network(prefix_str, strict=False)
+    except ValueError:
+        return 'invalid_prefix'
+    if net.prefixlen == net.max_prefixlen:
+        return 'host_route'
+    if net.prefixlen == net.max_prefixlen - 1:
+        return 'point_to_point'
+    return ''
+
+
+def _is_capacity_prefix(prefix_str: str, status: str = '') -> bool:
+    return not _capacity_exclusion_reason(prefix_str, status)
+
+
 def _normalize_prefix(prefix: str) -> tuple[str, ipaddress._BaseNetwork]:
     try:
         net = ipaddress.ip_network(prefix, strict=False)
@@ -294,7 +313,7 @@ def rebuild_prefixes_hierarchy(conn=None):
 # Subnet (Prefix) CRUD — using the `prefixes` table
 # ══════════════════════════════════════════════════════════
 
-def list_subnets(*, site: str = 'all', status: str = 'all', q: str = '') -> list[dict]:
+def list_subnets(*, site: str = 'all', status: str = 'all', q: str = '', family: str = 'all', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
     conn = get_db_connection()
     try:
         sql = f'''
@@ -320,12 +339,40 @@ def list_subnets(*, site: str = 'all', status: str = 'all', q: str = '') -> list
         if status and status != 'all':
             sql += f' AND p.status = {_PH}'
             params.append(status)
+        if family == 'ipv4':
+            sql += " AND p.prefix NOT LIKE '%:%'"
+        elif family == 'ipv6':
+            sql += " AND p.prefix LIKE '%:%'"
         if q and q.strip():
             fuzzy = f'%{q.strip().lower()}%'
             sql += f' AND (LOWER(p.name) LIKE {_PH} OR LOWER(p.prefix) LIKE {_PH} OR LOWER(p.description) LIKE {_PH})'
             params.extend([fuzzy, fuzzy, fuzzy])
 
-        sql += ' ORDER BY p.prefix'
+        sql += ' ORDER BY COALESCE(s.site_name, s.site_code, p.site_id, \'\'), p.prefix'
+        total: int | None = None
+        normalized_page_size = min(max(int(page_size or 20), 1), 100)
+        normalized_page = max(int(page or 1), 1)
+        if page is not None:
+            count_sql = 'SELECT COUNT(*) AS cnt FROM prefixes p LEFT JOIN sites s ON p.site_id = s.id WHERE 1=1'
+            count_params: list = []
+            if site and site != 'all':
+                count_sql += f' AND p.site_id = {_PH}'
+                count_params.append(site)
+            if status and status != 'all':
+                count_sql += f' AND p.status = {_PH}'
+                count_params.append(status)
+            if family == 'ipv4':
+                count_sql += " AND p.prefix NOT LIKE '%:%'"
+            elif family == 'ipv6':
+                count_sql += " AND p.prefix LIKE '%:%'"
+            if q and q.strip():
+                fuzzy = f'%{q.strip().lower()}%'
+                count_sql += f' AND (LOWER(p.name) LIKE {_PH} OR LOWER(p.prefix) LIKE {_PH} OR LOWER(p.description) LIKE {_PH})'
+                count_params.extend([fuzzy, fuzzy, fuzzy])
+            count_row = conn.execute(count_sql, tuple(count_params)).fetchone()
+            total = int(count_row['cnt'] if count_row else 0)
+            sql += f' LIMIT {_PH} OFFSET {_PH}'
+            params.extend([normalized_page_size, (normalized_page - 1) * normalized_page_size])
         rows = conn.execute(sql, tuple(params)).fetchall()
 
         result = []
@@ -372,7 +419,14 @@ def list_subnets(*, site: str = 'all', status: str = 'all', q: str = '') -> list
             item['vlan_id'] = item.get('vlan_number') or item.get('vlan_id')
 
             result.append(item)
-        return result
+        if page is None:
+            return result
+        return {
+            'items': result,
+            'total': total or 0,
+            'page': normalized_page,
+            'page_size': normalized_page_size,
+        }
     finally:
         conn.close()
 
@@ -853,14 +907,226 @@ def delete_subnet(subnet_id: str) -> bool:
 # IP Addresses
 # ══════════════════════════════════════════════════════════
 
-def list_addresses(subnet_id: str) -> list[dict]:
+def list_addresses(subnet_id: str, *, q: str = '', status: str = 'all', device_type: str = 'all', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
     conn = get_db_connection()
     try:
-        rows = conn.execute(
-            f'SELECT * FROM ip_addresses WHERE subnet_id = {_PH} ORDER BY address',
-            (subnet_id,),
+        where = f'WHERE subnet_id = {_PH}'
+        params: list = [subnet_id]
+        if status and status != 'all':
+            where += f" AND COALESCE(status, 'active') = {_PH}"
+            params.append(status)
+        if device_type:
+            where += f" AND COALESCE(device_type, '') = {_PH}"
+            params.append(device_type)
+        if q and q.strip():
+            fuzzy = f'%{q.strip().lower()}%'
+            where += f" AND (LOWER(COALESCE(address, '')) LIKE {_PH} OR LOWER(COALESCE(hostname, '')) LIKE {_PH} OR LOWER(COALESCE(interface_name, '')) LIKE {_PH} OR LOWER(COALESCE(mac_address, '')) LIKE {_PH})"
+            params.extend([fuzzy, fuzzy, fuzzy, fuzzy])
+        count_row = conn.execute(f'SELECT COUNT(*) AS cnt FROM ip_addresses {where}', tuple(params)).fetchone()
+        total = int(count_row['cnt'] if count_row else 0)
+        sql = f'SELECT * FROM ip_addresses {where} ORDER BY address'
+        normalized_page_size = min(max(int(page_size or 20), 1), 100)
+        normalized_page = max(int(page or 1), 1)
+        if page is not None:
+            sql += f' LIMIT {_PH} OFFSET {_PH}'
+            params.extend([normalized_page_size, (normalized_page - 1) * normalized_page_size])
+        rows = conn.execute(sql, tuple(params)).fetchall()
+        result = [dict(r) for r in rows]
+        if page is None:
+            return result
+        return {'items': result, 'total': total, 'page': normalized_page, 'page_size': normalized_page_size,
+                'total_pages': max(1, (total + normalized_page_size - 1) // normalized_page_size)}
+    finally:
+        conn.close()
+
+
+def list_ip_inventory(*, site_id: str = 'all', prefix_id: str = '', q: str = '', status: str = 'all', device_type: str = 'all', page: int = 1, page_size: int = 20) -> dict:
+    """Return manual IPAM records merged with active discovered endpoints.
+
+    Manual records remain the authoritative editable record.  Discovery facts
+    fill its empty L2 fields; endpoints without a manual record are returned as
+    read-only discovered inventory.  Prefix and site are resolved by longest
+    prefix match so the view can be used without pre-registering every IP.
+    """
+    conn = get_db_connection()
+    try:
+        prefix_rows = conn.execute(
+            '''SELECT p.id, p.prefix, p.name, p.site_id, p.network_type,
+                      s.site_name, s.site_code
+               FROM prefixes p
+               LEFT JOIN sites s ON s.id = p.site_id'''
         ).fetchall()
-        return [dict(r) for r in rows]
+        prefix_catalog: list[dict] = []
+        for row in prefix_rows:
+            try:
+                network = ipaddress.ip_network(row['prefix'], strict=False)
+            except (TypeError, ValueError):
+                continue
+            prefix_catalog.append({
+                'id': row['id'], 'prefix': row['prefix'], 'name': row['name'] or '',
+                'site_id': row['site_id'] or '', 'network_type': row['network_type'] or '',
+                'site_name': row['site_name'] or row['site_code'] or row['site_id'] or '未分配站点',
+                'site_code': row['site_code'] or '', 'network': network,
+            })
+        prefix_catalog.sort(key=lambda item: item['network'].prefixlen, reverse=True)
+
+        def match_prefix(address: str) -> dict | None:
+            try:
+                ip_obj = ipaddress.ip_address(address)
+            except ValueError:
+                return None
+            return next((item for item in prefix_catalog if ip_obj in item['network']), None)
+
+        manual_rows = conn.execute(
+            '''SELECT ip.*, p.prefix AS subnet_prefix, p.name AS subnet_name,
+                      p.site_id AS prefix_site_id, p.network_type,
+                      s.site_name AS prefix_site_name, s.site_code AS prefix_site_code
+               FROM ip_addresses ip
+               LEFT JOIN prefixes p ON p.id = ip.subnet_id
+               LEFT JOIN sites s ON s.id = p.site_id
+               ORDER BY ip.address'''
+        ).fetchall()
+        endpoint_rows = conn.execute(
+            '''SELECT ne.ip, ne.mac, ne.hostname, ne.switch_id, ne.switch_port,
+                      ne.vlan, ne.vrf, ne.site, ne.last_seen, ne.source_type,
+                      ne.confidence, d.hostname AS switch_name, d.site AS device_site
+               FROM network_endpoints ne
+               LEFT JOIN devices d ON d.id = ne.switch_id
+               WHERE ne.is_active = 1 AND COALESCE(ne.ip, '') <> ''
+               ORDER BY ne.last_seen DESC'''
+        ).fetchall()
+
+        sites = {
+            str(row['id']): {
+                'id': row['id'], 'name': row['site_name'] or row['site_code'] or row['id'],
+                'code': row['site_code'] or '', 'count': 0, 'ip_count': 0,
+            }
+            for row in conn.execute('SELECT id, site_name, site_code FROM sites ORDER BY site_name').fetchall()
+        }
+        for prefix in prefix_catalog:
+            site_key = str(prefix.get('site_id') or '')
+            if site_key in sites:
+                sites[site_key]['count'] += 1
+
+        def normalized_mac(value: str | None) -> str:
+            return str(value or '').replace(':', '').replace('-', '').replace('.', '').lower()
+
+        items_by_ip: dict[str, dict] = {}
+        for row in manual_rows:
+            item = dict(row)
+            address = str(item.get('address') or '')
+            if prefix_id and str(item.get('subnet_id') or '') != prefix_id:
+                continue
+            item.update({
+                'site_id': item.get('prefix_site_id') or item.get('site_id') or '',
+                'site_name': item.get('prefix_site_name') or item.get('prefix_site_code') or '未分配站点',
+                'source': 'manual', 'is_discovered': False,
+                'discovered_last_seen': '', 'switch_name': '', 'switch_port': '', 'vlan': '',
+            })
+            items_by_ip[address] = item
+
+        for row in endpoint_rows:
+            endpoint = dict(row)
+            address = str(endpoint.get('ip') or '')
+            prefix = match_prefix(address)
+            if not address or (prefix_id and (not prefix or prefix['id'] != prefix_id)):
+                continue
+            manual = items_by_ip.get(address)
+            endpoint_site = str(endpoint.get('site') or endpoint.get('device_site') or '')
+            resolved_site_id = (prefix or {}).get('site_id') or endpoint_site
+            resolved_site_name = (prefix or {}).get('site_name') or endpoint_site or '未分配站点'
+            if manual:
+                manual.update({
+                    'source': 'manual+discovered',
+                    'discovered_last_seen': endpoint.get('last_seen') or '',
+                    'switch_name': endpoint.get('switch_name') or '',
+                    'switch_port': endpoint.get('switch_port') or '',
+                    'vlan': endpoint.get('vlan') or '',
+                    'discovered_vrf': endpoint.get('vrf') or '',
+                    'discovered_confidence': endpoint.get('confidence') or '',
+                    'site_id': manual.get('site_id') or resolved_site_id,
+                    'site_name': manual.get('site_name') or resolved_site_name,
+                })
+                if not manual.get('mac_address'):
+                    manual['mac_address'] = endpoint.get('mac') or ''
+                if not manual.get('hostname'):
+                    manual['hostname'] = endpoint.get('hostname') or ''
+                if not manual.get('device_id'):
+                    manual['device_id'] = endpoint.get('switch_id') or ''
+                if not manual.get('interface_name'):
+                    manual['interface_name'] = endpoint.get('switch_port') or ''
+                continue
+
+            item = {
+                'id': f'discovered-{address}', 'subnet_id': (prefix or {}).get('id') or '',
+                'address': address, 'hostname': endpoint.get('hostname') or '',
+                'device_id': endpoint.get('switch_id') or '',
+                'interface_name': endpoint.get('switch_port') or '',
+                'mac_address': endpoint.get('mac') or '', 'device_type': 'host',
+                'status': 'active', 'description': '', 'last_seen': endpoint.get('last_seen') or '',
+                'created_at': '', 'updated_at': endpoint.get('last_seen') or '',
+                'subnet_prefix': (prefix or {}).get('prefix') or '',
+                'subnet_name': (prefix or {}).get('name') or '',
+                'network_type': (prefix or {}).get('network_type') or '',
+                'site_id': resolved_site_id, 'site_name': resolved_site_name,
+                'source': 'discovered', 'is_discovered': True,
+                'discovered_last_seen': endpoint.get('last_seen') or '',
+                'switch_name': endpoint.get('switch_name') or '',
+                'switch_port': endpoint.get('switch_port') or '',
+                'vlan': endpoint.get('vlan') or '', 'discovered_vrf': endpoint.get('vrf') or '',
+                'discovered_confidence': endpoint.get('confidence') or '',
+            }
+            items_by_ip[address] = item
+
+        all_items = list(items_by_ip.values())
+        for item in all_items:
+            site_key = str(item.get('site_id') or '')
+            if site_key in sites:
+                sites[site_key]['ip_count'] += 1
+
+        normalized_query = q.strip().lower()
+        items = []
+        for item in all_items:
+            item_site = str(item.get('site_id') or '')
+            if site_id != 'all' and site_id and item_site != site_id:
+                continue
+            if status and status != 'all' and status != 'available' and str(item.get('status') or '') != status:
+                continue
+            if status == 'available':
+                continue
+            if device_type and device_type != 'all' and str(item.get('device_type') or '') != device_type:
+                continue
+            if normalized_query:
+                haystack = ' '.join(str(item.get(key) or '') for key in (
+                    'address', 'hostname', 'interface_name', 'description', 'site_name',
+                    'subnet_prefix', 'subnet_name', 'mac_address', 'switch_name', 'vlan',
+                )).lower()
+                if normalized_query not in haystack:
+                    continue
+            items.append(item)
+
+        items.sort(key=lambda item: (
+            str(item.get('site_name') or ''), str(item.get('subnet_prefix') or ''), str(item.get('address') or '')
+        ))
+
+        normalized_page_size = min(max(int(page_size or 20), 1), 100)
+        normalized_page = max(int(page or 1), 1)
+        total = len(items)
+        start = (normalized_page - 1) * normalized_page_size
+        return {
+            'items': items[start:start + normalized_page_size],
+            'total': total,
+            'page': normalized_page,
+            'page_size': normalized_page_size,
+            'has_more': start + normalized_page_size < total,
+            'sites': list(sites.values()),
+            'summary': {
+                'total': total,
+                'discovered': sum(1 for item in items if item.get('is_discovered')),
+                'manual': sum(1 for item in items if not item.get('is_discovered')),
+                'prefixes': len(prefix_catalog),
+            },
+        }
     finally:
         conn.close()
 
@@ -1178,8 +1444,12 @@ def ipam_summary() -> dict:
         addresses = conn.execute('SELECT COUNT(*) as cnt FROM ip_addresses').fetchone()
 
         # Calculate total capacity dynamically
-        all_prefixes = conn.execute('SELECT prefix FROM prefixes').fetchall()
-        total_capacity = sum(_calculate_total_ips(r['prefix']) for r in all_prefixes)
+        all_prefixes = conn.execute('SELECT prefix, status FROM prefixes').fetchall()
+        capacity_prefixes = [
+            row for row in all_prefixes
+            if _is_capacity_prefix(row['prefix'], row['status'])
+        ]
+        total_capacity = sum(_calculate_total_ips(r['prefix']) for r in capacity_prefixes)
 
         total_used = conn.execute(
             "SELECT COUNT(*) as total FROM ip_addresses WHERE COALESCE(status, 'active') NOT IN ('released', 'available')"
@@ -1190,6 +1460,8 @@ def ipam_summary() -> dict:
             'total_addresses': addresses['cnt'] if addresses else 0,
             'total_capacity': total_capacity,
             'total_used': total_used['total'] if total_used else 0,
+            'capacity_prefixes_count': len(capacity_prefixes),
+            'excluded_prefixes_count': len(all_prefixes) - len(capacity_prefixes),
             'high_utilization_subnets': [],
         }
     finally:
@@ -1215,10 +1487,14 @@ def get_utilization_analytics() -> dict:
         per_prefix = []
         total_ips_sum = 0
         used_ips_sum = 0
+        capacity_prefixes_count = 0
+        excluded_prefixes_count = 0
         site_agg: dict[str, dict] = {}
 
         for r in rows:
             total = _calculate_total_ips(r['prefix'])
+            exclusion_reason = _capacity_exclusion_reason(r['prefix'], r['status'])
+            capacity_eligible = not exclusion_reason
             used_row = conn.execute(
                 f"""SELECT COUNT(*) as cnt FROM ip_addresses WHERE subnet_id = {_PH}
                     AND COALESCE(status, 'active') NOT IN ('released', 'available')""",
@@ -1226,8 +1502,12 @@ def get_utilization_analytics() -> dict:
             ).fetchone()
             used_count = used_row['cnt'] if used_row else 0
 
-            total_ips_sum += total
-            used_ips_sum += used_count
+            if capacity_eligible:
+                total_ips_sum += total
+                used_ips_sum += used_count
+                capacity_prefixes_count += 1
+            else:
+                excluded_prefixes_count += 1
 
             per_prefix.append({
                 'id': r['id'],
@@ -1237,17 +1517,20 @@ def get_utilization_analytics() -> dict:
                 'total_ips': total,
                 'used_ips': used_count,
                 'utilization': round(used_count / total * 100, 1) if total > 0 else 0,
+                'capacity_eligible': capacity_eligible,
+                'capacity_excluded_reason': exclusion_reason,
             })
 
-            # Aggregate by site
-            site_key = r['site_name'] or r['site_code'] or 'Unassigned'
-            bucket = site_agg.setdefault(site_key, {'site': site_key, 'total_ips': 0, 'used_ips': 0})
-            bucket['total_ips'] += total
-            bucket['used_ips'] += used_count
+            # Aggregate only allocatable capacity by site.
+            if capacity_eligible:
+                site_key = r['site_name'] or r['site_code'] or 'Unassigned'
+                bucket = site_agg.setdefault(site_key, {'site': site_key, 'total_ips': 0, 'used_ips': 0})
+                bucket['total_ips'] += total
+                bucket['used_ips'] += used_count
 
-        # Top 5 prefixes by utilization (exclude empty ones)
+        # Top 5 allocatable prefixes by utilization.
         top_utilized = sorted(
-            [p for p in per_prefix if p['total_ips'] > 0],
+            [p for p in per_prefix if p['capacity_eligible'] and p['total_ips'] > 0],
             key=lambda x: x['utilization'],
             reverse=True,
         )[:5]
@@ -1289,23 +1572,36 @@ def get_utilization_analytics() -> dict:
             'used_ips': used_ips_sum,
             'free_ips': max(0, total_ips_sum - used_ips_sum),
             'utilization_rate': round(used_ips_sum / total_ips_sum * 100, 1) if total_ips_sum > 0 else 0,
+            'capacity_prefixes_count': capacity_prefixes_count,
+            'excluded_prefixes_count': excluded_prefixes_count,
+            'capacity_policy': 'allocatable_prefixes_excluding_containers_and_point_to_point_or_host_routes',
         }
 
-        # ── Allocation trend (cumulative, by created day) ───
+        # ── Allocation trend for allocatable prefixes (cumulative, by created day) ───
         forecast_trend = []
         try:
             day_rows = conn.execute(
-                '''SELECT substr(created_at, 1, 10) as day, COUNT(*) as cnt
-                   FROM ip_addresses
-                   WHERE created_at IS NOT NULL AND created_at != ''
-                     AND COALESCE(status, 'active') NOT IN ('released', 'available')
-                   GROUP BY substr(created_at, 1, 10)
-                   ORDER BY day'''
+                '''SELECT ip.created_at, p.prefix, p.status AS prefix_status
+                   FROM ip_addresses ip
+                   LEFT JOIN prefixes p ON p.id = ip.subnet_id
+                   WHERE ip.created_at IS NOT NULL
+                     AND COALESCE(ip.status, 'active') NOT IN ('released', 'available')
+                   ORDER BY ip.created_at'''
             ).fetchall()
-            cumulative = 0
+            day_counts: dict[str, int] = {}
             for dr in day_rows:
-                cumulative += dr['cnt']
-                forecast_trend.append({'day': dr['day'], 'allocated': cumulative})
+                created_at = str(dr['created_at'] or '')
+                if len(created_at) < 10 or not _is_capacity_prefix(
+                    dr['prefix'] or '',
+                    dr['prefix_status'] or '',
+                ):
+                    continue
+                day = created_at[:10]
+                day_counts[day] = day_counts.get(day, 0) + 1
+            cumulative = 0
+            for day in sorted(day_counts):
+                cumulative += day_counts[day]
+                forecast_trend.append({'day': day, 'allocated': cumulative})
             # Keep the most recent 14 data points for a readable chart
             forecast_trend = forecast_trend[-14:]
         except Exception:
@@ -1377,16 +1673,41 @@ def get_subnets_tree() -> list[dict]:
 # IP Pools CRUD
 # ══════════════════════════════════════════════════════════
 
-def list_pools() -> list[dict]:
+def list_pools(*, q: str = '', status: str = '', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
     conn = get_db_connection()
     try:
-        rows = conn.execute('''
+        clauses: list[str] = []
+        params: list[str] = []
+        if q.strip():
+            clauses.append("(LOWER(p.name) LIKE ? OR LOWER(COALESCE(p.description, '')) LIKE ? OR LOWER(COALESCE(pf.prefix, '')) LIKE ?)")
+            fuzzy = f"%{q.strip().lower()}%"
+            params.extend([fuzzy, fuzzy, fuzzy])
+        if status and status.lower() != 'all':
+            clauses.append("LOWER(COALESCE(p.status, '')) = ?")
+            params.append(status.lower())
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
+        count_row = conn.execute(
+            f'''SELECT COUNT(*) AS total
+                FROM ipam_pools p
+                LEFT JOIN prefixes pf ON p.prefix_id = pf.id{where}''',
+            tuple(params),
+        ).fetchone()
+        total = int(count_row['total'] or 0) if count_row else 0
+        page_clause = ''
+        page_params: list[int] = []
+        if page is not None:
+            safe_page_size = min(max(int(page_size or 20), 1), 100)
+            safe_page = max(int(page or 1), 1)
+            page_clause = ' LIMIT ? OFFSET ?'
+            page_params = [safe_page_size, (safe_page - 1) * safe_page_size]
+        rows = conn.execute(f'''
             SELECT p.*, pf.prefix AS prefix_cidr, t.name AS tenant_name
             FROM ipam_pools p
             LEFT JOIN prefixes pf ON p.prefix_id = pf.id
             LEFT JOIN tenants t ON p.tenant_id = t.id
-            ORDER BY p.name
-        ''').fetchall()
+            {where}
+            ORDER BY p.name{page_clause}
+        ''', tuple(params + page_params)).fetchall()
         
         pools = []
         for r in rows:
@@ -1433,7 +1754,15 @@ def list_pools() -> list[dict]:
             p_dict['utilization'] = round((used_ips / total_ips * 100), 1) if total_ips > 0 else 0
             pools.append(p_dict)
             
-        return pools
+        if page is None:
+            return pools
+        return {
+            'items': pools,
+            'total': total,
+            'page': safe_page,
+            'page_size': safe_page_size,
+            'total_pages': max(1, (total + safe_page_size - 1) // safe_page_size),
+        }
     finally:
         conn.close()
 
@@ -1512,10 +1841,31 @@ def delete_pool(pool_id: str) -> bool:
 # VIP CRUD
 # ══════════════════════════════════════════════════════════
 
-def list_vips() -> list[dict]:
+def list_vips(*, q: str = '', vip_type: str = '', status: str = '', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
     conn = get_db_connection()
     try:
-        rows = conn.execute('''
+        clauses: list[str] = []
+        params: list[str] = []
+        if q.strip():
+            clauses.append("(LOWER(vip.address) LIKE ? OR LOWER(COALESCE(vip.description, '')) LIKE ? OR LOWER(COALESCE(vip.real_servers, '')) LIKE ?)")
+            fuzzy = f"%{q.strip().lower()}%"
+            params.extend([fuzzy, fuzzy, fuzzy])
+        if vip_type and vip_type.lower() != 'all':
+            clauses.append("LOWER(COALESCE(vip.vip_type, '')) = ?")
+            params.append(vip_type.lower())
+        if status and status.lower() != 'all':
+            clauses.append("LOWER(COALESCE(vip.status, '')) = ?")
+            params.append(status.lower())
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
+        count_row = conn.execute(
+            f'''SELECT COUNT(*) AS total FROM ipam_vips vip{where}''', tuple(params)
+        ).fetchone()
+        total = int(count_row['total'] or 0) if count_row else 0
+        safe_page = max(int(page or 1), 1)
+        safe_page_size = min(max(int(page_size or 20), 1), 100)
+        page_clause = '' if page is None else ' LIMIT ? OFFSET ?'
+        page_params = [] if page is None else [safe_page_size, (safe_page - 1) * safe_page_size]
+        rows = conn.execute(f'''
             SELECT vip.*, d.hostname AS device_name,
                    bd.hostname AS backup_device_name,
                    t.name AS tenant_name
@@ -1523,9 +1873,13 @@ def list_vips() -> list[dict]:
             LEFT JOIN devices d ON vip.device_id = d.id
             LEFT JOIN devices bd ON vip.backup_device_id = bd.id
             LEFT JOIN tenants t ON vip.tenant_id = t.id
-            ORDER BY vip.address
-        ''').fetchall()
-        return [dict(r) for r in rows]
+            {where}
+            ORDER BY vip.address{page_clause}
+        ''', tuple(params + page_params)).fetchall()
+        items = [dict(r) for r in rows]
+        if page is None:
+            return items
+        return {'items': items, 'total': total, 'page': safe_page, 'page_size': safe_page_size, 'total_pages': max(1, (total + safe_page_size - 1) // safe_page_size)}
     finally:
         conn.close()
 
@@ -1626,11 +1980,30 @@ def delete_vip(vip_id: str) -> bool:
 # DHCP Lease CRUD
 # ══════════════════════════════════════════════════════════
 
-def list_leases() -> list[dict]:
+def list_leases(*, q: str = '', state: str = '', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
     conn = get_db_connection()
     try:
-        rows = conn.execute('SELECT * FROM ipam_dhcp_leases ORDER BY address').fetchall()
-        return [dict(r) for r in rows]
+        clauses: list[str] = []
+        params: list[str] = []
+        if q.strip():
+            clauses.append("(LOWER(address) LIKE ? OR LOWER(COALESCE(mac_address, '')) LIKE ? OR LOWER(COALESCE(hostname, '')) LIKE ? OR LOWER(COALESCE(dhcp_server, '')) LIKE ?)")
+            fuzzy = f"%{q.strip().lower()}%"
+            params.extend([fuzzy] * 4)
+        if state and state.lower() != 'all':
+            clauses.append("LOWER(COALESCE(lease_state, '')) = ?")
+            params.append(state.lower())
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
+        count_row = conn.execute(f'SELECT COUNT(*) AS total FROM ipam_dhcp_leases{where}', tuple(params)).fetchone()
+        total = int(count_row['total'] or 0) if count_row else 0
+        safe_page = max(int(page or 1), 1)
+        safe_page_size = min(max(int(page_size or 20), 1), 100)
+        page_clause = '' if page is None else ' LIMIT ? OFFSET ?'
+        page_params = [] if page is None else [safe_page_size, (safe_page - 1) * safe_page_size]
+        rows = conn.execute(f'SELECT * FROM ipam_dhcp_leases{where} ORDER BY address{page_clause}', tuple(params + page_params)).fetchall()
+        items = [dict(r) for r in rows]
+        if page is None:
+            return items
+        return {'items': items, 'total': total, 'page': safe_page, 'page_size': safe_page_size, 'total_pages': max(1, (total + safe_page_size - 1) // safe_page_size)}
     finally:
         conn.close()
 
@@ -1833,7 +2206,7 @@ def get_next_available_prefix(subnet_id: str, prefix_len: int) -> Optional[str]:
         conn.close()
 
 
-def get_ipam_reconciliation() -> dict:
+def get_ipam_reconciliation(*, active_tab: str = '', q: str = '', page: int | None = None, page_size: int = 20) -> dict:
     """Compare documented IPAM records against discovered active hosts in network_endpoints.
     Detect:
       - undocumented_endpoints: present in network_endpoints (is_active=1) but NOT in ip_addresses.
@@ -1878,9 +2251,13 @@ def get_ipam_reconciliation() -> dict:
         ''').fetchall()
         
         endpoint_rows = conn.execute('''
-            SELECT id, ip, mac, hostname, vendor, switch_id, switch_port, vlan, vrf, site, last_seen
-            FROM network_endpoints
-            WHERE is_active = 1 AND ip IS NOT NULL AND ip != ''
+            SELECT ne.id, ne.ip, ne.mac, ne.hostname, ne.vendor,
+                   ne.switch_id, ne.switch_port, ne.vlan, ne.vrf, ne.site,
+                   ne.last_seen, ne.source_type, ne.confidence,
+                   COALESCE(NULLIF(d.hostname, ''), ne.switch_id) AS switch_name
+            FROM network_endpoints ne
+            LEFT JOIN devices d ON d.id = ne.switch_id
+            WHERE ne.is_active = 1 AND ne.ip IS NOT NULL AND ne.ip != ''
         ''').fetchall()
         
         def normalize_mac(mac_str: Optional[str]) -> str:
@@ -1904,11 +2281,14 @@ def get_ipam_reconciliation() -> dict:
                     'hostname': ep['hostname'] or '',
                     'vendor': ep['vendor'] or '',
                     'switch_id': ep['switch_id'] or '',
+                    'switch_name': ep['switch_name'] or ep['switch_id'] or '',
                     'switch_port': ep['switch_port'] or '',
                     'vlan': ep['vlan'] or '',
                     'vrf': ep['vrf'] or '',
                     'site': ep['site'] or '',
                     'last_seen': ep['last_seen'] or '',
+                    'source_type': ep['source_type'] or '',
+                    'confidence': ep['confidence'] or '',
                     'subnet_id': p['id'] if p else '',
                     'subnet_prefix': p['prefix'] if p else '',
                     'subnet_name': p['name'] if p else (p['prefix'] if p else '')
@@ -1965,7 +2345,7 @@ def get_ipam_reconciliation() -> dict:
                         'hostname_mismatch': hostname_mismatch
                     })
                     
-        return {
+        result = {
             'undocumented_endpoints': undocumented_endpoints,
             'stale_ip_addresses': stale_ip_addresses,
             'mismatched_endpoints': mismatched_endpoints,
@@ -1975,5 +2355,32 @@ def get_ipam_reconciliation() -> dict:
                 'total_mismatched': len(mismatched_endpoints)
             }
         }
+        if page is None:
+            return result
+
+        tab_map = {
+            'undocumented': 'undocumented_endpoints',
+            'stale': 'stale_ip_addresses',
+            'mismatched': 'mismatched_endpoints',
+        }
+        normalized_tab = tab_map.get(active_tab, active_tab if active_tab in result else 'undocumented_endpoints')
+        normalized_query = q.strip().lower()
+
+        def matches(item: dict) -> bool:
+            if not normalized_query:
+                return True
+            return normalized_query in ' '.join(str(value or '') for value in item.values()).lower()
+
+        all_items = [item for item in result[normalized_tab] if matches(item)]
+        safe_page = max(int(page or 1), 1)
+        safe_page_size = min(max(int(page_size or 20), 1), 100)
+        start = (safe_page - 1) * safe_page_size
+        result['undocumented_endpoints'] = all_items[start:start + safe_page_size] if normalized_tab == 'undocumented_endpoints' else []
+        result['stale_ip_addresses'] = all_items[start:start + safe_page_size] if normalized_tab == 'stale_ip_addresses' else []
+        result['mismatched_endpoints'] = all_items[start:start + safe_page_size] if normalized_tab == 'mismatched_endpoints' else []
+        result['result_total'] = len(all_items)
+        result['page'] = safe_page
+        result['page_size'] = safe_page_size
+        return result
     finally:
         conn.close()

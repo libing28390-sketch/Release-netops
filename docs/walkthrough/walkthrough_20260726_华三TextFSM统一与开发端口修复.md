@@ -7,7 +7,7 @@
 - 新保存的华三模板自动规范为 `hp_comware_*.textfsm`；现有 `h3c_comware_*.textfsm` 保留为兼容回退，不再作为新模板命名规范。
 - 增加/修复 `hp_comware` 的接口简表、VLAN、链路聚合和 IPv4 BGP 路由模板，覆盖 Comware V5/V7/V9 fixture。
 - 更新网络驱动 skill，固定华三 TextFSM 平台规则。
-- Windows 默认开发端口从保留的 `5150` 改为可配置的 `VITE_PORT`，默认 `5300`。`5150` 当前属于系统排除端口 `5124–5223`，没有可 kill 的监听进程。
+- Windows 默认开发端口从保留的 `5150` 改为可配置的 `VITE_PORT`，当前默认 `5400`。`5300` 后续被系统排除端口 `5241–5340` 覆盖，因此不再作为默认端口。
 
 ## 验证
 
@@ -16,5 +16,5 @@
 - `npm run lint`: passed。
 - `npm run build`: passed。
 - `skill-creator quick_validate.py .agents/skills/netops-network-drivers`: passed。
-- `npm run dev:frontend`: 已验证在 `0.0.0.0:5300` 监听成功。
+- `npm run dev:frontend`: 默认监听 `0.0.0.0:5400`；如需临时切换，可设置 `VITE_PORT`。
 - 全量 `pytest backend/tests -q` 在当前环境超过 300 秒未完成，已停止测试进程；未将其结果作为通过依据。

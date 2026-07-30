@@ -217,6 +217,8 @@ const AppMainContent: React.FC = () => {
     scheduleLoading,
     retentionDays,
     setRetentionDays,
+    retentionMaxPerDevice,
+    setRetentionMaxPerDevice,
     saveScheduleConfig,
     configSnapshots,
     handleRunBackupAllOnline,
@@ -228,6 +230,7 @@ const AppMainContent: React.FC = () => {
     diffFocusChangeIdx,
     diffOnlyChanges,
     diffShowFullBoth,
+    diffMode,
     renderedDiffLines,
     fullSideBySideRows,
     diffChangeBlocks,
@@ -242,6 +245,7 @@ const AppMainContent: React.FC = () => {
     jumpToDiff,
     setDiffOnlyChanges,
     setDiffShowFullBoth,
+    setDiffMode,
     setDiffBlockQuery,
     configTemplates,
     configVariableKeys,
@@ -358,11 +362,14 @@ const AppMainContent: React.FC = () => {
     topologyLinkStats,
     topologySearch,
     topologySiteFilter,
+    topologyTagFilter,
     topologyRoleFilter,
     topologyStatusFilter,
     topologyLinkStatusFilter,
     topologyProtocolFilter,
     topologySiteOptions,
+    topologyTagOptions,
+    topologyTagCandidateDevices,
     topologyRoleOptions,
     topologyVisibleDevices,
     topologyVisibleLinks,
@@ -384,6 +391,7 @@ const AppMainContent: React.FC = () => {
     handleExportMap,
     setTopologySearch,
     setTopologySiteFilter,
+    setTopologyTagFilter,
     setTopologyRoleFilter,
     setTopologyStatusFilter,
     setTopologyLinkStatusFilter,
@@ -475,6 +483,18 @@ const AppMainContent: React.FC = () => {
         </Suspense>
       )}
 
+      {activeTab === 'health' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <DeviceHealthTab
+            devices={devices}
+            overview={monitorOverview?.device_health_summary || null}
+            language={language}
+            onShowDetails={handleShowDetails}
+            onOpenMonitoring={() => navTo('/monitor/telemetry')}
+          />
+        </Suspense>
+      )}
+
       {activeTab === 'outbound-monitoring' && (
         <Suspense fallback={lazyPanelFallback}>
           <OutboundHealthPage />
@@ -485,6 +505,7 @@ const AppMainContent: React.FC = () => {
         <Suspense fallback={lazyPanelFallback}>
           <ServerMonitoring
             devices={devices}
+            hostResources={hostResources}
             language={language}
             showToast={showToast}
             isAuthenticated={isAuthenticated}
@@ -648,11 +669,14 @@ const AppMainContent: React.FC = () => {
             topologyLinkStats={topologyLinkStats}
             topologySearch={topologySearch}
             topologySiteFilter={topologySiteFilter}
+            topologyTagFilter={topologyTagFilter}
             topologyRoleFilter={topologyRoleFilter}
             topologyStatusFilter={topologyStatusFilter}
             topologyLinkStatusFilter={topologyLinkStatusFilter}
             topologyProtocolFilter={topologyProtocolFilter}
             topologySiteOptions={topologySiteOptions}
+            topologyTagOptions={topologyTagOptions}
+            topologyTagCandidateDevices={topologyTagCandidateDevices}
             topologyRoleOptions={topologyRoleOptions}
             topologyVisibleDevices={topologyVisibleDevices}
             topologyVisibleLinks={topologyVisibleLinks}
@@ -674,6 +698,7 @@ const AppMainContent: React.FC = () => {
             onExportMap={handleExportMap}
             onTopologySearchChange={setTopologySearch}
             onTopologySiteFilterChange={setTopologySiteFilter}
+            onTopologyTagFilterChange={setTopologyTagFilter}
             onTopologyRoleFilterChange={setTopologyRoleFilter}
             onTopologyStatusFilterChange={setTopologyStatusFilter}
             onTopologyLinkStatusFilterChange={setTopologyLinkStatusFilter}
@@ -683,11 +708,20 @@ const AppMainContent: React.FC = () => {
              onOpenWorkspace={(device) => {
                const workspaceUrl = `/access/workspace?device_id=${encodeURIComponent(device.id)}&auto=normal`;
                const workspaceWindow = window.open(workspaceUrl, '_blank', 'noopener,noreferrer');
-               if (!workspaceWindow) {
-                 // Popup blocking must not turn a successful click into a false
-                 // error. Continue in the current tab; the workspace will
-                 // create the session and redirect to the terminal normally.
-                 window.location.assign(workspaceUrl);
+               if (workspaceWindow) {
+                 workspaceWindow.focus();
+               } else {
+                 if (String(language) === 'zh') {
+                   showToast('浏览器阻止了新窗口，请允许本站弹出窗口后重试', 'info');
+                   return;
+                 }
+                 // Never replace the topology page when a popup is blocked.
+                 // Reusing the current tab made the topology view itself start
+                 // the terminal session and could result in two sessions.
+                 showToast(
+                   language === 'zh' ? '浏览器阻止了新窗口，请允许本站弹出窗口后重试' : 'The browser blocked the new window. Allow pop-ups for this site and retry.',
+                   'info',
+                 );
                }
              }}
              onOpenDeviceDetail={handleShowDetails}
@@ -695,7 +729,7 @@ const AppMainContent: React.FC = () => {
               if (selectedTopologyDevice) {
                 setMonitorSelectedDevice(selectedTopologyDevice);
                 const p = (selectedTopologyDevice.platform || '').toLowerCase();
-                const serverKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'server'];
+                const serverKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'windows', 'winrm', 'server'];
                 const isServer = serverKeywords.some((kw) => p.includes(kw)) ||
                                  (selectedTopologyDevice.device_category || '').toLowerCase().includes('server') ||
                                  (selectedTopologyDevice.role || '').toLowerCase().includes('server') ||
@@ -968,6 +1002,7 @@ const AppMainContent: React.FC = () => {
             scheduleCron={scheduleCron}
             scheduleLoading={scheduleLoading}
             retentionDays={retentionDays}
+            retentionMaxPerDevice={retentionMaxPerDevice}
             getVendorFromPlatform={(platform?: string) => {
               const p = (platform || '').toLowerCase();
               if (p.includes('cisco')) return 'Cisco';
@@ -980,6 +1015,7 @@ const AppMainContent: React.FC = () => {
             onToggleScheduleEnabled={() => setScheduleEnabled((v: boolean) => !v)}
             onCronChange={setScheduleCron}
             onRetentionDaysChange={setRetentionDays}
+            onRetentionMaxPerDeviceChange={setRetentionMaxPerDevice}
             onSaveSchedule={saveScheduleConfig}
             onRunBackupNow={handleRunBackupAllOnline}
             showToast={showToast}
@@ -997,6 +1033,7 @@ const AppMainContent: React.FC = () => {
             diffFocusChangeIdx={diffFocusChangeIdx}
             diffOnlyChanges={diffOnlyChanges}
             diffShowFullBoth={diffShowFullBoth}
+            diffMode={diffMode}
             renderedDiffLines={renderedDiffLines}
             fullSideBySideRows={fullSideBySideRows}
             diffChangeBlocks={diffChangeBlocks}
@@ -1007,6 +1044,7 @@ const AppMainContent: React.FC = () => {
             configDiffRight={configDiffRight}
             onToggleOnlyChanges={() => setDiffOnlyChanges((prev: boolean) => !prev)}
             onToggleFullBoth={() => setDiffShowFullBoth((prev: boolean) => !prev)}
+            onDiffModeChange={setDiffMode}
             onDiffBlockQueryChange={setDiffBlockQuery}
             onReset={handleResetDiffView}
             onSelectSnapshotPair={handleSelectSnapshotPair}
@@ -1168,7 +1206,11 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'ipam' && (
         <Suspense fallback={lazyPanelFallback}>
-          <IPAMManagementTab language={language} t={t} ipamPage={ipamPage} />
+          {ipamPage === 'locate' ? (
+            <IPLocatorPage language={language} t={t} mode="toolbox" />
+          ) : (
+            <IPAMManagementTab language={language} t={t} ipamPage={ipamPage} />
+          )}
         </Suspense>
       )}
 

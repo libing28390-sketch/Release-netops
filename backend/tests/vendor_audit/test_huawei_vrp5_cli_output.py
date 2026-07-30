@@ -128,6 +128,8 @@ def test_vrp5_sample_has_expected_records_and_alias_lookup():
 
     arp = smart_parse_cli(VRP5_OUTPUTS["display arp all"], "display arp all", "huawei_vrp")
     assert {row["IP_ADDRESS"] for row in arp["data"]} == {"10.253.10.1", "10.253.10.2"}
+    arp_by_ip = {row["IP_ADDRESS"]: row for row in arp["data"]}
+    assert arp_by_ip["10.253.10.1"]["VLAN_ID"] == "10"
 
     lldp = smart_parse_cli(VRP5_OUTPUTS["display lldp neighbor brief"], "display lldp neighbor brief", "huawei_vrp")
     assert lldp["data"][0]["NEIGHBOR_NAME"] == "LSW4"

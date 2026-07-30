@@ -1,5 +1,6 @@
 import React, { createContext, useContext, ReactNode } from 'react';
-import type { Device } from '../types';
+import type { Device, TagDefinition } from '../types';
+import type { TagFilterConfig } from '../components/TagConditionPicker';
 
 interface TopologyContextValue {
   setSelectedTopologyDeviceId: (id: string | null) => void;
@@ -21,11 +22,14 @@ interface TopologyContextValue {
   };
   topologySearch: string;
   topologySiteFilter: string;
+  topologyTagFilter: TagFilterConfig;
   topologyRoleFilter: string;
   topologyStatusFilter: 'all' | 'online' | 'offline' | 'pending';
   topologyLinkStatusFilter: 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
   topologyProtocolFilter: 'all' | 'lldp';
   topologySiteOptions: Array<{ id: string; name: string }>;
+  topologyTagOptions: TagDefinition[];
+  topologyTagCandidateDevices: Device[];
   topologyDiscoveryProgress: {
     id: string;
     status: string;
@@ -59,6 +63,7 @@ interface TopologyContextValue {
   handleExportMap: () => Promise<void>;
   setTopologySearch: (search: string) => void;
   setTopologySiteFilter: (site: string) => void;
+  setTopologyTagFilter: (conditions: TagFilterConfig) => void;
   setTopologyRoleFilter: (role: string) => void;
   setTopologyStatusFilter: (status: "pending" | "offline" | "online" | "all") => void;
   setTopologyLinkStatusFilter: (status: "all" | "up" | "degraded" | "down" | "stale" | "unknown") => void;

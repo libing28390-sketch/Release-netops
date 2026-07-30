@@ -106,8 +106,9 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
   const [addrViewMode, setAddrViewMode] = useState<'table' | 'card' | 'block'>('table');
   const [subnetGroupBy, setSubnetGroupBy] = useState<'none' | 'site'>('none');
   const [siteCollapsed, setSiteCollapsed] = useState<Record<string, boolean>>({});
-  const [subnetPageSizeOpt, setSubnetPageSizeOpt] = useState(10);
-  const [addrPageSizeOpt, setAddrPageSizeOpt] = useState(10);
+  const [subnetPageSizeOpt, setSubnetPageSizeOpt] = useState(20);
+  const [addrPageSizeOpt, setAddrPageSizeOpt] = useState(20);
+  const [addrTotal, setAddrTotal] = useState(0);
   const [overviewCollapsed, setOverviewCollapsed] = useState(true);
   const [compactSubnetList, setCompactSubnetList] = useState(false);
   const [subnetViewMode, setSubnetViewMode] = useState<'card' | 'table'>('table');
@@ -136,16 +137,27 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
     loadData();
   }, [loadData]);
 
-  const loadAddresses = async (subnet: Subnet) => {
+  const loadAddresses = async (subnet: Subnet, pageOverride = addrPage) => {
     setSelectedSubnet(subnet);
     try {
-      const r = await fetch(`/api/ipam/subnets/${subnet.id}/addresses`, { headers: authHeaders() });
-      if (r.ok) setAddresses(await r.json());
+      const params = new URLSearchParams({ q: addrSearch.trim(), status: addrStatusFilter, device_type: addrDeviceTypeFilter || 'all', page: String(pageOverride), page_size: String(addrPageSizeOpt) });
+      const r = await fetch(`/api/ipam/subnets/${subnet.id}/addresses?${params.toString()}`, { headers: authHeaders() });
+      if (r.ok) {
+        const payload = await r.json();
+        const data = payload?.data && !Array.isArray(payload.data) ? payload.data : payload;
+        if (Array.isArray(data)) { setAddresses(data); setAddrTotal(data.length); }
+        else { setAddresses(Array.isArray(data?.items) ? data.items : []); setAddrTotal(Number(data?.total || 0)); }
+      }
       else setApiError(`加载地址失败: ${r.status}`);
     } catch (e) {
       setApiError(`网络错误: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
+
+  useEffect(() => {
+    if (selectedSubnet) void loadAddresses(selectedSubnet, addrPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSubnet, addrPage, addrPageSizeOpt, addrSearch, addrStatusFilter, addrDeviceTypeFilter]);
 
   const handleAddSubnet = async () => {
     setApiError('');
@@ -432,9 +444,9 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
     return counts;
   }, [addresses]);
 
-  const addrTotalPages = Math.max(1, Math.ceil(filteredAddresses.length / addrPageSizeOpt));
+  const addrTotalPages = Math.max(1, Math.ceil(addrTotal / addrPageSizeOpt));
   const safeAddrPage = Math.min(addrPage, addrTotalPages);
-  const pagedAddresses = filteredAddresses.slice((safeAddrPage - 1) * addrPageSizeOpt, safeAddrPage * addrPageSizeOpt);
+  const pagedAddresses = filteredAddresses;
 
   const handleExport = () => {
     const zh = language === 'zh';
@@ -910,7 +922,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                     )}
                     {subnetViewMode === 'table' || selectedSubnet ? (
                       /* ── Subnet Table View (always table when detail is open) ── */
-                      <table className="w-full text-left border-collapse">
+                      <table className="nx-data-table text-left">
                         {!selectedSubnet && (
                           <thead>
                             <tr className="bg-black/[0.02] border-b border-black/5">
@@ -1512,7 +1524,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                           /* ── IP Block Map (Heatmap) ── */
                           <IPBlockMap language={language} blockMapData={blockMapData} onSelectAddress={openEditIP} />
                         ) : addrViewMode === 'table' ? (
-                          <table className="w-full text-left border-collapse">
+                          <table className="nx-data-table text-left">
                             <thead>
                               <tr className="bg-black/[0.01] border-b border-black/5">
                                 <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-widest text-black/40">
@@ -1695,7 +1707,7 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                         <div className="border-t border-black/5 flex-shrink-0">
                           <Pagination
                             currentPage={safeAddrPage}
-                            totalItems={filteredAddresses.length}
+                            totalItems={addrTotal}
                             itemsPerPage={addrPageSizeOpt}
                             onPageChange={setAddrPage}
                             onItemsPerPageChange={(v) => {

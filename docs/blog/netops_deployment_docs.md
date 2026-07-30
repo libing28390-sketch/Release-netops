@@ -37,7 +37,7 @@
 | 部署方式 | 适合场景 | 关键入口文件/目录 | 数据库选项 | 特点 |
 | :--- | :--- | :--- | :--- | :--- |
 | **Windows 图形化/一键部署** | 个人电脑、本地实验、Windows 裸机、小团队，希望零门槛一键双击运行。 | `NetOps.exe`, `start.bat`, `desktop/` | PostgreSQL 17 | **PySide6 premium 托盘及暗黑模式向导**。自动安装依赖及检测环境，未安装数据库时自动静默配置 PostgreSQL 17。 |
-| **Docker Compose 容器部署** | Linux 服务器、生产环境、云原生部署，希望隔离服务且易于维护。 | `docker-compose.yml`, `Dockerfile`, `scripts/deploy-docker.sh` | PostgreSQL 17 | **三容器架构一键拉起**。支持国内构建镜像源自动加速，内置 HTTPS 加密，卷级持久化。 |
+| **Docker Compose 容器部署** | Linux 服务器、生产环境、云原生部署，希望隔离服务且易于维护。 | `docker-compose.yml`, `Dockerfile`, `scripts/deploy-docker.sh` | PostgreSQL 17 | **三容器架构一键拉起**。支持在线构建，也支持镜像归档后离线导入，内置 HTTPS 加密和卷级持久化。 |
 | **Ubuntu 一键脚本部署** | Ubuntu 裸机服务器，想要以 Nginx 反向代理 + systemd 原生服务运行。 | `deploy-ubuntu.sh` | PostgreSQL | **Shell 脚本交互式向导**。自动化配置系统包、虚拟环境、SSL、systemd 服务以及 logrotate 等。 |
 
 ---
@@ -230,4 +230,3 @@ bash scripts/deploy-docker.sh reset-data --yes
 ```
 > [!CAUTION]
 > 重置操作是不可逆的，它会彻底删除 PostgreSQL 数据卷 `nexora-pgdata`。请谨慎在生产环境下操作。
-

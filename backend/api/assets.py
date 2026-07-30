@@ -109,11 +109,11 @@ _VENDOR_PLATFORM_RULES: tuple[tuple[str, set[str], str], ...] = (
     ('h3c', {
         'h3c', 'h3c_comware', 'h3c_comware9', 'hp_comware',
         'comware', 'comware5', 'comware7', 'comware9',
-    }, 'hp_comware'),
+    }, 'h3c_comware'),
     ('comware', {
         'h3c', 'h3c_comware', 'h3c_comware9', 'hp_comware',
         'comware', 'comware5', 'comware7', 'comware9',
-    }, 'hp_comware'),
+    }, 'h3c_comware'),
     ('arista', {'arista', 'arista_eos', 'eos'}, 'arista_eos'),
     ('juniper', {'juniper', 'juniper_junos', 'junos'}, 'juniper_junos'),
     ('ruijie', {'ruijie', 'ruijie_os', 'ruijie_rgos', 'rgos'}, 'ruijie_rgos'),
@@ -1077,6 +1077,7 @@ def list_assets(
     site_id: str = '',
     department: str = '',
     device_category: str = '',
+    lifecycle_status: str = '',
     status: str = 'all',
     device_role: str = '',
     tag_ids: str = '',
@@ -1105,6 +1106,13 @@ def list_assets(
         if device_category:
             conditions.append('pa.device_category = ?')
             params.append(device_category)
+        if lifecycle_status and lifecycle_status != 'all':
+            # Device onboarding is the authoritative lifecycle state for a
+            # linked device; standalone assets use their own lifecycle field.
+            conditions.append(
+                "COALESCE(NULLIF(d.lifecycle_status, ''), NULLIF(pa.lifecycle_status, ''), 'staging') = ?"
+            )
+            params.append(lifecycle_status)
         if status != 'all':
             if status in ('online', 'offline', 'pending'):
                 conditions.append(
@@ -1148,6 +1156,7 @@ def list_assets(
                 d.id AS device_id,
                 s.site_name,
                 s.site_code,
+                d.lifecycle_status AS device_lifecycle_status,
                 COALESCE(NULLIF(d.status, ''), CASE WHEN pa.status = 'active' THEN 'online' WHEN pa.status IN ('inactive', 'maintenance', 'decommissioned') THEN 'offline' ELSE 'pending' END) AS online_status,
                 COALESCE(NULLIF(pa.normal_username,''), d.normal_username, '') AS normal_username,
                 COALESCE(NULLIF(pa.admin_username,''),  d.admin_username,  '') AS admin_username,
@@ -1165,6 +1174,9 @@ def list_assets(
         items = []
         for r in rows:
             item = dict(r)
+            if item.get('device_lifecycle_status'):
+                item['lifecycle_status'] = item['device_lifecycle_status']
+            item.pop('device_lifecycle_status', None)
             for sensitive in ('password', 'normal_password', 'admin_password', 'enable_password'):
                 if sensitive in item:
                     item[f'{sensitive}_set'] = bool(item.get(sensitive))

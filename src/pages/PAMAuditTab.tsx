@@ -17,7 +17,8 @@ import {
   Wifi,
   WifiOff,
   AlertCircle,
-  Timer
+  Timer,
+  Info
 } from 'lucide-react';
 import CastPlayer from '../components/access/CastPlayer';
 import Pagination from '../components/Pagination';
@@ -42,6 +43,8 @@ interface PAMSession {
   /** Set to 1 when the underlying asset has been deleted; the session row
    *  itself is preserved for audit purposes (Plan A soft-delete). */
   archived?: number;
+  risk_level?: number | string;
+  risk_summary?: string;
 }
 
 const STATUS_CONFIG = {
@@ -59,8 +62,12 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [accessFilter, setAccessFilter] = useState('');
+  const [methodFilter, setMethodFilter] = useState('');
+  const [riskFilter, setRiskFilter] = useState('');
   const [showPlayback, setShowPlayback] = useState(false);
   const [selectedSession, setSelectedSession] = useState<PAMSession | null>(null);
+  const [detailsTarget, setDetailsTarget] = useState<PAMSession | null>(null);
   // Kill confirmation modal
   const [killTarget, setKillTarget] = useState<PAMSession | null>(null);
   const [isKilling, setIsKilling] = useState(false);
@@ -73,6 +80,11 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const [activeCnt, setActiveCnt] = useState(0);
   const [historyCnt, setHistoryCnt] = useState(0);
 
+  const authHeaders = useCallback(() => {
+    const token = localStorage.getItem('netops_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
+
   // Debounce the search box so we don't send a request per keystroke.
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 250);
@@ -82,14 +94,17 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const fetchSessions = useCallback(async () => {
     setLoading(true);
     try {
-      const statusFilter = activeTab === 'active' ? 'active' : '';
+      const statusFilter = activeTab === 'active' ? 'active' : 'history';
       const params = new URLSearchParams({
         status: statusFilter,
         page: String(page),
         page_size: String(pageSize),
       });
       if (debouncedSearch) params.set('search', debouncedSearch);
-      const res = await fetch(`/api/pam/sessions?${params.toString()}`);
+      if (accessFilter) params.set('access_level', accessFilter);
+      if (methodFilter) params.set('connect_method', methodFilter);
+      if (riskFilter) params.set('risk_level', riskFilter);
+      const res = await fetch(`/api/pam/sessions?${params.toString()}`, { headers: authHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.items) {
@@ -101,17 +116,14 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
     } finally {
       setLoading(false);
     }
-  }, [activeTab, page, pageSize, debouncedSearch, isZh, showToast]);
+  }, [accessFilter, activeTab, authHeaders, debouncedSearch, isZh, methodFilter, page, pageSize, riskFilter, showToast]);
 
   // Cheap badge counts — one tiny request each, parallel with the main list.
   const fetchCounts = useCallback(async () => {
     try {
       const [activeRes, historyRes] = await Promise.all([
-        fetch('/api/pam/sessions?status=active&page=1&page_size=1'),
-        // Closed sessions across all non-active states. We pass status=closed
-        // to bucket the most common case; the History tab's tab badge is a
-        // ballpark indicator, not a precise count, so this is acceptable.
-        fetch('/api/pam/sessions?status=closed&page=1&page_size=1'),
+        fetch('/api/pam/sessions?status=active&page=1&page_size=1', { headers: authHeaders() }),
+        fetch('/api/pam/sessions?status=history&page=1&page_size=1', { headers: authHeaders() }),
       ]);
       if (activeRes.ok) {
         const j = await activeRes.json();
@@ -122,7 +134,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
         setHistoryCnt(typeof j.total === 'number' ? j.total : 0);
       }
     } catch { /* ignore — badges are best-effort */ }
-  }, []);
+  }, [authHeaders]);
 
   useEffect(() => {
     fetchSessions();
@@ -155,7 +167,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
     if (!killTarget) return;
     setIsKilling(true);
     try {
-      const res = await fetch(`/api/pam/sessions/${killTarget.id}/kill`, { method: 'POST' });
+      const res = await fetch(`/api/pam/sessions/${killTarget.id}/kill`, { method: 'POST', headers: authHeaders() });
       if (res.ok) {
         showToast(isZh ? '会话已终止' : 'Session terminated', 'success');
         fetchSessions();
@@ -187,6 +199,29 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
     window.open(`/api/pam/sessions/${sessionId}/recording`, '_blank');
   };
 
+  const handleExport = async () => {
+    try {
+      const params = new URLSearchParams({
+        status: activeTab === 'active' ? 'active' : 'history',
+      });
+      if (debouncedSearch) params.set('search', debouncedSearch);
+      if (accessFilter) params.set('access_level', accessFilter);
+      if (methodFilter) params.set('connect_method', methodFilter);
+      if (riskFilter) params.set('risk_level', riskFilter);
+      const response = await fetch(`/api/pam/sessions/export.csv?${params.toString()}`, { headers: authHeaders() });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = `pam-sessions-${new Date().toISOString().slice(0, 10)}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(href);
+    } catch {
+      showToast(isZh ? '导出会话审计失败' : 'Failed to export session audit', 'error');
+    }
+  };
+
   const formatDuration = (sec: number) => {
     if (!sec || sec <= 0) return '—';
     const h = Math.floor(sec / 3600);
@@ -215,7 +250,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   // stranded on a page that no longer exists).
   useEffect(() => {
     setPage(1);
-  }, [activeTab, debouncedSearch]);
+  }, [accessFilter, activeTab, debouncedSearch, methodFilter, riskFilter]);
 
   // Clamp page if total items shrink (e.g. an active session just closed).
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -230,17 +265,26 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
         title={isZh ? 'PAM 受控会话审计' : 'PAM Session Audit'}
         subtitle={isZh ? '实时监控、强制断开及录制回放' : 'Real-time monitoring, termination & playback'}
         actions={
-          <button
-            onClick={fetchSessions}
-            className="p-2 hover:bg-slate-100 rounded-full transition-colors"
-            title={isZh ? '刷新' : 'Refresh'}
-          >
-            <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { void handleExport(); }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+            >
+              <Download className="h-4 w-4" />
+              {isZh ? '导出当前结果' : 'Export Results'}
+            </button>
+            <button
+              onClick={fetchSessions}
+              className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+              title={isZh ? '刷新' : 'Refresh'}
+            >
+              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         }
         extras={
           /* Tabs + Search */
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex p-1 bg-slate-100 rounded-lg gap-1">
               <button
                 onClick={() => setActiveTab('active')}
@@ -276,15 +320,32 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
               </button>
             </div>
 
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder={isZh ? '搜索设备、用户、IP...' : 'Search device, user, IP...'}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder={isZh ? '搜索设备、用户、IP...' : 'Search device, user, IP...'}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-lg text-sm focus:ring-2 focus:ring-cyan-500 w-64 transition-all outline-none"
+                />
+              </div>
+              <select value={accessFilter} onChange={event => setAccessFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-600 outline-none">
+                <option value="">{isZh ? '全部权限' : 'All access'}</option>
+                <option value="normal">{isZh ? '普通' : 'Normal'}</option>
+                <option value="admin">{isZh ? '特权' : 'Privileged'}</option>
+              </select>
+              <select value={methodFilter} onChange={event => setMethodFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-600 outline-none">
+                <option value="">{isZh ? '全部方式' : 'All methods'}</option>
+                <option value="web">{isZh ? '浏览器终端' : 'Browser'}</option>
+                <option value="local">{isZh ? '本地终端' : 'Local'}</option>
+              </select>
+              <select value={riskFilter} onChange={event => setRiskFilter(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-600 outline-none">
+                <option value="">{isZh ? '全部风险' : 'All risk'}</option>
+                <option value="risky">{isZh ? '存在风险' : 'Risky'}</option>
+                <option value="safe">{isZh ? '安全/未命中' : 'Safe'}</option>
+              </select>
             </div>
           </div>
         }
@@ -316,7 +377,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
               )}
             </div>
           ) : (
-            <table className="w-full text-left border-collapse">
+            <table className="nx-data-table text-left">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider w-28">{isZh ? '状态' : 'Status'}</th>
@@ -324,7 +385,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '请求者' : 'Requester'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '登录账号' : 'Login Account'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '权限级别' : 'Access Level'}</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '连接时间' : 'Connected At'}</th>
+                  <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '开始 / 完成时间' : 'Started / Completed'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">{isZh ? '时长' : 'Duration'}</th>
                   <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">{isZh ? '操作' : 'Actions'}</th>
                 </tr>
@@ -421,9 +482,12 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
 
                       {/* Connected at */}
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-1.5 text-sm text-slate-500">
+                        <div className="flex items-start gap-1.5 text-xs text-slate-500">
                           <Clock className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />
-                          {formatTime(s.connected_at || s.created_at)}
+                          <div>
+                            <span className="block">{formatTime(s.connected_at || s.created_at)}</span>
+                            {!isActive && <span className="mt-0.5 block text-[10px] text-slate-400">{isZh ? '完成 ' : 'Ended '}{formatTime(s.closed_at)}</span>}
+                          </div>
                         </div>
                       </td>
 
@@ -441,7 +505,14 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
 
                       {/* Actions */}
                       <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => setDetailsTarget(s)}
+                            className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
+                            title={isZh ? '查看详情' : 'View Details'}
+                          >
+                            <Info className="w-4 h-4" />
+                          </button>
                           {isActive ? (
                             <button
                               onClick={() => setKillTarget(s)}
@@ -505,7 +576,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           <div className="mt-2 flex items-center justify-end text-[11px] text-slate-400 px-2">
             <span className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              {isZh ? '每 8 秒自动刷新' : 'Auto-refresh every 8s'}
+              {isZh ? '每 15 秒自动刷新' : 'Auto-refresh every 15s'}
             </span>
           </div>
         )}
@@ -529,6 +600,45 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
           }}
           isZh={isZh}
         />
+      )}
+
+      {detailsTarget && (
+        <div className="fixed inset-0 z-[190] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={() => setDetailsTarget(null)}>
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl" onClick={event => event.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">{isZh ? '会话审计详情' : 'Session Audit Details'}</h3>
+                <p className="mt-1 font-mono text-[10px] text-slate-400">{detailsTarget.id}</p>
+              </div>
+              <button onClick={() => setDetailsTarget(null)} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100">×</button>
+            </div>
+            <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-3 text-xs">
+              {[
+                [isZh ? '设备' : 'Device', `${detailsTarget.asset_hostname || '—'} (${detailsTarget.target_ip || '—'})`],
+                [isZh ? '请求者' : 'Requester', detailsTarget.requester_username || '—'],
+                [isZh ? '登录账号' : 'Login account', detailsTarget.login_username || '—'],
+                [isZh ? '访问方式' : 'Method', detailsTarget.connect_method === 'local' ? (isZh ? '本地终端' : 'Local terminal') : (isZh ? '浏览器终端' : 'Browser terminal')],
+                [isZh ? '权限' : 'Access', detailsTarget.access_level === 'admin' ? (isZh ? '特权' : 'Privileged') : (isZh ? '普通' : 'Normal')],
+                [isZh ? '命令数' : 'Commands', String(detailsTarget.command_count || 0)],
+                [isZh ? '开始时间' : 'Started', formatTime(detailsTarget.connected_at || detailsTarget.created_at)],
+                [isZh ? '完成时间' : 'Completed', formatTime(detailsTarget.closed_at)],
+                [isZh ? '关闭原因' : 'Close reason', detailsTarget.close_reason || '—'],
+                [isZh ? '录像' : 'Recording', detailsTarget.recording_path ? (isZh ? '可用' : 'Available') : (isZh ? '无' : 'None')],
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</dt>
+                  <dd className="mt-1 break-words font-medium text-slate-700">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className={`mt-5 rounded-xl border px-4 py-3 text-xs ${
+              Number(detailsTarget.risk_level || 0) > 0 ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-slate-50 text-slate-600'
+            }`}>
+              <p className="font-bold">{isZh ? '风险分析' : 'Risk analysis'}</p>
+              <p className="mt-1">{detailsTarget.risk_summary || (isZh ? '未命中已知风险命令。' : 'No known risky commands matched.')}</p>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Kill Session Confirmation Modal ── */}

@@ -13,6 +13,7 @@ import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
 
 import Pagination from '../../components/Pagination';
+import { DataTable, DataTableFrame } from '../../components/DataTable';
 import PageHero from '../../components/PageHero';
 import TagFilterDropdown from '../../components/TagFilterDropdown';
 import { fetchAllPaginatedItems } from '../../utils/pagination';
@@ -90,7 +91,7 @@ const DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
   category_role: true,
   site: true,
   status: true,
-  tags: true,
+  tags: false,
   vendor: true,
   model: true,
   serial_number: true,
@@ -101,7 +102,7 @@ const DEFAULT_ASSET_COLUMNS: Record<AssetColumnKey, boolean> = {
 };
 
 const FIXED_ASSET_COLUMNS = new Set<AssetColumnKey>([
-  'hostname', 'category_role', 'site', 'status', 'tags', 'created_at', 'updated_at',
+  'hostname', 'category_role', 'site', 'status', 'created_at', 'updated_at',
 ]);
 
 const NETWORK_TEMPLATE_ROLES = new Set([
@@ -125,7 +126,7 @@ const normalizeAssetColumns = (columns: Partial<Record<AssetColumnKey, boolean>>
   return normalized;
 };
 
-const ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v2';
+const ASSET_COLUMNS_STORAGE_KEY = 'assets-dashboard-columns-v3';
 
 const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setActiveTab }) => {
   const { systemInfo } = useSystem();
@@ -138,7 +139,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const [summary, setSummary]           = useState<AssetSummary | null>(null);
   const [total, setTotal]               = useState(0);
   const [page, setPage]                 = useState(1);
-  const [pageSize, setPageSize]         = useState(10);
+  const [pageSize, setPageSize]         = useState(20);
   const [loading, setLoading]           = useState(true);
 
   const [search, setSearch]             = useState('');
@@ -311,6 +312,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       if (dcFilter !== 'all')     p.set('site_id', dcFilter);
       if (deptFilter !== 'all')   p.set('department', deptFilter);
       if (deviceCategoryFilter)   p.set('device_category', deviceCategoryFilter);
+      if (lifecycleFilter !== 'all') p.set('lifecycle_status', lifecycleFilter);
       if (tagFilter.length > 0)   p.set('tag_ids', tagFilter.join(','));
       const r = await fetch(`/api/assets?${p}`);
       if (r.ok) { const d = await r.json(); setAssets(d.items); setTotal(d.total); }
@@ -321,7 +323,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchSites(); }, [fetchSites]);
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
-  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, tagFilter, pageSize]);
+  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, lifecycleFilter, tagFilter, pageSize]);
 
   useEffect(() => {
     if (!drawerAsset) return;
@@ -1262,18 +1264,18 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         ? { label: zh ? '离线' : 'Offline', text: 'text-red-500', dot: 'bg-red-500' }
         : { label: zh ? '待确认' : 'Pending', text: 'text-amber-600', dot: 'bg-amber-400' };
     switch (column) {
-      case 'hostname': return <><p className="font-semibold text-[11px] text-black/80 leading-tight truncate max-w-[180px]">{a.hostname || '—'}</p><p className="text-[9px] text-black/20 font-mono truncate">{a.asset_tag || a.management_ip || a.serial_number || ''}</p></>;
-      case 'category_role': return <><span className="inline-flex items-center gap-1 text-[10px] text-cyan-600">{a.asset_type === 'server' ? <Server size={9} /> : <Router size={9} />}{typeDisplay(a)}</span><span className="block text-[9px] text-black/35 truncate max-w-[120px]">{categoryDisplay(a)}{a.device_role ? ` / ${a.device_role}` : ''}</span></>;
-      case 'site': return <span className="text-[10px] text-black/45 truncate max-w-[100px] block">{a.site_name || a.site_code || a.site_id || '—'}{a.rack && <span className="text-black/25 block text-[9px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}</span>;
-      case 'status': return <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${onlineMeta.text}`}><span className={`h-1.5 w-1.5 rounded-full ${onlineMeta.dot}`} />{onlineMeta.label}</span>;
-      case 'tags': return a.tags?.length ? <div className="flex flex-wrap items-center gap-1 max-w-[180px]">{a.tags.slice(0, 3).map(tag => <span key={tag.id} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-medium whitespace-nowrap" style={{ color: tag.color || '#0891b2', backgroundColor: `${tag.color || '#0891b2'}12` }}><span className="h-1 w-1 rounded-full" style={{ backgroundColor: tag.color || '#0891b2' }} />{zh ? (tag.label_zh || tag.label) : tag.label}</span>)}{a.tags.length > 3 && <span className="text-[8px] text-black/25">+{a.tags.length - 3}</span>}</div> : <span className="text-black/15">—</span>;
-      case 'vendor': return <span className="text-[10px] text-black/55">{a.vendor || '—'}</span>;
-      case 'model': return <span className="text-[10px] text-black/45">{a.model || '—'}</span>;
-      case 'serial_number': return <span className="font-mono text-[10px] text-black/50">{a.serial_number || '—'}</span>;
-      case 'management_ip': return <span className="font-mono text-[10px] text-black/50">{a.management_ip || '—'}</span>;
-      case 'lifecycle': return rotatingAssetId === a.id ? <span className="inline-flex items-center gap-1 text-[10px] font-medium text-cyan-600"><Loader2 size={9} className="animate-spin" />{zh ? '上收中' : 'Rotating'}</span> : <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${a.lifecycle_status === 'production' ? 'text-emerald-600' : a.lifecycle_status === 'decommissioned' ? 'text-slate-400' : a.lifecycle_status === 'maintenance' ? 'text-amber-600' : 'text-blue-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${a.lifecycle_status === 'production' ? 'bg-emerald-500' : a.lifecycle_status === 'decommissioned' ? 'bg-slate-400' : a.lifecycle_status === 'maintenance' ? 'bg-amber-500' : 'bg-blue-400'}`} />{LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}</span>;
-      case 'created_at': return <span className="text-[10px] text-black/45 tabular-nums">{a.created_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
-      case 'updated_at': return <span className="text-[10px] text-black/45 tabular-nums">{a.updated_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
+      case 'hostname': return <><p className="font-semibold text-[12px] text-black/80 leading-tight truncate max-w-[180px]">{a.hostname || '—'}</p><p className="text-[10px] text-black/20 font-mono truncate">{a.asset_tag || a.management_ip || a.serial_number || ''}</p></>;
+      case 'category_role': return <><span className="inline-flex items-center gap-1 text-[11px] text-cyan-600">{a.asset_type === 'server' ? <Server size={10} /> : <Router size={10} />}{typeDisplay(a)}</span><span className="block text-[10px] text-black/35 truncate max-w-[120px]">{categoryDisplay(a)}{a.device_role ? ` / ${a.device_role}` : ''}</span></>;
+      case 'site': return <span className="text-[11px] text-black/45 truncate max-w-[100px] block">{a.site_name || a.site_code || a.site_id || '—'}{a.rack && <span className="text-black/25 block text-[10px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}</span>;
+      case 'status': return <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${onlineMeta.text}`}><span className={`h-1.5 w-1.5 rounded-full ${onlineMeta.dot}`} />{onlineMeta.label}</span>;
+      case 'tags': return a.tags?.length ? <div className="flex flex-wrap items-center gap-1 max-w-[180px]">{a.tags.slice(0, 3).map(tag => <span key={tag.id} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium whitespace-nowrap" style={{ color: tag.color || '#0891b2', backgroundColor: `${tag.color || '#0891b2'}12` }}><span className="h-1 w-1 rounded-full" style={{ backgroundColor: tag.color || '#0891b2' }} />{zh ? (tag.label_zh || tag.label) : tag.label}</span>)}{a.tags.length > 3 && <span className="text-[9px] text-black/25">+{a.tags.length - 3}</span>}</div> : <span className="text-black/15">—</span>;
+      case 'vendor': return <span className="text-[11px] text-black/55">{a.vendor || '—'}</span>;
+      case 'model': return <span className="text-[11px] text-black/45">{a.model || '—'}</span>;
+      case 'serial_number': return <span className="font-mono text-[11px] text-black/50">{a.serial_number || '—'}</span>;
+      case 'management_ip': return <span className="font-mono text-[11px] text-black/50">{a.management_ip || '—'}</span>;
+      case 'lifecycle': return rotatingAssetId === a.id ? <span className="inline-flex items-center gap-1 text-[11px] font-medium text-cyan-600"><Loader2 size={10} className="animate-spin" />{zh ? '上收中' : 'Rotating'}</span> : <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${a.lifecycle_status === 'production' ? 'text-emerald-600' : a.lifecycle_status === 'decommissioned' ? 'text-slate-400' : a.lifecycle_status === 'maintenance' ? 'text-amber-600' : 'text-blue-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${a.lifecycle_status === 'production' ? 'bg-emerald-500' : a.lifecycle_status === 'decommissioned' ? 'bg-slate-400' : a.lifecycle_status === 'maintenance' ? 'bg-amber-500' : 'bg-blue-400'}`} />{LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}</span>;
+      case 'created_at': return <span className="text-[11px] text-black/45 tabular-nums">{a.created_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
+      case 'updated_at': return <span className="text-[11px] text-black/45 tabular-nums">{a.updated_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
     }
   };
 
@@ -1568,15 +1570,15 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
             </AnimatePresence>
           </div>
 
-          <div className="overflow-x-auto">
-              <table className="w-full text-[11px]">
+          <DataTableFrame className="rounded-none border-0 shadow-none">
+              <DataTable className="text-[12px]">
                 <thead>
                   <tr className="border-b border-black/5 bg-black/[0.008]">
                     <th className="w-7 px-1.5 py-1.5">
                       <input type="checkbox" checked={selectedIds.size === displayAssets.length && displayAssets.length > 0} onChange={toggleAll} className="h-3 w-3 rounded border-black/12 accent-[#00bceb] cursor-pointer" />
                     </th>
                     {activeAssetColumns.map(column => (
-                      <th key={column.key} className={`text-left px-1.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-black/20 ${column.width}`}>
+                      <th key={column.key} className={`text-left px-1.5 py-2 text-[10px] font-bold uppercase tracking-wider text-black/35 ${column.width}`}>
                         {zh ? column.zh : column.en}
                       </th>
                     ))}
@@ -1623,7 +1625,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                           <input type="checkbox" checked={sel} onChange={() => toggle(a.id)} className="h-3 w-3 rounded border-black/12 accent-[#00bceb] cursor-pointer" />
                         </td>
                         {activeAssetColumns.map(column => (
-                          <td key={column.key} className="px-1.5 py-1">
+                        <td key={column.key} className="px-1.5 py-1.5 text-[12px]">
                             {renderAssetCell(column.key, a)}
                           </td>
                         ))}
@@ -1638,8 +1640,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     );
                   })}
                 </tbody>
-              </table>
-            </div>
+              </DataTable>
+            </DataTableFrame>
 
           {/* Legacy grouped view removed; assets are now shown only in the table view.
           {viewMode === 'group' && false && (

@@ -728,7 +728,7 @@ export const ChangeOrderEditor: React.FC<Props> = ({
             </div>
             {form.target_devices.length > 0 && (
               <div className="mt-2 overflow-x-auto rounded-3xl border border-black/10 bg-slate-50">
-                <table className="min-w-full text-sm text-left">
+                <table className="nx-data-table nx-data-table--compact text-sm text-left">
                   <thead>
                     <tr className="text-xs text-black/50 uppercase tracking-[0.04em]">
                       <th className="px-3 py-3">{zh ? 'IP地址' : 'IP Address'}</th>

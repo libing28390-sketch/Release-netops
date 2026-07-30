@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import type { User } from '../types';
 import { primaryActionBtnClass } from '../components/shared';
 import PageHero from '../components/PageHero';
+import { DataTable } from '../components/DataTable';
 import { validateUserField } from '../utils/userValidation';
 
 type UserFormState = {
@@ -92,7 +93,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
 
       <div className="bg-white rounded-2xl border border-black/5 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+        <DataTable className="text-left">
           <thead>
             <tr className="bg-black/[0.01] border-b border-black/5">
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('username')}</th>
@@ -169,7 +170,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
               </tr>
             ))}
           </tbody>
-        </table>
+        </DataTable>
         </div>
       </div>
 

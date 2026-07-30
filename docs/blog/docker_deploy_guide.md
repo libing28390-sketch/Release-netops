@@ -36,7 +36,7 @@
 
 ## 🛠️ Docker 5 分钟一键部署教程
 
-我们为您提供了官方托管仓库，支持 **Gitee（国内高速）** 与 **GitHub** 双链路下载：
+我们为您提供了两个代码托管地址，部署时任选其一即可：
 
 - **Gitee 地址**：`https://gitee.com/leerbon/netops.git`
 - **GitHub 地址**：`https://github.com/libing28390-sketch/Release-netops.git`
@@ -46,7 +46,7 @@
 在您的 Linux 宿主机终端执行以下命令拉取项目：
 
 ```bash
-# 二选一：国内服务器推荐使用 Gitee
+# 二选一：选择当前环境可以访问的代码仓库
 git clone https://gitee.com/leerbon/netops.git nexora-automation
 # 或者使用 GitHub
 # git clone https://github.com/libing28390-sketch/Release-netops.git nexora-automation
@@ -89,7 +89,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-> 💡 **构建提示**：首次启动会拉取 Alpine/Postgres 基础镜像，并在后端镜像构建阶段通过内嵌 Node 环境编译打包 React 前端代码。国内网络下已配置 npm 与 pip 加速镜像，预计 **3 ~ 5 分钟**即可自动部署完毕。
+> 💡 **构建提示**：首次启动会拉取 PostgreSQL 和 Nginx 基础镜像，并在后端镜像构建阶段编译 React 前端代码。如果生产服务器无法访问镜像仓库，请先在联网构建机执行 `bash scripts/deploy-docker.sh save-images <archive-path>`，再在目标服务器执行 `load-images` 和 `start-offline`。
 
 ---
 

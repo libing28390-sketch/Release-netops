@@ -5,10 +5,10 @@ import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
-  // Windows may reserve 5124-5223 for Hyper-V/WSL; the historical 5150
-  // default then fails with EACCES before Vite can start.  Keep an explicit
-  // override for deployments while using a non-reserved development port.
-  const frontendPort = Number(env.VITE_PORT || process.env.VITE_PORT || '5300');
+  // Windows/Hyper-V/WSL may reserve broad dynamic ranges. Keep the default
+  // outside the currently reserved 5241-5340 range; VITE_PORT remains an
+  // explicit override for deployments or another local environment.
+  const frontendPort = Number(env.VITE_PORT || process.env.VITE_PORT || '5400');
   return {
     plugins: [react(), tailwindcss()],
     define: {

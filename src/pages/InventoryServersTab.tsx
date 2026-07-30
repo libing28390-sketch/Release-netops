@@ -430,7 +430,7 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
       {/* ════ Table ════ */}
       <div className="rounded-xl border border-black/5 dark:border-white/8 bg-[var(--card-bg)] overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[860px]">
+          <table className="nx-data-table min-w-[860px] text-left">
             <thead>
               <tr className="bg-black/[.02] dark:bg-white/[.02] border-b border-black/5 dark:border-white/6">
                 <th className="px-3 py-2.5 w-9">

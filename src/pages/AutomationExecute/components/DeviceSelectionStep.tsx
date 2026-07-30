@@ -305,7 +305,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
               </div>
             ) : (
               <div className="rounded-xl border border-gray-100 bg-white overflow-hidden">
-                <table className="w-full text-left">
+                <table className="nx-data-table nx-data-table--compact text-left">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50/60">
                       <th className="w-10 px-3 py-2">

@@ -422,7 +422,6 @@ def _get_device(device_id: str) -> dict[str, Any] | None:
         device['username'] = ssh_credentials['username'] or device.get('username', '')
         device['password'] = ssh_credentials['password']
         device['enable_password'] = ssh_credentials['enable_password']
-        device['platform'] = normalize_topology_platform(device.get('platform'))
         return device
     finally:
         conn.close()

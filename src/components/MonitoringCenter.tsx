@@ -272,7 +272,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
 
   const isServerDevice = (d: any) => {
     if (!d) return false;
-    const serverKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'server'];
+    const serverKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'windows', 'winrm', 'server'];
     const p = (d.platform || '').toLowerCase();
     if (serverKeywords.some((kw) => p.includes(kw))) return true;
     // Fallback: some servers are mis-tagged with a network platform (e.g. cisco_ios)
@@ -954,7 +954,8 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
             <HealthSegment label={language === 'zh' ? '\u672a\u77e5' : 'Unknown'} count={unknownCount} total={healthTotal} color="#94a3b8" />
           </div>
 
-          {hostResources && (
+          {/* Host resource telemetry is now shown under Server Monitoring. */}
+          {false && hostResources && (
             <div className="flex items-center justify-between rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-5 py-3">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-text)]">{language === 'zh' ? `${systemInfo?.system_name || 'Nexora'} 宿主机` : `${systemInfo?.system_name || 'Nexora'} Host`}</p>
@@ -1023,9 +1024,11 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       </div>
 
       {/* SECTION 3: BOTTOM - TRENDS + EVENTS */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-1 gap-4">
 
-        {/* LEFT: Performance Trends */}
+        {/* Host resource telemetry is now shown under Server Monitoring. */}
+        {false && (
+        /* LEFT: Performance Trends */
         <div className="ops-surface rounded-2xl p-5 space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -1167,6 +1170,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
             </span>
           </div>
         </div>
+        )}
 
         {/* RIGHT: Real-time Event Stream */}
         <div className="ops-surface rounded-2xl p-5 space-y-3">

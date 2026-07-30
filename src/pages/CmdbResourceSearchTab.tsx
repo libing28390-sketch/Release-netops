@@ -372,7 +372,7 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
           <div className="flex items-center gap-2 text-[11px] text-slate-400"><TagIcon size={13} />{tagIds.length ? `${tagIds.length} ${zh ? '个标签条件' : 'tag conditions'}` : (zh ? '标签未筛选' : 'No tag filter')}</div>
         </div>
         <div className="min-h-[360px] overflow-x-auto">
-          <table className="w-full min-w-[1180px] text-left text-xs">
+          <table className="nx-data-table min-w-[1180px] text-left text-xs">
             <thead className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
               <tr>
                 <th className="px-4 py-3">{zh ? '设备资源' : 'Resource'}</th>

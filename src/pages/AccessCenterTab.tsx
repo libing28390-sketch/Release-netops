@@ -2,10 +2,11 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Search, Terminal, Monitor, Lock, Info, 
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight, Send, ChevronDown, UserCheck,
-  Database, Server, Cpu, Key, Globe, X, Eye, EyeOff
+  Database, Server, Cpu, Key, FolderTree, Globe, X, Eye, EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
+import { DataTable } from '../components/DataTable';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import DeviceMfaModal from './AccessCenterTab/components/DeviceMfaModal';
@@ -20,6 +21,76 @@ interface Device {
   management_port?: number;
   normal_username?: string;
   admin_username?: string;
+  site?: string;
+  site_name?: string;
+  site_id?: string;
+  device_category?: string;
+  role?: string;
+  vendor?: string;
+}
+
+type AccessTreeKind = 'root' | 'site' | 'type' | 'role';
+interface AccessTreeNode {
+  id: string;
+  label: string;
+  kind: AccessTreeKind;
+  count: number;
+  children: AccessTreeNode[];
+  deviceIds: string[];
+}
+
+function accessSiteOf(device: Device, isZh: boolean): { key: string; label: string } {
+  const label = device.site_name || device.site || (isZh ? '未分配站点' : 'Unassigned site');
+  return { key: device.site_id || label, label };
+}
+
+function accessTypeOf(device: Device, isZh: boolean): { key: string; label: string } {
+  const raw = `${device.device_category || ''} ${device.role || ''} ${device.platform || ''}`.toLowerCase();
+  if (/(server|linux|windows|unix)/.test(raw)) return { key: 'server', label: isZh ? '服务器' : 'Servers' };
+  if (/(firewall|fw|router|switch|network|f5|load.?balanc|wireless|ap)/.test(raw)) return { key: 'network', label: isZh ? '网络设备' : 'Network devices' };
+  return { key: 'other', label: isZh ? '其他资产' : 'Other assets' };
+}
+
+function accessRoleOf(device: Device, isZh: boolean): { key: string; label: string } {
+  const raw = `${device.role || ''} ${device.device_category || ''} ${device.platform || ''}`.toLowerCase();
+  if (/(firewall|fw|防火墙)/.test(raw)) return { key: 'firewall', label: isZh ? '防火墙' : 'Firewalls' };
+  if (/(router|路由)/.test(raw)) return { key: 'router', label: isZh ? '路由器' : 'Routers' };
+  if (/(load.?balanc|f5|负载)/.test(raw)) return { key: 'load_balancer', label: isZh ? '负载均衡' : 'Load balancers' };
+  if (/(switch|交换)/.test(raw)) return { key: 'switch', label: isZh ? '交换机' : 'Switches' };
+  if (/(server|linux|windows|unix)/.test(raw)) return { key: 'server', label: isZh ? '服务器' : 'Servers' };
+  return { key: 'other', label: isZh ? '其他角色' : 'Other roles' };
+}
+
+function buildAccessTree(devices: Device[], isZh: boolean): AccessTreeNode {
+  const root: AccessTreeNode = {
+    id: 'root',
+    label: isZh ? '全部资产' : 'All assets',
+    kind: 'root',
+    count: devices.length,
+    children: [],
+    deviceIds: devices.map((device) => device.id),
+  };
+  const findOrCreate = (parent: AccessTreeNode, id: string, label: string, kind: AccessTreeKind) => {
+    let node = parent.children.find((item) => item.id === id);
+    if (!node) {
+      node = { id, label, kind, count: 0, children: [], deviceIds: [] };
+      parent.children.push(node);
+    }
+    return node;
+  };
+  devices.forEach((device) => {
+    const site = accessSiteOf(device, isZh);
+    const type = accessTypeOf(device, isZh);
+    const role = accessRoleOf(device, isZh);
+    const siteNode = findOrCreate(root, `site:${site.key}`, site.label, 'site');
+    const typeNode = findOrCreate(siteNode, `${siteNode.id}:type:${type.key}`, type.label, 'type');
+    const roleNode = findOrCreate(typeNode, `${typeNode.id}:role:${role.key}`, role.label, 'role');
+    [siteNode, typeNode, roleNode].forEach((node) => {
+      node.count += 1;
+      node.deviceIds.push(device.id);
+    });
+  });
+  return root;
 }
 
 interface AccessCenterTabProps {
@@ -42,7 +113,10 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   }, []);
   const [activeProtocol, setActiveProtocol] = useState('ALL');
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
+  const [selectedTreeKey, setSelectedTreeKey] = useState('root');
+  const [expandedTreeKeys, setExpandedTreeKeys] = useState<Set<string>>(new Set(['root']));
+  const [accessTreeCollapsed, setAccessTreeCollapsed] = useState(false);
   
   // --- MFA Logic ---
   const [showMFAModal, setShowMFAModal] = useState(false);
@@ -97,7 +171,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     return 'SSH'; 
   };
 
-  const filteredDevices = useMemo(() => {
+  const baseFilteredDevices = useMemo(() => {
     const list = Array.isArray(devices) ? devices : [];
     const query = (searchQuery || '').toLowerCase();
     
@@ -111,12 +185,81 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     });
   }, [devices, searchQuery, activeProtocol]);
 
+  const accessTree = useMemo(
+    () => buildAccessTree(baseFilteredDevices, isZh),
+    [baseFilteredDevices, isZh],
+  );
+  const accessTreeIndex = useMemo(() => {
+    const index = new Map<string, AccessTreeNode>();
+    const visit = (node: AccessTreeNode) => {
+      index.set(node.id, node);
+      node.children.forEach(visit);
+    };
+    visit(accessTree);
+    return index;
+  }, [accessTree]);
+  const filteredDevices = useMemo(() => {
+    const node = accessTreeIndex.get(selectedTreeKey);
+    if (!node || selectedTreeKey === 'root') return baseFilteredDevices;
+    const ids = new Set(node.deviceIds);
+    return baseFilteredDevices.filter((device) => ids.has(device.id));
+  }, [accessTreeIndex, baseFilteredDevices, selectedTreeKey]);
+  const selectedTreeLabel = accessTreeIndex.get(selectedTreeKey)?.label || accessTree.label;
   const totalCount = filteredDevices.length;
   const totalPages = Math.ceil(totalCount / pageSize);
   const currentData = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredDevices.slice(start, start + pageSize);
   }, [filteredDevices, currentPage, pageSize]);
+
+  useEffect(() => {
+    if (selectedTreeKey !== 'root' && !accessTreeIndex.has(selectedTreeKey)) {
+      setSelectedTreeKey('root');
+      setCurrentPage(1);
+    }
+  }, [accessTreeIndex, selectedTreeKey]);
+
+  const toggleTreeNode = (node: AccessTreeNode) => {
+    if (!node.children.length) return;
+    setExpandedTreeKeys((current) => {
+      const next = new Set(current);
+      if (next.has(node.id)) next.delete(node.id);
+      else next.add(node.id);
+      return next;
+    });
+  };
+
+  const renderTreeNode = (node: AccessTreeNode, depth = 0): React.ReactNode => {
+    const expanded = expandedTreeKeys.has(node.id);
+    const selected = selectedTreeKey === node.id;
+    const Icon = node.kind === 'root' ? Database : node.kind === 'site' ? Server : node.kind === 'type' ? Cpu : Key;
+    return (
+      <div key={node.id}>
+        <div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 16}px` }}>
+          <button
+            type="button"
+            onClick={() => toggleTreeNode(node)}
+            className="flex h-7 w-6 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-cyan-50 hover:text-cyan-700"
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+          >
+            {node.children.length ? (expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="w-3" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setSelectedTreeKey(node.id); setCurrentPage(1); }}
+            className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${selected ? 'bg-cyan-50 font-semibold text-cyan-800' : 'text-slate-600 hover:bg-slate-50'}`}
+          >
+            <Icon size={14} className={selected ? 'text-cyan-600' : 'text-slate-400'} />
+            <span className="min-w-0 flex-1 truncate">{node.label}</span>
+            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500">{node.count}</span>
+          </button>
+        </div>
+        {expanded && node.children.length > 0 && (
+          <div>{node.children.map((child) => renderTreeNode(child, depth + 1))}</div>
+        )}
+      </div>
+    );
+  };
 
   // Reset all MFA-related state to a clean slate.
   const resetMFAState = () => {
@@ -514,8 +657,34 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
       {/* Table Section */}
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-        <div className="bg-white border border-slate-200 rounded-[2rem] overflow-hidden shadow-sm">
-          <table className="w-full text-left border-collapse">
+        <div className={`grid min-h-[calc(100vh-250px)] grid-cols-1 gap-4 ${accessTreeCollapsed ? 'xl:grid-cols-[56px_minmax(0,1fr)]' : 'xl:grid-cols-[290px_minmax(0,1fr)]'}`}>
+          <aside className={`relative rounded-2xl border border-slate-200 bg-white shadow-sm ${accessTreeCollapsed ? 'p-2' : 'p-3'}`}>
+            <div className={`mb-3 border-b border-slate-100 px-2 pb-3 ${accessTreeCollapsed ? 'hidden' : ''}`}>
+              <div className="text-sm font-bold text-slate-800">{isZh ? '资产分类树' : 'Asset tree'}</div>
+              <div className="mt-0.5 text-[11px] text-slate-400">{isZh ? '站点 → 类型 → 角色' : 'Site → type → role'}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAccessTreeCollapsed((current) => !current)}
+              className={`rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-cyan-50 hover:text-cyan-700 ${accessTreeCollapsed ? 'mx-auto block' : 'absolute right-3 top-3'}`}
+              title={accessTreeCollapsed ? (isZh ? '展开资产分类树' : 'Expand asset tree') : (isZh ? '折叠资产分类树' : 'Collapse asset tree')}
+              aria-label={accessTreeCollapsed ? (isZh ? '展开资产分类树' : 'Expand asset tree') : (isZh ? '折叠资产分类树' : 'Collapse asset tree')}
+            >
+              {accessTreeCollapsed ? <FolderTree size={15} /> : <ChevronRight size={15} className="rotate-180" />}
+            </button>
+            <div className={`max-h-[calc(100vh-320px)] overflow-y-auto ${accessTreeCollapsed ? 'hidden' : ''}`}>
+              {renderTreeNode(accessTree)}
+            </div>
+          </aside>
+          <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3 text-xs text-slate-500">
+              <Database size={14} className="text-cyan-600" />
+              <span>{isZh ? '当前分类' : 'Current branch'}:</span>
+              <span className="rounded-full bg-cyan-50 px-2.5 py-1 font-semibold text-cyan-700">{selectedTreeLabel}</span>
+              <span className="ml-auto tabular-nums">{totalCount} {isZh ? '台设备' : 'devices'}</span>
+            </div>
+            <div className="min-h-0 overflow-auto">
+              <DataTable className="text-left">
             <thead>
               <tr className="bg-slate-50/50 border-b border-slate-200">
                 <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">资产信息</th>
@@ -526,7 +695,13 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {currentData.map((dev) => (
+              {currentData.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-16 text-center text-sm text-slate-400">
+                    {isZh ? '当前分类暂无可访问设备' : 'No accessible devices in this branch'}
+                  </td>
+                </tr>
+              ) : currentData.map((dev) => (
                 <tr key={dev.id} className="hover:bg-cyan-50/30 transition-colors group">
                   <td className="px-8 py-5">
                     <div className="flex items-center gap-4">
@@ -586,8 +761,10 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
                 </tr>
               ))}
             </tbody>
-          </table>
+              </DataTable>
+            </div>
         </div>
+      </div>
       </div>
 
       {/* Pagination Bar */}

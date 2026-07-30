@@ -1,5 +1,19 @@
 import type { DiffLine } from '../types';
 
+export function normalizeConfigForDiff(content: string): string {
+  const volatilePatterns = [
+    /^\s*!?\s*(last configuration change|current configuration|time source is)/i,
+    /^\s*#\s*(last commit|generated at)/i,
+  ];
+  const lines = String(content || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/\s+$/, ''))
+    .filter((line) => !volatilePatterns.some((pattern) => pattern.test(line)));
+  return `${lines.join('\n').trim()}\n`;
+}
+
 /**
  * Compute a unified diff between two text contents using LCS dynamic programming.
  * Returns an array of DiffLine objects representing context, add, and remove operations.

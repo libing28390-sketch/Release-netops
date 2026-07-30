@@ -152,9 +152,22 @@ def compare_inspection_runs(
 
 @router.get('/inspections/items/all')
 def get_all_inspection_items(
+    q: str = Query('', description='Search inspection item fields'),
+    category: str = Query('', description='Filter by category'),
+    method: str = Query('', description='Filter by method'),
+    vendor: str = Query('', description='Filter by vendor'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     _user=require_role('Viewer'),
 ):
-    items = list_inspection_items()
+    items = list_inspection_items(
+        q=q,
+        category=category,
+        method=method,
+        vendor=vendor,
+        page=page,
+        page_size=page_size,
+    )
     return {'success': True, 'data': items, 'message': ''}
 
 @router.post('/inspections/items')

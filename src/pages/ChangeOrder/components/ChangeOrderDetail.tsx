@@ -194,6 +194,15 @@ export const ChangeOrderDetail: React.FC<Props> = ({
                       onConfirm: (id: string) => proceed({ assigned_final_approver_id: id })
                     });
                   }
+                } else if (action.status === 'implementing') {
+                  setActionPrompt({
+                    title: zh ? '实施前 MFA 再认证' : 'MFA re-authentication',
+                    placeholder: zh ? '输入身份验证器中的动态验证码' : 'Enter the code from your authenticator',
+                    value: '',
+                    required: true,
+                    sensitive: true,
+                    onConfirm: (val: string) => handleTransition(selectedOrder.id, action.status, { mfa_code: val })
+                  });
                 } else if (action.status === 'completed') {
                   setActionPrompt({
                     title: zh ? '请输入实施结果说明' : 'Result summary',

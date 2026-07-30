@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Tags, Plus, Search, X, Edit3, Trash2, RefreshCw, ChevronDown, ChevronRight, Hash,
+  Tags, Plus, Search, X, Edit3, Trash2, RefreshCw, Hash, ChevronDown, ChevronRight,
   Server, Shield, Cpu, Globe, Layers, Settings2, BarChart3, Check, AlertCircle
 } from 'lucide-react';
-import type { TagDefinition, TagCategory } from '../types';
+import type { TagDefinition, TagCategory, TagStatistics } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
 import PageHero from '../components/PageHero';
+import Pagination from '../components/Pagination';
+import { DataTable } from '../components/DataTable';
 
 /* ─── Props ─── */
 interface TagManagementTabProps {
@@ -49,8 +51,12 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<TagCategory | ''>('');
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(CATEGORIES));
-  const [stats, setStats] = useState<{ total_definitions: number; total_assignments: number; tagged_devices: number; categories: Record<string, number> } | null>(null);
+  const [usageFilter, setUsageFilter] = useState<'all' | 'used' | 'unused'>('all');
+  const [activityFilter, setActivityFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [categoryPanelCollapsed, setCategoryPanelCollapsed] = useState(false);
+  const [stats, setStats] = useState<TagStatistics | null>(null);
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
@@ -67,6 +73,9 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
   });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const normalizedTagCode = formData.code.trim().toLowerCase();
+  const tagCodeIsValid = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/.test(normalizedTagCode)
+    && normalizedTagCode.length <= 96;
 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<TagDefinition | null>(null);
@@ -104,39 +113,44 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
 
   /* ── Filtered + grouped ── */
   const filtered = useMemo(() => {
-    if (!search.trim()) return tags;
-    const q = search.toLowerCase();
-    return tags.filter(
-      t => t.code.toLowerCase().includes(q) ||
-           t.label.toLowerCase().includes(q) ||
-           (t.label_zh && t.label_zh.toLowerCase().includes(q)) ||
-           (t.description && t.description.toLowerCase().includes(q))
-    );
-  }, [tags, search]);
+    const q = search.trim().toLowerCase();
+    return tags
+      .filter(tag => {
+        if (usageFilter === 'used' && (tag.assignment_count || 0) === 0) return false;
+        if (usageFilter === 'unused' && (tag.assignment_count || 0) > 0) return false;
+        if (activityFilter === 'active' && tag.is_active === 0) return false;
+        if (activityFilter === 'inactive' && tag.is_active !== 0) return false;
+        if (!q) return true;
+        return tag.code.toLowerCase().includes(q) ||
+          tag.label.toLowerCase().includes(q) ||
+          (tag.label_zh && tag.label_zh.toLowerCase().includes(q)) ||
+          (tag.description && tag.description.toLowerCase().includes(q));
+      })
+      .sort((a, b) => (a.sort_order - b.sort_order) || a.code.localeCompare(b.code));
+  }, [activityFilter, search, tags, usageFilter]);
 
-  const grouped = useMemo(() => {
-    const m: Record<string, TagDefinition[]> = {};
-    for (const cat of CATEGORIES) m[cat] = [];
-    for (const tag of filtered) {
-      const cat = tag.category || 'business';
-      if (!m[cat]) m[cat] = [];
-      m[cat].push(tag);
-    }
-    // sort each group by sort_order, then value
-    for (const arr of Object.values(m)) {
-      arr.sort((a, b) => (a.sort_order - b.sort_order) || a.code.localeCompare(b.code));
-    }
-    return m;
-  }, [filtered]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const paginatedTags = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, pageSize, safePage]);
 
-  /* ── Toggle category expand ── */
-  const toggleCategory = (cat: string) => {
-    setExpandedCategories(prev => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat);
-      else next.add(cat);
-      return next;
-    });
+  useEffect(() => {
+    setPage(1);
+  }, [activityFilter, categoryFilter, search, usageFilter, pageSize]);
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+
+  const hasFilters = Boolean(search || categoryFilter || usageFilter !== 'all' || activityFilter !== 'all');
+
+  const clearFilters = () => {
+    setSearch('');
+    setCategoryFilter('');
+    setUsageFilter('all');
+    setActivityFilter('all');
   };
 
   /* ── Modal: open for create / edit ── */
@@ -167,6 +181,12 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
   const handleSave = async () => {
     if (!formData.code.trim() || !formData.label.trim()) {
       setFormError(zh ? '标签代码和英文标签不能为空' : 'Code and label are required');
+      return;
+    }
+    if (!tagCodeIsValid) {
+      setFormError(zh
+        ? '标签代码必须以小写字母开头，仅可使用小写字母、数字、点、短横线或下划线，最长 96 个字符'
+        : 'Code must start with a lowercase letter and contain only lowercase letters, digits, dot, dash, or underscore (max 96 characters)');
       return;
     }
     setSaving(true);
@@ -263,19 +283,16 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
         }
       />
 
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
-      {/* ── Header card with stats ── */}
-      <div className="rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)]">
-        {/* ── Stats strip ── */}
+      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
         {stats && (
-          <div className="grid grid-cols-2 gap-px bg-black/[0.02] sm:grid-cols-4 rounded-t-[28px] overflow-hidden">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
-              { label: zh ? '标签定义' : 'Definitions', value: stats.total_definitions, color: 'text-[#06b6d4]' },
-              { label: zh ? '标签分配' : 'Assignments', value: stats.total_assignments, color: 'text-violet-600' },
+              { label: zh ? '标签总数' : 'Total Tags', value: stats.total_definitions, color: 'text-[#06b6d4]' },
+              { label: zh ? '已使用标签' : 'Used Tags', value: stats.used_definitions, color: 'text-violet-600' },
+              { label: zh ? '未使用标签' : 'Unused Tags', value: stats.unused_definitions, color: 'text-amber-600' },
               { label: zh ? '已标记设备' : 'Tagged Devices', value: stats.tagged_devices, color: 'text-emerald-600' },
-              { label: zh ? '标签分类' : 'Categories', value: Object.keys(stats.categories).length, color: 'text-amber-600' },
             ].map((s, i) => (
-              <div key={i} className="flex items-center gap-3 bg-white px-5 py-3.5">
+              <div key={i} className="flex items-center gap-3 rounded-2xl border border-black/5 bg-white px-5 py-3.5 shadow-sm">
                 <BarChart3 size={16} className={s.color} />
                 <div>
                   <p className="text-xs text-black/40">{s.label}</p>
@@ -286,119 +303,148 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
           </div>
         )}
 
-        {/* ── Search + filter row ── */}
-        <div className="flex flex-col gap-3 px-5 py-4 border-t border-black/5 sm:flex-row sm:items-center">
-          <label className="relative min-w-[240px] flex-1">
-            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder={zh ? '搜索标签名称、值或描述...' : 'Search tag name, value or description...'}
-              className="w-full rounded-xl border border-black/10 bg-white py-3 pl-9 pr-9 text-sm text-[#164e63] outline-none placeholder:text-black/30 focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-            />
-            {search && (
-              <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
-                <X size={14} />
-              </button>
-            )}
-          </label>
-
-          {/* Category filter chips */}
-          <div className="flex flex-wrap gap-1.5">
+        <div className={`grid grid-cols-1 items-start gap-4 ${categoryPanelCollapsed ? 'lg:grid-cols-[52px_minmax(0,1fr)]' : 'lg:grid-cols-[220px_minmax(0,1fr)]'}`}>
+          <aside className="h-fit rounded-2xl border border-black/5 bg-white p-3 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setCategoryPanelCollapsed(collapsed => !collapsed)}
+              className={`flex w-full items-center rounded-xl py-2 text-xs font-bold text-[#164e63] transition-colors hover:bg-[#ecfeff] ${categoryPanelCollapsed ? 'justify-center px-0' : 'justify-between px-2'}`}
+              title={categoryPanelCollapsed ? (zh ? '展开标签分类' : 'Expand categories') : (zh ? '折叠标签分类' : 'Collapse categories')}
+              aria-label={categoryPanelCollapsed ? (zh ? '展开标签分类' : 'Expand categories') : (zh ? '折叠标签分类' : 'Collapse categories')}
+            >
+              <span className="flex items-center gap-2"><Tags size={14} /><span className={categoryPanelCollapsed ? 'hidden' : ''}>{zh ? '标签分类' : 'Categories'}</span></span>
+              {categoryPanelCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+            </button>
+            {!categoryPanelCollapsed && <>
             <button
               onClick={() => setCategoryFilter('')}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-all ${
-                categoryFilter === '' ? 'border-[#06b6d4] bg-[#ecfeff] text-[#0e7490]' : 'border-black/10 bg-white text-black/50 hover:border-black/20'
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-semibold transition-all ${
+                categoryFilter === '' ? 'bg-[#ecfeff] text-[#0e7490]' : 'text-black/55 hover:bg-black/[0.025]'
               }`}
             >
-              {zh ? '全部' : 'All'}
+              <span className="flex items-center gap-2"><Tags size={14} />{zh ? '全部标签' : 'All Tags'}</span>
+              <span className="tabular-nums text-[11px]">{stats?.total_definitions ?? tags.length}</span>
             </button>
             {CATEGORIES.map(cat => {
               const meta = CATEGORY_META[cat];
               const catLabel = TAG_CATEGORY_LABELS[cat];
+              const CatIcon = meta?.icon || Tags;
               return (
                 <button
                   key={cat}
-                  onClick={() => setCategoryFilter(categoryFilter === cat ? '' : cat)}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-all ${
-                    categoryFilter === cat ? 'border-[#06b6d4] bg-[#ecfeff] text-[#0e7490]' : 'border-black/10 bg-white text-black/50 hover:border-black/20'
+                  onClick={() => setCategoryFilter(cat)}
+                  className={`mt-0.5 flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs font-semibold transition-all ${
+                    categoryFilter === cat ? 'bg-[#ecfeff] text-[#0e7490]' : 'text-black/55 hover:bg-black/[0.025]'
                   }`}
                 >
-                  {meta && <meta.icon size={12} />}
-                  {zh ? catLabel?.zh : catLabel?.en}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <CatIcon size={14} className={meta?.color} />
+                    <span className="truncate">{zh ? catLabel?.zh : catLabel?.en}</span>
+                  </span>
+                  <span className="tabular-nums text-[11px]">{stats?.categories[cat] ?? 0}</span>
                 </button>
               );
             })}
-          </div>
+            </>}
+          </aside>
 
-          <span className="ml-auto whitespace-nowrap rounded-xl bg-[#f0f9ff] px-3 py-2.5 text-sm font-medium text-[#164e63]">
-            {zh ? `${filtered.length} 个标签` : `${filtered.length} tags`}
-          </span>
-        </div>
-      </div>
-
-      {/* ── Category groups ── */}
-      <div className="space-y-3">
-        {CATEGORIES.map(cat => {
-          const items = grouped[cat] || [];
-          if (categoryFilter && categoryFilter !== cat) return null;
-          if (items.length === 0 && categoryFilter !== cat) return null;
-          const meta = CATEGORY_META[cat] || CATEGORY_META.business;
-          const catLabel = TAG_CATEGORY_LABELS[cat];
-          const isExpanded = expandedCategories.has(cat);
-          const CatIcon = meta.icon;
-
-          return (
-            <div key={cat} className="rounded-2xl border border-black/5 bg-white shadow-sm overflow-hidden">
-              {/* category header */}
-              <button
-                onClick={() => toggleCategory(cat)}
-                className="flex w-full items-center gap-3 px-5 py-3.5 text-left transition-colors hover:bg-black/[0.015]"
+          <section className="min-w-0 overflow-hidden rounded-2xl border border-black/5 bg-white shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-black/5 p-4 xl:flex-row xl:items-center">
+              <label className="relative min-w-[240px] flex-1">
+                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder={zh ? '搜索名称、代码或描述...' : 'Search name, code, or description...'}
+                  className="w-full rounded-xl border border-black/10 bg-white py-2.5 pl-9 pr-9 text-sm text-[#164e63] outline-none placeholder:text-black/30 focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10"
+                />
+                {search && (
+                  <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60">
+                    <X size={14} />
+                  </button>
+                )}
+              </label>
+              <select
+                value={usageFilter}
+                onChange={e => setUsageFilter(e.target.value as typeof usageFilter)}
+                className="rounded-xl border border-black/10 bg-white px-3 py-2.5 text-xs font-semibold text-[#164e63] outline-none"
+                aria-label={zh ? '使用状态' : 'Usage status'}
               >
-                <span className={`flex h-8 w-8 items-center justify-center rounded-lg border ${meta.bg}`}>
-                  <CatIcon size={16} className={meta.color} />
-                </span>
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-[#164e63]">
-                    {zh ? catLabel?.zh : catLabel?.en}
-                  </p>
-                  <p className="text-[11px] text-black/40">{items.length} {zh ? '个标签' : 'tags'}</p>
-                </div>
-                {isExpanded ? <ChevronDown size={16} className="text-black/30" /> : <ChevronRight size={16} className="text-black/30" />}
-              </button>
+                <option value="all">{zh ? '全部使用状态' : 'All usage states'}</option>
+                <option value="used">{zh ? '已使用' : 'Used'}</option>
+                <option value="unused">{zh ? '未使用' : 'Unused'}</option>
+              </select>
+              <select
+                value={activityFilter}
+                onChange={e => setActivityFilter(e.target.value as typeof activityFilter)}
+                className="rounded-xl border border-black/10 bg-white px-3 py-2.5 text-xs font-semibold text-[#164e63] outline-none"
+                aria-label={zh ? '启用状态' : 'Activity status'}
+              >
+                <option value="all">{zh ? '全部启用状态' : 'All activity states'}</option>
+                <option value="active">{zh ? '已启用' : 'Active'}</option>
+                <option value="inactive">{zh ? '已停用' : 'Inactive'}</option>
+              </select>
+              {hasFilters && (
+                <button onClick={clearFilters} className="h-10 rounded-xl px-3 text-xs font-semibold text-[#0891b2] hover:bg-[#ecfeff]">
+                  {zh ? '清空筛选' : 'Clear filters'}
+                </button>
+              )}
+              <span className="whitespace-nowrap rounded-xl bg-[#f0f9ff] px-3 py-2.5 text-xs font-semibold text-[#164e63]">
+                {zh ? `${filtered.length} 个标签` : `${filtered.length} tags`}
+              </span>
+            </div>
 
-              {/* tag list */}
-              {isExpanded && (
-                <div className="border-t border-black/5 px-5 py-3">
-                  {items.length === 0 ? (
-                    <p className="py-4 text-center text-xs text-black/30">
-                      {zh ? '暂无标签' : 'No tags in this category'}
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                      {items.map(tag => (
-                        <TagCard
-                          key={tag.id}
-                          tag={tag}
-                          zh={zh}
-                          onEdit={canManageTags && !tag.is_system ? () => openEditModal(tag) : undefined}
-                          onDelete={canManageTags ? () => setDeleteTarget(tag) : undefined}
-                        />
-                      ))}
-                    </div>
-                  )}
+            <div className="overflow-x-auto">
+              <DataTable className="min-w-[820px] text-left">
+                <thead className="bg-slate-50/80 text-[11px] font-bold uppercase tracking-wider text-black/40">
+                  <tr>
+                    <th className="px-4 py-3">{zh ? '标签' : 'Tag'}</th>
+                    <th className="px-4 py-3">{zh ? '代码' : 'Code'}</th>
+                    <th className="px-4 py-3">{zh ? '分类' : 'Category'}</th>
+                    <th className="px-4 py-3">{zh ? '来源' : 'Source'}</th>
+                    <th className="px-4 py-3 text-right">{zh ? '分配数' : 'Assignments'}</th>
+                    <th className="px-4 py-3">{zh ? '状态' : 'Status'}</th>
+                    <th className="px-4 py-3 text-right">{zh ? '操作' : 'Actions'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/5">
+                  {!loading && paginatedTags.map(tag => (
+                    <TagTableRow
+                      key={tag.id}
+                      tag={tag}
+                      zh={zh}
+                      canManage={canManageTags}
+                      onEdit={() => openEditModal(tag)}
+                      onDelete={() => setDeleteTarget(tag)}
+                    />
+                  ))}
+                </tbody>
+              </DataTable>
+              {loading && (
+                <div className="flex items-center justify-center py-16">
+                  <RefreshCw size={20} className="animate-spin text-[#06b6d4]" />
+                </div>
+              )}
+              {!loading && filtered.length === 0 && (
+                <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+                  <Tags size={28} className="text-black/20" />
+                  <p className="text-sm font-semibold text-black/45">{zh ? '没有符合条件的标签' : 'No matching tags'}</p>
+                  <p className="text-xs text-black/30">{zh ? '可调整筛选条件，或清空筛选查看全部标签。' : 'Adjust the filters or clear them to view all tags.'}</p>
                 </div>
               )}
             </div>
-          );
-        })}
-      </div>
-
-      {loading && (
-        <div className="flex items-center justify-center py-12">
-          <RefreshCw size={20} className="animate-spin text-[#06b6d4]" />
+            {!loading && filtered.length > 0 && (
+              <Pagination
+                currentPage={safePage}
+                totalItems={filtered.length}
+                itemsPerPage={pageSize}
+                onPageChange={setPage}
+                onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }}
+                language={language}
+              />
+            )}
+          </section>
         </div>
-      )}
 
       {/* ── Create / Edit Modal ── */}
       {showModal && (
@@ -434,11 +480,20 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
                 <label className="text-xs font-semibold text-black/50">{zh ? '标签代码 (唯一标识)' : 'Tag code (stable ID)'}</label>
                 <input
                   value={formData.code}
-                  onChange={e => setFormData(p => ({ ...p, code: e.target.value.toLowerCase().replace(/[^a-z0-9\-_.]/g, '') }))}
+                  onChange={e => setFormData(p => ({ ...p, code: e.target.value.toLowerCase() }))}
                   disabled={!!editingTag}
                   placeholder="e.g. env.production"
-                  className="mt-1 w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm font-mono text-[#164e63] outline-none focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 disabled:opacity-50"
+                  className={`mt-1 w-full rounded-xl border bg-white px-3 py-2.5 text-sm font-mono text-[#164e63] outline-none focus:ring-2 disabled:opacity-50 ${
+                    formData.code && !tagCodeIsValid
+                      ? 'border-red-300 focus:border-red-400 focus:ring-red-100'
+                      : 'border-black/10 focus:border-[#06b6d4]/40 focus:ring-[#06b6d4]/10'
+                  }`}
                 />
+                <p className={`mt-1 text-[10px] ${formData.code && !tagCodeIsValid ? 'text-red-500' : 'text-black/30'}`}>
+                  {zh
+                    ? '格式：小写字母开头，可包含数字、点、短横线和下划线，例如 business.sales'
+                    : 'Format: start with a lowercase letter; digits, dot, dash, and underscore are allowed, e.g. business.sales'}
+                </p>
               </div>
 
               {/* label (en) + label_zh */}
@@ -593,76 +648,77 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
 }
 
 /* ────────────────────────────────────────── */
-/* Tag chip sub-component */
-interface TagCardProps {
+/* Compact table row */
+interface TagTableRowProps {
   tag: TagDefinition;
   zh: boolean;
-  onEdit?: () => void;
-  onDelete?: () => void;
+  canManage: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
 }
 
-function TagCard({ tag, zh, onEdit, onDelete }: TagCardProps) {
+function TagTableRow({ tag, zh, canManage, onEdit, onDelete }: TagTableRowProps) {
   const displayLabel = zh ? (tag.label_zh || tag.label) : tag.label;
   const chipColor = tag.color || '#64748b';
+  const categoryLabel = TAG_CATEGORY_LABELS[tag.category];
+  const assignmentCount = tag.assignment_count || 0;
 
   return (
-    <div
-      className="group relative flex flex-col justify-between rounded-2xl border bg-white p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-black/10 dark:hover:border-white/10"
-      style={{ borderLeftWidth: '5px', borderLeftColor: chipColor, borderColor: `${chipColor}20` }}
-    >
-      <div>
-        <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="flex flex-col min-w-0">
-            <span className="font-bold text-[#164e63] text-xs truncate" title={displayLabel}>
-              {displayLabel}
-            </span>
-            <span className="text-[9px] font-mono text-black/35 font-semibold mt-0.5 truncate">
-              {tag.code}
-            </span>
-          </div>
-          <div className="flex items-center gap-1 flex-shrink-0">
-            {tag.built_in === 1 && (
-              <span className="rounded bg-black/[0.04] px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-black/30">
-                {zh ? '内置' : 'Built-in'}
-              </span>
-            )}
-            {tag.is_system === 1 && (
-              <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[8px] font-bold tracking-wider text-emerald-600">
-                {zh ? '系统' : 'System'}
-              </span>
-            )}
+    <tr className="group text-xs text-[#164e63] transition-colors hover:bg-cyan-50/30">
+      <td className="px-4 py-3">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className="mt-1 h-2.5 w-2.5 flex-none rounded-full" style={{ backgroundColor: chipColor }} />
+          <div className="min-w-0">
+            <p className="truncate font-semibold" title={displayLabel}>{displayLabel}</p>
+            <p className="mt-0.5 max-w-[300px] truncate text-[11px] text-black/35" title={tag.description || ''}>
+              {tag.description || (zh ? '暂无描述' : 'No description')}
+            </p>
           </div>
         </div>
-        <p className="text-[10px] text-black/45 leading-relaxed line-clamp-2 mt-1 min-h-[2.5rem]" title={tag.description || ''}>
-          {tag.description || (zh ? '暂无描述说明' : 'No description provided')}
-        </p>
-      </div>
-
-      <div className="mt-3 pt-2 border-t border-black/[0.03] flex items-center justify-between text-[9px] text-black/30">
-        <span className="font-mono">
-          {zh ? `排序: ${tag.sort_order ?? 0}` : `Order: ${tag.sort_order ?? 0}`}
+      </td>
+      <td className="px-4 py-3 font-mono text-[11px] text-black/55">{tag.code}</td>
+      <td className="px-4 py-3">{zh ? categoryLabel?.zh : categoryLabel?.en}</td>
+      <td className="px-4 py-3">
+        <div className="flex flex-wrap gap-1">
+          <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">
+            {tag.is_system === 1 ? (zh ? '系统' : 'System') : tag.built_in === 1 ? (zh ? '内置' : 'Built-in') : (zh ? '自定义' : 'Custom')}
+          </span>
+        </div>
+      </td>
+      <td className="px-4 py-3 text-right">
+        <span className={`font-mono font-bold ${assignmentCount > 0 ? 'text-violet-600' : 'text-black/30'}`}>{assignmentCount}</span>
+      </td>
+      <td className="px-4 py-3">
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-bold ${
+          tag.is_active === 0 ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-700'
+        }`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${tag.is_active === 0 ? 'bg-slate-400' : 'bg-emerald-500'}`} />
+          {tag.is_active === 0 ? (zh ? '已停用' : 'Inactive') : (zh ? '已启用' : 'Active')}
         </span>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          {onEdit && (
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center justify-end gap-1">
+          {canManage && tag.is_system !== 1 && (
             <button
               onClick={onEdit}
-              className="rounded-lg p-1 text-black/35 transition-all hover:bg-cyan-50 hover:text-[#0891b2]"
+              className="rounded-lg p-1.5 text-black/35 transition-all hover:bg-cyan-50 hover:text-[#0891b2]"
               title={zh ? '编辑' : 'Edit'}
             >
-              <Edit3 size={11} />
+              <Edit3 size={13} />
             </button>
           )}
-          {tag.built_in !== 1 && onDelete && (
+          {canManage && tag.built_in !== 1 && (
             <button
               onClick={onDelete}
-              className="rounded-lg p-1 text-black/35 transition-all hover:bg-red-50 hover:text-red-500"
+              className="rounded-lg p-1.5 text-black/35 transition-all hover:bg-red-50 hover:text-red-500"
               title={zh ? '删除' : 'Delete'}
             >
-              <Trash2 size={11} />
+              <Trash2 size={13} />
             </button>
           )}
+          {!canManage && <span className="text-black/25">—</span>}
         </div>
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }

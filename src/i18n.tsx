@@ -65,6 +65,10 @@ export const translations: Translations = {
   forgotPassword: { en: 'Forgot password?', zh: '忘记密码？' },
   forgotPasswordHint: { en: 'Please contact your system administrator to reset your password.', zh: '请联系系统管理员重置密码。' },
   // Forgot password modal
+  fpOr: { en: 'or', zh: '或者' },
+  fpUseMfa: { en: 'Use authenticator app', zh: '使用 MFA 验证器' },
+  fpMfaHint: { en: 'Enter the current 6-digit code from the authenticator enrolled on this account.', zh: '请输入该账户已绑定的 MFA 验证器当前 6 位动态码。' },
+  fpMfaCodeLabel: { en: 'Authenticator Code', zh: 'MFA 动态码' },
   fpTitle: { en: 'Reset Password', zh: '重置密码' },
   fpSubtitle: { en: 'A verification code will be sent to your notification channels', zh: '验证码将发送到您的通知渠道（飞书/钉钉/企业微信）' },
   fpStepUser: { en: 'Account', zh: '账户' },

@@ -3,11 +3,23 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ConfigTemplate, Device, SessionUser } from '../types';
 import { getVendorFromPlatform } from '../types';
 import type { Language } from '../i18n.tsx';
+import { apiRequest } from '../api/http';
 
 interface GlobalVar {
   id?: string;
   key: string;
   value: string;
+}
+
+interface TemplateValidationResult {
+  valid: boolean;
+  syntax_valid: boolean;
+  render_valid: boolean;
+  rendered: string;
+  issues: Array<{ message: string }>;
+  warnings: Array<{ message: string }>;
+  risk_level: 'none' | 'high' | 'critical';
+  risk_items: Array<{ line: number; command: string; message: string }>;
 }
 
 interface UseConfigWorkspaceArgs {
@@ -33,6 +45,7 @@ export const useConfigWorkspace = ({
   const [configScopePlatform, setConfigScopePlatform] = useState<string>('all');
   const [configScopeRole, setConfigScopeRole] = useState<string>('all');
   const [configScopeSite, setConfigScopeSite] = useState<string>('all');
+  const [serverValidation, setServerValidation] = useState<TemplateValidationResult | null>(null);
 
   // Reset per-template scope state when switching templates.
   useEffect(() => {
@@ -54,12 +67,25 @@ export const useConfigWorkspace = ({
     }
   }, [selectedTemplateId, configTemplates]);
 
+  useEffect(() => {
+    setServerValidation(null);
+  }, [editorContent, globalVars, selectedTemplateId]);
+
   const selectedConfigTemplate = useMemo(
     () => configTemplates.find((template) => template.id === selectedTemplateId) || null,
     [configTemplates, selectedTemplateId],
   );
 
   const configVariableKeys = useMemo(() => extractVars(editorContent), [editorContent, extractVars]);
+  const configDefaultedVariableKeys = useMemo(() => {
+    const keys = new Set<string>();
+    const pattern = /\{\{\s*([\w.-]+)\s*\|\s*(?:default|d)\s*\(/g;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(editorContent)) !== null) {
+      keys.add(match[1]);
+    }
+    return keys;
+  }, [editorContent]);
 
   const configVariableMap = useMemo(
     () => globalVars.reduce((acc, item) => {
@@ -70,14 +96,17 @@ export const useConfigWorkspace = ({
   );
 
   const configMissingVariables = useMemo(
-    () => configVariableKeys.filter((key) => !String(configVariableMap[key] ?? '').trim()),
-    [configVariableKeys, configVariableMap],
+    () => configVariableKeys.filter(
+      (key) => !configDefaultedVariableKeys.has(key) && !String(configVariableMap[key] ?? '').trim(),
+    ),
+    [configDefaultedVariableKeys, configVariableKeys, configVariableMap],
   );
 
-  const configRenderedPreview = useMemo(
-    () => editorContent.replace(/\{\{\s*([\w.-]+)(?:\s*\|\s*[^}]+)?\s*\}\}/g, (match, key: string) => configVariableMap[key] ?? match),
-    [editorContent, configVariableMap],
-  );
+  const configRenderedPreview = useMemo(() => (
+    serverValidation?.render_valid
+      ? serverValidation.rendered
+      : editorContent.replace(/\{\{\s*([\w.-]+)(?:\s*\|\s*[^}]+)?\s*\}\}/g, (match, key: string) => configVariableMap[key] ?? match)
+  ), [editorContent, configVariableMap, serverValidation]);
 
   const configVendorScopedDevices = useMemo(() => {
     const vendor = (selectedConfigTemplate?.vendor || '').trim();
@@ -132,8 +161,9 @@ export const useConfigWorkspace = ({
     if (configScopedDevices.length === 0) {
       issues.push(language === 'zh' ? '当前发布范围内没有匹配设备' : 'No devices match the current release scope');
     }
+    serverValidation?.issues.forEach((issue) => issues.push(issue.message));
     return issues;
-  }, [selectedConfigTemplate, editorContent, configMissingVariables, configScopedDevices, language]);
+  }, [selectedConfigTemplate, editorContent, configMissingVariables, configScopedDevices, language, serverValidation]);
 
   const configValidationWarnings = useMemo(() => {
     const warnings: string[] = [];
@@ -152,8 +182,16 @@ export const useConfigWorkspace = ({
           : 'Release scope is large; consider a staged rollout first',
       );
     }
+    serverValidation?.warnings.forEach((warning) => warnings.push(warning.message));
+    serverValidation?.risk_items.slice(0, 5).forEach((risk) => {
+      warnings.push(
+        language === 'zh'
+          ? `第 ${risk.line} 行：${risk.message}（${risk.command}）`
+          : `Line ${risk.line}: ${risk.message} (${risk.command})`,
+      );
+    });
     return warnings;
-  }, [configScopedDevices, language]);
+  }, [configScopedDevices, language, serverValidation]);
 
   const configReadinessScore = useMemo(() => {
     let score = 100;
@@ -313,14 +351,47 @@ export const useConfigWorkspace = ({
     }
   }, [refreshConfigWorkspace, language, showToast]);
 
-  const handleValidateTemplateWorkspace = useCallback(() => {
+  const handleValidateTemplateWorkspace = useCallback(async () => {
     setConfigWorkspaceView('checks');
-    if (configValidationIssues.length > 0) {
-      showToast(configValidationIssues[0], 'error');
+    if (!selectedConfigTemplate || !editorContent.trim()) {
+      const issue = !selectedConfigTemplate
+        ? (language === 'zh' ? '尚未选择模板资产' : 'No template asset selected')
+        : (language === 'zh' ? '模板内容为空' : 'Template content is empty');
+      showToast(issue, 'error');
       return;
     }
-    showToast(language === 'zh' ? '发布前检查通过' : 'Preflight checks passed', 'success');
-  }, [configValidationIssues, language, showToast]);
+    try {
+      const response = await apiRequest<{ success: boolean; data: TemplateValidationResult }>(
+        '/api/templates/validate',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            content: editorContent,
+            variables: configVariableMap,
+            vendor: selectedConfigTemplate.vendor || '',
+            platform: configScopePlatform === 'all' ? (configPlatformOptions.length === 1 ? configPlatformOptions[0] : '') : configScopePlatform,
+            software_version: selectedConfigTemplate.software_version || '',
+            rollback: selectedConfigTemplate.rollback || '',
+          }),
+        },
+      );
+      setServerValidation(response.data);
+      if (!response.data.valid) {
+        showToast(response.data.issues[0]?.message || (language === 'zh' ? '模板校验失败' : 'Validation failed'), 'error');
+      } else if (response.data.risk_level !== 'none') {
+        showToast(
+          language === 'zh'
+            ? `语法与渲染通过，但检测到 ${response.data.risk_level === 'critical' ? '严重' : '高'}风险命令`
+            : `Syntax and rendering passed with ${response.data.risk_level} risk commands`,
+          'info',
+        );
+      } else {
+        showToast(language === 'zh' ? '服务端语法、变量、渲染和风险检查通过' : 'Server preflight checks passed', 'success');
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (language === 'zh' ? '模板校验失败' : 'Validation failed'), 'error');
+    }
+  }, [configPlatformOptions, configScopePlatform, configVariableMap, editorContent, language, selectedConfigTemplate, showToast]);
 
   const handleSaveTemplate = useCallback(async () => {
     if (!selectedConfigTemplate) {

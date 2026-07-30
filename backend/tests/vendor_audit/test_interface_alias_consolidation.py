@@ -89,3 +89,10 @@ def test_cmdb_listing_does_not_append_inventory_alias_as_second_row() -> None:
     assert len(items) == 1
     assert items[0]["interface_name"] == "GE1/0/1"
     assert items[0]["interface_ip"] == "10.254.35.1"
+
+    paged = list_cmdb_interfaces(conn, has_ip=True, page=1, page_size=1)
+    assert paged["total"] == 1
+    assert paged["page"] == 1
+    assert paged["page_size"] == 1
+    assert len(paged["items"]) == 1
+    assert paged["summary"]["with_ip"] == 1

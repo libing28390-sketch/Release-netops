@@ -31,6 +31,17 @@ export const describeScope = (scope: string, filter: string, zh: boolean): strin
   if (scope === 'tag') {
     try {
       const cfg = JSON.parse(filter);
+      if (cfg.expression && typeof cfg.expression === 'object') {
+        const countExpression = (group: { tag_ids?: string[]; groups?: unknown[] }): number => {
+          let total = group.tag_ids?.length || 0;
+          for (const child of group.groups || []) {
+            total += countExpression((child || {}) as { tag_ids?: string[]; groups?: unknown[] });
+          }
+          return total;
+        };
+        const n = countExpression(cfg.expression);
+        return zh ? `${n} 个标签条件` : `${n} tag conditions`;
+      }
       // New format: groups[]
       if (Array.isArray(cfg.groups)) {
         const n = cfg.groups.reduce((s: number, g: { tag_ids?: string[] }) => s + (g.tag_ids?.length || 0), 0) + (cfg.exclude_tag_ids?.length || 0);

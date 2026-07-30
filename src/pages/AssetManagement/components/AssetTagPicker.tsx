@@ -13,7 +13,7 @@ type Props = {
 };
 
 const CATEGORY_ORDER: TagCategory[] = [
-  'technology', 'business', 'environment', 'network_zone', 'operations', 'security', 'project', 'lifecycle',
+  'technology', 'business', 'environment', 'network_zone', 'operations', 'security', 'project', 'lifecycle', 'system_auto',
 ];
 
 export const AssetTagPicker: React.FC<Props> = ({ tags, selectedIds, onChange, onSave, language, assetType }) => {
@@ -21,7 +21,7 @@ export const AssetTagPicker: React.FC<Props> = ({ tags, selectedIds, onChange, o
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
   const available = React.useMemo(
-    () => tags.filter(tag => tag.is_active !== 0 && !tag.is_system && tag.category !== 'system_auto' && (!assetType || !tag.resource_types || String(tag.resource_types).includes('device'))),
+    () => tags.filter(tag => tag.is_active !== 0 && !tag.is_system && (!assetType || !tag.resource_types || String(tag.resource_types).includes('device'))),
     [tags, assetType],
   );
   const selected = available.filter(tag => selectedIds.includes(tag.id));

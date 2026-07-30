@@ -9,8 +9,9 @@ import {
 } from 'lucide-react';
 
 import Pagination from '../../components/Pagination';
+import { DataTable } from '../../components/DataTable';
 import PageHero from '../../components/PageHero';
-import { parseTagFilter, type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter } from '../../components/TagConditionPicker';
+import { hasTagFilterConditions, parseTagFilter, type TagFilterConfig, EMPTY_TAG_FILTER, serializeTagFilter } from '../../components/TagConditionPicker';
 
 import { ScheduledJob, EligibleApprover, SystemScheduledJob, FormState, ValidatedDevice, ScheduledJobsTabProps } from './types';
 import { INITIAL_FORM, ACTION_TYPES, MAJOR_CATEGORIES } from './constants';
@@ -30,7 +31,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const [systemJobs, setSystemJobs] = useState<SystemScheduledJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
 
   // Modal
@@ -599,9 +600,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       return zh ? '请至少添加一个目标 IP / 设备' : 'Please add at least one target IP / device';
     }
     if (form.device_scope === 'tag') {
-      const hasTag = (tagFilter.groups || []).some(g => (g.tag_ids || []).length > 0)
-        || (tagFilter.exclude_tag_ids || []).length > 0;
-      if (!hasTag) return zh ? '请配置至少一个标签条件' : 'Please configure at least one tag condition';
+      if (!hasTagFilterConditions(tagFilter)) return zh ? '请配置至少一个标签条件' : 'Please configure at least one tag condition';
     }
     if ((form.device_scope === 'site' || form.device_scope === 'role') && !form.device_filter.trim()) {
       return zh ? '请填写过滤条件' : 'Please enter filter condition';
@@ -932,7 +931,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
                   {!systemCollapsed && (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
+                      <DataTable className="text-left">
                         <thead>
                           <tr className="border-b border-slate-100 text-[11px] font-bold text-slate-400 bg-slate-50/40 uppercase tracking-wider">
                             <th className="py-2.5 px-4">{zh ? '任务名称 / 标识' : 'Job Name / ID'}</th>
@@ -1011,7 +1010,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                             );
                           })}
                         </tbody>
-                      </table>
+                      </DataTable>
                     </div>
                   )}
                 </div>

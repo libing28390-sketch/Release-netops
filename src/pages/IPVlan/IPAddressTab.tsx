@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { formatMacAddress } from '../../utils/resourceFormatters';
 
 interface IPAddress {
   id: string;
@@ -31,12 +32,33 @@ interface IPAddress {
   last_seen: string;
   created_at: string;
   updated_at: string;
+  site_id?: string;
+  site_name?: string;
+  subnet_prefix?: string;
+  subnet_name?: string;
+  source?: 'manual' | 'manual+discovered' | 'discovered';
+  is_discovered?: boolean;
+  discovered_last_seen?: string;
+  switch_name?: string;
+  switch_port?: string;
+  vlan?: string;
+}
+
+interface SiteSummary {
+  id: string;
+  name: string;
+  code: string;
+  count: number;
+  ip_count?: number;
 }
 
 interface Prefix {
   id: string;
   prefix: string;
   name: string;
+  site_id?: string;
+  parent_prefix_id?: string | null;
+  status?: string;
 }
 
 interface IPAddressTabProps {
@@ -60,6 +82,7 @@ const ROLE_OPTIONS: { value: string; zh: string; en: string }[] = [
 
 // IP 地址状态
 const STATUS_OPTIONS: { value: string; zh: string; en: string }[] = [
+  { value: 'available', zh: '空闲', en: 'Available' },
   { value: 'active', zh: '使用中', en: 'Active' },
   { value: 'reserved', zh: '已保留', en: 'Reserved' },
   { value: 'deprecated', zh: '已弃用', en: 'Deprecated' },
@@ -74,6 +97,126 @@ const roleLabel = (v: string, zh: boolean): string => {
 const statusLabel = (v: string, zh: boolean): string => {
   const o = STATUS_OPTIONS.find((x) => x.value === v);
   return o ? (zh ? o.zh : o.en) : (v || '').toUpperCase();
+};
+
+const prefixMaskLength = (prefix: string): number => {
+  const raw = prefix.split('/')[1];
+  const value = Number.parseInt(raw || '', 10);
+  return Number.isFinite(value) ? value : -1;
+};
+
+const isHostRoutePrefix = (prefix: string): boolean => {
+  const mask = prefixMaskLength(prefix);
+  return prefix.includes(':') ? mask === 128 : mask === 32;
+};
+
+const PrefixSearchSelect: React.FC<{
+  prefixes: Prefix[];
+  value: string;
+  onChange: (id: string) => void;
+  zh: boolean;
+}> = ({ prefixes, value, onChange, zh }) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const selected = prefixes.find((prefix) => prefix.id === value);
+  const prefixById = useMemo(() => new Map(prefixes.map(prefix => [prefix.id, prefix])), [prefixes]);
+
+  useEffect(() => {
+    const onDocumentMouseDown = (event: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('mousedown', onDocumentMouseDown);
+    return () => document.removeEventListener('mousedown', onDocumentMouseDown);
+  }, []);
+
+  const visiblePrefixes = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return prefixes.filter(prefix => !normalized ||
+      prefix.prefix.toLowerCase().includes(normalized) ||
+      (prefix.name || '').toLowerCase().includes(normalized)
+    );
+  }, [prefixes, query]);
+
+  const depthOf = (prefix: Prefix) => {
+    let depth = 0;
+    let parentId = prefix.parent_prefix_id;
+    const visited = new Set<string>();
+    while (parentId && prefixById.has(parentId) && !visited.has(parentId) && depth < 6) {
+      visited.add(parentId);
+      depth += 1;
+      parentId = prefixById.get(parentId)?.parent_prefix_id;
+    }
+    return depth;
+  };
+
+  const renderGroup = (title: string, items: Prefix[]) => (
+    <>
+      <div className="sticky top-0 bg-slate-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+        {title} · {items.length}
+      </div>
+      {items.map(prefix => {
+        const depth = depthOf(prefix);
+        return (
+          <button
+            type="button"
+            key={prefix.id}
+            onClick={() => {
+              onChange(prefix.id);
+              setOpen(false);
+              setQuery('');
+            }}
+            className={`flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-cyan-50 ${
+              prefix.id === value ? 'bg-cyan-50 font-bold text-cyan-700' : 'text-gray-700'
+            }`}
+          >
+            <span className="shrink-0 text-gray-300" style={{ width: `${depth * 12}px` }} />
+            {depth > 0 && <span className="text-gray-300">└</span>}
+            <span className="font-mono font-semibold">{prefix.prefix}</span>
+            {prefix.name && <span className="truncate text-gray-400">({prefix.name})</span>}
+          </button>
+        );
+      })}
+    </>
+  );
+
+  const capacityPrefixes = visiblePrefixes.filter(prefix => !isHostRoutePrefix(prefix.prefix));
+  const hostRoutes = visiblePrefixes.filter(prefix => isHostRoutePrefix(prefix.prefix));
+
+  return (
+    <div ref={wrapRef} className="relative min-w-[280px]">
+      <div className="relative">
+        <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          value={open ? query : selected ? `${selected.prefix}${selected.name ? ` (${selected.name})` : ''}` : ''}
+          onChange={event => {
+            setQuery(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            setOpen(true);
+            setQuery('');
+          }}
+          placeholder={zh ? '搜索 CIDR 或名称...' : 'Search CIDR or name...'}
+          className="w-full rounded-xl border border-black/5 bg-white py-1.5 pl-8 pr-3 text-xs font-bold text-gray-700 outline-none transition-all focus:border-cyan-400 focus:shadow-sm"
+        />
+      </div>
+      {open && (
+        <div className="absolute right-0 z-50 mt-1 max-h-80 w-full min-w-[360px] overflow-auto rounded-xl border border-gray-150 bg-white py-1 shadow-xl">
+          {capacityPrefixes.length > 0 && renderGroup(zh ? '容量与业务网段' : 'Capacity & business prefixes', capacityPrefixes)}
+          {hostRoutes.length > 0 && renderGroup(zh ? '主机路由（不计容量）' : 'Host routes (excluded from capacity)', hostRoutes)}
+          {visiblePrefixes.length === 0 && (
+            <div className="px-4 py-5 text-center text-xs text-gray-400">
+              {zh ? '没有匹配的 Prefix' : 'No matching prefix'}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 };
 
 const DeviceSearchSelect: React.FC<{
@@ -175,15 +318,21 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
 
   const [addresses, setAddresses] = useState<IPAddress[]>([]);
   const [prefixes, setPrefixes] = useState<Prefix[]>([]);
+  const [sites, setSites] = useState<SiteSummary[]>([]);
+  const [inventorySummary, setInventorySummary] = useState({ total: 0, discovered: 0, manual: 0, prefixes: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [isMatrixView, setIsMatrixView] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalItems, setTotalItems] = useState(0);
 
   // Lookup data
   const [devices, setDevices] = useState<any[]>([]);
   const [selectedPrefixId, setSelectedPrefixId] = useState(prefixIdParam);
+  const [selectedSiteId, setSelectedSiteId] = useState('all');
   const [activePrefix, setActivePrefix] = useState<Prefix | null>(null);
 
   // Modals
@@ -240,29 +389,23 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     setLoading(true);
     const hdrs = authHeaders();
     try {
-      let url = '/api/ipam/subnets';
-      
-      // If we have selectedPrefixId, fetch addresses for that prefix
-      if (selectedPrefixId) {
-        url = `/api/ipam/subnets/${selectedPrefixId}/addresses`;
-        const res = await fetch(url, { headers: hdrs });
-        if (res.ok) {
-          setAddresses(await res.json());
-        }
-      } else {
-        // Fallback: fetch addresses of the first prefix if none selected, or all if we had a global endpoint.
-        // Since original API list_addresses takes subnet_id, we fetch all prefixes first, then load their IPs.
-        const prefRes = await fetch('/api/ipam/subnets', { headers: hdrs });
-        if (prefRes.ok) {
-          const prefData = await prefRes.json();
-          if (prefData.length > 0) {
-            setSelectedPrefixId(prefData[0].id);
-            setActivePrefix(prefData[0]);
-            const res = await fetch(`/api/ipam/subnets/${prefData[0].id}/addresses`, { headers: hdrs });
-            if (res.ok) {
-              setAddresses(await res.json());
-            }
-          }
+      const query = new URLSearchParams({
+        site_id: selectedSiteId,
+        page: String(page),
+        page_size: String(isMatrixView ? 1000 : pageSize),
+      });
+      if (selectedPrefixId) query.set('prefix_id', selectedPrefixId);
+      if (search.trim()) query.set('q', search.trim());
+      if (statusFilter !== 'all' && (!isMatrixView || statusFilter !== 'available')) query.set('status', statusFilter);
+      if (typeFilter !== 'all') query.set('device_type', typeFilter);
+      const res = await fetch(`/api/ipam/addresses?${query.toString()}`, { headers: hdrs });
+      if (res.ok) {
+        const data = await res.json();
+        setAddresses(Array.isArray(data) ? data : (data.items || []));
+        if (!Array.isArray(data)) {
+          setTotalItems(Number(data.total || 0));
+          setSites(data.sites || []);
+          setInventorySummary(data.summary || { total: 0, discovered: 0, manual: 0, prefixes: 0 });
         }
       }
     } catch (e) {
@@ -270,7 +413,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     } finally {
       setLoading(false);
     }
-  }, [selectedPrefixId, authHeaders]);
+  }, [selectedPrefixId, selectedSiteId, search, statusFilter, typeFilter, page, isMatrixView, authHeaders]);
 
   useEffect(() => {
     fetchLookups();
@@ -280,12 +423,28 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     loadData();
   }, [loadData]);
 
+  const siteScopedPrefixes = useMemo(
+    () => selectedSiteId === 'all'
+      ? prefixes
+      : prefixes.filter((prefix) => prefix.site_id === selectedSiteId),
+    [prefixes, selectedSiteId],
+  );
+
   // Handle prefix switch
   const handlePrefixChange = (id: string) => {
     setSelectedPrefixId(id);
-    const matched = prefixes.find((p) => p.id === id) || null;
+    setPage(1);
+    const matched = siteScopedPrefixes.find((p) => p.id === id) || null;
     setActivePrefix(matched);
     navigate(`/ipam/ips?prefix_id=${id}`);
+  };
+
+  const handleSiteChange = (id: string) => {
+    setSelectedSiteId(id);
+    setSelectedPrefixId('');
+    setActivePrefix(null);
+    setPage(1);
+    navigate('/ipam/ips');
   };
 
   const prefixMask = useMemo(() => {
@@ -294,23 +453,28 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     return isNaN(mask) ? 0 : mask;
   }, [activePrefix]);
 
-  const canUseMatrix = prefixMask >= 24 && prefixMask <= 32;
+  const canUseMatrix = prefixMask >= 24 && prefixMask <= 30 && !activePrefix?.prefix.includes(':');
+  const matrixPrefixCandidate = useMemo(() => {
+    if (canUseMatrix && activePrefix) return activePrefix;
+    return siteScopedPrefixes.find((prefix) => {
+      const mask = prefixMaskLength(prefix.prefix);
+      return mask >= 24 && mask <= 30 && !prefix.prefix.includes(':');
+    }) || null;
+  }, [activePrefix, canUseMatrix, siteScopedPrefixes]);
+
+  const handleMatrixClick = () => {
+    const target = matrixPrefixCandidate;
+    if (!target) return;
+    if (activePrefix?.id !== target.id) {
+      setSelectedPrefixId(target.id);
+      setActivePrefix(target);
+      navigate(`/ipam/ips?prefix_id=${target.id}`);
+    }
+    setIsMatrixView(true);
+  };
 
   // Filtered IP list
-  const filteredAddresses = useMemo(() => {
-    return addresses.filter((item) => {
-      const matchesSearch =
-        item.address.includes(search) ||
-        (item.hostname && item.hostname.toLowerCase().includes(search.toLowerCase())) ||
-        (item.interface_name && item.interface_name.toLowerCase().includes(search.toLowerCase())) ||
-        (item.description && item.description.toLowerCase().includes(search.toLowerCase()));
-
-      const matchesStatus = statusFilter === 'all' || item.status === statusFilter;
-      const matchesType = typeFilter === 'all' || item.device_type === typeFilter;
-
-      return matchesSearch && matchesStatus && matchesType;
-    });
-  }, [addresses, search, statusFilter, typeFilter]);
+  const filteredAddresses = addresses;
 
   const matrixData = useMemo(() => {
     if (!isMatrixView || !canUseMatrix || !activePrefix) return [];
@@ -323,8 +487,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
     const baseInt = ipParts[0] * 16777216 + ipParts[1] * 65536 + ipParts[2] * 256 + ipParts[3];
     const numHosts = Math.pow(2, 32 - mask);
 
-    const registeredMap = new Map<string, IPAddress>();
+    const hasActiveFilters = statusFilter !== 'all' || typeFilter !== 'all' || Boolean(search.trim());
+    const allRegisteredMap = new Map<string, IPAddress>();
     addresses.forEach((addr) => {
+      allRegisteredMap.set(addr.address, addr);
+    });
+    const registeredMap = new Map<string, IPAddress>();
+    filteredAddresses.forEach((addr) => {
       registeredMap.set(addr.address, addr);
     });
 
@@ -336,7 +505,12 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       const p3 = Math.floor(currentVal / 256) % 256;
       const p4 = currentVal % 256;
       const ipStr = `${p1}.${p2}.${p3}.${p4}`;
-      const matchedData = registeredMap.get(ipStr) || null;
+      const occupiedData = allRegisteredMap.get(ipStr) || null;
+      if (statusFilter === 'available') {
+        if (occupiedData || (search.trim() && !ipStr.includes(search.trim()))) continue;
+      }
+      const matchedData = statusFilter === 'available' ? null : (registeredMap.get(ipStr) || null);
+      if (hasActiveFilters && statusFilter !== 'available' && !matchedData) continue;
       
       let status = 'available';
       if (matchedData) {
@@ -350,12 +524,9 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
       });
     }
     return list;
-  }, [isMatrixView, canUseMatrix, activePrefix, addresses]);
+  }, [isMatrixView, canUseMatrix, activePrefix, addresses, filteredAddresses, search, statusFilter, typeFilter]);
 
-  // Pagination states
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
-  const paginatedAddresses = filteredAddresses.slice((page - 1) * pageSize, page * pageSize);
+  const paginatedAddresses = filteredAddresses;
 
   // Form handling
   const openForm = (ipItem: IPAddress | null = null) => {
@@ -489,18 +660,35 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
         }
         extras={
           <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-            {/* Prefix Selector */}
+            {/* Site scope */}
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{zh ? '当前网段' : 'Prefix'}</span>
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{zh ? '站点' : 'Site'}</span>
               <select
-                value={selectedPrefixId}
-                onChange={(e) => handlePrefixChange(e.target.value)}
-                className="px-3.5 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-bold text-gray-700 outline-none focus:border-cyan-400 focus:shadow-sm transition-all"
+                value={selectedSiteId}
+                onChange={(e) => handleSiteChange(e.target.value)}
+                className="min-w-[150px] px-3 py-1.5 rounded-xl border border-black/5 bg-white text-xs font-semibold text-gray-500 outline-none transition-all"
               >
-                {prefixes.map((p) => (
-                  <option key={p.id} value={p.id}>{p.prefix} {p.name ? `(${p.name})` : ''}</option>
+                <option value="all">{zh ? `全部站点 (${inventorySummary.prefixes} 个网段)` : `All Sites (${inventorySummary.prefixes} prefixes)`}</option>
+                {sites.map((site) => (
+                  <option key={site.id} value={site.id}>{site.name} ({site.count} {zh ? '个网段' : 'prefixes'})</option>
                 ))}
               </select>
+            </div>
+
+            {/* Prefix Selector */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{zh ? '网段' : 'Prefix'}</span>
+              <PrefixSearchSelect
+                prefixes={siteScopedPrefixes}
+                value={selectedPrefixId}
+                onChange={handlePrefixChange}
+                zh={zh}
+              />
+            </div>
+
+            <div className="flex items-center gap-2 text-[10px] text-gray-400">
+              <span className="rounded-full bg-cyan-50 px-2 py-1 font-bold text-cyan-600">{zh ? `IP记录 ${inventorySummary.total}` : `${inventorySummary.total} IPs`}</span>
+              <span className="rounded-full bg-emerald-50 px-2 py-1 font-bold text-emerald-600">{zh ? `自动发现 ${inventorySummary.discovered}` : `${inventorySummary.discovered} discovered`}</span>
             </div>
 
             {/* Filters */}
@@ -551,13 +739,13 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                 {zh ? '列表' : 'List'}
               </button>
               <button
-                disabled={!canUseMatrix}
-                onClick={() => setIsMatrixView(true)}
-                title={!canUseMatrix ? (zh ? '矩阵仅支持掩码 /24 - /32 的网段' : 'Matrix view requires subnet mask /24 - /32') : ''}
+                disabled={!matrixPrefixCandidate}
+                onClick={handleMatrixClick}
+                title={!matrixPrefixCandidate ? (zh ? '当前站点没有可用的 IPv4 /24 - /30 网段' : 'No IPv4 /24-/30 prefix is available for the current site') : (zh ? '矩阵按单个网段展示' : 'Matrix view is scoped to one prefix')}
                 className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${
                   isMatrixView 
                     ? 'bg-white shadow-sm text-cyan-600' 
-                    : !canUseMatrix
+                    : !matrixPrefixCandidate
                     ? 'text-gray-250 cursor-not-allowed opacity-50'
                     : 'text-gray-450 hover:text-gray-600'
                 }`}
@@ -599,11 +787,11 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                   </div>
                 </div>
                 <div className="font-semibold text-gray-400">
-                  {zh ? '点击方块可快捷分配或编辑 IP' : 'Click any square to allocate or edit IP'}
+                  {zh ? '点击已使用 IP 查看定位详情，点击空闲地址进行分配' : 'Click an occupied IP to view locator details, or an available address to allocate it'}
                 </div>
               </div>
               
-              <div className="grid grid-cols-8 sm:grid-cols-12 md:grid-cols-16 gap-2">
+              <div className="flex flex-wrap gap-2">
                 {matrixData.map((cell) => {
                   let bgClass = "bg-gray-50 hover:bg-cyan-50 text-gray-400 border-gray-150";
                   if (cell.status === 'active') {
@@ -624,7 +812,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       key={cell.ip}
                       onClick={() => {
                         if (cell.data) {
-                          openForm(cell.data);
+                          navigate(`/ipam/locate?ip=${encodeURIComponent(cell.ip)}`);
                         } else {
                           openForm({
                             id: '',
@@ -644,7 +832,7 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         }
                       }}
                       title={tooltip}
-                      className={`aspect-square w-full rounded-xl border flex flex-col items-center justify-center text-[10px] font-bold font-mono transition-all duration-150 cursor-pointer active:scale-95 select-none ${bgClass}`}
+                      className={`h-14 w-14 rounded-lg border flex flex-col items-center justify-center text-sm font-bold font-mono transition-all duration-150 cursor-pointer active:scale-95 select-none ${bgClass}`}
                     >
                       <span>.{lastOctet}</span>
                     </div>
@@ -653,9 +841,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
               </div>
             </div>
           ) : (
-            <table className="w-full border-collapse text-left">
+            <table className="nx-data-table text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/40 text-[10px] font-bold text-gray-400 uppercase tracking-wider select-none">
+                  <th className="pl-6 py-4">{zh ? '站点 / 网段' : 'Site / Prefix'}</th>
                   <th className="pl-6 py-4">{zh ? 'IP地址' : 'IP Address'}</th>
                   <th className="px-4 py-4">{zh ? '类型' : 'Role Type'}</th>
                   <th className="px-4 py-4">{zh ? '主机名 / 域名' : 'DNS Hostname'}</th>
@@ -675,7 +864,29 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       key={node.id} 
                       className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 group"
                     >
-                      <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">{node.address}</td>
+                      <td className="pl-6 py-4 min-w-[160px]">
+                        <div className="text-xs font-bold text-cyan-700">{node.site_name || '-'}</div>
+                        <div className="mt-1 font-mono text-[10px] text-gray-400">{node.subnet_prefix || '-'}</div>
+                      </td>
+                      <td className="pl-6 py-4 font-mono font-bold text-xs text-gray-800">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/ipam/locate?ip=${encodeURIComponent(node.address)}`)}
+                          title={zh ? '点击查看 IP 定位详情' : 'View IP locator details'}
+                          className="text-cyan-700 hover:text-cyan-500 hover:underline transition-colors"
+                        >
+                          {node.address}
+                        </button>
+                        <span className={`mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                          node.is_discovered
+                            ? 'bg-cyan-50 text-cyan-600'
+                            : node.source === 'manual+discovered'
+                            ? 'bg-emerald-50 text-emerald-600'
+                            : 'bg-slate-50 text-slate-500'
+                        }`}>
+                          {node.is_discovered ? (zh ? '自动发现' : 'Discovered') : node.source === 'manual+discovered' ? (zh ? 'IPAM + 采集' : 'IPAM + Discovery') : (zh ? '手工登记' : 'Manual')}
+                        </span>
+                      </td>
                       <td className="px-4 py-4">
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                           node.device_type === 'gateway' 
@@ -695,10 +906,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       </td>
                       <td className="px-4 py-4 text-xs font-semibold text-gray-500">{node.hostname || '-'}</td>
                       <td className="px-4 py-4 text-xs text-cyan-600 font-bold hover:underline cursor-pointer">
-                        {node.device_id ? getDeviceName(node.device_id) : '-'}
+                        {node.switch_name || (node.device_id ? getDeviceName(node.device_id) : '-')}
                       </td>
-                      <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.interface_name || '-'}</td>
-                      <td className="px-4 py-4 font-mono text-xs text-gray-500">{node.mac_address || '-'}</td>
+                      <td className="px-4 py-4 text-xs text-gray-600 font-semibold">{node.switch_port || node.interface_name || '-'}</td>
+                      <td className="px-4 py-4 font-mono text-xs text-gray-500">{formatMacAddress(node.mac_address) || '-'}</td>
                       <td className="px-4 py-4">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                           node.status === 'active' 
@@ -714,31 +925,33 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                         </span>
                       </td>
                       <td className="px-4 py-4 text-xs text-gray-400 font-medium max-w-[150px] truncate">{node.description || '-'}</td>
-                      <td className="px-4 py-4 font-mono text-[10px] text-gray-400">{node.last_seen ? node.last_seen.split('T')[0] : '-'}</td>
+                      <td className="px-4 py-4 font-mono text-[10px] text-gray-400">{(node.discovered_last_seen || node.last_seen) ? (node.discovered_last_seen || node.last_seen).replace('T', ' ').slice(0, 19) : '-'}</td>
                       <td className="pr-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => openForm(node)}
-                            title={zh ? '编辑' : 'Edit'}
-                            className="p-1 rounded-md text-gray-400 hover:text-cyan-600 hover:bg-cyan-50 transition-all"
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            onClick={() => setShowDeleteConfirm(node.id)}
-                            title={zh ? '删除' : 'Delete'}
-                            className="p-1 rounded-md text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-all"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                        {!node.is_discovered ? (
+                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => openForm(node)}
+                              title={zh ? '编辑' : 'Edit'}
+                              className="p-1 rounded-md text-gray-400 hover:text-cyan-600 hover:bg-cyan-50 transition-all"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              onClick={() => setShowDeleteConfirm(node.id)}
+                              title={zh ? '删除' : 'Delete'}
+                              className="p-1 rounded-md text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-all"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ) : <span className="text-[10px] font-semibold text-cyan-500">{zh ? '只读采集' : 'Read-only'}</span>}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center text-xs text-gray-400 font-medium">
-                      {zh ? '当前网段无已分配IP记录' : 'No IP address registered in this prefix block'}
+                    <td colSpan={11} className="py-12 text-center text-xs text-gray-400 font-medium">
+                      {zh ? '当前筛选范围暂无 IP 记录' : 'No IP record in the current scope'}
                     </td>
                   </tr>
                 )}
@@ -752,9 +965,10 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
           <div className="px-6 py-4 border-t border-gray-100">
             <Pagination
               currentPage={page}
-              totalItems={filteredAddresses.length}
+              totalItems={totalItems}
               itemsPerPage={pageSize}
               onPageChange={setPage}
+              onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }}
               language={language}
               alwaysVisible={true}
             />

@@ -751,10 +751,20 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         vendor TEXT,
         content TEXT,
         rollback TEXT,
-        last_used TEXT
+        last_used TEXT,
+        description TEXT DEFAULT '',
+        platform_family TEXT DEFAULT '',
+        software_version TEXT DEFAULT '',
+        official_reference TEXT DEFAULT '',
+        validation_status TEXT DEFAULT 'draft'
     )
     ''')
     ensure_column('templates', 'rollback', 'TEXT')
+    ensure_column('templates', 'description', "TEXT DEFAULT ''")
+    ensure_column('templates', 'platform_family', "TEXT DEFAULT ''")
+    ensure_column('templates', 'software_version', "TEXT DEFAULT ''")
+    ensure_column('templates', 'official_reference', "TEXT DEFAULT ''")
+    ensure_column('templates', 'validation_status', "TEXT DEFAULT 'draft'")
     
     # Create users table if not exists
     cursor.execute('''
@@ -833,6 +843,51 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         FOREIGN KEY (device_id) REFERENCES devices (id)
     )
     ''')
+    ensure_column('config_snapshots', 'raw_hash', "TEXT DEFAULT ''")
+    ensure_column('config_snapshots', 'normalized_hash', "TEXT DEFAULT ''")
+    ensure_column('config_snapshots', 'line_count', 'INTEGER DEFAULT 0')
+    ensure_column('config_snapshots', 'section_count', 'INTEGER DEFAULT 0')
+    ensure_column('config_snapshots', 'integrity_status', "TEXT DEFAULT 'unknown'")
+    ensure_column('config_snapshots', 'lifecycle_status', "TEXT DEFAULT 'stored_raw'")
+    ensure_column('config_snapshots', 'normalizer_version', "TEXT DEFAULT 'ncm-v1'")
+    ensure_column('config_snapshots', 'collected_at', "TEXT DEFAULT ''")
+    ensure_column('config_snapshots', 'task_id', "TEXT DEFAULT ''")
+    ensure_column('config_snapshots', 'policy_id', "TEXT DEFAULT ''")
+    ensure_column('config_snapshots', 'config_type', "TEXT DEFAULT 'running'")
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_config_snapshots_policy_device_time '
+        'ON config_snapshots(policy_id, device_id, timestamp DESC)'
+    )
+
+    # Persistent backup policies. The default row is imported lazily from the
+    # legacy global schedule so existing installations retain their settings.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS config_backup_policies (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        cron_expr TEXT NOT NULL DEFAULT '0 2 * * *',
+        timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+        priority INTEGER NOT NULL DEFAULT 100,
+        scope_json TEXT NOT NULL DEFAULT '{}',
+        config_types_json TEXT NOT NULL DEFAULT '["running"]',
+        change_only INTEGER NOT NULL DEFAULT 1,
+        retention_days INTEGER NOT NULL DEFAULT 90,
+        max_versions_per_device INTEGER NOT NULL DEFAULT 30,
+        concurrency INTEGER NOT NULL DEFAULT 10,
+        retry_count INTEGER NOT NULL DEFAULT 1,
+        timeout_seconds INTEGER NOT NULL DEFAULT 30,
+        created_by TEXT NOT NULL DEFAULT '',
+        updated_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_config_backup_policies_enabled_priority '
+        'ON config_backup_policies(enabled, priority, name)'
+    )
 
     # Create links table for topology
     cursor.execute('''
@@ -946,12 +1001,17 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     CREATE TABLE IF NOT EXISTS arp_cache (
         target_ip   TEXT PRIMARY KEY,
         mac         TEXT NOT NULL,
+        vlan_id     INTEGER,
         arp_source  TEXT NOT NULL DEFAULT '{}',
         cached_at   TEXT NOT NULL,
-        expires_at  REAL NOT NULL
+        expires_at  REAL NOT NULL,
+        source_device_id TEXT DEFAULT ''
     )
     ''')
+    ensure_column('arp_cache', 'vlan_id', "INTEGER")
+    ensure_column('arp_cache', 'source_device_id', "TEXT DEFAULT ''")
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_arp_cache_expires ON arp_cache(expires_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_arp_cache_source_device ON arp_cache(source_device_id)')
 
     cursor.execute(f'''
     CREATE TABLE IF NOT EXISTS mac_change_log (
@@ -1569,13 +1629,83 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         error_code TEXT DEFAULT '',
         error_message TEXT DEFAULT '',
         metadata_json TEXT DEFAULT '{}',
+        next_retry_at TEXT,
+        failure_class TEXT DEFAULT '',
+        circuit_state TEXT DEFAULT 'closed',
+        last_failure_at TEXT,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (device_id, collector),
         FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
     )
     ''')
+    for col, dtype in [
+        ('next_retry_at', "TEXT"),
+        ('failure_class', "TEXT DEFAULT ''"),
+        ('circuit_state', "TEXT DEFAULT 'closed'"),
+        ('last_failure_at', "TEXT"),
+    ]:
+        ensure_column('device_collection_status', col, dtype)
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_collection_status_collector_status ON device_collection_status(collector, status)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_collection_status_last_success ON device_collection_status(last_success_at)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_collection_status_retry ON device_collection_status(collector, circuit_state, next_retry_at)')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS collector_sweep_state (
+        collector TEXT PRIMARY KEY,
+        cursor_position INTEGER NOT NULL DEFAULT 0,
+        last_run_id TEXT DEFAULT '',
+        last_started_at TEXT,
+        last_completed_at TEXT,
+        last_eligible INTEGER NOT NULL DEFAULT 0,
+        last_selected INTEGER NOT NULL DEFAULT 0,
+        last_batch_size INTEGER NOT NULL DEFAULT 0,
+        last_successful INTEGER NOT NULL DEFAULT 0,
+        last_failed INTEGER NOT NULL DEFAULT 0,
+        last_collected INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_collector_sweep_completed ON collector_sweep_state(last_completed_at)')
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS collector_task_queue (
+        id TEXT PRIMARY KEY,
+        collector TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        priority INTEGER NOT NULL DEFAULT 100,
+        available_at TEXT NOT NULL,
+        lease_owner TEXT DEFAULT '',
+        lease_until TEXT,
+        attempt INTEGER NOT NULL DEFAULT 0,
+        error_class TEXT DEFAULT '',
+        error_message TEXT DEFAULT '',
+        payload_json TEXT DEFAULT '{}',
+        result_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL,
+        UNIQUE (collector, device_id),
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_collector_task_claim ON collector_task_queue(collector, status, available_at, priority)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_collector_task_lease ON collector_task_queue(collector, lease_until)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS collector_worker_slots (
+        collector TEXT NOT NULL,
+        slot_id INTEGER NOT NULL,
+        task_id TEXT,
+        lease_owner TEXT DEFAULT '',
+        lease_until TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (collector, slot_id),
+        UNIQUE (collector, task_id)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_collector_worker_slot_lease ON collector_worker_slots(collector, lease_until)')
 
     # Create playbook_executions table
     cursor.execute('''
@@ -2527,6 +2657,19 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_config_drift_device ON config_drift_results(device_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_config_drift_checked ON config_drift_results(checked_at)')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS config_baselines (
+        id TEXT PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        config_type TEXT NOT NULL DEFAULT 'running',
+        snapshot_id TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        set_by TEXT NOT NULL DEFAULT '',
+        set_at TEXT NOT NULL,
+        UNIQUE(device_id, config_type)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_config_baselines_snapshot ON config_baselines(snapshot_id)')
 
     # IP/VLAN resource management
     cursor.execute('''

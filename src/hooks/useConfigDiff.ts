@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ConfigSnapshot, DiffLine } from '../types';
-import { computeDiff, buildDiffDerivedData } from '../utils/configDiffEngine';
+import { computeDiff, buildDiffDerivedData, normalizeConfigForDiff } from '../utils/configDiffEngine';
 
 export interface UseConfigDiffOptions {
   language: string;
@@ -23,6 +23,7 @@ export function useConfigDiff({
   const [diffPreSelectedDeviceId, setDiffPreSelectedDeviceId] = useState<string | null>(null);
   const [diffOnlyChanges, setDiffOnlyChanges] = useState(false);
   const [diffShowFullBoth, setDiffShowFullBoth] = useState(false);
+  const [diffMode, setDiffMode] = useState<'normalized' | 'raw'>('normalized');
   const [diffFocusChangeIdx, setDiffFocusChangeIdx] = useState(0);
   const [diffBlockQuery, setDiffBlockQuery] = useState('');
   const diffLineRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -47,7 +48,10 @@ export function useConfigDiff({
 
   // ── Compute diff lines ──
   const activeDiffLines: DiffLine[] = configDiffLeft && configDiffRight
-    ? computeDiff(configDiffLeft.content || '', configDiffRight.content || '')
+    ? computeDiff(
+        diffMode === 'normalized' ? normalizeConfigForDiff(configDiffLeft.content || '') : (configDiffLeft.content || ''),
+        diffMode === 'normalized' ? normalizeConfigForDiff(configDiffRight.content || '') : (configDiffRight.content || ''),
+      )
     : [];
 
   const derived = buildDiffDerivedData(activeDiffLines, diffOnlyChanges, diffBlockQuery, language);
@@ -205,6 +209,7 @@ export function useConfigDiff({
     diffPreSelectedDeviceId,
     diffOnlyChanges,
     diffShowFullBoth,
+    diffMode,
     diffFocusChangeIdx,
     diffBlockQuery,
     diffLineRefs,
@@ -213,6 +218,7 @@ export function useConfigDiff({
     setConfigDiffRight,
     setDiffOnlyChanges,
     setDiffShowFullBoth,
+    setDiffMode,
     setDiffFocusChangeIdx,
     setDiffBlockQuery,
     // Derived data

@@ -16,6 +16,7 @@ from services.operational_data_service import collect_operational_data
 
 READ_ONLY_EVIDENCE_CATEGORIES = (
     "interfaces",
+    "interface_description",
     "vlan",
     "routing_table",
     "neighbors",

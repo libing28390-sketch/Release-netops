@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Body, Request, Depends
+from fastapi import APIRouter, HTTPException, Body, Request, Depends, Query
 from fastapi.responses import JSONResponse
 import os
 import uuid
@@ -66,11 +66,70 @@ def _resolve_execution_credentials(device: dict, auth_role: str = 'normal') -> d
 # ── Script Management CRUD ──
 
 @router.get("/scripts")
-async def read_scripts():
+async def read_scripts(
+    q: str = Query('', description='Search script name, id or description'),
+    platform: str = Query('', description='Platform or platform group'),
+    category: str = Query('', description='Script category'),
+    script_type: str = Query('', description='Script type'),
+    status: str = Query('', description='Script status'),
+    page: int | None = Query(None, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
     conn = get_db_connection()
     try:
-        scripts = conn.execute('SELECT * FROM scripts ORDER BY updated_at DESC').fetchall()
-        return [dict(s) for s in scripts]
+        clauses: list[str] = []
+        params: list[str] = []
+        if q.strip():
+            clauses.append("(LOWER(id) LIKE ? OR LOWER(name) LIKE ? OR LOWER(COALESCE(description, '')) LIKE ?)")
+            fuzzy = f"%{q.strip().lower()}%"
+            params.extend([fuzzy, fuzzy, fuzzy])
+        if platform and platform.lower() not in ('all', 'any'):
+            groups = {
+                'linux': ['linux', 'ubuntu', 'centos', 'debian', 'redhat'],
+                'cisco': ['cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco'],
+                'huawei': ['huawei_vrp', 'huawei_vrpv8', 'huawei'],
+                'h3c': ['h3c_comware', 'hp_comware', 'h3c'],
+                'juniper': ['juniper_junos', 'juniper'],
+                'arista': ['arista_eos', 'arista'],
+            }
+            values = groups.get(platform.lower(), [platform])
+            placeholders = ','.join('?' for _ in values)
+            clauses.append(f"LOWER(COALESCE(platform, '')) IN ({placeholders})")
+            params.extend(value.lower() for value in values)
+        if category and category.lower() not in ('all', 'any'):
+            if category.lower() == 'inspection':
+                clauses.append("LOWER(COALESCE(category, '')) IN ('inspection', 'standard')")
+            elif category.lower() == 'system':
+                clauses.append("(LOWER(COALESCE(submitter_name, '')) = 'system' OR LOWER(COALESCE(author, '')) = 'system')")
+            else:
+                clauses.append("LOWER(COALESCE(category, '')) = ?")
+                params.append(category.lower())
+        if script_type and script_type.lower() not in ('all', 'any'):
+            clauses.append("LOWER(COALESCE(script_type, '')) = ?")
+            params.append(script_type.lower())
+        if status and status.lower() not in ('all', 'any'):
+            clauses.append("LOWER(COALESCE(status, '')) = ?")
+            params.append(status.lower())
+
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ''
+        if page is None:
+            scripts = conn.execute(f'SELECT * FROM scripts{where} ORDER BY updated_at DESC', tuple(params)).fetchall()
+            return [dict(s) for s in scripts]
+
+        total_row = conn.execute(f'SELECT COUNT(*) AS total FROM scripts{where}', tuple(params)).fetchone()
+        total = int(total_row['total'] or 0) if total_row else 0
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            f'SELECT * FROM scripts{where} ORDER BY updated_at DESC LIMIT ? OFFSET ?',
+            tuple(params + [page_size, offset]),
+        ).fetchall()
+        return {
+            'items': [dict(row) for row in rows],
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': max(1, (total + page_size - 1) // page_size),
+        }
     finally:
         conn.close()
 

@@ -8,7 +8,7 @@ from services.read_only_collection_adapter import READ_ONLY_EVIDENCE_CATEGORIES
 
 def test_read_only_evidence_categories_are_explicit_and_vendor_neutral() -> None:
     assert READ_ONLY_EVIDENCE_CATEGORIES == (
-        'interfaces', 'vlan', 'routing_table', 'neighbors', 'arp', 'mac_table'
+        'interfaces', 'interface_description', 'vlan', 'routing_table', 'neighbors', 'arp', 'mac_table'
     )
 
 
@@ -173,6 +173,57 @@ def test_interface_snapshot_bridge_falls_back_to_ip_inventory(monkeypatch) -> No
     assert result['created'] == 1
     assert captured[0]['prefix'] == '1.1.1.1/32'
     assert captured[0]['network_type'] == 'loopback'
+
+
+def test_interface_snapshot_matches_h3c_svi_alias_and_dotted_mask(monkeypatch) -> None:
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    conn.executescript('''
+        CREATE TABLE devices (
+            id TEXT PRIMARY KEY, hostname TEXT, ip_address TEXT, platform TEXT,
+            site_id TEXT, tenant_id TEXT
+        );
+        CREATE TABLE interfaces (
+            device_id TEXT, interface_name TEXT, primary_ip TEXT, ip_address TEXT,
+            ip_prefix_length INTEGER, vrf_id TEXT
+        );
+        CREATE TABLE ip_inventory (
+            device_id TEXT, interface TEXT, ip TEXT, mask TEXT, last_seen TEXT
+        );
+    ''')
+    conn.execute(
+        "INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?)",
+        ('dev-h3c', 'S6850-6', '10.254.0.6', 'hp_comware', 'site-a', 'tenant-default'),
+    )
+    conn.execute(
+        "INSERT INTO interfaces VALUES (?, ?, ?, ?, ?, ?)",
+        ('dev-h3c', 'Vlan8', '172.16.6.1', '172.16.6.1', None, ''),
+    )
+    conn.execute(
+        "INSERT INTO ip_inventory VALUES (?, ?, ?, ?, ?)",
+        ('dev-h3c', 'Vlan-interface8', '172.16.6.1', '255.255.255.0', 'now'),
+    )
+
+    class NonClosingConnection:
+        def __getattr__(self, name):
+            return getattr(conn, name)
+
+        def close(self):
+            return None
+
+    captured: list[dict] = []
+    monkeypatch.setattr(prefix_service, 'get_db_connection', lambda: NonClosingConnection())
+    monkeypatch.setattr(
+        prefix_service,
+        'persist_prefix_candidates',
+        lambda candidates, collection_run_id=None: captured.extend(candidates) or {
+            'created': len(candidates), 'updated': 0,
+        },
+    )
+
+    result = prefix_service.discover_prefixes_from_interface_snapshot('dev-h3c', collection_run_id='run-h3c')
+    assert result['created'] == 1
+    assert captured[0]['prefix'] == '172.16.6.0/24'
 
 
 def test_prefix_classification_summary_returns_sql_row(monkeypatch) -> None:

@@ -1,0 +1,11 @@
+Value FAN_ID (\d+|\S+)
+Value MODEL (.*)
+Value STATUS (ok|fail|absent|\S+)
+Value HARDWARE_VERSION (\S+)
+Value SERIAL_NUMBER (\S+)
+
+Start
+  ^Fan id\s+Type\s+Status
+  ^-+
+  ^${FAN_ID}\s+${MODEL}\s{2,}${STATUS}\s{2,}${HARDWARE_VERSION}\s{2,}${SERIAL_NUMBER}\s*$$ -> Record
+  ^${FAN_ID}\s+${MODEL}\s+${STATUS}\s+${HARDWARE_VERSION}\s+${SERIAL_NUMBER}\s*$$ -> Record

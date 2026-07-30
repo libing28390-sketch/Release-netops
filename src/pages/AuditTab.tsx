@@ -204,7 +204,7 @@ const AuditTab: React.FC<AuditTabProps> = ({
           </select>
         </div>
         <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+        <table className="nx-data-table text-left">
           <thead>
             <tr className="bg-black/[0.01] border-b border-black/5">
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('timestamp')}</th>

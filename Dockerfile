@@ -2,7 +2,7 @@
 FROM node:20-alpine AS frontend-build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm config set registry https://registry.npmmirror.com && npm ci --silent
+RUN npm ci --silent
 COPY . .
 RUN npm run build
 
@@ -13,14 +13,9 @@ LABEL maintainer="NetOps Team"
 LABEL python.version="3.10"
 LABEL description="Nexora NetOps Platform"
 
-# System dependencies (use mirror in China for speed)
-RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list 2>/dev/null || true && \
-    sed -i 's/security.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list 2>/dev/null || true && \
-    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
-        sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \
-        sed -i 's/security.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list.d/debian.sources; \
-    fi && \
-    apt-get update -qq && \
+# System dependencies. Build images on a connected build host, then transfer
+# the resulting images to isolated/offline deployment hosts when required.
+RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends \
         build-essential \
         python3-dev \
@@ -35,8 +30,8 @@ WORKDIR /app
 
 # Python dependencies (install before copying code for better layer caching)
 COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ && \
-    pip install --no-cache-dir -r /app/backend/requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /app/backend/requirements.txt
 
 # Copy backend source
 COPY backend/ /app/backend/

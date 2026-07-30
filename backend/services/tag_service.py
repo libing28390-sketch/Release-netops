@@ -199,7 +199,12 @@ def list_tag_definitions(conn, category: str | None = None, include_inactive: bo
         clauses.append("td.is_active = 1")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = conn.execute(
-        f'''SELECT td.*, tc.label AS category_label, tc.label_zh AS category_label_zh
+        f'''SELECT td.*, tc.label AS category_label, tc.label_zh AS category_label_zh,
+                   COALESCE((
+                       SELECT COUNT(*)
+                       FROM tag_assignments ta
+                       WHERE ta.tag_id = td.id
+                   ), 0) AS assignment_count
             FROM tag_definitions td LEFT JOIN tag_categories tc ON tc.code=td.category
             {where} ORDER BY td.category, td.sort_order, td.code''',
         params,
@@ -416,28 +421,125 @@ def batch_set_device_tags(conn, device_ids: list[str], tag_ids: list[str], creat
     return count
 
 
+def resolve_device_ids_by_expression(conn, expression: dict | None) -> list[str]:
+    """Resolve a recursively nested AND/OR/NOT tag expression."""
+    if not isinstance(expression, dict):
+        return []
+
+    device_rows = conn.execute("SELECT id FROM devices").fetchall()
+    device_ids = [str(row["id"]) for row in device_rows]
+    assignments = conn.execute(
+        "SELECT resource_id, tag_id FROM tag_assignments WHERE resource_type='device'"
+    ).fetchall()
+    tags_by_device: dict[str, set[str]] = {device_id: set() for device_id in device_ids}
+    for row in assignments:
+        resource_id = str(row["resource_id"])
+        if resource_id in tags_by_device:
+            tags_by_device[resource_id].add(str(row["tag_id"]))
+
+    evaluated_nodes = 0
+
+    def matches(group: object, device_tags: set[str], depth: int = 0) -> bool:
+        nonlocal evaluated_nodes
+        evaluated_nodes += 1
+        if evaluated_nodes > 4096 or depth > 16 or not isinstance(group, dict):
+            return False
+
+        tag_ids = [
+            str(tag_id).strip()
+            for tag_id in (group.get("tag_ids") or [])
+            if str(tag_id).strip()
+        ]
+        child_groups = group.get("groups") or []
+        values = [tag_id in device_tags for tag_id in tag_ids]
+        if isinstance(child_groups, list):
+            values.extend(matches(child, device_tags, depth + 1) for child in child_groups)
+        if not values:
+            return False
+
+        result = any(values) if str(group.get("operator") or "and").lower() == "or" else all(values)
+        return not result if group.get("negated") is True else result
+
+    result: list[str] = []
+    for device_id in device_ids:
+        evaluated_nodes = 0
+        if matches(expression, tags_by_device[device_id]):
+            result.append(device_id)
+    return sorted(result)
+
+
+def resolve_device_ids_by_condition_groups(
+    conn,
+    condition_groups: list[dict] | None = None,
+    exclude_tag_ids: list[str] | None = None,
+) -> list[str]:
+    """Resolve automation tag groups using the shared AND/OR/NOT semantics.
+
+    Tags inside one group are ORed. Every ``and`` group must match, at least
+    one ``or`` group must match when OR groups exist, and any ``not`` group
+    match excludes the device. ``exclude_tag_ids`` remains supported for
+    saved filters created before group operators were introduced.
+    """
+    normalized: list[tuple[str, list[str]]] = []
+    for raw_group in condition_groups or []:
+        if not isinstance(raw_group, dict):
+            continue
+        tag_ids = list(dict.fromkeys(
+            str(tag_id).strip()
+            for tag_id in (raw_group.get("tag_ids") or [])
+            if str(tag_id).strip()
+        ))
+        if not tag_ids:
+            continue
+        operator = str(raw_group.get("operator") or "and").strip().lower()
+        if operator not in {"and", "or", "not"}:
+            operator = "and"
+        normalized.append((operator, tag_ids))
+
+    excluded = list(dict.fromkeys(
+        str(tag_id).strip()
+        for tag_id in (exclude_tag_ids or [])
+        if str(tag_id).strip()
+    ))
+    if excluded:
+        normalized.append(("not", excluded))
+
+    root = {
+        "operator": "and",
+        "negated": False,
+        "tag_ids": [],
+        "groups": [],
+    }
+    or_tag_ids: list[str] = []
+    for operator, tag_ids in normalized:
+        if operator == "or":
+            or_tag_ids.extend(tag_ids)
+            continue
+        root["groups"].append({
+            "operator": "or",
+            "negated": operator == "not",
+            "tag_ids": tag_ids,
+            "groups": [],
+        })
+    if or_tag_ids:
+        root["groups"].append({
+            "operator": "or",
+            "negated": False,
+            "tag_ids": list(dict.fromkeys(or_tag_ids)),
+            "groups": [],
+        })
+    return resolve_device_ids_by_expression(conn, root)
+
+
 def resolve_device_ids_by_filter(conn, include_groups: list[list[str]] | None = None,
                                  exclude_tag_ids: list[str] | None = None) -> list[str]:
-    """Resolve AND-of-OR tag groups plus exclusions for automation targets."""
-    groups = [list(dict.fromkeys(group)) for group in (include_groups or []) if group]
-    excluded = list(dict.fromkeys(exclude_tag_ids or []))
-    rows = conn.execute("SELECT id FROM devices").fetchall()
-    candidates = {str(row["id"]) for row in rows}
-    for group in groups:
-        marks = ",".join("?" for _ in group)
-        matched = conn.execute(
-            f"SELECT DISTINCT resource_id FROM tag_assignments WHERE resource_type='device' AND tag_id IN ({marks})",
-            group,
-        ).fetchall()
-        candidates &= {str(row["resource_id"]) for row in matched}
-    if excluded:
-        marks = ",".join("?" for _ in excluded)
-        matched = conn.execute(
-            f"SELECT DISTINCT resource_id FROM tag_assignments WHERE resource_type='device' AND tag_id IN ({marks})",
-            excluded,
-        ).fetchall()
-        candidates -= {str(row["resource_id"]) for row in matched}
-    return sorted(candidates)
+    """Backward-compatible AND-of-OR tag group resolver."""
+    conditions = [
+        {"operator": "and", "tag_ids": list(group)}
+        for group in (include_groups or [])
+        if group
+    ]
+    return resolve_device_ids_by_condition_groups(conn, conditions, exclude_tag_ids)
 
 
 def find_devices_by_tags(conn, tag_ids: list[str], match_all: bool = True) -> list[str]:
@@ -449,6 +551,14 @@ def find_devices_by_tags(conn, tag_ids: list[str], match_all: bool = True) -> li
 
 def get_tag_statistics(conn) -> dict:
     category_counts = conn.execute("SELECT category, COUNT(*) AS count FROM tag_definitions WHERE is_active=1 GROUP BY category ORDER BY category").fetchall()
+    definition_counts = conn.execute(
+        '''SELECT COUNT(*) AS total_definitions,
+                  COALESCE(SUM(CASE WHEN EXISTS (
+                      SELECT 1 FROM tag_assignments ta WHERE ta.tag_id = td.id
+                  ) THEN 1 ELSE 0 END), 0) AS used_definitions
+           FROM tag_definitions td
+           WHERE td.is_active=1'''
+    ).fetchone()
     usage_counts = conn.execute(
         '''SELECT td.id, td.category, td.code, td.label, td.label_zh, COUNT(ta.resource_id) AS device_count
            FROM tag_definitions td JOIN tag_assignments ta ON ta.tag_id=td.id
@@ -458,6 +568,12 @@ def get_tag_statistics(conn) -> dict:
     ).fetchall()
     return {
         "total_definitions": conn.execute("SELECT COUNT(*) FROM tag_definitions WHERE is_active=1").fetchone()[0],
+        "used_definitions": definition_counts["used_definitions"] if definition_counts else 0,
+        "unused_definitions": (
+            definition_counts["total_definitions"] - definition_counts["used_definitions"]
+            if definition_counts
+            else 0
+        ),
         "total_assignments": conn.execute("SELECT COUNT(*) FROM tag_assignments").fetchone()[0],
         "tagged_devices": conn.execute("SELECT COUNT(DISTINCT resource_id) FROM tag_assignments WHERE resource_type='device'").fetchone()[0],
         "categories": {row["category"]: row["count"] for row in category_counts},

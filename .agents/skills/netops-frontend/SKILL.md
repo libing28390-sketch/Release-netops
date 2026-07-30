@@ -12,6 +12,7 @@ description: Implement and review Nexora NetOps React 19 and TypeScript pages, c
 3. Reuse existing layout, modal, pagination, notification, theme, and localization patterns.
 4. Update `src/types.ts` or domain-local `types.ts` when an API contract changes.
 5. Handle loading, empty, error, permission-denied, and narrow-screen states.
+6. For device, backup, task, log, alert, topology, or other growing datasets, read [references/large-data-ui.md](references/large-data-ui.md) before choosing the view, pagination, filtering, search, or detail-loading strategy.
 
 ## Conventions
 

@@ -21,11 +21,13 @@ import time
 import os
 import threading
 import re
+import csv
+import io
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from database import get_db_connection
@@ -404,6 +406,9 @@ def list_sessions(
     status: str = '',
     requester_username: str = '',
     search: str = '',
+    access_level: str = '',
+    connect_method: str = '',
+    risk_level: str = '',
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
 ):
@@ -424,14 +429,43 @@ def list_sessions(
         conditions = []
         params = []
         if status:
-            if status.strip().lower() == 'active':
+            normalized_status = status.strip().lower()
+            if normalized_status == 'active':
                 conditions.append("status IN ('active', 'connecting')")
+            elif normalized_status == 'history':
+                conditions.append("status NOT IN ('active', 'connecting')")
             else:
                 conditions.append('status = ?')
-                params.append(status.strip().lower())
+                params.append(normalized_status)
         if requester_username:
             conditions.append('requester_username = ?')
             params.append(requester_username.strip())
+        if access_level:
+            normalized_access = access_level.strip().lower()
+            if normalized_access not in {'normal', 'admin'}:
+                raise HTTPException(status_code=400, detail='Invalid access_level filter')
+            conditions.append('access_level = ?')
+            params.append(normalized_access)
+        if connect_method:
+            normalized_method = connect_method.strip().lower()
+            if normalized_method not in {'web', 'local'}:
+                raise HTTPException(status_code=400, detail='Invalid connect_method filter')
+            conditions.append('connect_method = ?')
+            params.append(normalized_method)
+        if risk_level:
+            normalized_risk = risk_level.strip().lower()
+            if normalized_risk == 'risky':
+                conditions.append(
+                    "LOWER(CAST(risk_level AS TEXT)) IN "
+                    "('1', '2', 'medium', 'high', 'critical')"
+                )
+            elif normalized_risk == 'safe':
+                conditions.append(
+                    "(risk_level IS NULL OR LOWER(CAST(risk_level AS TEXT)) "
+                    "IN ('', '0', 'low', 'safe'))"
+                )
+            else:
+                raise HTTPException(status_code=400, detail='Invalid risk_level filter')
         # Free-text search across host/IP/user fields. The query adapter
         # rewrites LIKE to ILIKE on PG so case-insensitive search is free.
         if search:
@@ -492,6 +526,70 @@ def list_sessions(
         return {'items': items, 'total': total, 'page': page, 'page_size': page_size}
     finally:
         conn.close()
+
+
+@router.get('/pam/sessions/export.csv')
+def export_sessions_csv(
+    status: str = '',
+    requester_username: str = '',
+    search: str = '',
+    access_level: str = '',
+    connect_method: str = '',
+    risk_level: str = '',
+):
+    """Export the filtered PAM audit result without exposing credentials."""
+    items: list[dict] = []
+    page = 1
+    while True:
+        result = list_sessions(
+            status=status,
+            requester_username=requester_username,
+            search=search,
+            access_level=access_level,
+            connect_method=connect_method,
+            risk_level=risk_level,
+            page=page,
+            page_size=200,
+        )
+        batch = result.get('items') or []
+        items.extend(batch)
+        if len(items) >= result.get('total', 0) or not batch or len(items) >= 10000:
+            break
+        page += 1
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        'session_id', 'status', 'device', 'target_ip', 'requester',
+        'login_account', 'access_level', 'connect_method', 'risk_level',
+        'risk_summary', 'connected_at', 'closed_at', 'duration_seconds',
+        'command_count', 'close_reason', 'recording_available',
+    ])
+    for item in items:
+        writer.writerow([
+            item.get('id', ''),
+            item.get('status', ''),
+            item.get('asset_hostname', ''),
+            item.get('target_ip', ''),
+            item.get('requester_username', ''),
+            item.get('login_username', ''),
+            item.get('access_level', ''),
+            item.get('connect_method', ''),
+            item.get('risk_level', ''),
+            item.get('risk_summary', ''),
+            item.get('connected_at', ''),
+            item.get('closed_at', ''),
+            item.get('duration_seconds', 0),
+            item.get('command_count', 0),
+            item.get('close_reason', ''),
+            'yes' if item.get('recording_path') else 'no',
+        ])
+    content = '\ufeff' + output.getvalue()
+    return Response(
+        content=content.encode('utf-8'),
+        media_type='text/csv; charset=utf-8',
+        headers={'Content-Disposition': 'attachment; filename="pam_sessions.csv"'},
+    )
 
 
 @router.post('/pam/sessions/{session_id}/kill')

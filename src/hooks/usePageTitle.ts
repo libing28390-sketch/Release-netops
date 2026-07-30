@@ -73,6 +73,7 @@ export const usePageTitle = ({
     if (activeTab === 'capacity') return language === 'zh' ? '容量规划' : 'Capacity Planning';
     if (activeTab === 'ipam') {
       const map: Record<string, string> = {
+        locate: language === 'zh' ? 'IP 定位' : 'IP Locator',
         prefixes: language === 'zh' ? 'Prefix管理' : 'Prefix Management',
         ips: language === 'zh' ? 'IP地址' : 'IP Address Management',
         pools: language === 'zh' ? '地址池' : 'IP Pool Management',

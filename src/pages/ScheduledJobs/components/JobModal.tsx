@@ -4,7 +4,7 @@ import {
   CalendarClock, X, Zap, ChevronDown, Info, Search, FileCode, CheckCircle2,
   Trash2, RotateCcw, User, ShieldAlert, Shield, AlertTriangle, Database, Activity
 } from 'lucide-react';
-import TagConditionPicker, { type TagFilterConfig } from '../../../components/TagConditionPicker';
+import TagConditionPicker, { hasTagFilterConditions, type TagFilterConfig } from '../../../components/TagConditionPicker';
 import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice } from '../types';
 import {
   CRON_PRESETS, CRON_FIELD_LABELS_ZH, CRON_FIELD_LABELS_EN,
@@ -123,9 +123,7 @@ export const JobModal: React.FC<JobModalProps> = ({
     if (!form.device_scope) return false;
     if (form.device_scope === 'ip' && ipDevices.length === 0) return false;
     if (form.device_scope === 'tag') {
-      const hasTag = (tagFilter.groups || []).some(g => (g.tag_ids || []).length > 0)
-        || (tagFilter.exclude_tag_ids || []).length > 0;
-      if (!hasTag) return false;
+      if (!hasTagFilterConditions(tagFilter)) return false;
     }
     if ((form.device_scope === 'site' || form.device_scope === 'role') && !form.device_filter.trim()) return false;
     if (form.action_type === 'script_run' && !form.script_id) return false;

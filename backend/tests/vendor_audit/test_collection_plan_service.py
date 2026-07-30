@@ -17,7 +17,7 @@ def test_router_skips_l2_collectors_by_default():
     assert should_collect(device, "endpoint_location") is False
 
 
-def test_access_switch_skips_routing_collectors_by_default():
+def test_access_switch_uses_mac_by_default_and_arp_is_capability_gated():
     device = _device("access")
     assert should_collect(device, "mac_table") is True
     assert should_collect(device, "vlan") is True
@@ -25,6 +25,14 @@ def test_access_switch_skips_routing_collectors_by_default():
     assert should_collect(device, "arp") is False
     assert should_collect(device, "routes") is False
     assert should_collect(device, "bgp") is False
+
+
+def test_access_switch_can_explicitly_enable_arp():
+    device = _device(
+        "access",
+        collection_policy_json='{"collectors":{"arp":true}}',
+    )
+    assert should_collect(device, "arp") is True
 
 
 def test_explicit_device_policy_overrides_role_defaults():

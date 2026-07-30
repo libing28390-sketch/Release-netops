@@ -74,6 +74,14 @@ def normalize_interface_name(value: str | None) -> str:
     raw = str(value).strip().replace("\u200b", "")
     raw = re.sub(r"\s+interface\s*$", "", raw, flags=re.IGNORECASE)
     raw = raw.lower().replace(" ", "")
+
+    # SVI names are formatted differently by Cisco, Huawei and H3C. H3C may
+    # report the same interface as ``Vlan8`` in the brief table and
+    # ``Vlan-interface8`` in the IP inventory/configuration output.
+    svi_match = re.fullmatch(r"vlan(?:if|[-_]?interface)?[-_ ]*(\d+)", raw, flags=re.IGNORECASE)
+    if svi_match:
+        return f"vlan{svi_match.group(1)}"
+
     for source, target in INTERFACE_ALIASES:
         if raw.startswith(source):
             raw = raw.replace(source, target, 1)

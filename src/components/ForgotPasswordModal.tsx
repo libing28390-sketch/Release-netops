@@ -10,6 +10,7 @@ interface ForgotPasswordModalProps {
 }
 
 type Step = 'username' | 'code' | 'newpwd' | 'done';
+type RecoveryMethod = 'notification' | 'mfa';
 
 const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose, t, initialUsername = '' }) => {
   const [step, setStep] = useState<Step>('username');
@@ -22,6 +23,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
   const [sending, setSending] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [channels, setChannels] = useState<{ platform: string; success: boolean }[]>([]);
+  const [recoveryMethod, setRecoveryMethod] = useState<RecoveryMethod>('notification');
 
   // Reset state when modal opens
   useEffect(() => {
@@ -36,6 +38,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
       setSending(false);
       setCountdown(0);
       setChannels([]);
+      setRecoveryMethod('notification');
     }
   }, [open, initialUsername]);
 
@@ -74,6 +77,17 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
     }
   }, [username, t]);
 
+  const handleUseMfa = useCallback(() => {
+    if (!username.trim()) {
+      setError(t('fpUsernameRequired'));
+      return;
+    }
+    setRecoveryMethod('mfa');
+    setCode('');
+    setError(null);
+    setStep('code');
+  }, [username, t]);
+
   const handleVerifyAndReset = useCallback(async () => {
     if (!code.trim() || code.trim().length !== 6) {
       setError(t('fpCodeInvalid'));
@@ -90,7 +104,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
     setSending(true);
     setError(null);
     try {
-      const resp = await fetch('/api/forgot-password/reset', {
+      const resp = await fetch(recoveryMethod === 'mfa' ? '/api/forgot-password/mfa-reset' : '/api/forgot-password/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), code: code.trim(), new_password: newPassword }),
@@ -106,7 +120,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
     } finally {
       setSending(false);
     }
-  }, [username, code, newPassword, confirmPassword, t]);
+  }, [username, code, newPassword, confirmPassword, recoveryMethod, t]);
 
   if (!open) return null;
 
@@ -244,6 +258,19 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                         <><Send size={14} />{t('fpSendCode')}<ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" /></>
                       )}
                     </button>
+                    <div className="flex items-center gap-2 py-1 text-[10px] text-white/15">
+                      <span className="h-px flex-1 bg-white/[0.06]" />
+                      <span>{t('fpOr')}</span>
+                      <span className="h-px flex-1 bg-white/[0.06]" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleUseMfa}
+                      disabled={!username.trim()}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#06b6d4]/20 py-2.5 text-[12px] font-semibold text-[#06b6d4]/70 transition-colors hover:bg-[#06b6d4]/[0.08] disabled:opacity-40"
+                    >
+                      <ShieldCheck size={14} />{t('fpUseMfa')}
+                    </button>
                   </motion.div>
                 )}
 
@@ -258,7 +285,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                     className="space-y-4"
                   >
                     {/* channel badges */}
-                    {channels.length > 0 && (
+                    {recoveryMethod === 'notification' && channels.length > 0 && (
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[10px] text-white/25 uppercase tracking-wider">{t('fpSentTo')}:</span>
                         {channels.filter(c => c.success).map((ch) => (
@@ -269,9 +296,14 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                         ))}
                       </div>
                     )}
+                    {recoveryMethod === 'mfa' && (
+                      <p className="rounded-lg border border-[#06b6d4]/15 bg-[#06b6d4]/[0.06] px-3 py-2 text-[11px] leading-relaxed text-white/45">
+                        {t('fpMfaHint')}
+                      </p>
+                    )}
                     <div>
                       <label htmlFor="fp-code" className="block ml-0.5 mb-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#06b6d4]/60">
-                        {t('fpCodeLabel')}
+                        {recoveryMethod === 'mfa' ? t('fpMfaCodeLabel') : t('fpCodeLabel')}
                       </label>
                       <input
                         id="fp-code"
@@ -287,7 +319,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                       />
                     </div>
                     {/* resend */}
-                    <div className="flex items-center justify-between">
+                    {recoveryMethod === 'notification' ? <div className="flex items-center justify-between">
                       <button
                         onClick={() => { setStep('username'); setError(null); }}
                         className="text-[11px] text-white/25 hover:text-white/50 flex items-center gap-1 transition-colors"
@@ -301,7 +333,9 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                       >
                         {countdown > 0 ? `${t('fpResend')} (${countdown}s)` : t('fpResend')}
                       </button>
-                    </div>
+                    </div> : <div className="flex items-center justify-start">
+                      <button onClick={() => { setStep('username'); setRecoveryMethod('notification'); setError(null); }} className="text-[11px] text-white/25 hover:text-white/50 flex items-center gap-1 transition-colors"><ArrowLeft size={12} />{t('fpBack')}</button>
+                    </div>}
                     <button
                       onClick={() => {
                         if (code.trim().length !== 6) {

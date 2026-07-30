@@ -6,7 +6,6 @@ import {
   CheckCircle,
   AlertOctagon,
   Calendar,
-  Clock,
   Sparkles,
 } from 'lucide-react';
 import PageHero from '../../components/PageHero';
@@ -22,6 +21,9 @@ interface AnalyticsData {
     used_ips: number;
     free_ips: number;
     utilization_rate: number;
+    capacity_prefixes_count: number;
+    excluded_prefixes_count: number;
+    capacity_policy: string;
   };
   top_utilized_prefixes: Array<{
     id: string;
@@ -98,7 +100,9 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
 
     // Project coordinates
     const points = trend.map((d, index) => {
-      const x = padding + (index / (trend.length - 1)) * (width - padding * 2);
+      const x = trend.length === 1
+        ? width / 2
+        : padding + (index / (trend.length - 1)) * (width - padding * 2);
       const y = height - padding - ((d.allocated - minVal) / range) * (height - padding * 2);
       return { x, y, label: d.day, val: d.allocated };
     });
@@ -204,7 +208,7 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
       <PageHero
         icon={TrendingUp}
         title={zh ? 'IP 利用率与水位分析' : 'IPAM Capacity Analytics'}
-        subtitle={zh ? '多维度分析IP网段的水位负载，进行30天容量耗尽预测与Site/租户利用率横向对比' : 'Visualize prefix watermarks, site breakdowns, and 30-day allocation trend forecasts.'}
+        subtitle={zh ? '按可分配容量网段统计水位，容器前缀、点到点网段和主机路由不计入容量分母。' : 'Capacity is calculated from allocatable prefixes; containers, point-to-point links, and host routes are excluded.'}
       />
 
       {/* Grid Dashboard */}
@@ -218,8 +222,13 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
               <Layers size={22} />
             </div>
             <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '前缀网段数' : 'Total Prefixes'}</p>
-              <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">{overview.prefixes_count}</h3>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{zh ? '容量网段数' : 'Capacity Prefixes'}</p>
+              <h3 className="text-xl font-extrabold text-gray-900 mt-0.5">
+                {overview.capacity_prefixes_count}
+                <span className="ml-1 text-[10px] font-semibold text-gray-400">
+                  {zh ? `排除 ${overview.excluded_prefixes_count}` : `${overview.excluded_prefixes_count} excluded`}
+                </span>
+              </h3>
             </div>
           </div>
 
@@ -269,10 +278,10 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">
                 <AlertOctagon size={16} className="text-rose-500 animate-pulse" />
-                {zh ? '高水位网段 Top 5 排行榜' : 'High Watermark Prefixes (Top 5)'}
+                {zh ? '容量网段利用率 Top 5' : 'Capacity Prefix Utilization (Top 5)'}
               </h4>
-              <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-rose-50 text-rose-600 border border-rose-500/10">
-                {zh ? '利用率 >= 80%' : 'Critical >= 80%'}
+              <span className="px-2 py-0.5 rounded-md text-[9px] font-bold bg-slate-50 text-slate-500 border border-slate-200">
+                {zh ? '已排除 /31、/32' : '/31 and /32 excluded'}
               </span>
             </div>
 
@@ -295,7 +304,7 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
                 ))
               ) : (
                 <div className="h-full flex items-center justify-center text-xs text-gray-400 font-medium">
-                  {zh ? '当前全网无高负荷网段，运行状态良好' : 'No high utilized prefix blocks detected.'}
+                  {zh ? '尚无可计算容量的网段' : 'No allocatable capacity prefixes are available.'}
                 </div>
               )}
             </div>
@@ -306,13 +315,18 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
             <div className="mb-4">
               <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">
                 <Sparkles size={16} className="text-cyan-500" />
-                {zh ? '容量增长趋势与30天耗尽预测' : 'Depletion Forecast & Trend'}
+                {zh ? '容量分配历史趋势' : 'Capacity Allocation Trend'}
               </h4>
-              <p className="text-[10px] text-gray-400 mt-0.5">{zh ? '基于线性回归拟合未来IP消耗进度' : 'Linear regression forecast based on history.'}</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">{zh ? '仅统计可分配容量网段中的有效分配记录' : 'Only active allocations in capacity-eligible prefixes are included.'}</p>
             </div>
             
             <div className="flex-1 flex items-center justify-center min-h-[160px]">
-              {renderSVGChart(forecast_trend)}
+              {forecast_trend.length > 0 ? renderSVGChart(forecast_trend) : (
+                <div className="px-6 text-center">
+                  <p className="text-xs font-semibold text-gray-500">{zh ? '尚无历史分配样本' : 'No historical allocation samples yet'}</p>
+                  <p className="mt-1 text-[10px] text-gray-400">{zh ? '产生带时间戳的有效 IP 分配后将显示趋势。' : 'The trend appears after timestamped allocations are recorded.'}</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -349,6 +363,11 @@ const IPUtilizationTab: React.FC<IPUtilizationTabProps> = ({ language, t }) => {
                 </div>
               </div>
             ))}
+            {site_breakdown.length === 0 && (
+              <div className="col-span-full rounded-2xl border border-dashed border-gray-200 py-8 text-center text-xs text-gray-400">
+                {zh ? '尚无可按站点汇总的容量网段' : 'No site-scoped capacity prefixes are available.'}
+              </div>
+            )}
           </div>
         </div>
       </div>

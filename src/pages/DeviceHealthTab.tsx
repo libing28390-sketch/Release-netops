@@ -1,10 +1,23 @@
 import React from 'react';
-import { Activity, AlertTriangle, Filter, ShieldCheck, Server, Stethoscope } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
+  CircleHelp,
+  Clock3,
+  Filter,
+  Gauge,
+  RefreshCw,
+  Search,
+  Server,
+  ShieldAlert,
+  ShieldCheck,
+  WifiOff,
+  X,
+} from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
-import { severityBadgeClass } from '../components/shared';
-import { useChartTheme } from '../hooks/useChartTheme';
-import PageHero from '../components/PageHero';
 
 interface DeviceHealthTabProps {
   devices: Device[];
@@ -14,405 +27,130 @@ interface DeviceHealthTabProps {
   onOpenMonitoring: () => void;
 }
 
-const statusToneMap: Record<string, string> = {
-  healthy: 'bg-emerald-100 text-emerald-700',
-  warning: 'bg-amber-100 text-amber-700',
-  critical: 'bg-red-100 text-red-700',
-  unknown: 'bg-slate-100 text-slate-600',
+type HealthStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
+
+const statusConfig: Record<HealthStatus, { zh: string; en: string; color: string; soft: string; bar: string; icon: typeof CheckCircle2 }> = {
+  healthy: { zh: '\u5065\u5eb7', en: 'Healthy', color: 'text-emerald-300', soft: 'bg-emerald-400/10 border-emerald-300/20', bar: 'bg-emerald-400', icon: CheckCircle2 },
+  warning: { zh: '\u544a\u8b66', en: 'Warning', color: 'text-amber-300', soft: 'bg-amber-400/10 border-amber-300/20', bar: 'bg-amber-400', icon: AlertTriangle },
+  critical: { zh: '\u4e25\u91cd', en: 'Critical', color: 'text-rose-300', soft: 'bg-rose-400/10 border-rose-300/20', bar: 'bg-rose-400', icon: ShieldAlert },
+  unknown: { zh: '\u672a\u77e5', en: 'Unknown', color: 'text-slate-300', soft: 'bg-slate-400/10 border-slate-300/20', bar: 'bg-slate-400', icon: CircleHelp },
 };
 
-const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({
-  devices,
-  overview,
-  language,
-  onShowDetails,
-  onOpenMonitoring,
-}) => {
-  const ct = useChartTheme();
+const copy = (isZh: boolean) => isZh ? {
+  eyebrow: '\u5b9e\u65f6\u5065\u5eb7\u6001\u52bf', title: '\u8bbe\u5907\u5065\u5eb7\u68c0\u6d4b\u4e2d\u5fc3',
+  subtitle: '\u7edf\u4e00\u67e5\u770b\u8bbe\u5907\u53ef\u8fbe\u6027\u3001\u544a\u8b66\u3001\u63a5\u53e3\u8d28\u91cf\u3001\u8d44\u6e90\u548c\u5408\u89c4\u72b6\u6001\uff0c\u4f18\u5148\u5b9a\u4f4d\u6700\u9700\u8981\u5904\u7406\u7684\u8bbe\u5907\u3002',
+  auto: '30 \u79d2\u81ea\u52a8\u5237\u65b0', refresh: '\u5237\u65b0\u6570\u636e', monitoring: '\u6253\u5f00\u76d1\u63a7\u4e2d\u5fc3',
+  total: '\u8bbe\u5907\u603b\u6570', average: '\u5e73\u5747\u5065\u5eb7\u5206', distribution: '\u5168\u7f51\u5065\u5eb7\u5206\u5e03', posture: '\u5f53\u524d\u8bbe\u5907\u72b6\u6001', healthyRate: '\u5065\u5eb7\u7387', averageShort: '\u5e73\u5747\u5206',
+  triage: '\u4f18\u5148\u5904\u7406', risky: '\u9ad8\u98ce\u9669\u8bbe\u5907', sorted: '\u6309\u5065\u5eb7\u5206\u6392\u5e8f', noRisk: '\u5f53\u524d\u6ca1\u6709\u9ad8\u98ce\u9669\u8bbe\u5907', noMatch: '\u6ca1\u6709\u8bbe\u5907\u5339\u914d\u5f53\u524d\u7b5b\u9009\u6761\u4ef6',
+  trend: '\u5386\u53f2\u8d8b\u52bf', trendTitle: '\u5065\u5eb7\u6001\u52bf\u53d8\u5316', loading: '\u52a0\u8f7d\u4e2d\u2026', samples: '\u4e2a\u91c7\u6837\u70b9', noTrend: '\u6682\u65e0\u8d8b\u52bf\u91c7\u6837\u6570\u636e\uff0c\u91c7\u6837\u4efb\u52a1\u8fd0\u884c\u540e\u4f1a\u5728\u8fd9\u91cc\u663e\u793a', latestScore: '\u6700\u65b0\u5e73\u5747\u5206', latestCritical: '\u6700\u65b0\u4e25\u91cd\u8bbe\u5907', latestWarning: '\u6700\u65b0\u544a\u8b66\u8bbe\u5907',
+  inventory: '\u8bbe\u5907\u660e\u7ec6', results: '\u5065\u5eb7\u68c0\u6d4b\u7ed3\u679c', clear: '\u6e05\u9664\u7b5b\u9009', search: '\u641c\u7d22\u8bbe\u5907\u540d\u3001IP\u3001\u5e73\u53f0\u6216\u6458\u8981', allSites: '\u5168\u90e8\u7ad9\u70b9', allRoles: '\u5168\u90e8\u89d2\u8272', allStates: '\u5168\u90e8\u5065\u5eb7\u72b6\u6001', allRisks: '\u5168\u90e8\u98ce\u9669\u7ef4\u5ea6', openAlerts: '\u6709\u672a\u5904\u7406\u544a\u8b66', interfaceRisk: '\u63a5\u53e3\u5b58\u5728\u98ce\u9669',
+  device: '\u8bbe\u5907', location: '\u4f4d\u7f6e / \u89d2\u8272', health: '\u5065\u5eb7\u72b6\u6001', score: '\u8bc4\u5206', signals: '\u98ce\u9669\u4fe1\u53f7', summary: '\u6458\u8981', clearState: '\u6b63\u5e38', noData: '\u6682\u65e0\u8bbe\u5907\u5065\u5eb7\u6570\u636e\u3002\u8bf7\u786e\u8ba4\u8bbe\u5907\u5df2\u540c\u6b65\u5e76\u7b49\u5f85\u5065\u5eb7\u91c7\u6837\u3002', noIssue: '\u672a\u53d1\u73b0\u660e\u663e\u5065\u5eb7\u95ee\u9898', retry: '\u91cd\u8bd5', unavailable: '\u5065\u5eb7\u6570\u636e\u6682\u65f6\u65e0\u6cd5\u52a0\u8f7d\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5', alerts: '\u6761\u544a\u8b66', noMetadata: '\u6682\u65e0\u8bbe\u5907\u4fe1\u606f', interface: '\u63a5\u53e3\u98ce\u9669',
+} : {
+  eyebrow: 'Live health posture', title: 'Device Health Center', subtitle: 'Unify reachability, alerts, interface quality, resource and compliance signals to focus triage on the devices that need attention first.', auto: '30s auto refresh', refresh: 'Refresh', monitoring: 'Open monitoring', total: 'Total devices', average: 'Average score', distribution: 'Fleet distribution', posture: 'Current device posture', healthyRate: 'Healthy rate', averageShort: 'AVG', triage: 'Priority triage', risky: 'High-risk devices', sorted: 'Sorted by health score', noRisk: 'No high-risk devices right now.', noMatch: 'No devices match the active filters.', trend: 'History trend', trendTitle: 'Health posture over time', loading: 'Loading...', samples: 'samples', noTrend: 'No trend samples yet. Data will appear after the sampler runs.', latestScore: 'Latest score', latestCritical: 'Latest critical', latestWarning: 'Latest warning', inventory: 'Device inventory', results: 'Health check results', clear: 'Clear filters', search: 'Search hostname, IP, platform or summary', allSites: 'All sites', allRoles: 'All roles', allStates: 'All health states', allRisks: 'All risk types', openAlerts: 'Open alerts', interfaceRisk: 'Interface risk', device: 'Device', location: 'Location / role', health: 'Health', score: 'Score', signals: 'Signals', summary: 'Summary', clearState: 'Clear', noData: 'No device health data. Confirm devices are synced and wait for a health sample.', noIssue: 'No material health issue detected', retry: 'Retry', unavailable: 'Health data is temporarily unavailable. Please retry.', alerts: 'alerts', noMetadata: 'No device metadata', interface: 'Interface risk',
+};
+
+const toHealthStatus = (value: string | undefined): HealthStatus => value === 'healthy' || value === 'warning' || value === 'critical' ? value : 'unknown';
+const formatTime = (value: string | undefined, language: string) => {
+  if (!value) return '--';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+};
+
+const DeviceHealthTab: React.FC<DeviceHealthTabProps> = ({ devices, overview, language, onShowDetails, onOpenMonitoring }) => {
   const isZh = language === 'zh';
+  const labels = copy(isZh);
   const [rangeHours, setRangeHours] = React.useState(24);
   const [history, setHistory] = React.useState<DeviceHealthHistoryResponse | null>(null);
+  const [liveOverview, setLiveOverview] = React.useState<DeviceHealthOverview | null>(overview);
   const [historyLoading, setHistoryLoading] = React.useState(false);
+  const [overviewLoading, setOverviewLoading] = React.useState(false);
+  const [loadError, setLoadError] = React.useState('');
   const [siteFilter, setSiteFilter] = React.useState('all');
   const [roleFilter, setRoleFilter] = React.useState('all');
-  const [statusFilter, setStatusFilter] = React.useState('all');
-  const [alertFilter, setAlertFilter] = React.useState('all');
+  const [statusFilter, setStatusFilter] = React.useState<'all' | HealthStatus>('all');
+  const [riskFilter, setRiskFilter] = React.useState<'all' | 'alerts' | 'interfaces'>('all');
   const [searchTerm, setSearchTerm] = React.useState('');
 
-  React.useEffect(() => {
-    let cancelled = false;
-    const loadHistory = async () => {
-      setHistoryLoading(true);
-      try {
-        const resp = await fetch(`/api/device-health/history?range_hours=${rangeHours}`);
-        if (!resp.ok) return;
-        const data = await resp.json() as DeviceHealthHistoryResponse;
-        if (!cancelled) setHistory(data);
-      } finally {
-        if (!cancelled) setHistoryLoading(false);
-      }
-    };
+  const loadOverview = React.useCallback(async () => {
+    setOverviewLoading(true);
+    try {
+      const response = await fetch('/api/device-health/overview');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      setLiveOverview(await response.json() as DeviceHealthOverview);
+      setLoadError('');
+    } catch (error) {
+      console.error('Failed to load device health overview:', error);
+      if (!liveOverview && !overview) setLoadError(labels.unavailable);
+    } finally {
+      setOverviewLoading(false);
+    }
+  }, [labels.unavailable, liveOverview, overview]);
 
-    loadHistory();
-    const timer = window.setInterval(loadHistory, 60000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
+  const loadHistory = React.useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const response = await fetch(`/api/device-health/history?range_hours=${rangeHours}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      setHistory(await response.json() as DeviceHealthHistoryResponse);
+    } catch (error) {
+      console.error('Failed to load device health history:', error);
+    } finally {
+      setHistoryLoading(false);
+    }
   }, [rangeHours]);
 
-  const summary = overview || {
+  React.useEffect(() => { void loadOverview(); const timer = window.setInterval(() => void loadOverview(), 30000); return () => window.clearInterval(timer); }, [loadOverview]);
+  React.useEffect(() => { void loadHistory(); const timer = window.setInterval(() => void loadHistory(), 60000); return () => window.clearInterval(timer); }, [loadHistory]);
+  React.useEffect(() => { if (overview) setLiveOverview((current) => current || overview); }, [overview]);
+
+  const summary = liveOverview || overview || {
     total_devices: devices.length,
-    average_score: devices.length > 0 ? Number((devices.reduce((sum, item) => sum + Number(item.health_score || 0), 0) / devices.length).toFixed(1)) : 0,
-    healthy: devices.filter((item) => item.health_status === 'healthy').length,
-    warning: devices.filter((item) => item.health_status === 'warning').length,
-    critical: devices.filter((item) => item.health_status === 'critical').length,
-    unknown: devices.filter((item) => !item.health_status || item.health_status === 'unknown').length,
+    average_score: devices.length ? Number((devices.reduce((sum, device) => sum + Number(device.health_score || 0), 0) / devices.length).toFixed(1)) : 0,
+    healthy: devices.filter((device) => toHealthStatus(device.health_status) === 'healthy').length,
+    warning: devices.filter((device) => toHealthStatus(device.health_status) === 'warning').length,
+    critical: devices.filter((device) => toHealthStatus(device.health_status) === 'critical').length,
+    unknown: devices.filter((device) => toHealthStatus(device.health_status) === 'unknown').length,
     top_risky_devices: [],
   };
-
-  const riskyDevices = (overview?.top_risky_devices?.length ? overview.top_risky_devices : [...devices]
-    .sort((a, b) => {
-      const rank = (value?: string) => value === 'critical' ? 0 : value === 'warning' ? 1 : value === 'unknown' ? 2 : 3;
-      return rank(a.health_status) - rank(b.health_status) || Number(a.health_score || 0) - Number(b.health_score || 0) || Number(b.open_alert_count || 0) - Number(a.open_alert_count || 0);
-    })
-    .slice(0, 8));
-
-  const siteOptions = React.useMemo<string[]>(
-    () => Array.from(new Set<string>(devices.map((item) => String(item.site || '').trim()).filter((value): value is string => Boolean(value)))).sort((a, b) => a.localeCompare(b)),
-    [devices],
-  );
-  const roleOptions = React.useMemo<string[]>(
-    () => Array.from(new Set<string>(devices.map((item) => String(item.role || '').trim()).filter((value): value is string => Boolean(value)))).sort((a, b) => a.localeCompare(b)),
-    [devices],
-  );
+  const siteOptions = React.useMemo(() => Array.from(new Set(devices.map((device) => device.site).filter(Boolean))).sort(), [devices]);
+  const roleOptions = React.useMemo(() => Array.from(new Set(devices.map((device) => device.role).filter(Boolean))).sort(), [devices]);
   const filteredDevices = React.useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
     return devices.filter((device) => {
-      if (siteFilter !== 'all' && (device.site || '') !== siteFilter) return false;
-      if (roleFilter !== 'all' && (device.role || '') !== roleFilter) return false;
-      if (statusFilter !== 'all' && (device.health_status || 'unknown') !== statusFilter) return false;
-      if (alertFilter === 'open' && Number(device.open_alert_count || 0) <= 0) return false;
-      if (alertFilter === 'critical' && Number(device.critical_open_alerts || 0) <= 0) return false;
-      if (alertFilter === 'interface' && (Number(device.interface_down_count || 0) + Number(device.interface_flap_count || 0) + Number(device.interface_error_count || 0)) <= 0) return false;
-      if (!keyword) return true;
-      const haystack = [device.hostname, device.ip_address, device.platform, device.site, device.role, device.health_summary]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(keyword);
+      const status = toHealthStatus(device.health_status);
+      if (siteFilter !== 'all' && device.site !== siteFilter) return false;
+      if (roleFilter !== 'all' && device.role !== roleFilter) return false;
+      if (statusFilter !== 'all' && status !== statusFilter) return false;
+      if (riskFilter === 'alerts' && Number(device.open_alert_count || 0) <= 0) return false;
+      if (riskFilter === 'interfaces' && Number(device.interface_down_count || 0) + Number(device.interface_flap_count || 0) + Number(device.interface_error_count || 0) <= 0) return false;
+      return !keyword || [device.hostname, device.ip_address, device.platform, device.role, device.site, device.health_summary].filter(Boolean).join(' ').toLowerCase().includes(keyword);
     });
-  }, [alertFilter, devices, roleFilter, searchTerm, siteFilter, statusFilter]);
-  const filteredSummary = React.useMemo(() => ({
-    total: filteredDevices.length,
-    healthy: filteredDevices.filter((item) => item.health_status === 'healthy').length,
-    warning: filteredDevices.filter((item) => item.health_status === 'warning').length,
-    critical: filteredDevices.filter((item) => item.health_status === 'critical').length,
-    unknown: filteredDevices.filter((item) => item.health_status === 'unknown' || !item.health_status).length,
-  }), [filteredDevices]);
-  const filteredRiskyDevices = React.useMemo(
-    () => [...filteredDevices].sort((a, b) => {
-      const rank = (value?: string) => value === 'critical' ? 0 : value === 'warning' ? 1 : value === 'unknown' ? 2 : 3;
-      return rank(a.health_status) - rank(b.health_status) || Number(a.health_score || 0) - Number(b.health_score || 0) || Number(b.open_alert_count || 0) - Number(a.open_alert_count || 0);
-    }).slice(0, 8),
-    [filteredDevices],
-  );
-  const fleetRows = React.useMemo(
-    () => [...filteredDevices].sort((a, b) => Number(a.health_score || 0) - Number(b.health_score || 0) || String(a.hostname || '').localeCompare(String(b.hostname || ''))),
-    [filteredDevices],
-  );
+  }, [devices, riskFilter, roleFilter, searchTerm, siteFilter, statusFilter]);
+  const activeFilters = siteFilter !== 'all' || roleFilter !== 'all' || statusFilter !== 'all' || riskFilter !== 'all' || Boolean(searchTerm.trim());
+  const riskyDevices = React.useMemo(() => {
+    const source = activeFilters ? filteredDevices : (summary.top_risky_devices?.length ? summary.top_risky_devices : devices);
+    return [...source].sort((a, b) => ({ critical: 0, warning: 1, unknown: 2, healthy: 3 }[toHealthStatus(a.health_status)] - ({ critical: 0, warning: 1, unknown: 2, healthy: 3 }[toHealthStatus(b.health_status)]) || Number(a.health_score || 0) - Number(b.health_score || 0) || Number(b.open_alert_count || 0) - Number(a.open_alert_count || 0))).slice(0, 6);
+  }, [activeFilters, devices, filteredDevices, summary.top_risky_devices]);
+  const total = Math.max(Number(summary.total_devices || 0), 1);
+  const distribution = (['healthy', 'warning', 'critical', 'unknown'] as HealthStatus[]).map((status) => ({ status, count: Number(summary[status] || 0), percent: Math.round(Number(summary[status] || 0) / total * 100) }));
   const historySeries = history?.series || [];
-  const hasActiveFilters = siteFilter !== 'all' || roleFilter !== 'all' || statusFilter !== 'all' || alertFilter !== 'all' || searchTerm.trim().length > 0;
-  const displayedRiskyDevices = hasActiveFilters ? filteredRiskyDevices : riskyDevices;
+  const lastPoint = historySeries[historySeries.length - 1];
+  const clearFilters = () => { setSiteFilter('all'); setRoleFilter('all'); setStatusFilter('all'); setRiskFilter('all'); setSearchTerm(''); };
 
-  return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <PageHero
-        icon={Stethoscope}
-        title={isZh ? '健康检测中心' : 'Health Detection Center'}
-        subtitle={isZh ? '把可达性、资源、硬件、接口异常和开放告警整合到统一健康模型，便于快速排障。' : 'Unify reachability, resource, hardware, interface anomalies, and open alerts into one health model for fast triage.'}
-        actions={
-          <button
-            type="button"
-            onClick={onOpenMonitoring}
-            className="px-4 py-2 rounded-xl border border-black/10 text-sm font-medium hover:bg-black/5 transition-all"
-            title={isZh ? '打开监控中心' : 'Open Monitoring Center'}
-          >
-            {isZh ? '打开监控中心' : 'Open Monitoring'}
-          </button>
-        }
-      />
-
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
-
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-        {[
-          { label: isZh ? '设备总数' : 'Total Devices', value: summary.total_devices, icon: Server, tone: 'text-slate-700 bg-slate-100', filter: 'all' as const },
-          { label: isZh ? '平均健康分' : 'Average Score', value: summary.average_score, icon: Activity, tone: 'text-cyan-700 bg-cyan-100', filter: null },
-          { label: isZh ? '健康' : 'Healthy', value: summary.healthy, icon: ShieldCheck, tone: 'text-emerald-700 bg-emerald-100', filter: 'healthy' as const },
-          { label: isZh ? '告警' : 'Warning', value: summary.warning, icon: AlertTriangle, tone: 'text-amber-700 bg-amber-100', filter: 'warning' as const },
-          { label: isZh ? '严重' : 'Critical', value: summary.critical, icon: AlertTriangle, tone: 'text-red-700 bg-red-100', filter: 'critical' as const },
-        ].map((card) => (
-          <button
-            key={card.label}
-            type="button"
-            onClick={() => {
-              if (card.filter === null) return;
-              setStatusFilter(card.filter === statusFilter ? 'all' : card.filter);
-            }}
-            className={`bg-white rounded-2xl border shadow-sm p-4 text-left transition-all ${card.filter !== null ? 'cursor-pointer hover:border-black/15 hover:shadow-md active:scale-[0.98]' : ''} ${statusFilter !== 'all' && card.filter === statusFilter ? 'border-black/20 ring-2 ring-black/5' : 'border-black/5'}`}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-black/35">{card.label}</p>
-              <span className={`inline-flex rounded-full p-2 ${card.tone}`}><card.icon size={14} /></span>
-            </div>
-            <p className="mt-2 text-3xl font-semibold text-[#00172D]">{card.value}</p>
-          </button>
-        ))}
-      </div>
-
-      <div className="rounded-2xl border border-black/5 bg-white shadow-sm px-4 py-3 space-y-2.5">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Filter size={14} className="text-black/30" />
-            <span className="text-sm font-semibold text-[#0b2340]">{isZh ? '按站点、角色和风险聚焦设备' : 'Filter by site, role & risk'}</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">{isZh ? '命中' : 'Hit'} {filteredSummary.total}</span>
-            <span className="rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">{isZh ? '严重' : 'Crit'} {filteredSummary.critical}</span>
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">{isZh ? '告警' : 'Warn'} {filteredSummary.warning}</span>
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">{isZh ? '健康' : 'OK'} {filteredSummary.healthy}</span>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-[1.2fr_repeat(4,minmax(0,0.9fr))] gap-2">
-          <label className="space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '搜索' : 'Search'}</span>
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder={isZh ? '设备名 / IP / 平台 / 摘要' : 'Hostname / IP / platform / summary'}
-              className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5"
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '站点' : 'Site'}</span>
-            <select value={siteFilter} onChange={(event) => setSiteFilter(event.target.value)} className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
-              <option value="all">{isZh ? '全部站点' : 'All sites'}</option>
-              {siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}
-            </select>
-          </label>
-          <label className="space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '角色' : 'Role'}</span>
-            <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
-              <option value="all">{isZh ? '全部角色' : 'All roles'}</option>
-              {roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}
-            </select>
-          </label>
-          <label className="space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '健康状态' : 'Status'}</span>
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
-              <option value="all">{isZh ? '全部状态' : 'All states'}</option>
-              <option value="critical">{isZh ? '严重' : 'Critical'}</option>
-              <option value="warning">{isZh ? '告警' : 'Warning'}</option>
-              <option value="healthy">{isZh ? '健康' : 'Healthy'}</option>
-              <option value="unknown">{isZh ? '未知' : 'Unknown'}</option>
-            </select>
-          </label>
-          <label className="space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{isZh ? '风险维度' : 'Risk'}</span>
-            <select value={alertFilter} onChange={(event) => setAlertFilter(event.target.value)} className="w-full rounded-lg border border-black/10 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-black/25 focus:ring-2 focus:ring-black/5">
-              <option value="all">{isZh ? '全部风险' : 'All risk types'}</option>
-              <option value="open">{isZh ? '有开放告警' : 'Open alerts'}</option>
-              <option value="critical">{isZh ? '有严重告警' : 'Critical alerts'}</option>
-              <option value="interface">{isZh ? '接口风险' : 'Interface risk'}</option>
-            </select>
-          </label>
-        </div>
-        {hasActiveFilters && (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-black/10 bg-black/[0.015] px-3 py-2 text-xs text-black/50">
-            <span>{isZh ? '已按筛选条件收敛' : 'Filtered'}</span>
-            <button
-              type="button"
-              onClick={() => {
-                setSearchTerm('');
-                setSiteFilter('all');
-                setRoleFilter('all');
-                setStatusFilter('all');
-                setAlertFilter('all');
-              }}
-              className="rounded-md border border-black/10 px-2.5 py-1 text-[11px] font-semibold text-black/60 transition-all hover:bg-black/[0.03]"
-            >
-              {isZh ? '清空' : 'Clear'}
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-4 space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#0089ac]">{isZh ? '健康趋势' : 'Trend'}</p>
-            <h3 className="text-base font-semibold text-[#0b2340]">{isZh ? '全网健康分演进' : 'Fleet Health Evolution'}</h3>
-          </div>
-          <div className="flex items-center gap-2">
-            {[1, 24, 168].map((hours) => (
-              <button
-                key={hours}
-                type="button"
-                onClick={() => setRangeHours(hours)}
-                className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${rangeHours === hours ? 'bg-black text-white' : 'border border-black/10 text-black/60 hover:bg-black/[0.03]'}`}
-              >
-                {hours === 1 ? (isZh ? '1 小时' : '1h') : hours === 24 ? (isZh ? '24 小时' : '24h') : (isZh ? '7 天' : '7d')}
-              </button>
-            ))}
-            <span className="text-[11px] text-black/40">{historyLoading ? (isZh ? '加载中...' : 'Loading...') : `${history?.sample_count || 0} ${isZh ? '个样本' : 'samples'}`}</span>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.6fr] gap-3">
-          <div className="rounded-xl border border-black/8 bg-[linear-gradient(180deg,rgba(2,6,23,0.01),rgba(2,6,23,0.04))] p-3 h-[240px]">
-            {historySeries.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={historySeries} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="2 4" vertical={false} stroke={ct.gridAlt} />
-                  <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(value) => new Date(String(value)).toLocaleString(isZh ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} minTickGap={28} />
-                  <YAxis yAxisId="score" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} domain={[0, 100]} width={32} />
-                  <YAxis yAxisId="count" orientation="right" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} width={28} />
-                  <Tooltip
-                    contentStyle={{ borderRadius: 10, borderColor: ct.tooltipBorder, boxShadow: ct.tooltipShadow, padding: '10px 12px', background: ct.tooltipBg, color: ct.tooltipText }}
-                    labelFormatter={(value) => new Date(String(value)).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}
-                  />
-                  <Area yAxisId="score" type="monotone" dataKey="average_score" name={isZh ? '平均健康分' : 'Average score'} stroke="#2563eb" fill="#2563eb1f" strokeWidth={2} isAnimationActive={false} />
-                  <Area yAxisId="count" type="monotone" dataKey="critical" name={isZh ? '严重设备' : 'Critical devices'} stroke="#dc2626" fill="#dc262618" strokeWidth={1.6} isAnimationActive={false} />
-                  <Area yAxisId="count" type="monotone" dataKey="warning" name={isZh ? '告警设备' : 'Warning devices'} stroke="#d97706" fill="#d9770612" strokeWidth={1.6} isAnimationActive={false} />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-sm text-black/35">{isZh ? '当前还没有健康趋势样本。' : 'No health trend samples are available yet.'}</div>
-            )}
-          </div>
-          <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
-            {(historySeries.length > 0 ? [...historySeries].slice(-6).reverse() : []).map((point) => (
-              <div key={point.ts} className="rounded-lg border border-black/8 bg-white px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-[10px] text-black/35 truncate">{new Date(point.ts).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</p>
-                    <p className="text-base font-semibold text-[#00172D]">{isZh ? '平均分' : 'Avg'} {point.average_score}</p>
-                  </div>
-                  <span className="shrink-0 text-[10px] font-semibold text-slate-500">{point.total_devices} {isZh ? '台' : 'dev'}</span>
-                </div>
-                <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] font-bold uppercase">
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">{isZh ? '健康' : 'OK'} {point.healthy}</span>
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700">{isZh ? '告警' : 'W'} {point.warning}</span>
-                  <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-700">{isZh ? '严重' : 'C'} {point.critical}</span>
-                </div>
-              </div>
-            ))}
-            {historySeries.length === 0 && (
-              <div className="rounded-lg border border-dashed border-black/10 bg-black/[0.01] p-4 text-center text-sm text-black/40">
-                {isZh ? '趋势样本将在采样器运行后出现。' : 'Trend samples will appear after the sampler runs.'}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1.15fr] gap-3">
-        <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{isZh ? '优先排障' : 'Triage'}</p>
-              <h3 className="text-base font-semibold text-[#0b2340]">{isZh ? '高风险设备' : 'High-Risk Devices'}</h3>
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            {displayedRiskyDevices.length > 0 ? displayedRiskyDevices.map((device) => (
-              <button
-                key={device.id}
-                type="button"
-                onClick={() => onShowDetails(device)}
-                className="w-full rounded-lg border border-black/10 px-3 py-2 text-left transition-all hover:border-red-200 hover:bg-red-50/20"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-[#0b2340] truncate">{device.hostname || device.ip_address}</p>
-                    <p className="text-[11px] text-black/40 truncate">{[device.site, device.role, device.platform].filter(Boolean).join(' · ')}</p>
-                  </div>
-                  <div className="shrink-0 flex items-center gap-2">
-                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${statusToneMap[device.health_status || 'unknown'] || statusToneMap.unknown}`}>
-                      {device.health_status || 'unknown'}
-                    </span>
-                    <span className="text-sm font-semibold text-[#00172D] tabular-nums">{Number(device.health_score || 0)}</span>
-                  </div>
-                </div>
-                <div className="mt-1 flex items-center gap-3 text-[11px] text-black/40">
-                  <span>{isZh ? '告警' : 'Alerts'} {Number(device.open_alert_count || 0)}</span>
-                  <span>{isZh ? 'Down' : 'Down'} {Number(device.interface_down_count || 0)}</span>
-                </div>
-              </button>
-            )) : (
-              <div className="rounded-lg border border-dashed border-black/10 bg-black/[0.01] p-4 text-center text-sm text-black/40">
-                {hasActiveFilters
-                  ? (isZh ? '没有设备匹配当前筛选条件。' : 'No devices match the active filters.')
-                  : (isZh ? '当前没有风险设备。' : 'No risky devices right now.')}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-black/5 bg-white shadow-sm p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#0089ac]">{isZh ? '全网视图' : 'Fleet'}</p>
-            <h3 className="text-base font-semibold text-[#0b2340]">{isZh ? '设备健康清单' : 'Device Health Inventory'}</h3>
-          </div>
-          <div className="overflow-hidden rounded-xl border border-black/10">
-            <div className="max-h-[620px] overflow-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="sticky top-0 bg-black/[0.02] border-b border-black/5">
-                  <tr>
-                    <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/35">{isZh ? '设备' : 'Device'}</th>
-                    <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/35">{isZh ? '健康状态' : 'Health'}</th>
-                    <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/35">{isZh ? '评分' : 'Score'}</th>
-                    <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/35">{isZh ? '开放告警' : 'Open Alerts'}</th>
-                    <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-widest text-black/35">{isZh ? '摘要' : 'Summary'}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-black/5">
-                  {fleetRows.map((device) => (
-                    <tr key={device.id} className="hover:bg-black/[0.01] cursor-pointer" onClick={() => onShowDetails(device)}>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-[#0b2340]">{device.hostname || '-'}</div>
-                        <div className="text-[11px] font-mono text-black/40">{device.ip_address || '-'}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase ${statusToneMap[device.health_status || 'unknown'] || statusToneMap.unknown}`}>
-                          {device.health_status || 'unknown'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-semibold text-[#00172D]">{Number(device.health_score || 0)}</td>
-                      <td className="px-4 py-3">
-                        <span className={severityBadgeClass(Number(device.open_alert_count || 0) > 0 ? (Number(device.critical_open_alerts || 0) > 0 ? 'critical' : 'warning') : 'minor')}>
-                          {Number(device.open_alert_count || 0)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-[12px] text-black/55 max-w-[320px] truncate" title={device.health_summary || ''}>{device.health_summary || '-'}</td>
-                    </tr>
-                  ))}
-                  {fleetRows.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-black/40">
-                        {isZh ? '当前没有可展示的健康检测结果。' : 'No device health results are available yet.'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-      </div>
+  return <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[#06111f] text-white">
+    <div className="shrink-0 border-b border-white/10 bg-[radial-gradient(circle_at_78%_0%,rgba(14,165,233,0.20),transparent_35%),linear-gradient(120deg,#06111f,#0b1d32)] px-6 py-5">
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-2xl border border-cyan-300/20 bg-cyan-300/10 text-cyan-300 shadow-[0_0_30px_rgba(34,211,238,0.12)]"><Activity size={22} /></span><div><div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-300/75"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" /> {labels.eyebrow}</div><h1 className="mt-1 text-2xl font-semibold tracking-tight">{labels.title}</h1></div></div><p className="mt-3 max-w-2xl text-sm text-slate-300">{labels.subtitle}</p></div><div className="flex items-center gap-2"><span className="hidden items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300 sm:flex"><Clock3 size={13} /> {labels.auto}</span><button type="button" onClick={() => { void loadOverview(); void loadHistory(); }} className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20" disabled={overviewLoading || historyLoading}><RefreshCw size={14} className={overviewLoading || historyLoading ? 'animate-spin' : ''} /> {labels.refresh}</button><button type="button" onClick={onOpenMonitoring} className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10">{labels.monitoring} <ChevronRight size={14} /></button></div></div>
     </div>
-  );
+    <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
+      {loadError && <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-rose-300/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-100"><span className="flex items-center gap-2"><WifiOff size={16} /> {loadError}</span><button type="button" onClick={() => void loadOverview()} className="rounded-lg border border-rose-200/25 px-3 py-1.5 text-xs font-semibold hover:bg-rose-300/10">{labels.retry}</button></div>}
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">{[
+        { label: labels.total, value: summary.total_devices, icon: Server, color: 'text-cyan-300', filter: 'all' as const }, { label: labels.average, value: summary.average_score, icon: Gauge, color: 'text-sky-300', filter: null }, { label: statusConfig.healthy[isZh ? 'zh' : 'en'], value: summary.healthy, icon: ShieldCheck, color: 'text-emerald-300', filter: 'healthy' as const }, { label: statusConfig.warning[isZh ? 'zh' : 'en'], value: summary.warning, icon: AlertTriangle, color: 'text-amber-300', filter: 'warning' as const }, { label: statusConfig.critical[isZh ? 'zh' : 'en'], value: summary.critical, icon: ShieldAlert, color: 'text-rose-300', filter: 'critical' as const }, { label: statusConfig.unknown[isZh ? 'zh' : 'en'], value: summary.unknown, icon: CircleHelp, color: 'text-slate-300', filter: 'unknown' as const },
+      ].map((card) => { const Icon = card.icon; return <button key={card.label} type="button" onClick={() => card.filter && setStatusFilter(card.filter === statusFilter ? 'all' : card.filter)} className={`rounded-2xl border border-white/10 bg-white/[0.045] p-4 text-left shadow-[0_8px_30px_rgba(0,0,0,0.12)] transition ${card.filter ? 'hover:-translate-y-0.5 hover:border-white/20' : 'cursor-default'} ${card.filter && statusFilter === card.filter ? 'ring-2 ring-cyan-300/40' : ''}`}><div className="flex items-center justify-between gap-2"><span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{card.label}</span><Icon size={17} className={card.color} /></div><div className={`mt-2 text-3xl font-semibold tabular-nums ${card.color}`}>{card.value}</div></button>; })}</div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1.05fr_1.5fr]"><section className="rounded-2xl border border-white/10 bg-white/[0.045] p-5 shadow-[0_8px_30px_rgba(0,0,0,0.12)]"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300/70">{labels.distribution}</p><h2 className="mt-1 text-lg font-semibold">{labels.posture}</h2></div><span className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xl font-semibold text-cyan-200">{summary.average_score}<small className="ml-1 text-[10px] font-medium text-cyan-200/60">{labels.averageShort}</small></span></div><div className="mt-5 flex items-center gap-6"><div className="relative grid h-36 w-36 shrink-0 place-items-center rounded-full" style={{ background: `conic-gradient(#34d399 0 ${summary.healthy / total * 360}deg, #fbbf24 ${summary.healthy / total * 360}deg ${(summary.healthy + summary.warning) / total * 360}deg, #fb7185 ${(summary.healthy + summary.warning) / total * 360}deg ${(summary.healthy + summary.warning + summary.critical) / total * 360}deg, #64748b ${(summary.healthy + summary.warning + summary.critical) / total * 360}deg 360deg)` }}><div className="grid h-24 w-24 place-items-center rounded-full bg-[#0b1d32]"><span className="text-center"><strong className="block text-2xl">{Math.round(summary.healthy / total * 100)}%</strong><small className="text-[10px] text-slate-400">{labels.healthyRate}</small></span></div></div><div className="min-w-0 flex-1 space-y-3">{distribution.map(({ status, count, percent }) => { const config = statusConfig[status]; const Icon = config.icon; return <div key={status}><div className="flex items-center justify-between text-xs"><span className={`flex items-center gap-2 ${config.color}`}><Icon size={14} /> {isZh ? config.zh : config.en}</span><span className="tabular-nums text-slate-300">{count} <span className="text-slate-500">({percent}%)</span></span></div><div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10"><div className={`h-full rounded-full ${config.bar}`} style={{ width: `${percent}%` }} /></div></div>; })}</div></div></section><section className="rounded-2xl border border-white/10 bg-white/[0.045] p-5 shadow-[0_8px_30px_rgba(0,0,0,0.12)]"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-rose-300/80">{labels.triage}</p><h2 className="mt-1 text-lg font-semibold">{labels.risky}</h2></div><span className="text-xs text-slate-400">{labels.sorted}</span></div><div className="mt-4 grid gap-2 md:grid-cols-2">{riskyDevices.map((device) => { const status = toHealthStatus(device.health_status); const config = statusConfig[status]; const Icon = config.icon; return <button key={device.id} type="button" onClick={() => onShowDetails(device)} className="group flex items-center gap-3 rounded-xl border border-white/10 bg-black/10 px-3 py-3 text-left transition hover:border-cyan-300/30 hover:bg-cyan-300/[0.06]"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${config.soft} ${config.color}`}><Icon size={17} /></span><span className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-100">{device.hostname || device.ip_address || '--'}</strong><small className="mt-0.5 block truncate text-[11px] text-slate-400">{[device.site, device.role, device.platform].filter(Boolean).join(' · ') || labels.noMetadata}</small></span><span className="text-right"><strong className={`block text-lg tabular-nums ${config.color}`}>{Number(device.health_score || 0)}</strong><small className="text-[10px] text-slate-500">{Number(device.open_alert_count || 0)} {labels.alerts}</small></span><ChevronRight size={15} className="text-slate-600 transition group-hover:translate-x-0.5 group-hover:text-cyan-300" /></button>; })}{riskyDevices.length === 0 && <div className="col-span-full rounded-xl border border-dashed border-white/15 px-4 py-8 text-center text-sm text-slate-400">{activeFilters ? labels.noMatch : labels.noRisk}</div>}</div></section></div>
+      <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.045] p-5 shadow-[0_8px_30px_rgba(0,0,0,0.12)]"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-300/70">{labels.trend}</p><h2 className="mt-1 text-lg font-semibold">{labels.trendTitle}</h2></div><div className="flex items-center gap-2">{[1, 24, 168].map((hours) => <button key={hours} type="button" onClick={() => setRangeHours(hours)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${rangeHours === hours ? 'bg-cyan-300 text-[#062039]' : 'border border-white/10 text-slate-300 hover:bg-white/10'}`}>{hours === 1 ? '1h' : hours === 24 ? '24h' : '7d'}</button>)}<span className="ml-1 text-xs text-slate-500">{historyLoading ? labels.loading : `${history?.sample_count || 0} ${labels.samples}`}</span></div></div><div className="mt-4 grid gap-4 xl:grid-cols-[1fr_220px]"><div className="h-56 rounded-xl border border-white/10 bg-black/10 p-2">{historySeries.length ? <ResponsiveContainer width="100%" height="100%"><AreaChart data={historySeries} margin={{ top: 8, right: 8, left: -22, bottom: 0 }}><defs><linearGradient id="healthScoreFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#22d3ee" stopOpacity={0.35} /><stop offset="100%" stopColor="#22d3ee" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="rgba(148,163,184,0.13)" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10 }} tickFormatter={(value) => formatTime(String(value), language)} minTickGap={36} /><YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10 }} /><Tooltip contentStyle={{ border: '1px solid rgba(148,163,184,.2)', borderRadius: 12, background: '#0b1d32', color: '#e2e8f0' }} labelFormatter={(value) => formatTime(String(value), language)} /><Area type="monotone" dataKey="average_score" name={isZh ? '\u5e73\u5747\u5065\u5eb7\u5206' : 'Average score'} stroke="#22d3ee" fill="url(#healthScoreFill)" strokeWidth={2} dot={false} isAnimationActive={false} /></AreaChart></ResponsiveContainer> : <div className="grid h-full place-items-center text-sm text-slate-500">{labels.noTrend}</div>}</div><div className="grid grid-cols-2 gap-2 xl:grid-cols-1">{[{ label: labels.latestScore, value: lastPoint?.average_score ?? summary.average_score, color: 'text-cyan-300' }, { label: labels.latestCritical, value: lastPoint?.critical ?? summary.critical, color: 'text-rose-300' }, { label: labels.latestWarning, value: lastPoint?.warning ?? summary.warning, color: 'text-amber-300' }].map((item) => <div key={item.label} className="rounded-xl border border-white/10 bg-black/10 px-3 py-3"><div className="text-[10px] uppercase tracking-widest text-slate-500">{item.label}</div><div className={`mt-1 text-xl font-semibold tabular-nums ${item.color}`}>{item.value}</div></div>)}</div></div></section>
+      <section className="mt-4 rounded-2xl border border-white/10 bg-white/[0.045] shadow-[0_8px_30px_rgba(0,0,0,0.12)]"><div className="border-b border-white/10 p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-300/70">{labels.inventory}</p><h2 className="mt-1 text-lg font-semibold">{labels.results} <span className="ml-2 text-sm font-normal text-slate-500">{filteredDevices.length}/{devices.length}</span></h2></div>{activeFilters && <button type="button" onClick={clearFilters} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/10"><X size={13} /> {labels.clear}</button>}</div><div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-[1.5fr_repeat(4,minmax(0,1fr))]"><label className="relative"><Search size={15} className="pointer-events-none absolute left-3 top-2.5 text-slate-500" /><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder={labels.search} className="w-full rounded-lg border border-white/10 bg-black/10 py-2 pl-9 pr-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-300/40" /></label><select value={siteFilter} onChange={(event) => setSiteFilter(event.target.value)} className="rounded-lg border border-white/10 bg-[#0b1d32] px-3 py-2 text-sm text-slate-200 outline-none"><option value="all">{labels.allSites}</option>{siteOptions.map((site) => <option key={site} value={site}>{site}</option>)}</select><select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} className="rounded-lg border border-white/10 bg-[#0b1d32] px-3 py-2 text-sm text-slate-200 outline-none"><option value="all">{labels.allRoles}</option>{roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}</select><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="rounded-lg border border-white/10 bg-[#0b1d32] px-3 py-2 text-sm text-slate-200 outline-none"><option value="all">{labels.allStates}</option>{(Object.keys(statusConfig) as HealthStatus[]).map((status) => <option key={status} value={status}>{isZh ? statusConfig[status].zh : statusConfig[status].en}</option>)}</select><select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as typeof riskFilter)} className="rounded-lg border border-white/10 bg-[#0b1d32] px-3 py-2 text-sm text-slate-200 outline-none"><option value="all">{labels.allRisks}</option><option value="alerts">{labels.openAlerts}</option><option value="interfaces">{labels.interfaceRisk}</option></select></div></div><div className="max-h-[480px] overflow-auto"><table className="w-full min-w-[780px] text-left"><thead className="sticky top-0 z-10 bg-[#0b1d32] text-[10px] uppercase tracking-[0.16em] text-slate-500"><tr><th className="px-5 py-3 font-semibold">{labels.device}</th><th className="px-4 py-3 font-semibold">{labels.location}</th><th className="px-4 py-3 font-semibold">{labels.health}</th><th className="px-4 py-3 font-semibold">{labels.score}</th><th className="px-4 py-3 font-semibold">{labels.signals}</th><th className="px-5 py-3 font-semibold">{labels.summary}</th></tr></thead><tbody className="divide-y divide-white/5">{filteredDevices.map((device) => { const status = toHealthStatus(device.health_status); const config = statusConfig[status]; const Icon = config.icon; const signalCount = Number(device.open_alert_count || 0) + Number(device.interface_down_count || 0) + Number(device.interface_flap_count || 0) + Number(device.interface_error_count || 0); return <tr key={device.id} onClick={() => onShowDetails(device)} className="cursor-pointer transition hover:bg-cyan-300/[0.06]"><td className="px-5 py-3"><div className="font-semibold text-slate-100">{device.hostname || '--'}</div><div className="mt-0.5 font-mono text-[11px] text-slate-500">{device.ip_address || '--'}</div></td><td className="px-4 py-3"><div className="text-sm text-slate-300">{device.site || '--'}</div><div className="mt-0.5 text-[11px] text-slate-500">{[device.role, device.platform].filter(Boolean).join(' · ') || '--'}</div></td><td className="px-4 py-3"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${config.soft} ${config.color}`}><Icon size={12} /> {isZh ? config.zh : config.en}</span></td><td className={`px-4 py-3 text-base font-semibold tabular-nums ${config.color}`}>{Number(device.health_score || 0)}</td><td className="px-4 py-3"><span className={`inline-flex items-center gap-1.5 text-xs ${signalCount ? 'text-amber-200' : 'text-slate-500'}`}><Filter size={12} /> {signalCount || labels.clearState}</span></td><td className="max-w-[300px] truncate px-5 py-3 text-xs text-slate-400" title={device.health_summary || ''}>{device.health_summary || labels.noIssue}</td></tr>; })}{filteredDevices.length === 0 && <tr><td colSpan={6} className="px-5 py-12 text-center text-sm text-slate-500">{devices.length === 0 ? labels.noData : labels.noMatch}</td></tr>}</tbody></table></div></section>
+    </div>
+  </div>;
 };
 
 export default DeviceHealthTab;

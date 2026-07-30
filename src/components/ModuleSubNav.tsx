@@ -341,14 +341,6 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
               v{systemInfo?.version || '0.1.0'}
             </span>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--dim-text)' }}>
-              {zh ? '授权' : 'ED'}
-            </span>
-            <span className="text-[10px] font-bold" style={{ color: 'var(--muted-text)' }}>
-              {systemInfo?.edition || 'Standard'}
-            </span>
-          </div>
         </div>
       )}
     </aside>

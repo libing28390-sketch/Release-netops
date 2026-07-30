@@ -365,6 +365,182 @@ def _mark_endpoint_down(hops: list[dict], target_ip: str, endpoint_state: dict) 
     return hops
 
 
+def _classify_acl_evidence(
+    output: str,
+    source_ip: str,
+    target_ip: str,
+    protocol: str,
+    port: int,
+    *,
+    direction: str = 'egress',
+) -> dict:
+    """Classify collected ACL attachment evidence without assuming an empty result is safe.
+
+    The interface commands used by the path walker prove whether a policy is
+    attached, but most vendors require a second command to retrieve the complete
+    rule body.  Therefore an attached policy is ``review_required`` unless the
+    collected text contains an explicit matching permit/deny statement.
+    """
+    raw = str(output or '').strip()
+    lowered = raw.lower()
+    evidence = {
+        'direction': direction,
+        'source_ip': source_ip,
+        'target_ip': target_ip,
+        'protocol': str(protocol or '').upper(),
+        'port': int(port or 0),
+        'decision': 'unknown',
+        'reason': 'ACL 命令无有效输出，不能据此判定未配置或放行。',
+    }
+    if not raw:
+        return evidence
+
+    unsupported_markers = (
+        'invalid input',
+        'unrecognized command',
+        'unknown command',
+        'error:',
+        'permission denied',
+        'timed out',
+    )
+    if any(marker in lowered for marker in unsupported_markers):
+        evidence['reason'] = 'ACL 命令执行失败或设备不支持，策略状态未知。'
+        return evidence
+
+    not_configured_markers = (
+        'not configured',
+        'not applied',
+        'no access list',
+        'no access-list',
+        'no traffic policy',
+        'traffic policy is not',
+    )
+    if any(marker in lowered for marker in not_configured_markers):
+        evidence.update({
+            'decision': 'not_configured',
+            'reason': f'{direction} 方向未发现已应用的 ACL/流量策略。',
+        })
+        return evidence
+
+    flow_tokens = [source_ip.lower(), target_ip.lower(), str(protocol or '').lower()]
+    if port:
+        flow_tokens.append(str(port))
+    flow_match = bool(source_ip and target_ip) and source_ip.lower() in lowered and target_ip.lower() in lowered
+    if flow_match and re.search(r'\b(deny|drop|discard|reject)\b', lowered):
+        evidence.update({
+            'decision': 'deny',
+            'reason': f'{direction} 方向发现与当前五元组相关的显式拒绝规则。',
+        })
+        return evidence
+    if flow_match and re.search(r'\b(permit|allow|accept)\b', lowered):
+        evidence.update({
+            'decision': 'permit',
+            'reason': f'{direction} 方向发现与当前五元组相关的显式放行规则。',
+        })
+        return evidence
+
+    attachment_markers = (
+        'access-group',
+        'access-list',
+        'traffic-policy',
+        'traffic policy',
+        'firewall filter',
+        'filter input',
+        'filter output',
+    )
+    if any(marker in lowered for marker in attachment_markers):
+        evidence.update({
+            'decision': 'review_required',
+            'reason': (
+                f'{direction} 方向检测到策略绑定，但当前输出不足以完成规则级五元组模拟；'
+                f'待补采规则体后再判定。检索键：{", ".join(token for token in flow_tokens if token)}'
+            ),
+        })
+        return evidence
+
+    evidence['reason'] = 'ACL 输出未包含可识别的未配置声明、策略绑定或五元组匹配结果。'
+    return evidence
+
+
+def _derive_evidence_quality(
+    diag_context: dict,
+    path_interface_evidence: dict,
+    *,
+    return_path_status: str,
+) -> dict:
+    """Return evidence gaps and a confidence cap for one diagnosis run."""
+    gaps: list[str] = []
+    if not (path_interface_evidence or {}).get('records'):
+        gaps.append('未采集到路径接口实时状态')
+    elif (path_interface_evidence or {}).get('unknown'):
+        gaps.append('部分路径接口实时状态未知')
+    if diag_context.get('cef_verified') is None:
+        gaps.append('FIB/CEF 转发面证据未知')
+    if diag_context.get('acl_verified') is None:
+        gaps.append('ACL/策略五元组判定未知')
+    if diag_context.get('perf_warning') is None:
+        gaps.append('接口计数器或设备性能证据未知')
+    if diag_context.get('ha_verified') is None:
+        gaps.append('HA 状态未知')
+    if return_path_status != 'collected':
+        gaps.append('回程路径未完成实时验证')
+    return {
+        'gaps': gaps,
+        'confidence_cap': 70 if gaps else 100,
+        'status': 'unknown' if gaps else 'complete',
+    }
+
+
+def _managed_device_by_ip(conn, ip_address: str) -> dict | None:
+    """Resolve a managed device through management, IPAM, or inventory address."""
+    normalized = str(ip_address or '').strip()
+    if not normalized:
+        return None
+    queries = (
+        (
+            "SELECT id, hostname, role FROM devices WHERE TRIM(ip_address) = ? LIMIT 1",
+            (normalized,),
+        ),
+        (
+            "SELECT d.id, d.hostname, d.role FROM ip_addresses ip "
+            "JOIN devices d ON ip.device_id = d.id WHERE TRIM(ip.address) = ? LIMIT 1",
+            (normalized,),
+        ),
+        (
+            "SELECT d.id, d.hostname, d.role FROM ip_inventory inv "
+            "JOIN devices d ON inv.device_id = d.id WHERE TRIM(inv.ip) = ? LIMIT 1",
+            (normalized,),
+        ),
+    )
+    for query, params in queries:
+        try:
+            row = conn.execute(query, params).fetchone()
+        except Exception:
+            continue
+        if row:
+            return dict(row)
+    return None
+
+
+def _annotate_hop_interfaces(hops: list[dict]) -> list[dict]:
+    """Expose ingress/egress fields explicitly, retaining unknown as unknown."""
+    annotated: list[dict] = []
+    for hop in hops or []:
+        item = dict(hop)
+        egress = item.get('egress_interface') or item.get('interface_name') or ''
+        item['ingress_interface'] = item.get('ingress_interface') or ''
+        item['egress_interface'] = egress
+        item['interface_evidence_status'] = (
+            'complete'
+            if item['ingress_interface'] and item['egress_interface']
+            else 'partial'
+            if item['ingress_interface'] or item['egress_interface']
+            else 'unknown'
+        )
+        annotated.append(item)
+    return annotated
+
+
 async def _collect_target_endpoint_state(target_ip: str) -> dict:
     conn = get_db_connection()
     try:
@@ -684,23 +860,33 @@ def match_route_offline(device_id: str, target_ip: str, vrf_name: str = 'default
             conn.close()
 
 
-async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf: str = None) -> tuple[list[dict], str, str, dict]:
+async def trace_route_path_async(
+    conn,
+    start_device_id: str,
+    target_ip: str,
+    vrf: str = None,
+    *,
+    source_ip: str = '',
+    protocol: str = '',
+    port: int = 0,
+) -> tuple[list[dict], str, str, dict]:
     last_log = ""
     
     diag_context = {
-        "cef_verified": True,
+        "cef_verified": None,
         "cef_logs": "",
-        "bgp_verified": True,
+        "bgp_verified": None,
         "bgp_logs": "",
-        "ha_verified": True,
+        "ha_verified": None,
         "ha_logs": "",
         "perf_logs": "",
-        "perf_warning": False,
+        "perf_warning": None,
         "perf_details": [],
         "route_sources": [],
         "vrf_logs": "",
         "acl_logs": "",
-        "acl_verified": True,
+        "acl_verified": None,
+        "acl_evidence": [],
         "endpoint_state": {},
         "force_live_route": True,
         "route_cache_hits": 0,
@@ -1111,6 +1297,8 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                     cef_l = cef_out.lower()
                     if "no route" in cef_l or "not found" in cef_l or "drop" in cef_l or "not in table" in cef_l or (len(cef_out.strip()) < 10 and "0.0.0.0" not in target_ip):
                         diag_context["cef_verified"] = False
+                    elif cef_out.strip():
+                        diag_context["cef_verified"] = True
                 except Exception as e:
                     diag_context["cef_logs"] += f"Error: {e}\n"
 
@@ -1138,6 +1326,8 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                     bgp_l = bgp_out.lower()
                     if any(term in bgp_l for term in ("not in table", "not active", "not found", "no such", "inactive")):
                         diag_context["bgp_verified"] = False
+                    elif bgp_out.strip():
+                        diag_context["bgp_verified"] = True
                 except Exception as e:
                     diag_context["bgp_logs"] += f"Error: {e}\n"
 
@@ -1156,6 +1346,11 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                 if "master" in ha_out.lower() and ha_out.lower().count("master") >= 2:
                     diag_context["ha_verified"] = False
                     diag_context["ha_logs"] += "WARNING: Dual Master split-brain state detected!\n"
+                elif ha_out.strip() and any(
+                    token in ha_out.lower()
+                    for token in ('master', 'backup', 'active', 'standby', 'vrrp', 'hsrp')
+                ):
+                    diag_context["ha_verified"] = True
             except Exception as e:
                 diag_context["ha_logs"] += f"Error: {e}\n"
 
@@ -1181,6 +1376,8 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                         await run_cmd(cmd_mem)
 
                         status_str = "HEALTHY"
+                        if diag_context["perf_warning"] is None:
+                            diag_context["perf_warning"] = False
                         if counters["crc"] > 0 or counters["input_errors"] > 0 or cpu_val > 80:
                             status_str = "WARNING"
                             diag_context["perf_warning"] = True
@@ -1212,6 +1409,28 @@ async def trace_route_path_async(conn, start_device_id: str, target_ip: str, vrf
                     try:
                         acl_out = await run_cmd(cmd_acl)
                         diag_context["acl_logs"] += acl_out + "\n"
+                        acl_evidence = _classify_acl_evidence(
+                            acl_out,
+                            source_ip,
+                            target_ip,
+                            protocol,
+                            port,
+                            direction='egress',
+                        )
+                        acl_evidence.update({
+                            'device': dev_label,
+                            'device_id': dev.get('id'),
+                            'interface': egress_intf,
+                            'command': cmd_acl,
+                        })
+                        diag_context["acl_evidence"].append(acl_evidence)
+                        if acl_evidence['decision'] == 'deny':
+                            diag_context["acl_verified"] = False
+                        elif (
+                            acl_evidence['decision'] in {'permit', 'not_configured'}
+                            and diag_context["acl_verified"] is not False
+                        ):
+                            diag_context["acl_verified"] = True
                     except Exception as e:
                         diag_context["acl_logs"] += f"Error: {e}\n"
 
@@ -1483,285 +1702,6 @@ async def _run_stabilized_probe(probe_args: dict, max_attempts: int = 3) -> tupl
         if success:
             break
     return last_result, attempts
-
-def _generate_mock_diagnose(source_ip: str, target_ip: str, port: int, protocol: str) -> dict:
-    steps = [
-        {
-            "name": "P0. VRF 发现 (VRF Discovery)",
-            "status": "success",
-            "message": "发现 VRF 分布：检测到 2 个活动 VRF 上下文 (VRF-Busi, VRF-Mgmt)。当前自动绑定到 VRF-Busi。",
-            "log": (
-                "Sw-Access-01# show vrf\n"
-                "  Name                             Default RD          Protocols   Interfaces\n"
-                "  VRF-Busi                         100:1               ipv4        Gi1/0/12, Vlan10\n"
-                "  VRF-Mgmt                         200:1               ipv4        Gi1/0/1\n"
-                "INFO: Found VRF-Busi matching source subnet and interface Vlan10.\n"
-                "INFO: All subsequent routing lookup will use 'vrf VRF-Busi'."
-            )
-        },
-        {
-            "name": "P1. 资产发现 (Asset Discovery)",
-            "status": "success",
-            "message": f"定位成功：源主机 {source_ip} 已连接到接入层交换机 Sw-Access-01 的 GigabitEthernet1/0/12 接口 (VLAN 10)。",
-            "log": (
-                f"DEBUG: locate_ip_async for {source_ip}\n"
-                "INFO: Querying Sw-Access-01 via SNMP bridge MIB...\n"
-                "INFO: MAC 00:50:56:ab:cd:ef found on Port GigabitEthernet1/0/12\n"
-                f"SUCCESS: Located source IP {source_ip} on Sw-Access-01:GigabitEthernet1/0/12"
-            )
-        },
-        {
-            "name": "P2. 目标分类 (Target Classification)",
-            "status": "success",
-            "message": f"目标分类：目标 IP {target_ip} 属于非直连网段 (Remote Subnet)，进入三层路由递归寻路流程。",
-            "log": (
-                f"INFO: Checking target subnet bounds for {target_ip}...\n"
-                f"INFO: Destination network {target_ip} is not local to Sw-Access-01 subnets.\n"
-                "INFO: Subnet classification is: REMOTE_SUBNET."
-            )
-        },
-        {
-            "name": "P3. ARP 分析 (ARP Analysis)",
-            "status": "success",
-            "message": f"ARP 正常：在网关 RT-Core-01 上成功查询到 {source_ip} 的 ARP 条目，对应 MAC 00:50:56:ab:cd:ef。",
-            "log": (
-                f"RT-Core-01# show ip arp vrf VRF-Busi {source_ip}\n"
-                "Protocol  Address          Age (min)  Hardware Addr   Type   Interface\n"
-                f"Internet  {source_ip}             0   0050.56ab.cdef  ARPA   Vlan10\n"
-                "INFO: ARP binding verified successfully."
-            )
-        },
-        {
-            "name": "P4. MAC 定位 (MAC Analysis)",
-            "status": "success",
-            "message": "MAC 定位正常：二层交换机物理接口 Gi1/0/12 物理状态 UP，STP 处于 Forwarding 转发状态。",
-            "log": (
-                "Sw-Access-01# show mac address-table address 0050.56ab.cdef\n"
-                "          Mac Address Table\n"
-                "-------------------------------------------\n"
-                "Vlan    Mac Address       Type        Ports\n"
-                "----    -----------       ----        -----\n"
-                "  10    0050.56ab.cdef    DYNAMIC     Gi1/0/12\n"
-                "Sw-Access-01# show spanning-tree interface Gi1/0/12\n"
-                "Interface           Role Sts Cost      Prio.Nbr Type\n"
-                "------------------- ---- --- --------- -------- --------------------------------\n"
-                "Gi1/0/12            Desg FWD 4         128.12   P2p"
-            )
-        },
-        {
-            "name": "P5. 路由递归 (Route Recursion)",
-            "status": "success",
-            "message": f"路由表项正常：源网关 RT-Core-01 拥有到达目标网段 {target_ip}/24 的有效静态路由，下一跳为 FW-Core-01 (10.254.1.2)。",
-            "log": (
-                f"RT-Core-01# show ip route vrf VRF-Busi {target_ip}\n"
-                f"Routing entry for {target_ip}/24\n"
-                "  Known via \"static\", distance 1, metric 0\n"
-                "  Routing Descriptor Blocks:\n"
-                "  * 10.254.1.2, via GigabitEthernet0/1\n"
-                "      Route path via RT-Core-01 (10.1.1.254) -> FW-Core-01 (10.254.1.2)\n"
-                "INFO: Routing table lookup succeeded."
-            )
-        },
-        {
-            "name": "P5.5. FIB 验证 (FIB Verification)",
-            "status": "success",
-            "message": "FIB 转发面验证正常：控制面路由与 ASIC 芯片 CEF/FIB 转发流条目一致，无硬件转发失配异常。",
-            "log": (
-                f"RT-Core-01# show ip cef vrf VRF-Busi {target_ip}\n"
-                f"172.16.1.0/24, version 42, epoch 0, cached adjacency 10.254.1.2\n"
-                "0 packets, 0 bytes\n"
-                "  via 10.254.1.2, GigabitEthernet0/1, 0 dependencies\n"
-                "    next hop 10.254.1.2, GigabitEthernet0/1 active\n"
-                "INFO: FIB verification OK."
-            )
-        },
-        {
-            "name": "P6. 策略分析 (Policy Analysis)",
-            "status": "failed",
-            "message": (
-                f"安全策略拦截：在防火墙 FW-Core-01 上匹配到明确的丢弃策略，规则 denying {protocol} {source_ip} -> {target_ip} 命中。"
-                if protocol == 'ICMP' else
-                f"安全策略拦截：在防火墙 FW-Core-01 上匹配到明确的丢弃策略，规则 denying {protocol} {source_ip} -> {target_ip}:{port} 命中。"
-            ),
-            "log": (
-                f"FW-Core-01# show access-lists 3001\n"
-                "Extended IP access list 3001\n"
-                "    10 permit ip 10.1.1.0 0.0.0.255 172.16.1.0 0.0.0.255 eq 80\n" +
-                (f"    20 deny icmp any host {target_ip} (hitcnt=142) <-- MATCHED\n" if protocol == 'ICMP' else f"    20 deny tcp any host {target_ip} eq {port} (hitcnt=142) <-- MATCHED\n") +
-                "    30 permit ip any any\n"
-                f"FW-Core-01# show conn address {target_ip}\n"
-                f"0 connection found for {target_ip}\n"
-                f"CRITICAL: Access blocked by outbound ACL 3001 rule 20 on FW-Core-01"
-            )
-        },
-        {
-            "name": "P6.5. BGP 分析 (BGP Analysis)",
-            "status": "success",
-            "message": "BGP 状态正常：路由已从外部自治系统正常收敛安装，未受到 BGP 策略过滤。",
-            "log": (
-                f"RT-Core-01# show ip bgp {target_ip}\n"
-                "BGP routing table entry for 172.16.1.0/24, version 12\n"
-                "Paths: (1 available, best #1, table default)\n"
-                "  65002 65003\n"
-                "    10.254.1.2 from 10.254.1.2 (172.16.1.254)\n"
-                "      Origin IGP, localpref 100, valid, external, best\n"
-                "INFO: BGP route propagation verified."
-            )
-        },
-        {
-            "name": "P7. Overlay 分析 (Overlay Analysis)",
-            "status": "success",
-            "message": "Overlay 隧道验证通过：此路径为 Native IP 物理转发，未开启 Overlay (VXLAN/GRE) 隧道。",
-            "log": "INFO: Egress interface GigabitEthernet0/1 has no active VXLAN/GRE tunnel encapsulation configured."
-        },
-        {
-            "name": "P7.5. HA Analysis (HA 冗余分析)",
-            "status": "success",
-            "message": "HA 冗余校验正常：热备网关处于 Active 状态，HA 冗余无脑裂与状态漂移现象。",
-            "log": (
-                "RT-Core-01# show standby brief\n"
-                "                     P indicates configured to preempt.\n"
-                "                     |\n"
-                "Interface   Grp  Pri P State    Active          Standby         Virtual IP\n"
-                "Vlan10      10   110 P Active   local           10.1.1.253      10.1.1.254\n"
-                "INFO: HSRP Active gateway verified. Standby is alive."
-            )
-        },
-        {
-            "name": "P8. ICMP 验证 (ICMP Validation)" if protocol == 'ICMP' else f"P8. {protocol} 验证 ({protocol} Validation)",
-            "status": "failed",
-            "message": "ICMP 验证超时：由于防火墙策略拦截，未能收到 Ping 响应。" if protocol == 'ICMP' else f"{protocol} 验证超时：由于防火墙策略拦截，未能建立 {protocol} 握手连接。",
-            "log": f"ICMP Ping Probe to {target_ip} -> Connection timed out (No response)" if protocol == 'ICMP' else f"{protocol} Probe to {target_ip}:{port} -> Connection timed out (No response)"
-        },
-        {
-            "name": "P8.5. 性能分析 (Performance Analysis)",
-            "status": "warning",
-            "message": "链路亚健康警告：物理出接口 Gi0/1 存在少量 CRC 物理错包(累计 12 个)，建议排查光模块与光纤跳线状态。",
-            "log": (
-                "FW-Core-01# show interface GigabitEthernet0/1\n"
-                "GigabitEthernet0/1 is up, line protocol is up\n"
-                "  Input queue: 0/75/0/0 (size/max/drops/flushes); Total output drops: 0\n"
-                "  0 input errors, 12 CRC, 0 frame, 0 overrun, 0 ignored\n"
-                "  0 output errors, 0 collisions, 0 interface resets\n"
-                "FW-Core-01# show processes cpu\n"
-                "CPU utilization for five seconds: 12%/0%; one minute: 15%; five minutes: 14%\n"
-                "INFO: CPU load is 12% (normal). Memory free is 1.2GB/2GB (60% free).\n"
-                "WARNING: 12 CRC errors detected on GigabitEthernet0/1. Check physical fiber link."
-            )
-        },
-        {
-            "name": "P9. AI 根因推导 (AI Root Cause Engine)",
-            "status": "success",
-            "message": "AI 根因定位完成：置信度 98%。证据链：ACL 3001 规则 20 拦截 + TCP 握手 SYN 超时无响应。" if protocol != 'ICMP' else "AI 根因定位完成：置信度 98%。证据链：ACL 3001 规则 20 拦截 + ICMP 探测超时无响应。",
-            "log": (
-                "[AI Engine] Analyzing collected telemetry data...\n"
-                "[Evidence Checklist]\n"
-                "- P0-P4 VRF/ARP/MAC: Verified OK\n"
-                "- P5-P5.5 Routing/CEF: Verified OK\n" +
-                (f"- P6 Security Policy: ACL 3001 Rule 20 matched (deny icmp any host {target_ip}) (CRITICAL)\n" if protocol == 'ICMP' else f"- P6 Security Policy: ACL 3001 Rule 20 matched (deny tcp any host {target_ip} eq {port}) (CRITICAL)\n") +
-                "- P8.5 Performance: Egress interface CRC = 12 (MINOR WARNING)\n" +
-                (f"- P8 ICMP: Ping Probe Timed Out (CRITICAL)\n\n" if protocol == 'ICMP' else f"- P8 TCP: Connection Timed Out (CRITICAL)\n\n") +
-                "[AI Deducting]\n"
-                "Matching Rule: firewall_acl_block\n"
-                "Calculated Confidence: 98%"
-            )
-        },
-        {
-            "name": "P10. 智能报告 (Smart Report)",
-            "status": "success",
-            "message": "智能报告生成完毕：定位到 1 处严重安全阻断点与 1 处亚健康接口警告。",
-            "log": "INFO: Smart report formatted successfully."
-        }
-    ]
-
-    hops = [
-        {
-            "hop": 1,
-            "ip": "10.1.1.254",
-            "device_name": "RT-Core-01",
-            "device_type": "router",
-            "status": "active",
-            "detail": "1.02 ms"
-        },
-        {
-            "hop": 2,
-            "is_ecmp": True,
-            "paths": [
-                {
-                    "hop": 2,
-                    "ip": "10.254.1.2",
-                    "device_name": "FW-Core-01A",
-                    "device_type": "firewall",
-                    "status": "active",
-                    "detail": "2.18 ms (Active)"
-                },
-                {
-                    "hop": 2,
-                    "ip": "10.254.1.3",
-                    "device_name": "FW-Core-01B",
-                    "device_type": "firewall",
-                    "status": "blocked",
-                    "detail": "阻断 (Standby/Backup)"
-                }
-            ],
-            "ip": "10.254.1.2 | 10.254.1.3",
-            "device_name": "FW-Core-01A | FW-Core-01B",
-            "device_type": "firewall",
-            "status": "blocked",
-            "detail": "路径 A 正常 / 路径 B 阻断"
-        },
-        {
-            "hop": 3,
-            "ip": "*",
-            "device_name": "超时节点",
-            "device_type": "unknown",
-            "status": "timeout",
-            "detail": "未响应 (172.16.1.100 之前被安全设备拦截)"
-        }
-    ]
-
-    conclusion = "interrupted"
-    if protocol == 'ICMP':
-        reason = f"安全策略 ACL 3001 第 20 条规则阻断 (deny icmp any host {target_ip})"
-        impact = f"ICMP 业务流量被安全规则丢弃，目标服务不可达。"
-        suggestion = f"请登录防火墙 [FW-Core-01](/assets/detail/FW-Core-01) 修改或新增策略，放行源 IP 网段访问目标 IP {target_ip} 的 ICMP 流量。\n\n配置修复命令行建议：\nconfigure terminal\n ip access-list extended 3001\n  no 20 deny icmp any host {target_ip}\n  20 permit icmp any host {target_ip}\n  end\nwrite memory"
-        repair_commands = f"configure terminal\nip access-list extended 3001\n no 20 deny icmp any host {target_ip}\n 20 permit icmp any host {target_ip}\nend\nwrite memory"
-    else:
-        reason = f"安全策略 ACL 3001 第 20 条规则阻断 (deny tcp any host {target_ip} eq {port})"
-        impact = f"{protocol} 端口 {port} 业务流量被安全规则丢弃，目标服务不可达。"
-        suggestion = f"请登录防火墙 [FW-Core-01](/assets/detail/FW-Core-01) 修改或新增策略，放行源 IP 网段访问目标 IP {target_ip} 端口 {port} 的 {protocol} 流量。\n\n配置修复命令行建议：\nconfigure terminal\n ip access-list extended 3001\n  no 20 deny tcp any host {target_ip} eq {port}\n  20 permit tcp any host {target_ip} eq {port}\n  end\nwrite memory"
-        repair_commands = f"configure terminal\nip access-list extended 3001\n no 20 deny tcp any host {target_ip} eq {port}\n 20 permit tcp any host {target_ip} eq {port}\nend\nwrite memory"
-    
-    evidence = [
-        "P0 VRF: 已匹配到 VRF-Busi 路由上下文",
-        "P1-P4 二层: 物理端口 Gi1/0/12 与 ARP/MAC 绑定校验正常",
-        "P5-P5.5 三层: 路由表与 CEF 转发面路径下一跳一致",
-        "P6 安全策略: FW-Core-01 防火墙 ACL 3001 命中 deny 拦截规则 (hitcnt=142)",
-        "P8.5 性能: 中继端口 Gi0/1 存在少量 CRC 错包(12个)，但未引发丢包",
-        f"P8 {protocol}: Ping 探测超时无响应" if protocol == 'ICMP' else f"P8 {protocol}: SYN 握手探测超时无响应"
-    ]
-
-    return {
-        "success": True,
-        "timestamp": _beijing_now_iso(),
-        "source_ip": source_ip,
-        "target_ip": target_ip,
-        "port": port,
-        "protocol": protocol,
-        "steps": steps,
-        "hops": hops,
-        "report": {
-            "conclusion": conclusion,
-            "interrupted_at": "FW-Core-01",
-            "reason": reason,
-            "impact": impact,
-            "suggestion": suggestion,
-            "confidence": "98%",
-            "evidence": evidence,
-            "repair_commands": repair_commands
-        }
-    }
-
 async def run_diagnose_async(
     source_ip: str, 
     target_ip: str, 
@@ -1774,18 +1714,6 @@ async def run_diagnose_async(
     diagnosis_run_id = _new_diagnosis_run_id()
     diagnosis_started_at = _beijing_now_iso()
     
-    if source_ip == '10.1.1.10' and target_ip == '172.16.1.100':
-        await asyncio.sleep(2.0)
-        mock_result = _generate_mock_diagnose(source_ip, target_ip, port, protocol)
-        mock_result['diagnosis_run_id'] = diagnosis_run_id
-        mock_result['snapshot'] = {
-            'run_id': diagnosis_run_id,
-            'started_at': diagnosis_started_at,
-            'finished_at': _beijing_now_iso(),
-            'mode': 'mock',
-        }
-        return mock_result
-
     steps = []
     hops = []
     
@@ -1967,16 +1895,62 @@ async def run_diagnose_async(
     trace_conclusion = "interrupted"
     trace_log = ""
     diag_context = {}
+    return_hops: list[dict] = []
+    return_trace_log = ""
+    return_path_status = 'unavailable'
+    return_path_reason = '目标 IP 未映射到可执行设备侧路由查询的受管网络设备。'
+    return_trace_conclusion = 'unknown'
+    target_managed_device = None
     
     if source_dev_id:
         conn = get_db_connection()
         try:
-            hops, trace_conclusion, trace_log, diag_context = await trace_route_path_async(conn, source_dev_id, target_ip, active_vrf)
+            target_managed_device = _managed_device_by_ip(conn, target_ip)
+            hops, trace_conclusion, trace_log, diag_context = await trace_route_path_async(
+                conn,
+                source_dev_id,
+                target_ip,
+                active_vrf,
+                source_ip=source_ip,
+                protocol=protocol,
+                port=port,
+            )
             trace_success = True
+            if target_managed_device and str(target_managed_device.get('id')) != str(source_dev_id):
+                try:
+                    (
+                        return_hops,
+                        return_trace_conclusion,
+                        return_trace_log,
+                        _return_diag_context,
+                    ) = await trace_route_path_async(
+                        conn,
+                        str(target_managed_device['id']),
+                        source_ip,
+                        active_vrf,
+                        source_ip=target_ip,
+                        protocol=protocol,
+                        port=port,
+                    )
+                    return_path_status = 'collected'
+                    return_path_reason = (
+                        f"已从受管目标设备 {target_managed_device.get('hostname') or target_managed_device['id']} "
+                        f"执行回程路由递归。"
+                    )
+                except Exception as exc:
+                    return_path_status = 'failed'
+                    return_path_reason = f'回程设备侧路由递归失败：{exc}'
+                    return_trace_log = f'Error during return-path recursive trace: {exc}'
+            elif target_managed_device:
+                return_path_status = 'same_device'
+                return_path_reason = '源与目标映射到同一受管设备，不执行独立回程递归。'
         except Exception as e:
             trace_log = f"Error during recursive trace: {e}\n"
         finally:
             conn.close()
+
+    hops = _annotate_hop_interfaces(hops)
+    return_hops = _annotate_hop_interfaces(return_hops)
 
     if trace_success:
         if trace_conclusion == "reachable":
@@ -2055,33 +2029,60 @@ async def run_diagnose_async(
 
     # ── P5.5: FIB 验证 ──
     steps.append({"name": "P5.5. FIB 验证 (FIB Verification)", "status": "pending", "message": "正在验证控制面路由与转发面 CEF/FIB 的一致性...", "log": ""})
-    cef_ok = diag_context.get("cef_verified", True)
-    cef_logs = diag_context.get("cef_logs", "No CEF logs collected.")
+    cef_ok = diag_context.get("cef_verified")
+    cef_logs = diag_context.get("cef_logs") or "No CEF/FIB evidence collected."
+    if cef_ok is True:
+        cef_status = 'success'
+        cef_message = "FIB 转发面校验成功：已采集的控制面路由与转发面条目一致。"
+    elif cef_ok is False:
+        cef_status = 'failed'
+        cef_message = "FIB 转发故障：检测到软硬件路由表项失配或硬件转发面缺失该路由。"
+    else:
+        cef_status = 'warning'
+        cef_message = "FIB 转发面状态未知：未采集到足够的实时 CEF/FIB 证据，不能默认判定正常。"
     steps[7].update({
-        "status": "success" if cef_ok else "failed",
-        "message": "FIB 转发面校验成功：控制面路由条目与 ASIC 转发平面完全匹配。" if cef_ok else "FIB 转发故障：检测到软硬件路由表项失配，硬件转发平面缺失该路由。",
+        "status": cef_status,
+        "message": cef_message,
         "log": cef_logs
     })
 
     # ── P6: 策略分析 ──
     steps.append({"name": "P6. 策略分析 (Policy Analysis)", "status": "pending", "message": "正在匹配链路上的 ACL/NAT/QoS 安全过滤策略...", "log": ""})
-    acl_logs = diag_context.get("acl_logs", "No interface access lists applied.")
+    acl_logs = diag_context.get("acl_logs") or "No ACL attachment evidence collected."
+    acl_ok = diag_context.get("acl_verified")
+    acl_evidence = diag_context.get("acl_evidence") or []
+    if acl_ok is False:
+        acl_status = 'failed'
+        acl_message = "安全策略阻断：实时证据中发现与当前五元组相关的显式拒绝规则。"
+    elif acl_ok is True:
+        acl_status = 'success'
+        acl_message = "安全策略校验完成：已采集的出方向证据未发现阻断当前五元组的规则。"
+    else:
+        acl_status = 'warning'
+        acl_message = "安全策略状态未知：策略未采集、命令失败或仅发现绑定关系但尚未完成规则级五元组模拟。"
     steps[8].update({
-        "status": "success",
-        "message": "安全策略校验完成：出接口未绑定任何 ACL 阻断流量规则。",
-        "log": acl_logs
+        "status": acl_status,
+        "message": acl_message,
+        "log": acl_logs,
+        "evidence": acl_evidence,
     })
 
     # ── P6.5: BGP 分析 ──
     steps.append({"name": "P6.5. BGP 分析 (BGP Analysis)", "status": "pending", "message": "正在检查 BGP 路由传导及控制策略状态...", "log": ""})
-    bgp_ok = diag_context.get("bgp_verified", True)
-    bgp_logs = diag_context.get("bgp_logs", "No BGP routing detected.")
+    bgp_ok = diag_context.get("bgp_verified")
+    bgp_logs = diag_context.get("bgp_logs") or "No BGP evidence collected."
     is_bgp_route = any(r.get("source") == "BGP" for r in diag_context.get("route_sources", []))
     
     if is_bgp_route:
         steps[9].update({
-            "status": "success" if bgp_ok else "warning",
-            "message": "BGP 控制平面分析完成：路由已成功在边界自治系统传播接收。" if bgp_ok else "BGP 路由警告：检测到路由前缀被 BGP 策略过滤，未能在本地安装。",
+            "status": "success" if bgp_ok is True else "failed" if bgp_ok is False else "warning",
+            "message": (
+                "BGP 控制平面分析完成：已采集证据显示路由在边界自治系统正常安装。"
+                if bgp_ok is True
+                else "BGP 路由异常：检测到路由未激活、未安装或被策略过滤。"
+                if bgp_ok is False
+                else "BGP 状态未知：未采集到足够的实时 BGP 路由证据。"
+            ),
             "log": bgp_logs
         })
     else:
@@ -2094,18 +2095,24 @@ async def run_diagnose_async(
     # ── P7: Overlay 分析 ──
     steps.append({"name": "P7. Overlay 分析 (Overlay Analysis)", "status": "pending", "message": "正在检查底层 VXLAN/IPsec 等隧道封装状态...", "log": ""})
     steps[10].update({
-        "status": "success",
-        "message": "Overlay 核验完成：出接口采用物理原生 IP 二三层路由转发，无 Overlay 隧道封装。",
-        "log": "No active tunnel interfaces (Tunnel/VxLAN) detected on egress paths."
+        "status": "warning",
+        "message": "Overlay 状态未知：本次路径采集未包含足以排除 VXLAN/IPsec/GRE 封装的实时隧道证据。",
+        "log": "Overlay/tunnel evidence was not collected; absence of evidence is not treated as native forwarding."
     })
 
     # ── P7.5: HA 分析 ──
     steps.append({"name": "P7.5. HA 分析 (HA Analysis)", "status": "pending", "message": "正在校验设备冗余双机(HSRP/VRRP)健康状态...", "log": ""})
-    ha_ok = diag_context.get("ha_verified", True)
-    ha_logs = diag_context.get("ha_logs", "No HA brief information.")
+    ha_ok = diag_context.get("ha_verified")
+    ha_logs = diag_context.get("ha_logs") or "No HA evidence collected."
     steps[11].update({
-        "status": "success" if ha_ok else "warning",
-        "message": "HA 双机状态正常：网关备用协议工作在健康的 Active/Standby 状态。" if ha_ok else "HA 状态异常警告：检测到双 Master 脑裂或冗余组状态抖动摆动！",
+        "status": "success" if ha_ok is True else "failed" if ha_ok is False else "warning",
+        "message": (
+            "HA 状态校验完成：已采集证据显示网关冗余角色正常。"
+            if ha_ok is True
+            else "HA 状态异常：检测到双 Master 脑裂或冗余组异常。"
+            if ha_ok is False
+            else "HA 状态未知：未采集到足够的实时冗余协议证据。"
+        ),
         "log": ha_logs
     })
 
@@ -2206,14 +2213,28 @@ async def run_diagnose_async(
                 f"当前 {protocol.upper()} 探测未收到响应；控制平面路径或历史 ARP/MAC 命中不代表目标端当前可达。"
             )
 
-    perf_logs = diag_context.get("perf_logs", "No performance data captured.")
-    perf_warning = diag_context.get("perf_warning", False)
-    
+    perf_logs = diag_context.get("perf_logs") or "No live performance evidence collected."
+    perf_warning = diag_context.get("perf_warning")
+    if perf_warning is True:
+        perf_status = 'warning'
+        perf_message = "端口性能校验警告：路径接口存在错包、丢包或 CPU 过载。"
+    elif perf_warning is False:
+        perf_status = 'success'
+        perf_message = "性能校验完成：已采集接口计数器和 CPU 证据，未发现设定阈值异常。"
+    else:
+        perf_status = 'warning'
+        perf_message = "性能状态未知：未采集到完整的实时接口计数器或设备负载证据。"
     steps[13].update({
-        "status": "warning" if perf_warning else "success",
-        "message": "端口性能校验警告：路径中某些物理端口存在丢包、错包(CRC)增加，或设备 CPU 过载！" if perf_warning else "链路接口计数正常：无丢包、错包及 CPU 过载（利用率均在 10% 以下）。",
+        "status": perf_status,
+        "message": perf_message,
         "log": perf_logs
     })
+    evidence_quality = _derive_evidence_quality(
+        diag_context,
+        path_interface_evidence,
+        return_path_status=return_path_status,
+    )
+    evidence_gaps = evidence_quality['gaps']
 
     # ── P9: AI 根因推导 ──
     steps.append({"name": "P9. AI 根因推导 (AI Root Cause Engine)", "status": "pending", "message": "正在对比网络专家库推导核心故障点...", "log": ""})
@@ -2249,7 +2270,7 @@ async def run_diagnose_async(
             f"{p8_desc}未收到响应（以源设备实时探测结果为准）",
             "应优先核查最后一跳接口、上下联链路及 VLAN/Trunk 状态",
         ]
-    elif not cef_ok:
+    elif cef_ok is False:
         confidence = "95%"
         evidence = ["P5.5 FIB 验证控制面与 ASIC 转发项失配 (硬件路由黑洞)"]
     elif trace_conclusion == "interrupted":
@@ -2292,13 +2313,40 @@ async def run_diagnose_async(
             'log': '[Evidence Conflict]\n' + '\n'.join(evidence),
             'evidence_conflicts': evidence_conflicts,
         })
+    elif evidence_gaps:
+        numeric_confidence = int(str(confidence).rstrip('%') or 0)
+        confidence = f"{min(numeric_confidence, evidence_quality['confidence_cap'])}%"
+        evidence = evidence + [f"证据缺口：{gap}" for gap in evidence_gaps]
+        steps[14].update({
+            'status': 'warning',
+            'message': f"根因推导仅形成候选结论：证据不完整，置信度上限为 {confidence}。",
+            'log': (
+                '[Incomplete Evidence]\n'
+                + '\n'.join(f'- {item}' for item in evidence_gaps)
+                + f'\nConfidence cap: {confidence}'
+            ),
+            'evidence_gaps': evidence_gaps,
+        })
 
     steps.append({"name": "P9.5. 证据一致性检查 (Evidence Consistency)", "status": "pending", "message": "正在核对本次实时探测、接口、ARP 与路径证据...", "log": ""})
     steps[15].update({
-        'status': 'warning' if evidence_conflicts else 'success',
-        'message': '存在证据冲突，已阻止高置信度根因输出。' if evidence_conflicts else '证据一致性检查通过：本次诊断结果使用同一运行快照。',
-        'log': '\n'.join(evidence_conflicts) if evidence_conflicts else 'No evidence conflicts detected.',
+        'status': 'warning' if evidence_conflicts or evidence_gaps else 'success',
+        'message': (
+            '存在证据冲突，已阻止高置信度根因输出。'
+            if evidence_conflicts
+            else '证据链不完整，未知项已显式列出并限制置信度。'
+            if evidence_gaps
+            else '证据一致性检查通过：本次诊断结果使用同一运行快照。'
+        ),
+        'log': (
+            '\n'.join(evidence_conflicts)
+            if evidence_conflicts
+            else '\n'.join(evidence_gaps)
+            if evidence_gaps
+            else 'No evidence conflicts or gaps detected.'
+        ),
         'evidence_conflicts': evidence_conflicts,
+        'evidence_gaps': evidence_gaps,
         'snapshot': _snapshot_meta(diagnosis_run_id, 'derived', finished_at),
     })
 
@@ -2315,7 +2363,7 @@ async def run_diagnose_async(
 
     blocked_hop = next((h for h in hops if h["status"] == "blocked"), None)
     arp_missing_hop = next((h for h in hops if h["status"] == "timeout" and "ARP Missing" in h["detail"]), None)
-    diagnostic_status = 'confirmed'
+    diagnostic_status = 'incomplete_evidence' if evidence_gaps else 'confirmed'
     
     if evidence_conflicts:
         diagnostic_status = 'evidence_conflict'
@@ -2357,7 +2405,7 @@ async def run_diagnose_async(
             impact = f"无法访问 {target_ip} 的 {port} 端口服务"
         suggestion = f"请登录设备 {interrupted_at}，检查路由表配置，确保拥有到达目标网段 {target_ip} 的有效静态或动态路由条目。"
         repair_commands = f"configure terminal\n ip route {target_ip} 255.255.255.255 <下一跳地址>\n end\n write memory"
-    elif not has_success and cef_ok:
+    elif not has_success:
         # P8 is the current data-plane observation. It must override a stale
         # route/ARP snapshot and must never produce a reachable conclusion.
         last_hop = next((hop for hop in reversed(hops) if hop.get("device_name")), None)
@@ -2379,6 +2427,8 @@ async def run_diagnose_async(
             impact = f"目标 {target_ip}:{port} 当前不可达或服务未响应"
         if arp_missing_hop:
             reason += f" 最后一跳未发现目标主机 {target_ip} 的实时 ARP 记录。"
+        if cef_ok is False:
+            reason += " 同时，P5.5 实时证据显示控制面路由与 FIB/CEF 转发表不一致。"
         suggestion = (
             f"1. 先登录最后一跳设备 {endpoint_name}，检查 {endpoint_port} 的 admin/oper 状态，确认没有误执行 shutdown；"
             "\n2. 检查该接口上下联、VLAN/Trunk、MAC/ARP 学习及链路告警，恢复链路后重新执行诊断；"
@@ -2392,13 +2442,6 @@ async def run_diagnose_async(
         impact = f"由于目标主机未开机或网络断开，导致业务无法连通"
         suggestion = f"1. 请检查目标主机 {target_ip} 是否已开机，网卡是否启用，IP 地址配置是否正确。\n2. 检查直连交换机/路由器接口的 VLAN 和 Trunk 配置，确保广播包可正常传输。"
         repair_commands = f"# 建议检查直连交换机接口配置：\ninterface <interface_name>\n switchport access vlan <vlan_id>\n no shutdown"
-    elif not cef_ok and not has_success:
-        interrupted_at = "FIB 转发面"
-        conclusion = "interrupted"
-        reason = "FIB 验证失败：软件路由表存在但硬件转发表丢失项，产生硬件丢包黑洞。"
-        impact = f"ASIC 芯片级路由丢包，导致访问 {target_ip} 异常"
-        suggestion = "尝试清除并重建 CEF/FIB 状态，或重启设备接口。若依然无效，可能需要升级软件或更换板卡以修复 ASIC 同步问题。"
-        repair_commands = "clear ip cef 172.16.1.100"
     elif trace_conclusion == "reachable":
         conclusion = "reachable"
         interrupted_at = ""
@@ -2444,10 +2487,12 @@ async def run_diagnose_async(
                 "interfaces": "live_textfsm",
                 "route": "live_cli" if diag_context.get('force_live_route') else "route_cache",
                 "arp": "live_cli" if source_dev_id else "unknown",
+                "return_path": "live_cli" if return_path_status == 'collected' else "unknown",
             },
             "route_cache_hits": diag_context.get('route_cache_hits', 0),
             "command_cache_hits": diag_context.get('command_cache_hits', 0),
             "evidence_conflicts": evidence_conflicts,
+            "evidence_gaps": evidence_gaps,
             "is_cached": False,
         },
         "source_ip": source_ip,
@@ -2456,6 +2501,27 @@ async def run_diagnose_async(
         "protocol": protocol,
         "steps": steps,
         "hops": hops,
+        "forward_path": {
+            "status": "collected" if trace_success else "failed",
+            "conclusion": trace_conclusion,
+            "hops": hops,
+            "log": trace_log,
+        },
+        "return_path": {
+            "status": return_path_status,
+            "conclusion": return_trace_conclusion,
+            "hops": return_hops,
+            "reason": return_path_reason,
+            "log": return_trace_log,
+            "source_device": (
+                {
+                    "id": target_managed_device.get('id'),
+                    "hostname": target_managed_device.get('hostname'),
+                }
+                if target_managed_device
+                else None
+            ),
+        },
         "report": {
             "conclusion": conclusion,
             "interrupted_at": interrupted_at if conclusion == "interrupted" else "",
@@ -2466,6 +2532,9 @@ async def run_diagnose_async(
             "evidence": evidence,
             "diagnostic_status": diagnostic_status,
             "evidence_conflicts": evidence_conflicts,
+            "evidence_gaps": evidence_gaps,
+            "evidence_quality": evidence_quality,
+            "acl_evidence": diag_context.get('acl_evidence', []),
             "interface_states": diag_context.get('path_interface_states', []),
             "probe_attempts": icmp_attempts if protocol.upper() == 'ICMP' else tcp_attempts,
             "repair_commands": repair_commands

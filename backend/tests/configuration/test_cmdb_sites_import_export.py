@@ -1,0 +1,55 @@
+from api import cmdb as cmdb_api
+from schemas.schemas import SiteCreate, SiteImportRequest
+
+
+def test_site_import_validates_duplicates_and_export_is_unpaginated(isolated_db, monkeypatch):
+    monkeypatch.setattr(cmdb_api, '_audit', lambda *args, **kwargs: None)
+
+    first = SiteCreate(
+        site_name='North DC',
+        country='United States',
+        state_province='Virginia',
+        city='Ashburn',
+        contact_name='Network Ops',
+        contact_phone='+12025550123',
+        contact_email='ops@example.com',
+        status='active',
+    )
+    imported = cmdb_api.api_import_sites(
+        SiteImportRequest(rows=[first]),
+        user={'username': 'tester', 'role': 'Operator'},
+    )
+    assert imported['success'] is True
+    assert imported['data']['imported'] == 1
+    assert imported['data']['failed'] == 0
+
+    duplicate = cmdb_api.api_import_sites(
+        SiteImportRequest(rows=[first]),
+        user={'username': 'tester', 'role': 'Operator'},
+    )
+    assert duplicate['data']['imported'] == 0
+    assert duplicate['data']['failed'] == 1
+    assert '已存在' in duplicate['data']['errors'][0]['message']
+
+    second = first.model_copy(update={'site_name': 'West DC'})
+    mixed = cmdb_api.api_import_sites(
+        SiteImportRequest(rows=[second, first]),
+        user={'username': 'tester', 'role': 'Operator'},
+    )
+    assert mixed['data']['imported'] == 0
+    assert mixed['data']['failed'] == 1
+
+    listed = cmdb_api.api_list_sites(
+        tenant_id='', q='West', page=None, page_size=20, _user={'role': 'Viewer'}
+    )
+    assert listed['data'] == []
+
+    response = cmdb_api.api_export_sites(
+        tenant_id='',
+        q='North',
+        _user={'username': 'tester', 'role': 'Viewer'},
+    )
+    content = response.body.decode('utf-8-sig')
+    assert '站点编码' in content
+    assert 'North DC' in content
+    assert '+12025550123' in content

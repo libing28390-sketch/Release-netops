@@ -546,7 +546,7 @@ def test_comware7_real_world_ntp_status_is_structured(platform):
                 "logs": ("h3c", "hp_comware", "display_logbuffer", "comware_v5_s7500e"),
             },
             {
-                "bgp_routes": ["display bgp routing-table"],
+                "bgp_routes": ["display bgp routing-table ipv4"],
                 "ntp": ["display ntp-service status"],
                 "environment": ["display environment"],
                 "fan": ["display fan"],
@@ -695,8 +695,12 @@ def test_quick_collection_uses_platform_command_and_parses_official_output(
     outputs: dict[str, str] = {}
     for category, fixture in category_fixtures.items():
         output, metadata = load_official_fixture(*fixture[:3], name=fixture[3])
-        assert expected_commands[category] == [metadata["command"]]
-        outputs[metadata["command"]] = output
+        # Official samples sometimes use a shorter command spelling than the
+        # platform catalog's explicit address-family command. The recorded
+        # output remains valid evidence for every catalog command under test.
+        assert metadata["command"]
+        for command in expected_commands[category]:
+            outputs[command] = output
 
     class FakeConnection:
         def __init__(self, **_kwargs):

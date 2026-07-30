@@ -40,7 +40,8 @@ const TagFilterDropdown: React.FC<TagFilterDropdownProps> = ({
   };
 
   const filtered = allTags.filter(t => {
-    if (excludeStatusTags && (t.category === 'system_auto' || t.is_system)) return false;
+    if (t.is_active === 0) return false;
+    if (excludeStatusTags && t.is_system) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return String(t.label || '').toLowerCase().includes(q)

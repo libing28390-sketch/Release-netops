@@ -104,7 +104,13 @@ def create_job(
         conn.close()
 
 
-def get_job(job_id: str, *, conn=None) -> dict:
+def get_job(
+    job_id: str,
+    *,
+    conn=None,
+    target_statuses: set[str] | None = None,
+    target_limit: int | None = None,
+) -> dict:
     own_conn = conn is None
     conn = conn or get_db_connection()
     try:
@@ -113,13 +119,25 @@ def get_job(job_id: str, *, conn=None) -> dict:
             raise ValueError('Job not found')
         item = dict(row)
         try:
+            target_params: list[Any] = [job_id]
+            target_filter = ''
+            if target_statuses:
+                statuses = sorted({str(status) for status in target_statuses if str(status) in TARGET_STATUSES})
+                if statuses:
+                    target_filter = f" AND jt.status IN ({','.join('?' for _ in statuses)})"
+                    target_params.extend(statuses)
+            target_limit_sql = ''
+            if target_limit is not None:
+                target_limit_sql = ' LIMIT ?'
+                target_params.append(max(1, int(target_limit)))
             target_rows = conn.execute(
-                """SELECT jt.*, d.hostname AS target_hostname, d.ip_address AS target_ip
+                f"""SELECT jt.*, d.hostname AS target_hostname, d.ip_address AS target_ip
                    FROM job_targets jt
                    LEFT JOIN devices d
                      ON jt.target_type = 'device' AND d.id = jt.target_id
-                   WHERE jt.job_id = ? ORDER BY jt.id""",
-                (job_id,),
+                   WHERE jt.job_id = ?{target_filter}
+                   ORDER BY jt.status, jt.id{target_limit_sql}""",
+                tuple(target_params),
             ).fetchall()
         except Exception:
             # Keep generic job reads usable during bootstrap databases where
@@ -128,6 +146,12 @@ def get_job(job_id: str, *, conn=None) -> dict:
                 "SELECT * FROM job_targets WHERE job_id = ? ORDER BY id", (job_id,)
             ).fetchall()
         item['targets'] = [dict(value) for value in target_rows]
+        status_counts = conn.execute(
+            "SELECT status, COUNT(*) AS count FROM job_targets WHERE job_id = ? GROUP BY status",
+            (job_id,),
+        ).fetchall()
+        item['target_status_counts'] = {str(value['status']): int(value['count'] or 0) for value in status_counts}
+        item['targets_truncated'] = bool(target_limit is not None and sum(item['target_status_counts'].values()) > len(item['targets']))
         item['steps'] = [dict(value) for value in conn.execute(
             "SELECT * FROM job_steps WHERE job_id = ? ORDER BY step_order", (job_id,)
         ).fetchall()]

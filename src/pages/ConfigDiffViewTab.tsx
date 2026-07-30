@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, RotateCcw, Search, X, Database, Clock, ArrowLeftRight, Zap } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RotateCcw, Search, X, Database, Clock, ArrowLeftRight, Zap, Server, SlidersHorizontal, ShieldCheck } from 'lucide-react';
 import type { DiffLine } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { GitCompare } from 'lucide-react';
+import { apiRequest } from '../api/http';
 
 /* ── shared interfaces (kept compatible with App.tsx) ── */
 
@@ -16,6 +17,7 @@ interface DiffSnapshot {
   content?: string;
   size?: number;
   vendor?: string;
+  is_baseline?: number | boolean;
 }
 
 interface DiffRenderEntry {
@@ -57,6 +59,7 @@ interface ConfigDiffViewTabProps {
   diffFocusChangeIdx: number;
   diffOnlyChanges: boolean;
   diffShowFullBoth: boolean;
+  diffMode: 'normalized' | 'raw';
   renderedDiffLines: DiffRenderEntry[];
   fullSideBySideRows: FullSideBySideRow[];
   diffChangeBlocks: DiffChangeBlock[];
@@ -72,6 +75,7 @@ interface ConfigDiffViewTabProps {
   onJumpToDiff: (direction: 'prev' | 'next') => void;
   onToggleOnlyChanges: () => void;
   onToggleFullBoth: () => void;
+  onDiffModeChange: (mode: 'normalized' | 'raw') => void;
   onDiffBlockQueryChange: (value: string) => void;
   onToggleQuickKeyword: (keyword: string) => void;
   onFocusDiffChangeAt: (changeIdx: number) => void;
@@ -87,6 +91,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   diffFocusChangeIdx,
   diffOnlyChanges,
   diffShowFullBoth,
+  diffMode,
   renderedDiffLines,
   fullSideBySideRows,
   diffChangeBlocks,
@@ -100,6 +105,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   onJumpToDiff,
   onToggleOnlyChanges,
   onToggleFullBoth,
+  onDiffModeChange,
   onDiffBlockQueryChange,
   onToggleQuickKeyword,
   onFocusDiffChangeAt,
@@ -113,6 +119,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
 
   /* ── Step 1: Device list ── */
   const [deviceSearch, setDeviceSearch] = useState('');
+  const [deviceSearchDraft, setDeviceSearchDraft] = useState('');
   const [devices, setDevices] = useState<BackupDevice[]>([]);
   const [devicesTotal, setDevicesTotal] = useState(0);
   const [devicesLoading, setDevicesLoading] = useState(false);
@@ -125,24 +132,43 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const [pickLeft, setPickLeft] = useState<string | null>(null);
   const [pickRight, setPickRight] = useState<string | null>(null);
+  const [baselineSaving, setBaselineSaving] = useState('');
+  const deviceAbortRef = React.useRef<AbortController | null>(null);
 
   /* ── Load devices ── */
   const loadDevices = useCallback(async (q = '', pg = devPage, ps = devPageSize) => {
+    deviceAbortRef.current?.abort();
+    const controller = new AbortController();
+    deviceAbortRef.current = controller;
     setDevicesLoading(true);
     try {
       const params = new URLSearchParams({ page: String(pg), page_size: String(ps) });
       if (q.trim()) params.set('search', q.trim());
-      const resp = await fetch(`/api/configs/devices-with-backups?${params}`);
+      const resp = await fetch(`/api/configs/devices-with-backups?${params}`, { signal: controller.signal });
       if (resp.ok) {
         const data = await resp.json();
         setDevices(data.items || []);
         setDevicesTotal(data.total || 0);
       }
-    } catch { /* ignore */ }
-    finally { setDevicesLoading(false); }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        // The page already has a meaningful empty/loading state; keep network
+        // failures quiet here so a transient request does not replace it.
+      }
+    } finally {
+      if (!controller.signal.aborted) setDevicesLoading(false);
+    }
   }, [devPage, devPageSize]);
 
-  useEffect(() => { void loadDevices(deviceSearch); }, [loadDevices, deviceSearch]);
+  useEffect(() => {
+    void loadDevices(deviceSearch);
+    return () => deviceAbortRef.current?.abort();
+  }, [loadDevices, deviceSearch]);
+
+  const submitDeviceSearch = () => {
+    setDevPage(1);
+    setDeviceSearch(deviceSearchDraft.trim());
+  };
 
   /* ── Pre-select device from backup center navigation ── */
   useEffect(() => {
@@ -157,9 +183,9 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const loadSnapshots = useCallback(async (deviceId: string) => {
     setSnapshotsLoading(true);
     try {
-      const resp = await fetch(`/api/configs/snapshots?device_id=${encodeURIComponent(deviceId)}`);
+      const resp = await fetch(`/api/config-drift/device/${encodeURIComponent(deviceId)}/snapshots`);
       if (resp.ok) {
-        const data: DiffSnapshot[] = await resp.json();
+        const data = await resp.json() as DiffSnapshot[];
         setSnapshots(data.sort((a, b) => b.timestamp.localeCompare(a.timestamp)));
       }
     } catch { /* ignore */ }
@@ -213,6 +239,27 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const handleStartCompare = async () => {
     if (!pickLeft || !pickRight) return;
     await onSelectSnapshotPair(pickLeft, pickRight);
+  };
+
+  const handleSetBaseline = async (snapshotId: string) => {
+    if (!selectedDevice) return;
+    setBaselineSaving(snapshotId);
+    try {
+      await apiRequest(
+        `/api/config-drift/device/${encodeURIComponent(selectedDevice.id)}/baseline`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            snapshot_id: snapshotId,
+            description: zh ? '从配置对比页面设为基准' : 'Designated from config comparison',
+          }),
+        },
+      );
+      setPickLeft(snapshotId);
+      await loadSnapshots(selectedDevice.id);
+    } finally {
+      setBaselineSaving('');
+    }
   };
 
   /* ── Quick compare: latest two ── */
@@ -280,89 +327,84 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
           <div className="flex-1 overflow-auto">
             {!selectedDevice ? (
               /* ──── Step 1: Device list ──── */
-              <div className="flex flex-col h-full">
-                {/* Search + count bar */}
-                <div className="flex items-center gap-3 px-5 pt-4 pb-3 border-b border-black/[0.04]">
-                  <label className="relative flex-1 max-w-sm">
-                    <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-black/25" />
-                    <input
-                      value={deviceSearch}
-                      onChange={(e) => { setDeviceSearch(e.target.value); setDevPage(1); }}
-                      placeholder={zh ? '搜索主机名 / IP ...' : 'Search hostname / IP...'}
-                      className="w-full rounded-lg border border-black/8 bg-white py-2 pl-8 pr-8 text-[13px] text-[#164e63] outline-none placeholder:text-black/25 focus:border-[#06b6d4]/40 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
-                    />
-                    {deviceSearch && (
-                      <button onClick={() => { setDeviceSearch(''); setDevPage(1); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-black/25 hover:text-black/50">
-                        <X size={13} />
-                      </button>
-                    )}
-                  </label>
-                  <span className="text-[11px] font-medium text-black/35">
-                    {zh ? `共 ${devicesTotal} 台` : `${devicesTotal} devices`}
-                  </span>
-                </div>
-
-                {/* Table header */}
-                <div className="grid grid-cols-[auto_1fr_auto_auto_auto_auto] items-center gap-x-3 px-5 py-2 text-[10px] font-bold uppercase tracking-wider text-black/25 border-b border-black/[0.03]">
-                  <span className="w-2" />
-                  <span>{zh ? '设备' : 'Device'}</span>
-                  <span className="hidden sm:block">{zh ? '平台' : 'Platform'}</span>
-                  <span>{zh ? '备份数' : 'Backups'}</span>
-                  <span className="hidden sm:block">{zh ? '最近备份' : 'Last Backup'}</span>
-                  <span className="w-4" />
-                </div>
-
-                {/* Device rows */}
-                <div className="flex-1 overflow-auto">
-                  {devicesLoading ? (
-                    <div className="py-16 text-center text-sm text-black/35 flex items-center justify-center gap-2">
-                      <RotateCcw size={14} className="animate-spin" /> {zh ? '加载中...' : 'Loading...'}
-                    </div>
-                  ) : devices.length === 0 ? (
-                    <div className="py-16 text-center text-black/25">
-                      <Database size={32} strokeWidth={1} className="mx-auto mb-2 text-black/15" />
-                      <p className="text-sm font-medium">{zh ? '暂无配置备份' : 'No config backups yet'}</p>
-                      <p className="text-xs mt-1 text-black/30">{zh ? '请先到备份中心执行备份操作' : 'Go to Backup Center first'}</p>
-                    </div>
-                  ) : (
+              <div className="flex flex-col h-full bg-[#f7fbfc]">
+                <div className="px-6 pt-6 pb-5 bg-gradient-to-br from-[#f0fbfc] via-white to-white border-b border-cyan-100/70">
+                  <div className="flex items-start justify-between gap-4">
                     <div>
-                      {devices.map((dev, idx) => (
-                        <button
-                          key={dev.id}
-                          onClick={() => handleSelectDevice(dev)}
-                          className={`group w-full text-left grid grid-cols-[auto_1fr_auto_auto_auto_auto] items-center gap-x-3 px-5 py-2.5 transition-colors hover:bg-[#f0fdfa] ${
-                            idx > 0 ? 'border-t border-black/[0.03]' : ''
-                          }`}
-                        >
-                          <div className={`h-2 w-2 flex-shrink-0 rounded-full ${dev.status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-[13px] font-semibold text-[#164e63] truncate">{dev.hostname}</span>
-                            <span className="text-[11px] font-mono text-black/30 truncate hidden md:inline">{dev.ip_address}</span>
-                          </div>
-                          <span className="text-[11px] text-black/35 hidden sm:block truncate max-w-[100px]">{dev.platform || '--'}</span>
-                          <span className="rounded-full bg-[#ecfeff] px-2 py-0.5 text-[10px] font-bold text-[#0e7490] tabular-nums">
-                            {dev.backup_count}
-                          </span>
-                          <span className="text-[11px] text-black/30 hidden sm:block whitespace-nowrap">{timeSince(dev.latest_backup)}</span>
-                          <ChevronRight size={13} className="text-black/15 group-hover:text-[#06b6d4] transition-colors" />
-                        </button>
+                      <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-[#0891b2]">
+                        <Server size={14} /> {zh ? '配置审计工作台' : 'Configuration audit workspace'}
+                      </div>
+                      <h2 className="mt-2 text-xl font-bold tracking-tight text-[#123b50]">{zh ? '选择要对比的设备' : 'Choose a device to compare'}</h2>
+                      <p className="mt-1 text-xs text-slate-500">{zh ? '先定位设备，再从正式基线或历史快照中选择两个版本。' : 'Locate a device first, then choose two versions from its baseline or history.'}</p>
+                    </div>
+                    <div className="hidden md:flex items-center gap-1.5 rounded-xl border border-white bg-white/80 p-1 shadow-sm">
+                      {[zh ? '设备' : 'Device', zh ? '快照' : 'Snapshots', zh ? '差异' : 'Diff'].map((step, idx) => (
+                        <div key={step} className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold ${idx === 0 ? 'bg-[#123b50] text-white' : 'text-slate-400'}`}>
+                          <span className="font-mono opacity-70">0{idx + 1}</span>{step}
+                        </div>
                       ))}
                     </div>
-                  )}
+                  </div>
+                  <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div className="rounded-xl border border-white bg-white/80 px-3.5 py-3 shadow-sm">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{zh ? '可审计设备' : 'Auditable devices'}</div>
+                      <div className="mt-1 text-lg font-bold tabular-nums text-[#123b50]">{devicesTotal}</div>
+                    </div>
+                    <div className="rounded-xl border border-white bg-white/80 px-3.5 py-3 shadow-sm">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{zh ? '当前页结果' : 'Current page'}</div>
+                      <div className="mt-1 text-lg font-bold tabular-nums text-[#0891b2]">{devices.length}<span className="ml-1 text-xs font-medium text-slate-400">/ {devPageSize}</span></div>
+                    </div>
+                    <div className="rounded-xl border border-white bg-white/80 px-3.5 py-3 shadow-sm">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{zh ? '对比方式' : 'Compare mode'}</div>
+                      <div className="mt-1 flex items-center gap-1.5 text-sm font-bold text-[#123b50]"><ShieldCheck size={14} className="text-emerald-500" />{diffMode === 'normalized' ? (zh ? '标准化审阅' : 'Normalized review') : (zh ? '原始文本' : 'Raw text')}</div>
+                    </div>
+                  </div>
                 </div>
 
-                {devicesTotal > devPageSize && (
-                  <div className="px-5 py-3 border-t border-black/[0.04]">
-                    <Pagination
-                      currentPage={devPage}
-                      totalItems={devicesTotal}
-                      itemsPerPage={devPageSize}
-                      onPageChange={setDevPage}
-                      onItemsPerPageChange={(v) => { setDevPage(1); setDevPageSize(v); }}
-                      language={language}
-                    />
+                <div className="flex-1 overflow-auto px-6 py-5">
+                  <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_12px_30px_rgba(18,59,80,0.06)] overflow-hidden">
+                    <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 bg-white">
+                      <div className="flex items-center gap-2 text-xs font-bold text-[#123b50]"><SlidersHorizontal size={14} className="text-[#0891b2]" />{zh ? '设备范围' : 'Device scope'}</div>
+                      <div className="relative flex-1 min-w-[220px] max-w-xl">
+                        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          value={deviceSearchDraft}
+                          onChange={(e) => setDeviceSearchDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') submitDeviceSearch(); }}
+                          placeholder={zh ? '搜索主机名或管理 IP，按回车执行' : 'Search hostname or management IP, press Enter'}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-9 text-xs text-[#123b50] outline-none placeholder:text-slate-400 focus:border-cyan-300 focus:bg-white focus:ring-4 focus:ring-cyan-50 transition-all"
+                        />
+                        {deviceSearchDraft && <button onClick={() => { setDeviceSearchDraft(''); setDeviceSearch(''); setDevPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"><X size={13} /></button>}
+                      </div>
+                      <button onClick={submitDeviceSearch} className="inline-flex items-center gap-1.5 rounded-xl bg-[#123b50] px-3.5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-[#0b2d3e] transition-colors"><Search size={13} />{zh ? '搜索' : 'Search'}</button>
+                      {deviceSearch && <span className="rounded-full bg-cyan-50 px-2.5 py-1 text-[10px] font-bold text-cyan-700">{zh ? `已筛选：${deviceSearch}` : `Filter: ${deviceSearch}`}</span>}
+                    </div>
+
+                    <div className="grid grid-cols-[minmax(210px,1.8fr)_minmax(130px,1fr)_90px_120px_32px] items-center gap-x-4 px-5 py-2.5 bg-slate-50/80 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                      <span>{zh ? '设备资产' : 'Device asset'}</span><span>{zh ? '平台' : 'Platform'}</span><span>{zh ? '快照' : 'Snapshots'}</span><span>{zh ? '最近备份' : 'Last backup'}</span><span />
+                    </div>
+
+                    {devicesLoading ? (
+                      <div className="py-20 text-center text-sm text-slate-400 flex items-center justify-center gap-2"><RotateCcw size={15} className="animate-spin text-cyan-500" />{zh ? '正在加载设备资产...' : 'Loading device assets...'}</div>
+                    ) : devices.length === 0 ? (
+                      <div className="py-20 text-center text-slate-400"><div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-50"><Database size={28} strokeWidth={1.4} className="text-slate-300" /></div><p className="text-sm font-bold text-slate-600">{deviceSearch ? (zh ? '没有匹配的设备' : 'No matching devices') : (zh ? '暂无配置备份' : 'No config backups yet')}</p><p className="mt-1 text-xs">{deviceSearch ? (zh ? '请调整关键词后重试。' : 'Adjust the search and try again.') : (zh ? '请先到备份中心执行一次配置备份。' : 'Run a configuration backup from Backup Center first.')}</p></div>
+                    ) : (
+                      <div>
+                        {devices.map((dev) => {
+                          const online = dev.status === 'online';
+                          return <button key={dev.id} onClick={() => handleSelectDevice(dev)} className="group w-full text-left grid grid-cols-[minmax(210px,1.8fr)_minmax(130px,1fr)_90px_120px_32px] items-center gap-x-4 px-5 py-3.5 border-b border-slate-100 last:border-b-0 hover:bg-cyan-50/50 transition-colors">
+                            <div className="flex items-center gap-3 min-w-0"><div className={`flex h-9 w-9 items-center justify-center rounded-xl ${online ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}><Server size={15} /></div><div className="min-w-0"><div className="flex items-center gap-2"><span className="truncate text-[13px] font-bold text-[#123b50]">{dev.hostname}</span><span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-emerald-500' : 'bg-amber-400'}`} /></div><span className="mt-0.5 block truncate text-[10px] font-mono text-slate-400">{dev.ip_address}</span></div></div>
+                            <span className="truncate rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 max-w-[150px]">{dev.platform || '--'}</span>
+                            <span className="inline-flex w-fit items-center gap-1 rounded-full bg-cyan-50 px-2.5 py-1 text-[10px] font-bold text-cyan-700 tabular-nums"><Database size={11} />{dev.backup_count}</span>
+                            <span className="text-[11px] text-slate-500 whitespace-nowrap"><span className="block font-semibold text-slate-600">{timeSince(dev.latest_backup) || '--'}</span><span className="block text-[9px] text-slate-400">{formatTime(dev.latest_backup).split(',')[0]}</span></span>
+                            <ChevronRight size={16} className="text-slate-300 group-hover:translate-x-0.5 group-hover:text-cyan-600 transition-all" />
+                          </button>;
+                        })}
+                      </div>
+                    )}
                   </div>
-                )}
+                  {devicesTotal > devPageSize && <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-2.5"><Pagination currentPage={devPage} totalItems={devicesTotal} itemsPerPage={devPageSize} onPageChange={setDevPage} onItemsPerPageChange={(v) => { setDevPage(1); setDevPageSize(v); }} language={language} /></div>}
+                </div>
               </div>
             ) : (
               /* ──── Step 2: Snapshot selection ──── */
@@ -594,6 +636,23 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                                     {zh ? '最新' : 'NEW'}
                                   </span>
                                 )}
+                                {Boolean(snap.is_baseline) ? (
+                                  <span className="rounded bg-cyan-50 px-1.5 py-px text-[8px] font-bold text-cyan-700">
+                                    {zh ? '正式基线' : 'BASELINE'}
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={baselineSaving === snap.id}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void handleSetBaseline(snap.id);
+                                    }}
+                                    className="ml-auto hidden rounded border border-black/8 px-1.5 py-0.5 text-[9px] text-black/25 hover:border-cyan-300 hover:text-cyan-700 group-hover:inline-flex disabled:opacity-40"
+                                  >
+                                    {baselineSaving === snap.id ? '...' : (zh ? '设为基线' : 'Set baseline')}
+                                  </button>
+                                )}
                                 <span className={`hidden sm:inline-flex rounded-full px-1.5 py-px text-[8px] font-bold uppercase ${
                                   snap.trigger === 'manual'
                                     ? 'bg-cyan-50 text-cyan-600'
@@ -608,7 +667,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
 
                                 {/* Role pill (far right) */}
                                 {isPicked && (
-                                  <span className={`ml-auto flex-shrink-0 text-[9px] font-bold ${
+                                  <span className={`flex-shrink-0 text-[9px] font-bold ${
                                     isLeft ? 'text-[#06b6d4]' : 'text-[#164e63]'
                                   }`}>
                                     {isLeft ? (zh ? '基准' : 'A') : (zh ? '对比' : 'B')}
@@ -629,20 +688,42 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
 
         {/* ════════ Step 3: Diff viewer ════════ */}
         {showDiffViewer && (
-          <div className="flex-1 overflow-auto font-mono text-xs leading-6">
-            <div className="h-full bg-[#1E1E1E] flex flex-col">
-              <div className="flex items-center gap-3 px-5 py-2.5 border-b border-white/5 text-xs">
-                <span className="font-mono text-white/40">{configDiffLeft.hostname}</span>
-                <span className="text-white/20">→</span>
-                <span className="font-mono text-white/40">{configDiffRight.hostname}</span>
-                <span className="ml-auto text-emerald-400">+{added} {t('linesAdded')}</span>
-                <span className="text-red-400">−{removed} {t('linesRemoved')}</span>
-                {added === 0 && removed === 0 && <span className="text-white/40">{t('noDiff')}</span>}
-                {activeChangeLineIndexes.length > 0 && <span className="text-white/45 font-mono">{safeFocusIdx + 1}/{activeChangeLineIndexes.length}</span>}
-                <button
+          <div className="flex-1 overflow-auto font-mono text-xs leading-6 bg-[#f7fbfc]">
+            <div className="h-full flex flex-col">
+              <div className="flex flex-wrap items-center gap-3 px-5 py-3.5 border-b border-slate-200 bg-white text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-50 text-cyan-700"><ArrowLeftRight size={14} /></div>
+                  <span className="font-mono font-bold text-[#123b50] truncate">{configDiffLeft.hostname}</span>
+                  <span className="text-slate-300">→</span>
+                  <span className="font-mono font-bold text-[#123b50] truncate">{configDiffRight.hostname}</span>
+                </div>
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">+{added} {t('linesAdded')}</span>
+                  <span className="rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-bold text-red-700">−{removed} {t('linesRemoved')}</span>
+                  {added === 0 && removed === 0 && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-500">{t('noDiff')}</span>}
+                </div>
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                  {(['normalized', 'raw'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => onDiffModeChange(mode)}
+                      className={`rounded px-2 py-0.5 text-[10px] transition-colors ${
+                        diffMode === mode ? 'bg-[#123b50] text-white shadow-sm' : 'text-slate-500 hover:text-[#123b50]'
+                      }`}
+                      title={mode === 'normalized'
+                        ? (zh ? '忽略时间戳和行尾空白等采集噪声' : 'Ignore volatile collection noise')
+                        : (zh ? '逐字符查看原始配置差异' : 'Compare raw configuration')}
+                    >
+                      {mode === 'normalized' ? (zh ? '标准化' : 'Normalized') : (zh ? '原始' : 'Raw')}
+                    </button>
+                  ))}
+                </div>
+                {activeChangeLineIndexes.length > 0 && <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500 tabular-nums">{safeFocusIdx + 1}/{activeChangeLineIndexes.length}</span>}
+                  <button
                   onClick={() => onJumpToDiff('prev')}
                   disabled={activeChangeLineIndexes.length === 0}
-                  className="p-1 rounded border border-white/15 text-white/60 hover:text-white hover:border-white/30 disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-30 disabled:cursor-not-allowed"
                   title={zh ? '上一处差异 (P)' : 'Previous change (P)'}
                 >
                   <ChevronLeft size={13} />
@@ -650,50 +731,53 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                 <button
                   onClick={() => onJumpToDiff('next')}
                   disabled={activeChangeLineIndexes.length === 0}
-                  className="p-1 rounded border border-white/15 text-white/60 hover:text-white hover:border-white/30 disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-30 disabled:cursor-not-allowed"
                   title={zh ? '下一处差异 (N)' : 'Next change (N)'}
                 >
                   <ChevronRight size={13} />
                 </button>
                 <button
                   onClick={onToggleOnlyChanges}
-                  className={`px-2 py-1 rounded border transition-colors ${diffOnlyChanges ? 'border-[#00bceb]/60 text-[#00d3ff] bg-[#00bceb]/10' : 'border-white/15 text-white/60 hover:text-white hover:border-white/30'}`}
+                  className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-colors ${diffOnlyChanges ? 'border-cyan-300 text-cyan-700 bg-cyan-50' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300'}`}
                   title={zh ? '仅显示变更行 (F)' : 'Show changed lines only (F)'}
                 >
                   {zh ? '仅变更' : 'Changes only'}
                 </button>
                 <button
                   onClick={onToggleFullBoth}
-                  className={`px-2 py-1 rounded border transition-colors ${diffShowFullBoth ? 'border-[#00bceb]/60 text-[#00d3ff] bg-[#00bceb]/10' : 'border-white/15 text-white/60 hover:text-white hover:border-white/30'}`}
+                  className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-colors ${diffShowFullBoth ? 'border-cyan-300 text-cyan-700 bg-cyan-50' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300'}`}
                   title={zh ? '显示两侧完整配置' : 'Show full configs on both sides'}
                 >
                   {zh ? '两侧全部' : 'Both full'}
                 </button>
               </div>
-              <div className="px-5 py-1.5 border-b border-white/5 text-[11px] text-white/35">
-                {zh ? '可使用右上角按钮快速定位与筛选差异块' : 'Use toolbar buttons above to jump and filter change blocks quickly'}
+              <div className="flex items-center justify-between gap-3 px-5 py-2 border-b border-slate-100 bg-slate-50/80 text-[11px] text-slate-500">
+                {diffMode === 'normalized'
+                  ? (zh ? '当前为标准化对比：已忽略时间戳、采集头和行尾空白等非业务噪声' : 'Normalized diff ignores volatile headers and trailing whitespace')
+                  : (zh ? '当前为原始对比：展示快照中的所有文本变化' : 'Raw diff shows every textual change')}
+                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600"><ShieldCheck size={12} />{zh ? '审计视图' : 'Audit view'}</span>
               </div>
-              <div className="flex-1 min-h-0 flex overflow-hidden">
-                <div className="flex-1 overflow-auto">
+              <div className="flex-1 min-h-0 flex overflow-hidden p-4 gap-4">
+                <div className="flex-1 overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                   {diffShowFullBoth ? (
                     <div className="min-w-[960px]">
-                      <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-white/10 bg-[#181818] text-[10px] uppercase tracking-wider text-white/45">
-                        <div className="px-4 py-1.5 border-r border-white/10">{zh ? '左侧配置 (A)' : 'Left Config (A)'}</div>
+                      <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                        <div className="px-4 py-2 border-r border-slate-200">{zh ? '左侧配置 (A)' : 'Left Config (A)'}</div>
                         <div className="px-4 py-1.5">{zh ? '右侧配置 (B)' : 'Right Config (B)'}</div>
                       </div>
                       {fullSideBySideRows.map((row) => {
                         const isFocused = focusedLineIndex !== undefined && row.originalIndex === focusedLineIndex;
                         return (
-                          <div key={row.originalIndex} ref={(el) => { diffLineRefs.current[row.originalIndex] = el; }} className={`grid grid-cols-2 ${isFocused ? 'ring-1 ring-[#00d3ff]/80 bg-[#00bceb]/10' : ''}`}>
-                            <div className={`flex items-start px-4 py-0.5 border-r border-white/10 ${row.rowType === 'remove' ? 'bg-red-500/15' : ''}`}>
-                              <span className="w-10 text-right text-white/20 pr-3 select-none flex-shrink-0">{row.leftLine || ''}</span>
+                          <div key={row.originalIndex} ref={(el) => { diffLineRefs.current[row.originalIndex] = el; }} className={`grid grid-cols-2 ${isFocused ? 'ring-1 ring-cyan-300 bg-cyan-50' : ''}`}>
+                            <div className={`flex items-start px-4 py-0.5 border-r border-slate-100 ${row.rowType === 'remove' ? 'bg-red-50' : ''}`}>
+                              <span className="w-10 text-right text-slate-300 pr-3 select-none flex-shrink-0">{row.leftLine || ''}</span>
                               <span className="w-4 select-none flex-shrink-0 text-red-400">{row.rowType === 'remove' ? '−' : ' '}</span>
-                              <span className={`${row.rowType === 'remove' ? 'text-red-300' : 'text-[#d4d4d4]'} whitespace-pre`}>{row.leftContent}</span>
+                              <span className={`${row.rowType === 'remove' ? 'text-red-700' : 'text-slate-600'} whitespace-pre`}>{row.leftContent}</span>
                             </div>
-                            <div className={`flex items-start px-4 py-0.5 ${row.rowType === 'add' ? 'bg-emerald-500/15' : ''}`}>
-                              <span className="w-10 text-right text-white/20 pr-3 select-none flex-shrink-0">{row.rightLine || ''}</span>
+                            <div className={`flex items-start px-4 py-0.5 ${row.rowType === 'add' ? 'bg-emerald-50' : ''}`}>
+                              <span className="w-10 text-right text-slate-300 pr-3 select-none flex-shrink-0">{row.rightLine || ''}</span>
                               <span className="w-4 select-none flex-shrink-0 text-emerald-400">{row.rowType === 'add' ? '+' : ' '}</span>
-                              <span className={`${row.rowType === 'add' ? 'text-emerald-300' : 'text-[#d4d4d4]'} whitespace-pre`}>{row.rightContent}</span>
+                              <span className={`${row.rowType === 'add' ? 'text-emerald-700' : 'text-slate-600'} whitespace-pre`}>{row.rightContent}</span>
                             </div>
                           </div>
                         );
@@ -706,35 +790,35 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                         <div
                           key={originalIndex}
                           ref={(el) => { diffLineRefs.current[originalIndex] = el; }}
-                          className={`flex items-start px-4 py-0.5 ${line.type === 'add' ? 'bg-emerald-500/15' : line.type === 'remove' ? 'bg-red-500/15' : ''} ${isFocused ? 'ring-1 ring-[#00d3ff]/80 bg-[#00bceb]/10' : ''}`}
+                           className={`flex items-start px-4 py-0.5 ${line.type === 'add' ? 'bg-emerald-50' : line.type === 'remove' ? 'bg-red-50' : ''} ${isFocused ? 'ring-1 ring-cyan-300 bg-cyan-50' : ''}`}
                         >
-                          <span className="w-10 text-right text-white/20 pr-3 select-none flex-shrink-0">{line.lineA || ''}</span>
-                          <span className="w-10 text-right text-white/20 pr-3 select-none flex-shrink-0">{line.lineB || ''}</span>
-                          <span className={`w-4 select-none flex-shrink-0 ${line.type === 'add' ? 'text-emerald-400' : line.type === 'remove' ? 'text-red-400' : 'text-white/20'}`}>
+                           <span className="w-10 text-right text-slate-300 pr-3 select-none flex-shrink-0">{line.lineA || ''}</span>
+                           <span className="w-10 text-right text-slate-300 pr-3 select-none flex-shrink-0">{line.lineB || ''}</span>
+                           <span className={`w-4 select-none flex-shrink-0 ${line.type === 'add' ? 'text-emerald-600' : line.type === 'remove' ? 'text-red-600' : 'text-slate-300'}`}>
                             {line.type === 'add' ? '+' : line.type === 'remove' ? '−' : ' '}
                           </span>
-                          <span className={`${line.type === 'add' ? 'text-emerald-300' : line.type === 'remove' ? 'text-red-300' : 'text-[#d4d4d4]'} whitespace-pre`}>{line.content}</span>
+                           <span className={`${line.type === 'add' ? 'text-emerald-700' : line.type === 'remove' ? 'text-red-700' : 'text-slate-600'} whitespace-pre`}>{line.content}</span>
                         </div>
                       );
                     })
                   )}
                 </div>
                 {diffChangeBlocks.length > 0 && (
-                  <aside className="hidden xl:block w-64 border-l border-white/10 bg-[#181818] overflow-auto">
-                    <div className="px-3 py-2 border-b border-white/10">
-                      <div className="text-[10px] uppercase tracking-wider text-white/45 font-bold">{zh ? '变更目录' : 'Change Map'}</div>
+                  <aside className="hidden xl:block w-64 rounded-xl border border-slate-200 bg-white overflow-auto shadow-sm">
+                    <div className="px-3 py-3 border-b border-slate-100">
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{zh ? '变更目录' : 'Change Map'}</div>
                       <input
                         value={diffBlockQuery}
                         onChange={(e) => onDiffBlockQueryChange(e.target.value)}
                         placeholder={zh ? '过滤: interface / route / acl' : 'Filter: interface / route / acl'}
-                        className="mt-2 w-full px-2 py-1.5 rounded-md border border-white/15 bg-black/25 text-[10px] text-white/80 placeholder:text-white/30 outline-none focus:border-[#00bceb]/50"
+                        className="mt-2 w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-slate-50 text-[10px] text-slate-700 placeholder:text-slate-400 outline-none focus:border-cyan-300 focus:bg-white"
                       />
                       <div className="mt-2 flex flex-wrap gap-1">
                         {['interface', 'route', 'acl', 'bgp', 'ospf', 'vlan'].map((kw) => (
                           <button
                             key={kw}
                             onClick={() => onToggleQuickKeyword(kw)}
-                            className={`px-1.5 py-0.5 rounded text-[9px] border transition-colors ${diffBlockQuery.toLowerCase() === kw ? 'border-[#00bceb]/60 text-[#7ee8ff] bg-[#00bceb]/10' : 'border-white/15 text-white/55 hover:text-white hover:border-white/30'}`}
+                            className={`px-1.5 py-0.5 rounded text-[9px] border transition-colors ${diffBlockQuery.toLowerCase() === kw ? 'border-cyan-300 text-cyan-700 bg-cyan-50' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300'}`}
                           >
                             {kw}
                           </button>
@@ -748,19 +832,19 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                           <button
                             key={`${block.startChangeIdx}-${block.endChangeIdx}`}
                             onClick={() => onFocusDiffChangeAt(block.startChangeIdx)}
-                            className={`w-full text-left px-2.5 py-2 rounded-lg border transition-all ${isActive ? 'border-[#00bceb]/60 bg-[#00bceb]/15 text-[#7ee8ff]' : 'border-white/10 text-white/60 hover:text-white hover:border-white/25 hover:bg-white/5'}`}
+                            className={`w-full text-left px-2.5 py-2 rounded-lg border transition-all ${isActive ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300 hover:bg-slate-50'}`}
                             title={block.label}
                           >
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-[10px] font-bold">#{idx + 1}</span>
-                              <span className="text-[10px] font-mono text-white/45">{block.startChangeIdx + 1}-{block.endChangeIdx + 1}</span>
+                              <span className="text-[10px] font-mono text-slate-400">{block.startChangeIdx + 1}-{block.endChangeIdx + 1}</span>
                             </div>
                             <div className="mt-1 text-[10px] leading-4 truncate">{block.label}</div>
                           </button>
                         );
                       })}
                       {filteredDiffChangeBlocks.length === 0 && (
-                        <p className="px-2 py-2 text-[10px] text-white/35">{zh ? '没有匹配的变更块' : 'No matching change block'}</p>
+                        <p className="px-2 py-2 text-[10px] text-slate-400">{zh ? '没有匹配的变更块' : 'No matching change block'}</p>
                       )}
                     </div>
                   </aside>

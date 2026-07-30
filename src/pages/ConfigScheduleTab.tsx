@@ -3,12 +3,14 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Database, RotateCcw, Calendar, CalendarClock, Server, ChevronDown, Play, Info, Zap,
   Activity, Timer, TrendingUp, BarChart3, AlertTriangle, RefreshCw,
-  Shield, GitCompareArrows, Hash, Eye, Tag, HardDrive, Layers, CheckCircle2, XCircle,
+  Shield, GitCompareArrows, Hash, Eye, HardDrive, CheckCircle2, XCircle,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import type { ConfigSnapshot, Device } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import { DataTable } from '../components/DataTable';
+import BackupPolicyManager from './ConfigSchedule/BackupPolicyManager';
 
 /* ═══════════════════════════════════════════════════════ */
 /*  Constants                                              */
@@ -52,7 +54,7 @@ interface RecentBackup {
   timestamp: string; trigger: string; author: string; tag: string; size: number;
 }
 interface BackupStats {
-  today: { total: number; scheduled: number; manual: number; success?: number; failed?: number };
+  today: { total: number; scheduled: number; manual: number; success?: number; failed?: number; skipped?: number; unobserved?: number };
   daily_history: { date: string; scheduled: number; manual: number; total: number }[];
   total_snapshots: number; total_devices_backed: number;
   storage_bytes?: number;
@@ -69,10 +71,12 @@ interface ConfigScheduleTabProps {
   scheduleCron: string;
   scheduleLoading: boolean;
   retentionDays: number;
+  retentionMaxPerDevice: number;
   getVendorFromPlatform: (platform?: string) => string;
   onToggleScheduleEnabled: () => void;
   onCronChange: (value: string) => void;
   onRetentionDaysChange: (value: number) => void;
+  onRetentionMaxPerDeviceChange: (value: number) => void;
   onSaveSchedule: () => Promise<void> | void;
   onRunBackupNow: () => Promise<void> | void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
@@ -141,9 +145,9 @@ const fmtSize = (bytes: number | null): string => {
 
 const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
   t, language, devices, configSnapshots, isTakingSnapshot,
-  scheduleEnabled, scheduleCron, scheduleLoading, retentionDays,
+  scheduleEnabled, scheduleCron, scheduleLoading, retentionDays, retentionMaxPerDevice,
   getVendorFromPlatform, onToggleScheduleEnabled, onCronChange,
-  onRetentionDaysChange, onSaveSchedule, onRunBackupNow, showToast,
+  onRetentionDaysChange, onRetentionMaxPerDeviceChange, onSaveSchedule, onRunBackupNow, showToast,
 }) => {
   const zh = language === 'zh';
   const onlineCount = devices.filter(d => d.status === 'online').length;
@@ -259,28 +263,6 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
   const [devicePage, setDevicePage] = useState(1);
   const DEVICE_PAGE_SIZE = 5;
   const [timelineExpanded, setTimelineExpanded] = useState(false);
-  const [backupScope, setBackupScope] = useState<'all' | 'selected'>('all');
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
-  const [concurrency, setConcurrency] = useState(50);
-  const [retryCount, setRetryCount] = useState(2);
-  const [diffOnly, setDiffOnly] = useState(false);
-
-  const platformGroups = useMemo(() => {
-    const online = devices.filter(d => d.status === 'online');
-    const map = new Map<string, { platform: string; count: number; ids: string[] }>();
-    for (const d of online) {
-      const key = d.platform || 'Unknown';
-      const g = map.get(key) || { platform: key, count: 0, ids: [] };
-      g.count++;
-      g.ids.push(d.id);
-      map.set(key, g);
-    }
-    return Array.from(map.values()).sort((a, b) => b.count - a.count);
-  }, [devices]);
-
-  const togglePlatform = useCallback((platform: string) => {
-    setSelectedPlatforms(prev => prev.includes(platform) ? prev.filter(p => p !== platform) : [...prev, platform]);
-  }, []);
 
   const displayDeviceStats = useMemo(() => {
     const stats = backupStats?.device_stats || [];
@@ -299,6 +281,13 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
       />
 
       <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
+      <BackupPolicyManager
+        language={language}
+        devices={devices}
+        getVendorFromPlatform={getVendorFromPlatform}
+        showToast={showToast}
+      />
+
       {/* ── Status Bar ── */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
@@ -394,14 +383,16 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
               {(() => {
                 const success = backupStats?.today?.success ?? 0;
                 const failed = backupStats?.today?.failed ?? 0;
+                const unobserved = backupStats?.today?.unobserved ?? 0;
                 return (
                   <div>
                     <div className="flex items-baseline gap-2">
                       <p className="text-3xl font-bold text-emerald-600 tabular-nums">{success}</p>
                       <p className={`text-xl font-bold tabular-nums ${failed > 0 ? 'text-red-500' : 'text-slate-200 dark:text-slate-700'}`}>{failed}</p>
+                      {unobserved > 0 && <p className="text-xl font-bold text-amber-500 tabular-nums">{unobserved}</p>}
                     </div>
                     <p className="text-[10px] font-medium text-slate-400 dark:text-slate-500 mt-1 uppercase tracking-wide">
-                      {zh ? `成功 ${success} · 失败 ${failed}` : `SUCCESS ${success} · FAIL ${failed}`}
+                      {zh ? `成功 ${success} · 失败 ${failed}${unobserved ? ` · 未观测 ${unobserved}` : ''}` : `SUCCESS ${success} · FAIL ${failed}${unobserved ? ` · UNOBSERVED ${unobserved}` : ''}`}
                     </p>
                   </div>
                 );
@@ -514,7 +505,7 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '实时更新' : 'LIVE'}</span>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              <DataTable className="text-left">
                 <thead>
                   <tr className="bg-slate-50/50">
                     <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">{zh ? '设备' : 'DEVICE'}</th>
@@ -554,7 +545,7 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           </motion.div>
         </div>
@@ -574,34 +565,6 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
             </div>
 
             <div className={`space-y-4 transition-all duration-300 ${scheduleEnabled ? '' : 'opacity-40 grayscale pointer-events-none scale-[0.98]'}`}>
-              <div className="space-y-3">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <Tag size={12} className="text-slate-300" />
-                  {zh ? '资产范围' : 'ASSET SCOPE'}
-                </label>
-                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-50 rounded-2xl">
-                  <button onClick={() => { setBackupScope('all'); setSelectedPlatforms([]); }}
-                    className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${backupScope === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>
-                    {zh ? '全选' : 'ALL'}
-                  </button>
-                  <button onClick={() => setBackupScope('selected')}
-                    className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${backupScope === 'selected' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>
-                    {zh ? '筛选' : 'SCOPE'}
-                  </button>
-                </div>
-                {backupScope === 'selected' && (
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    {platformGroups.map(g => (
-                      <button key={g.platform} onClick={() => togglePlatform(g.platform)}
-                        className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-all ${selectedPlatforms.includes(g.platform)
-                          ? 'bg-cyan-50 border-cyan-200 text-cyan-700' : 'bg-white border-slate-100 text-slate-400 hover:border-slate-200'}`}>
-                        {getVendorFromPlatform(g.platform)} ({g.count})
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
               <div className="space-y-3">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                   <Timer size={12} className="text-slate-300" />
@@ -674,6 +637,17 @@ const ConfigScheduleTab: React.FC<ConfigScheduleTabProps> = ({
                     <option value={365}>1 {zh ? '年' : 'Year'}</option>
                     <option value={730}>2 {zh ? '年' : 'Years'}</option>
                   </select>
+                  <div className="space-y-2 pt-2">
+                    <p className="text-[10px] font-bold text-slate-400">{zh ? '姣忚澶囨渶澶у揩鐓х數' : 'MAX SNAPSHOTS / DEVICE'}</p>
+                    <input
+                      type="number"
+                      min={1}
+                      max={5000}
+                      value={retentionMaxPerDevice}
+                      onChange={e => onRetentionMaxPerDeviceChange(Math.max(1, Number(e.target.value) || 1))}
+                      className="w-full bg-white border border-slate-100 rounded-xl px-4 py-2.5 text-sm font-bold text-slate-700 outline-none"
+                    />
+                  </div>
                 </div>
               </div>
 

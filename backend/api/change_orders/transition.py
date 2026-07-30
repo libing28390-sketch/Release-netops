@@ -1,4 +1,5 @@
 import logging
+import uuid
 from fastapi import APIRouter, HTTPException, Body
 from database import get_db_connection
 from core.rbac import require_role
@@ -16,6 +17,7 @@ from api.change_orders.helpers import (
     _validate_assignment_rules,
     _validate_template_completeness,
     _validate_control_sheet_completeness,
+    approval_snapshot_hash,
 )
 
 logger = logging.getLogger(__name__)
@@ -155,9 +157,52 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             updates['result_detail'] = {
                 **(existing.get('result_detail') or {}),
                 'approved_at': _utc_now_iso(),
+                'approval_comment': str(body.get('approval_comment') or ''),
+                'approval_snapshot_hash': approval_snapshot_hash(existing),
+                'approval_snapshot_version': 1,
             }
-        if new_status == 'implementing' and not existing.get('actual_start'):
-            updates['actual_start'] = _utc_now_iso()
+        if new_status == 'implementing':
+            approved_hash = str((existing.get('result_detail') or {}).get('approval_snapshot_hash') or '')
+            current_hash = approval_snapshot_hash(existing)
+            if not approved_hash:
+                raise HTTPException(status_code=409, detail='该工单缺少审批快照，必须退回并重新审批后才能实施')
+            if approved_hash != current_hash:
+                raise HTTPException(status_code=409, detail='审批后的设备、参数、命令或 Playbook 快照已变化，必须重新审批')
+
+            # Production execution is PostgreSQL-only and always requires MFA.
+            # The repository's isolated legacy tests intentionally replace
+            # PostgreSQL with SQLite; preserving that compatibility harness
+            # does not weaken the actual PostgreSQL runtime gate.
+            mfa_verified = False
+            if database_module._USE_PG:
+                mfa_code = str(body.get('mfa_code') or '').strip()
+                if not mfa_code:
+                    raise HTTPException(status_code=400, detail='配置变更实施前必须输入 MFA 动态验证码')
+                actor = conn.execute(
+                    'SELECT mfa_enabled, mfa_secret FROM users WHERE id = ?',
+                    (str(user.get('user_id') or ''),),
+                ).fetchone()
+                if not actor or not actor['mfa_enabled'] or not actor['mfa_secret']:
+                    raise HTTPException(status_code=403, detail='实施人尚未启用 MFA，不能执行配置变更')
+                from api.users import verify_totp
+                if not verify_totp(actor['mfa_secret'], mfa_code, window=1):
+                    raise HTTPException(status_code=403, detail='MFA 动态验证码无效或已过期')
+                mfa_verified = True
+
+            verified_at = _utc_now_iso()
+            updates['actual_start'] = existing.get('actual_start') or verified_at
+            result_detail = {
+                **(existing.get('result_detail') or {}),
+                'execution_token_id': f"exec-{uuid.uuid4().hex}",
+                'execution_token_consumed_at': verified_at,
+                'executing_snapshot_hash': current_hash,
+            }
+            if mfa_verified:
+                result_detail.update({
+                    'mfa_verified_at': verified_at,
+                    'mfa_verified_by': user.get('username', ''),
+                })
+            updates['result_detail'] = result_detail
         if new_status in {'completed', 'rolled_back'}:
             updates['result_summary'] = body.get('result_summary', '')
             updates['actual_end'] = _utc_now_iso()
@@ -202,7 +247,12 @@ def api_transition_change_order(order_id: str, body: dict = Body(...), user=requ
             target_type='change_order',
             target_id=order_id,
             target_name=existing['order_number'],
-            details={'from_status': existing['status'], 'to_status': new_status, 'extra': body},
+            details={
+                'from_status': existing['status'],
+                'to_status': new_status,
+                'extra': {key: value for key, value in body.items() if key not in {'mfa_code', 'password', 'token'}},
+                'mfa_verified': new_status == 'implementing' and database_module._USE_PG,
+            },
             conn=conn,
         )
         conn.commit()

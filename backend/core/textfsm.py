@@ -40,6 +40,13 @@ TEXTFSM_PLATFORM_MAP = {
     'h3c_comware': 'hp_comware',
     'h3c_comware9': 'hp_comware',
     'hp_comware': 'hp_comware',
+    'ruijie': 'ruijie_rgos',
+    'ruijie_os': 'ruijie_rgos',
+    'ruijie_rgos': 'ruijie_rgos',
+    'dptech': 'dptech_ios',
+    'dptech_ios': 'dptech_ios',
+    'maipu': 'maipu',
+    'maipu_mypower': 'maipu',
 }
 
 
@@ -92,6 +99,33 @@ TEMPLATE_DEFAULT_SAMPLES = {
         "Slot  FanID  Status  Speed\n"
         "1     1      Normal  60%\n"
         "1     2      Absent  -"
+    ),
+    'ruijie_rgos_show_ip_interface_brief.textfsm': (
+        "Interface                IP-Address      OK? Method Status                Protocol\n"
+        "GigabitEthernet 0/1      192.168.1.1     YES manual up                    up\n"
+        "GigabitEthernet 0/2      unassigned      YES unset  down                  down\n"
+        "Vlan 1                   10.1.1.1        YES manual up                    up"
+    ),
+    'dptech_ios_show_interface_brief.textfsm': (
+        "Interface                Link   Speed     Duplex   Type     PVID  Description\n"
+        "ge0/0                    up     1G        full     trunk    1     To_Core_SW\n"
+        "ge0/1                    down   auto      auto     access   10    LAN_Port"
+    ),
+    'dptech_ios_show_ip_interface_brief.textfsm': (
+        "Interface                IP Address        Physical Protocol Description\n"
+        "eth0/0                   192.168.1.1/24    up       up       WAN1\n"
+        "eth0/1                   10.0.0.1/24       up       up       LAN1"
+    ),
+    'maipu_show_ip_interface_brief.textfsm': (
+        "Interface                IP-Address      OK? Method Status                Protocol\n"
+        "GigabitEthernet0/1       192.168.1.1     YES manual up                    up\n"
+        "GigabitEthernet0/2       unassigned      YES unset  down                  down\n"
+        "Vlan1                    10.1.1.1        YES manual up                    up"
+    ),
+    'maipu_show_interface_brief.textfsm': (
+        "Port                     Link  Speed    Duplex  Vlan  Type       Description\n"
+        "Gi0/1                    up    1G       full    1     Trunk      Uplink_Core\n"
+        "Gi0/2                    down  auto     auto    10    Access     User_Port"
     )
 }
 
@@ -343,6 +377,9 @@ _COMPATIBLE_PLATFORMS = {
     # Prefer dedicated Comware 9 templates, then Comware 7 custom templates,
     # and finally the hp_comware NTC family for stable legacy grammars.
     'h3c_comware9': ['h3c_comware', 'hp_comware'],
+    'ruijie_os': ['ruijie_rgos'],
+    'dptech': ['dptech_ios'],
+    'maipu_mypower': ['maipu'],
 }
 
 _STANDARD_FIELDS_MAPPING = {

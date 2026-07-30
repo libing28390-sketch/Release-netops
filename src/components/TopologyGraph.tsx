@@ -298,7 +298,7 @@ const normalizeGraphInterface = (value?: string) => {
   return raw;
 };
 
-type DeviceGlyphKind = 'switch' | 'firewall' | 'router' | 'server' | 'wireless' | 'generic';
+type DeviceGlyphKind = 'switch' | 'firewall' | 'router' | 'load_balancer' | 'waf' | 'vpn_gateway' | 'server' | 'wireless' | 'generic';
 type TopologyLayoutMode = 'hierarchy' | 'horizontal' | 'force' | 'radial';
 type PortLabelMode = 'auto' | 'visible' | 'hidden';
 
@@ -317,6 +317,9 @@ const getLayerTone = (device: Device) => {
   const kind = getDeviceGlyphKind(device);
   if (kind === 'firewall') return { color: '#b91c1c', soft: 'rgba(185,28,28,0.14)', label: '防火墙' };
   if (kind === 'router') return { color: '#c2410c', soft: 'rgba(194,65,12,0.14)', label: '路由器' };
+  if (kind === 'load_balancer') return { color: '#7c3aed', soft: 'rgba(124,58,237,0.14)', label: '负载均衡' };
+  if (kind === 'waf') return { color: '#be123c', soft: 'rgba(190,18,60,0.14)', label: 'WAF' };
+  if (kind === 'vpn_gateway') return { color: '#0f766e', soft: 'rgba(15,118,110,0.14)', label: 'VPN 网关' };
   if (kind === 'server') return { color: '#15803d', soft: 'rgba(21,128,61,0.14)', label: '服务器' };
   return { color: '#475569', soft: 'rgba(71,85,105,0.12)', label: '设备' };
 };
@@ -342,7 +345,7 @@ const buildLayerSummary = (devices: Device[]): LayerSummary[] => {
       });
     }
   });
-  const order = ['核心层', '汇聚层', '路由器', '防火墙', '接入层', '服务器', '设备'];
+  const order = ['核心层', '汇聚层', '路由器', '防火墙', '负载均衡', 'WAF', 'VPN 网关', '接入层', '服务器', '设备'];
   return Array.from(summary.values()).sort((left, right) => {
     const leftIndex = order.indexOf(left.label);
     const rightIndex = order.indexOf(right.label);
@@ -358,6 +361,9 @@ const getDeviceGlyphKind = (device: Device): DeviceGlyphKind => {
   const fingerprint = [device.role, device.hostname, device.platform, device.model]
     .map((value) => String(value || '').toLowerCase())
     .join(' ');
+  if (/(waf|web application firewall|web防火墙)/.test(fingerprint)) return 'waf';
+  if (/(load[-_ ]?balanc|\blb\b|f5|big[-_ ]?ip|adc\b|netscaler|citrix adc|haproxy|nginx plus)/.test(fingerprint)) return 'load_balancer';
+  if (/(vpn|ipsec gateway|ssl vpn|远程接入网关)/.test(fingerprint)) return 'vpn_gateway';
   if (/(firewall| fortigate|forti|palo|pan-|checkpoint|srx|asa|ftd|fw\b)/.test(fingerprint)) return 'firewall';
   if (/(router|gateway|wan|edge router|isr|asr|mx\b)/.test(fingerprint)) return 'router';
   if (/(switch|core|distribution|access|leaf|spine|nexus|catalyst)/.test(fingerprint)) return 'switch';
@@ -370,6 +376,9 @@ const iconCategoryByKind: Record<Exclude<DeviceGlyphKind, 'generic'>, string> = 
   switch: 'switches',
   router: 'routers',
   firewall: 'firewalls',
+  load_balancer: 'firewalls',
+  waf: 'firewalls',
+  vpn_gateway: 'firewalls',
   server: 'servers',
   wireless: 'wireless',
 };
@@ -378,6 +387,9 @@ const preferredIconNames: Record<Exclude<DeviceGlyphKind, 'generic'>, string[]> 
   switch: ['switch.svg', 'cisco-switch-l3-480x480.svg', 'cisco-switch-l3-240x240.svg', 'cisco-switch-l3-144x144.svg'],
   router: ['router.svg'],
   firewall: ['firewall.svg'],
+  load_balancer: ['load-balancer.svg', 'f5.svg', 'adc.svg', 'firewall.svg'],
+  waf: ['waf.svg', 'web-application-firewall.svg', 'firewall.svg'],
+  vpn_gateway: ['vpn-gateway.svg', 'vpn.svg', 'firewall.svg'],
   server: ['server.svg', 'server-linux.svg', 'server-windows.svg'],
   wireless: ['wireless.svg', 'access-point.svg', 'wifi-ap.svg'],
 };
@@ -400,6 +412,9 @@ const deviceIconSize: Record<Exclude<DeviceGlyphKind, 'generic'>, { width: numbe
   switch: { width: 58, height: 58 },
   router: { width: 58, height: 58 },
   firewall: { width: 50, height: 60 },
+  load_balancer: { width: 52, height: 60 },
+  waf: { width: 50, height: 60 },
+  vpn_gateway: { width: 50, height: 60 },
   server: { width: 58, height: 58 },
   wireless: { width: 58, height: 58 },
 };
@@ -632,12 +647,12 @@ const buildHorizontalRowPositions = (ids: string[], width: number, height: numbe
 };
 
 const getDeviceTopologyLayer = (device: Device): number | null => {
-  const fingerprint = [device.role, device.hostname, device.model]
+  const fingerprint = [device.role, device.hostname, device.model, device.platform]
     .map((value) => String(value || '').toLowerCase())
     .join(' ');
-  // Keep firewalls in a dedicated security row instead of silently placing
-  // them in the aggregation row when no layer keyword is present.
-  if (getDeviceGlyphKind(device) === 'firewall' || /(firewall|防火墙|fw[-_ ]?)/.test(fingerprint)) return -1;
+  // Keep boundary and security appliances in the same edge row instead of
+  // silently placing them in the aggregation row when no layer keyword exists.
+  if (['router', 'firewall', 'load_balancer', 'waf', 'vpn_gateway'].includes(getDeviceGlyphKind(device))) return -1;
   if (/(core|核心|backbone|骨干)/.test(fingerprint)) return 0;
   if (/(distribution|aggregation|汇聚|分布)/.test(fingerprint)) return 1;
   if (/(access|接入|edge|acc[-_ ]?sw)/.test(fingerprint)) return 2;

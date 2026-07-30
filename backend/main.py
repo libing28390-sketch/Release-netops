@@ -37,6 +37,7 @@ from api.automation import router as automation_router
 from api.users import router as users_router
 from api.topology import router as topology_router
 from api.configs import router as configs_router, run_scheduled_backup, _get_schedule_from_db, reschedule_backup
+from api.config_backup_policies import router as config_backup_policies_router
 from api.playbooks import router as playbooks_router
 from services import notification_service
 from services import alert_maintenance_service
@@ -137,6 +138,8 @@ async def lifespan(app: FastAPI):
 
 
     
+    arp_worker_tasks = []
+
     # Start core components immediately
     schedule_cfg = _get_schedule_from_db()
     scheduler.start()
@@ -171,14 +174,30 @@ async def lifespan(app: FastAPI):
     
     reschedule_backup(schedule_cfg)
     
-    from services.ip_locator_service import run_endpoint_collector, run_route_collector, ARP_SWEEP_INTERVAL_SECONDS
+    from services.ip_locator_service import (
+        dispatch_arp_sweep,
+        run_endpoint_fact_collector,
+        run_route_collector,
+        ARP_SWEEP_INTERVAL_SECONDS,
+        ENDPOINT_FACT_INTERVAL_SECONDS,
+        ROUTE_SWEEP_INTERVAL_SECONDS,
+    )
+    from services.collector_worker_service import start_arp_worker_tasks, stop_worker_tasks
+    arp_worker_tasks = await start_arp_worker_tasks()
     scheduler.add_job(
-        synchronized_scheduler_job('arp_cache_sweep', expire_seconds=int(ARP_SWEEP_INTERVAL_SECONDS - 1))(run_endpoint_collector),
-        'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='arp_cache_sweep', replace_existing=True
+        synchronized_scheduler_job('arp_cache_sweep', expire_seconds=int(ARP_SWEEP_INTERVAL_SECONDS - 1))(dispatch_arp_sweep),
+        'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='arp_cache_sweep', replace_existing=True,
+        max_instances=1, coalesce=True,
     )
     scheduler.add_job(
-        synchronized_scheduler_job('route_cache_sweep', expire_seconds=int(ARP_SWEEP_INTERVAL_SECONDS - 1))(run_route_collector),
-        'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='route_cache_sweep', replace_existing=True
+        synchronized_scheduler_job('endpoint_fact_sync', expire_seconds=int(ENDPOINT_FACT_INTERVAL_SECONDS - 1))(run_endpoint_fact_collector),
+        'interval', seconds=ENDPOINT_FACT_INTERVAL_SECONDS, id='endpoint_fact_sync', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('route_cache_sweep', expire_seconds=int(ROUTE_SWEEP_INTERVAL_SECONDS - 1))(run_route_collector),
+        'interval', seconds=ROUTE_SWEEP_INTERVAL_SECONDS, id='route_cache_sweep', replace_existing=True,
+        max_instances=1, coalesce=True,
     )
     
     from services.scheduler_service import sync_topology_and_interfaces_job, poll_endpoints_job, sync_routing_neighbors_job, sync_bgp_routes_job
@@ -246,6 +265,11 @@ async def lifespan(app: FastAPI):
 
     yield
     # ── shutdown ──
+    try:
+        await stop_worker_tasks(arp_worker_tasks)
+        logger.info("[ARP Workers] Worker tasks stopped")
+    except Exception as e:
+        logger.warning(f"[ARP Workers] Failed to stop worker tasks: {e}")
     try:
         from engine.orchestrator import get_telemetry_orchestrator
         telemetry_orch = get_telemetry_orchestrator()
@@ -408,6 +432,7 @@ app.include_router(automation_router,     prefix="/api")
 app.include_router(playbooks_router,      prefix="/api")
 app.include_router(scheduled_jobs_router, prefix="/api")
 app.include_router(configs_router,        prefix="/api")
+app.include_router(config_backup_policies_router, prefix="/api")
 app.include_router(config_drift_router,   prefix="/api")
 app.include_router(monitoring_router,     prefix="/api")
 app.include_router(alerts_router,         prefix="/api")

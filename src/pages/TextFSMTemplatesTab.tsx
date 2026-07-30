@@ -90,7 +90,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   };
 
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
 
   const authHeaders = useMemo(() => {
@@ -332,7 +332,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Templates Table */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-          <table className="w-full text-xs">
+          <table className="nx-data-table text-xs">
             <thead className="bg-slate-50/80 text-black/40 text-[11px] font-semibold uppercase tracking-wider sticky top-0 z-10 border-b border-black/5">
               <tr>
                 <th className="text-left px-4 py-2.5">{isZh ? '文件名' : 'Filename'}</th>

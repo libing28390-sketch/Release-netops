@@ -1,0 +1,11 @@
+Value NEIGHBOR (\S+)
+Value LOCAL_INTERFACE (\S+)
+Value NEIGHBOR_INTERFACE ([\w/.-]+(?:\s+\d+(?:/\d+)*(?:\.\d+)?)?|\S+)
+Value CAPABILITY ([A-Z,\s]+)
+Value AGING_TIME (.*)
+
+Start
+  ^Capability\s+codes:
+  ^System\s+Name\s+Local\s+Intf
+  ^${NEIGHBOR}\s+${LOCAL_INTERFACE}\s{2,}${NEIGHBOR_INTERFACE}\s{2,}${CAPABILITY}\s{2,}${AGING_TIME}\s*$$ -> Record
+  ^${NEIGHBOR}\s+${LOCAL_INTERFACE}\s+${NEIGHBOR_INTERFACE}\s+${CAPABILITY}\s+${AGING_TIME}\s*$$ -> Record

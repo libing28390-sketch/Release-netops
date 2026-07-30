@@ -9,6 +9,9 @@ from services.operational_data_service import _parse_aggregation_raw
 
 
 def test_interface_aliases_are_canonical_for_cross_vendor_adjacencies() -> None:
+    assert normalize_interface_name('Vlan7') == 'vlan7'
+    assert normalize_interface_name('Vlan-interface7') == 'vlan7'
+    assert normalize_interface_name('Vlanif7') == 'vlan7'
     assert normalize_interface_name('Et0/1') == 'eth0/1'
     assert normalize_interface_name('Ethernet0/1') == 'eth0/1'
     assert normalize_interface_name('GE2/0') == 'gi2/0'

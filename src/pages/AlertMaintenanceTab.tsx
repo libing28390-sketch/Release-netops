@@ -113,7 +113,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(20);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<RuntimeFilter>('all');
   const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
@@ -589,7 +589,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar border-b border-black/5">
-          <table className="min-w-full border-collapse text-left">
+          <table className="nx-data-table text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-y border-black/5 bg-[#f8fafc] text-[11px] font-bold uppercase tracking-[0.16em] text-black/40">
                 <th className="px-5 py-3">{language === 'zh' ? '维护名称' : 'Name'}</th>

@@ -101,13 +101,28 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
     return { ...point, jobRate: successRate };
   });
 
-  const healthLevel = hostResources?.status === 'critical' || unreadNotificationCount >= 5 || (hasDevices && onlinePct < 30) || (hasDevices && compPct === 0)
+  const hasHealthEvidence = Boolean(hostResources) || hasDevices;
+  const healthLevel = !hasHealthEvidence
+    ? 'unknown'
+    : hostResources?.status === 'critical' || unreadNotificationCount >= 5 || (hasDevices && onlinePct < 30) || (hasDevices && compPct === 0)
     ? 'critical'
     : hostResources?.status === 'degraded' || unreadNotificationCount > 0 || (hasDevices && onlinePct < 60) || (hasDevices && compPct < 50)
       ? 'degraded'
       : 'healthy';
-  const healthLabel = healthLevel === 'critical' ? t('systemCritical') : healthLevel === 'degraded' ? t('systemDegraded') : t('systemHealthy');
-  const healthColor = healthLevel === 'critical' ? 'bg-red-100 text-red-700' : healthLevel === 'degraded' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700';
+  const healthLabel = healthLevel === 'unknown'
+    ? (language === 'zh' ? '状态未知' : 'Status Unknown')
+    : healthLevel === 'critical'
+      ? t('systemCritical')
+      : healthLevel === 'degraded'
+        ? t('systemDegraded')
+        : t('systemHealthy');
+  const healthColor = healthLevel === 'unknown'
+    ? 'bg-slate-100 text-slate-600'
+    : healthLevel === 'critical'
+      ? 'bg-red-100 text-red-700'
+      : healthLevel === 'degraded'
+        ? 'bg-orange-100 text-orange-700'
+        : 'bg-emerald-100 text-emerald-700';
   const hostStatusText = hostResources?.status === 'critical'
     ? (language === 'zh' ? '宿主机严重' : 'Host Critical')
     : hostResources?.status === 'degraded'
@@ -531,7 +546,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
                 <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-[#0078d4]/5 mb-2">
                   <Zap size={18} className="text-[#0078d4]/40" />
                 </div>
-                <p className="text-xs text-black/45 font-medium">{language === 'zh' ? '一切正常，暂无新任务' : 'All clear — no recent tasks'}</p>
+                <p className="text-xs text-black/45 font-medium">{language === 'zh' ? '暂无近期任务记录' : 'No recent task records'}</p>
                 <button onClick={() => navigate('/automation/tasks')} className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-lg bg-[#0078d4]/10 text-[#0078d4] hover:bg-[#0078d4]/20 transition-all">
                   <Play size={10} />
                   {language === 'zh' ? '执行任务' : 'Run a Task'}

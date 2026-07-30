@@ -15,6 +15,7 @@ IP Locator Service — 根据 IP 地址定位设备所在交换机端口。
 import asyncio
 import uuid
 import logging
+import os
 import re
 import threading
 import time
@@ -25,7 +26,7 @@ from typing import Any
 
 from netmiko import ConnectHandler, NetmikoAuthenticationException
 
-from database import get_db_connection, _SERIAL_PK, init_db
+from database import get_db_connection, _SERIAL_PK, _USE_PG, init_db
 from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
 from services.network_access_limiter import limited_connect_handler
@@ -37,7 +38,18 @@ from services.operational_data_service import (
 )
 from services.oui_lookup import lookup_vendor
 from core.cmd_cache import get_cached_command, set_cached_command
-from services.collection_plan_service import filter_devices, should_collect
+from services.collection_plan_service import (
+    explicit_collector_override,
+    filter_devices,
+    should_collect,
+)
+from services.collection_status_service import record_collection_results
+from services.collector_sweep_state_service import (
+    complete_collector_sweep,
+    reserve_collector_sweep_batch,
+)
+from services.collector_task_queue_service import enqueue_tasks
+from services.vlan_discovery_service import parse_vlan_id_from_interface
 
 # 并发 SSH 连接上限，避免瞬间打开过多连接
 # 小规模 (≤10 台) 取 5；中规模动态扩展到 10；大规模上限 15
@@ -69,6 +81,23 @@ def _calc_ssh_workers(device_count: int) -> int:
 ARP_SWEEP_INTERVAL_SECONDS = 300   # 后台全量采集间隔：5 分钟
 ARP_CACHE_TTL_SECONDS = 600        # 缓存有效期：10 分钟（2 倍采集间隔，保证覆盖）
 ARP_CACHE_MAX_ENTRIES = 5000
+ENDPOINT_CACHE_TTL_SECONDS = 600
+ARP_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ARP_SWEEP_INTERVAL_SECONDS', '600')))
+ARP_CACHE_TTL_SECONDS = max(ARP_SWEEP_INTERVAL_SECONDS * 2, 600)
+ENDPOINT_FACT_INTERVAL_SECONDS = max(900, int(os.environ.get('ENDPOINT_FACT_INTERVAL_SECONDS', '1800')))
+ROUTE_SWEEP_INTERVAL_SECONDS = max(300, int(os.environ.get('ROUTE_SWEEP_INTERVAL_SECONDS', '300')))
+ARP_MAX_DEVICES_PER_SWEEP = max(0, int(os.environ.get('ARP_MAX_DEVICES_PER_SWEEP', '500')))
+
+_ARP_L3_ROLES = frozenset({
+    'router', 'gateway', 'core', 'dist', 'distribution',
+    'aggregation', 'l3switch', 'firewall', 'load-balancer',
+})
+_ARP_SVI_ROLES = frozenset({'access', 'switch', 'dist', 'distribution', 'aggregation', 'l3switch'})
+_ARP_RETRY_BASE_SECONDS = 300
+_ARP_RETRY_MAX_SECONDS = 3600
+_ARP_AUTH_RETRY_SECONDS = 3600
+_ARP_UNSUPPORTED_RETRY_SECONDS = 86400
+_ARP_CIRCUIT_OPEN_AFTER = 5
 
 logger = logging.getLogger(__name__)
 
@@ -175,13 +204,25 @@ def _normalize_arp_record(record: dict[str, Any], device_info: dict[str, Any]) -
         record, 'interface', 'intf', 'port', 'local_interface',
         'destination_port',
     )
-    return {
+    normalized = {
         'ip': ip_addr,
         'mac': mac_norm,
         'interface': str(interface or '').strip(),
         'source_device_id': device_info.get('id'),
         'source_device': device_info.get('hostname') or device_info.get('ip_address'),
     }
+    vlan_raw = _record_value(record, 'vlan_id', 'vlan', 'vid', 'vlanid')
+    try:
+        vlan_id = int(str(vlan_raw).strip())
+        if 1 <= vlan_id <= 4094:
+            normalized['vlan'] = str(vlan_id)
+            normalized['vlan_source'] = 'arp_vid'
+    except (TypeError, ValueError):
+        interface_vlan = parse_vlan_id_from_interface(normalized['interface'])
+        if interface_vlan:
+            normalized['vlan'] = str(interface_vlan)
+            normalized['vlan_source'] = 'arp_interface'
+    return normalized
 
 
 _ARP_OUTPUT_MAC_RE = re.compile(
@@ -199,26 +240,60 @@ _ARP_INTERFACE_RE = re.compile(
 def _parse_arp_output_fallback(output: str, device_info: dict[str, Any]) -> list[dict[str, Any]]:
     """Parse common Cisco/Huawei/H3C ARP rows when TextFSM has no match."""
     records: list[dict[str, Any]] = []
+    pending: dict[str, Any] | None = None
+
+    def flush_pending() -> None:
+        nonlocal pending
+        if pending is None:
+            return
+        record = _normalize_arp_record(pending, device_info)
+        if record:
+            records.append(record)
+        pending = None
+
     for raw_line in str(output or '').splitlines():
         line = raw_line.strip()
         if not line:
             continue
+
+        if pending and re.fullmatch(r'\d{1,4}', line):
+            vlan_id = int(line)
+            if 1 <= vlan_id <= 4094:
+                pending['vlan'] = line
+                flush_pending()
+                continue
+
         ip_match = _ARP_OUTPUT_IP_RE.search(line)
         mac_match = _ARP_OUTPUT_MAC_RE.search(line)
         if not ip_match or not mac_match:
+            if pending and (line.startswith('Total:') or line.startswith('-')):
+                flush_pending()
             continue
+
+        flush_pending()
         suffix_tokens = line[mac_match.end():].split()
         interface = ''
-        for token in suffix_tokens:
+        interface_index = -1
+        for index, token in enumerate(suffix_tokens):
             candidate = token.strip('(),[]')
             if _ARP_INTERFACE_RE.match(candidate):
                 interface = candidate
-        record = _normalize_arp_record(
-            {'ip': ip_match.group(0), 'mac': mac_match.group(0), 'interface': interface},
-            device_info,
-        )
-        if record:
-            records.append(record)
+                interface_index = index
+                break
+        vlan = ''
+        # H3C/Huawei commonly output: IP MAC VID Interface. Cisco ARP rows
+        # have ARPA/age fields here, so only accept the adjacent numeric VID.
+        if interface_index > 0:
+            candidate_vlan = suffix_tokens[interface_index - 1].strip('(),[]')
+            if candidate_vlan.isdigit() and 1 <= int(candidate_vlan) <= 4094:
+                vlan = candidate_vlan
+        pending = {
+            'ip': ip_match.group(0),
+            'mac': mac_match.group(0),
+            'interface': interface,
+            'vlan': vlan,
+        }
+    flush_pending()
     return records
 
 
@@ -226,13 +301,33 @@ def _format_mac(mac12: str) -> str:
     """将 12 位 hex 格式化为 xxxx.xxxx.xxxx（Cisco 风格）方便阅读。"""
     if len(mac12) != 12:
         return mac12
-    return f'{mac12[0:4]}.{mac12[4:8]}.{mac12[8:12]}'
+    return f'{mac12[0:4]}-{mac12[4:8]}-{mac12[8:12]}'
+
+
+def _parse_vlan_id(value: Any) -> int | None:
+    try:
+        vlan_id = int(str(value or '').strip())
+    except (TypeError, ValueError):
+        return None
+    return vlan_id if 1 <= vlan_id <= 4094 else None
 
 
 _BEIJING_TZ = timezone(timedelta(hours=8))
 
 def _beijing_now_iso() -> str:
     return datetime.now(_BEIJING_TZ).replace(microsecond=0).isoformat()
+
+
+def _age_seconds(value: Any) -> int | None:
+    if not value:
+        return None
+    try:
+        observed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=_BEIJING_TZ)
+        return max(0, int((datetime.now(timezone.utc) - observed.astimezone(timezone.utc)).total_seconds()))
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 # ── ARP 持久化缓存（数据库 L2 + 内存 L1） ──────────────────────────
@@ -266,7 +361,7 @@ def _get_cached_arp(target_ip: str) -> dict[str, Any] | None:
         conn = get_db_connection()
         try:
             row = conn.execute(
-                'SELECT mac, arp_source, cached_at, expires_at FROM arp_cache WHERE target_ip = ? AND expires_at > ?',
+                'SELECT mac, vlan_id, arp_source, cached_at, expires_at FROM arp_cache WHERE target_ip = ? AND expires_at > ?',
                 (target_ip, now_ts),
             ).fetchone()
         finally:
@@ -281,6 +376,7 @@ def _get_cached_arp(target_ip: str) -> dict[str, Any] | None:
     entry = {
         'target_ip': target_ip,
         'mac': row['mac'],
+        'vlan': str(row['vlan_id']) if row['vlan_id'] else '',
         'arp_source': _json.loads(row['arp_source'] or '{}'),
         'cached_at': row['cached_at'],
         'created_at_epoch': now_ts,
@@ -298,11 +394,17 @@ def _set_cached_arp(target_ip: str, mac: str, arp_source: dict[str, Any] | None)
     cached_at = _beijing_now_iso()
     expires_at = now_ts + ARP_CACHE_TTL_SECONDS
     source_dict = dict(arp_source or {})
+    explicit_vlan_id = _parse_vlan_id(source_dict.get('vlan'))
+    vlan_id = explicit_vlan_id or parse_vlan_id_from_interface(source_dict.get('interface'))
+    if vlan_id is not None:
+        source_dict['vlan'] = str(vlan_id)
+        source_dict.setdefault('vlan_source', 'arp_vid' if explicit_vlan_id else 'arp_interface')
 
     # L1 写入
     entry = {
         'target_ip': target_ip,
         'mac': mac,
+        'vlan': str(vlan_id) if vlan_id is not None else '',
         'arp_source': source_dict,
         'cached_at': cached_at,
         'created_at_epoch': now_ts,
@@ -317,14 +419,15 @@ def _set_cached_arp(target_ip: str, mac: str, arp_source: dict[str, Any] | None)
         conn = get_db_connection()
         try:
             conn.execute(
-                '''INSERT INTO arp_cache (target_ip, mac, arp_source, cached_at, expires_at)
-                   VALUES (?, ?, ?, ?, ?)
+                '''INSERT INTO arp_cache (target_ip, mac, vlan_id, arp_source, cached_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT(target_ip) DO UPDATE SET
                        mac = excluded.mac,
+                       vlan_id = excluded.vlan_id,
                        arp_source = excluded.arp_source,
                        cached_at = excluded.cached_at,
                        expires_at = excluded.expires_at''',
-                (target_ip, mac, _json.dumps(source_dict), cached_at, expires_at),
+                (target_ip, mac, vlan_id, _json.dumps(source_dict), cached_at, expires_at),
             )
             
             # Write to arp_table as well
@@ -342,9 +445,9 @@ def _set_cached_arp(target_ip: str, mac: str, arp_source: dict[str, Any] | None)
             if dev_id:
                 conn.execute("DELETE FROM arp_table WHERE device_id = ? AND ip_address = ?", (dev_id, target_ip))
                 conn.execute(
-                    '''INSERT INTO arp_table (id, device_id, ip_address, mac_address, interface_name, last_updated)
-                       VALUES (?, ?, ?, ?, ?, ?)''',
-                    (str(uuid.uuid4()), dev_id, target_ip, mac, source_dict.get('interface') or '', cached_at)
+                    '''INSERT INTO arp_table (id, device_id, ip_address, mac_address, interface_name, vlan_id, last_updated)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                    (str(uuid.uuid4()), dev_id, target_ip, mac, source_dict.get('interface') or '', vlan_id, cached_at)
                 )
 
             # 顺便清理过期行（轻量级，不阻塞）
@@ -545,6 +648,17 @@ def _targeted_arp_query(device_info: dict, target_ip: str, vrf: str = None) -> d
             else:
                 cmd = cmd_template.format(ip=target_ip)
             output = _send_command(device_info, cmd)
+            for normalized in _parse_arp_output_fallback(output, device_info):
+                if normalized['ip'] == target_ip:
+                    return {
+                        'ip': target_ip,
+                        'mac': normalized['mac'],
+                        'mac_display': _format_mac(normalized['mac']),
+                        'interface': normalized['interface'],
+                        'vlan': normalized.get('vlan', ''),
+                        'source_device_id': normalized['source_device_id'],
+                        'source_device': normalized['source_device'],
+                    }
             # 解析输出行，寻找包含目标 IP 的 ARP 条目
             for line in output.splitlines():
                 if target_ip not in line:
@@ -590,6 +704,7 @@ def _collect_arp_from_device_for_ip(device_info: dict, target_ip: str) -> dict |
                     'mac': normalized['mac'],
                     'mac_display': _format_mac(normalized['mac']),
                     'interface': normalized['interface'],
+                    'vlan': normalized.get('vlan', ''),
                     'source_device_id': normalized['source_device_id'],
                     'source_device': normalized['source_device'],
                 }
@@ -604,6 +719,7 @@ def _collect_arp_from_device_for_ip(device_info: dict, target_ip: str) -> dict |
                             'mac': normalized['mac'],
                             'mac_display': _format_mac(normalized['mac']),
                             'interface': normalized['interface'],
+                            'vlan': normalized.get('vlan', ''),
                             'source_device_id': normalized['source_device_id'],
                             'source_device': normalized['source_device'],
                         }
@@ -655,6 +771,7 @@ def _parse_mac_output(output: str, target_mac: str, device_info: dict) -> list[d
             'mac': mac_norm,
             'port': m.group('port').strip(),
             'vlan': m.group('vlan').strip(),
+            'vlan_source': 'mac_table',
             'type': m.group('type').strip(),
             'switch_id': device_info.get('id'),
             'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
@@ -687,6 +804,7 @@ def _collect_mac_from_device_for_mac(device_info: dict, target_mac: str) -> list
                         'mac': mac_norm,
                         'port': str(port_field).strip(),
                         'vlan': str(vlan).strip(),
+                        'vlan_source': 'mac_table',
                         'type': rec.get('type', ''),
                         'switch_id': device_info.get('id'),
                         'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
@@ -793,6 +911,520 @@ def _get_ip_network_role(target_ip: str) -> dict | None:
     }
 
 
+def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Aggregate existing IPAM, endpoint, interface and route facts for one IP."""
+    context: dict[str, Any] = {
+        'address': {
+            'ip': target_ip, 'type': 'unknown', 'prefix': '', 'prefix_length': None,
+            'netmask': '', 'network_type': '', 'purpose': '', 'status': '', 'last_seen': '',
+        },
+        'l2': {
+            'mac': '', 'vlan': '', 'vlan_name': '', 'vlan_source': 'unknown',
+            'switch_id': '', 'switch_name': '', 'port': '', 'description': '',
+            'admin_status': '', 'oper_status': '', 'mode': '', 'native_vlan': '',
+            'allowed_vlans': '', 'last_seen': '',
+        },
+        'l3': {
+            'gateway': '', 'gateway_device': '', 'gateway_interface': '', 'vrf': '',
+            'next_hop': '', 'route_source': '', 'route_interface': '', 'route_last_updated': '',
+            'upstream_devices': [], 'downstream_devices': [], 'adjacent_devices': [],
+        },
+        'business': {
+            'hostname': '', 'asset_type': '', 'department': '', 'tenant': '', 'site': '',
+            'owner': '', 'criticality': '', 'description': '', 'config_backup_at': '',
+            'business_systems': [], 'business_level': '',
+            'open_alerts': [],
+        },
+        'freshness': {
+            'endpoint_last_seen': '', 'arp_last_updated': '', 'mac_last_updated': '',
+            'interface_last_seen': '', 'collected_at': _beijing_now_iso(),
+        },
+        'path': [],
+    }
+
+    def set_if_empty(target: dict[str, Any], key: str, value: Any) -> None:
+        if target.get(key) in (None, '', 'unknown') and value not in (None, ''):
+            target[key] = value
+
+    try:
+        ip_obj = ipaddress.ip_address(target_ip)
+    except ValueError:
+        ip_obj = None
+
+    try:
+        conn = get_db_connection()
+        try:
+            prefix_rows = conn.execute(
+                '''SELECT p.id, p.prefix, p.name, p.network_type, p.gateway, p.vlan_id,
+                          p.vrf_id, p.site_id, p.tenant_id, p.gateway_device_id,
+                          p.gateway_interface_id, p.description,
+                          vl.vlan_id AS vlan_number, vl.name AS vlan_name,
+                          v.vrf_name, s.site_name, t.name AS tenant_name,
+                          gd.hostname AS gateway_device_name,
+                          gi.interface_name AS gateway_interface_name
+                   FROM prefixes p
+                   LEFT JOIN vlans vl ON p.vlan_id = vl.id
+                   LEFT JOIN vrfs v ON p.vrf_id = v.id
+                   LEFT JOIN sites s ON p.site_id = s.id
+                   LEFT JOIN tenants t ON p.tenant_id = t.id
+                   LEFT JOIN devices gd ON p.gateway_device_id = gd.id
+                   LEFT JOIN interfaces gi ON p.gateway_interface_id = gi.id'''
+            ).fetchall()
+
+            best_prefix = None
+            best_prefix_len = -1
+            if ip_obj:
+                for row in prefix_rows:
+                    try:
+                        network = ipaddress.ip_network(row['prefix'], strict=False)
+                    except (ValueError, TypeError, KeyError):
+                        continue
+                    if network.version == ip_obj.version and ip_obj in network and network.prefixlen > best_prefix_len:
+                        best_prefix = row
+                        best_prefix_len = network.prefixlen
+
+            if best_prefix:
+                network = ipaddress.ip_network(best_prefix['prefix'], strict=False)
+                context['address'].update({
+                    'type': best_prefix['network_type'] or 'server',
+                    'prefix': best_prefix['prefix'] or '',
+                    'prefix_length': network.prefixlen,
+                    'netmask': str(network.netmask),
+                    'network_type': best_prefix['network_type'] or '',
+                    'purpose': best_prefix['name'] or best_prefix['description'] or '',
+                })
+                context['l3'].update({
+                    'gateway': best_prefix['gateway'] or '',
+                    'gateway_device': best_prefix['gateway_device_name'] or best_prefix['gateway_device_id'] or '',
+                    'gateway_interface': best_prefix['gateway_interface_name'] or best_prefix['gateway_interface_id'] or '',
+                    'vrf': best_prefix['vrf_name'] or best_prefix['vrf_id'] or '',
+                })
+                context['business'].update({
+                    'tenant': best_prefix['tenant_name'] or best_prefix['tenant_id'] or '',
+                    'site': best_prefix['site_name'] or best_prefix['site_id'] or '',
+                })
+                if best_prefix['vlan_number']:
+                    context['l2'].update({
+                        'vlan': str(best_prefix['vlan_number']),
+                        'vlan_name': best_prefix['vlan_name'] or '',
+                        'vlan_source': 'ipam_prefix',
+                    })
+                elif best_prefix['vlan_id']:
+                    prefix_vlan = _parse_vlan_id(best_prefix['vlan_id'])
+                    if prefix_vlan:
+                        context['l2'].update({
+                            'vlan': str(prefix_vlan),
+                            'vlan_source': 'ipam_prefix_id',
+                        })
+
+            ip_row = conn.execute(
+                '''SELECT ip.address, ip.hostname, ip.mac_address, ip.device_id,
+                          ip.interface_name, ip.device_type, ip.status, ip.description,
+                          ip.last_seen
+                   FROM ip_addresses ip
+                   WHERE ip.address = ? OR ip.ip_address = ?
+                   ORDER BY CASE WHEN ip.address = ? THEN 0 ELSE 1 END LIMIT 1''',
+                (target_ip, target_ip, target_ip),
+            ).fetchone()
+            if ip_row:
+                context['address']['status'] = ip_row['status'] or ''
+                context['address']['last_seen'] = ip_row['last_seen'] or ''
+                set_if_empty(context['address'], 'type', ip_row['device_type'])
+                set_if_empty(context['business'], 'hostname', ip_row['hostname'])
+                set_if_empty(context['business'], 'description', ip_row['description'])
+                set_if_empty(context['l2'], 'mac', ip_row['mac_address'])
+
+            endpoint = conn.execute(
+                '''SELECT ne.ip, ne.mac, ne.hostname, ne.asset_type, ne.switch_id,
+                          ne.switch_port, ne.vlan, ne.vrf, ne.site, ne.source_type,
+                          ne.last_seen, d.hostname AS switch_name, d.owner_team,
+                          d.criticality, COALESCE(s.site_name, s.site_code, d.site) AS device_site
+                   FROM network_endpoints ne
+                   LEFT JOIN devices d ON d.id = ne.switch_id
+                   LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, ''))
+                   WHERE ne.ip = ? AND ne.is_active = 1
+                   ORDER BY ne.last_seen DESC LIMIT 1''',
+                (target_ip,),
+            ).fetchone()
+
+            location = None
+            if result:
+                location = next((item for item in (result.get('locations') or []) if not item.get('is_uplink')), None)
+
+            l2 = context['l2']
+            if endpoint:
+                l2.update({
+                    'mac': endpoint['mac'] or l2['mac'],
+                    'vlan': endpoint['vlan'] or l2['vlan'],
+                    'vlan_source': endpoint['source_type'] or l2['vlan_source'],
+                    'switch_id': endpoint['switch_id'] or '',
+                    'switch_name': endpoint['switch_name'] or endpoint['switch_id'] or '',
+                    'port': endpoint['switch_port'] or '',
+                })
+                context['freshness']['endpoint_last_seen'] = endpoint['last_seen'] or ''
+                set_if_empty(context['business'], 'hostname', endpoint['hostname'])
+                set_if_empty(context['business'], 'asset_type', endpoint['asset_type'])
+                set_if_empty(context['business'], 'owner', endpoint['owner_team'])
+                set_if_empty(context['business'], 'criticality', endpoint['criticality'])
+                set_if_empty(context['business'], 'site', endpoint['device_site'] or endpoint['site'])
+                set_if_empty(context['l3'], 'vrf', endpoint['vrf'])
+            elif location:
+                l2.update({
+                    'switch_id': str(location.get('switch_id') or ''),
+                    'switch_name': location.get('switch_name') or '',
+                    'port': location.get('port') or '',
+                    'vlan': location.get('vlan') or l2['vlan'],
+                    'vlan_source': location.get('vlan_source') or l2['vlan_source'],
+                })
+
+            arp_row = conn.execute(
+                '''SELECT a.mac_address, a.vlan_id, a.interface_name, a.last_updated,
+                          d.hostname AS device_name, a.device_id
+                   FROM arp_table a
+                   LEFT JOIN devices d ON d.id = a.device_id
+                   WHERE a.ip_address = ?
+                   ORDER BY a.last_updated DESC LIMIT 1''',
+                (target_ip,),
+            ).fetchone()
+            if arp_row:
+                arp_interface_vlan = parse_vlan_id_from_interface(arp_row['interface_name'])
+                arp_vlan = str(arp_row['vlan_id'] or arp_interface_vlan or '')
+                # network_endpoints is a derived, IP-keyed cache.  If its row
+                # has no VLAN/L2 evidence, prefer the latest ARP observation
+                # instead of retaining a stale device/port chosen by a prior
+                # tracker run.
+                prefer_arp_location = bool(
+                    arp_row['interface_name']
+                    and arp_vlan
+                    and (
+                        not endpoint
+                        or not endpoint['vlan']
+                        or not endpoint['switch_id']
+                        or not endpoint['switch_port']
+                    )
+                )
+                if prefer_arp_location:
+                    l2.update({
+                        'mac': arp_row['mac_address'] or l2['mac'],
+                        'switch_id': arp_row['device_id'] or l2['switch_id'],
+                        'switch_name': arp_row['device_name'] or arp_row['device_id'] or l2['switch_name'],
+                        'port': arp_row['interface_name'] or l2['port'],
+                        'vlan': arp_vlan,
+                        'vlan_source': 'arp_table' if arp_row['vlan_id'] else 'arp_interface',
+                    })
+                else:
+                    set_if_empty(l2, 'mac', arp_row['mac_address'])
+                    if not l2['vlan'] and arp_vlan:
+                        l2['vlan'] = arp_vlan
+                        l2['vlan_source'] = 'arp_table' if arp_row['vlan_id'] else 'arp_interface'
+                context['freshness']['arp_last_updated'] = arp_row['last_updated'] or ''
+                if not l2['switch_name']:
+                    l2['switch_name'] = arp_row['device_name'] or arp_row['device_id'] or ''
+                if not l2['port']:
+                    l2['port'] = arp_row['interface_name'] or ''
+
+            if result and result.get('mac'):
+                set_if_empty(l2, 'mac', _format_mac(result['mac']))
+
+            switch_id = l2.get('switch_id') or ''
+            port = l2.get('port') or ''
+            if switch_id and port:
+                interface_rows = conn.execute(
+                    '''SELECT i.interface_name, i.description, i.admin_status, i.oper_status,
+                              i.switchport_mode, i.access_vlan, i.native_vlan, i.allowed_vlans,
+                              i.last_seen, v.vrf_name
+                       FROM interfaces i
+                       LEFT JOIN vrfs v ON v.id = i.vrf_id
+                       WHERE i.device_id = ?''',
+                    (switch_id,),
+                ).fetchall()
+                port_key = normalize_interface_name(str(port)).lower()
+                interface = next(
+                    (row for row in interface_rows if normalize_interface_name(str(row['interface_name'] or '')).lower() == port_key),
+                    None,
+                )
+                if interface:
+                    l2.update({
+                        'description': interface['description'] or '',
+                        'admin_status': interface['admin_status'] or '',
+                        'oper_status': interface['oper_status'] or '',
+                        'mode': interface['switchport_mode'] or '',
+                        'native_vlan': str(interface['native_vlan']) if interface['native_vlan'] else '',
+                        'allowed_vlans': interface['allowed_vlans'] or '',
+                    })
+                    if not l2['vlan']:
+                        interface_vlan = parse_vlan_id_from_interface(interface['interface_name'])
+                        interface_vlan = interface_vlan or _parse_vlan_id(interface['access_vlan']) or _parse_vlan_id(interface['native_vlan'])
+                        if interface_vlan:
+                            l2['vlan'] = str(interface_vlan)
+                            l2['vlan_source'] = 'interface_snapshot'
+                    set_if_empty(context['l3'], 'vrf', interface['vrf_name'])
+                    context['freshness']['interface_last_seen'] = interface['last_seen'] or ''
+
+            # Resolve the gateway SVI/VLANIF even when the endpoint is not
+            # currently present in the access-switch tables.
+            gateway_device_id = str(best_prefix['gateway_device_id'] or '') if best_prefix else ''
+            gateway_ip = str(best_prefix['gateway'] or '') if best_prefix else ''
+            if gateway_device_id:
+                gateway_interfaces = conn.execute(
+                    '''SELECT i.id, i.interface_name, i.primary_ip, i.ip_address,
+                              i.admin_status, i.oper_status, i.last_seen, v.vrf_name,
+                              d.hostname AS device_name
+                       FROM interfaces i
+                       LEFT JOIN vrfs v ON v.id = i.vrf_id
+                       LEFT JOIN devices d ON d.id = i.device_id
+                       WHERE i.device_id = ?''',
+                    (gateway_device_id,),
+                ).fetchall()
+                current_vlan_id = _parse_vlan_id(l2.get('vlan'))
+                gateway_interface = next(
+                    (
+                        row for row in gateway_interfaces
+                        if (best_prefix and best_prefix['gateway_interface_id'] and row['id'] == best_prefix['gateway_interface_id'])
+                        or (gateway_ip and gateway_ip in {row['primary_ip'], row['ip_address']})
+                        or (current_vlan_id and parse_vlan_id_from_interface(row['interface_name']) == current_vlan_id)
+                    ),
+                    None,
+                )
+                if gateway_interface:
+                    set_if_empty(context['l3'], 'gateway_device', gateway_interface['device_name'] or gateway_device_id)
+                    set_if_empty(context['l3'], 'gateway_interface', gateway_interface['interface_name'])
+                    set_if_empty(context['l3'], 'vrf', gateway_interface['vrf_name'])
+                    gateway_vlan = parse_vlan_id_from_interface(gateway_interface['interface_name'])
+                    if not l2['vlan'] and gateway_vlan:
+                        l2['vlan'] = str(gateway_vlan)
+                        l2['vlan_source'] = 'vlanif_interface'
+                    context['freshness']['interface_last_seen'] = gateway_interface['last_seen'] or context['freshness']['interface_last_seen']
+
+            vlan_number = _parse_vlan_id(l2.get('vlan'))
+            if vlan_number:
+                vlan_row = conn.execute(
+                    '''SELECT name FROM vlans
+                       WHERE vlan_id = ? AND (? = '' OR COALESCE(site_id, '') = ?)
+                       ORDER BY CASE WHEN COALESCE(site_id, '') = ? THEN 0 ELSE 1 END
+                       LIMIT 1''',
+                    (vlan_number, str(best_prefix['site_id'] or '') if best_prefix else '',
+                     str(best_prefix['site_id'] or '') if best_prefix else '',
+                     str(best_prefix['site_id'] or '') if best_prefix else ''),
+                ).fetchone()
+                if vlan_row:
+                    l2['vlan_name'] = vlan_row['name'] or ''
+                binding_rows = conn.execute(
+                    '''SELECT business_system, department, owner, business_level
+                       FROM vlan_business_bindings
+                       WHERE vlan_id = ?
+                         AND (site_id = ? OR (site_id = '' AND ? = ''))
+                         AND status <> 'retired'
+                       ORDER BY business_system''',
+                    (vlan_number,
+                     str(best_prefix['site_id'] or '') if best_prefix else '',
+                     str(best_prefix['site_id'] or '') if best_prefix else ''),
+                ).fetchall()
+                if binding_rows:
+                    context['business']['business_systems'] = [row['business_system'] for row in binding_rows]
+                    context['business']['department'] = context['business']['department'] or binding_rows[0]['department'] or ''
+                    context['business']['owner'] = context['business']['owner'] or binding_rows[0]['owner'] or ''
+                    context['business']['business_level'] = next(
+                        (level for level in ('P1', 'P2', 'P3', 'P4') if any(row['business_level'] == level for row in binding_rows)),
+                        '',
+                    )
+
+            asset = conn.execute(
+                '''SELECT asset_type, hostname, department, status, notes, site_id
+                   FROM physical_assets
+                   WHERE business_ip = ? OR management_ip = ?
+                   ORDER BY CASE WHEN business_ip = ? THEN 0 ELSE 1 END LIMIT 1''',
+                (target_ip, target_ip, target_ip),
+            ).fetchone()
+            if asset:
+                set_if_empty(context['business'], 'hostname', asset['hostname'])
+                set_if_empty(context['business'], 'asset_type', asset['asset_type'])
+                set_if_empty(context['business'], 'department', asset['department'])
+                set_if_empty(context['business'], 'site', asset['site_id'])
+                set_if_empty(context['business'], 'description', asset['notes'])
+                if not context['address']['status']:
+                    context['address']['status'] = asset['status'] or ''
+
+            device_ids = {str(v) for v in (
+                l2.get('switch_id'), best_prefix['gateway_device_id'] if best_prefix else ''
+            ) if v}
+            if device_ids:
+                placeholders = ','.join('?' for _ in device_ids)
+                backup = conn.execute(
+                    f'''SELECT backup_time FROM config_backups
+                        WHERE device_id IN ({placeholders})
+                        ORDER BY backup_time DESC LIMIT 1''',
+                    tuple(device_ids),
+                ).fetchone()
+                if backup:
+                    context['business']['config_backup_at'] = backup['backup_time'] or ''
+
+                alert_rows = conn.execute(
+                    f'''SELECT id, severity, title, created_at, interface_name
+                        FROM alert_events
+                        WHERE resolved_at IS NULL
+                          AND COALESCE(workflow_status, 'open') != 'suppressed'
+                          AND (device_id IN ({placeholders}) OR title LIKE ? OR message LIKE ?)
+                        ORDER BY created_at DESC LIMIT 5''',
+                    (*device_ids, f'%{target_ip}%', f'%{target_ip}%'),
+                ).fetchall()
+                context['business']['open_alerts'] = [
+                    {
+                        'id': row['id'], 'severity': row['severity'], 'title': row['title'],
+                        'created_at': row['created_at'], 'interface': row['interface_name'] or '',
+                    }
+                    for row in alert_rows
+                ]
+
+            route_rows = conn.execute(
+                '''SELECT rt.destination, rt.next_hop, rt.protocol, rt.outgoing_interface,
+                          rt.vrf_name, rt.last_updated, d.hostname AS device_name
+                   FROM route_table rt
+                   LEFT JOIN devices d ON d.id = rt.device_id
+                   WHERE COALESCE(rt.active, 1) = 1
+                   ORDER BY rt.last_updated DESC LIMIT 1000'''
+            ).fetchall()
+            best_route = None
+            best_route_len = -1
+            if ip_obj:
+                for row in route_rows:
+                    try:
+                        network = ipaddress.ip_network(row['destination'], strict=False)
+                    except (ValueError, TypeError, KeyError):
+                        continue
+                    if network.version == ip_obj.version and ip_obj in network and network.prefixlen > best_route_len:
+                        best_route = row
+                        best_route_len = network.prefixlen
+            if best_route:
+                context['l3'].update({
+                    'next_hop': best_route['next_hop'] or '',
+                    'route_source': best_route['protocol'] or '',
+                    'route_interface': best_route['outgoing_interface'] or '',
+                    'route_last_updated': best_route['last_updated'] or '',
+                })
+                set_if_empty(context['l3'], 'vrf', best_route['vrf_name'])
+                set_if_empty(context['l3'], 'gateway_device', best_route['device_name'])
+
+            # Build only an evidence-backed access-switch -> gateway path from LLDP topology.
+            path: list[dict[str, Any]] = []
+            if l2.get('mac'):
+                path.extend([
+                    {'kind': 'ip', 'label': target_ip, 'detail': context['address']['type'] or 'IP'},
+                    {'kind': 'mac', 'label': l2['mac'], 'detail': 'ARP'},
+                ])
+            if l2.get('switch_name') or l2.get('switch_id'):
+                path.append({
+                    'kind': 'access',
+                    'label': l2.get('switch_name') or l2.get('switch_id'),
+                    'detail': l2.get('port') or '',
+                })
+            if l2.get('vlan'):
+                path.append({
+                    'kind': 'vlan',
+                    'label': f"VLAN {l2['vlan']}",
+                    'detail': l2.get('vlan_name') or l2.get('vlan_source') or '',
+                })
+
+            access_id = str(l2.get('switch_id') or '')
+            gateway_id = str(best_prefix['gateway_device_id'] or '') if best_prefix else ''
+            if access_id and gateway_id and access_id != gateway_id:
+                link_rows = conn.execute(
+                    '''SELECT source_device_id, source_hostname, source_port,
+                              target_device_id, target_hostname, target_port,
+                              status, last_seen
+                       FROM topology_links
+                       WHERE COALESCE(status, 'unknown') <> 'stale' '''
+                ).fetchall()
+                adjacency: dict[str, list[tuple[str, str, str, str]]] = {}
+                for link in link_rows:
+                    source_id = str(link['source_device_id'] or '')
+                    target_id = str(link['target_device_id'] or '')
+                    if not source_id or not target_id:
+                        continue
+                    adjacency.setdefault(source_id, []).append((
+                        target_id, link['target_hostname'] or target_id,
+                        link['source_port'] or '', link['target_port'] or '',
+                    ))
+                    adjacency.setdefault(target_id, []).append((
+                        source_id, link['source_hostname'] or source_id,
+                        link['target_port'] or '', link['source_port'] or '',
+                    ))
+
+                queue: list[tuple[str, list[tuple[str, str, str, str]]]] = [(access_id, [])]
+                visited = {access_id}
+                device_hops: list[tuple[str, str, str, str]] | None = None
+                while queue and device_hops is None:
+                    current, current_path = queue.pop(0)
+                    if current == gateway_id:
+                        device_hops = current_path
+                        break
+                    if len(current_path) >= 8:
+                        continue
+                    for neighbor_id, neighbor_name, local_port, neighbor_port in adjacency.get(current, []):
+                        if neighbor_id in visited:
+                            continue
+                        visited.add(neighbor_id)
+                        next_path = current_path + [(neighbor_id, neighbor_name, local_port, neighbor_port)]
+                        if neighbor_id == gateway_id:
+                            device_hops = next_path
+                            break
+                        queue.append((neighbor_id, next_path))
+
+                if device_hops:
+                    context['l3']['upstream_devices'] = [
+                        {
+                            'device': device_name or device_id,
+                            'device_id': device_id,
+                            'port': local_port or '',
+                            'peer_port': neighbor_port or '',
+                        }
+                        for device_id, device_name, local_port, neighbor_port in device_hops
+                    ]
+                    path_device_ids = {item[0] for item in device_hops}
+                    # LLDP gives adjacency, not traffic direction.  A device
+                    # that is not on the selected access-to-gateway path is
+                    # therefore a peer/other neighbor, not a downstream device.
+                    context['l3']['adjacent_devices'] = [
+                        {
+                            'device': neighbor_name or neighbor_id,
+                            'device_id': neighbor_id,
+                            'port': local_port or '',
+                            'peer_port': neighbor_port or '',
+                        }
+                        for neighbor_id, neighbor_name, local_port, neighbor_port in adjacency.get(access_id, [])
+                        if neighbor_id not in path_device_ids
+                    ]
+                    for index, (device_id, device_name, local_port, neighbor_port) in enumerate(device_hops):
+                        is_gateway = device_id == gateway_id
+                        path.append({
+                            'kind': 'gateway' if is_gateway else 'transit',
+                            'label': device_name or device_id,
+                            'detail': (
+                                f"{local_port} ↔ {neighbor_port}" if local_port or neighbor_port else ''
+                            ),
+                        })
+            elif gateway_id and access_id == gateway_id:
+                path.append({
+                    'kind': 'gateway',
+                    'label': context['l3']['gateway_device'] or gateway_id,
+                    'detail': context['l3']['gateway_interface'] or '',
+                })
+
+            if context['address']['prefix']:
+                path.append({
+                    'kind': 'network',
+                    'label': context['address']['prefix'],
+                    'detail': context['address']['purpose'] or context['address']['network_type'] or '',
+                })
+            context['path'] = path
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.debug(f"[IPLocator] context aggregation error for {target_ip}: {exc}")
+
+    return context
+
+
 def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     """
     核心定位逻辑：IP → MAC（ARP） → Port（MAC表 + LLDP 拓扑追踪）
@@ -820,6 +1452,8 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         'timestamp': _beijing_now_iso(),
         'errors': [],
     }
+    # Return the IPAM/L2/L3/business facts even when live ARP lookup is unavailable.
+    result['context'] = _get_ip_locator_context(target_ip)
 
     # ── Step -1: 网段角色识别 ──
     # 互联地址 (Transit) 背后是网络设备接口，应切换到路由/邻居检查策略，
@@ -881,7 +1515,8 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     if not force_refresh:
         # 1. 查找 network_endpoints 事实缓存
         cached_ep = _get_cached_endpoint(target_ip)
-        if cached_ep:
+        cached_age = _age_seconds(cached_ep.get('last_seen')) if cached_ep else None
+        if cached_ep and cached_age is not None and cached_age <= ENDPOINT_CACHE_TTL_SECONDS:
             result['found'] = True
             result['mac'] = cached_ep['mac']
             result['mac_display'] = _format_mac(cached_ep['mac'])
@@ -897,6 +1532,9 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
             result['cache']['cached_at'] = cached_ep.get('last_seen')
             result['cache']['arp_cache_hit'] = True
             return result
+        if cached_ep:
+            result['cache']['endpoint_cache_stale'] = True
+            result['cache']['endpoint_cache_age_seconds'] = cached_age
 
         # 2. 查找 ip_inventory 资产库 (支持 Loopback/设备接口等无 ARP 数据)
         try:
@@ -945,7 +1583,9 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         cached_arp = _get_cached_arp(target_ip)
         if cached_arp:
             target_mac = str(cached_arp.get('mac') or '')
-            arp_source_info = cached_arp.get('arp_source') or None
+            arp_source_info = dict(cached_arp.get('arp_source') or {}) or None
+            if arp_source_info is not None and cached_arp.get('vlan'):
+                arp_source_info.setdefault('vlan', cached_arp['vlan'])
             result['cache']['arp_cache_hit'] = True
             result['cache']['cached_at'] = cached_arp.get('cached_at')
 
@@ -975,6 +1615,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
                         'device_id': arp_hit['source_device_id'],
                         'device': arp_hit['source_device'],
                         'interface': arp_hit['interface'],
+                        'vlan': arp_hit.get('vlan', ''),
                     }
                     # 早期终止：取消尚未开始的任务
                     for pending_f in future_map:
@@ -1038,6 +1679,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
     terminal_switch_id = None
     terminal_port = None
     terminal_vlan = ''
+    terminal_vlan_source = 'unknown'
     terminal_type = 'DYNAMIC'
 
     trace_notes.append(f"开始追踪：源 ARP 学习自网关 {arp_source_info.get('device')} ({arp_source_info.get('interface')})")
@@ -1074,6 +1716,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
                 mac_rec = mac_records[0]
                 curr_port = mac_rec['port']
                 terminal_vlan = mac_rec.get('vlan', '')
+                terminal_vlan_source = mac_rec.get('vlan_source', 'mac_table') if terminal_vlan else 'unknown'
                 terminal_type = mac_rec.get('type', 'DYNAMIC')
                 
                 terminal_switch_id = curr_device_id
@@ -1149,6 +1792,7 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
             'switch_name': term_label,
             'port': terminal_port,
             'vlan': terminal_vlan,
+            'vlan_source': terminal_vlan_source,
             'type': 'PATH_TRACED',
             'is_uplink': False,
             'note': ' -> '.join(trace_notes),
@@ -1171,12 +1815,14 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
             'switch_id': arp_source_info.get('device_id'),
             'switch_name': arp_source_info.get('device'),
             'port': arp_source_info.get('interface') or 'N/A',
-            'vlan': '',
+            'vlan': arp_source_info.get('vlan', ''),
+            'vlan_source': arp_source_info.get('vlan_source', 'arp_vid') if arp_source_info.get('vlan') else 'unknown',
             'type': 'ARP_DIRECT',
             'is_uplink': False,
             'note': '该 MAC 未在交换机 MAC 表中发现，定位基于 ARP 记录',
         }]
     
+    result['context'] = _get_ip_locator_context(target_ip, result)
     return result
 
 
@@ -1193,30 +1839,177 @@ async def locate_ip_async_with_options(target_ip: str, force_refresh: bool = Fal
 
 # ── 后台全量 ARP 采集 ──────────────────────────────────────────────
 
-def _collect_full_arp_from_device(device_info: dict) -> list[dict]:
+def _load_arp_collection_state() -> dict[str, dict[str, Any]]:
+    """Load retry state once so a sweep does not query the DB per device."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT device_id, consecutive_failures, next_retry_at,
+                   circuit_state, failure_class
+            FROM device_collection_status
+            WHERE collector = 'arp'
+            """
+        ).fetchall()
+        return {str(row['device_id']): dict(row) for row in rows}
+    except Exception as exc:
+        logger.warning("[ARP Sweep] Could not load retry state: %s", exc)
+        return {}
+    finally:
+        conn.close()
+
+
+def _load_svi_evidence() -> set[str]:
+    """Return device ids whose interface inventory proves an SVI/Vlanif."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT device_id, interface_name, ip_address, primary_ip, is_l3 FROM interfaces"
+        ).fetchall()
+    except Exception:
+        try:
+            rows = conn.execute(
+                "SELECT device_id, interface_name, ip_address FROM interfaces"
+            ).fetchall()
+        except Exception as exc:
+            logger.debug("[ARP Sweep] Could not load SVI evidence: %s", exc)
+            return set()
+    finally:
+        conn.close()
+
+    evidence: set[str] = set()
+    for row in rows:
+        row_data = dict(row) if hasattr(row, 'keys') else row
+        name = str(row_data['interface_name'] or '').strip().lower()
+        ip_value = str(row_data.get('ip_address') or row_data.get('primary_ip') or '').strip()
+        is_svi = name.startswith(('vlan', 'vlanif', 'vlan-interface'))
+        if is_svi and ip_value not in {'', '--', 'unassigned', '0.0.0.0'}:
+            evidence.add(str(row_data['device_id']))
+    return evidence
+
+
+def _arp_device_is_due(state: dict[str, Any], now: datetime) -> bool:
+    retry_at = state.get('next_retry_at')
+    if not retry_at:
+        return True
+    try:
+        parsed = datetime.fromisoformat(str(retry_at).replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed <= now
+    except (TypeError, ValueError):
+        return True
+
+
+def _load_arp_sweep_devices(run_id: str = '') -> tuple[list[dict], int, int]:
+    """Select ARP-capable devices and skip devices in retry backoff."""
+    all_eligible = _load_eligible_devices()
+    svi_devices = _load_svi_evidence()
+    state_by_device = _load_arp_collection_state()
+    now = datetime.now(timezone.utc)
+    candidates: list[dict] = []
+    skipped_backoff = 0
+
+    for device in all_eligible:
+        role = str(device.get('role') or '').strip().lower()
+        explicit = explicit_collector_override(device, 'arp')
+        if explicit is False:
+            continue
+        capable_by_role = role in _ARP_L3_ROLES
+        capable_by_svi = (
+            str(device.get('id') or '') in svi_devices
+            and role in _ARP_SVI_ROLES
+        )
+        if explicit is not True and not (capable_by_role or capable_by_svi):
+            continue
+        state = state_by_device.get(str(device.get('id') or ''), {})
+        if not _arp_device_is_due(state, now):
+            skipped_backoff += 1
+            continue
+        if capable_by_svi and explicit is None:
+            device = dict(device)
+            device['_arp_policy_override'] = True
+        candidates.append(device)
+
+    candidates.sort(key=lambda item: str(item.get('id') or item.get('ip_address') or ''))
+    if not candidates:
+        return [], len(all_eligible), skipped_backoff
+
+    batch = reserve_collector_sweep_batch(
+        'arp',
+        total_candidates=len(candidates),
+        batch_size=ARP_MAX_DEVICES_PER_SWEEP,
+        run_id=run_id,
+    )
+    start = int(batch.get('start_cursor') or 0) % len(candidates)
+    selected_count = min(len(candidates), int(batch.get('selected_count') or len(candidates)))
+    selected = [candidates[(start + offset) % len(candidates)] for offset in range(selected_count)]
+    return selected, len(all_eligible), skipped_backoff
+
+
+def _classify_arp_failure(error: Any) -> str:
+    text = str(error or '').lower()
+    if 'authentication' in text or 'auth' in text or 'permission' in text:
+        return 'auth_failed'
+    if 'no command' in text or 'not supported' in text or 'unsupported' in text:
+        return 'unsupported'
+    if 'limit' in text or 'concurrency' in text or 'rate' in text:
+        return 'rate_limited'
+    if any(token in text for token in ('timeout', 'timed out', 'unreachable', 'refused', 'closed', 'network')):
+        return 'unreachable'
+    return 'collection_failed'
+
+
+def _arp_retry_delay(failure_class: str, failure_count: int) -> int:
+    if failure_class == 'unsupported':
+        return _ARP_UNSUPPORTED_RETRY_SECONDS
+    if failure_class == 'auth_failed':
+        return _ARP_AUTH_RETRY_SECONDS
+    if failure_class == 'rate_limited':
+        return 60
+    exponent = max(0, min(6, failure_count - 1))
+    return min(_ARP_RETRY_MAX_SECONDS, _ARP_RETRY_BASE_SECONDS * (2 ** exponent))
+
+
+def _collect_full_arp_result(device_info: dict) -> dict[str, Any]:
     """从单台设备采集完整 ARP 表，返回解析后的条目列表。"""
     try:
-        payload = collect_operational_data(device_info, categories=['arp'])
+        payload = collect_operational_data(
+            device_info,
+            categories=['arp'],
+            policy_override_categories={'arp'} if device_info.get('_arp_policy_override') else None,
+        )
     except Exception as exc:
         logger.warning(
             "[ARP Sweep] collection failed on %s: %s",
             device_info.get('hostname') or device_info.get('ip_address'),
             exc,
         )
-        return []
+        return {
+            'entries': [],
+            'status': 'failed',
+            'failure_class': _classify_arp_failure(exc),
+            'error_message': str(exc),
+        }
 
     entries = []
     dev_label = device_info.get('hostname') or device_info.get('ip_address')
     dev_id = device_info.get('id')
+    arp_category_found = False
+    failure_class = ''
+    error_message = ''
     for cat in payload.get('categories', []):
         if cat.get('key') != 'arp':
             continue
+        arp_category_found = True
         if not cat.get('success'):
             logger.warning(
                 "[ARP Sweep] %s ARP command failed: %s",
                 dev_label,
                 cat.get('error') or 'unknown error',
             )
+            failure_class = _classify_arp_failure(cat.get('error'))
+            error_message = str(cat.get('error') or 'ARP command failed')
             continue
 
         for rec in cat.get('records', []):
@@ -1248,7 +2041,161 @@ def _collect_full_arp_from_device(device_info: dict) -> list[dict]:
     for entry in entries:
         unique[(entry['ip'], entry['mac'], entry.get('interface') or '')] = entry
     entries = list(unique.values())
-    return entries
+    if not arp_category_found:
+        return {
+            'entries': [],
+            'status': 'failed',
+            'failure_class': 'unsupported',
+            'error_message': 'ARP category was not collected for this device',
+        }
+    if failure_class:
+        return {
+            'entries': [],
+            'status': 'failed',
+            'failure_class': failure_class,
+            'error_message': error_message,
+        }
+    return {'entries': entries, 'status': 'success', 'failure_class': '', 'error_message': ''}
+
+
+def _collect_full_arp_from_device(device_info: dict) -> list[dict]:
+    """Backward-compatible list-returning wrapper for existing callers."""
+    return _collect_full_arp_result(device_info).get('entries', [])
+
+
+def _persist_arp_device_entries(device_info: dict, entries: list[dict]) -> dict[str, Any]:
+    """Atomically replace one device's successful ARP snapshot."""
+    if not entries:
+        return {'entry_count': 0, 'mac_changes': 0}
+
+    device_id = str(device_info.get('id') or '')
+    if not device_id:
+        raise ValueError('ARP result has no device id')
+    cached_at = _beijing_now_iso()
+    now_ts = time.time()
+    expires_at = now_ts + ARP_CACHE_TTL_SECONDS
+    placeholder = '%s' if _USE_PG else '?'
+    normalized_entries = [dict(entry) for entry in entries]
+    for entry in normalized_entries:
+        entry['source_device_id'] = device_id
+        entry['source_device'] = device_info.get('hostname') or device_info.get('ip_address') or ''
+
+    conn = get_db_connection()
+    mac_changes: list[dict[str, Any]] = []
+    try:
+        old_rows = conn.execute(
+            f'SELECT target_ip, mac, arp_source FROM arp_cache WHERE source_device_id = {placeholder}',
+            (device_id,),
+        ).fetchall()
+        old_by_ip: dict[str, tuple[str, str]] = {}
+        for row in old_rows:
+            try:
+                source = _json.loads(row['arp_source'] or '{}')
+            except (TypeError, ValueError):
+                source = {}
+            old_by_ip[str(row['target_ip'])] = (str(row['mac'] or ''), str(source.get('device') or ''))
+
+        mac_vlan_map: dict[str, str] = {}
+        for row in conn.execute(
+            f'SELECT mac_address, vlan_id FROM mac_table WHERE device_id = {placeholder} AND vlan_id IS NOT NULL',
+            (device_id,),
+        ).fetchall():
+            mac_key = _normalize_mac(row['mac_address'])
+            vlan_value = _parse_vlan_id(row['vlan_id'])
+            if mac_key and vlan_value is not None:
+                mac_vlan_map.setdefault(mac_key, str(vlan_value))
+
+        conn.execute(f'DELETE FROM arp_table WHERE device_id = {placeholder}', (device_id,))
+        conn.execute(f'DELETE FROM arp_cache WHERE source_device_id = {placeholder}', (device_id,))
+
+        for entry in normalized_entries:
+            if not entry.get('vlan') and mac_vlan_map.get(entry.get('mac', '')):
+                entry['vlan'] = mac_vlan_map[entry['mac']]
+                entry['vlan_source'] = 'mac_table'
+            vlan_id = _parse_vlan_id(entry.get('vlan')) or parse_vlan_id_from_interface(entry.get('interface'))
+            source_dict = {
+                'device_id': device_id,
+                'device': entry.get('source_device') or '',
+                'interface': entry.get('interface') or '',
+                'vlan': entry.get('vlan') or '',
+                'vlan_source': entry.get('vlan_source') or 'unknown',
+            }
+            conn.execute(
+                f'''INSERT INTO arp_cache
+                    (target_ip, mac, vlan_id, arp_source, cached_at, expires_at, source_device_id)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                    ON CONFLICT(target_ip) DO UPDATE SET
+                        mac = excluded.mac, vlan_id = excluded.vlan_id,
+                        arp_source = excluded.arp_source, cached_at = excluded.cached_at,
+                        expires_at = excluded.expires_at, source_device_id = excluded.source_device_id''',
+                (
+                    entry['ip'], entry['mac'], vlan_id, _json.dumps(source_dict),
+                    cached_at, expires_at, device_id,
+                ),
+            )
+            conn.execute(
+                f'''INSERT INTO arp_table
+                    (id, device_id, ip_address, mac_address, interface_name, vlan_id, last_updated)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})''',
+                (
+                    str(uuid.uuid4()), device_id, entry['ip'], entry['mac'],
+                    entry.get('interface') or '', vlan_id, cached_at,
+                ),
+            )
+            old = old_by_ip.get(str(entry['ip']))
+            if old and old[0] != entry['mac']:
+                mac_changes.append({
+                    'ip': entry['ip'],
+                    'old_mac': old[0],
+                    'new_mac': entry['mac'],
+                    'old_vendor': lookup_vendor(old[0]),
+                    'new_vendor': lookup_vendor(entry['mac']),
+                    'old_device': old[1],
+                    'new_device': entry.get('source_device') or '',
+                })
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    with _ARP_CACHE_LOCK:
+        for entry in normalized_entries:
+            _ARP_CACHE[entry['ip']] = {
+                'target_ip': entry['ip'],
+                'mac': entry['mac'],
+                'arp_source': {
+                    'device_id': device_id,
+                    'device': entry.get('source_device') or '',
+                    'interface': entry.get('interface') or '',
+                },
+                'cached_at': cached_at,
+                'created_at_epoch': now_ts,
+                'expires_at': expires_at,
+            }
+        _prune_memory_cache(now_ts)
+
+    if mac_changes:
+        conn = get_db_connection()
+        try:
+            conn.executemany(
+                f'''INSERT INTO mac_change_log
+                    (ip, old_mac, new_mac, old_vendor, new_vendor, old_device, new_device, detected_at)
+                    VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})''',
+                [
+                    (
+                        change['ip'], change['old_mac'], change['new_mac'],
+                        change['old_vendor'], change['new_vendor'], change['old_device'],
+                        change['new_device'], cached_at,
+                    )
+                    for change in mac_changes
+                ],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return {'entry_count': len(normalized_entries), 'mac_changes': len(mac_changes)}
 
 
 def run_arp_sweep() -> dict[str, Any]:
@@ -1259,51 +2206,144 @@ def run_arp_sweep() -> dict[str, Any]:
     logger.info("[ARP Sweep] Starting full ARP table collection...")
     t0 = time.time()
 
-    all_eligible = _load_eligible_devices()
+    collection_run_id = str(uuid.uuid4())
+    gateway_devices, total_eligible, skipped_backoff = _load_arp_sweep_devices(collection_run_id)
     # ARP 采集不按角色排除——access 路由器同样拥有 ARP 表
-    gateway_devices = all_eligible
-
     if not gateway_devices:
         logger.info("[ARP Sweep] No eligible devices, skipping")
         return {
             'eligible_devices': 0,
+            'total_eligible_devices': total_eligible,
+            'skipped_backoff_devices': skipped_backoff,
+            'collection_run_id': collection_run_id,
+            'batch_size': 0,
+            'max_batch_size': ARP_MAX_DEVICES_PER_SWEEP,
             'devices_with_entries': 0,
             'collected_entries': 0,
             'device_results': [],
         }
 
-    logger.info(f"[ARP Sweep] {len(gateway_devices)} eligible device(s) found, starting collection")
+    logger.info(
+        "[ARP Sweep] %s ARP-capable device(s) selected from %s eligible device(s); %s in retry backoff",
+        len(gateway_devices), total_eligible, skipped_backoff,
+    )
 
     all_entries: list[dict] = []
     device_results: list[dict[str, Any]] = []
+    successful_device_ids: set[str] = set()
     workers = _calc_ssh_workers(len(gateway_devices))
 
+    state_by_device = _load_arp_collection_state()
+    status_updates: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {executor.submit(_collect_full_arp_from_device, dev): dev for dev in gateway_devices}
+        future_map = {executor.submit(_collect_full_arp_result, dev): dev for dev in gateway_devices}
         for future in as_completed(future_map):
             dev = future_map[future]
             try:
-                entries = future.result()
+                result = future.result()
+                entries = result.get('entries', [])
+                result_status = result.get('status') or 'failed'
+                failure_class = result.get('failure_class') or ''
+                error_message = result.get('error_message') or ''
                 all_entries.extend(entries)
+                if result_status == 'success' and entries and dev.get('id'):
+                    successful_device_ids.add(str(dev['id']))
+                previous_failures = int(
+                    state_by_device.get(str(dev.get('id') or ''), {}).get('consecutive_failures') or 0
+                )
+                failure_count = previous_failures + 1 if result_status != 'success' else 0
+                retry_at = None
+                circuit_state = 'closed'
+                if result_status != 'success':
+                    delay = _arp_retry_delay(failure_class, failure_count)
+                    retry_at = (
+                        datetime.now(timezone.utc) + timedelta(seconds=delay)
+                    ).replace(microsecond=0).isoformat()
+                    circuit_state = 'open' if failure_count >= _ARP_CIRCUIT_OPEN_AFTER else 'backoff'
+                status_updates.append({
+                    'device_id': str(dev.get('id') or ''),
+                    'collector': 'arp',
+                    'status': 'success' if result_status == 'success' else 'failed',
+                    'transport': 'ssh',
+                    'source': 'arp_sweep',
+                    'coverage_total': len(entries),
+                    'coverage_supported': 1 if result_status == 'success' else 0,
+                    'error_code': failure_class,
+                    'error_message': error_message,
+                    'next_retry_at': retry_at,
+                    'failure_class': failure_class,
+                    'circuit_state': circuit_state,
+                    'metadata': {
+                        'collection_run_id': collection_run_id,
+                        'entry_count': len(entries),
+                        'failure_count': failure_count,
+                    },
+                })
                 device_results.append({
                     'device_id': dev.get('id'),
                     'device': dev.get('hostname') or dev.get('ip_address'),
                     'entry_count': len(entries),
-                    'status': 'success' if entries else 'no_data',
+                    'status': 'success' if result_status == 'success' and entries else (
+                        'no_data' if result_status == 'success' else 'failed'
+                    ),
+                    'failure_class': failure_class,
                 })
             except Exception as exc:
                 logger.warning("[ARP Sweep] Error from %s: %s", dev.get('hostname') or dev.get('ip_address'), exc)
+                failure_class = _classify_arp_failure(exc)
+                previous_failures = int(
+                    state_by_device.get(str(dev.get('id') or ''), {}).get('consecutive_failures') or 0
+                )
+                failure_count = previous_failures + 1
+                retry_at = (
+                    datetime.now(timezone.utc)
+                    + timedelta(seconds=_arp_retry_delay(failure_class, failure_count))
+                ).replace(microsecond=0).isoformat()
+                status_updates.append({
+                    'device_id': str(dev.get('id') or ''),
+                    'collector': 'arp',
+                    'status': 'failed',
+                    'transport': 'ssh',
+                    'source': 'arp_sweep',
+                    'coverage_total': 0,
+                    'coverage_supported': 0,
+                    'error_code': failure_class,
+                    'error_message': str(exc),
+                    'next_retry_at': retry_at,
+                    'failure_class': failure_class,
+                    'circuit_state': 'open' if failure_count >= _ARP_CIRCUIT_OPEN_AFTER else 'backoff',
+                    'metadata': {
+                        'collection_run_id': collection_run_id,
+                        'entry_count': 0,
+                        'failure_count': failure_count,
+                    },
+                })
                 device_results.append({
                     'device_id': dev.get('id'),
                     'device': dev.get('hostname') or dev.get('ip_address'),
                     'entry_count': 0,
                     'status': 'failed',
+                    'failure_class': failure_class,
                 })
+
+    record_collection_results(status_updates)
 
     if not all_entries:
         logger.info("[ARP Sweep] No ARP entries collected")
+        complete_collector_sweep(
+            'arp',
+            run_id=collection_run_id,
+            successful_devices=sum(1 for item in device_results if item.get('status') == 'success'),
+            failed_devices=sum(1 for item in device_results if item.get('status') == 'failed'),
+            collected_entries=0,
+        )
         return {
             'eligible_devices': len(gateway_devices),
+            'total_eligible_devices': total_eligible,
+            'skipped_backoff_devices': skipped_backoff,
+            'collection_run_id': collection_run_id,
+            'batch_size': len(gateway_devices),
+            'max_batch_size': ARP_MAX_DEVICES_PER_SWEEP,
             'devices_with_entries': 0,
             'collected_entries': 0,
             'device_results': sorted(device_results, key=lambda item: item.get('device') or ''),
@@ -1347,21 +2387,53 @@ def run_arp_sweep() -> dict[str, Any]:
         conn = get_db_connection()
         try:
             conn.execute('DELETE FROM arp_cache WHERE expires_at <= ?', (now_ts,))
+            if successful_device_ids:
+                for device_id in successful_device_ids:
+                    conn.execute('DELETE FROM arp_table WHERE device_id = ?', (device_id,))
+                stale_cache_ips: list[str] = []
+                for cache_row in conn.execute('SELECT target_ip, arp_source FROM arp_cache').fetchall():
+                    try:
+                        source = _json.loads(cache_row['arp_source'] or '{}')
+                    except (TypeError, ValueError):
+                        source = {}
+                    if str(source.get('device_id') or '') in successful_device_ids:
+                        stale_cache_ips.append(str(cache_row['target_ip']))
+                for target_ip in stale_cache_ips:
+                    conn.execute('DELETE FROM arp_cache WHERE target_ip = ?', (target_ip,))
+            mac_vlan_map: dict[tuple[str, str], str] = {}
+            for mac_row in conn.execute('SELECT device_id, mac_address, vlan_id FROM mac_table WHERE vlan_id IS NOT NULL').fetchall():
+                mac_key = _normalize_mac(mac_row['mac_address'])
+                vlan_value = _parse_vlan_id(mac_row['vlan_id'])
+                if mac_key and vlan_value is not None:
+                    mac_vlan_map.setdefault((str(mac_row['device_id']), mac_key), str(vlan_value))
             for e in all_entries:
+                if not e.get('vlan'):
+                    learned_vlan = mac_vlan_map.get((str(e.get('source_device_id')), e['mac']))
+                    if learned_vlan:
+                        e['vlan'] = learned_vlan
+                        e['vlan_source'] = 'mac_table'
+                vlan_id = _parse_vlan_id(e.get('vlan')) or parse_vlan_id_from_interface(e.get('interface'))
+                if vlan_id is not None and not e.get('vlan'):
+                    e['vlan'] = str(vlan_id)
+                    e['vlan_source'] = 'arp_interface'
                 source_dict = {
                     'device_id': e['source_device_id'],
                     'device': e['source_device'],
                     'interface': e['interface'],
+                    'vlan': e.get('vlan', ''),
+                    'vlan_source': e.get('vlan_source', 'unknown'),
                 }
                 conn.execute(
-                    '''INSERT INTO arp_cache (target_ip, mac, arp_source, cached_at, expires_at)
-                       VALUES (?, ?, ?, ?, ?)
+                    '''INSERT INTO arp_cache (target_ip, mac, vlan_id, arp_source, cached_at, expires_at, source_device_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(target_ip) DO UPDATE SET
                            mac = excluded.mac,
+                           vlan_id = excluded.vlan_id,
                            arp_source = excluded.arp_source,
                            cached_at = excluded.cached_at,
-                           expires_at = excluded.expires_at''',
-                    (e['ip'], e['mac'], _json.dumps(source_dict), cached_at, expires_at),
+                           expires_at = excluded.expires_at,
+                           source_device_id = excluded.source_device_id''',
+                     (e['ip'], e['mac'], vlan_id, _json.dumps(source_dict), cached_at, expires_at, str(e.get('source_device_id') or '')),
                 )
                 
                 # Bulk update to arp_table as well
@@ -1377,11 +2449,10 @@ def run_arp_sweep() -> dict[str, Any]:
                     if d_row:
                         dev_id = d_row['id']
                 if dev_id:
-                    conn.execute("DELETE FROM arp_table WHERE device_id = ? AND ip_address = ?", (dev_id, e['ip']))
                     conn.execute(
-                        '''INSERT INTO arp_table (id, device_id, ip_address, mac_address, interface_name, last_updated)
-                           VALUES (?, ?, ?, ?, ?, ?)''',
-                        (str(uuid.uuid4()), dev_id, e['ip'], e['mac'], e['interface'] or '', cached_at)
+                        '''INSERT INTO arp_table (id, device_id, ip_address, mac_address, interface_name, vlan_id, last_updated)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                        (str(uuid.uuid4()), dev_id, e['ip'], e['mac'], e['interface'] or '', vlan_id, cached_at)
                     )
             conn.commit()
         finally:
@@ -1425,9 +2496,21 @@ def run_arp_sweep() -> dict[str, Any]:
         except Exception as exc:
             logger.error(f"[ARP Sweep] MAC change log write error: {exc}")
         logger.warning(f"[ARP Sweep] Detected {len(mac_changes)} MAC address changes")
+    complete_collector_sweep(
+        'arp',
+        run_id=collection_run_id,
+        successful_devices=sum(1 for item in device_results if item.get('status') == 'success'),
+        failed_devices=sum(1 for item in device_results if item.get('status') == 'failed'),
+        collected_entries=len(all_entries),
+    )
     logger.info(f"[ARP Sweep] Collected {len(all_entries)} entries from {len(gateway_devices)} devices in {elapsed}s")
     return {
         'eligible_devices': len(gateway_devices),
+        'total_eligible_devices': total_eligible,
+        'skipped_backoff_devices': skipped_backoff,
+        'collection_run_id': collection_run_id,
+        'batch_size': len(gateway_devices),
+        'max_batch_size': ARP_MAX_DEVICES_PER_SWEEP,
         'devices_with_entries': sum(1 for item in device_results if item.get('entry_count', 0) > 0),
         'collected_entries': len(all_entries),
         'device_results': sorted(device_results, key=lambda item: item.get('device') or ''),
@@ -1440,17 +2523,65 @@ async def run_arp_sweep_async():
     return await asyncio.to_thread(run_arp_sweep)
 
 
+def dispatch_arp_sweep() -> dict[str, Any]:
+    """Queue one bounded ARP batch for the process-safe worker pool."""
+    collection_run_id = str(uuid.uuid4())
+    devices, total_eligible, skipped_backoff = _load_arp_sweep_devices(collection_run_id)
+    if not devices:
+        return {
+            'collection_run_id': collection_run_id,
+            'total_eligible_devices': total_eligible,
+            'skipped_backoff_devices': skipped_backoff,
+            'batch_size': 0,
+            'queued_devices': 0,
+            'max_batch_size': ARP_MAX_DEVICES_PER_SWEEP,
+        }
+    payload_by_device = {
+        str(device.get('id')): {
+            'arp_policy_override': bool(device.get('_arp_policy_override')),
+        }
+        for device in devices
+        if device.get('id')
+    }
+    queued = enqueue_tasks(
+        'arp',
+        run_id=collection_run_id,
+        device_ids=[str(device['id']) for device in devices if device.get('id')],
+        payload_by_device=payload_by_device,
+    )
+    logger.info(
+        '[ARP Dispatch] queued %s device task(s) for run %s; %s in backoff',
+        queued, collection_run_id, skipped_backoff,
+    )
+    return {
+        'collection_run_id': collection_run_id,
+        'total_eligible_devices': total_eligible,
+        'skipped_backoff_devices': skipped_backoff,
+        'batch_size': len(devices),
+        'queued_devices': queued,
+        'max_batch_size': ARP_MAX_DEVICES_PER_SWEEP,
+    }
+
+
 # ── 全量 ARP 表查询 ────────────────────────────────────────────────
 
 def get_arp_table() -> dict[str, Any]:
     """查询 PostgreSQL ARP 事实表，并兼容定位缓存中的临时条目。"""
     now_ts = time.time()
     entries_by_ip: dict[str, dict[str, Any]] = {}
+    mac_vlan_map: dict[tuple[str, str], int] = {}
     try:
         conn = get_db_connection()
         try:
+            for mac_row in conn.execute(
+                'SELECT device_id, mac_address, vlan_id FROM mac_table WHERE vlan_id IS NOT NULL'
+            ).fetchall():
+                mac_key = _normalize_mac(mac_row['mac_address'])
+                vlan_value = _parse_vlan_id(mac_row['vlan_id'])
+                if mac_key and vlan_value is not None:
+                    mac_vlan_map.setdefault((str(mac_row['device_id']), mac_key), vlan_value)
             cache_rows = conn.execute(
-                'SELECT target_ip, mac, arp_source, cached_at, expires_at '
+                'SELECT target_ip, mac, vlan_id, arp_source, cached_at, expires_at '
                 'FROM arp_cache WHERE expires_at > ? ORDER BY target_ip',
                 (now_ts,),
             ).fetchall()
@@ -1459,16 +2590,24 @@ def get_arp_table() -> dict[str, Any]:
                 mac_raw = _normalize_mac(row['mac'])
                 if not mac_raw:
                     continue
+                vlan_id = row['vlan_id'] or _parse_vlan_id(source.get('vlan'))
+                if vlan_id is None:
+                    vlan_id = mac_vlan_map.get((str(source.get('device_id') or ''), mac_raw))
                 entries_by_ip[row['target_ip']] = {
                     'ip': row['target_ip'],
                     'mac': _format_mac(mac_raw),
                     'mac_raw': mac_raw,
+                    'vlan': str(vlan_id or ''),
+                    'vlan_id': vlan_id,
+                    'vlan_source': source.get('vlan_source') or ('mac_table' if vlan_id else 'unknown'),
                     'vendor': lookup_vendor(mac_raw),
                     'interface': source.get('interface', ''),
                     'device': source.get('device', ''),
                     'device_id': source.get('device_id'),
                     'cached_at': row['cached_at'],
                     'ttl_remaining': max(0, int(row['expires_at'] - now_ts)),
+                    'age_seconds': _age_seconds(row['cached_at']),
+                    'freshness': 'fresh' if row['expires_at'] > now_ts else 'stale',
                     'source': 'arp_cache',
                 }
 
@@ -1476,7 +2615,7 @@ def get_arp_table() -> dict[str, Any]:
             # scheduled endpoint collection.  Older code only read arp_cache,
             # which made this page show zero even when arp_table had records.
             arp_rows = conn.execute(
-                'SELECT a.ip_address, a.mac_address, a.interface_name, a.device_id, '
+                'SELECT a.ip_address, a.mac_address, a.interface_name, a.vlan_id, a.device_id, '
                 'a.last_updated, d.hostname AS device_hostname '
                 'FROM arp_table a LEFT JOIN devices d ON d.id = a.device_id '
                 'ORDER BY a.ip_address, a.last_updated DESC'
@@ -1491,16 +2630,25 @@ def get_arp_table() -> dict[str, Any]:
         mac_raw = _normalize_mac(row['mac_address'])
         if not ip_addr or not mac_raw or ip_addr in entries_by_ip:
             continue
+        vlan_id = row['vlan_id'] or mac_vlan_map.get((str(row['device_id'] or ''), mac_raw))
         entries_by_ip[ip_addr] = {
             'ip': ip_addr,
             'mac': _format_mac(mac_raw),
             'mac_raw': mac_raw,
+            'vlan': str(vlan_id or ''),
+            'vlan_id': vlan_id,
+            'vlan_source': 'arp_table' if row['vlan_id'] else ('mac_table' if vlan_id else 'unknown'),
             'vendor': lookup_vendor(mac_raw),
             'interface': row['interface_name'] or '',
             'device': row['device_hostname'] or '',
             'device_id': row['device_id'],
             'cached_at': row['last_updated'],
             'ttl_remaining': 0,
+            'age_seconds': _age_seconds(row['last_updated']),
+            'freshness': (
+                'fresh' if _age_seconds(row['last_updated']) is not None and _age_seconds(row['last_updated']) <= ARP_CACHE_TTL_SECONDS
+                else 'stale' if _age_seconds(row['last_updated']) is not None else 'unknown'
+            ),
             'source': 'arp_table',
         }
 
@@ -1612,8 +2760,15 @@ def _get_cached_endpoint(ip: str) -> dict[str, Any] | None:
         conn = get_db_connection()
         try:
             row = conn.execute(
-                'SELECT id, ip, mac, hostname, vendor, os_type, asset_type, switch_id, switch_port, vlan, vrf, site, source_type, confidence, first_seen, last_seen, is_active '
-                'FROM network_endpoints WHERE ip = ? AND is_active = 1',
+                'SELECT ne.id, ne.ip, ne.mac, ne.hostname, ne.vendor, ne.os_type, ne.asset_type, '
+                'ne.switch_id, ne.switch_port, ne.vlan, ne.vrf, ne.site, ne.source_type, '
+                'ne.confidence, ne.first_seen, ne.last_seen, ne.is_active, '
+                'd.hostname AS switch_name, '
+                "COALESCE(s.site_name, s.site_code, NULLIF(ne.site, ''), '未分配站点') AS site_name "
+                'FROM network_endpoints ne '
+                'LEFT JOIN devices d ON d.id = ne.switch_id '
+                "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, '')) "
+                'WHERE ne.ip = ? AND ne.is_active = 1',
                 (ip,),
             ).fetchone()
         finally:
@@ -1630,6 +2785,8 @@ def _get_cached_endpoint(ip: str) -> dict[str, Any] | None:
         res['device_id'] = res['switch_id']
     if 'switch_port' in res:
         res['port'] = res['switch_port']
+    res['switch_name'] = res.get('switch_name') or res.get('switch_id') or ''
+    res['site'] = res.get('site_name') or res.get('site') or '未分配站点'
     return res
 
 
@@ -1742,8 +2899,17 @@ def get_network_endpoints() -> dict[str, Any]:
         conn = get_db_connection()
         try:
             rows = conn.execute(
-                'SELECT id, ip, mac, hostname, vendor, os_type, asset_type, switch_id, switch_port, vlan, vrf, site, source_type, confidence, first_seen, last_seen, is_active '
-                'FROM network_endpoints WHERE is_active = 1 ORDER BY last_seen DESC'
+                "SELECT ne.id, ne.ip, ne.mac, ne.hostname, ne.vendor, ne.os_type, ne.asset_type, "
+                "ne.switch_id, ne.switch_port, ne.vlan, ne.vrf, ne.site, ne.source_type, "
+                "ne.confidence, ne.first_seen, ne.last_seen, ne.is_active, "
+                "d.hostname AS device_name, d.site_id AS device_site_id, "
+                "COALESCE(s.site_name, s.site_code, s_ep.site_name, s_ep.site_code, "
+                "NULLIF(d.site, ''), NULLIF(ne.site, ''), '未分配站点') AS site_name "
+                "FROM network_endpoints ne "
+                "LEFT JOIN devices d ON d.id = ne.switch_id "
+                "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, '')) "
+                "LEFT JOIN sites s_ep ON s_ep.id = ne.site OR s_ep.site_code = ne.site OR s_ep.site_name = ne.site "
+                "WHERE ne.is_active = 1 ORDER BY ne.last_seen DESC"
             ).fetchall()
         finally:
             conn.close()
@@ -1756,15 +2922,25 @@ def get_network_endpoints() -> dict[str, Any]:
         e = dict(row)
         if 'switch_port' in e:
             e['port'] = e['switch_port']
+        e['switch_name'] = e.get('device_name') or e.get('switch_id') or ''
+        # ``site`` is a legacy cache field and may contain an internal site ID.
+        # Return the human-readable CMDB site name at the API boundary.
+        e['site_id'] = e.get('device_site_id') or ''
+        e['site'] = e.get('site_name') or e.get('site') or '未分配站点'
         if 'mac' in e:
             e['mac_display'] = _format_mac(e['mac']) if e['mac'] else '—'
         t = e.get('asset_type', 'host')
         stats[t] = stats.get(t, 0) + 1
         entries.append(e)
 
+    site_stats = {}
+    for entry in entries:
+        site = entry.get('site') or '未分配站点'
+        site_stats[site] = site_stats.get(site, 0) + 1
     return {
         'total': len(entries),
         'type_stats': stats,
+        'site_stats': site_stats,
         'entries': entries,
         'table_name': 'network_endpoints',
         'columns': ['ip', 'mac', 'hostname', 'vendor', 'os_type', 'asset_type', 'switch_id', 'switch_port', 'vlan', 'vrf', 'site', 'source_type', 'confidence', 'first_seen', 'last_seen'],
@@ -1782,8 +2958,11 @@ def get_ip_inventory() -> dict[str, Any]:
         conn = get_db_connection()
         try:
             rows = conn.execute(
-                'SELECT inv.ip, inv.mask, inv.device_id, inv.interface, inv.type, inv.last_seen, d.hostname AS device_name '
-                'FROM ip_inventory inv LEFT JOIN devices d ON inv.device_id = d.id '
+                "SELECT inv.ip, inv.mask, inv.device_id, inv.interface, inv.type, inv.last_seen, "
+                "d.hostname AS device_name, "
+                "COALESCE(s.site_name, s.site_code, NULLIF(d.site, ''), '未分配站点') AS site_name "
+                "FROM ip_inventory inv LEFT JOIN devices d ON inv.device_id = d.id "
+                "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, '')) "
                 'ORDER BY inv.last_seen DESC'
             ).fetchall()
         finally:
@@ -1793,13 +2972,17 @@ def get_ip_inventory() -> dict[str, Any]:
 
     entries = [dict(row) for row in rows]
     type_stats = {}
+    site_stats = {}
     for e in entries:
         t = e.get('type', 'unknown')
         type_stats[t] = type_stats.get(t, 0) + 1
+        site = e.get('site_name') or '未分配站点'
+        site_stats[site] = site_stats.get(site, 0) + 1
 
     return {
         'total': len(entries),
         'type_stats': type_stats,
+        'site_stats': site_stats,
         'entries': entries,
         'table_name': 'ip_inventory',
         'columns': ['ip', 'mask', 'device_id', 'device_name', 'interface', 'type', 'last_seen'],
@@ -1817,8 +3000,11 @@ def get_route_cache() -> dict[str, Any]:
         conn = get_db_connection()
         try:
             rows = conn.execute(
-                'SELECT rc.id, rc.device_id, rc.vrf_name, rc.destination, rc.next_hop, rc.protocol, rc.outgoing_interface, rc.metric, rc.last_updated, d.hostname AS device_name '
-                'FROM route_table rc LEFT JOIN devices d ON rc.device_id = d.id '
+                "SELECT rc.id, rc.device_id, rc.vrf_name, rc.destination, rc.next_hop, rc.protocol, "
+                "rc.outgoing_interface, rc.metric, rc.last_updated, d.hostname AS device_name, "
+                "COALESCE(s.site_name, s.site_code, NULLIF(d.site, ''), '未分配站点') AS site_name "
+                "FROM route_table rc LEFT JOIN devices d ON rc.device_id = d.id "
+                "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, '')) "
                 'ORDER BY rc.device_id, rc.destination'
             ).fetchall()
         finally:
@@ -1844,6 +3030,7 @@ def get_route_cache() -> dict[str, Any]:
             'id': row_dict.get('id'),
             'device_id': row_dict.get('device_id'),
             'device_name': row_dict.get('device_name'),
+            'site_name': row_dict.get('site_name') or '未分配站点',
             'vrf_name': row_dict.get('vrf_name') or 'default',
             'prefix': prefix,
             'mask': mask,
@@ -1859,14 +3046,18 @@ def get_route_cache() -> dict[str, Any]:
         p = e.get('protocol', 'unknown')
         proto_stats[p] = proto_stats.get(p, 0) + 1
     device_stats = {}
+    site_stats = {}
     for e in entries:
         dn = e.get('device_name') or e.get('device_id', 'unknown')
         device_stats[dn] = device_stats.get(dn, 0) + 1
+        site = e.get('site_name') or '未分配站点'
+        site_stats[site] = site_stats.get(site, 0) + 1
 
     return {
         'total': len(entries),
         'protocol_stats': proto_stats,
         'device_stats': device_stats,
+        'site_stats': site_stats,
         'entries': entries,
         'table_name': 'route_table',
         'columns': ['id', 'device_id', 'device_name', 'vrf_name', 'prefix', 'mask', 'next_hop', 'protocol', 'interface', 'metric', 'last_update'],
@@ -1884,8 +3075,12 @@ def get_routing_neighbors() -> dict[str, Any]:
         conn = get_db_connection()
         try:
             rows = conn.execute(
-                'SELECT rn.id, rn.device_id, rn.protocol, rn.neighbor_id, rn.neighbor_ip, rn.local_interface, rn.state, rn.uptime, rn.local_as, rn.remote_as, rn.area_id, rn.last_updated, d.hostname AS device_name '
-                'FROM routing_neighbors rn LEFT JOIN devices d ON rn.device_id = d.id '
+                "SELECT rn.id, rn.device_id, rn.protocol, rn.neighbor_id, rn.neighbor_ip, "
+                "rn.local_interface, rn.state, rn.uptime, rn.local_as, rn.remote_as, rn.area_id, "
+                "rn.last_updated, d.hostname AS device_name, "
+                "COALESCE(s.site_name, s.site_code, NULLIF(d.site, ''), '未分配站点') AS site_name "
+                "FROM routing_neighbors rn LEFT JOIN devices d ON rn.device_id = d.id "
+                "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, '')) "
                 'ORDER BY rn.device_id, rn.protocol, rn.neighbor_ip'
             ).fetchall()
         finally:
@@ -1900,6 +3095,7 @@ def get_routing_neighbors() -> dict[str, Any]:
             'id': row_dict.get('id'),
             'device_id': row_dict.get('device_id'),
             'device_name': row_dict.get('device_name'),
+            'site_name': row_dict.get('site_name') or '未分配站点',
             'protocol': row_dict.get('protocol'),
             'neighbor_id': row_dict.get('neighbor_id'),
             'neighbor_ip': row_dict.get('neighbor_ip'),
@@ -1917,14 +3113,18 @@ def get_routing_neighbors() -> dict[str, Any]:
         p = e.get('protocol', 'unknown')
         proto_stats[p] = proto_stats.get(p, 0) + 1
     device_stats = {}
+    site_stats = {}
     for e in entries:
         dn = e.get('device_name') or e.get('device_id', 'unknown')
         device_stats[dn] = device_stats.get(dn, 0) + 1
+        site = e.get('site_name') or '未分配站点'
+        site_stats[site] = site_stats.get(site, 0) + 1
 
     return {
         'total': len(entries),
         'protocol_stats': proto_stats,
         'device_stats': device_stats,
+        'site_stats': site_stats,
         'entries': entries,
         'table_name': 'routing_neighbors',
         'columns': ['id', 'device_id', 'device_name', 'protocol', 'neighbor_id', 'neighbor_ip', 'local_interface', 'state', 'uptime', 'remote_as', 'area_id', 'last_update'],
@@ -1938,8 +3138,12 @@ def get_bgp_routes() -> dict[str, Any]:
         conn = get_db_connection()
         try:
             rows = conn.execute(
-                'SELECT br.id, br.device_id, br.vrf_name, br.prefix, br.next_hop, br.metric, br.loc_pref, br.weight, br.as_path, br.local_as, br.is_best, br.is_active, br.last_updated, d.hostname AS device_name '
-                'FROM bgp_route_table br LEFT JOIN devices d ON br.device_id = d.id '
+                "SELECT br.id, br.device_id, br.vrf_name, br.prefix, br.next_hop, br.metric, "
+                "br.loc_pref, br.weight, br.as_path, br.local_as, br.is_best, br.is_active, "
+                "br.last_updated, d.hostname AS device_name, "
+                "COALESCE(s.site_name, s.site_code, NULLIF(d.site, ''), '未分配站点') AS site_name "
+                "FROM bgp_route_table br LEFT JOIN devices d ON br.device_id = d.id "
+                "LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, '')) "
                 'ORDER BY br.device_id, br.vrf_name, br.prefix, br.next_hop'
             ).fetchall()
         finally:
@@ -1954,6 +3158,7 @@ def get_bgp_routes() -> dict[str, Any]:
             'id': row_dict.get('id'),
             'device_id': row_dict.get('device_id'),
             'device_name': row_dict.get('device_name'),
+            'site_name': row_dict.get('site_name') or '未分配站点',
             'vrf_name': row_dict.get('vrf_name'),
             'prefix': row_dict.get('prefix'),
             'next_hop': row_dict.get('next_hop'),
@@ -1968,13 +3173,17 @@ def get_bgp_routes() -> dict[str, Any]:
         })
 
     device_stats = {}
+    site_stats = {}
     for e in entries:
         dn = e.get('device_name') or e.get('device_id', 'unknown')
         device_stats[dn] = device_stats.get(dn, 0) + 1
+        site = e.get('site_name') or '未分配站点'
+        site_stats[site] = site_stats.get(site, 0) + 1
 
     return {
         'total': len(entries),
         'device_stats': device_stats,
+        'site_stats': site_stats,
         'entries': entries,
         'table_name': 'bgp_route_table',
         'columns': ['id', 'device_id', 'device_name', 'vrf_name', 'prefix', 'next_hop', 'metric', 'loc_pref', 'weight', 'as_path', 'local_as', 'is_best', 'is_active', 'last_update'],
@@ -2369,7 +3578,8 @@ def run_unified_nsot_sync() -> dict[str, Any]:
     interface_status_result: dict[str, Any] = {}
     prefix_result: dict[str, int] = {"devices": 0, "created": 0, "updated": 0, "failed": 0}
     try:
-        run_endpoint_collector()
+        run_arp_sweep()
+        run_endpoint_collector(refresh_arp=False)
         run_route_collector()
         sync_routing_neighbors_job()
         sync_bgp_routes_job()
@@ -2386,7 +3596,7 @@ def run_unified_nsot_sync() -> dict[str, Any]:
     }
 
 
-def run_endpoint_collector():
+def run_endpoint_collector(*, refresh_arp: bool = True):
     """
     后台终端事实库同步任务：
     1. 触发 ARP Sweep 以确保本地 ARP 缓存最新。
@@ -2399,10 +3609,11 @@ def run_endpoint_collector():
     t0 = time.time()
 
     # 1. 确保 ARP 缓存最新
-    try:
-        run_arp_sweep()
-    except Exception as e:
-        logger.error(f"[Endpoint Collector] ARP sweep failed: {e}")
+    if refresh_arp:
+        try:
+            run_arp_sweep()
+        except Exception as e:
+            logger.error(f"[Endpoint Collector] ARP sweep failed: {e}")
 
     arp_data = get_arp_table()
     arp_entries = arp_data.get('entries', [])
@@ -2583,6 +3794,11 @@ def run_endpoint_collector():
 
 async def run_endpoint_collector_async():
     await asyncio.to_thread(run_endpoint_collector)
+
+
+def run_endpoint_fact_collector() -> None:
+    """Refresh MAC/interface endpoint facts using the latest ARP snapshot."""
+    run_endpoint_collector(refresh_arp=False)
 
 
 # ── 路由表解析与采集 ─────────────────────────────────────

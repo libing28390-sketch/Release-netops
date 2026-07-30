@@ -124,13 +124,17 @@ def _default_plan(device: dict[str, Any]) -> dict[str, bool]:
     if role in {"router", "gateway", "firewall", "load-balancer"}:
         plan.update({"mac_table": False, "vlan": False, "endpoint_location": False})
 
-    # An access switch is an L2 source for MAC/VLAN/endpoint data, not a
-    # routing-protocol source. ARP stays disabled unless explicitly enabled
-    # for an SVI-enabled access switch.
+    # Access switches are an L2 source for MAC/VLAN/endpoint data. ARP is not
+    # enabled by default here because a large access layer is usually pure L2;
+    # the ARP scheduler promotes an access switch only when interface evidence
+    # proves it has an SVI/Vlanif, or when the operator explicitly overrides
+    # ``arp`` for that device. This prevents a high-frequency ARP sweep from
+    # opening SSH sessions to thousands of devices that cannot own ARP state.
     if role == "access":
         plan.update({
-            "arp": False, "routes": False, "bgp": False, "ospf": False,
+            "routes": False, "bgp": False, "ospf": False,
             "eigrp": False, "isis": False, "rip": False, "bfd": False,
+            "arp": False,
         })
 
     # A generic switch keeps the legacy L2+L3 behavior for compatibility;
@@ -222,7 +226,7 @@ def collection_catalog() -> list[dict[str, Any]]:
         {"key": "interface_status", "name_zh": "接口状态与流量", "transport": "snmp", "default_interval": "1m"},
         {"key": "interface_ip", "name_zh": "接口 IP/Loopback", "transport": "ssh/playbook", "default_interval": "24h"},
         {"key": "lldp", "name_zh": "LLDP 邻居", "transport": "ssh/playbook", "default_interval": "24h full reconcile"},
-        {"key": "arp", "name_zh": "ARP 表", "transport": "ssh", "default_interval": "5m"},
+        {"key": "arp", "name_zh": "ARP 表", "transport": "ssh", "default_interval": "10m; bounded batches"},
         {"key": "mac_table", "name_zh": "MAC 地址表", "transport": "ssh", "default_interval": "5m"},
         {"key": "vlan", "name_zh": "VLAN", "transport": "ssh", "default_interval": "5m"},
         {"key": "routes", "name_zh": "路由表", "transport": "ssh", "default_interval": "5m"},
