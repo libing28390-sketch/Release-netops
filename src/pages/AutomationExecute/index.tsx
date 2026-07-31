@@ -396,7 +396,8 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                 : isMaipu
                   ? 'show interface switchport brief'
                   : isZte
-                    ? 'show interface brief',
+                    ? 'show interface brief'
+                    : 'show ip interface brief',
         },
         {
           icon: '📋',
