@@ -29,7 +29,10 @@ def _read_local_templates() -> list[dict]:
         templates = conn.execute(
             'SELECT id, name, type, category, vendor, content, rollback, description, '
             'platform_family, software_version, official_reference, validation_status, '
-            'last_used as lastUsed FROM templates'
+            'last_used as lastUsed, code, source_type, risk_level, status, '
+            'current_version, is_official, created_by, created_at, updated_at, '
+            'variable_schema_json, example_values_json, usage_notes, risk_notes, '
+            'tags_json, favorite_count, use_count, quality_score FROM templates'
         ).fetchall()
         return [dict(template) for template in templates]
     finally:
@@ -164,7 +167,7 @@ def create_template(template: dict = Body(...)):
             target_name=template.get('name'),
             details={'vendor': template.get('vendor'), 'type': template.get('type')},
         )
-        return {"success": True}
+        return {"success": True, "id": template_id}
     except HTTPException:
         raise
     except Exception as e:

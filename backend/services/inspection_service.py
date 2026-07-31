@@ -197,6 +197,10 @@ def _netmiko_platform_type(platform: str) -> str:
         'ruijie_rgos': 'ruijie_os',
         'zte_zxros': 'zte_zxros',
         'maipu': 'maipu',
+        'dptech': 'dptech_ios',
+        'dptech_ios': 'dptech_ios',
+        'dptech_conplat': 'dptech_ios',
+        'dptech_conplat_fw': 'dptech_ios',
     }
     return mapping.get(platform, 'cisco_ios')
 

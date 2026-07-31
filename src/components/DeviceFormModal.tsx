@@ -32,6 +32,8 @@ const PLATFORM_OPTIONS = [
   { value: 'ruijie_rgos', label: 'Ruijie RGOS' },
   { value: 'zte_zxros', label: 'ZTE ZXROS' },
   { value: 'maipu', label: 'Maipu Network OS' },
+  { value: 'dptech_conplat', label: 'DPTech Conplat (Switch)' },
+  { value: 'dptech_conplat_fw', label: 'DPTech Conplat FW (Firewall)' },
 ];
 
 const ROLE_OPTIONS = [

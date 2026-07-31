@@ -3,6 +3,8 @@ import time
 from typing import List, Dict, Any
 try:
     from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
+    from .ssh_compat import build_netmiko_compatibility_kwargs, drain_paged_output, ensure_netmiko_custom_platforms
+    ensure_netmiko_custom_platforms()
     HAS_NETMIKO = True
 except ImportError:
     HAS_NETMIKO = False
@@ -30,7 +32,7 @@ _CLI_ERROR_PATTERNS = re.compile(
 )
 
 # 慢速平台（Huawei/H3C）不适合 fast_cli，需要保守的时序参数
-_SLOW_PLATFORMS = {'huawei_vrp', 'h3c_comware', 'h3c_comware9', 'hp_comware', 'ruijie_rgos', 'zte_zxros', 'maipu'}
+_SLOW_PLATFORMS = {'huawei_vrp', 'h3c_comware', 'h3c_comware9', 'hp_comware', 'ruijie_rgos', 'zte_zxros', 'maipu', 'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'}
 
 # ── IP 地址前缀长度 → 点分十进制子网掩码 自动归一化 ─────────────────────────
 # 华为 VRP / H3C Comware 支持 `ip address X.X.X.X 24` 写法；
@@ -185,7 +187,11 @@ class NetmikoDriver(BaseDriver):
             'zte': 'zte_zxros',
             'zxros': 'zte_zxros',
             'maipu_network': 'maipu',
-            '\u534e\u4e3avrp': 'huawei_vrp',
+            'dptech': 'dptech_ios',
+            'dptech_ios': 'dptech_ios',
+            'dptech_conplat': 'dptech_ios',
+            'dptech_conplat_fw': 'dptech_ios',
+            '华为vrp': 'huawei_vrp',
         }
         p = aliases.get(p, p)
         mapping = {
@@ -198,6 +204,7 @@ class NetmikoDriver(BaseDriver):
             'ruijie_rgos':  'ruijie_os',
             'zte_zxros': 'zte_zxros',
             'maipu': 'maipu',
+            'dptech_ios': 'dptech_ios',
             'linux':        'linux',
             'ubuntu':       'linux',
             'centos':       'linux',

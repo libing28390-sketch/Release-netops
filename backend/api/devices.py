@@ -218,6 +218,12 @@ def _sanitize_device_item(item: dict) -> dict:
     cmdb_rack_id = str(sanitized.get('cmdb_rack_id') or '').strip()
     if cmdb_rack_id and not str(sanitized.get('rack_id') or '').strip():
         sanitized['rack_id'] = cmdb_rack_id
+
+    # Synchronize lifecycle status prioritizing physical_assets status when linked
+    asset_lifecycle = str(sanitized.get('asset_lifecycle_status') or '').strip()
+    device_lifecycle = str(sanitized.get('lifecycle_status') or '').strip()
+    sanitized['lifecycle_status'] = asset_lifecycle or device_lifecycle or 'staging'
+
     if 'password' in sanitized:
         sanitized['password'] = ''
     if 'enable_password' in sanitized:
@@ -595,6 +601,7 @@ def read_devices(
             ', pa.asset_tag, pa.site_id AS asset_site_id, pa.rack, pa.rack_unit, '
             'pa.department, pa.warranty_expiry, pa.purchase_date, '
             'pa.business_ip, pa.vlan, pa.uplink_switch, pa.uplink_port, '
+            'pa.lifecycle_status AS asset_lifecycle_status, pa.status AS asset_status, '
             'COALESCE(NULLIF(pa.site_id, \'\'), NULLIF(d.site_id, \'\'), \'\') AS canonical_site_id, '
             's.site_name, s.site_code, s.country AS site_country, '
             's.state_province AS site_state_province, s.city AS site_city, '
@@ -625,7 +632,7 @@ def read_devices(
                 'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.sn, d.model, d.version, '
                 'd.role, d.site, d.uptime, d.connection_method, d.cpu_usage, d.memory_usage, d.temp, '
                 'd.site_id, d.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor, '
-                'd.device_category, d.management_port'
+                'd.device_category, d.management_port, d.lifecycle_status'
                 + asset_cols
             )
 
@@ -1811,6 +1818,7 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
         )
         return res
     except ValueError as exc:
+        logger.exception("Failed operational-data collection for device %s", device_id)
         _record_instant_execution(
             device_id, query_name, [], 'failed',
             platform=device_info.get('platform', 'unknown'),

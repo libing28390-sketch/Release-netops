@@ -73,7 +73,7 @@ export function getRouteContext(pathname: string): RouteContext {
   else if (first === 'assets') {
     if (second === 'dashboard') {
       activeTab = 'assets';
-    } else if (second === 'devices') {
+    } else if (second === 'network-devices' || second === 'devices') {
       activeTab = 'inventory';
       inventorySubPage = 'devices';
     } else if (second === 'servers') {

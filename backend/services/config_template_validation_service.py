@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import Any
 
@@ -43,6 +44,137 @@ _OFFICIAL_REFERENCES = {
         "scope": "Comware 7 CLI views, syntax, and undo commands",
     }],
 }
+
+_ALLOWED_FILTERS = {
+    "default",
+    "d",
+    "upper",
+    "lower",
+    "capitalize",
+    "title",
+    "trim",
+    "replace",
+    "join",
+    "length",
+    "int",
+    "float",
+    "string",
+    "list",
+    "first",
+    "last",
+    "sort",
+    "unique",
+    "min",
+    "max",
+    "round",
+    "abs",
+}
+_ALLOWED_TESTS = {
+    "defined",
+    "undefined",
+    "none",
+    "boolean",
+    "true",
+    "false",
+    "integer",
+    "float",
+    "number",
+    "string",
+    "mapping",
+    "sequence",
+    "iterable",
+    "in",
+    "eq",
+    "ne",
+    "lt",
+    "le",
+    "gt",
+    "ge",
+}
+
+
+def _ip_interface(value: Any) -> ipaddress.IPv4Interface | ipaddress.IPv6Interface:
+    text = str(value or "").strip()
+    if "/" not in text:
+        address = ipaddress.ip_address(text)
+        text = f"{text}/{'32' if address.version == 4 else '128'}"
+    return ipaddress.ip_interface(text)
+
+
+def _filter_ipaddr(value: Any, attribute: str = "address") -> str:
+    interface = _ip_interface(value)
+    requested = str(attribute or "address").lower()
+    if requested in {"address", "ip", "host"}:
+        return str(interface.ip)
+    if requested in {"network", "network_address"}:
+        return str(interface.network.network_address)
+    if requested in {"prefix", "prefixlen"}:
+        return str(interface.network.prefixlen)
+    if requested == "netmask":
+        return str(interface.network.netmask)
+    if requested == "hostmask":
+        return str(interface.network.hostmask)
+    if requested == "broadcast":
+        return str(interface.network.broadcast_address)
+    raise ValueError(f"不支持的 ipaddr 属性: {attribute}")
+
+
+def _filter_network_address(value: Any) -> str:
+    return str(_ip_interface(value).network.network_address)
+
+
+def _filter_netmask(value: Any) -> str:
+    return str(_ip_interface(value).network.netmask)
+
+
+def _filter_wildcard(value: Any) -> str:
+    interface = _ip_interface(value)
+    if interface.version != 4:
+        raise ValueError("IPv6 不支持 IPv4 wildcard mask")
+    return str(interface.network.hostmask)
+
+
+def _filter_normalize_interface(value: Any) -> str:
+    text = re.sub(r"\s+", "", str(value or "")).strip()
+    aliases = (
+        (re.compile(r"^gi(?:gabit(?:ethernet)?)?", re.I), "GigabitEthernet"),
+        (re.compile(r"^te(?:n(?:gigabit)?ethernet)?", re.I), "TenGigabitEthernet"),
+        (re.compile(r"^fa(?:stethernet)?", re.I), "FastEthernet"),
+        (re.compile(r"^eth(?:ernet)?", re.I), "Ethernet"),
+        (re.compile(r"^lo(?:opback)?", re.I), "LoopBack"),
+        (re.compile(r"^po(?:rt-channel)?", re.I), "Port-channel"),
+    )
+    for pattern, replacement in aliases:
+        if pattern.search(text):
+            return pattern.sub(replacement, text, count=1)
+    return text
+
+
+def _build_environment() -> SandboxedEnvironment:
+    environment = SandboxedEnvironment(
+        undefined=StrictUndefined,
+        autoescape=False,
+        keep_trailing_newline=True,
+    )
+    built_in_filters = dict(environment.filters)
+    environment.filters.clear()
+    for name in sorted(_ALLOWED_FILTERS):
+        if name in built_in_filters:
+            environment.filters[name] = built_in_filters[name]
+    built_in_tests = dict(environment.tests)
+    environment.tests.clear()
+    for name in sorted(_ALLOWED_TESTS):
+        if name in built_in_tests:
+            environment.tests[name] = built_in_tests[name]
+    environment.filters.update({
+        "ipaddr": _filter_ipaddr,
+        "network_address": _filter_network_address,
+        "netmask": _filter_netmask,
+        "wildcard": _filter_wildcard,
+        "normalize_interface": _filter_normalize_interface,
+    })
+    environment.globals.clear()
+    return environment
 
 
 def _nested_context(values: dict[str, Any] | None) -> dict[str, Any]:
@@ -178,12 +310,7 @@ def validate_template(
             "official_references": official_references,
         }
 
-    environment = SandboxedEnvironment(
-        undefined=StrictUndefined,
-        autoescape=False,
-        keep_trailing_newline=True,
-    )
-    environment.globals.clear()
+    environment = _build_environment()
     try:
         ast = environment.parse(source)
         required_names = set(meta.find_undeclared_variables(ast))

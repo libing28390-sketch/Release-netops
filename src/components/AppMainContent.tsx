@@ -1058,7 +1058,7 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'config' && configPage === 'search' && (
         <Suspense fallback={lazyPanelFallback}>
-          <ConfigSearchTab t={t} />
+          <ConfigSearchTab t={t} language={language} />
         </Suspense>
       )}
       {activeTab === 'config' && configPage === 'templates' && (

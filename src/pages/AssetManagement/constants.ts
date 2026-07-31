@@ -56,6 +56,10 @@ export const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]
   'Palo Alto':[{ value: 'paloalto_panos', label: 'PAN-OS' }],
   ZTE:        [{ value: 'zte_zxros', label: 'ZTE ZXROS' }],
   Maipu:      [{ value: 'maipu', label: 'Maipu Network OS' }],
+  DPtech:     [
+    { value: 'dptech_conplat', label: 'DPTech Conplat (Switch)' },
+    { value: 'dptech_conplat_fw', label: 'DPTech Conplat FW (Firewall)' },
+  ],
 };
 
 export const SERVER_PLATFORMS = [
@@ -68,7 +72,26 @@ export const SERVER_PLATFORMS = [
   { value: 'esxi',    label: 'VMware ESXi' },
 ];
 
-export const ALL_PLATFORMS = [...Object.values(VENDOR_PLATFORMS).flat(), ...SERVER_PLATFORMS];
+export const uniquePlatforms = (items: { value: string; label: string }[]) => {
+  const seen = new Set<string>();
+  return items.filter(item => {
+    if (seen.has(item.value)) return false;
+    seen.add(item.value);
+    return true;
+  });
+};
+
+export const ALL_PLATFORMS = uniquePlatforms([...Object.values(VENDOR_PLATFORMS).flat(), ...SERVER_PLATFORMS]);
+
+export const getPlatformsForVendor = (vendor?: string) => {
+  if (!vendor) return ALL_PLATFORMS;
+  const v = vendor.trim().toLowerCase();
+  const matchedKey = Object.keys(VENDOR_PLATFORMS).find(k => k.toLowerCase() === v || (v === '迪普' && k.toLowerCase() === 'dptech'));
+  if (matchedKey && VENDOR_PLATFORMS[matchedKey]) {
+    return uniquePlatforms(VENDOR_PLATFORMS[matchedKey]);
+  }
+  return ALL_PLATFORMS;
+};
 
 export const COL_MAP: Record<string, string> = {
   '主机名': 'hostname', 'Hostname': 'hostname', 'hostname': 'hostname',
@@ -126,7 +149,8 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
   vendor: {
     '思科': 'Cisco', '华为': 'Huawei', '华三': 'H3C', '阿里斯塔': 'Arista',
     '瞻博': 'Juniper', '锐捷': 'Ruijie', '飞塔': 'Fortinet', '帕洛阿尔托': 'Palo Alto',
-    '中兴': 'ZTE', '迈普': 'Maipu', '戴尔': 'Dell', '惠普': 'HP', '联想': 'Lenovo',
+    '中兴': 'ZTE', '迈普': 'Maipu', '迪普': 'DPtech', '迪普科技': 'DPtech', 'DPTech': 'DPtech', 'DPtech': 'DPtech', 'dptech': 'DPtech',
+    '戴尔': 'Dell', '惠普': 'HP', '联想': 'Lenovo',
     '浪潮': 'Inspur', '通用服务器': 'Generic Server',
   },
   device_role: {
@@ -170,6 +194,11 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     '华三 Comware V5': 'hp_comware', '华三 Comware V7': 'h3c_comware', '华三 Comware V9': 'h3c_comware9',
     '阿里斯塔 EOS': 'arista_eos', '瞻博 JunOS': 'juniper_junos', '锐捷 RGOS': 'ruijie_rgos',
     '飞塔 FortiOS': 'fortinet', '帕洛阿尔托 PAN-OS': 'paloalto_panos', '中兴 ZXROS': 'zte_zxros', '迈普网络系统': 'maipu',
+    '迪普 Conplat': 'dptech_conplat', '迪普 Conplat FW': 'dptech_conplat_fw',
+    '迪普交换机': 'dptech_conplat', '迪普防火墙': 'dptech_conplat_fw',
+    'DPTech Conplat (Switch)': 'dptech_conplat', 'DPTech Conplat FW (Firewall)': 'dptech_conplat_fw',
+    'DPTech Conplat': 'dptech_conplat', 'DPTech Conplat FW': 'dptech_conplat_fw',
+    dptech_conplat: 'dptech_conplat', dptech_conplat_fw: 'dptech_conplat_fw', dptech_ios: 'dptech_conplat',
     'Linux（通用）': 'linux', '红帽 RHEL': 'redhat', 'Windows服务器': 'windows', 'VMware ESXi（虚拟化）': 'esxi',
     Ubuntu: 'ubuntu', CentOS: 'centos', Debian: 'debian',
     'Cisco IOS': 'cisco_ios', 'Cisco NX-OS': 'cisco_nxos', 'Cisco IOS-XE': 'cisco_xe',

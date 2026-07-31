@@ -53,7 +53,7 @@ export const navConfig: NavGroup[] = [
     icon: 'Server',
     children: [
       { id: 'assets',     label: '资产管理',    labelEn: 'Assets',          path: '/assets/dashboard',   icon: 'Package' },
-      { id: 'devices',    label: '网络设备',    labelEn: 'Network Devices', path: '/assets/devices',     icon: 'Router' },
+      { id: 'devices',    label: '网络设备',    labelEn: 'Network Devices', path: '/assets/network-devices', icon: 'Router' },
       { id: 'servers',    label: '服务器',      labelEn: 'Servers',         path: '/assets/servers',     icon: 'Server' },
       { id: 'path-diagnose', label: 'NPA 智能路径诊断', labelEn: 'NPA Path Diagnostics', path: '/assets/diagnose', icon: 'ShieldAlert' },
       { id: 'nsot',          label: '网络事实库',      labelEn: 'Network Facts (NSOT)', path: '/assets/nsot',     icon: 'Database' },

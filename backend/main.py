@@ -33,6 +33,7 @@ from api.health import router as health_router, record_host_resource_snapshot
 from api.devices import router as devices_router
 from api.jobs import router as jobs_router
 from api.templates import router as templates_router
+from api.config_templates import router as config_templates_router
 from api.automation import router as automation_router
 from api.users import router as users_router
 from api.topology import router as topology_router
@@ -50,6 +51,8 @@ from api.alerts import router as alerts_router
 from api.audit import router as audit_router
 from api.compliance import router as compliance_router
 from api.config_drift import router as config_drift_router
+from api.config_search import router as config_search_router
+from api.config_diff_analysis import router as config_diff_analysis_router
 from api.capacity import router as capacity_router
 from api.reports import router as reports_router
 from api.ipam import router as ipam_router
@@ -420,6 +423,7 @@ app.include_router(tags_router,          prefix="/api")
 app.include_router(devices_router,       prefix="/api")
 app.include_router(jobs_router,          prefix="/api")
 app.include_router(templates_router,     prefix="/api")
+app.include_router(config_templates_router, prefix="/api")
 app.include_router(assets_router,        prefix="/api")
 app.include_router(racks_router,         prefix="/api")
 app.include_router(credentials_router,   prefix="/api")
@@ -434,6 +438,8 @@ app.include_router(scheduled_jobs_router, prefix="/api")
 app.include_router(configs_router,        prefix="/api")
 app.include_router(config_backup_policies_router, prefix="/api")
 app.include_router(config_drift_router,   prefix="/api")
+app.include_router(config_search_router,  prefix="/api")
+app.include_router(config_diff_analysis_router, prefix="/api")
 app.include_router(monitoring_router,     prefix="/api")
 app.include_router(alerts_router,         prefix="/api")
 app.include_router(topology_router,       prefix="/api")

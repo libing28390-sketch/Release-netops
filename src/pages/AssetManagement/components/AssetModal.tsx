@@ -4,7 +4,7 @@ import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTri
 import DateTimePicker from '../../../components/DateTimePicker';
 import { Asset } from '../types';
 import type { TagDefinition } from '../../../types';
-import { VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, STATUSES, LIFECYCLE_STATUSES } from '../constants';
+import { VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, getPlatformsForVendor, STATUSES, LIFECYCLE_STATUSES } from '../constants';
 import { AssetTagPicker } from './AssetTagPicker';
 
 const TOPOLOGY_ROLE_OPTIONS = [
@@ -125,8 +125,13 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const snmpCommunityConfigured = Boolean(form.snmp_community_set || selectedSnmpCredential?.has_snmp_community);
 
   const withTechnologyTag = (next: any, vendor: string, platform: string) => {
+    let targetPlatform = platform;
+    if ((vendor === 'DPtech' || vendor === 'DPTech' || vendor === '迪普') && !['dptech_conplat', 'dptech_conplat_fw'].includes(platform)) {
+      const isFw = String(next.device_role || '').toLowerCase().includes('firewall') || String(next.device_role || '').includes('防火墙');
+      targetPlatform = isFw ? 'dptech_conplat_fw' : 'dptech_conplat';
+    }
     const vendorCode = vendor ? `vendor.${vendor.toLowerCase().replace(/\s+/g, '').replace('paloalto', 'paloalto')}` : '';
-    const effectivePlatform = next.asset_type === 'network_device' ? platform : next.platform;
+    const effectivePlatform = next.asset_type === 'network_device' ? targetPlatform : next.platform;
     const platformCode = effectivePlatform ? `platform.${effectivePlatform}` : '';
     const vendorTag = allTags.find(tag => tag.code === vendorCode && tag.exclusive_group === 'technology.vendor');
     const platformTag = allTags.find(tag => tag.code === platformCode && tag.exclusive_group === 'technology.platform');
@@ -135,7 +140,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
       const tag = allTags.find(item => item.id === id);
       return !tag?.exclusive_group?.startsWith('technology.');
     });
-    return { ...next, tag_ids: [...withoutTechnology, ...(vendorTag ? [vendorTag.id] : []), ...(platformTag ? [platformTag.id] : [])] };
+    return { ...next, platform: targetPlatform, tag_ids: [...withoutTechnology, ...(vendorTag ? [vendorTag.id] : []), ...(platformTag ? [platformTag.id] : [])] };
   };
 
   // Real-time U-position validation
@@ -416,7 +421,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                           <option key={p.value} value={p.value}>{p.label}</option>
                         ))
                       ) : (
-                        (VENDOR_PLATFORMS[form.vendor] || ALL_PLATFORMS).map(p => (
+                        getPlatformsForVendor(form.vendor).map(p => (
                           <option key={p.value} value={p.value}>{p.label}</option>
                         ))
                       )}
@@ -660,31 +665,35 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   </div>
                 )}
 
-                <div className="flex items-center gap-1.5 mt-2 mb-1">
-                  <Wifi size={12} className="text-[#00bceb]/60" />
-                  <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">SNMP</span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
-                  <div>
-                    <Field label={zh ? '团体字' : 'Community'} value={form.snmp_community} onChange={v => setForm(f => ({ ...f, snmp_community: v }))} placeholder={snmpCommunityConfigured ? (zh ? '已安全存储，留空保持不变' : 'Configured; leave empty to keep') : (zh ? '可选' : 'Optional')} />
-                    {snmpCommunityConfigured && <p className="mt-1 text-[8px] text-emerald-600">✓ {zh ? '已配置（不会回显明文）' : 'Configured (value is not revealed)'}</p>}
-                  </div>
-                  <Field label={zh ? '端口' : 'Port'} value={form.snmp_port} onChange={v => setForm(f => ({ ...f, snmp_port: v }))} placeholder="161" />
-                  <div className="col-span-2">
-                    <label className="block text-[10px] text-black/30 mb-0.5">{zh ? 'SNMP 凭据' : 'SNMP Credential'}</label>
-                    <select
-                      value={form.snmp_credential_id || ''}
-                      onChange={e => setForm(f => ({ ...f, snmp_credential_id: e.target.value }))}
-                      className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
-                    >
-                      <option value="">{zh ? '使用资产本地 Community' : 'Use asset-local Community'}</option>
-                      {snmpCredentials.map(c => (
-                        <option key={c.id} value={c.id}>{c.credential_name} (SNMPv2c)</option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-[8px] text-black/30">{zh ? '选择后使用凭据中心的 Community，不会替换 SSH 登录凭据。' : 'Uses the credential-center Community without replacing the SSH login credential.'}</p>
-                  </div>
-                </div>
+                {form.asset_type === 'network_device' && (
+                  <>
+                    <div className="flex items-center gap-1.5 mt-2 mb-1">
+                      <Wifi size={12} className="text-[#00bceb]/60" />
+                      <span className="text-[10px] font-bold text-black/30 uppercase tracking-wider">SNMP</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
+                      <div>
+                        <Field label={zh ? '团体字' : 'Community'} value={form.snmp_community} onChange={v => setForm(f => ({ ...f, snmp_community: v }))} placeholder={snmpCommunityConfigured ? (zh ? '已安全存储，留空保持不变' : 'Configured; leave empty to keep') : (zh ? '可选' : 'Optional')} />
+                        {snmpCommunityConfigured && <p className="mt-1 text-[8px] text-emerald-600">✓ {zh ? '已配置（不会回显明文）' : 'Configured (value is not revealed)'}</p>}
+                      </div>
+                      <Field label={zh ? '端口' : 'Port'} value={form.snmp_port} onChange={v => setForm(f => ({ ...f, snmp_port: v }))} placeholder="161" />
+                      <div className="col-span-2">
+                        <label className="block text-[10px] text-black/30 mb-0.5">{zh ? 'SNMP 凭据' : 'SNMP Credential'}</label>
+                        <select
+                          value={form.snmp_credential_id || ''}
+                          onChange={e => setForm(f => ({ ...f, snmp_credential_id: e.target.value }))}
+                          className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+                        >
+                          <option value="">{zh ? '使用资产本地 Community' : 'Use asset-local Community'}</option>
+                          {snmpCredentials.map(c => (
+                            <option key={c.id} value={c.id}>{c.credential_name} (SNMPv2c)</option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-[8px] text-black/30">{zh ? '选择后使用凭据中心的 Community，不会替换 SSH 登录凭据。' : 'Uses the credential-center Community without replacing the SSH login credential.'}</p>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 

@@ -95,6 +95,10 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
         return 'zte_zxros'
     if 'maipu' in v:
         return 'maipu'
+    if 'dptech' in v or '迪普' in v:
+        if 'fw' in v or 'firewall' in v or '防火墙' in v or asset_type == 'firewall':
+            return 'dptech_conplat_fw'
+        return 'dptech_conplat'
     if any(x in v for x in ['ubuntu', 'debian', 'centos', 'redhat', 'linux']):
         return 'linux'
     

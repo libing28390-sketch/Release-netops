@@ -37,7 +37,7 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         'huawei_vrp', 'huawei_vrpv8', 'vrp5', 'vrpv5', 'vrp8', 'vrpv8',
         'h3c_comware', 'h3c_comware9', 'hp_comware', 'comware5', 'comware7', 'comware9',
         'ruijie_rgos', 'ruijie_os', 'zte_zxros', 'maipu', 'maipu_network', 'maipu_mypower',
-        'dptech_ios', 'dptech',
+        'dptech_ios', 'dptech', 'dptech_conplat', 'dptech_conplat_fw',
     }
     if p in explicit_platforms:
         if p in {'vrp8', 'vrpv8'}:
@@ -54,8 +54,10 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
             return 'ruijie_rgos'
         if p in {'maipu_network', 'maipu_mypower'}:
             return 'maipu'
+        if p in {'dptech_conplat', 'dptech_conplat_fw'}:
+            return p
         if p in {'dptech', 'dptech_ios'}:
-            return 'dptech_ios'
+            return 'dptech_conplat'
         return p
 
     # If platform is empty or generic/cisco but vendor is specific, override it
@@ -76,7 +78,9 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
             return 'maipu'
     elif v_key == 'dptech':
         if not p or 'cisco' in p or p == 'generic':
-            return 'dptech_ios'
+            if 'fw' in p or 'firewall' in p:
+                return 'dptech_conplat_fw'
+            return 'dptech_conplat'
     elif v_key == 'juniper':
         if not p or 'cisco' in p or p == 'generic':
             return 'juniper_junos'

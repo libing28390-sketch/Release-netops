@@ -192,7 +192,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
       <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
         {/* Total Assets */}
-        <div onClick={() => navigate('/assets/devices')} className="bg-white dark:bg-[#2d2d2d] px-5 py-4 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-[#e5e5e5] dark:border-white/5 flex items-center justify-between group hover:shadow-md transition-all duration-200 cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
+        <div onClick={() => navigate('/assets/network-devices')} className="bg-white dark:bg-[#2d2d2d] px-5 py-4 rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.04)] border border-[#e5e5e5] dark:border-white/5 flex items-center justify-between group hover:shadow-md transition-all duration-200 cursor-pointer" role="button" tabIndex={0} aria-label={t('totalAssets')}>
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-black/30 dark:text-white/30 mb-1">{t('totalAssets')}</p>
             <p className="text-3xl font-bold monitoring-data text-[#0078d4] dark:text-[#0078d4]">{assetsTotal}</p>

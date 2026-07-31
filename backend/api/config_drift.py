@@ -387,7 +387,9 @@ def list_device_snapshots(device_id: str):
     try:
         rows = conn.execute('''
             SELECT cs.id, cs.hostname, cs.vendor, cs.timestamp, cs.trigger, cs.author,
-                   cs.tag, cs.size,
+                   cs.tag, cs.size, cs.integrity_status, cs.validation_status,
+                   cs.validation_message, cs.config_type, cs.collection_source,
+                   cs.collection_task_id, cs.change_ticket_id, cs.line_count,
                    CASE WHEN cb.snapshot_id IS NOT NULL THEN 1 ELSE 0 END AS is_baseline
             FROM config_snapshots cs
             LEFT JOIN config_baselines cb

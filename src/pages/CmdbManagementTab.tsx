@@ -2632,7 +2632,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       const val = row.hostname || row.ip_address || row.id;
       return (
         <button
-          onClick={() => navigate('/assets/devices')}
+          onClick={() => navigate('/assets/network-devices')}
           className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 hover:text-cyan-900 dark:text-cyan-400 dark:hover:text-cyan-300"
           title={zh ? '查看设备资产' : 'Open device inventory'}
         >
@@ -2645,7 +2645,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       const val = row.device_hostname || row.device_ip || row.device_id;
       return (
         <button
-          onClick={() => navigate('/assets/devices')}
+          onClick={() => navigate('/assets/network-devices')}
           className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 hover:text-cyan-900 dark:text-cyan-400 dark:hover:text-cyan-300"
           title={zh ? '查看设备资产' : 'Open device inventory'}
         >
@@ -2697,7 +2697,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
             <span key={d.id} className="inline-flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => navigate(`/assets/devices`)}
+                onClick={() => navigate(`/assets/network-devices`)}
                 className="inline-flex items-center gap-1 rounded-l border border-slate-200/50 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-350 dark:hover:bg-slate-750"
               >
                 <Server size={11} className="text-slate-400" />

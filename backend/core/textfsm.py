@@ -45,6 +45,8 @@ TEXTFSM_PLATFORM_MAP = {
     'ruijie_rgos': 'ruijie_rgos',
     'dptech': 'dptech_ios',
     'dptech_ios': 'dptech_ios',
+    'dptech_conplat': 'dptech_ios',
+    'dptech_conplat_fw': 'dptech_ios',
     'maipu': 'maipu',
     'maipu_mypower': 'maipu',
 }
@@ -378,7 +380,10 @@ _COMPATIBLE_PLATFORMS = {
     # and finally the hp_comware NTC family for stable legacy grammars.
     'h3c_comware9': ['h3c_comware', 'hp_comware'],
     'ruijie_os': ['ruijie_rgos'],
-    'dptech': ['dptech_ios'],
+    'dptech': ['dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'],
+    'dptech_conplat': ['dptech_ios', 'dptech_conplat_fw'],
+    'dptech_conplat_fw': ['dptech_ios', 'dptech_conplat'],
+    'dptech_ios': ['dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'],
     'maipu_mypower': ['maipu'],
 }
 
@@ -1082,6 +1087,7 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
         'maipu',
         'dcn_dcnos',
         'dptech_conplat',
+        'dptech_conplat_fw',
         'fiberhome_fengine',
         'linux',
         'alcatel_aos', 'alcatel_sros',

@@ -1,39 +1,140 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
+  BookOpen,
+  Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
   Code2,
   Copy,
   Download,
-  ExternalLink,
+  FileCode2,
   FileCog,
-  FileText,
+  FileJson,
+  Filter,
   FolderOpen,
+  History,
+  Import,
   Layers,
-  Play,
+  Loader2,
+  Maximize2,
+  Minimize2,
   Plus,
-  Rocket,
+  RefreshCw,
+  Save,
   Search,
-  Send,
-  Server,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Star,
   Trash2,
   Upload,
+  WandSparkles,
+  WrapText,
   X,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { ConfigTemplate, Device } from '../types';
 import PageHero from '../components/PageHero';
+import { apiRequest, authHeaders } from '../api/http';
 
 type ConfigWorkspaceView = 'source' | 'rendered' | 'checks';
 type TemplateType = 'Jinja2' | 'YAML';
 type ToastTone = 'success' | 'error' | 'warning' | 'info';
+type PreviewTab = 'preview' | 'source' | 'json' | 'checks' | 'versions';
+type RenderState = 'idle' | 'rendering' | 'success' | 'warning' | 'error';
 
 interface GlobalVarItem {
   id?: string;
   key: string;
   value: string;
+}
+
+interface TemplateVariable {
+  name: string;
+  label: string;
+  description?: string;
+  type: string;
+  required: boolean;
+  default_value?: unknown;
+  example_value?: unknown;
+  placeholder?: string;
+  validation_rules?: Record<string, unknown>;
+  options?: Array<string | { value: string; label?: string }>;
+  sort_order?: number;
+  group_name?: string;
+  is_secret?: boolean;
+  is_advanced?: boolean;
+  allow_multiline?: boolean;
+}
+
+interface TemplateVersion {
+  id: string;
+  version: string;
+  change_summary?: string;
+  checksum?: string;
+  status?: string;
+  created_by?: string;
+  created_at?: string;
+  published_at?: string;
+}
+
+interface TemplateDetail extends ConfigTemplate {
+  variable_schema: TemplateVariable[];
+  example_values: Record<string, unknown>;
+  quality: { score: number; checks: Record<string, boolean> };
+  is_favorite: boolean;
+  variable_count: number;
+  versions: TemplateVersion[];
+  version: {
+    version: string;
+    source: string;
+    rollback_source?: string;
+    variable_schema: TemplateVariable[];
+    example_values: Record<string, unknown>;
+  };
+  compatibility?: Array<Record<string, unknown>>;
+}
+
+interface RenderIssue {
+  field?: string;
+  code?: string;
+  line?: number;
+  message: string;
+}
+
+interface RenderResult {
+  success: boolean;
+  render_status: string;
+  rendered_output: string;
+  rendered_rollback?: string;
+  line_count: number;
+  command_count: number;
+  used_variables: string[];
+  defaulted_variables: string[];
+  warnings: RenderIssue[];
+  errors: RenderIssue[];
+  risk_level: string;
+  risk_items: Array<{ line: number; command: string; message: string }>;
+  source_map: Array<{ output_line: number; variable: string; value: string; source: string }>;
+  quality_score?: number;
+}
+
+interface ParameterProfile {
+  id: string;
+  template_version: string;
+  name: string;
+  description?: string;
+  values: Record<string, unknown>;
+  value_sources: Record<string, string>;
+  scope: string;
+  is_default: boolean;
+  created_by?: string;
+  updated_at?: string;
 }
 
 interface PlatformSettingsTabProps {
@@ -83,891 +184,1114 @@ interface PlatformSettingsTabProps {
   showToast: (message: string, tone: ToastTone) => void;
 }
 
-/** Visual brand metadata per vendor. Used to colorize template cards. */
-const VENDOR_BRAND: Record<string, { label: string; gradient: string; border: string; chip: string; icon: string }> = {
-  Cisco:   { label: 'Cisco',   gradient: 'from-[#049fd9] to-[#00bceb]', border: 'border-[#049fd9]/30', chip: 'bg-[#049fd9]/10 text-[#067db5]',  icon: '🅒' },
-  Juniper: { label: 'Juniper', gradient: 'from-[#10b981] to-[#059669]', border: 'border-emerald-500/30', chip: 'bg-emerald-50 text-emerald-700', icon: 'Ⓙ' },
-  Huawei:  { label: 'Huawei',  gradient: 'from-[#e60012] to-[#c41428]', border: 'border-rose-500/30',  chip: 'bg-rose-50 text-rose-700',       icon: 'Ⓗ' },
-  H3C:     { label: 'H3C',     gradient: 'from-[#d4a017] to-[#b8860b]', border: 'border-amber-500/30', chip: 'bg-amber-50 text-amber-700',     icon: '③' },
-  Arista:  { label: 'Arista',  gradient: 'from-[#fb923c] to-[#ea580c]', border: 'border-orange-500/30',chip: 'bg-orange-50 text-orange-700',   icon: 'Ⓐ' },
-  Ruijie:  { label: 'Ruijie',  gradient: 'from-[#7c3aed] to-[#6d28d9]', border: 'border-violet-500/30',chip: 'bg-violet-50 text-violet-700',   icon: 'Ⓡ' },
-  Other:   { label: 'Other',   gradient: 'from-slate-500 to-slate-700', border: 'border-slate-400/30',  chip: 'bg-slate-100 text-slate-700',    icon: '◯' },
-  Custom:  { label: 'Custom',  gradient: 'from-slate-400 to-slate-600', border: 'border-slate-300/40',  chip: 'bg-slate-100 text-slate-600',    icon: '✎' },
+const VENDOR_STYLE: Record<string, { chip: string; gradient: string; label: string }> = {
+  Cisco: { chip: 'bg-sky-50 text-sky-700 ring-sky-100', gradient: 'from-sky-500 to-cyan-500', label: 'Cisco' },
+  Huawei: { chip: 'bg-rose-50 text-rose-700 ring-rose-100', gradient: 'from-rose-500 to-red-600', label: 'Huawei' },
+  H3C: { chip: 'bg-amber-50 text-amber-700 ring-amber-100', gradient: 'from-amber-500 to-orange-500', label: 'H3C' },
+  Juniper: { chip: 'bg-emerald-50 text-emerald-700 ring-emerald-100', gradient: 'from-emerald-500 to-teal-600', label: 'Juniper' },
+  Arista: { chip: 'bg-orange-50 text-orange-700 ring-orange-100', gradient: 'from-orange-500 to-amber-500', label: 'Arista' },
+  Custom: { chip: 'bg-slate-100 text-slate-600 ring-slate-200', gradient: 'from-slate-500 to-slate-700', label: 'Custom' },
 };
 
-function vendorBrand(name?: string) {
-  if (!name) return VENDOR_BRAND.Custom;
-  return VENDOR_BRAND[name] || VENDOR_BRAND.Custom;
-}
+const SOURCE_LABELS: Record<string, string> = {
+  user: '用户填写',
+  template_default: '模板默认值',
+  example: '示例值',
+  profile: '参数方案',
+  system: '系统计算',
+  device: '设备上下文',
+};
+
+const PREVIEW_TABS: Array<{ id: PreviewTab; zh: string; en: string; icon: React.ReactNode }> = [
+  { id: 'preview', zh: '命令预览', en: 'Preview', icon: <FileCode2 size={13} /> },
+  { id: 'source', zh: '模板源码', en: 'Source', icon: <Code2 size={13} /> },
+  { id: 'json', zh: '参数 JSON', en: 'Parameters', icon: <FileJson size={13} /> },
+  { id: 'checks', zh: '校验结果', en: 'Validation', icon: <ShieldCheck size={13} /> },
+  { id: 'versions', zh: '版本差异', en: 'Version diff', icon: <History size={13} /> },
+];
+
+const fieldClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100';
+
+const parseJson = <T,>(value: string | undefined, fallback: T): T => {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const formatLastUsed = (value: string | null | undefined, zh: boolean) => {
+  if (value === null || value === '') return zh ? '从未使用' : 'Never used';
+  if (value === undefined) return zh ? '数据异常' : 'Data unavailable';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return zh ? '时间格式错误' : 'Invalid time';
+  return parsed.toLocaleString(zh ? 'zh-CN' : 'en-US');
+};
+
+const safeFileName = (value: string) => value.replace(/[^\w\u4e00-\u9fa5-]+/g, '_').slice(0, 80) || 'config';
+
+const downloadText = (content: string, filename: string, type = 'text/plain;charset=utf-8') => {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+};
 
 const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   t,
   language,
-  sectionHeaderRowClass,
   configTemplates,
-  configVariableKeys,
-  configMissingVariables,
-  configScopedDevices,
-  configScopedOnlineCount,
-  configReadinessScore,
-  configValidationIssues,
-  configValidationWarnings,
-  configWorkspaceView,
   selectedTemplateId,
-  selectedConfigTemplate,
   globalVars,
-  editorContent,
-  configRenderedPreview,
-  configScopePlatform,
-  configScopeRole,
-  configScopeSite,
-  configPlatformOptions,
-  configRoleOptions,
-  configSiteOptions,
-  extractVars,
-  getPlatformLabel,
-  onImportVars,
-  onCreateTemplate,
   onSelectTemplateIdChange,
-  onAddVar,
-  onDeleteVar,
-  onSelectedTemplateNameChange,
-  onSelectedTemplateVendorChange,
-  onSelectedTemplateTypeChange,
-  onDiscardChanges,
-  onConfigWorkspaceViewChange,
-  onValidate,
-  onSaveTemplate,
-  onCreateScenarioDraft,
-  onSendToAutomation,
-  onEditorContentChange,
-  onConfigScopePlatformChange,
-  onConfigScopeRoleChange,
-  onConfigScopeSiteChange,
   showToast,
 }) => {
   const zh = language === 'zh';
-  const [tplSearch, setTplSearch] = useState('');
-  const [tplVendorFilter, setTplVendorFilter] = useState<string>('all');
-  const [showSidebar, setShowSidebar] = useState<'scope' | 'vars' | null>(null);
-  const lineNumRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const importRef = useRef<HTMLInputElement>(null);
+  const previewScrollRef = useRef<HTMLDivElement>(null);
 
-  /* ── Derived lists ─────────────────────────────────────── */
+  const [templates, setTemplates] = useState<ConfigTemplate[]>(configTemplates);
+  const [detail, setDetail] = useState<TemplateDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [keyword, setKeyword] = useState('');
+  const [vendorFilter, setVendorFilter] = useState('all');
+  const [platformFilter, setPlatformFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortBy, setSortBy] = useState<'name' | 'updated' | 'usage' | 'quality'>('updated');
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [leftWidth, setLeftWidth] = useState(326);
+  const [parameterWidth, setParameterWidth] = useState(400);
+  const [previewTab, setPreviewTab] = useState<PreviewTab>('preview');
+  const [parameters, setParameters] = useState<Record<string, unknown>>({});
+  const [parameterSources, setParameterSources] = useState<Record<string, string>>({});
+  const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>({});
+  const [renderState, setRenderState] = useState<RenderState>('idle');
+  const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
+  const [lastSuccessfulResult, setLastSuccessfulResult] = useState<RenderResult | null>(null);
+  const [sourceContent, setSourceContent] = useState('');
+  const [sourceDirty, setSourceDirty] = useState(false);
+  const [wrapPreview, setWrapPreview] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [previewSearch, setPreviewSearch] = useState('');
+  const [profiles, setProfiles] = useState<ParameterProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [profileName, setProfileName] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [sourceSaving, setSourceSaving] = useState(false);
+  const [taskCreating, setTaskCreating] = useState(false);
+  const [versionFrom, setVersionFrom] = useState('');
+  const [versionTo, setVersionTo] = useState('');
+  const [versionDiff, setVersionDiff] = useState<string[]>([]);
+  const [versionDiffLoading, setVersionDiffLoading] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ name: '', vendor: 'Cisco', platform: 'cisco_iosxe', category: 'interface' });
+  const [creatingTemplate, setCreatingTemplate] = useState(false);
+  const parameterDrafts = useRef<Record<string, Record<string, unknown>>>({});
 
-  const vendorList = useMemo(() => {
-    const vendors = new Set<string>();
-    configTemplates.forEach((tpl) => vendors.add(tpl.vendor || 'Custom'));
-    return Array.from(vendors).sort();
+  useEffect(() => {
+    setTemplates(configTemplates);
   }, [configTemplates]);
 
-  // Templates matching the free-text search (used for both vendor-chip counts
-  // and the final rendered list, so counts stay consistent with what the user sees).
-  const searchedTemplates = useMemo(() => {
-    if (!tplSearch.trim()) return configTemplates;
-    const q = tplSearch.trim().toLowerCase();
-    return configTemplates.filter(
-      (tpl) =>
-        tpl.name.toLowerCase().includes(q) ||
-        (tpl.vendor || 'Custom').toLowerCase().includes(q)
-    );
-  }, [configTemplates, tplSearch]);
+  const refreshTemplates = useCallback(async () => {
+    try {
+      const result = await apiRequest<{ items: ConfigTemplate[] }>('/api/config-templates?page=1&page_size=200&sort=updated');
+      setTemplates(result.items || []);
+      return result.items || [];
+    } catch {
+      return templates;
+    }
+  }, [templates]);
 
-  const filteredTemplates = useMemo(() => {
-    if (tplVendorFilter === 'all') return searchedTemplates;
-    return searchedTemplates.filter((tpl) => (tpl.vendor || 'Custom') === tplVendorFilter);
-  }, [searchedTemplates, tplVendorFilter]);
+  const loadTemplate = useCallback(async (templateId: string) => {
+    if (!templateId || templateId.startsWith('draft-')) return;
+    setDetailLoading(true);
+    try {
+      const [templateDetail, templateProfiles] = await Promise.all([
+        apiRequest<TemplateDetail>(`/api/config-templates/${encodeURIComponent(templateId)}`),
+        apiRequest<ParameterProfile[]>(`/api/config-templates/${encodeURIComponent(templateId)}/parameter-profiles`),
+      ]);
+      setDetail(templateDetail);
+      setProfiles(templateProfiles || []);
+      setSourceContent(templateDetail.version?.source || templateDetail.content || '');
+      setSourceDirty(false);
+      const draft = parameterDrafts.current[templateId];
+      setParameters(draft || {});
+      setParameterSources(
+        draft
+          ? Object.fromEntries(Object.keys(draft).map((name) => [name, 'user']))
+          : {},
+      );
+      setSelectedProfileId('');
+      setProfileName('');
+      setRenderResult(null);
+      setLastSuccessfulResult(null);
+      setRenderState('idle');
+      setPreviewTab('preview');
+      const versions = templateDetail.versions || [];
+      setVersionTo(templateDetail.current_version || versions[0]?.version || '1.0');
+      setVersionFrom(versions[1]?.version || versions[0]?.version || '1.0');
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : (zh ? '模板详情加载失败' : 'Failed to load template details'),
+        'error',
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [showToast, zh]);
 
-  const vendorCounts = useMemo(() => {
-    const map = new Map<string, number>();
-    searchedTemplates.forEach((tpl) => {
-      const v = tpl.vendor || 'Custom';
-      map.set(v, (map.get(v) || 0) + 1);
+  useEffect(() => {
+    if (selectedTemplateId) {
+      void loadTemplate(selectedTemplateId);
+    } else if (templates.length > 0) {
+      onSelectTemplateIdChange(templates[0].id);
+    }
+  }, [loadTemplate, onSelectTemplateIdChange, selectedTemplateId, templates]);
+
+  const schema = detail?.variable_schema || detail?.version?.variable_schema || [];
+
+  const groupedSchema = useMemo(() => {
+    const groups = new Map<string, TemplateVariable[]>();
+    schema
+      .slice()
+      .sort((left, right) => (left.sort_order || 0) - (right.sort_order || 0))
+      .forEach((item) => {
+        const group = item.group_name || (zh ? '基础参数' : 'Basic');
+        groups.set(group, [...(groups.get(group) || []), item]);
+      });
+    return Array.from(groups.entries());
+  }, [schema, zh]);
+
+  const requiredVariables = useMemo(() => schema.filter((item) => item.required), [schema]);
+  const completedRequired = useMemo(() => requiredVariables.filter((item) => {
+    const value = parameters[item.name];
+    return value !== undefined && value !== null && value !== '';
+  }).length, [parameters, requiredVariables]);
+
+  const fieldErrors = useMemo(() => {
+    const map = new Map<string, string>();
+    renderResult?.errors.forEach((issue) => {
+      if (issue.field) map.set(issue.field, issue.message);
     });
     return map;
-  }, [searchedTemplates]);
+  }, [renderResult]);
 
-  const templateVarsMap = useMemo(() => {
-    const map = new Map<string, string[]>();
-    configTemplates.forEach((tpl) => map.set(tpl.id, extractVars(tpl.content)));
-    return map;
-  }, [configTemplates, extractVars]);
+  useEffect(() => {
+    const groupsWithErrors = new Set<string>();
+    schema.forEach((item) => {
+      if (fieldErrors.has(item.name)) groupsWithErrors.add(item.group_name || (zh ? '基础参数' : 'Basic'));
+    });
+    if (groupsWithErrors.size > 0) {
+      setGroupCollapsed((current) => {
+        const next = { ...current };
+        groupsWithErrors.forEach((group) => { next[group] = false; });
+        return next;
+      });
+    }
+  }, [fieldErrors, schema, zh]);
 
-  const officialCount = useMemo(
-    () => configTemplates.filter(
-      (tpl) => tpl.category === 'official' || tpl.validation_status === 'official_reference_reviewed'
-    ).length,
-    [configTemplates]
-  );
-  const customCount = configTemplates.length - officialCount;
+  const runRender = useCallback(async (showFeedback = false) => {
+    if (!detail?.id) return;
+    setRenderState('rendering');
+    try {
+      const result = await apiRequest<RenderResult>(`/api/config-templates/${encodeURIComponent(detail.id)}/render`, {
+        method: 'POST',
+        body: JSON.stringify({
+          version: detail.current_version || detail.version?.version || '',
+          parameters,
+          parameter_profile_id: selectedProfileId,
+          options: {
+            strict: true,
+            trim_blank_lines: true,
+            include_source_map: true,
+          },
+        }),
+      });
+      setRenderResult(result);
+      if (result.success) {
+        setLastSuccessfulResult(result);
+        setRenderState(result.warnings.length > 0 ? 'warning' : 'success');
+        if (showFeedback) showToast(zh ? '模板渲染成功' : 'Template rendered', 'success');
+      } else {
+        setRenderState('error');
+        if (showFeedback) showToast(zh ? '参数或模板校验未通过' : 'Validation failed', 'warning');
+      }
+    } catch (error) {
+      setRenderState('error');
+      if (showFeedback) {
+        showToast(error instanceof Error ? error.message : (zh ? '渲染失败' : 'Render failed'), 'error');
+      }
+    }
+  }, [detail, parameters, selectedProfileId, showToast, zh]);
 
-  /* ── Download rendered as .txt ─────────────────────────── */
-  const handleDownloadRendered = () => {
-    if (!configRenderedPreview) return;
-    const blob = new Blob([configRenderedPreview], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const name = (selectedConfigTemplate?.name || 'config')
-      .replace(/[^a-zA-Z0-9_-]+/g, '_');
-    a.href = url;
-    a.download = `${name}_rendered.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 200);
+  useEffect(() => {
+    if (!detail?.id) return undefined;
+    const timer = window.setTimeout(() => {
+      void runRender(false);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [detail?.id, parameters, runRender]);
+
+  const filteredTemplates = useMemo(() => {
+    const normalized = keyword.trim().toLowerCase();
+    const list = templates.filter((template) => {
+      if (normalized) {
+        const haystack = [
+          template.id,
+          template.code,
+          template.name,
+          template.description,
+          template.vendor,
+          template.platform_family,
+          template.category,
+          template.content,
+          ...(parseJson<string[]>(template.tags_json, [])),
+        ].join(' ').toLowerCase();
+        if (!haystack.includes(normalized)) return false;
+      }
+      if (vendorFilter !== 'all' && (template.vendor || 'Custom') !== vendorFilter) return false;
+      if (platformFilter !== 'all' && (template.platform_family || '') !== platformFilter) return false;
+      if (categoryFilter !== 'all' && (template.category || '') !== categoryFilter) return false;
+      if (sourceFilter !== 'all' && (template.source_type || 'custom') !== sourceFilter) return false;
+      if (statusFilter !== 'all' && (template.status || 'draft') !== statusFilter) return false;
+      return true;
+    });
+    return list.sort((left, right) => {
+      if (sortBy === 'name') return left.name.localeCompare(right.name, zh ? 'zh-CN' : 'en');
+      if (sortBy === 'usage') return (right.use_count || 0) - (left.use_count || 0);
+      if (sortBy === 'quality') return (right.quality_score || 0) - (left.quality_score || 0);
+      return String(right.updated_at || '').localeCompare(String(left.updated_at || ''));
+    });
+  }, [categoryFilter, keyword, platformFilter, sortBy, sourceFilter, statusFilter, templates, vendorFilter, zh]);
+
+  const distinct = useCallback((key: keyof ConfigTemplate) => (
+    Array.from(new Set(templates.map((item) => String(item[key] || '')).filter(Boolean))).sort()
+  ), [templates]);
+
+  const selectTemplate = useCallback((id: string) => {
+    if (detail?.id) parameterDrafts.current[detail.id] = parameters;
+    onSelectTemplateIdChange(id);
+  }, [detail?.id, onSelectTemplateIdChange, parameters]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
+      if (!['ArrowUp', 'ArrowDown'].includes(event.key) || filteredTemplates.length === 0) return;
+      event.preventDefault();
+      const current = filteredTemplates.findIndex((item) => item.id === selectedTemplateId);
+      const next = event.key === 'ArrowDown'
+        ? Math.min(filteredTemplates.length - 1, current + 1)
+        : Math.max(0, current <= 0 ? 0 : current - 1);
+      selectTemplate(filteredTemplates[next].id);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [filteredTemplates, selectTemplate, selectedTemplateId]);
+
+  const updateParameter = useCallback((name: string, value: unknown, source = 'user') => {
+    setParameters((current) => {
+      const next = { ...current, [name]: value };
+      if (detail?.id) parameterDrafts.current[detail.id] = next;
+      return next;
+    });
+    setParameterSources((current) => ({ ...current, [name]: source }));
+  }, [detail?.id]);
+
+  const loadExamples = useCallback(() => {
+    if (!detail) return;
+    const next: Record<string, unknown> = { ...detail.example_values };
+    schema.forEach((item) => {
+      if (next[item.name] === undefined && item.example_value !== undefined && item.example_value !== null) {
+        next[item.name] = item.example_value;
+      }
+    });
+    setParameters(next);
+    setParameterSources(Object.fromEntries(Object.keys(next).map((name) => [name, 'example'])));
+    if (detail.id) parameterDrafts.current[detail.id] = next;
+  }, [detail, schema]);
+
+  const resetParameters = useCallback(() => {
+    setParameters({});
+    setParameterSources({});
+    setSelectedProfileId('');
+    if (detail?.id) parameterDrafts.current[detail.id] = {};
+  }, [detail?.id]);
+
+  const loadProfile = useCallback((profileId: string) => {
+    setSelectedProfileId(profileId);
+    const profile = profiles.find((item) => item.id === profileId);
+    if (!profile) return;
+    const allowed = new Set(schema.map((item) => item.name));
+    const compatibleValues = Object.fromEntries(
+      Object.entries(profile.values || {}).filter(([key, value]) => allowed.has(key) && value !== '***'),
+    );
+    setParameters(compatibleValues);
+    setParameterSources(Object.fromEntries(Object.keys(compatibleValues).map((name) => [name, 'profile'])));
+    if (detail?.id) parameterDrafts.current[detail.id] = compatibleValues;
+    const missing = requiredVariables.filter((item) => {
+      const value = compatibleValues[item.name];
+      return value === undefined || value === null || value === '';
+    }).length;
+    if (profile.template_version !== detail?.current_version || missing > 0) {
+      showToast(zh ? `参数方案部分兼容，仍需补充 ${missing} 个必填参数` : `Profile is partially compatible; ${missing} required values remain`, 'warning');
+    }
+  }, [detail?.current_version, detail?.id, profiles, requiredVariables, schema, showToast, zh]);
+
+  const saveProfile = useCallback(async () => {
+    if (!detail?.id || !profileName.trim()) return;
+    setSavingProfile(true);
+    try {
+      await apiRequest(`/api/config-templates/${encodeURIComponent(detail.id)}/parameter-profiles`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: profileName.trim(),
+          description: '',
+          version: detail.current_version || '1.0',
+          values: parameters,
+          value_sources: parameterSources,
+          scope: 'private',
+          is_default: false,
+        }),
+      });
+      const list = await apiRequest<ParameterProfile[]>(`/api/config-templates/${encodeURIComponent(detail.id)}/parameter-profiles`);
+      setProfiles(list);
+      setProfileName('');
+      showToast(zh ? '参数方案已保存' : 'Parameter profile saved', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '参数方案保存失败' : 'Failed to save profile'), 'error');
+    } finally {
+      setSavingProfile(false);
+    }
+  }, [detail, parameterSources, parameters, profileName, showToast, zh]);
+
+  const deleteProfile = useCallback(async () => {
+    if (!detail?.id || !selectedProfileId) return;
+    try {
+      await apiRequest(`/api/config-templates/${encodeURIComponent(detail.id)}/parameter-profiles/${encodeURIComponent(selectedProfileId)}`, { method: 'DELETE' });
+      setProfiles((items) => items.filter((item) => item.id !== selectedProfileId));
+      setSelectedProfileId('');
+      showToast(zh ? '参数方案已删除' : 'Profile deleted', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '删除失败' : 'Delete failed'), 'error');
+    }
+  }, [detail?.id, selectedProfileId, showToast, zh]);
+
+  const toggleFavorite = useCallback(async (template: ConfigTemplate) => {
+    const favorite = !(template as TemplateDetail).is_favorite;
+    try {
+      await apiRequest(`/api/config-templates/${encodeURIComponent(template.id)}/favorite?favorite=${favorite}`, { method: 'PUT' });
+      setTemplates((items) => items.map((item) => item.id === template.id ? { ...item, is_favorite: favorite } as ConfigTemplate : item));
+      if (detail?.id === template.id) setDetail({ ...detail, is_favorite: favorite });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '收藏操作失败' : 'Favorite action failed'), 'error');
+    }
+  }, [detail, showToast, zh]);
+
+  const saveSource = useCallback(async () => {
+    if (!detail?.id || !sourceContent.trim()) return;
+    setSourceSaving(true);
+    try {
+      await apiRequest(`/api/templates/${encodeURIComponent(detail.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          ...detail,
+          content: sourceContent,
+          lastUsed: detail.lastUsed,
+          actor_username: 'current-user',
+        }),
+      });
+      setSourceDirty(false);
+      await refreshTemplates();
+      await loadTemplate(detail.id);
+      showToast(zh ? '模板源码已保存，审核状态已重置为草稿' : 'Template saved and review status reset to draft', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '模板保存失败' : 'Failed to save template'), 'error');
+    } finally {
+      setSourceSaving(false);
+    }
+  }, [detail, loadTemplate, refreshTemplates, showToast, sourceContent, zh]);
+
+  const createTemplate = useCallback(async () => {
+    if (!createForm.name.trim()) return;
+    setCreatingTemplate(true);
+    try {
+      const payload = {
+        name: createForm.name.trim(),
+        type: 'Jinja2',
+        category: createForm.category,
+        vendor: createForm.vendor,
+        platform_family: createForm.platform,
+        content: zh
+          ? '# 在此输入配置命令，使用 {{ variable_name }} 定义参数\n'
+          : '# Enter commands here; use {{ variable_name }} for parameters\n',
+        rollback: '',
+        description: '',
+        lastUsed: null,
+      };
+      const result = await apiRequest<{ id?: string; success: boolean }>('/api/templates', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      const items = await refreshTemplates();
+      setShowCreate(false);
+      setCreateForm({ name: '', vendor: 'Cisco', platform: 'cisco_iosxe', category: 'interface' });
+      const created = result.id ? items.find((item) => item.id === result.id) : items.find((item) => item.name === payload.name);
+      if (created) selectTemplate(created.id);
+      showToast(zh ? '新模板已创建' : 'Template created', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '模板创建失败' : 'Failed to create template'), 'error');
+    } finally {
+      setCreatingTemplate(false);
+    }
+  }, [createForm, refreshTemplates, selectTemplate, showToast, zh]);
+
+  const importTemplate = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const raw = JSON.parse(await file.text());
+      const result = await apiRequest<{ id: string }>('/api/config-templates/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          template: raw.template || raw,
+          version: raw.template?.version || raw.version || {},
+          expected_checksum: raw.checksum || '',
+        }),
+      });
+      await refreshTemplates();
+      selectTemplate(result.id);
+      showToast(zh ? '模板导入成功并已按自定义草稿处理' : 'Template imported as a custom draft', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '模板导入失败' : 'Failed to import template'), 'error');
+    }
+  }, [refreshTemplates, selectTemplate, showToast, zh]);
+
+  const exportTemplate = useCallback(async () => {
+    if (!detail?.id) return;
+    try {
+      const response = await fetch(`/api/config-templates/${encodeURIComponent(detail.id)}/export`, { headers: authHeaders() });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      downloadText(await response.text(), `${safeFileName(detail.name)}.template.json`, 'application/json;charset=utf-8');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '模板导出失败' : 'Failed to export template'), 'error');
+    }
+  }, [detail, showToast, zh]);
+
+  const createTaskDraft = useCallback(async () => {
+    if (!detail?.id || !lastSuccessfulResult?.success) return;
+    setTaskCreating(true);
+    try {
+      const result = await apiRequest<{ redirect_path: string; message: string }>('/api/automation/tasks/from-template', {
+        method: 'POST',
+        body: JSON.stringify({
+          template_id: detail.id,
+          version: detail.current_version || '1.0',
+          parameters,
+          parameter_profile_id: selectedProfileId,
+          options: { strict: true, trim_blank_lines: true, include_source_map: true },
+          device_ids: [],
+        }),
+      });
+      showToast(result.message || (zh ? '任务草稿已创建' : 'Task draft created'), 'success');
+      navigate(result.redirect_path);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '任务草稿创建失败' : 'Failed to create task draft'), 'error');
+    } finally {
+      setTaskCreating(false);
+    }
+  }, [detail, lastSuccessfulResult?.success, navigate, parameters, selectedProfileId, showToast, zh]);
+
+  const loadVersionDiff = useCallback(async () => {
+    if (!detail?.id || !versionFrom || !versionTo) return;
+    setVersionDiffLoading(true);
+    try {
+      const result = await apiRequest<{ diff: string[] }>(
+        `/api/config-templates/${encodeURIComponent(detail.id)}/versions/diff?from_version=${encodeURIComponent(versionFrom)}&to_version=${encodeURIComponent(versionTo)}`,
+      );
+      setVersionDiff(result.diff || []);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '版本差异加载失败' : 'Failed to load version diff'), 'error');
+    } finally {
+      setVersionDiffLoading(false);
+    }
+  }, [detail?.id, showToast, versionFrom, versionTo, zh]);
+
+  useEffect(() => {
+    if (previewTab === 'versions' && versionFrom && versionTo) void loadVersionDiff();
+  }, [loadVersionDiff, previewTab, versionFrom, versionTo]);
+
+  const startResize = useCallback((target: 'left' | 'parameters', event: React.MouseEvent) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const initial = target === 'left' ? leftWidth : parameterWidth;
+    const move = (moveEvent: MouseEvent) => {
+      const next = initial + moveEvent.clientX - startX;
+      if (target === 'left') setLeftWidth(Math.max(260, Math.min(430, next)));
+      else setParameterWidth(Math.max(340, Math.min(520, next)));
+    };
+    const stop = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', stop);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', stop);
+  }, [leftWidth, parameterWidth]);
+
+  const visibleRender = renderResult?.success ? renderResult : lastSuccessfulResult;
+  const previewLines = useMemo(() => {
+    const lines = (visibleRender?.rendered_output || '').split('\n');
+    const search = previewSearch.trim().toLowerCase();
+    if (!search) return lines.map((content, index) => ({ content, number: index + 1 }));
+    return lines
+      .map((content, index) => ({ content, number: index + 1 }))
+      .filter((line) => line.content.toLowerCase().includes(search));
+  }, [previewSearch, visibleRender?.rendered_output]);
+
+  const renderPreviewContent = useCallback((line: string, lineNumber: number) => {
+    const maps = visibleRender?.source_map.filter((item) => item.output_line === lineNumber && item.value) || [];
+    if (maps.length === 0) return line;
+    const values = maps.slice().sort((a, b) => b.value.length - a.value.length);
+    const pattern = new RegExp(`(${values.map((item) => item.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'g');
+    return line.split(pattern).map((part, index) => {
+      const source = values.find((item) => item.value === part);
+      return source
+        ? (
+          <span
+            key={`${lineNumber}-${index}`}
+            title={`${zh ? '变量' : 'Variable'}: ${source.variable}\n${zh ? '来源' : 'Source'}: ${SOURCE_LABELS[source.source] || source.source}\n${zh ? '当前值' : 'Value'}: ${source.value}`}
+            className="rounded bg-cyan-400/20 px-0.5 text-cyan-200 underline decoration-cyan-500/40 decoration-dotted underline-offset-2"
+          >
+            {part}
+          </span>
+        )
+        : <React.Fragment key={`${lineNumber}-${index}`}>{part}</React.Fragment>;
+    });
+  }, [visibleRender?.source_map, zh]);
+
+  const renderVariableInput = (item: TemplateVariable) => {
+    const value = parameters[item.name] ?? '';
+    const commonProps = {
+      value: String(value),
+      onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => updateParameter(item.name, event.target.value),
+      className: `${fieldClass} ${fieldErrors.has(item.name) ? 'border-rose-400 ring-2 ring-rose-100' : ''}`,
+      placeholder: item.placeholder || (item.example_value !== undefined ? String(item.example_value) : ''),
+    };
+    if (item.type === 'boolean') {
+      return (
+        <button
+          type="button"
+          onClick={() => updateParameter(item.name, !(value === true || value === 'true'))}
+          className={`relative h-6 w-11 rounded-full transition ${value === true || value === 'true' ? 'bg-cyan-600' : 'bg-slate-300'}`}
+        >
+          <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${value === true || value === 'true' ? 'left-6' : 'left-1'}`} />
+        </button>
+      );
+    }
+    if (item.type === 'select') {
+      return (
+        <select {...commonProps}>
+          <option value="">{zh ? '请选择' : 'Select'}</option>
+          {(item.options || []).map((option) => {
+            const optionValue = typeof option === 'string' ? option : option.value;
+            const label = typeof option === 'string' ? option : (option.label || option.value);
+            return <option key={optionValue} value={optionValue}>{label}</option>;
+          })}
+        </select>
+      );
+    }
+    if (item.type === 'multi_select') {
+      const selected = Array.isArray(parameters[item.name]) ? parameters[item.name] as unknown[] : String(value).split(',').filter(Boolean);
+      return (
+        <select
+          multiple
+          value={selected.map(String)}
+          onChange={(event) => updateParameter(item.name, Array.from(event.target.selectedOptions).map((option) => option.value))}
+          className={`${fieldClass} min-h-24`}
+        >
+          {(item.options || []).map((option) => {
+            const optionValue = typeof option === 'string' ? option : option.value;
+            const label = typeof option === 'string' ? option : (option.label || option.value);
+            return <option key={optionValue} value={optionValue}>{label}</option>;
+          })}
+        </select>
+      );
+    }
+    if (['text', 'list', 'object', 'command_block'].includes(item.type)) {
+      return <textarea {...commonProps} rows={item.type === 'text' ? 3 : 2} />;
+    }
+    return (
+      <input
+        {...commonProps}
+        type={item.type === 'password' ? 'password' : ['integer', 'vlan_id'].includes(item.type) ? 'number' : 'text'}
+        min={item.type === 'vlan_id' ? 1 : undefined}
+        max={item.type === 'vlan_id' ? 4094 : undefined}
+        autoComplete={item.type === 'password' ? 'new-password' : undefined}
+      />
+    );
   };
 
-  /* ── Render ────────────────────────────────────────────── */
-
-  const readinessColor =
-    configReadinessScore >= 85
-      ? 'text-emerald-600'
-      : configReadinessScore >= 60
-      ? 'text-amber-600'
-      : 'text-rose-600';
-
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 to-cyan-50/30">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50">
       <PageHero
         icon={FileCog}
-        title={t('configManagement')}
-        subtitle={zh
-          ? '多厂商网络设备配置模板 · 渲染预览 · 发布范围与下发'
-          : 'Multi-vendor network config templates · Render · Scope · Deploy'}
-        actions={
+        title={zh ? '配置模板中心' : 'Configuration Template Center'}
+        subtitle={zh ? '多厂商网络配置模板、结构化参数填写与实时命令生成' : 'Multi-vendor templates, structured parameters, and real-time command generation'}
+        actions={(
           <>
-            <label className="cursor-pointer px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:border-[#06b6d4] hover:text-[#0891b2] transition-all flex items-center gap-2 shadow-sm">
-              <Upload size={15} />
-              {t('importVars')}
-              <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={(e) => { onImportVars(e); e.target.value = ''; }} />
-            </label>
-            <button
-              onClick={onCreateTemplate}
-              className="bg-gradient-to-r from-[#06b6d4] to-[#0891b2] text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 hover:shadow-lg hover:shadow-cyan-500/30 transition-all"
-            >
-              <Plus size={16} />
-              {t('newTemplate')}
+            <input ref={importRef} type="file" accept=".json" className="hidden" onChange={(event) => void importTemplate(event)} />
+            <button type="button" onClick={() => importRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 shadow-sm hover:border-cyan-300 hover:text-cyan-700">
+              <Import size={14} /> {zh ? '导入模板' : 'Import'}
+            </button>
+            <button type="button" onClick={() => setShowCreate(true)} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-cyan-200">
+              <Plus size={14} /> {zh ? '新建模板' : 'New template'}
             </button>
           </>
-        }
+        )}
       />
 
-      <div className="flex-1 flex flex-col gap-4 overflow-hidden px-6 py-5">
-      {/* ═════════ METRICS STRIP ═════════ */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 flex-shrink-0">
-        <MetricCard
-          icon={<FolderOpen size={16} />}
-          tone="slate"
-          label={zh ? '模板资产' : 'Template Assets'}
-          value={String(configTemplates.length)}
-          sub={zh ? `官方 ${officialCount} · 自定义 ${customCount}` : `${officialCount} official · ${customCount} custom`}
-        />
-        <MetricCard
-          icon={<Sparkles size={16} />}
-          tone={configMissingVariables.length === 0 ? 'emerald' : 'amber'}
-          label={zh ? '变量完备度' : 'Variable Coverage'}
-          value={`${configVariableKeys.length - configMissingVariables.length}/${configVariableKeys.length || 0}`}
-          sub={
-            configMissingVariables.length === 0
-              ? (zh ? '已全部赋值' : 'All variables set')
-              : (zh ? `缺失 ${configMissingVariables.length} 个` : `${configMissingVariables.length} missing`)
-          }
-        />
-        <MetricCard
-          icon={<Server size={16} />}
-          tone="cyan"
-          label={zh ? '匹配设备' : 'Target Devices'}
-          value={String(configScopedDevices.length)}
-          sub={zh ? `${configScopedOnlineCount} 台在线` : `${configScopedOnlineCount} online`}
-        />
-        <MetricCard
-          icon={<ShieldCheck size={16} />}
-          tone={configReadinessScore >= 85 ? 'emerald' : configReadinessScore >= 60 ? 'amber' : 'rose'}
-          label={zh ? '发布就绪度' : 'Release Readiness'}
-          value={`${configReadinessScore}`}
-          sub={
-            configValidationIssues.length === 0
-              ? (zh ? '基础校验已通过' : 'Checks passed')
-              : (zh ? `${configValidationIssues.length} 个阻断项` : `${configValidationIssues.length} blocking`)
-          }
-        />
+      <div className="grid shrink-0 grid-cols-2 gap-3 px-5 pt-4 md:grid-cols-4">
+        {[
+          { icon: FolderOpen, label: zh ? '模板总数' : 'Templates', value: templates.length, sub: `${templates.filter((item) => item.is_official).length} ${zh ? '官方' : 'official'}`, tone: 'bg-slate-100 text-slate-700' },
+          { icon: ClipboardList, label: zh ? '当前模板参数' : 'Parameters', value: `${completedRequired}/${requiredVariables.length}`, sub: `${schema.length} ${zh ? '个参数' : 'parameters'}`, tone: completedRequired === requiredVariables.length ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700' },
+          { icon: WandSparkles, label: zh ? '渲染状态' : 'Render status', value: renderState === 'rendering' ? (zh ? '渲染中' : 'Rendering') : renderState === 'success' ? (zh ? '成功' : 'Success') : renderState === 'warning' ? (zh ? '有警告' : 'Warning') : renderState === 'error' ? (zh ? '失败' : 'Failed') : (zh ? '未渲染' : 'Idle'), sub: visibleRender ? `${visibleRender.command_count} ${zh ? '条命令' : 'commands'}` : '—', tone: renderState === 'success' ? 'bg-emerald-50 text-emerald-700' : renderState === 'error' ? 'bg-rose-50 text-rose-700' : 'bg-cyan-50 text-cyan-700' },
+          { icon: ShieldCheck, label: zh ? '模板质量' : 'Template quality', value: `${detail?.quality?.score ?? detail?.quality_score ?? 0}`, sub: zh ? '语法·参数·说明·回滚' : 'Syntax · schema · docs · rollback', tone: (detail?.quality?.score || 0) >= 80 ? 'bg-emerald-50 text-emerald-700' : 'bg-violet-50 text-violet-700' },
+        ].map((metric) => (
+          <div key={metric.label} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
+            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${metric.tone}`}><metric.icon size={16} /></span>
+            <div className="min-w-0">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{metric.label}</p>
+              <p className="truncate text-lg font-black text-slate-800">{metric.value}</p>
+              <p className="truncate text-[9px] text-slate-400">{metric.sub}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {/* ═════════ MAIN WORKSPACE ═════════ */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 gap-4 overflow-hidden">
-        {/* ═════ LEFT: Template Library ═════ */}
-        <aside className="lg:col-span-3 min-h-0 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-br from-slate-50 to-white">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Layers size={15} className="text-[#06b6d4]" />
-                <h3 className="text-sm font-bold text-[#0f172a]">{zh ? '模板库' : 'Template Library'}</h3>
+      <div className="flex min-h-0 flex-1 gap-0 overflow-hidden p-5 pt-4">
+        <aside
+          className={`relative flex min-h-0 shrink-0 flex-col overflow-hidden rounded-l-2xl border border-slate-200 bg-white shadow-sm transition-all ${leftCollapsed ? 'w-12' : ''}`}
+          style={leftCollapsed ? undefined : { width: leftWidth }}
+        >
+          {leftCollapsed ? (
+            <button type="button" onClick={() => setLeftCollapsed(false)} className="flex h-full flex-col items-center gap-3 py-4 text-slate-400 hover:text-cyan-700">
+              <ChevronRight size={16} />
+              <Layers size={16} />
+              <span className="vertical-text text-[10px] font-bold">{zh ? '模板库' : 'Templates'}</span>
+            </button>
+          ) : (
+            <>
+              <div className="shrink-0 border-b border-slate-100 p-3">
+                <div className="flex items-center gap-2">
+                  <Layers size={14} className="text-cyan-600" />
+                  <h2 className="flex-1 text-xs font-black text-slate-800">{zh ? '模板库' : 'Template library'}</h2>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-500">{filteredTemplates.length}</span>
+                  <button type="button" onClick={() => setLeftCollapsed(true)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"><ChevronLeft size={13} /></button>
+                </div>
+                <div className="relative mt-3">
+                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder={zh ? '名称、描述、厂商、平台、命令…' : 'Name, vendor, platform, commands…'} className={`${fieldClass} pl-9`} />
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                  {[
+                    [vendorFilter, setVendorFilter, zh ? '全部厂商' : 'All vendors', distinct('vendor')],
+                    [platformFilter, setPlatformFilter, zh ? '全部平台' : 'All platforms', distinct('platform_family')],
+                    [categoryFilter, setCategoryFilter, zh ? '全部场景' : 'All scenarios', distinct('category')],
+                    [sourceFilter, setSourceFilter, zh ? '全部来源' : 'All sources', ['official', 'custom', 'team', 'mine']],
+                    [statusFilter, setStatusFilter, zh ? '全部状态' : 'All statuses', ['published', 'draft', 'review', 'archived']],
+                    [sortBy, setSortBy, zh ? '最近更新' : 'Recently updated', ['updated', 'name', 'usage', 'quality']],
+                  ].map(([value, setter, placeholder, options], index) => (
+                    <select
+                      key={String(placeholder)}
+                      value={String(value)}
+                      onChange={(event) => (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value)}
+                      className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[9px] font-semibold text-slate-600 outline-none"
+                    >
+                      <option value={index === 5 ? 'updated' : 'all'}>{String(placeholder)}</option>
+                      {(options as string[]).map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  ))}
+                </div>
               </div>
-              <span className="text-[10px] font-bold text-slate-400 px-2 py-0.5 rounded-full bg-slate-100">
-                {filteredTemplates.length}
-              </span>
-            </div>
-            <div className="mt-3 relative">
-              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={tplSearch}
-                onChange={(e) => setTplSearch(e.target.value)}
-                placeholder={zh ? '搜索模板或厂商...' : 'Search templates or vendors...'}
-                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:border-[#06b6d4] focus:bg-white focus:shadow-[0_0_0_3px_rgba(6,182,212,0.1)] transition-all placeholder:text-slate-400"
-              />
-            </div>
-            {/* Vendor chips */}
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              <button
-                onClick={() => setTplVendorFilter('all')}
-                className={`text-[10px] font-bold px-2 py-1 rounded-full transition-all ${
-                  tplVendorFilter === 'all'
-                    ? 'bg-[#0f172a] text-white'
-                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                }`}
-              >
-                {zh ? '全部' : 'All'} · {searchedTemplates.length}
-              </button>
-              {vendorList.map((vendor) => {
-                const brand = vendorBrand(vendor);
-                const count = vendorCounts.get(vendor) || 0;
-                // When the user types a search, hide vendors with zero matches
-                // to avoid the "Arista · 5" lie shown during search.
-                if (tplSearch.trim() && count === 0) return null;
-                const isActive = tplVendorFilter === vendor;
-                return (
-                  <button
-                    key={vendor}
-                    onClick={() => setTplVendorFilter(vendor)}
-                    className={`text-[10px] font-bold px-2 py-1 rounded-full transition-all ${
-                      isActive
-                        ? `bg-gradient-to-r ${brand.gradient} text-white shadow-sm`
-                        : `${brand.chip} hover:ring-1 hover:ring-slate-300`
-                    }`}
-                  >
-                    {vendor} · {count}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-auto p-3 space-y-2">
-            {filteredTemplates.length === 0 ? (
-              <div className="py-10 text-center text-xs text-slate-300 italic">
-                {zh ? '没有匹配的模板' : 'No matching templates'}
-              </div>
-            ) : (
-              filteredTemplates.map((tpl) => {
-                const brand = vendorBrand(tpl.vendor || 'Custom');
-                const templateVars = templateVarsMap.get(tpl.id) || [];
-                const isSelected = selectedTemplateId === tpl.id;
-                return (
-                  <button
-                    key={tpl.id}
-                    onClick={() => onSelectTemplateIdChange(tpl.id)}
-                    className={`w-full text-left rounded-xl border transition-all overflow-hidden group ${
-                      isSelected
-                        ? `border-transparent shadow-lg ring-2 ring-[#06b6d4]/40`
-                        : `${brand.border} bg-white hover:border-slate-300 hover:shadow-sm`
-                    }`}
-                  >
-                    <div
-                      className={`h-1 bg-gradient-to-r ${brand.gradient} ${isSelected ? 'opacity-100' : 'opacity-70'}`}
-                    />
-                    <div className="p-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${brand.chip}`}>
-                              {tpl.vendor || 'Custom'}
-                            </span>
-                            {(tpl.category === 'official' || tpl.validation_status === 'official_reference_reviewed') && (
-                              <span className="text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase bg-blue-50 text-blue-700 border border-blue-100">
-                                {zh ? '官方参考已审核' : 'Official reference reviewed'}
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-1.5 text-sm font-bold text-[#0f172a] truncate">{tpl.name}</p>
-                          <p className="mt-0.5 text-[10px] text-slate-400">
-                            {zh ? `最近使用 ${tpl.lastUsed}` : `Last used ${tpl.lastUsed}`}
-                          </p>
-                        </div>
-                        <span className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">
-                          {tpl.type}
-                        </span>
-                      </div>
-                      <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-50 text-slate-500">
-                          {templateVars.length} {zh ? '变量' : 'vars'}
-                        </span>
-                        {tpl.software_version && (
-                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700">
-                            {tpl.software_version}
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
+                {filteredTemplates.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <Filter size={24} className="mx-auto text-slate-200" />
+                    <p className="mt-2 text-[10px] text-slate-400">{zh ? '没有匹配模板' : 'No matching templates'}</p>
+                  </div>
+                ) : filteredTemplates.map((template) => {
+                  const selected = template.id === selectedTemplateId;
+                  const brand = VENDOR_STYLE[template.vendor || 'Custom'] || VENDOR_STYLE.Custom;
+                  return (
+                    <div key={template.id} className={`group relative rounded-xl border transition ${selected ? 'border-cyan-300 bg-cyan-50/50 shadow-sm ring-1 ring-cyan-100' : 'border-slate-200 bg-white hover:border-cyan-200'}`}>
+                      <button type="button" onClick={() => selectTemplate(template.id)} className="w-full p-3 pr-9 text-left">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`rounded px-1.5 py-0.5 text-[8px] font-black ring-1 ${brand.chip}`}>{template.vendor || 'Custom'}</span>
+                          {template.platform_family && <span className="max-w-24 truncate rounded bg-slate-100 px-1.5 py-0.5 text-[8px] font-bold text-slate-500">{template.platform_family}</span>}
+                          <span className={`rounded px-1.5 py-0.5 text-[8px] font-bold ${template.is_official || template.source_type === 'official' ? 'bg-blue-50 text-blue-700' : 'bg-violet-50 text-violet-700'}`}>
+                            {template.is_official || template.source_type === 'official' ? (zh ? '官方' : 'Official') : (zh ? '自定义' : 'Custom')}
                           </span>
-                        )}
-                      </div>
+                        </div>
+                        <p className="mt-2 truncate text-xs font-black text-slate-800">{template.name}</p>
+                        <p className="mt-1 line-clamp-2 min-h-7 text-[9px] leading-3.5 text-slate-400">{template.description || (zh ? '暂无模板说明' : 'No description')}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-1 text-[8px] text-slate-400">
+                          <span>{parseJson<TemplateVariable[]>(template.variable_schema_json, []).length || '—'} {zh ? '变量' : 'vars'}</span>
+                          <span>· v{template.current_version || '1.0'}</span>
+                          <span>· {template.risk_level || 'low'}</span>
+                          <span>· {formatLastUsed(template.lastUsed, zh)}</span>
+                        </div>
+                      </button>
+                      <button type="button" onClick={() => void toggleFavorite(template)} className={`absolute right-2 top-2 rounded-lg p-1.5 transition ${template.is_favorite ? 'text-amber-500' : 'text-slate-300 opacity-0 hover:text-amber-500 group-hover:opacity-100'}`} title={zh ? '收藏模板' : 'Favorite'}>
+                        <Star size={13} fill={template.is_favorite ? 'currentColor' : 'none'} />
+                      </button>
                     </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          {!leftCollapsed && <div onMouseDown={(event) => startResize('left', event)} className="absolute bottom-0 right-0 top-0 z-10 w-1 cursor-col-resize hover:bg-cyan-300" />}
         </aside>
 
-        {/* ═════ RIGHT: Editor / Rendered / Checks ═════ */}
-        <section className="lg:col-span-9 min-h-0 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-          {/* Top bar: template header */}
-          <div className="px-5 py-4 border-b border-slate-100 bg-gradient-to-br from-slate-50 to-white flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2 flex-1 min-w-[260px]">
-              <div
-                className={`w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-sm bg-gradient-to-br ${vendorBrand(selectedConfigTemplate?.vendor).gradient} shadow-sm`}
-              >
-                {selectedConfigTemplate?.vendor ? selectedConfigTemplate.vendor.slice(0, 2).toUpperCase() : '✎'}
-              </div>
-              <input
-                type="text"
-                value={selectedConfigTemplate?.name || ''}
-                title={zh ? '模板名称' : 'Template name'}
-                onChange={(event) => onSelectedTemplateNameChange(event.target.value)}
-                className="flex-1 min-w-0 bg-transparent px-3 py-2 rounded-xl text-base font-bold text-[#0f172a] border border-transparent hover:border-slate-200 focus:border-[#06b6d4] focus:bg-white outline-none transition-all"
-                placeholder={zh ? '模板名称' : 'Template name'}
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <select
-                value={selectedConfigTemplate?.vendor || 'Custom'}
-                title={zh ? '模板厂商' : 'Template vendor'}
-                onChange={(event) => onSelectedTemplateVendorChange(event.target.value)}
-                className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer hover:bg-white hover:border-[#06b6d4] transition-all"
-              >
-                {['Cisco', 'Juniper', 'Huawei', 'H3C', 'Arista', 'Ruijie', 'Other', 'Custom'].map((vendor) => (
-                  <option key={vendor} value={vendor}>{vendor}</option>
-                ))}
-              </select>
-              <select
-                value={selectedConfigTemplate?.type || 'Jinja2'}
-                title={zh ? '模板类型' : 'Template type'}
-                onChange={(event) => onSelectedTemplateTypeChange(event.target.value as TemplateType)}
-                className="text-xs font-bold px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer hover:bg-white hover:border-[#06b6d4] transition-all"
-              >
-                <option value="Jinja2">Jinja2</option>
-                <option value="YAML">YAML</option>
-              </select>
-              <div className="w-px h-6 bg-slate-200" />
-              <button
-                onClick={onDiscardChanges}
-                className="px-3 py-2 text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all"
-              >
-                {t('discard')}
-              </button>
-              <button
-                onClick={onSaveTemplate}
-                className="px-3 py-2 text-xs font-bold text-[#0891b2] hover:bg-cyan-50 rounded-lg transition-all"
-              >
-                {t('saveChanges')}
-              </button>
-            </div>
-          </div>
-          {(selectedConfigTemplate?.description
-            || selectedConfigTemplate?.platform_family
-            || selectedConfigTemplate?.software_version
-            || selectedConfigTemplate?.official_reference) && (
-            <div className="px-5 py-2.5 border-b border-slate-100 bg-cyan-50/40 flex items-center gap-2 flex-wrap text-[11px] text-slate-600">
-              {selectedConfigTemplate.description && (
-                <span className="mr-auto">{selectedConfigTemplate.description}</span>
-              )}
-              {selectedConfigTemplate.platform_family && (
-                <span className="px-2 py-1 rounded-full bg-white border border-cyan-100 font-semibold text-cyan-800">
-                  {selectedConfigTemplate.platform_family}
-                </span>
-              )}
-              {selectedConfigTemplate.software_version && (
-                <span className="px-2 py-1 rounded-full bg-white border border-cyan-100 font-semibold text-cyan-800">
-                  {selectedConfigTemplate.software_version}
-                </span>
-              )}
-              {selectedConfigTemplate.official_reference && (
-                <a
-                  href={selectedConfigTemplate.official_reference}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-white border border-blue-100 font-semibold text-blue-700 hover:border-blue-300"
-                >
-                  <ExternalLink size={11} />
-                  {zh ? '查看官方依据' : 'Official reference'}
-                </a>
-              )}
-            </div>
-          )}
-
-          {/* View tabs + action row */}
-          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
-            <div className="inline-flex p-1 rounded-xl bg-slate-100">
-              {[
-                { key: 'source', label: zh ? '源模板' : 'Source', icon: <Code2 size={13} /> },
-                { key: 'rendered', label: zh ? '渲染结果' : 'Rendered', icon: <Play size={13} /> },
-                { key: 'checks', label: zh ? '发布检查' : 'Preflight', icon: <ShieldCheck size={13} /> },
-              ].map((tab) => {
-                const active = configWorkspaceView === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    onClick={() => onConfigWorkspaceViewChange(tab.key as ConfigWorkspaceView)}
-                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      active
-                        ? 'bg-white text-[#0f172a] shadow-sm'
-                        : 'text-slate-500 hover:text-[#0f172a]'
-                    }`}
-                  >
-                    {tab.icon}
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex items-center gap-2">
-              <SidebarToggle
-                active={showSidebar === 'scope'}
-                onClick={() => setShowSidebar(showSidebar === 'scope' ? null : 'scope')}
-                icon={<Server size={13} />}
-                label={zh ? '发布范围' : 'Scope'}
-                badge={configScopedDevices.length}
-              />
-              <SidebarToggle
-                active={showSidebar === 'vars'}
-                onClick={() => setShowSidebar(showSidebar === 'vars' ? null : 'vars')}
-                icon={<Sparkles size={13} />}
-                label={zh ? '变量' : 'Variables'}
-                badge={globalVars.length}
-              />
-              <div className="w-px h-5 bg-slate-200 mx-1" />
-              <button
-                onClick={onValidate}
-                className="px-3 py-1.5 text-xs font-bold text-[#0891b2] border border-[#06b6d4]/30 bg-cyan-50 rounded-lg hover:bg-cyan-100 transition-all flex items-center gap-1.5"
-              >
-                <ShieldCheck size={13} />
-                {zh ? '检查' : 'Preflight'}
-              </button>
-              <button
-                onClick={onCreateScenarioDraft}
-                className="px-3 py-1.5 text-xs font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-all"
-              >
-                {zh ? '转草稿' : 'To Draft'}
-              </button>
-              <button
-                onClick={onSendToAutomation}
-                className="px-4 py-1.5 bg-gradient-to-r from-[#06b6d4] to-[#0891b2] text-white rounded-lg text-xs font-bold hover:shadow-lg hover:shadow-cyan-500/30 transition-all flex items-center gap-1.5"
-              >
-                <Rocket size={13} />
-                {zh ? '提交下发' : 'Deploy'}
-              </button>
-            </div>
-          </div>
-
-          {/* Missing vars banner */}
-          {configMissingVariables.length > 0 && (
-            <div className="px-5 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-[11px] text-amber-900">
-              <AlertTriangle size={13} className="flex-shrink-0" />
-              <span>
-                {zh
-                  ? `尚有 ${configMissingVariables.length} 个变量未赋值：${configMissingVariables.slice(0, 5).join('、')}${configMissingVariables.length > 5 ? ' ...' : ''}`
-                  : `${configMissingVariables.length} variables missing: ${configMissingVariables.slice(0, 5).join(', ')}${configMissingVariables.length > 5 ? ' ...' : ''}`}
+        <section className="relative flex min-h-0 shrink-0 flex-col overflow-hidden border-y border-slate-200 bg-white" style={{ width: parameterWidth }}>
+          <div className="shrink-0 border-b border-slate-100 p-3">
+            <div className="flex items-start gap-3">
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-xs font-black text-white ${VENDOR_STYLE[detail?.vendor || 'Custom']?.gradient || VENDOR_STYLE.Custom.gradient}`}>
+                {(detail?.vendor || 'NA').slice(0, 2).toUpperCase()}
               </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="truncate text-sm font-black text-slate-800">{detail?.name || (zh ? '请选择模板' : 'Select a template')}</h2>
+                <p className="mt-0.5 text-[9px] text-slate-400">
+                  {zh ? '版本' : 'Version'} v{detail?.current_version || '—'} · {zh ? '必填' : 'required'} {requiredVariables.length}
+                </p>
+              </div>
+              {detailLoading && <Loader2 size={14} className="animate-spin text-cyan-600" />}
             </div>
-          )}
+            {detail && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <button type="button" onClick={loadExamples} className="rounded-lg border border-slate-200 px-2 py-1 text-[9px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><Sparkles size={10} className="mr-1 inline" />{zh ? '加载示例' : 'Example'}</button>
+                <button type="button" onClick={resetParameters} className="rounded-lg border border-slate-200 px-2 py-1 text-[9px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><RefreshCw size={10} className="mr-1 inline" />{zh ? '重置参数' : 'Reset'}</button>
+                <button type="button" onClick={() => void runRender(true)} className="rounded-lg bg-slate-900 px-2 py-1 text-[9px] font-bold text-white"><WandSparkles size={10} className="mr-1 inline" />{zh ? '立即渲染' : 'Render'}</button>
+              </div>
+            )}
+          </div>
 
-          {/* Content area — flex 1, optional sidebar on right */}
-          <div className="flex-1 min-h-0 flex overflow-hidden">
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-              {configWorkspaceView === 'source' && (
-                <div className="flex-1 min-h-0 flex bg-[#1E1E1E] overflow-hidden">
-                  <div
-                    ref={lineNumRef}
-                    className="w-12 py-6 bg-black/30 text-white/30 select-none text-right pr-3 font-mono text-sm leading-6 overflow-hidden"
-                  >
-                    {editorContent.split('\n').map((_, index) => <div key={index}>{index + 1}</div>)}
-                  </div>
-                  <textarea
-                    value={editorContent}
-                    onChange={(event) => onEditorContentChange(event.target.value)}
-                    onScroll={(e) => { if (lineNumRef.current) lineNumRef.current.scrollTop = e.currentTarget.scrollTop; }}
-                    title={zh ? '模板源码编辑器' : 'Template source editor'}
-                    placeholder={zh ? '在这里编辑模板源码' : 'Edit template source here'}
-                    className="flex-1 p-6 bg-transparent font-mono text-sm text-[#D4D4D4] outline-none resize-none leading-6"
-                    spellCheck={false}
-                  />
+          {detail ? (
+            <>
+              <div className="shrink-0 border-b border-slate-100 bg-slate-50 p-3">
+                <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{zh ? '参数方案' : 'Parameter profile'}</label>
+                <div className="mt-1.5 flex gap-1.5">
+                  <select value={selectedProfileId} onChange={(event) => loadProfile(event.target.value)} className={`${fieldClass} min-w-0 flex-1`}>
+                    <option value="">{zh ? '未使用参数方案' : 'No profile'}</option>
+                    {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · v{profile.template_version}</option>)}
+                  </select>
+                  <button type="button" disabled={!selectedProfileId} onClick={() => void deleteProfile()} className="rounded-xl border border-slate-200 p-2 text-slate-400 hover:border-rose-200 hover:text-rose-600 disabled:opacity-30"><Trash2 size={13} /></button>
                 </div>
-              )}
-
-              {configWorkspaceView === 'rendered' && (
-                <div className="flex-1 min-h-0 overflow-auto bg-[#0f172a] text-[#e2e8f0] font-mono text-sm leading-6 p-6">
-                  <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-                    <div>
-                      <p className="text-xs uppercase tracking-widest text-white/40 font-bold">
-                        {zh ? '渲染结果' : 'Rendered Output'}
-                      </p>
-                      <p className="mt-1 text-[11px] text-white/50">
-                        {zh ? '模板应用全局变量后的纯文本结果，不连接设备。' : 'Template output after variable substitution. No device connection.'}
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          navigator.clipboard.writeText(configRenderedPreview || '');
-                          showToast(t('copied'), 'success');
-                        }}
-                        disabled={!configRenderedPreview}
-                        className="px-3 py-1.5 rounded-lg border border-white/10 text-xs font-semibold text-white/70 hover:text-white hover:bg-white/5 disabled:opacity-30 flex items-center gap-1.5 transition-all"
-                      >
-                        <Copy size={12} />
-                        {zh ? '复制' : 'Copy'}
-                      </button>
-                      <button
-                        onClick={handleDownloadRendered}
-                        disabled={!configRenderedPreview}
-                        className="px-3 py-1.5 rounded-lg border border-white/10 text-xs font-semibold text-white/70 hover:text-white hover:bg-white/5 disabled:opacity-30 flex items-center gap-1.5 transition-all"
-                      >
-                        <Download size={12} />
-                        {zh ? '下载' : 'Download'}
-                      </button>
-                    </div>
-                  </div>
-                  <pre className="whitespace-pre-wrap break-words text-[13px] leading-[1.7]">
-                    {configRenderedPreview || (
-                      <span className="text-white/30 italic">{zh ? '暂无内容' : 'No content to render'}</span>
-                    )}
-                  </pre>
-                </div>
-              )}
-
-              {configWorkspaceView === 'checks' && (
-                <div className="flex-1 min-h-0 overflow-auto p-5 bg-slate-50/80 space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Blocking */}
-                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-4">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${configValidationIssues.length === 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                          <ShieldCheck size={15} />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-bold text-[#0f172a]">{zh ? '阻断项' : 'Blocking'}</h3>
-                          <p className="text-[11px] text-slate-400">{zh ? '必须解决后才能下发' : 'Must resolve before deploying'}</p>
-                        </div>
-                        <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${configValidationIssues.length === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
-                          {configValidationIssues.length}
-                        </span>
-                      </div>
-                      <div className="space-y-2">
-                        {configValidationIssues.length === 0 ? (
-                          <div className="flex items-start gap-2 text-sm text-emerald-700">
-                            <CheckCircle2 size={15} className="mt-0.5 flex-shrink-0" />
-                            <span>{zh ? '全部通过，可以执行发布。' : 'All checks passed. Release is ready.'}</span>
-                          </div>
-                        ) : configValidationIssues.map((issue) => (
-                          <div key={issue} className="flex items-start gap-2 text-sm text-rose-700 bg-rose-50/50 rounded-lg px-3 py-2">
-                            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-                            <span>{issue}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {/* Advisories */}
-                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                      <div className="flex items-center gap-2 mb-4">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${configValidationWarnings.length === 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
-                          <AlertCircle size={15} />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-bold text-[#0f172a]">{zh ? '建议项' : 'Advisories'}</h3>
-                          <p className="text-[11px] text-slate-400">{zh ? '可以继续，但建议关注' : 'Not blocking, worth reviewing'}</p>
-                        </div>
-                        <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${configValidationWarnings.length === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                          {configValidationWarnings.length}
-                        </span>
-                      </div>
-                      <div className="space-y-2">
-                        {configValidationWarnings.length === 0 ? (
-                          <div className="flex items-start gap-2 text-sm text-slate-600">
-                            <CheckCircle2 size={15} className="mt-0.5 flex-shrink-0 text-emerald-500" />
-                            <span>{zh ? '没有额外建议。' : 'No additional advisories.'}</span>
-                          </div>
-                        ) : configValidationWarnings.map((warning) => (
-                          <div key={warning} className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50/50 rounded-lg px-3 py-2">
-                            <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
-                            <span>{warning}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Release Flow */}
-                  <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                    <div className="flex items-center gap-2 mb-4">
-                      <div className="w-8 h-8 rounded-lg bg-cyan-50 text-cyan-600 flex items-center justify-center">
-                        <Send size={15} />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-bold text-[#0f172a]">{zh ? '推荐发布流程' : 'Recommended Release Flow'}</h3>
-                        <p className="text-[11px] text-slate-400">
-                          {zh ? '先小范围验证 → 再批量下发 → 最后核对结果' : 'Canary first → bulk deploy → verify outcomes'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                      {[
-                        { n: '1', t: zh ? '锁定模板与变量' : 'Freeze template & vars' },
-                        { n: '2', t: zh ? '按平台/角色/站点筛目标' : 'Scope by platform/role/site' },
-                        { n: '3', t: zh ? '挑 1 台在线设备做 canary' : 'Canary on 1 online device' },
-                        { n: '4', t: zh ? '批量下发并核对结果' : 'Bulk deploy & verify' },
-                      ].map((s) => (
-                        <div key={s.n} className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-3 py-3">
-                          <div className="w-6 h-6 rounded-full bg-[#0f172a] text-white text-[10px] font-black flex items-center justify-center mb-2">
-                            {s.n}
-                          </div>
-                          <p className="text-xs font-semibold text-slate-700 leading-snug">{s.t}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Readiness Summary */}
-                  <div className="bg-gradient-to-br from-[#0f172a] to-[#1e293b] rounded-2xl p-6 text-white flex items-center gap-5 shadow-lg">
-                    <div className="w-20 h-20 rounded-full bg-white/5 border-4 border-white/10 flex items-center justify-center">
-                      <span className={`text-3xl font-black ${readinessColor}`}>{configReadinessScore}</span>
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">
-                        {zh ? '发布就绪度' : 'Release Readiness'}
-                      </p>
-                      <p className="mt-1 text-lg font-bold">
-                        {configReadinessScore >= 85
-                          ? (zh ? '可以发布' : 'Ready to deploy')
-                          : configReadinessScore >= 60
-                          ? (zh ? '基本就绪，建议复核' : 'Mostly ready, review first')
-                          : (zh ? '暂不建议发布' : 'Not ready for release')}
-                      </p>
-                      <p className="mt-1 text-[11px] text-white/50">
-                        {zh
-                          ? `已匹配 ${configScopedDevices.length} 台设备（${configScopedOnlineCount} 在线）`
-                          : `${configScopedDevices.length} matched (${configScopedOnlineCount} online)`}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* ═════ SIDE DRAWER (scope / vars) ═════ */}
-            {showSidebar && (
-              <aside className="w-80 border-l border-slate-100 bg-slate-50/60 flex flex-col overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-white">
-                  <div className="flex items-center gap-2">
-                    {showSidebar === 'scope' ? <Server size={14} className="text-[#06b6d4]" /> : <Sparkles size={14} className="text-[#06b6d4]" />}
-                    <h4 className="text-sm font-bold text-[#0f172a]">
-                      {showSidebar === 'scope'
-                        ? (zh ? '发布范围' : 'Release Scope')
-                        : (zh ? '全局变量' : 'Global Variables')}
-                    </h4>
-                  </div>
-                  <button
-                    onClick={() => setShowSidebar(null)}
-                    className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all"
-                    title={zh ? '关闭' : 'Close'}
-                  >
-                    <X size={14} />
+                <div className="mt-1.5 flex gap-1.5">
+                  <input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder={zh ? '输入方案名称后保存当前参数' : 'Profile name'} className={`${fieldClass} min-w-0 flex-1`} />
+                  <button type="button" disabled={!profileName.trim() || savingProfile} onClick={() => void saveProfile()} className="inline-flex items-center gap-1 rounded-xl bg-cyan-600 px-3 text-[9px] font-bold text-white disabled:opacity-40">
+                    {savingProfile ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />} {zh ? '保存' : 'Save'}
                   </button>
                 </div>
+              </div>
 
-                {showSidebar === 'scope' && (
-                  <div className="flex-1 overflow-auto p-4 space-y-3">
-                    <ScopeSelect
-                      label={zh ? '平台' : 'Platform'}
-                      value={configScopePlatform}
-                      options={[{ value: 'all', label: zh ? '全部' : 'All' }, ...configPlatformOptions.map(p => ({ value: p, label: getPlatformLabel(p) }))]}
-                      onChange={onConfigScopePlatformChange}
-                    />
-                    <ScopeSelect
-                      label={zh ? '角色' : 'Role'}
-                      value={configScopeRole}
-                      options={[{ value: 'all', label: zh ? '全部' : 'All' }, ...configRoleOptions.map(r => ({ value: r, label: r }))]}
-                      onChange={onConfigScopeRoleChange}
-                    />
-                    <ScopeSelect
-                      label={zh ? '站点' : 'Site'}
-                      value={configScopeSite}
-                      options={[{ value: 'all', label: zh ? '全部' : 'All' }, ...configSiteOptions.map(s => ({ value: s, label: s }))]}
-                      onChange={onConfigScopeSiteChange}
-                    />
+              <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                <div className="mb-3 grid grid-cols-4 gap-1.5 rounded-xl bg-slate-50 p-2 text-center">
+                  {[
+                    [zh ? '总数' : 'Total', schema.length],
+                    [zh ? '必填' : 'Required', requiredVariables.length],
+                    [zh ? '已填写' : 'Filled', Object.values(parameters).filter((value) => value !== '' && value !== null && value !== undefined).length],
+                    [zh ? '未完成' : 'Missing', Math.max(0, requiredVariables.length - completedRequired)],
+                  ].map(([label, value]) => (
+                    <div key={String(label)}>
+                      <p className="text-sm font-black text-slate-700">{value}</p>
+                      <p className="text-[8px] text-slate-400">{label}</p>
+                    </div>
+                  ))}
+                </div>
 
-                    <div className="mt-4 rounded-xl bg-white border border-slate-200 p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                          {zh ? '匹配到' : 'Matched'}
-                        </span>
-                        <span className="text-xs font-bold text-[#0891b2]">
-                          {configScopedOnlineCount}/{configScopedDevices.length} {zh ? '在线' : 'online'}
-                        </span>
-                      </div>
-                      {configScopedDevices.length === 0 ? (
-                        <p className="text-[11px] text-slate-400 italic py-2 text-center">
-                          {zh ? '无匹配设备，请调整范围' : 'No devices match. Adjust scope.'}
-                        </p>
-                      ) : (
-                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
-                          {configScopedDevices.map((device) => (
-                            <div key={device.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5">
-                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${device.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                              <div className="min-w-0 flex-1">
-                                <p className="text-xs font-semibold text-slate-700 truncate">{device.hostname}</p>
-                                <p className="text-[10px] text-slate-400 font-mono truncate">{device.ip_address}</p>
-                              </div>
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-500 flex-shrink-0">
-                                {getPlatformLabel(device.platform)}
-                              </span>
-                            </div>
-                          ))}
+                {groupedSchema.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center">
+                    <FileJson size={24} className="mx-auto text-slate-200" />
+                    <p className="mt-2 text-[10px] text-slate-400">{zh ? '当前模板没有参数' : 'This template has no parameters'}</p>
+                  </div>
+                ) : groupedSchema.map(([group, items]) => {
+                  const collapsed = groupCollapsed[group];
+                  const errorCount = items.filter((item) => fieldErrors.has(item.name)).length;
+                  return (
+                    <div key={group} className="mb-3 overflow-hidden rounded-xl border border-slate-200">
+                      <button type="button" onClick={() => setGroupCollapsed((current) => ({ ...current, [group]: !collapsed }))} className="flex w-full items-center gap-2 bg-slate-50 px-3 py-2 text-left">
+                        <ChevronDown size={12} className={`text-slate-400 transition ${collapsed ? '-rotate-90' : ''}`} />
+                        <span className="flex-1 text-[10px] font-black text-slate-700">{group}</span>
+                        {errorCount > 0 && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[8px] font-bold text-rose-700">{errorCount}</span>}
+                        <span className="text-[8px] text-slate-400">{items.length}</span>
+                      </button>
+                      {!collapsed && (
+                        <div className="space-y-3 p-3">
+                          {items.map((item) => {
+                            const source = parameterSources[item.name] || (item.default_value !== undefined && item.default_value !== null ? 'template_default' : '');
+                            return (
+                              <label key={item.name} className="block">
+                                <div className="mb-1.5 flex items-center gap-2">
+                                  <span className="text-[10px] font-bold text-slate-700">{item.label || item.name}</span>
+                                  {item.required ? <span className="text-[9px] font-black text-rose-500">*</span> : <span className="text-[8px] text-slate-400">{zh ? '可选' : 'optional'}</span>}
+                                  <code className="ml-auto text-[8px] text-slate-300">{item.type}</code>
+                                </div>
+                                {renderVariableInput(item)}
+                                <div className="mt-1 flex items-start gap-2">
+                                  {fieldErrors.has(item.name) ? (
+                                    <p className="flex-1 text-[9px] leading-4 text-rose-600">{fieldErrors.get(item.name)}</p>
+                                  ) : (
+                                    <p className="flex-1 text-[9px] leading-4 text-slate-400">{item.description || item.placeholder || ''}</p>
+                                  )}
+                                  {source && <span className="shrink-0 rounded bg-cyan-50 px-1.5 py-0.5 text-[8px] font-bold text-cyan-700">{SOURCE_LABELS[source] || source}</span>}
+                                </div>
+                              </label>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
-                  </div>
-                )}
+                  );
+                })}
 
-                {showSidebar === 'vars' && (
-                  <div className="flex-1 overflow-auto p-4">
-                    <button
-                      onClick={onAddVar}
-                      className="w-full mb-3 px-3 py-2 rounded-xl border-2 border-dashed border-[#06b6d4]/40 text-[#0891b2] text-xs font-bold hover:bg-cyan-50 transition-all flex items-center justify-center gap-1.5"
-                    >
-                      <Plus size={13} />
-                      {t('addVar')}
-                    </button>
-                    <div className="space-y-1.5">
-                      {globalVars.length === 0 && (
-                        <p className="text-[11px] text-slate-400 italic py-4 text-center">
-                          {zh ? '暂无全局变量' : 'No variables defined yet'}
-                        </p>
-                      )}
-                      {globalVars.map((item, index) => (
-                        <div key={item.id || index} className="group bg-white rounded-lg border border-slate-200 p-2.5 hover:border-[#06b6d4]/30 transition-all">
-                          <div className="flex items-center justify-between gap-2">
-                            <code className="text-xs font-bold text-[#0f172a] font-mono truncate flex-1">{item.key}</code>
-                            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
-                              <button
-                                onClick={() => {
-                                  navigator.clipboard.writeText('{{ ' + item.key + ' }}');
-                                  showToast(t('copied'), 'success');
-                                }}
-                                className="p-1 rounded text-slate-400 hover:text-[#0891b2] hover:bg-cyan-50 transition-all"
-                                title={zh ? '复制引用' : 'Copy reference'}
-                              >
-                                <FileText size={11} />
-                              </button>
-                              <button
-                                onClick={() => item.id && onDeleteVar(item.id)}
-                                disabled={!item.id}
-                                className={`p-1 rounded transition-all ${item.id ? 'text-slate-400 hover:text-rose-500 hover:bg-rose-50' : 'text-slate-200 cursor-not-allowed'}`}
-                                title={zh ? '删除' : 'Delete'}
-                              >
-                                <Trash2 size={11} />
-                              </button>
-                            </div>
-                          </div>
-                          <p className="mt-1 text-[10px] text-slate-400 font-mono truncate">{`{{ ${item.key} }} = ${item.value}`}</p>
-                        </div>
-                      ))}
-                    </div>
+                {(detail.usage_notes || detail.risk_notes || detail.official_reference) && (
+                  <div className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+                    <p className="flex items-center gap-1.5 text-[10px] font-black text-blue-800"><BookOpen size={12} /> {zh ? '模板说明' : 'Template guidance'}</p>
+                    {detail.usage_notes && <p className="text-[9px] leading-4 text-slate-600">{detail.usage_notes}</p>}
+                    {detail.risk_notes && <p className="text-[9px] leading-4 text-amber-700"><ShieldAlert size={10} className="mr-1 inline" />{detail.risk_notes}</p>}
+                    {detail.official_reference && <a href={detail.official_reference} target="_blank" rel="noreferrer" className="block truncate text-[9px] font-bold text-blue-700 underline">{zh ? '查看厂商官方参考' : 'Official vendor reference'}</a>}
                   </div>
                 )}
-              </aside>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-slate-400">{zh ? '请从左侧选择一个配置模板' : 'Select a template from the left'}</div>
+          )}
+          <div onMouseDown={(event) => startResize('parameters', event)} className="absolute bottom-0 right-0 top-0 z-10 w-1 cursor-col-resize hover:bg-cyan-300" />
+        </section>
+
+        <section className={`${fullscreen ? 'fixed inset-4 z-50 rounded-2xl shadow-2xl' : 'min-w-[520px] flex-1 rounded-r-2xl'} flex min-h-0 min-w-0 flex-col overflow-hidden border border-slate-200 bg-white shadow-sm`}>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-100 px-3 py-2">
+            <div className="flex rounded-lg bg-slate-100 p-1">
+              {PREVIEW_TABS.map((tab) => (
+                <button type="button" key={tab.id} onClick={() => setPreviewTab(tab.id)} className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[9px] font-bold transition ${previewTab === tab.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+                  {tab.icon}{zh ? tab.zh : tab.en}
+                  {tab.id === 'checks' && renderResult && (renderResult.errors.length + renderResult.warnings.length > 0) && <span className="rounded-full bg-amber-100 px-1 text-[8px] text-amber-700">{renderResult.errors.length + renderResult.warnings.length}</span>}
+                </button>
+              ))}
+            </div>
+            <div className="ml-auto flex items-center gap-1.5">
+              {previewTab === 'preview' && (
+                <>
+                  <div className="relative hidden xl:block">
+                    <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input value={previewSearch} onChange={(event) => setPreviewSearch(event.target.value)} placeholder={zh ? '搜索命令' : 'Search output'} className="w-32 rounded-lg border border-slate-200 py-1.5 pl-7 pr-2 text-[9px] outline-none focus:border-cyan-300" />
+                  </div>
+                  <button type="button" onClick={() => setWrapPreview((value) => !value)} className={`rounded-lg border p-1.5 ${wrapPreview ? 'border-cyan-200 bg-cyan-50 text-cyan-700' : 'border-slate-200 text-slate-500'}`} title={zh ? '自动换行' : 'Wrap'}><WrapText size={12} /></button>
+                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => {
+                    void navigator.clipboard.writeText(visibleRender?.rendered_output || '');
+                    showToast(t('copied'), 'success');
+                  }} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30" title={zh ? '复制全部' : 'Copy all'}><Copy size={12} /></button>
+                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => visibleRender && downloadText(visibleRender.rendered_output, `${safeFileName(detail?.name || 'config')}.txt`)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30" title="TXT"><Download size={12} /></button>
+                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => visibleRender && downloadText(visibleRender.rendered_output, `${safeFileName(detail?.name || 'config')}.cfg`)} className="rounded-lg border border-slate-200 px-2 py-1 text-[8px] font-bold text-slate-500 disabled:opacity-30">CFG</button>
+                </>
+              )}
+              <button type="button" onClick={() => setFullscreen((value) => !value)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500">{fullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}</button>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-3 border-b border-slate-100 bg-slate-50 px-4 py-2">
+            {renderState === 'rendering' ? <Loader2 size={13} className="animate-spin text-cyan-600" /> : renderState === 'success' ? <CheckCircle2 size={13} className="text-emerald-600" /> : renderState === 'warning' ? <AlertTriangle size={13} className="text-amber-600" /> : renderState === 'error' ? <AlertCircle size={13} className="text-rose-600" /> : <Code2 size={13} className="text-slate-400" />}
+            <p className="text-[10px] font-bold text-slate-600">
+              {renderState === 'rendering' ? (zh ? '参数已变化，正在实时渲染…' : 'Rendering parameter changes…') : renderState === 'success' ? (zh ? '渲染成功' : 'Rendered successfully') : renderState === 'warning' ? (zh ? '渲染成功，但存在警告' : 'Rendered with warnings') : renderState === 'error' ? (zh ? '渲染失败，已保留上一次成功结果' : 'Render failed; previous result retained') : (zh ? '等待参数输入' : 'Waiting for parameters')}
+            </p>
+            {visibleRender && <span className="text-[9px] text-slate-400">{visibleRender.line_count} {zh ? '行' : 'lines'} · {visibleRender.used_variables.length} {zh ? '个参数' : 'variables'} · {visibleRender.defaulted_variables.length} {zh ? '个默认值' : 'defaults'}</span>}
+            <span className={`ml-auto rounded-full px-2 py-0.5 text-[8px] font-black uppercase ${visibleRender?.risk_level === 'critical' ? 'bg-rose-100 text-rose-700' : visibleRender?.risk_level === 'high' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700'}`}>
+              {zh ? '风险' : 'Risk'} {visibleRender?.risk_level || 'none'}
+            </span>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {previewTab === 'preview' && (
+              <div ref={previewScrollRef} className="h-full overflow-auto bg-[#0b1220] py-3 font-mono text-[11px] leading-5 text-slate-300">
+                {!detail ? (
+                  <EmptyState icon={Layers} title={zh ? '请从左侧选择一个配置模板' : 'Select a template'} />
+                ) : !visibleRender?.rendered_output ? (
+                  <EmptyState icon={WandSparkles} title={requiredVariables.length > completedRequired ? (zh ? `请先完成 ${requiredVariables.length - completedRequired} 个必填参数` : `Complete ${requiredVariables.length - completedRequired} required parameters`) : (zh ? '模板尚未生成命令，请检查条件表达式' : 'No commands generated')} />
+                ) : previewLines.map((line) => (
+                  <div key={line.number} className="flex min-w-max px-3 hover:bg-white/[0.035]">
+                    <span className="w-12 shrink-0 select-none pr-3 text-right text-slate-600">{line.number}</span>
+                    <code className={`${wrapPreview ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'} min-w-0 flex-1 pr-4`}>{renderPreviewContent(line.content, line.number)}</code>
+                  </div>
+                ))}
+              </div>
             )}
+
+            {previewTab === 'source' && (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-amber-50 px-3 py-2 text-[9px] text-amber-800">
+                  <AlertTriangle size={11} />
+                  <span className="flex-1">{zh ? '编辑模板源码会重置官方审核状态；保存后请重新校验并发布新版本。' : 'Editing source resets review status; validate and publish a new version after saving.'}</span>
+                  <button type="button" onClick={() => void exportTemplate()} className="rounded-lg border border-amber-200 bg-white px-2 py-1 font-bold"><Upload size={10} className="mr-1 inline" />{zh ? '导出' : 'Export'}</button>
+                  <button type="button" disabled={!sourceDirty || sourceSaving} onClick={() => void saveSource()} className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2 py-1 font-bold text-white disabled:opacity-30">
+                    {sourceSaving ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}{zh ? '保存源码' : 'Save'}
+                  </button>
+                </div>
+                <textarea value={sourceContent} onChange={(event) => {
+                  setSourceContent(event.target.value);
+                  setSourceDirty(true);
+                }} spellCheck={false} className="min-h-0 flex-1 resize-none bg-[#0b1220] p-5 font-mono text-xs leading-6 text-slate-300 outline-none" />
+              </div>
+            )}
+
+            {previewTab === 'json' && (
+              <div className="h-full overflow-auto bg-[#0b1220] p-5">
+                <pre className="whitespace-pre-wrap font-mono text-xs leading-6 text-cyan-100">{JSON.stringify({
+                  template_id: detail?.id || null,
+                  template_version: detail?.current_version || null,
+                  parameter_profile_id: selectedProfileId || null,
+                  parameters,
+                  parameter_sources: parameterSources,
+                }, null, 2)}</pre>
+              </div>
+            )}
+
+            {previewTab === 'checks' && (
+              <div className="h-full space-y-4 overflow-y-auto bg-slate-50 p-4">
+                <ValidationSection
+                  title={zh ? '阻断错误' : 'Blocking errors'}
+                  items={renderResult?.errors || []}
+                  tone="error"
+                  empty={zh ? '没有阻断错误' : 'No blocking errors'}
+                />
+                <ValidationSection
+                  title={zh ? '警告与提示' : 'Warnings and advisories'}
+                  items={renderResult?.warnings || []}
+                  tone="warning"
+                  empty={zh ? '没有额外警告' : 'No warnings'}
+                />
+                {visibleRender && visibleRender.risk_items.length > 0 && (
+                  <ValidationSection
+                    title={zh ? '高风险命令' : 'Risky commands'}
+                    items={visibleRender.risk_items.map((item) => ({ ...item, message: `${zh ? '第' : 'Line'} ${item.line}: ${item.message} — ${item.command}` }))}
+                    tone="error"
+                    empty=""
+                  />
+                )}
+                <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                  <p className="text-xs font-black text-blue-800">{zh ? '流程边界' : 'Workflow boundary'}</p>
+                  <p className="mt-1 text-[10px] leading-5 text-blue-700">
+                    {zh ? '模板中心只负责参数校验、命令预览、静态检查和创建任务草稿，不会登录设备或直接下发。设备选择、审批、MFA、执行、验证与回滚在任务中心完成。' : 'This center validates, previews, checks, and creates drafts only. Device selection, approval, MFA, execution, verification, and rollback happen in Automation.'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {previewTab === 'versions' && (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 p-3">
+                  <select value={versionFrom} onChange={(event) => setVersionFrom(event.target.value)} className={`${fieldClass} max-w-40`}>
+                    {(detail?.versions || []).map((version) => <option key={version.version} value={version.version}>A · v{version.version}</option>)}
+                  </select>
+                  <ChevronRight size={14} className="text-slate-400" />
+                  <select value={versionTo} onChange={(event) => setVersionTo(event.target.value)} className={`${fieldClass} max-w-40`}>
+                    {(detail?.versions || []).map((version) => <option key={version.version} value={version.version}>B · v{version.version}</option>)}
+                  </select>
+                  <button type="button" onClick={() => void loadVersionDiff()} className="rounded-xl bg-slate-900 px-3 py-2 text-[9px] font-bold text-white">{zh ? '刷新差异' : 'Refresh diff'}</button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto bg-[#0b1220] p-4 font-mono text-[10px] leading-5">
+                  {versionDiffLoading ? (
+                    <Loader2 size={20} className="mx-auto mt-16 animate-spin text-cyan-500" />
+                  ) : versionDiff.length === 0 ? (
+                    <p className="mt-16 text-center text-slate-500">{zh ? '两个版本没有源码差异，或当前只有一个版本。' : 'No source differences, or only one version exists.'}</p>
+                  ) : versionDiff.map((line, index) => (
+                    <div key={`${index}-${line}`} className={`whitespace-pre px-2 ${line.startsWith('+') && !line.startsWith('+++') ? 'bg-emerald-500/10 text-emerald-300' : line.startsWith('-') && !line.startsWith('---') ? 'bg-rose-500/10 text-rose-300' : line.startsWith('@@') ? 'text-cyan-400' : 'text-slate-400'}`}>{line}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-3 border-t border-slate-100 bg-white px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{zh ? '下一步' : 'Next step'}</p>
+              <p className="truncate text-[10px] text-slate-600">{zh ? '将当前模板、版本、参数和校验摘要带入任务中心' : 'Send the template, version, parameters, and validation summary to Automation'}</p>
+            </div>
+            <button type="button" disabled={!lastSuccessfulResult?.success || taskCreating || (renderResult?.errors.length || 0) > 0} onClick={() => void createTaskDraft()} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">
+              {taskCreating ? <Loader2 size={14} className="animate-spin" /> : <ClipboardList size={14} />}
+              {zh ? '基于当前结果创建任务' : 'Create task from result'}
+            </button>
           </div>
         </section>
       </div>
-      </div>
-    </div>
-  );
-};
 
-/* ═════════════════════════════════════════════════════════ */
-/*  Small helper components                                  */
-/* ═════════════════════════════════════════════════════════ */
-
-const METRIC_TONE: Record<string, { bg: string; text: string; ring: string }> = {
-  slate:   { bg: 'bg-slate-100',  text: 'text-slate-700',   ring: 'ring-slate-200' },
-  cyan:    { bg: 'bg-cyan-100',   text: 'text-[#0891b2]',   ring: 'ring-cyan-200' },
-  emerald: { bg: 'bg-emerald-100',text: 'text-emerald-700', ring: 'ring-emerald-200' },
-  amber:   { bg: 'bg-amber-100',  text: 'text-amber-700',   ring: 'ring-amber-200' },
-  rose:    { bg: 'bg-rose-100',   text: 'text-rose-700',    ring: 'ring-rose-200' },
-};
-
-const MetricCard: React.FC<{
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  sub: string;
-  tone: keyof typeof METRIC_TONE;
-}> = ({ icon, label, value, sub, tone }) => {
-  const t = METRIC_TONE[tone] || METRIC_TONE.slate;
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-all">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</span>
-        <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${t.bg} ${t.text}`}>
-          {icon}
+      {showCreate && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-white/40 bg-white p-5 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><Plus size={18} /></span>
+              <div className="flex-1">
+                <h3 className="text-sm font-black text-slate-800">{zh ? '新建配置模板' : 'New configuration template'}</h3>
+                <p className="text-[10px] text-slate-400">{zh ? '新模板以自定义草稿创建，不会直接发布或执行。' : 'Created as a custom draft; never published or executed directly.'}</p>
+              </div>
+              <button type="button" onClick={() => setShowCreate(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={15} /></button>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <label className="col-span-2 space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '模板名称' : 'Name'} *</span><input value={createForm.name} onChange={(event) => setCreateForm((current) => ({ ...current, name: event.target.value }))} className={fieldClass} autoFocus /></label>
+              <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '厂商' : 'Vendor'}</span><select value={createForm.vendor} onChange={(event) => setCreateForm((current) => ({ ...current, vendor: event.target.value }))} className={fieldClass}>{['Cisco', 'Huawei', 'H3C', 'Juniper', 'Arista', 'Custom'].map((value) => <option key={value}>{value}</option>)}</select></label>
+              <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '平台' : 'Platform'}</span><input value={createForm.platform} onChange={(event) => setCreateForm((current) => ({ ...current, platform: event.target.value }))} className={fieldClass} /></label>
+              <label className="col-span-2 space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '配置场景' : 'Scenario'}</span><select value={createForm.category} onChange={(event) => setCreateForm((current) => ({ ...current, category: event.target.value }))} className={fieldClass}>{['vlan', 'interface', 'routing', 'ospf', 'bgp', 'acl', 'qos', 'snmp', 'ntp', 'aaa', 'security', 'system', 'other'].map((value) => <option key={value}>{value}</option>)}</select></label>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setShowCreate(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600">{zh ? '取消' : 'Cancel'}</button>
+              <button type="button" disabled={!createForm.name.trim() || creatingTemplate} onClick={() => void createTemplate()} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2 text-xs font-black text-white disabled:opacity-40">{creatingTemplate ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{zh ? '创建草稿' : 'Create draft'}</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <p className={`mt-3 text-3xl font-bold ${t.text}`}>{value}</p>
-      <p className="mt-1 text-[11px] text-slate-500 truncate">{sub}</p>
+      )}
     </div>
   );
 };
 
-const SidebarToggle: React.FC<{
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-  badge?: number;
-}> = ({ active, onClick, icon, label, badge }) => (
-  <button
-    onClick={onClick}
-    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-      active
-        ? 'bg-[#0f172a] text-white shadow-sm'
-        : 'text-slate-600 border border-slate-200 hover:border-[#06b6d4] hover:text-[#0891b2] bg-white'
-    }`}
-    title={label}
-  >
-    {icon}
-    {label}
-    {typeof badge === 'number' && (
-      <span className={`ml-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-full ${active ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-500'}`}>
-        {badge}
-      </span>
-    )}
-  </button>
+const EmptyState: React.FC<{ icon: React.ElementType; title: string }> = ({ icon: Icon, title }) => (
+  <div className="flex h-full min-h-64 flex-col items-center justify-center text-center">
+    <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-slate-600"><Icon size={24} /></span>
+    <p className="mt-3 text-xs font-bold text-slate-500">{title}</p>
+  </div>
 );
 
-const ScopeSelect: React.FC<{
-  label: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (v: string) => void;
-}> = ({ label, value, options, onChange }) => (
-  <div>
-    <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 block mb-1.5">{label}</label>
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 outline-none focus:border-[#06b6d4] transition-all"
-    >
-      {options.map((opt) => (
-        <option key={opt.value} value={opt.value}>{opt.label}</option>
+const ValidationSection: React.FC<{
+  title: string;
+  items: RenderIssue[];
+  tone: 'error' | 'warning';
+  empty: string;
+}> = ({ title, items, tone, empty }) => (
+  <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+    <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
+      {tone === 'error' ? <AlertCircle size={14} className="text-rose-600" /> : <AlertTriangle size={14} className="text-amber-600" />}
+      <h3 className="flex-1 text-xs font-black text-slate-700">{title}</h3>
+      <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone === 'error' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>{items.length}</span>
+    </div>
+    <div className="space-y-2 p-4">
+      {items.length === 0 ? (
+        <p className="flex items-center gap-2 text-[10px] text-emerald-700"><CheckCircle2 size={12} />{empty}</p>
+      ) : items.map((item, index) => (
+        <div key={`${item.code}-${index}`} className={`rounded-lg px-3 py-2 text-[10px] leading-5 ${tone === 'error' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-800'}`}>
+          {item.line ? `L${item.line} · ` : ''}{item.message}
+        </div>
       ))}
-    </select>
-  </div>
+    </div>
+  </section>
 );
 
 export default PlatformSettingsTab;

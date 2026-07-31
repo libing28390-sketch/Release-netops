@@ -1,15 +1,40 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, RotateCcw, Search, X, Database, Clock, ArrowLeftRight, Zap, Server, SlidersHorizontal, ShieldCheck } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowLeftRight,
+  Boxes,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Database,
+  Download,
+  FileCheck2,
+  FileWarning,
+  GitBranch,
+  Link2,
+  Loader2,
+  RotateCcw,
+  Search,
+  Server,
+  ShieldAlert,
+  ShieldCheck,
+  SlidersHorizontal,
+  X,
+  Zap,
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { DiffLine } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { GitCompare } from 'lucide-react';
-import { apiRequest } from '../api/http';
+import { apiRequest, authHeaders } from '../api/http';
 
 /* ── shared interfaces (kept compatible with App.tsx) ── */
 
 interface DiffSnapshot {
   id: string;
+  device_id?: string;
   hostname: string;
   ip_address?: string;
   timestamp: string;
@@ -18,6 +43,14 @@ interface DiffSnapshot {
   size?: number;
   vendor?: string;
   is_baseline?: number | boolean;
+  integrity_status?: string;
+  validation_status?: string;
+  validation_message?: string;
+  config_type?: string;
+  collection_source?: string;
+  collection_task_id?: string;
+  change_ticket_id?: string;
+  line_count?: number;
 }
 
 interface DiffRenderEntry {
@@ -48,6 +81,100 @@ interface BackupDevice {
   status: string;
   backup_count: number;
   latest_backup: string;
+}
+
+interface StructuredObjectChange {
+  id: string;
+  object_type: string;
+  object_name: string;
+  module: string;
+  change_type: 'added' | 'deleted' | 'modified';
+  before_lines: string[];
+  after_lines: string[];
+  field_changes: Array<{ field: string; before: unknown; after: unknown }>;
+  risk_level: string;
+  risk_reason: string;
+  potential_impact: string;
+  requires_secondary_approval: boolean;
+  requires_mfa: boolean;
+}
+
+interface StructuredRisk {
+  rule_id: string;
+  severity: string;
+  message: string;
+  potential_impact: string;
+  object_type: string;
+  object_name: string;
+  requires_secondary_approval: boolean;
+  requires_mfa: boolean;
+}
+
+interface StructuredAnalysis {
+  device: BackupDevice & { vendor?: string; role?: string; site?: string };
+  snapshot_a: DiffSnapshot;
+  snapshot_b: DiffSnapshot;
+  direction: string;
+  direction_reversed: boolean;
+  validation: {
+    a: { status: string; valid_for_auto_compare: boolean; issues: Array<{ message: string }> };
+    b: { status: string; valid_for_auto_compare: boolean; issues: Array<{ message: string }> };
+  };
+  summary: {
+    added_lines: number;
+    removed_lines: number;
+    changed_objects: number;
+    affected_modules: number;
+    high_risk_changes: number;
+    module_counts: Record<string, number>;
+    object_counts: Record<string, number>;
+    risk_counts: Record<string, number>;
+  };
+  objects: StructuredObjectChange[];
+  risks: StructuredRisk[];
+  compliance: {
+    compliant_count: number;
+    noncompliant_count: number;
+    compliance_rate: number;
+    findings: Array<{
+      rule_id: string;
+      name: string;
+      status: string;
+      severity: string;
+      observed_count: number;
+      expected_count: number;
+      remediation: string;
+    }>;
+  };
+  source_correlation: {
+    correlations: Array<{
+      source_type: string;
+      source_id: string;
+      label: string;
+      status: string;
+      actor: string;
+      timestamp: string;
+    }>;
+    out_of_band_suspected: boolean;
+    message: string;
+  };
+  running_startup_sync: boolean | null;
+  requires_secondary_approval: boolean;
+  requires_mfa: boolean;
+  cache: { hit: boolean; key: string };
+}
+
+interface RollbackPlan {
+  mode: string;
+  plan_id: string;
+  line_count: number;
+  executable: boolean;
+  requires_change_order: boolean;
+  requires_mfa: boolean;
+  requires_pre_restore_backup: boolean;
+  requires_rollback_timer: boolean;
+  blockers: string[];
+  warning?: string;
 }
 
 interface ConfigDiffViewTabProps {
@@ -112,6 +239,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   preSelectedDeviceId,
 }) => {
   const zh = language === 'zh';
+  const navigate = useNavigate();
   const safeFocusIdx = activeChangeLineIndexes.length === 0 ? 0 : Math.min(diffFocusChangeIdx, activeChangeLineIndexes.length - 1);
   const focusedLineIndex = activeChangeLineIndexes[safeFocusIdx];
   const added = activeDiffLines.filter((l) => l.type === 'add').length;
@@ -134,6 +262,16 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const [pickRight, setPickRight] = useState<string | null>(null);
   const [baselineSaving, setBaselineSaving] = useState('');
   const deviceAbortRef = React.useRef<AbortController | null>(null);
+  const [analysis, setAnalysis] = useState<StructuredAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState('');
+  const [analysisView, setAnalysisView] = useState<'text' | 'objects' | 'risks'>('objects');
+  const [objectFilter, setObjectFilter] = useState('all');
+  const [riskFilter, setRiskFilter] = useState('all');
+  const [exporting, setExporting] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [rollbackPlan, setRollbackPlan] = useState<RollbackPlan | null>(null);
+  const [rollbackLoading, setRollbackLoading] = useState(false);
 
   /* ── Load devices ── */
   const loadDevices = useCallback(async (q = '', pg = devPage, ps = devPageSize) => {
@@ -180,22 +318,39 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   }, [preSelectedDeviceId, devices]);
 
   /* ── Load snapshots for selected device ── */
-  const loadSnapshots = useCallback(async (deviceId: string) => {
+  const loadSnapshots = useCallback(async (deviceId: string, autoCompare = true) => {
     setSnapshotsLoading(true);
     try {
-      const resp = await fetch(`/api/config-drift/device/${encodeURIComponent(deviceId)}/snapshots`);
-      if (resp.ok) {
-        const data = await resp.json() as DiffSnapshot[];
-        setSnapshots(data.sort((a, b) => b.timestamp.localeCompare(a.timestamp)));
+      const data = await apiRequest<DiffSnapshot[]>(`/api/config-drift/device/${encodeURIComponent(deviceId)}/snapshots`);
+      const sorted = data.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      setSnapshots(sorted);
+      if (autoCompare) {
+        const valid = sorted.filter((snapshot) => (
+          !['invalid', 'corrupt'].includes(String(snapshot.integrity_status || '').toLowerCase())
+          && !['invalid', 'empty', 'command_error', 'permission_denied', 'connection_interrupted'].includes(String(snapshot.validation_status || '').toLowerCase())
+          && (snapshot.config_type || 'running') === 'running'
+        ));
+        if (valid.length >= 2) {
+          const latest = valid[0];
+          const previous = valid[1];
+          setPickLeft(previous.id);
+          setPickRight(latest.id);
+          await onSelectSnapshotPair(previous.id, latest.id);
+        }
       }
-    } catch { /* ignore */ }
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : (zh ? '快照加载失败' : 'Failed to load snapshots'));
+    }
     finally { setSnapshotsLoading(false); }
-  }, []);
+  }, [onSelectSnapshotPair, zh]);
 
   const handleSelectDevice = (dev: BackupDevice) => {
     setSelectedDevice(dev);
     setPickLeft(null);
     setPickRight(null);
+    setAnalysis(null);
+    setAnalysisError('');
+    setRollbackPlan(null);
     onReset();
     void loadSnapshots(dev.id);
   };
@@ -205,6 +360,9 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
     setSnapshots([]);
     setPickLeft(null);
     setPickRight(null);
+    setAnalysis(null);
+    setAnalysisError('');
+    setRollbackPlan(null);
     onReset();
   };
 
@@ -265,12 +423,131 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   /* ── Quick compare: latest two ── */
   const handleQuickCompare = async () => {
     if (snapshots.length < 2) return;
-    const leftId = snapshots[0].id;
-    const rightId = snapshots[1].id;
+    const leftId = snapshots[1].id;
+    const rightId = snapshots[0].id;
     setPickLeft(leftId);
     setPickRight(rightId);
     await onSelectSnapshotPair(leftId, rightId);
   };
+
+  const analysisDeviceId = selectedDevice?.id || configDiffLeft?.device_id || configDiffRight?.device_id || '';
+
+  const loadStructuredAnalysis = useCallback(async (forceRefresh = false) => {
+    if (!analysisDeviceId || !configDiffLeft?.id || !configDiffRight?.id) return;
+    setAnalysisLoading(true);
+    setAnalysisError('');
+    try {
+      const result = await apiRequest<StructuredAnalysis>('/api/config-diff/analysis', {
+        method: 'POST',
+        body: JSON.stringify({
+          device_id: analysisDeviceId,
+          snapshot_a_id: configDiffLeft.id,
+          snapshot_b_id: configDiffRight.id,
+          mode: diffMode,
+          force_refresh: forceRefresh,
+        }),
+      });
+      setAnalysis(result);
+      setRollbackPlan(null);
+    } catch (error) {
+      setAnalysis(null);
+      setAnalysisError(error instanceof Error ? error.message : (zh ? '结构化差异分析失败' : 'Structured analysis failed'));
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }, [analysisDeviceId, configDiffLeft?.id, configDiffRight?.id, diffMode, zh]);
+
+  useEffect(() => {
+    if (configDiffLeft && configDiffRight) {
+      void loadStructuredAnalysis(false);
+    } else {
+      setAnalysis(null);
+      setAnalysisError('');
+    }
+  }, [configDiffLeft, configDiffRight, loadStructuredAnalysis]);
+
+  const exportAnalysis = useCallback(async (format: 'markdown' | 'html' | 'json') => {
+    if (!analysisDeviceId || !configDiffLeft?.id || !configDiffRight?.id) return;
+    setExporting(format);
+    try {
+      const response = await fetch(`/api/config-diff/export?format=${format}`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          device_id: analysisDeviceId,
+          snapshot_a_id: configDiffLeft.id,
+          snapshot_b_id: configDiffRight.id,
+          mode: diffMode,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || `HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `config-diff-${new Date().toISOString().slice(0, 10)}.${format === 'markdown' ? 'md' : format}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : (zh ? '差异报告导出失败' : 'Failed to export report'));
+    } finally {
+      setExporting('');
+    }
+  }, [analysisDeviceId, configDiffLeft?.id, configDiffRight?.id, diffMode, zh]);
+
+  const confirmAnalysis = useCallback(async () => {
+    if (!analysisDeviceId || !configDiffLeft?.id || !configDiffRight?.id) return;
+    setConfirming(true);
+    try {
+      await apiRequest('/api/config-diff/confirm', {
+        method: 'POST',
+        body: JSON.stringify({
+          device_id: analysisDeviceId,
+          snapshot_a_id: configDiffLeft.id,
+          snapshot_b_id: configDiffRight.id,
+          status: 'confirmed',
+          note: zh ? '在配置差异分析页面确认' : 'Confirmed in configuration diff analysis',
+        }),
+      });
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : (zh ? '确认失败' : 'Confirmation failed'));
+    } finally {
+      setConfirming(false);
+    }
+  }, [analysisDeviceId, configDiffLeft?.id, configDiffRight?.id, zh]);
+
+  const prepareRollback = useCallback(async () => {
+    if (!analysisDeviceId || !configDiffLeft?.id) return;
+    setRollbackLoading(true);
+    try {
+      const result = await apiRequest<RollbackPlan>('/api/config-drift/rollback-preview', {
+        method: 'POST',
+        body: JSON.stringify({
+          device_id: analysisDeviceId,
+          snapshot_id: configDiffLeft.id,
+          selected_lines: [],
+        }),
+      });
+      setRollbackPlan(result);
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : (zh ? '回滚方案预检失败' : 'Rollback preflight failed'));
+    } finally {
+      setRollbackLoading(false);
+    }
+  }, [analysisDeviceId, configDiffLeft?.id, zh]);
+
+  const filteredObjects = useMemo(() => (
+    (analysis?.objects || []).filter((item) => objectFilter === 'all' || item.object_type === objectFilter)
+  ), [analysis?.objects, objectFilter]);
+
+  const filteredRisks = useMemo(() => (
+    (analysis?.risks || []).filter((item) => riskFilter === 'all' || item.severity === riskFilter)
+  ), [analysis?.risks, riskFilter]);
 
   const formatTime = (ts: string) => {
     if (!ts) return '--';
@@ -303,11 +580,11 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
     <div className="h-full flex flex-col overflow-hidden">
       <PageHero
         icon={GitCompare}
-        eyebrow={zh ? '配置管理 / 配置对比' : 'Config / Diff Compare'}
-        title={t('diffCompare')}
+        eyebrow={zh ? '配置管理 / 配置差异分析' : 'Config / Difference Analysis'}
+        title={zh ? '配置差异分析' : t('diffCompare')}
         subtitle={showDiffViewer
-          ? (zh ? `${configDiffLeft.hostname} 的两个版本配置对比` : `Comparing two snapshots of ${configDiffLeft.hostname}`)
-          : (zh ? '选择设备和快照进行配置差异对比' : 'Select a device and snapshots to compare')}
+          ? (zh ? `${configDiffLeft.hostname} · 识别高风险变更、合规偏差与变更来源` : `Risk, compliance, and source analysis for ${configDiffLeft.hostname}`)
+          : (zh ? '自动对比最近两个有效快照，识别高风险变更并生成回滚依据' : 'Automatically compare the latest valid snapshots and identify risky changes')}
         actions={
           (selectedDevice || showDiffViewer) ? (
             <button
@@ -690,74 +967,252 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
         {showDiffViewer && (
           <div className="flex-1 overflow-auto font-mono text-xs leading-6 bg-[#f7fbfc]">
             <div className="h-full flex flex-col">
-              <div className="flex flex-wrap items-center gap-3 px-5 py-3.5 border-b border-slate-200 bg-white text-xs">
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-50 text-cyan-700"><ArrowLeftRight size={14} /></div>
-                  <span className="font-mono font-bold text-[#123b50] truncate">{configDiffLeft.hostname}</span>
-                  <span className="text-slate-300">→</span>
-                  <span className="font-mono font-bold text-[#123b50] truncate">{configDiffRight.hostname}</span>
+              <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-5 py-3 text-xs">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><Server size={15} /></div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate font-sans text-sm font-black text-[#123b50]">{analysis?.device.hostname || configDiffRight.hostname}</span>
+                      {analysis?.device.ip_address && <code className="text-[10px] text-slate-400">{analysis.device.ip_address}</code>}
+                      {analysis?.device.platform && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">{analysis.device.platform}</span>}
+                      <span className={`rounded-full px-1.5 py-0.5 text-[8px] font-bold ${analysis?.device.status === 'online' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{analysis?.device.status || '—'}</span>
+                    </div>
+                    <p className="mt-0.5 font-sans text-[9px] text-slate-400">
+                      {zh ? '变化方向' : 'Direction'}：A {formatTime(configDiffLeft.timestamp)} → B {formatTime(configDiffRight.timestamp)}
+                      {analysis?.direction_reversed && <span className="ml-2 font-bold text-amber-600">{zh ? '时间方向已反转' : 'Time direction reversed'}</span>}
+                    </p>
+                  </div>
                 </div>
-                <div className="ml-auto flex items-center gap-2">
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">+{added} {t('linesAdded')}</span>
-                  <span className="rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-bold text-red-700">−{removed} {t('linesRemoved')}</span>
-                  {added === 0 && removed === 0 && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-500">{t('noDiff')}</span>}
+                <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                  {analysisLoading && <span className="inline-flex items-center gap-1 text-[9px] text-cyan-700"><Loader2 size={11} className="animate-spin" />{zh ? '对象分析中' : 'Analyzing'}</span>}
+                  <button type="button" onClick={() => void onSelectSnapshotPair(configDiffRight.id, configDiffLeft.id)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:border-cyan-300 hover:text-cyan-700" title={zh ? '交换 A/B' : 'Swap A/B'}><ArrowLeftRight size={12} /></button>
+                  <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                    {(['normalized', 'raw'] as const).map((mode) => (
+                      <button key={mode} type="button" onClick={() => onDiffModeChange(mode)} className={`rounded px-2 py-0.5 text-[9px] transition-colors ${diffMode === mode ? 'bg-[#123b50] text-white shadow-sm' : 'text-slate-500 hover:text-[#123b50]'}`}>
+                        {mode === 'normalized' ? (zh ? '标准化' : 'Normalized') : (zh ? '原始' : 'Raw')}
+                      </button>
+                    ))}
+                  </div>
+                  {(['markdown', 'html', 'json'] as const).map((format) => (
+                    <button key={format} type="button" disabled={Boolean(exporting)} onClick={() => void exportAnalysis(format)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-[8px] font-bold uppercase text-slate-500 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-40">
+                      {exporting === format ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}{format === 'markdown' ? 'MD' : format}
+                    </button>
+                  ))}
+                  <button type="button" disabled={confirming} onClick={() => void confirmAnalysis()} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[9px] font-bold text-emerald-700 disabled:opacity-40">
+                    {confirming ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle2 size={10} />}{zh ? '标记已确认' : 'Confirm'}
+                  </button>
                 </div>
-                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                  {(['normalized', 'raw'] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => onDiffModeChange(mode)}
-                      className={`rounded px-2 py-0.5 text-[10px] transition-colors ${
-                        diffMode === mode ? 'bg-[#123b50] text-white shadow-sm' : 'text-slate-500 hover:text-[#123b50]'
-                      }`}
-                      title={mode === 'normalized'
-                        ? (zh ? '忽略时间戳和行尾空白等采集噪声' : 'Ignore volatile collection noise')
-                        : (zh ? '逐字符查看原始配置差异' : 'Compare raw configuration')}
-                    >
-                      {mode === 'normalized' ? (zh ? '标准化' : 'Normalized') : (zh ? '原始' : 'Raw')}
+              </div>
+              {analysis && (
+                <div className="shrink-0 border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-cyan-50/40 px-5 py-3">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                    {[
+                      { label: zh ? '新增行' : 'Added', value: analysis.summary.added_lines, cls: 'text-emerald-700 bg-emerald-50' },
+                      { label: zh ? '删除行' : 'Removed', value: analysis.summary.removed_lines, cls: 'text-rose-700 bg-rose-50' },
+                      { label: zh ? '变更对象' : 'Objects', value: analysis.summary.changed_objects, cls: 'text-cyan-700 bg-cyan-50' },
+                      { label: zh ? '影响模块' : 'Modules', value: analysis.summary.affected_modules, cls: 'text-blue-700 bg-blue-50' },
+                      { label: zh ? '高风险' : 'High risk', value: analysis.summary.high_risk_changes, cls: 'text-orange-700 bg-orange-50' },
+                      { label: zh ? '合规率' : 'Compliance', value: `${analysis.compliance.compliance_rate}%`, cls: 'text-violet-700 bg-violet-50' },
+                    ].map((item) => (
+                      <div key={item.label} className="flex items-center justify-between rounded-xl border border-white bg-white/80 px-3 py-2 shadow-sm">
+                        <span className="font-sans text-[9px] font-bold text-slate-400">{item.label}</span>
+                        <span className={`rounded-lg px-2 py-0.5 font-sans text-sm font-black ${item.cls}`}>{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {Object.entries(analysis.summary.object_counts).map(([name, count]) => (
+                      <button type="button" key={name} onClick={() => {
+                        setAnalysisView('objects');
+                        setObjectFilter(name);
+                      }} className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-sans text-[8px] font-bold text-slate-500 hover:border-cyan-200 hover:text-cyan-700">{name} {count}</button>
+                    ))}
+                    {analysis.source_correlation.out_of_band_suspected && (
+                      <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 font-sans text-[8px] font-black text-rose-700"><FileWarning size={10} />{zh ? '疑似带外变更' : 'Possible out-of-band change'}</span>
+                    )}
+                    {analysis.requires_mfa && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-sans text-[8px] font-black text-amber-700"><ShieldAlert size={10} />MFA</span>}
+                    {analysis.cache.hit && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-sans text-[8px] text-slate-500">{zh ? '缓存命中' : 'Cache hit'}</span>}
+                  </div>
+                </div>
+              )}
+              {analysisError && (
+                <div className="flex shrink-0 items-center gap-2 border-b border-rose-100 bg-rose-50 px-5 py-2 font-sans text-[10px] text-rose-700">
+                  <AlertTriangle size={12} /><span className="flex-1">{analysisError}</span>
+                  <button type="button" onClick={() => void loadStructuredAnalysis(true)} className="font-bold underline">{zh ? '重试' : 'Retry'}</button>
+                  <button type="button" onClick={() => setAnalysisError('')}><X size={12} /></button>
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-5 py-2 font-sans text-[10px] text-slate-500">
+                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+                  {([
+                    ['text', zh ? '统一 Diff' : 'Unified diff', GitBranch],
+                    ['objects', zh ? '对象视图' : 'Object view', Boxes],
+                    ['risks', zh ? '风险与合规' : 'Risk & compliance', ShieldAlert],
+                  ] as const).map(([view, label, Icon]) => (
+                    <button type="button" key={view} onClick={() => setAnalysisView(view)} className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[9px] font-bold ${analysisView === view ? 'bg-[#123b50] text-white' : 'text-slate-500 hover:text-slate-800'}`}>
+                      <Icon size={10} />{label}
                     </button>
                   ))}
                 </div>
-                {activeChangeLineIndexes.length > 0 && <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500 tabular-nums">{safeFocusIdx + 1}/{activeChangeLineIndexes.length}</span>}
-                  <button
-                  onClick={() => onJumpToDiff('prev')}
-                  disabled={activeChangeLineIndexes.length === 0}
-                  className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-30 disabled:cursor-not-allowed"
-                  title={zh ? '上一处差异 (P)' : 'Previous change (P)'}
-                >
-                  <ChevronLeft size={13} />
-                </button>
-                <button
-                  onClick={() => onJumpToDiff('next')}
-                  disabled={activeChangeLineIndexes.length === 0}
-                  className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-30 disabled:cursor-not-allowed"
-                  title={zh ? '下一处差异 (N)' : 'Next change (N)'}
-                >
-                  <ChevronRight size={13} />
-                </button>
-                <button
-                  onClick={onToggleOnlyChanges}
-                  className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-colors ${diffOnlyChanges ? 'border-cyan-300 text-cyan-700 bg-cyan-50' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300'}`}
-                  title={zh ? '仅显示变更行 (F)' : 'Show changed lines only (F)'}
-                >
-                  {zh ? '仅变更' : 'Changes only'}
-                </button>
-                <button
-                  onClick={onToggleFullBoth}
-                  className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-colors ${diffShowFullBoth ? 'border-cyan-300 text-cyan-700 bg-cyan-50' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300'}`}
-                  title={zh ? '显示两侧完整配置' : 'Show full configs on both sides'}
-                >
-                  {zh ? '两侧全部' : 'Both full'}
-                </button>
+                {analysisView === 'text' && (
+                  <>
+                    {activeChangeLineIndexes.length > 0 && <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-500 tabular-nums">{safeFocusIdx + 1}/{activeChangeLineIndexes.length}</span>}
+                    <button onClick={() => onJumpToDiff('prev')} disabled={activeChangeLineIndexes.length === 0} className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 disabled:opacity-30"><ChevronLeft size={11} /></button>
+                    <button onClick={() => onJumpToDiff('next')} disabled={activeChangeLineIndexes.length === 0} className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 disabled:opacity-30"><ChevronRight size={11} /></button>
+                    <button onClick={onToggleOnlyChanges} className={`rounded-lg border px-2 py-1 text-[9px] font-bold ${diffOnlyChanges ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-white text-slate-500'}`}>{zh ? '仅变更' : 'Changes only'}</button>
+                    <button onClick={onToggleFullBoth} className={`rounded-lg border px-2 py-1 text-[9px] font-bold ${diffShowFullBoth ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-white text-slate-500'}`}>{zh ? '左右对照' : 'Side by side'}</button>
+                  </>
+                )}
+                <span className="ml-auto hidden items-center gap-1 font-semibold text-emerald-600 sm:inline-flex"><ShieldCheck size={11} />{diffMode === 'normalized' ? (zh ? '已隐藏采集噪声' : 'Collection noise hidden') : (zh ? '原始审计文本' : 'Raw audit text')}</span>
               </div>
-              <div className="flex items-center justify-between gap-3 px-5 py-2 border-b border-slate-100 bg-slate-50/80 text-[11px] text-slate-500">
-                {diffMode === 'normalized'
-                  ? (zh ? '当前为标准化对比：已忽略时间戳、采集头和行尾空白等非业务噪声' : 'Normalized diff ignores volatile headers and trailing whitespace')
-                  : (zh ? '当前为原始对比：展示快照中的所有文本变化' : 'Raw diff shows every textual change')}
-                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600"><ShieldCheck size={12} />{zh ? '审计视图' : 'Audit view'}</span>
-              </div>
-              <div className="flex-1 min-h-0 flex overflow-hidden p-4 gap-4">
+              <div className="flex-1 min-h-0 overflow-hidden p-4">
+                {analysisView === 'objects' ? (
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-3">
+                      <span className="font-sans text-[10px] font-black uppercase tracking-wider text-[#123b50]">{zh ? '结构化变更对象' : 'Structured change objects'}</span>
+                      <button type="button" onClick={() => setObjectFilter('all')} className={`rounded-full px-2.5 py-1 font-sans text-[9px] font-bold ${objectFilter === 'all' ? 'bg-[#123b50] text-white' : 'border border-slate-200 bg-white text-slate-500'}`}>
+                        {zh ? '全部' : 'All'} {analysis?.objects.length || 0}
+                      </button>
+                      {Object.entries(analysis?.summary.object_counts || {}).map(([name, count]) => (
+                        <button type="button" key={name} onClick={() => setObjectFilter(name)} className={`rounded-full px-2.5 py-1 font-sans text-[9px] font-bold ${objectFilter === name ? 'bg-cyan-600 text-white' : 'border border-slate-200 bg-white text-slate-500 hover:border-cyan-200 hover:text-cyan-700'}`}>
+                          {name} {count}
+                        </button>
+                      ))}
+                      {analysisLoading && <Loader2 size={13} className="ml-auto animate-spin text-cyan-600" />}
+                    </div>
+                    <div className="flex-1 overflow-auto p-3">
+                      {filteredObjects.length > 0 ? (
+                        <div className="grid gap-3 xl:grid-cols-2">
+                          {filteredObjects.map((item) => (
+                            <article key={item.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                              <div className="flex items-start gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3">
+                                <span className={`mt-0.5 rounded-lg px-2 py-1 font-sans text-[8px] font-black uppercase ${
+                                  item.change_type === 'added' ? 'bg-emerald-50 text-emerald-700' : item.change_type === 'deleted' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'
+                                }`}>{item.change_type === 'added' ? (zh ? '新增' : 'Added') : item.change_type === 'deleted' ? (zh ? '删除' : 'Deleted') : (zh ? '修改' : 'Modified')}</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate font-sans text-xs font-black text-[#123b50]">{item.object_name}</div>
+                                  <div className="mt-0.5 font-sans text-[9px] text-slate-400">{item.object_type} · {item.module}</div>
+                                </div>
+                                <span className={`rounded-full px-2 py-0.5 font-sans text-[8px] font-black ${
+                                  item.risk_level === 'critical' || item.risk_level === 'high' ? 'bg-rose-50 text-rose-700' : item.risk_level === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'
+                                }`}>{item.risk_level || 'low'}</span>
+                              </div>
+                              <div className="space-y-3 px-4 py-3">
+                                {item.field_changes.length > 0 && (
+                                  <div className="overflow-hidden rounded-lg border border-slate-100">
+                                    {item.field_changes.map((field, index) => (
+                                      <div key={`${field.field}-${index}`} className="grid grid-cols-[100px_1fr_18px_1fr] items-start gap-2 border-b border-slate-100 px-3 py-2 font-sans text-[9px] last:border-b-0">
+                                        <span className="font-bold text-slate-500">{field.field}</span>
+                                        <code className="break-all text-rose-600">{String(field.before ?? '--')}</code>
+                                        <ArrowLeftRight size={10} className="mt-0.5 text-slate-300" />
+                                        <code className="break-all text-emerald-600">{String(field.after ?? '--')}</code>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="grid gap-2 md:grid-cols-2">
+                                  <div className="rounded-lg bg-rose-50/70 p-2.5">
+                                    <div className="font-sans text-[8px] font-black uppercase text-rose-500">{zh ? '变更前' : 'Before'}</div>
+                                    <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-all font-mono text-[8px] leading-4 text-rose-800">{item.before_lines.join('\n') || '--'}</pre>
+                                  </div>
+                                  <div className="rounded-lg bg-emerald-50/70 p-2.5">
+                                    <div className="font-sans text-[8px] font-black uppercase text-emerald-500">{zh ? '变更后' : 'After'}</div>
+                                    <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-all font-mono text-[8px] leading-4 text-emerald-800">{item.after_lines.join('\n') || '--'}</pre>
+                                  </div>
+                                </div>
+                                {(item.risk_reason || item.potential_impact) && (
+                                  <div className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2 font-sans text-[9px] leading-4 text-amber-800">
+                                    <span className="font-black">{item.risk_reason || (zh ? '风险提示' : 'Risk')}</span>
+                                    {item.potential_impact && <span> · {item.potential_impact}</span>}
+                                  </div>
+                                )}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex h-full flex-col items-center justify-center text-slate-400">
+                          <Boxes size={28} className="mb-2 text-slate-300" />
+                          <p className="font-sans text-xs font-bold">{analysisLoading ? (zh ? '正在解析配置对象…' : 'Parsing configuration objects…') : (zh ? '当前筛选下没有结构化变更对象' : 'No structured changes match this filter')}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : analysisView === 'risks' ? (
+                  <div className="grid h-full min-h-0 gap-4 overflow-auto xl:grid-cols-[1.15fr_0.85fr]">
+                    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-3">
+                        <ShieldAlert size={13} className="text-rose-600" />
+                        <span className="font-sans text-[10px] font-black uppercase tracking-wider text-[#123b50]">{zh ? '变更风险' : 'Change risks'}</span>
+                        {['all', 'critical', 'high', 'medium', 'low'].map((level) => (
+                          <button type="button" key={level} onClick={() => setRiskFilter(level)} className={`rounded-full px-2 py-1 font-sans text-[8px] font-bold ${riskFilter === level ? 'bg-[#123b50] text-white' : 'border border-slate-200 bg-white text-slate-500'}`}>
+                            {level === 'all' ? (zh ? '全部' : 'All') : level}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="max-h-full space-y-2 overflow-auto p-3">
+                        {filteredRisks.map((risk, index) => (
+                          <div key={`${risk.rule_id}-${risk.object_name}-${index}`} className={`rounded-xl border p-3 ${
+                            risk.severity === 'critical' || risk.severity === 'high' ? 'border-rose-200 bg-rose-50/60' : risk.severity === 'medium' ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-slate-50'
+                          }`}>
+                            <div className="flex items-start gap-2">
+                              <span className="rounded-md bg-white px-2 py-0.5 font-sans text-[8px] font-black uppercase text-slate-600 shadow-sm">{risk.severity}</span>
+                              <div className="min-w-0 flex-1">
+                                <div className="font-sans text-[10px] font-black text-[#123b50]">{risk.message}</div>
+                                <div className="mt-1 font-sans text-[9px] text-slate-500">{risk.object_type} · {risk.object_name}</div>
+                                {risk.potential_impact && <p className="mt-2 font-sans text-[9px] leading-4 text-slate-600">{risk.potential_impact}</p>}
+                              </div>
+                              {(risk.requires_mfa || risk.requires_secondary_approval) && (
+                                <div className="flex flex-col items-end gap-1">
+                                  {risk.requires_mfa && <span className="rounded bg-amber-100 px-1.5 py-0.5 font-sans text-[7px] font-black text-amber-700">MFA</span>}
+                                  {risk.requires_secondary_approval && <span className="rounded bg-violet-100 px-1.5 py-0.5 font-sans text-[7px] font-black text-violet-700">{zh ? '复核' : 'Review'}</span>}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {filteredRisks.length === 0 && <p className="py-12 text-center font-sans text-xs font-bold text-slate-400">{zh ? '未发现匹配风险' : 'No matching risks found'}</p>}
+                      </div>
+                    </section>
+                    <div className="space-y-4 overflow-auto">
+                      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                          <span className="inline-flex items-center gap-1.5 font-sans text-[10px] font-black text-[#123b50]"><FileCheck2 size={12} className="text-violet-600" />{zh ? '合规检查' : 'Compliance checks'}</span>
+                          <span className="font-sans text-xs font-black text-violet-700">{analysis?.compliance.compliance_rate ?? 0}%</span>
+                        </div>
+                        <div className="space-y-2 p-3">
+                          {(analysis?.compliance.findings || []).map((finding) => (
+                            <div key={finding.rule_id} className={`rounded-lg border px-3 py-2 ${finding.status === 'compliant' ? 'border-emerald-100 bg-emerald-50/50' : 'border-rose-100 bg-rose-50/50'}`}>
+                              <div className="flex items-center gap-2 font-sans text-[9px]">
+                                {finding.status === 'compliant' ? <CheckCircle2 size={11} className="text-emerald-600" /> : <AlertTriangle size={11} className="text-rose-600" />}
+                                <span className="flex-1 font-black text-slate-700">{finding.name}</span>
+                                <span className="text-slate-400">{finding.observed_count}/{finding.expected_count}</span>
+                              </div>
+                              {finding.status !== 'compliant' && finding.remediation && <p className="mt-1.5 pl-5 font-sans text-[8px] leading-4 text-rose-700">{finding.remediation}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <div className="font-sans text-[10px] font-black text-[#123b50]">{zh ? '变更来源关联' : 'Change source correlation'}</div>
+                        <p className={`mt-2 rounded-lg px-3 py-2 font-sans text-[9px] leading-4 ${analysis?.source_correlation.out_of_band_suspected ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                          {analysis?.source_correlation.message || (zh ? '暂无关联结果' : 'No correlation result')}
+                        </p>
+                        <div className="mt-2 space-y-1.5">
+                          {(analysis?.source_correlation.correlations || []).map((source) => (
+                            <div key={`${source.source_type}-${source.source_id}`} className="flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-2 font-sans text-[8px] text-slate-500">
+                              <Link2 size={10} className="text-cyan-600" />
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold">{source.source_type}</span>
+                              <span className="min-w-0 flex-1 truncate font-bold text-slate-700">{source.label}</span>
+                              <span>{source.actor}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+                ) : (
+                <div className="flex h-full min-h-0 gap-4 overflow-hidden">
                 <div className="flex-1 overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
                   {diffShowFullBoth ? (
                     <div className="min-w-[960px]">
@@ -849,7 +1304,38 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                     </div>
                   </aside>
                 )}
+                </div>
+                )}
               </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-100 bg-white px-5 py-3">
+                <div className="mr-auto font-sans text-[9px] text-slate-400">
+                  {zh ? '任何回滚都只生成受控恢复方案，不会从差异页直接下发设备。' : 'Rollback actions only create a governed recovery plan; this page never pushes commands directly.'}
+                </div>
+                {configDiffRight && (
+                  <button type="button" onClick={() => void handleSetBaseline(configDiffRight.id)} disabled={baselineSaving === configDiffRight.id} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-[9px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-50">
+                    {baselineSaving === configDiffRight.id ? <Loader2 size={11} className="animate-spin" /> : <Database size={11} />}{zh ? '设 B 为基准' : 'Set B as baseline'}
+                  </button>
+                )}
+                <button type="button" onClick={() => void prepareRollback()} disabled={rollbackLoading} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 font-sans text-[9px] font-bold text-amber-700 disabled:opacity-50">
+                  {rollbackLoading ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}{zh ? '生成回滚预案' : 'Prepare rollback'}
+                </button>
+                <button type="button" onClick={() => navigate(`/change-orders?device_id=${encodeURIComponent(analysisDeviceId)}&snapshot_a=${encodeURIComponent(configDiffLeft?.id || '')}&snapshot_b=${encodeURIComponent(configDiffRight?.id || '')}`)} className="inline-flex items-center gap-1.5 rounded-lg bg-[#123b50] px-3 py-2 font-sans text-[9px] font-bold text-white hover:bg-[#0b2d3e]">
+                  <Zap size={11} />{zh ? '创建变更工单' : 'Create change order'}
+                </button>
+              </div>
+              {rollbackPlan && (
+                <div className="shrink-0 border-t border-amber-100 bg-amber-50/70 px-5 py-3">
+                  <div className="flex flex-wrap items-start gap-3">
+                    <ShieldAlert size={14} className="mt-0.5 text-amber-700" />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-sans text-[10px] font-black text-amber-900">{zh ? '受控回滚预案已生成' : 'Governed rollback plan prepared'} · {rollbackPlan.plan_id}</div>
+                      <p className="mt-1 font-sans text-[9px] leading-4 text-amber-800">{rollbackPlan.warning || (zh ? `目标 ${rollbackPlan.line_count} 行配置；必须经过变更工单、MFA、恢复前备份和回滚计时器。` : `${rollbackPlan.line_count} target lines; change order, MFA, pre-restore backup, and rollback timer are required.`)}</p>
+                      {rollbackPlan.blockers.length > 0 && <p className="mt-1 font-sans text-[8px] font-bold text-rose-700">{zh ? '阻断项：' : 'Blockers: '}{rollbackPlan.blockers.join('；')}</p>}
+                    </div>
+                    <button type="button" onClick={() => setRollbackPlan(null)} className="text-amber-700"><X size={13} /></button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

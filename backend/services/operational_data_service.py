@@ -5,6 +5,13 @@ import re
 from typing import Any
 
 from netmiko import ConnectHandler
+try:
+    from netmiko.ssh_dispatcher import CLASS_MAP, CLASS_MAP_BASE
+    from netmiko.cisco import CiscoIosSSH
+    CLASS_MAP['dptech_ios'] = CiscoIosSSH
+    CLASS_MAP_BASE['dptech_ios'] = CiscoIosSSH
+except Exception:
+    pass
 from ntc_templates.parse import parse_output
 
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
@@ -79,6 +86,10 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'zxros': 'zte_zxros',
     'maipu': 'maipu',
     'maipu_network': 'maipu',
+    'dptech': 'dptech_ios',
+    'dptech_ios': 'dptech_ios',
+    'dptech_conplat': 'dptech_ios',
+    'dptech_conplat_fw': 'dptech_ios',
     'linux': 'linux',
     'ubuntu': 'linux',
     'centos': 'linux',
@@ -155,6 +166,9 @@ _PLATFORM_ALIAS: dict[str, str] = {
     'zte': 'zte_zxros',
     'zxros': 'zte_zxros',
     'maipu_network': 'maipu',
+    'dptech': 'dptech_ios',
+    'dptech_conplat': 'dptech_ios',
+    'dptech_conplat_fw': 'dptech_ios',
 }
 
 
@@ -190,6 +204,22 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'ntp': ['show ntp status'],
         'environment': ['show environment temperature'],
         'transceiver': ['show interfaces transceiver'],
+        'version': ['show version'],
+        'logs': ['show logging'],
+        'interface_description': ['show interfaces description'],
+        'uptime': ['show version'],
+    },
+    'dptech_ios': {
+        'interfaces': ['show ip interface brief'],
+        'neighbors': ['show lldp neighbors'],
+        'arp': ['show arp'],
+        'mac_table': ['show mac address-table'],
+        'vlan': ['show vlan brief'],
+        'routing_table': ['show ip route'],
+        'bgp': ['show ip bgp summary'],
+        'ospf': ['show ip ospf neighbor'],
+        'ntp': ['show ntp status'],
+        'environment': ['show environment temperature'],
         'version': ['show version'],
         'logs': ['show logging'],
         'interface_description': ['show interfaces description'],
@@ -481,8 +511,15 @@ def _first_complete_pair(*pairs: tuple[str, str]) -> tuple[str, str]:
 
 
 def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'auto') -> dict[str, Any]:
-    platform = _normalize_platform(device_info.get('platform') or '')
-    device_type = PLATFORM_DEVICE_TYPE_MAP.get(platform) or platform or 'cisco_ios'
+    raw_p = str(device_info.get('platform') or '').lower().strip()
+    raw_v = str(device_info.get('vendor') or '').lower().strip()
+    platform = _normalize_platform(raw_p)
+    device_type = PLATFORM_DEVICE_TYPE_MAP.get(platform) or PLATFORM_DEVICE_TYPE_MAP.get(raw_p)
+    if not device_type or device_type in ('dptech_conplat', 'dptech_conplat_fw', 'dptech'):
+        if 'dptech' in raw_p or 'dptech' in raw_v:
+            device_type = 'dptech_ios'
+        else:
+            device_type = platform or 'cisco_ios'
     
     from core.crypto import decrypt_credential
     from services.vault_service import resolve_device_credentials

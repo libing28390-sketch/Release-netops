@@ -35,6 +35,10 @@ const normalizeDeviceRecord = (raw: any): Device => {
       raw?.status === 'online' || raw?.status === 'offline' || raw?.status === 'pending'
         ? raw.status
         : 'offline',
+    lifecycle_status:
+      typeof raw?.lifecycle_status === 'string' && raw.lifecycle_status.trim()
+        ? raw.lifecycle_status
+        : 'staging',
     compliance:
       raw?.compliance === 'compliant' ||
       raw?.compliance === 'non-compliant' ||

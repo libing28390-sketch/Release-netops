@@ -43,6 +43,39 @@ PAGING_PROMPT_RE = re.compile(
 )
 
 
+def ensure_netmiko_custom_platforms() -> None:
+    """Ensure custom platforms like dptech_ios are registered in Netmiko 4.x's ssh_dispatcher."""
+    try:
+        from netmiko import ssh_dispatcher as sd
+        g = getattr(sd, '__globals__', None)
+        if isinstance(g, dict):
+            mapper = g.get('CLASS_MAPPER')
+            mapper_base = g.get('CLASS_MAPPER_BASE')
+            platforms = g.get('platforms')
+            cisco_cls = g.get('CiscoIosSSH')
+            
+            if mapper is not None and cisco_cls:
+                mapper['dptech_ios'] = cisco_cls
+                mapper['dptech_conplat'] = cisco_cls
+                mapper['dptech_conplat_fw'] = cisco_cls
+            if mapper_base is not None and cisco_cls:
+                mapper_base['dptech_ios'] = cisco_cls
+                mapper_base['dptech_conplat'] = cisco_cls
+                mapper_base['dptech_conplat_fw'] = cisco_cls
+            if isinstance(platforms, list):
+                for p_key in ('dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'):
+                    if p_key not in platforms:
+                        platforms.append(p_key)
+            if 'platforms_str' in g:
+                for p_key in ('dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'):
+                    if p_key not in g['platforms_str']:
+                        g['platforms_str'] += f"\n{p_key}"
+    except Exception:
+        pass
+
+ensure_netmiko_custom_platforms()
+
+
 def build_netmiko_compatibility_kwargs() -> Dict[str, Any]:
     """
     Netmiko/Paramiko 兼容老设备的连接参数。
@@ -53,6 +86,7 @@ def build_netmiko_compatibility_kwargs() -> Dict[str, Any]:
     - disable_sha2_fix 打开旧 Cisco/旧 Paramiko 兼容路径
     - conn_timeout: 增加 SSH 连接/协商超时时间以防止慢速设备超时 (R2.7)
     """
+    ensure_netmiko_custom_platforms()
     return {
         "disabled_algorithms": {},
         "use_keys": False,

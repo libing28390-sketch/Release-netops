@@ -231,7 +231,7 @@ export interface ConfigTemplate {
   id: string;
   name: string;
   type: string;
-  lastUsed: string;
+  lastUsed: string | null;
   category: string;
   vendor?: string;
   content: string;
@@ -241,6 +241,24 @@ export interface ConfigTemplate {
   software_version?: string;
   official_reference?: string;
   validation_status?: 'draft' | 'official_reference_reviewed' | 'device_validated';
+  code?: string;
+  source_type?: 'official' | 'custom' | 'team' | 'mine' | string;
+  risk_level?: 'none' | 'low' | 'medium' | 'high' | 'critical' | string;
+  status?: 'published' | 'draft' | 'archived' | 'review' | 'error' | string;
+  current_version?: string;
+  is_official?: boolean;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+  variable_schema_json?: string;
+  example_values_json?: string;
+  usage_notes?: string;
+  risk_notes?: string;
+  tags_json?: string;
+  favorite_count?: number;
+  use_count?: number;
+  quality_score?: number;
+  is_favorite?: boolean;
 }
 
 export interface ConfigSnapshot {

@@ -1,6 +1,11 @@
 import time
 from typing import Dict, Any
-from netmiko import ConnectHandler
+try:
+    from netmiko import ConnectHandler
+    from drivers.ssh_compat import ensure_netmiko_custom_platforms
+    ensure_netmiko_custom_platforms()
+except ImportError:
+    from netmiko import ConnectHandler
 from .base_driver import BaseDriver
 from ..base import Capability, ExecutionMode
 from ..pool import ConnectionPool
@@ -51,6 +56,10 @@ class NetmikoDriver(BaseDriver):
             'zte': 'zte_zxros',
             'zxros': 'zte_zxros',
             'maipu_network': 'maipu',
+            'dptech': 'dptech_ios',
+            'dptech_ios': 'dptech_ios',
+            'dptech_conplat': 'dptech_ios',
+            'dptech_conplat_fw': 'dptech_ios',
         }
         p = aliases.get(p, p)
         mapping = {
@@ -62,6 +71,7 @@ class NetmikoDriver(BaseDriver):
             'ruijie_rgos': 'ruijie_os',
             'zte_zxros': 'zte_zxros',
             'maipu': 'maipu',
+            'dptech_ios': 'dptech_ios',
         }
         return mapping.get(p) or p or 'cisco_ios'
 
