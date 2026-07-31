@@ -70,6 +70,11 @@ COMMAND_PROFILES = {
         'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbors detail',
         'normalizer': 'ruijie_rgos',
     },
+    'zte_zxros': {
+        'version': 'show version', 'interfaces': 'show interface brief',
+        'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbor',
+        'normalizer': 'zte_zxros',
+    },
 }
 
 PLATFORM_ALIASES = {
@@ -78,6 +83,7 @@ PLATFORM_ALIASES = {
     'cisco': 'cisco_ios', 'ios': 'cisco_ios',
     'juniper': 'juniper_junos', 'junos': 'juniper_junos',
     'arista': 'arista_eos', 'eos': 'arista_eos',
+    'zte': 'zte_zxros', 'zxros': 'zte_zxros', 'zte_zxros': 'zte_zxros',
     'ruijie': 'ruijie_rgos', 'ruijie_os': 'ruijie_rgos', 'rgos': 'ruijie_rgos',
 }
 

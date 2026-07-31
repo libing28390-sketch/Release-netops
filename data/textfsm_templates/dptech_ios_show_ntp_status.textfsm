@@ -1,0 +1,8 @@
+Value Required SYNC_STATUS (synchronized|unsynchronized)
+Value Required STRATUM (\d+)
+Value REFERENCE (.+)
+
+Start
+  ^\s*Clock is ${SYNC_STATUS}, stratum ${STRATUM}, ${REFERENCE}\s*$$ -> Record
+  ^\s*$$
+  ^.*

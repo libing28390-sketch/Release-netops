@@ -353,6 +353,8 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const isArista = platform === 'arista_eos';
   const isRuijie = platform === 'ruijie_rgos';
   const isZte = platform === 'zte_zxros';
+  const isDptech = platform === 'dptech_ios' || platform === 'dptech_conplat';
+  const isMaipu = platform === 'maipu' || platform === 'maipu_mypower';
   const deviceRole = (singleDevice?.role || '').toLowerCase();
 
   const filteredQuickQueryRecords = useMemo(() => {
@@ -378,285 +380,324 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
       operationalCategory?: string;
       excludeRoles?: string[];
     }> = [
-      {
-        icon: '📡',
-        label: '接口状态',
-        labelEn: 'Interfaces',
-        group: 'net',
-        scope: 'network',
-        operationalCategory: 'interfaces',
-        cmds: isHuawei || isH3c
-          ? 'display interface brief'
-          : isJuniper
-          ? 'show interfaces terse'
-          : 'show ip interface brief',
-      },
-      {
-        icon: '📋',
-        label: 'ARP表',
-        labelEn: 'ARP Table',
-        group: 'net',
-        scope: 'network',
-        operationalCategory: 'arp',
-        cmds: isHuawei
-          ? 'display arp all'
-          : isH3c
-          ? isComware5
-            ? 'display arp'
-            : 'display arp all'
-          : isNxos
-          ? 'show ip arp'
-          : isJuniper
-          ? 'show arp no-resolve'
-          : 'show arp',
-      },
-      {
-        icon: '🏷️',
-        label: 'MAC表',
-        labelEn: 'MAC Table',
-        group: 'net',
-        scope: 'network',
-        operationalCategory: 'mac_table',
-        excludeRoles: ['router'],
-        cmds: isHuawei || isH3c
-          ? 'display mac-address'
-          : isJuniper
-          ? 'show ethernet-switching table'
-          : 'show mac address-table',
-      },
-      {
-        icon: '📊',
-        label: 'VLAN',
-        labelEn: 'VLAN',
-        group: 'net',
-        scope: 'network',
-        operationalCategory: 'vlan',
-        excludeRoles: ['router'],
-        cmds: isHuawei
-          ? 'display vlan'
-          : isH3c
-          ? 'display vlan brief'
-          : isJuniper
-          ? 'show vlans'
-          : 'show vlan brief',
-      },
-      {
-        icon: '📌',
-        label: 'LLDP邻居',
-        labelEn: 'LLDP',
-        group: 'net',
-        scope: 'network',
-        operationalCategory: 'neighbors',
-        cmds: isHuawei
-          ? 'display lldp neighbor brief'
-          : isH3c
-          ? 'display lldp neighbor-information list'
-          : isJuniper
-          ? 'show lldp neighbors'
-          : isZte
-          ? 'show lldp neighbor brief'
-          : isCisco || isNxos
-          ? 'show lldp neighbors detail'
-          : 'show lldp neighbors detail',
-      },
-      {
-        icon: '💎',
-        label: '光模块状态',
-        labelEn: 'Transceiver',
-        group: 'net',
-        scope: 'network',
-        operationalCategory: isHuawei || isH3c || isCisco || isNxos ? 'transceiver' : undefined,
-        cmds: isHuawei || isH3c
-          ? 'display transceiver interface'
-          : isJuniper
-          ? 'show interfaces diagnostics transceiver'
-          : isRuijie
-          ? 'show interface transceiver'
-          : isCisco
-          ? 'show interfaces transceiver'
-          : 'show interface transceiver',
-      },
+        {
+          icon: '📡',
+          label: '接口状态',
+          labelEn: 'Interfaces',
+          group: 'net',
+          scope: 'network',
+          operationalCategory: 'interfaces',
+          cmds: isHuawei || isH3c
+            ? 'display interface brief'
+            : isJuniper
+              ? 'show interfaces terse'
+              : isRuijie || isDptech
+                ? 'show interface status'
+                : isMaipu
+                  ? 'show interface switchport brief'
+                  : isZte
+                    ? 'show interface brief',
+        },
+        {
+          icon: '📋',
+          label: 'ARP表',
+          labelEn: 'ARP Table',
+          group: 'net',
+          scope: 'network',
+          operationalCategory: 'arp',
+          cmds: isHuawei
+            ? 'display arp all'
+            : isH3c
+              ? isComware5
+                ? 'display arp'
+                : 'display arp all'
+              : isNxos
+                ? 'show ip arp'
+                : isJuniper
+                  ? 'show arp no-resolve'
+                  : isDptech
+                    ? 'show arp all'
+                    : 'show arp',
+        },
+        {
+          icon: '🏷️',
+          label: 'MAC表',
+          labelEn: 'MAC Table',
+          group: 'net',
+          scope: 'network',
+          operationalCategory: 'mac_table',
+          excludeRoles: ['router'],
+          cmds: isHuawei || isH3c
+            ? 'display mac-address'
+            : isJuniper
+              ? 'show ethernet-switching table'
+              : isMaipu
+                ? 'show mac-address all'
+                : isZte
+                  ? 'show mac table'
+                  : 'show mac address-table',
+        },
+        {
+          icon: '📊',
+          label: 'VLAN',
+          labelEn: 'VLAN',
+          group: 'net',
+          scope: 'network',
+          operationalCategory: 'vlan',
+          excludeRoles: ['router'],
+          cmds: isHuawei
+            ? 'display vlan'
+            : isH3c
+              ? 'display vlan brief'
+              : isJuniper
+                ? 'show vlans'
+                : isZte || isDptech || isMaipu || isRuijie
+                  ? 'show vlan'
+                  : 'show vlan brief',
+        },
+        {
+          icon: '📌',
+          label: 'LLDP邻居',
+          labelEn: 'LLDP',
+          group: 'net',
+          scope: 'network',
+          operationalCategory: 'neighbors',
+          cmds: isHuawei
+            ? 'display lldp neighbor brief'
+            : isH3c
+              ? 'display lldp neighbor-information list'
+              : isJuniper
+                ? 'show lldp neighbors'
+                : isZte
+                  ? 'show lldp neighbor'
+                  : isDptech || isMaipu || isRuijie
+                    ? 'show lldp neighbors'
+                    : isCisco || isNxos
+                      ? 'show lldp neighbors detail'
+                      : 'show lldp neighbors detail',
+        },
+        {
+          icon: '💎',
+          label: '光模块状态',
+          labelEn: 'Transceiver',
+          group: 'net',
+          scope: 'network',
+          operationalCategory: isHuawei || isH3c || isCisco || isNxos || isZte || isMaipu || isRuijie ? 'transceiver' : undefined,
+          cmds: isHuawei || isH3c
+            ? 'display transceiver interface'
+            : isJuniper
+              ? 'show interfaces diagnostics transceiver'
+              : isRuijie
+                ? 'show interface transceiver'
+                : isZte
+                  ? 'show opticalinfo brief'
+                  : isMaipu
+                    ? 'show optical all'
+                    : isCisco
+                      ? 'show interfaces transceiver'
+                      : 'show interface transceiver',
+        },
 
-      {
-        icon: '🗺️',
-        label: '路由表',
-        labelEn: 'Routes',
-        group: 'route',
-        scope: 'network',
-        operationalCategory: 'routing_table',
-        cmds: isHuawei
-          ? 'display ip routing-table verbose'
-          : isH3c
-          ? 'display ip routing-table'
-          : isJuniper
-          ? 'show route'
-          : 'show ip route',
-      },
-      {
-        icon: '🔗',
-        label: 'BGP邻居',
-        labelEn: 'BGP Peers',
-        group: 'route',
-        scope: 'network',
-        operationalCategory: 'bgp',
-        excludeRoles: ['access'],
-        cmds: isHuawei
-          ? 'display bgp peer'
-          : isH3c
-          ? 'display bgp peer ipv4 unicast'
-          : isNxos
-          ? 'show ip bgp summary'
-          : 'show ip bgp summary',
-      },
-      {
-        icon: '🔍',
-        label: 'OSPF邻居',
-        labelEn: 'OSPF Nbrs',
-        group: 'route',
-        scope: 'network',
-        operationalCategory: 'ospf',
-        excludeRoles: ['access'],
-        cmds: isHuawei || isH3c
-          ? 'display ospf peer'
-          : isNxos
-          ? 'show ip ospf neighbors'
-          : 'show ip ospf neighbor',
-      },
-      {
-        icon: '⏱️',
-        label: 'NTP同步',
-        labelEn: 'NTP Status',
-        group: 'route',
-        scope: 'network',
-        operationalCategory: isHuawei || isH3c || isCisco || isNxos ? 'ntp' : undefined,
-        cmds: isHuawei || isH3c
-          ? 'display ntp-service status'
-          : isNxos
-          ? 'show ntp peer-status'
-          : 'show ntp status',
-      },
+        {
+          icon: '🗺️',
+          label: '路由表',
+          labelEn: 'Routes',
+          group: 'route',
+          scope: 'network',
+          operationalCategory: 'routing_table',
+          cmds: isHuawei
+            ? 'display ip routing-table verbose'
+            : isH3c
+              ? 'display ip routing-table'
+              : isJuniper
+                ? 'show route'
+                : isZte
+                  ? 'show ip forwarding route'
+                  : 'show ip route',
+        },
+        {
+          icon: '🔗',
+          label: 'BGP邻居',
+          labelEn: 'BGP Peers',
+          group: 'route',
+          scope: 'network',
+          operationalCategory: 'bgp',
+          excludeRoles: ['access'],
+          cmds: isHuawei
+            ? 'display bgp peer'
+            : isH3c
+              ? 'display bgp peer ipv4 unicast'
+              : isNxos
+                ? 'show ip bgp summary'
+                : isZte || isRuijie
+                  ? 'show ip bgp neighbors'
+                  : 'show ip bgp summary',
+        },
+        {
+          icon: '🔍',
+          label: 'OSPF邻居',
+          labelEn: 'OSPF Nbrs',
+          group: 'route',
+          scope: 'network',
+          operationalCategory: 'ospf',
+          excludeRoles: ['access'],
+          cmds: isHuawei || isH3c
+            ? 'display ospf peer'
+            : isNxos
+              ? 'show ip ospf neighbors'
+              : 'show ip ospf neighbor',
+        },
+        {
+          icon: '⏱️',
+          label: 'NTP同步',
+          labelEn: 'NTP Status',
+          group: 'route',
+          scope: 'network',
+          operationalCategory: isHuawei || isH3c || isCisco || isNxos || isZte || isDptech || isMaipu || isRuijie ? 'ntp' : undefined,
+          cmds: isHuawei || isH3c
+            ? 'display ntp-service status'
+            : isNxos
+              ? 'show ntp peer-status'
+              : 'show ntp status',
+        },
 
-      {
-        icon: '🔄',
-        label: 'BFD会话',
-        labelEn: 'BFD Sessions',
-        group: 'route',
-        scope: 'network',
-        operationalCategory: isHuawei || isH3c || isCisco || isNxos ? 'bfd' : undefined,
-        excludeRoles: ['access'],
-        cmds: isHuawei
-          ? 'display bfd session all'
-          : isH3c
-          ? 'display bfd session'
-          : isCisco
-          ? 'show bfd neighbors details'
-          : 'show bfd neighbors',
-      },
+        {
+          icon: '🔄',
+          label: 'BFD会话',
+          labelEn: 'BFD Sessions',
+          group: 'route',
+          scope: 'network',
+          operationalCategory: isHuawei || isH3c || isCisco || isNxos || isRuijie || isDptech ? 'bfd' : undefined,
+          excludeRoles: ['access'],
+          cmds: isHuawei
+            ? 'display bfd session all'
+            : isH3c
+              ? 'display bfd session'
+              : isDptech
+                ? 'show bfd session'
+                : isCisco
+                  ? 'show bfd neighbors details'
+                  : 'show bfd neighbors',
+        },
 
-      { icon: '📈', label: '负载统计', labelEn: 'Load Avg', group: 'sys', scope: 'server', cmds: 'uptime && top -bn1 | head -n 5' },
-      { icon: '💽', label: '磁盘空间', labelEn: 'Disk Usage', group: 'sys', scope: 'server', cmds: 'df -h' },
-      { icon: '🧠', label: '内存占用', labelEn: 'Memory', group: 'sys', scope: 'server', cmds: 'free -m' },
-      { icon: '⚡', label: '高负载进程', labelEn: 'Processes', group: 'sys', scope: 'server', cmds: 'ps aux --sort=-%cpu | head -n 11' },
-      { icon: '🌐', label: '网络连接', labelEn: 'Netstat', group: 'sys', scope: 'server', cmds: 'ss -tulpn' },
-      { icon: '🪵', label: '系统日志', labelEn: 'Syslog', group: 'sys', scope: 'server', cmds: 'tail -n 50 /var/log/syslog' },
-      { icon: '🆔', label: 'IP地址', labelEn: 'IP Addr', group: 'sys', scope: 'server', cmds: 'ip a' },
-      { icon: '🛤️', label: '路由表', labelEn: 'IP Route', group: 'sys', scope: 'server', cmds: 'ip route' },
-      {
-        icon: '🔌',
-        label: '系统服务',
-        labelEn: 'Services',
-        group: 'sys',
-        scope: 'server',
-        cmds: 'systemctl list-units --type=service --state=running | head -n 20',
-      },
-      { icon: '🛡️', label: 'DNS配置', labelEn: 'DNS', group: 'sys', scope: 'server', cmds: 'cat /etc/resolv.conf' },
-      { icon: '👤', label: '最近登录', labelEn: 'Last Login', group: 'sys', scope: 'server', cmds: 'last -n 10' },
-      { icon: '🧱', label: '环境变量', labelEn: 'Env Vars', group: 'sys', scope: 'server', cmds: 'env | sort | head -n 30' },
+        { icon: '📈', label: '负载统计', labelEn: 'Load Avg', group: 'sys', scope: 'server', cmds: 'uptime && top -bn1 | head -n 5' },
+        { icon: '💽', label: '磁盘空间', labelEn: 'Disk Usage', group: 'sys', scope: 'server', cmds: 'df -h' },
+        { icon: '🧠', label: '内存占用', labelEn: 'Memory', group: 'sys', scope: 'server', cmds: 'free -m' },
+        { icon: '⚡', label: '高负载进程', labelEn: 'Processes', group: 'sys', scope: 'server', cmds: 'ps aux --sort=-%cpu | head -n 11' },
+        { icon: '🌐', label: '网络连接', labelEn: 'Netstat', group: 'sys', scope: 'server', cmds: 'ss -tulpn' },
+        { icon: '🪵', label: '系统日志', labelEn: 'Syslog', group: 'sys', scope: 'server', cmds: 'tail -n 50 /var/log/syslog' },
+        { icon: '🆔', label: 'IP地址', labelEn: 'IP Addr', group: 'sys', scope: 'server', cmds: 'ip a' },
+        { icon: '🛤️', label: '路由表', labelEn: 'IP Route', group: 'sys', scope: 'server', cmds: 'ip route' },
+        {
+          icon: '🔌',
+          label: '系统服务',
+          labelEn: 'Services',
+          group: 'sys',
+          scope: 'server',
+          cmds: 'systemctl list-units --type=service --state=running | head -n 20',
+        },
+        { icon: '🛡️', label: 'DNS配置', labelEn: 'DNS', group: 'sys', scope: 'server', cmds: 'cat /etc/resolv.conf' },
+        { icon: '👤', label: '最近登录', labelEn: 'Last Login', group: 'sys', scope: 'server', cmds: 'last -n 10' },
+        { icon: '🧱', label: '环境变量', labelEn: 'Env Vars', group: 'sys', scope: 'server', cmds: 'env | sort | head -n 30' },
 
-      {
-        icon: '🏥',
-        label: '设备信息',
-        labelEn: 'Version',
-        group: 'sys',
-        scope: 'all',
-        operationalCategory: deviceCategory === 'server' ? undefined : 'version',
-        cmds: isHuawei || isH3c
-          ? 'display version'
-          : 'show version',
-      },
-      {
-        icon: '🔋',
-        label: '电源风扇',
-        labelEn: 'Environment',
-        group: 'sys',
-        scope: 'all',
-        operationalCategory: isHuawei || isH3c || isCisco || isNxos ? 'environment' : undefined,
-        cmds: isHuawei
-          ? 'display temperature all'
-          : isH3c
-          ? 'display environment'
-          : isJuniper
-          ? 'show chassis environment'
-          : isCisco
-          ? 'show environment temperature'
-          : 'show environment',
-      },
-      {
-        icon: '📝',
-        label: '日志概览',
-        labelEn: 'Logs',
-        group: 'sys',
-        scope: 'all',
-        operationalCategory: deviceCategory === 'server' ? undefined : 'logs',
-        cmds: isHuawei
-          ? 'display logbuffer last 30'
-          : isH3c
-          ? 'display logbuffer'
-          : isJuniper
-          ? 'show log messages | last 30'
-          : isNxos
-          ? 'show logging last 30'
-          : isCisco
-          ? 'show logging'
-          : 'show logging | tail 30',
-      },
-      {
-        icon: '🧩',
-        label: '接口配置',
-        labelEn: 'Intf Config',
-        group: 'sys',
-        scope: 'network',
-        operationalCategory: 'interface_description',
-        cmds: isHuawei || isH3c
-          ? isH3c
-            ? 'display interface brief description'
-            : 'display interface description'
-          : isJuniper
-          ? 'show interfaces descriptions'
-          : isNxos
-          ? 'show interface description'
-          : isCisco
-          ? 'show interfaces description'
-          : 'show interfaces description\nshow interfaces status',
-      },
-      {
-        icon: '🕒',
-        label: '系统运行时间',
-        labelEn: 'Uptime',
-        group: 'sys',
-        scope: 'all',
-        operationalCategory: deviceCategory === 'server' ? undefined : 'uptime',
-        cmds: isHuawei
-          ? 'display version | include uptime'
-          : isH3c
-          ? 'display version'
-          : isJuniper
-          ? 'show system uptime'
-          : isCisco || isNxos
-          ? 'show version'
-          : 'show version | include uptime',
-      },
-    ];
+        {
+          icon: '🏥',
+          label: '设备信息',
+          labelEn: 'Version',
+          group: 'sys',
+          scope: 'all',
+          operationalCategory: deviceCategory === 'server' ? undefined : 'version',
+          cmds: isHuawei || isH3c
+            ? 'display version'
+            : 'show version',
+        },
+        {
+          icon: '🔋',
+          label: '电源风扇',
+          labelEn: 'Environment',
+          group: 'sys',
+          scope: 'all',
+          operationalCategory: isHuawei || isH3c || isCisco || isNxos || isZte || isDptech || isMaipu || isRuijie || isJuniper ? 'environment' : undefined,
+          cmds: isHuawei
+            ? 'display temperature all'
+            : isH3c
+              ? 'display environment'
+              : isJuniper
+                ? 'show chassis environment'
+                : isRuijie
+                  ? 'show temperature'
+                  : isZte
+                    ? 'show temperature detail'
+                    : isDptech || isMaipu
+                      ? 'show environment'
+                      : isCisco
+                        ? 'show environment temperature'
+                        : 'show environment',
+        },
+        {
+          icon: '📝',
+          label: '日志概览',
+          labelEn: 'Logs',
+          group: 'sys',
+          scope: 'all',
+          operationalCategory: deviceCategory === 'server' ? undefined : 'logs',
+          cmds: isHuawei
+            ? 'display logbuffer last 30'
+            : isH3c
+              ? 'display logbuffer'
+              : isJuniper
+                ? 'show log messages | last 30'
+                : isNxos
+                  ? 'show logging last 30'
+                  : isZte
+                    ? 'show logging buffer almlog'
+                    : isDptech
+                      ? 'show logging operlog recent'
+                      : isCisco || isRuijie
+                        ? 'show logging'
+                        : 'show logging | tail 30',
+        },
+        {
+          icon: '🧩',
+          label: '接口配置',
+          labelEn: 'Intf Config',
+          group: 'sys',
+          scope: 'network',
+          operationalCategory: 'interface_description',
+          cmds: isHuawei || isH3c
+            ? isH3c
+              ? 'display interface brief description'
+              : 'display interface description'
+            : isJuniper
+              ? 'show interfaces descriptions'
+              : isNxos
+                ? 'show interface description'
+                : isRuijie
+                  ? 'show ip interface brief'
+                  : isZte || isDptech || isMaipu
+                    ? 'show ip interface brief'
+                    : isCisco
+                      ? 'show interfaces description'
+                      : 'show interfaces description\nshow interfaces status',
+        },
+        {
+          icon: '🕒',
+          label: '系统运行时间',
+          labelEn: 'Uptime',
+          group: 'sys',
+          scope: 'all',
+          operationalCategory: deviceCategory === 'server' ? undefined : 'uptime',
+          cmds: isHuawei
+            ? 'display version | include uptime'
+            : isH3c
+              ? 'display version'
+              : isJuniper
+                ? 'show system uptime'
+                : isCisco || isNxos
+                  ? 'show version'
+                  : 'show version | include uptime',
+        },
+      ];
 
     if (isHuawei || isH3c) {
       all.push(
@@ -963,13 +1004,12 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                 className="fixed left-1/2 top-1/2 z-[80] -translate-x-1/2 -translate-y-1/2 w-[440px] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden"
               >
                 <div
-                  className={`px-6 py-4 ${
-                    confirmAction === 'apply'
+                  className={`px-6 py-4 ${confirmAction === 'apply'
                       ? quickPlaybookScenario?.risk === 'high'
                         ? 'bg-gradient-to-r from-red-50 to-rose-50'
                         : 'bg-gradient-to-r from-cyan-50 to-teal-50'
                       : 'bg-gradient-to-r from-cyan-50 to-cyan-100/50'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-3">
                     {confirmAction === 'apply' && quickPlaybookScenario?.risk === 'high' ? (
@@ -988,8 +1028,8 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                             ? '确认运行校验'
                             : 'Confirm Validation'
                           : isZh
-                          ? '确认应用变更'
-                          : 'Confirm Apply'}
+                            ? '确认应用变更'
+                            : 'Confirm Apply'}
                       </p>
                       <p className="text-xs text-gray-500">
                         {isZh
@@ -1048,19 +1088,18 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
                   </button>
                   <button
                     onClick={handleConfirmExecute}
-                    className={`px-5 py-2 rounded-xl text-xs font-bold text-white transition-all ${
-                      confirmAction === 'apply' && quickPlaybookScenario?.risk === 'high'
+                    className={`px-5 py-2 rounded-xl text-xs font-bold text-white transition-all ${confirmAction === 'apply' && quickPlaybookScenario?.risk === 'high'
                         ? 'bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/25'
                         : 'bg-gradient-to-r from-cyan-500 to-teal-500 shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40'
-                    }`}
+                      }`}
                   >
                     {confirmAction === 'validate'
                       ? isZh
                         ? '确认校验'
                         : 'Confirm Validate'
                       : isZh
-                      ? '确认执行'
-                      : 'Confirm Apply'}
+                        ? '确认执行'
+                        : 'Confirm Apply'}
                   </button>
                 </div>
               </motion.div>

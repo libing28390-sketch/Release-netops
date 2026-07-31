@@ -1,0 +1,9 @@
+Value Required LOG_ID (\d+)
+Value TIMESTAMP (\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)
+Value CLASS (\S+)
+Value MESSAGE (.*?)
+
+Start
+  ^LogID:${LOG_ID}\s+${TIMESTAMP}\s+Class:${CLASS}\s+${MESSAGE}\s*$$ -> Record
+  ^LogID:${LOG_ID}\s+${TIMESTAMP}\s+Class:${CLASS} -> Continue
+  ^\s*${MESSAGE}\s*$$ -> Record

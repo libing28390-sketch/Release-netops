@@ -6,6 +6,7 @@ from services.normalizers.h3c import H3CNormalizer
 from services.normalizers.huawei import HuaweiNormalizer
 from services.normalizers.juniper import JuniperNormalizer
 from services.normalizers.ruijie import RuijieNormalizer
+from services.normalizers.zte import ZTENormalizer
 
 class NormalizerFactory:
     """Factory to fetch vendor-specific command output normalizers."""
@@ -17,6 +18,7 @@ class NormalizerFactory:
         "juniper_junos": JuniperNormalizer,
         "arista_eos": AristaNormalizer,
         "ruijie_rgos": RuijieNormalizer,
+        "zte_zxros": ZTENormalizer,
     }
 
     @classmethod
@@ -37,6 +39,8 @@ class NormalizerFactory:
             platform_lower = "arista_eos"
         elif "ruijie" in platform_lower or "rgos" in platform_lower:
             platform_lower = "ruijie_rgos"
+        elif "zte" in platform_lower or "zxros" in platform_lower:
+            platform_lower = "zte_zxros"
             
         normalizer_cls = cls._normalizers.get(platform_lower)
         if not normalizer_cls:

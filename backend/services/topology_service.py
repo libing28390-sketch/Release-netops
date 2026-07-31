@@ -72,7 +72,7 @@ DISCOVERY_COMMANDS = {
     'h3c_comware': [('lldp', 'display lldp neighbor-information list')],
     'h3c_comware9': [('lldp', 'display lldp neighbor-information list')],
     'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
-    'zte_zxros': [('lldp', 'show lldp neighbor brief')],
+    'zte_zxros': [('lldp', 'show lldp neighbor')],
 }
 
 

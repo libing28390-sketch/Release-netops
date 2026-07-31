@@ -49,6 +49,9 @@ TEXTFSM_PLATFORM_MAP = {
     'dptech_conplat_fw': 'dptech_ios',
     'maipu': 'maipu',
     'maipu_mypower': 'maipu',
+    'zte': 'zte_zxros',
+    'zxros': 'zte_zxros',
+    'zte_zxros': 'zte_zxros',
 }
 
 
