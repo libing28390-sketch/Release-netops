@@ -237,11 +237,11 @@ class NetmikoDriver(BaseDriver):
             'username':           self.username,
             'password':           self.password,
             'port':               self.port,
-            'timeout':            20,
+            'timeout':            int(self.device_info.get('conn_timeout') or self.device_info.get('timeout') or 5),
             'session_timeout':    60,
             'fast_cli':           not is_slow,         # 慢速平台禁用 fast_cli
             'global_delay_factor':1.5 if is_slow else 0.5,
-            'blocking_timeout':   30,
+            'blocking_timeout':   int(self.device_info.get('blocking_timeout') or 5),
         }
         logger.info(f"Login to {self.host} as username={self.username!r} pwd_len={len(self.password or '')}")
         device_params.update(build_netmiko_compatibility_kwargs())
@@ -364,7 +364,7 @@ class NetmikoDriver(BaseDriver):
                 'cmd_verify': False,
                 'strip_prompt': True,
                 'strip_command': True,
-                'read_timeout': self.device_info.get('command_read_timeout', 120),
+                'read_timeout': self.device_info.get('command_read_timeout', 5),
                 'delay_factor': 2
             }
             # Override with kwargs (e.g. expect_string)

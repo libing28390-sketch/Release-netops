@@ -102,6 +102,8 @@ class NetmikoDriver(BaseDriver):
         )
 
         from drivers.ssh_compat import build_netmiko_compatibility_kwargs
+        conn_timeout = int(self.device_info.get('timeout') or self.device_info.get('conn_timeout') or 5)
+        blocking_timeout = int(self.device_info.get('blocking_timeout') or 5)
         device_params = {
             'device_type': self.device_type,
             'host': self.ip,
@@ -109,9 +111,9 @@ class NetmikoDriver(BaseDriver):
             'password': self.password,
             'port': self.port,
             'secret': enable_pwd or self.password,
-            'timeout': 20,
+            'timeout': conn_timeout,
             'global_delay_factor': 1.5,
-            'blocking_timeout': 30,
+            'blocking_timeout': blocking_timeout,
         }
         device_params.update(build_netmiko_compatibility_kwargs())
         self.conn = ConnectHandler(**device_params)
@@ -134,19 +136,20 @@ class NetmikoDriver(BaseDriver):
 
     def execute(self, mode: ExecutionMode, content: Any, **kwargs) -> Dict[str, Any]:
         start_time = time.perf_counter()
+        exec_read_timeout = int(kwargs.get('read_timeout') or self.device_info.get('read_timeout') or self.device_info.get('command_read_timeout') or 5)
         try:
             self.connect()
             
             if mode == ExecutionMode.COMMAND:
                 try:
-                    output = self.conn.send_command(content, read_timeout=30)
+                    output = self.conn.send_command(content, read_timeout=exec_read_timeout)
                 except Exception as e:
                     if "Pattern not detected" in str(e) or "Timeout" in str(e) or "socket" in str(e).lower():
-                        output = self.conn.send_command_timing(content, read_timeout=30)
+                        output = self.conn.send_command_timing(content, read_timeout=exec_read_timeout)
                     else:
                         raise e
                 from drivers.ssh_compat import drain_paged_output
-                output = drain_paged_output(self.conn, output, read_timeout=30)
+                output = drain_paged_output(self.conn, output, read_timeout=exec_read_timeout)
                 return {
                     "success": True, "stdout": output, "device": self.ip,
                     "duration": time.perf_counter() - start_time
