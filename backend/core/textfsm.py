@@ -965,6 +965,9 @@ def _template_platform_candidates(platform: str) -> list[str]:
         'cisco': 'cisco_ios',
         'ios': 'cisco_ios',
         'iosxe': 'cisco_xe',
+        'dptech': 'dptech_ios',
+        'dptech_conplat': 'dptech_ios',
+        'dptech_conplat_fw': 'dptech_ios',
     }
     normalized = resolve_textfsm_platform(aliases.get(raw, raw)) or ''
     candidates = [normalized] if normalized else []
@@ -1089,6 +1092,8 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
         'zte_zxros',
         'maipu',
         'dcn_dcnos',
+        'dptech_ios',
+        'dptech',
         'dptech_conplat',
         'dptech_conplat_fw',
         'fiberhome_fengine',

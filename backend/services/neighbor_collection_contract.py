@@ -22,6 +22,8 @@ _PLATFORM_ALIASES = {
     "h3c": "h3c_comware", "h3c_comware9": "h3c_comware", "comware": "h3c_comware", "hp_comware": "h3c_comware",
     "ruijie": "ruijie_rgos", "ruijie_os": "ruijie_rgos", "rgos": "ruijie_rgos",
     "zte": "zte_zxros", "zxros": "zte_zxros",
+    "dptech": "dptech_ios", "dptech_ios": "dptech_ios", "dptech_conplat": "dptech_ios", "dptech_conplat_fw": "dptech_ios",
+    "maipu": "maipu", "maipu_mypower": "maipu", "maipu_network": "maipu",
 }
 
 # Approved commands for the existing validated Automation Playbook/TextFSM
@@ -35,6 +37,8 @@ LLDP_COMMAND_WHITELIST: dict[str, frozenset[str]] = {
     "h3c_comware": frozenset({"display lldp neighbor", "display lldp neighbor-information list", "display lldp neighbor-information verbose"}),
     "ruijie_rgos": frozenset({"show lldp neighbors", "show lldp neighbors detail"}),
     "zte_zxros": frozenset({"show lldp neighbor", "show lldp neighbor brief", "show lldp neighbors", "show lldp neighbors detail"}),
+    "dptech_ios": frozenset({"show lldp neighbors", "show lldp neighbors detail"}),
+    "maipu": frozenset({"show lldp neighbors", "show lldp neighbors detail"}),
 }
 
 

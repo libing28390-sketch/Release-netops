@@ -44,6 +44,7 @@ const SAMPLE_PLATFORMS = [
   { value: 'arista_eos', label: 'Arista EOS' },
   { value: 'ruijie_rgos', label: 'Ruijie RGOS' },
   { value: 'zte_zxros', label: 'ZTE ZXROS' },
+  { value: 'dptech_ios', label: '迪普 DPTech Conplat', labelEn: 'DPTech Conplat' },
   { value: 'maipu', label: 'Maipu Network OS' },
   { value: 'paloalto_panos', label: 'Palo Alto' },
   { value: 'fortinet', label: 'Fortinet' },

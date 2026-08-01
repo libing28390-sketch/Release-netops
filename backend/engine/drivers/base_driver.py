@@ -17,11 +17,11 @@ class BaseDriver(abc.ABC):
         raw_password = (device_info.get("password") or "").strip()
         password = decrypt_credential(raw_password) or raw_password
 
-        # 如果外层未传入明确的 username，则使用全局统一支持 Vault 的凭据解析服务
-        if not username:
+        # 如果外层未传入明确的 username 或 password，则使用全局统一支持 Vault 的凭据解析服务
+        if not username or not password:
             creds = resolve_device_credentials(device_info)
-            username = creds.get("username") or "root"
-            password = creds.get("password") or ""
+            username = username or creds.get("username") or creds.get("normal_username") or "root"
+            password = password or creds.get("password") or creds.get("normal_password") or ""
 
         self.device_info = device_info
         self.ip = device_info.get("ip") or device_info.get("ip_address")

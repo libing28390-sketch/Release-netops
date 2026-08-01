@@ -55,7 +55,7 @@ jobs:
           if [ -d docs ]; then
             find docs -mindepth 1 -maxdepth 1 ! -name deploy -exec rm -rf {} +
           fi
-          rm -rf brain/ skills/ .github/skills/ .agents/
+          rm -rf brain/ skills/ .github/skills/ .agents/ blog/
 
           rm -rf scratch/ backend/scratch/
           rm -rf backend/scripts/
@@ -103,7 +103,7 @@ jobs:
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
           done
-          for path in backend/scripts data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key; do
+          for path in backend/scripts data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 
@@ -190,7 +190,7 @@ jobs:
           if [ -d docs ]; then
             find docs -mindepth 1 -maxdepth 1 ! -name deploy -exec rm -rf {} +
           fi
-          rm -rf brain/ skills/ .github/skills/ .agents/
+          rm -rf brain/ skills/ .github/skills/ .agents/ blog/
           rm -rf scratch/ backend/scratch/
           rm -rf backend/scripts/
           if [ -d backend/tests ]; then
@@ -234,7 +234,7 @@ jobs:
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required Windows release path missing: $path"; exit 1; }
           done
-          for path in backend/scripts data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key; do
+          for path in backend/scripts data/netops.db.bak data/backups data/pam_recordings nginx/ssl/netops.crt nginx/ssl/netops.key blog; do
             test -z "$(git ls-files -- "$path")" || { echo "[FAIL] Forbidden path staged: $path"; exit 1; }
           done
 

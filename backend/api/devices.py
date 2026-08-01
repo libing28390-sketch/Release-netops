@@ -19,6 +19,8 @@ from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
 from datetime import datetime, timezone
 
 _logger = logging.getLogger(__name__)
+logger = _logger
+
 
 router = APIRouter()
 
@@ -1818,7 +1820,7 @@ def collect_device_operational_data(device_id: str, payload: dict = Body(default
         )
         return res
     except ValueError as exc:
-        logger.exception("Failed operational-data collection for device %s", device_id)
+        _logger.exception("Failed operational-data collection for device %s", device_id)
         _record_instant_execution(
             device_id, query_name, [], 'failed',
             platform=device_info.get('platform', 'unknown'),

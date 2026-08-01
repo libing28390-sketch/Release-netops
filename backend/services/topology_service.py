@@ -73,6 +73,8 @@ DISCOVERY_COMMANDS = {
     'h3c_comware9': [('lldp', 'display lldp neighbor-information list')],
     'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
     'zte_zxros': [('lldp', 'show lldp neighbor')],
+    'dptech_ios': [('lldp', 'show lldp neighbors')],
+    'maipu': [('lldp', 'show lldp neighbors')],
 }
 
 
@@ -86,6 +88,11 @@ def normalize_topology_platform(platform: str | None) -> str:
         'hp_comware': 'h3c_comware',
         'comware': 'h3c_comware',
         'ruijie_os': 'ruijie_rgos',
+        'dptech': 'dptech_ios',
+        'dptech_conplat': 'dptech_ios',
+        'dptech_conplat_fw': 'dptech_ios',
+        'maipu_mypower': 'maipu',
+        'maipu_network': 'maipu',
     }
     normalized = aliases.get(raw, raw)
     if normalized not in DISCOVERY_COMMANDS:

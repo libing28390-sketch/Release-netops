@@ -57,7 +57,7 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         if p in {'dptech_conplat', 'dptech_conplat_fw'}:
             return p
         if p in {'dptech', 'dptech_ios'}:
-            return 'dptech_conplat'
+            return 'dptech_ios'
         return p
 
     # If platform is empty or generic/cisco but vendor is specific, override it
@@ -80,7 +80,7 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         if not p or 'cisco' in p or p == 'generic':
             if 'fw' in p or 'firewall' in p:
                 return 'dptech_conplat_fw'
-            return 'dptech_conplat'
+            return 'dptech_ios'
     elif v_key == 'juniper':
         if not p or 'cisco' in p or p == 'generic':
             return 'juniper_junos'

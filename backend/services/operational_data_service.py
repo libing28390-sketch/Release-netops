@@ -225,6 +225,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'version': ['show version'],
         'logs': ['show logging operlog recent'],
         'interface_description': ['show ip interface brief'],
+        'clock': ['show clock'],
         'uptime': ['show version'],
     },
     'cisco_nxos': {
@@ -1341,8 +1342,9 @@ def collect_operational_data(
             }
 
             if not category_commands:
-                category_result['success'] = False
-                category_result['error'] = f'No command catalog found for category {category} on platform {platform}'
+                category_result['success'] = True
+                category_result['parse_status'] = 'unsupported_by_platform'
+                category_result['message'] = f'Category {category} is not configured for platform {platform}'
                 payload['categories'].append(category_result)
                 continue
 
