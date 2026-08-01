@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { HostResourceSnapshot } from '../types';
+import type { DeviceHealthHistoryResponse, HostResourceSnapshot, MonitoringIncident } from '../types';
 import type { OutboundHealthResponse, OutboundTargetHistoryResponse } from '../types/outbound';
 
 interface MonitoringState {
@@ -13,6 +13,7 @@ interface MonitoringState {
 
   // Data
   monitorOverview: any | null;
+  monitorHealthHistory: DeviceHealthHistoryResponse | null;
   monitorRealtime: any | null;
   monitorTrend: any | null;
 
@@ -35,6 +36,10 @@ interface MonitoringState {
   monitorAlertsPageSize: number;
   monitorAlertsSeverity: string;
   monitorAlertsPhase: string;
+
+  // Incident projection
+  monitorIncidents: MonitoringIncident[];
+  monitorIncidentTotal: number;
 
   // UI state
   monitorLoading: boolean;
@@ -59,6 +64,7 @@ interface MonitoringState {
   setMonitorSearching: (v: boolean) => void;
   setMonitorSelectedDevice: (v: any | null) => void;
   setMonitorOverview: (v: any | null) => void;
+  setMonitorHealthHistory: (v: DeviceHealthHistoryResponse | null) => void;
   setMonitorRealtime: (v: any | null) => void;
   setMonitorTrend: (v: any | null) => void;
   setMonitorTrendInterface: (v: string) => void;
@@ -76,6 +82,8 @@ interface MonitoringState {
   setMonitorAlertsPage: (v: number) => void;
   setMonitorAlertsSeverity: (v: string) => void;
   setMonitorAlertsPhase: (v: string) => void;
+  setMonitorIncidents: (v: MonitoringIncident[]) => void;
+  setMonitorIncidentTotal: (v: number) => void;
   setMonitorLoading: (v: boolean) => void;
   setMonitorPageVisible: (v: boolean) => void;
   setMonitorDashboardSiteFilter: (v: string) => void;
@@ -107,6 +115,7 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
   monitorSearching: false,
   monitorSelectedDevice: null,
   monitorOverview: null,
+  monitorHealthHistory: null,
   monitorRealtime: null,
   monitorTrend: null,
   monitorTrendInterface: '',
@@ -125,6 +134,8 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
   monitorAlertsPageSize: 10,
   monitorAlertsSeverity: 'all',
   monitorAlertsPhase: 'all',
+  monitorIncidents: [],
+  monitorIncidentTotal: 0,
   monitorLoading: false,
   monitorPageVisible: typeof document === 'undefined' ? true : document.visibilityState === 'visible',
   monitorDashboardSiteFilter: 'all',
@@ -142,6 +153,7 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
   setMonitorSearching: (v) => set({ monitorSearching: v }),
   setMonitorSelectedDevice: (v) => set({ monitorSelectedDevice: v }),
   setMonitorOverview: (v) => set({ monitorOverview: v }),
+  setMonitorHealthHistory: (v) => set({ monitorHealthHistory: v }),
   setMonitorRealtime: (v) => set({ monitorRealtime: v }),
   setMonitorTrend: (v) => set({ monitorTrend: v }),
   setMonitorTrendInterface: (v) => set({ monitorTrendInterface: v }),
@@ -164,6 +176,8 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
   setMonitorAlertsPage: (v) => set({ monitorAlertsPage: v }),
   setMonitorAlertsSeverity: (v) => set({ monitorAlertsSeverity: v }),
   setMonitorAlertsPhase: (v) => set({ monitorAlertsPhase: v }),
+  setMonitorIncidents: (v) => set({ monitorIncidents: v }),
+  setMonitorIncidentTotal: (v) => set({ monitorIncidentTotal: v }),
   setMonitorLoading: (v) => set({ monitorLoading: v }),
   setMonitorPageVisible: (v) => set({ monitorPageVisible: v }),
   setMonitorDashboardSiteFilter: (v) => set({ monitorDashboardSiteFilter: v }),
@@ -182,6 +196,7 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
     monitorSearching: false,
     monitorSelectedDevice: null,
     monitorOverview: null,
+    monitorHealthHistory: null,
     monitorRealtime: null,
     monitorTrend: null,
     monitorTrendInterface: '',
@@ -198,6 +213,8 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
     monitorAlertsPage: 1,
     monitorAlertsSeverity: 'all',
     monitorAlertsPhase: 'all',
+    monitorIncidents: [],
+    monitorIncidentTotal: 0,
     monitorLoading: false,
     monitorDashboardSiteFilter: 'all',
     monitorDashboardAlertFilter: 'all',

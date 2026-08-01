@@ -44,7 +44,17 @@ type SearchType =
   | 'REGEX'
   | 'STRUCTURED';
 
-type SearchScope = 'LATEST_VALID_RUNNING' | 'LATEST_RUNNING' | 'ALL_LATEST' | 'HISTORY';
+type SearchScope =
+  | 'LATEST_VALID_RUNNING'
+  | 'LATEST_RUNNING'
+  | 'ALL_LATEST'
+  | 'HISTORY'
+  | 'RUNNING_HISTORY'
+  | 'STARTUP_HISTORY'
+  | 'BASELINE'
+  | 'TIME_RANGE'
+  | 'SPECIFIC_VERSION'
+  | 'TEMPLATES';
 
 interface SearchFilters {
   vendors: string[];
@@ -54,6 +64,7 @@ interface SearchFilters {
   device_ids: string[];
   config_types: string[];
   integrity: string[];
+  snapshot_ids: string[];
   from_time: string;
   to_time: string;
 }
@@ -105,6 +116,7 @@ interface SearchResponse {
     matches: number;
     searched_snapshots: number;
     index_updates: number;
+    objects: number;
     duration_ms: number;
     truncated: boolean;
   };
@@ -140,8 +152,9 @@ const EMPTY_FILTERS: SearchFilters = {
   sites: [],
   roles: [],
   device_ids: [],
-  config_types: ['running'],
+  config_types: [],
   integrity: [],
+  snapshot_ids: [],
   from_time: '',
   to_time: '',
 };
@@ -149,7 +162,7 @@ const EMPTY_FILTERS: SearchFilters = {
 const QUICK_QUERIES = [
   { value: '192.168.1.1', label: '精确 IP' },
   { value: '10.0.0.0/24', label: 'CIDR 关系' },
-  { value: '100', label: 'VLAN 100' },
+  { value: 'VLAN 100', label: 'VLAN 100' },
   { value: 'ospf', label: 'OSPF' },
   { value: 'bgp', label: 'BGP' },
   { value: 'interface', label: '接口' },
@@ -177,6 +190,12 @@ const SCOPE_OPTIONS: Array<{ value: SearchScope; zh: string; en: string }> = [
   { value: 'LATEST_RUNNING', zh: '最新运行配置', en: 'Latest running' },
   { value: 'ALL_LATEST', zh: '各设备最新配置', en: 'All latest snapshots' },
   { value: 'HISTORY', zh: '全部历史版本', en: 'All historical snapshots' },
+  { value: 'RUNNING_HISTORY', zh: '运行配置历史', en: 'Running history' },
+  { value: 'STARTUP_HISTORY', zh: '启动配置历史', en: 'Startup history' },
+  { value: 'BASELINE', zh: '已设定基线', en: 'Designated baselines' },
+  { value: 'TIME_RANGE', zh: '时间范围内快照', en: 'Snapshots in time range' },
+  { value: 'SPECIFIC_VERSION', zh: '指定快照版本', en: 'Specific snapshot versions' },
+  { value: 'TEMPLATES', zh: '配置模板', en: 'Configuration templates' },
 ];
 
 const FACET_LABELS: Record<string, string> = {
@@ -388,7 +407,7 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
     }
   }, [loadLibrary, zh]);
 
-  const exportResults = useCallback(async (format: 'csv' | 'json' | 'markdown') => {
+  const exportResults = useCallback(async (format: 'csv' | 'xlsx' | 'json' | 'markdown') => {
     if (!query.trim()) return;
     setExporting(format);
     try {
@@ -694,6 +713,7 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
               {[
                 { icon: Server, label: zh ? '命中设备' : 'Devices', value: response.summary.devices, tone: 'text-cyan-700 bg-cyan-50' },
                 { icon: FileSearch, label: zh ? '命中快照' : 'Snapshots', value: response.summary.snapshots, tone: 'text-blue-700 bg-blue-50' },
+                { icon: Braces, label: zh ? '配置对象' : 'Objects', value: response.summary.objects, tone: 'text-indigo-700 bg-indigo-50' },
                 { icon: Hash, label: zh ? '命中行' : 'Matches', value: response.summary.matches, tone: 'text-violet-700 bg-violet-50' },
                 { icon: Clock3, label: zh ? '耗时' : 'Duration', value: `${response.summary.duration_ms} ms`, tone: 'text-amber-700 bg-amber-50' },
                 { icon: Network, label: zh ? '扫描快照' : 'Scanned', value: response.summary.searched_snapshots, tone: 'text-emerald-700 bg-emerald-50' },
@@ -770,7 +790,7 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                     >
                       <WrapText size={13} />
                     </button>
-                    {(['csv', 'json', 'markdown'] as const).map((format) => (
+                    {(['csv', 'xlsx', 'json', 'markdown'] as const).map((format) => (
                       <button
                         type="button"
                         key={format}
@@ -779,7 +799,7 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[9px] font-bold uppercase text-slate-500 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-40"
                       >
                         {exporting === format ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
-                        {format === 'markdown' ? 'MD' : format}
+                        {format === 'markdown' ? 'MD' : format.toUpperCase()}
                       </button>
                     ))}
                   </div>
@@ -797,7 +817,7 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                       <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-50 text-slate-300"><FileSearch size={30} /></span>
                       <p className="mt-4 text-sm font-black text-slate-700">{zh ? '没有找到匹配配置' : 'No configuration matched'}</p>
                       <p className="mt-1 max-w-lg text-xs leading-5 text-slate-400">
-                        {zh ? '请检查检索类型、作用域和筛选条件。纯数字会自动按 VLAN/ASN 解释，必要时可切换为“精确文本”。' : 'Review the search type, scope, and filters. Numeric queries are interpreted as VLAN/ASN by default.'}
+                        {zh ? '请检查检索类型、作用域和筛选条件。纯数字存在歧义，必要时可手工切换为 VLAN、ASN 或精确文本。' : 'Review the type, scope, and filters. Bare numbers are ambiguous; choose VLAN, ASN, or exact text when needed.'}
                       </p>
                     </div>
                   ) : response.results.map((result) => {

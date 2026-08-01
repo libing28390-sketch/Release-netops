@@ -11,6 +11,7 @@ class TemplateValidateRequest(BaseModel):
 
 class ChangeOrderCreate(BaseModel):
     title: str
+    incident_id: str = ''
     description: str = ''
     order_type: str = 'config_change'
     priority: str = 'medium'
@@ -32,6 +33,7 @@ class ChangeOrderCreate(BaseModel):
 
 class ChangeOrderUpdate(BaseModel):
     title: Optional[str] = None
+    incident_id: Optional[str] = None
     description: Optional[str] = None
     order_type: Optional[str] = None
     priority: Optional[str] = None

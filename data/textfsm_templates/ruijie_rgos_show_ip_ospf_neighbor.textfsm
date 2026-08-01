@@ -1,13 +1,15 @@
-Value Filldown ROUTER_ID (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
 Value Filldown PROCESS_ID (\d+)
-Value Required NEIGHBOR_ID (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
+Value Filldown NEIGHBOR_COUNT (\d+)
+Value Filldown FULL_COUNT (\d+)
+Value NEIGHBOR_ID (\S+)
 Value PRIORITY (\d+)
 Value STATE (\S+)
 Value DEAD_TIME (\S+)
-Value ADDRESS (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})
-Value INTERFACE (\S+)
+Value ADDRESS (\S+)
+Value INTERFACE (.+?)
 
 Start
-  ^Neighbor\s+ID\s+Pri\s+State
-  ^\s*OSPF Router with ID \(${ROUTER_ID}\)\s+\(Process ID ${PROCESS_ID}\)
-  ^${NEIGHBOR_ID}\s+${PRIORITY}\s+${STATE}\s+${DEAD_TIME}\s+${ADDRESS}\s+${INTERFACE}\s*$$ -> Record
+  ^OSPF process ${PROCESS_ID}, ${NEIGHBOR_COUNT} Neighbors, ${FULL_COUNT} is Full:\s*$$
+  ^\s*${NEIGHBOR_ID}\s+${PRIORITY}\s+${STATE}\s+${DEAD_TIME}\s+${ADDRESS}\s+${INTERFACE}\s*$$ -> Record
+
+EOF

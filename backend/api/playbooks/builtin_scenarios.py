@@ -10,6 +10,14 @@ PLATFORM_SAVE_COMMANDS: dict[str, str | None] = {
     'h3c_comware':  'save force',
     'arista_eos':   'write memory',
     'juniper_junos': None,  # commit 已在 execute 阶段模板里
+    # 国产平台的保存命令只登记有官方资料或现有设备样本支持的写法。
+    # DPtech/Maipu 暂不自动保存，避免跨型号猜测写盘命令。
+    'ruijie_rgos': 'write',
+    'zte_zxros': 'write',
+    'maipu': None,
+    'dptech_conplat': None,
+    'dptech_conplat_fw': None,
+    'dptech_ios': None,
 }
 
 
@@ -21,6 +29,12 @@ PLATFORM_SHOW_RUNNING: dict[str, str] = {
     'h3c_comware':  'display current-configuration',
     'arista_eos':   'show running-config',
     'juniper_junos': 'show configuration',
+    'ruijie_rgos': 'show running-config',
+    'zte_zxros': 'show running-config',
+    'maipu': 'show running-config',
+    'dptech_conplat': 'show running-config',
+    'dptech_conplat_fw': 'show running-config',
+    'dptech_ios': 'show running-config',
 }
 
 
@@ -67,10 +81,153 @@ PLATFORMS = {
         "description": "EX Series, QFX Series, MX Series, SRX Series",
         "icon": "🟤",
     },
+    "ruijie_rgos": {
+        "vendor": "Ruijie",
+        "name": "RGOS",
+        "description": "RG-S/CS/NBS 交换机、RG-R/RSR 路由器、RG-EG 网关",
+        "icon": "🟦",
+    },
+    "zte_zxros": {
+        "vendor": "ZTE",
+        "name": "ZXROS",
+        "description": "ZXR10 交换机、路由器及承载网设备",
+        "icon": "🟪",
+    },
+    "maipu": {
+        "vendor": "Maipu",
+        "name": "MyPower",
+        "description": "MyPower S/NSS 系列交换机及 MP 系列路由器",
+        "icon": "⬛",
+    },
+    "dptech_conplat": {
+        "vendor": "DPtech",
+        "name": "ConPlat",
+        "description": "迪普 ConPlat 交换机与路由平台",
+        "icon": "🟧",
+    },
+    "dptech_conplat_fw": {
+        "vendor": "DPtech",
+        "name": "ConPlat FW",
+        "description": "迪普 ConPlat 防火墙平台",
+        "icon": "🟥",
+    },
 }
 
 
 BUILTIN_SCENARIOS = [
+    # ── 0. Domestic platform read-only inspection ─────────────
+    # The Excel vendor matrix supplies the command evidence.  This scenario is
+    # deliberately read-only: no configuration-mode command is sent, and the
+    # device-specific command list stays isolated by platform family.
+    {
+        "id": "domestic-readonly-inspection",
+        "name": "Domestic Platform Read-only Inspection",
+        "name_zh": "国产平台只读巡检",
+        "description": "Collect vendor-specific operational facts without changing device configuration",
+        "description_zh": "按厂商平台采集基础运行信息，不进入配置模式、不修改设备配置",
+        "category": "Operations",
+        "icon": "🧭",
+        "risk": "low",
+        "supported_platforms": [
+            "ruijie_rgos", "zte_zxros", "maipu", "dptech_conplat", "dptech_conplat_fw",
+        ],
+        "default_platform": "ruijie_rgos",
+        "variables": [],
+        "platform_phases": {
+            "ruijie_rgos": {
+                "pre_check": [
+                    "show version",
+                    "show interface status",
+                    "show ip interface brief",
+                    "show lldp neighbors",
+                    "show vlan",
+                    "show mac-address-table",
+                    "show arp",
+                    "show ip route",
+                    "show ntp status",
+                    "show interfaces transceiver",
+                    "show logging",
+                    "show cpu",
+                    "show memory",
+                    "show clock",
+                ],
+                "execute": [], "post_check": [], "rollback": [],
+            },
+            "zte_zxros": {
+                "pre_check": [
+                    "show version",
+                    "show interface brief",
+                    "show ip interface brief",
+                    "show lldp neighbor",
+                    "show vlan",
+                    "show mac table",
+                    "show arp",
+                    "show ip forwarding route",
+                    "show ntp status",
+                    "show opticalinfo brief",
+                    "show logging buffer almlog",
+                    "show fan",
+                    "show power",
+                    "show temperature detail",
+                    "show clock",
+                ],
+                "execute": [], "post_check": [], "rollback": [],
+            },
+            "maipu": {
+                "pre_check": [
+                    "show version",
+                    "show interface switchport brief",
+                    "show ip interface brief",
+                    "show lldp neighbors",
+                    "show vlan",
+                    "show mac-address all",
+                    "show arp",
+                    "show ip route",
+                    "show ntp status",
+                    "show optical all",
+                    "show environment",
+                    "show system fan",
+                    "show system power",
+                    "show clock",
+                ],
+                "execute": [], "post_check": [], "rollback": [],
+            },
+            "dptech_conplat": {
+                "pre_check": [
+                    "show version",
+                    "show interface status",
+                    "show ip interface brief",
+                    "show lldp neighbors",
+                    "show vlan",
+                    "show mac-address-table",
+                    "show arp all",
+                    "show ip route",
+                    "show ntp status",
+                    "show environment",
+                    "show logging operlog recent",
+                    "show clock",
+                ],
+                "execute": [], "post_check": [], "rollback": [],
+            },
+            "dptech_conplat_fw": {
+                "pre_check": [
+                    "show version",
+                    "show interface status",
+                    "show ip interface brief",
+                    "show lldp neighbors",
+                    "show vlan",
+                    "show mac-address-table",
+                    "show arp all",
+                    "show ip route",
+                    "show ntp status",
+                    "show environment",
+                    "show logging operlog recent",
+                    "show clock",
+                ],
+                "execute": [], "post_check": [], "rollback": [],
+            },
+        },
+    },
     # ── 1. VLAN Provisioning ──────────────────────────────────
     {
         "id": "vlan-provision",

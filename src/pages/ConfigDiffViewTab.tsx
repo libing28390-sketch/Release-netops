@@ -11,6 +11,7 @@ import {
   Download,
   FileCheck2,
   FileWarning,
+  FolderTree,
   GitBranch,
   Link2,
   Loader2,
@@ -20,6 +21,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
+  Tag,
   X,
   Zap,
 } from 'lucide-react';
@@ -81,6 +83,26 @@ interface BackupDevice {
   status: string;
   backup_count: number;
   latest_backup: string;
+  site_id?: string;
+  site_name?: string;
+  site_code?: string;
+  asset_type?: string;
+  device_category?: string;
+  device_role?: string;
+}
+
+interface DeviceScopeTreeNode {
+  id: string;
+  kind: 'root' | 'site' | 'type' | 'category' | 'role';
+  label: string;
+  count: number;
+  branch: {
+    site_id?: string;
+    asset_type?: string;
+    device_category?: string;
+    device_role?: string;
+  };
+  children: DeviceScopeTreeNode[];
 }
 
 interface StructuredObjectChange {
@@ -254,6 +276,10 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const [devPage, setDevPage] = useState(1);
   const [devPageSize, setDevPageSize] = useState(15);
   const [selectedDevice, setSelectedDevice] = useState<BackupDevice | null>(null);
+  const [deviceScopeTree, setDeviceScopeTree] = useState<DeviceScopeTreeNode[]>([]);
+  const [expandedDeviceTree, setExpandedDeviceTree] = useState<Set<string>>(new Set(['root']));
+  const [deviceTreeCollapsed, setDeviceTreeCollapsed] = useState(false);
+  const [deviceBranch, setDeviceBranch] = useState<DeviceScopeTreeNode['branch']>({});
 
   /* ── Step 2: Snapshot list for selected device ── */
   const [snapshots, setSnapshots] = useState<DiffSnapshot[]>([]);
@@ -274,7 +300,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const [rollbackLoading, setRollbackLoading] = useState(false);
 
   /* ── Load devices ── */
-  const loadDevices = useCallback(async (q = '', pg = devPage, ps = devPageSize) => {
+  const loadDevices = useCallback(async (q = '', pg = devPage, ps = devPageSize, branch = deviceBranch) => {
     deviceAbortRef.current?.abort();
     const controller = new AbortController();
     deviceAbortRef.current = controller;
@@ -282,11 +308,15 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
     try {
       const params = new URLSearchParams({ page: String(pg), page_size: String(ps) });
       if (q.trim()) params.set('search', q.trim());
+      Object.entries(branch).forEach(([key, value]) => {
+        if (value) params.set(key, value);
+      });
       const resp = await fetch(`/api/configs/devices-with-backups?${params}`, { signal: controller.signal });
       if (resp.ok) {
         const data = await resp.json();
         setDevices(data.items || []);
         setDevicesTotal(data.total || 0);
+        setDeviceScopeTree(data.tree || []);
       }
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
@@ -296,7 +326,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
     } finally {
       if (!controller.signal.aborted) setDevicesLoading(false);
     }
-  }, [devPage, devPageSize]);
+  }, [deviceBranch, devPage, devPageSize]);
 
   useEffect(() => {
     void loadDevices(deviceSearch);
@@ -306,6 +336,20 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const submitDeviceSearch = () => {
     setDevPage(1);
     setDeviceSearch(deviceSearchDraft.trim());
+  };
+
+  const toggleDeviceTreeNode = (nodeId: string) => {
+    setExpandedDeviceTree((current) => {
+      const next = new Set(current);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  };
+
+  const selectDeviceBranch = (node: DeviceScopeTreeNode) => {
+    setDeviceBranch(node.branch || {});
+    setDevPage(1);
   };
 
   /* ── Pre-select device from backup center navigation ── */
@@ -576,6 +620,43 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
 
   const showDiffViewer = configDiffLeft && configDiffRight;
 
+  const scopeLabel = (node: DeviceScopeTreeNode) => {
+    const labels: Record<string, string> = {
+      network_device: zh ? '网络设备' : 'Network devices',
+      server: zh ? '服务器' : 'Servers',
+      other: zh ? '其他资产' : 'Other assets',
+      router: zh ? '路由器' : 'Routers',
+      switch: zh ? '交换机' : 'Switches',
+      firewall: zh ? '防火墙' : 'Firewalls',
+      load_balancer: zh ? '负载均衡' : 'Load balancers',
+      unassigned: zh ? '未分配' : 'Unassigned',
+    };
+    return labels[node.label] || node.label;
+  };
+
+  const renderDeviceScopeNode = (node: DeviceScopeTreeNode, depth = 0): React.ReactNode => {
+    const expanded = expandedDeviceTree.has(node.id);
+    const selected = JSON.stringify(deviceBranch) === JSON.stringify(node.branch || {});
+    const Icon = node.kind === 'root' ? Database : node.kind === 'site' ? FolderTree : node.kind === 'type' ? Server : node.kind === 'category' ? Boxes : Tag;
+    return (
+      <div key={node.id}>
+        <div className={`group flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs ${selected ? 'bg-cyan-50 text-cyan-800' : 'text-slate-600 hover:bg-slate-50'}`} style={{ paddingLeft: `${8 + depth * 13}px` }}>
+          {node.children.length > 0 ? (
+            <button type="button" onClick={() => toggleDeviceTreeNode(node.id)} className="shrink-0 text-slate-400" aria-label={expanded ? 'Collapse' : 'Expand'}>
+              <ChevronRight size={14} className={expanded ? 'rotate-90 transition-transform' : 'transition-transform'} />
+            </button>
+          ) : <span className="w-[14px]" />}
+          <button type="button" onClick={() => selectDeviceBranch(node)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+            <Icon size={14} className={node.kind === 'site' ? 'text-cyan-600' : node.kind === 'type' ? 'text-indigo-500' : 'text-slate-400'} />
+            <span className="truncate">{node.kind === 'root' ? (zh ? '全部资产' : 'All assets') : scopeLabel(node)}</span>
+            <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500">{node.count}</span>
+          </button>
+        </div>
+        {expanded && node.children.map((child) => renderDeviceScopeNode(child, depth + 1))}
+      </div>
+    );
+  };
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <PageHero
@@ -639,6 +720,17 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                 </div>
 
                 <div className="flex-1 overflow-auto px-6 py-5">
+                  <div className={`mb-4 grid gap-4 ${deviceTreeCollapsed ? 'xl:grid-cols-[56px_minmax(0,1fr)]' : 'xl:grid-cols-[290px_minmax(0,1fr)]'}`}>
+                    <aside className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${deviceTreeCollapsed ? 'p-2' : 'p-3'}`}>
+                      <div className={`mb-3 flex items-center border-b border-slate-100 pb-3 ${deviceTreeCollapsed ? 'justify-center' : 'justify-between px-2'}`}>
+                        {!deviceTreeCollapsed && <div><div className="text-sm font-bold text-slate-800">{zh ? '资产分类树' : 'Asset tree'}</div><div className="mt-0.5 text-[11px] text-slate-400">{zh ? '站点 → 类型 → 分类 → 角色' : 'Site → type → category → role'}</div></div>}
+                        <button type="button" onClick={() => setDeviceTreeCollapsed((current) => !current)} className="rounded-lg p-1.5 text-slate-400 hover:bg-cyan-50 hover:text-cyan-700" title={deviceTreeCollapsed ? (zh ? '展开资产分类树' : 'Expand asset tree') : (zh ? '折叠资产分类树' : 'Collapse asset tree')}>
+                          {deviceTreeCollapsed ? <FolderTree size={15} /> : <ChevronRight size={15} className="rotate-180" />}
+                        </button>
+                      </div>
+                      {!deviceTreeCollapsed && <div className="max-h-[280px] overflow-y-auto">{deviceScopeTree.length ? deviceScopeTree.map((node) => renderDeviceScopeNode(node)) : <p className="px-2 py-8 text-center text-xs text-slate-400">{zh ? '暂无资产分类' : 'No asset groups'}</p>}</div>}
+                    </aside>
+                    <div className="min-w-0">
                   <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_12px_30px_rgba(18,59,80,0.06)] overflow-hidden">
                     <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 bg-white">
                       <div className="flex items-center gap-2 text-xs font-bold text-[#123b50]"><SlidersHorizontal size={14} className="text-[#0891b2]" />{zh ? '设备范围' : 'Device scope'}</div>
@@ -681,6 +773,8 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                     )}
                   </div>
                   {devicesTotal > devPageSize && <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-2.5"><Pagination currentPage={devPage} totalItems={devicesTotal} itemsPerPage={devPageSize} onPageChange={setDevPage} onItemsPerPageChange={(v) => { setDevPage(1); setDevPageSize(v); }} language={language} /></div>}
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (

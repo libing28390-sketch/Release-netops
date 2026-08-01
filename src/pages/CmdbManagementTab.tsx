@@ -93,7 +93,7 @@ function dedupeSiteRows<T extends Record<string, any>>(rows: T[]): T[] {
   return Array.from(merged.values()).sort((left, right) => String(left.site_name || left.site_code || '').localeCompare(String(right.site_name || right.site_code || '')));
 }
 
-async function apiListPage<T>(url: string): Promise<{ items: T[]; total: number; page: number; page_size: number; total_pages: number; summary?: Record<string, number>; site_summary?: Array<{ key: string; label: string; count: number }>; device_options?: Array<{ value: string; label: string }> }> {
+async function apiListPage<T>(url: string): Promise<{ items: T[]; total: number; page: number; page_size: number; total_pages: number; summary?: Record<string, number>; site_summary?: Array<{ key: string; label: string; count: number }>; device_options?: Array<{ value: string; label: string }>; tree?: any[] }> {
   const res = await fetch(url, { headers: authHeaders() });
   const json = await res.json();
   if (!res.ok || !json.success) throw new Error(formatErrorDetail(json.detail || json.message));
@@ -107,6 +107,7 @@ async function apiListPage<T>(url: string): Promise<{ items: T[]; total: number;
     summary: data.summary || {},
     site_summary: Array.isArray(data.site_summary) ? data.site_summary : [],
     device_options: data.device_options || [],
+    tree: Array.isArray(data.tree) ? data.tree : [],
   };
 }
 
@@ -1538,6 +1539,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [search, setSearch] = useState('');
   const [vlanSiteFilter, setVlanSiteFilter] = useState('');
   const [vlanTreeCollapsed, setVlanTreeCollapsed] = useState(false);
+  const [vlanScopeTree, setVlanScopeTree] = useState<any[]>([]);
+  const [expandedVlanTree, setExpandedVlanTree] = useState<Record<string, boolean>>({ root: true });
+  const [vlanTreeBranch, setVlanTreeBranch] = useState<{ site_id?: string; asset_type?: string; device_category?: string; device_role?: string }>({});
   const [vlanStatusFilter, setVlanStatusFilter] = useState('all');
   const [vlanListMeta, setVlanListMeta] = useState({
     total: 0,
@@ -1958,7 +1962,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
           q: search.trim(),
           status: vlanStatusFilter,
         });
-        if (vlanSiteFilter && vlanSiteFilter !== 'unassigned') params.set('site_id', vlanSiteFilter);
+        if (vlanSiteFilter) params.set('site_id', vlanSiteFilter);
+        Object.entries(vlanTreeBranch).forEach(([key, value]) => {
+          if (value && key !== 'site_id') params.set(key, value);
+        });
         const pageData = await apiListPage<any>(`${endpoint}?${params.toString()}`);
         if (requestId !== loadRequestRef.current) return;
         setRows(pageData.items);
@@ -1975,6 +1982,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
           },
           site_summary: pageData.site_summary || [],
         });
+        setVlanScopeTree(pageData.tree || []);
       } else {
         const pagedEntity = ['sites', 'vrfs'].includes(tab);
         if (pagedEntity) {
@@ -2001,7 +2009,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     } finally {
       if (requestId === loadRequestRef.current) setLoading(false);
     }
-  }, [tab, search, interfaceDeviceFilter, interfacePage, interfacePageSize, page, pageSize, vlanSiteFilter, vlanStatusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, search, interfaceDeviceFilter, interfacePage, interfacePageSize, page, pageSize, vlanSiteFilter, vlanStatusFilter, vlanTreeBranch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
@@ -2896,22 +2904,51 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     return filteredRows.slice(start, start + pageSize);
   }, [filteredRows, page, pageSize, tab]);
 
-  const vlanSiteGroups = useMemo(() => {
-    if (tab !== 'vlans') return [] as Array<{ key: string; label: string; count: number }>;
-    if (vlanListMeta.site_summary.length > 0) return vlanListMeta.site_summary;
-    const grouped = new Map<string, { key: string; label: string; count: number }>();
-    rows.forEach(row => {
-      const site = sites.find(candidate => candidate.id === row.site_id || candidate.site_code === row.site_name || candidate.site_name === row.site_name);
-      const key = String(row.site_id || site?.id || row.site_name || 'unassigned');
-      const label = String(site?.site_name || site?.site_code || row.site_name || '未分配站点');
-      const current = grouped.get(key) || { key, label, count: 0 };
-      current.count += 1;
-      grouped.set(key, current);
-    });
-    return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label));
-  }, [rows, sites, tab, vlanListMeta.site_summary]);
-
   const vlanFilteredRows = useMemo(() => tab === 'vlans' ? rows : [], [rows, tab]);
+
+  const vlanScopeLabel = useCallback((node: any) => {
+    const labels: Record<string, string> = {
+      network_device: zh ? '网络设备' : 'Network devices',
+      server: zh ? '服务器' : 'Servers',
+      other: zh ? '其他资产' : 'Other assets',
+      router: zh ? '路由器' : 'Routers',
+      switch: zh ? '交换机' : 'Switches',
+      firewall: zh ? '防火墙' : 'Firewalls',
+      load_balancer: zh ? '负载均衡' : 'Load balancers',
+      unassigned: zh ? '未分配' : 'Unassigned',
+    };
+    return node.kind === 'root' ? (zh ? '全部资产' : 'All assets') : labels[String(node.label)] || node.label || (zh ? '未分配' : 'Unassigned');
+  }, [zh]);
+
+  const selectVlanTreeBranch = useCallback((node: any) => {
+    const branch = node.branch || {};
+    setVlanTreeBranch(branch);
+    setVlanSiteFilter(String(branch.site_id || ''));
+    setPage(1);
+  }, []);
+
+  const toggleVlanTreeNode = useCallback((nodeId: string) => {
+    setExpandedVlanTree((current) => ({ ...current, [nodeId]: !current[nodeId] }));
+  }, []);
+
+  const renderVlanTreeNode = (node: any, depth = 0): React.ReactNode => {
+    const expanded = expandedVlanTree[node.id] !== false;
+    const selected = JSON.stringify(vlanTreeBranch) === JSON.stringify(node.branch || {});
+    const Icon = node.kind === 'root' ? Layers : node.kind === 'site' ? FolderTree : node.kind === 'type' ? Server : node.kind === 'category' ? Network : UsersIcon;
+    return (
+      <div key={node.id}>
+        <div className={`group flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs ${selected ? 'bg-cyan-50 text-cyan-800' : 'text-slate-600 hover:bg-slate-50'}`} style={{ paddingLeft: `${8 + depth * 14}px` }}>
+          {node.children?.length ? <button type="button" onClick={() => toggleVlanTreeNode(node.id)} className="shrink-0 text-slate-400" aria-label={expanded ? 'Collapse' : 'Expand'}><ChevronRight size={14} className={expanded ? 'rotate-90 transition-transform' : 'transition-transform'} /></button> : <span className="w-[14px]" />}
+          <button type="button" onClick={() => selectVlanTreeBranch(node)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+            <Icon size={14} className={node.kind === 'site' ? 'text-cyan-600' : node.kind === 'type' ? 'text-indigo-500' : 'text-slate-400'} />
+            <span className="truncate">{vlanScopeLabel(node)}</span>
+            <span className="ml-auto rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500">{node.count || 0}</span>
+          </button>
+        </div>
+        {expanded && node.children?.map((child: any) => renderVlanTreeNode(child, depth + 1))}
+      </div>
+    );
+  };
 
   const vlanTotalPages = Math.max(1, Math.ceil(vlanListMeta.total / pageSize));
   const paginatedVlanRows = vlanFilteredRows;
@@ -3298,16 +3335,12 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 {vlanTreeCollapsed ? <FolderTree size={15} /> : <ChevronRight size={15} className="rotate-180" />}
               </button>
               <div className={`mt-3 space-y-1 ${vlanTreeCollapsed ? 'hidden' : ''}`}>
-                <button type="button" onClick={() => { setVlanSiteFilter(''); setPage(1); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${!vlanSiteFilter ? 'bg-cyan-50 font-semibold text-cyan-700' : 'text-slate-600 hover:bg-slate-50'}`}>
-                  <span className="inline-flex items-center gap-2"><Layers size={14} />全部站点</span>
-                  <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-500 shadow-sm">{vlanListMeta.total}</span>
-                </button>
-                {vlanSiteGroups.map(group => (
-                  <button key={group.key} type="button" onClick={() => { setVlanSiteFilter(group.key); setPage(1); }} className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${vlanSiteFilter === group.key ? 'bg-cyan-50 font-semibold text-cyan-700' : 'text-slate-600 hover:bg-slate-50'}`}>
-                    <span className="inline-flex min-w-0 items-center gap-2"><Building2 size={14} className="shrink-0 text-cyan-600" /><span className="truncate">{group.label}</span></span>
-                    <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500">{group.count}</span>
+                {vlanScopeTree.length ? vlanScopeTree.map((node) => renderVlanTreeNode(node)) : (
+                  <button type="button" onClick={() => { setVlanTreeBranch({}); setVlanSiteFilter(''); setPage(1); }} className="flex w-full items-center justify-between rounded-xl bg-cyan-50 px-3 py-2.5 text-left text-sm font-semibold text-cyan-700">
+                    <span className="inline-flex items-center gap-2"><Layers size={14} />鍏ㄩ儴璧勪骇</span>
+                    <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-500 shadow-sm">{vlanListMeta.total}</span>
                   </button>
-                ))}
+                )}
               </div>
             </aside>
 
@@ -3319,7 +3352,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500">
                   <span className="rounded-full bg-cyan-50 px-2.5 py-1 font-semibold text-cyan-700">{vlanListMeta.total} 条记录</span>
-                  {vlanSiteFilter && <button type="button" onClick={() => setVlanSiteFilter('')} className="text-cyan-700 hover:text-cyan-900">清除站点筛选</button>}
+                  {vlanSiteFilter && <button type="button" onClick={() => { setVlanTreeBranch({}); setVlanSiteFilter(''); setPage(1); }} className="text-cyan-700 hover:text-cyan-900">清除站点筛选</button>}
                   <button type="button" onClick={() => void exportVlanInventory()} disabled={vlanExporting} className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 py-1.5 font-semibold text-cyan-700 shadow-sm transition-colors hover:border-cyan-300 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50" title={zh ? '导出完整 VLAN 信息' : 'Export complete VLAN inventory'}>
                     {vlanExporting ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
                     {vlanExporting ? '导出中' : '导出 VLAN'}

@@ -42,14 +42,13 @@ const SAMPLE_PLATFORMS = [
   { value: 'h3c_comware9', label: 'H3C Comware V9', labelEn: 'H3C Comware V9' },
   { value: 'juniper_junos', label: 'Juniper JunOS' },
   { value: 'arista_eos', label: 'Arista EOS' },
-  { value: 'ruijie_rgos', label: 'Ruijie RGOS' },
+  { value: 'ruijie_rgos', label: '锐捷 RGOS', labelEn: 'Ruijie RGOS' },
   { value: 'zte_zxros', label: 'ZTE ZXROS' },
   { value: 'dptech_ios', label: '迪普 DPTech Conplat', labelEn: 'DPTech Conplat' },
   { value: 'maipu', label: 'Maipu Network OS' },
   { value: 'paloalto_panos', label: 'Palo Alto' },
   { value: 'fortinet', label: 'Fortinet' },
   { value: 'hillstone_stoneos', label: '山石 StoneOS' },
-  { value: 'ruijie_os', label: '锐捷 RGOS' },
 ];
 
 const DEFAULT_TEMPLATE_CONTENT = `Value EXAMPLE_FIELD (\\S+)

@@ -48,9 +48,11 @@ TEXTFSM_PLATFORM_MAP = {
     'dptech_conplat': 'dptech_ios',
     'dptech_conplat_fw': 'dptech_ios',
     'maipu': 'maipu',
+    'mypower': 'maipu',
     'maipu_mypower': 'maipu',
     'zte': 'zte_zxros',
     'zxros': 'zte_zxros',
+    '中兴 zxros': 'zte_zxros',
     'zte_zxros': 'zte_zxros',
 }
 
@@ -879,7 +881,11 @@ def list_templates(platform_filter: str = '', search: str = '') -> list[dict[str
 
     # 过滤
     if platform_filter:
-        result = [t for t in result if t.get('platform', '').lower() == platform_filter.lower()]
+        requested_platform = resolve_textfsm_platform(platform_filter) or platform_filter.lower()
+        result = [
+            t for t in result
+            if (resolve_textfsm_platform(t.get('platform', '')) or t.get('platform', '').lower()) == requested_platform
+        ]
     if search:
         s = search.lower()
         result = [t for t in result if s in t.get('filename', '').lower() or s in t.get('command', '').lower()]

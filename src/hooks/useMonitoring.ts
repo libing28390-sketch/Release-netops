@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useMonitoringStore } from '../store/monitoringStore';
 import type { OutboundTarget } from '../types/outbound';
+import type { DeviceHealthHistoryResponse, MonitoringHealthDevicesResponse, MonitoringIncident, MonitoringIncidentImpact, MonitoringIncidentListResponse } from '../types';
 
 interface UseMonitoringProps {
   isAuthenticated: boolean;
   activeTab: string;
   language: string;
   pollOutbound?: boolean;
+  healthHistoryRange?: number;
 }
 
 const isAbortError = (error: unknown) => {
@@ -15,13 +17,14 @@ const isAbortError = (error: unknown) => {
   return typeof error === 'object' && (error as { name?: string }).name === 'AbortError';
 };
 
-export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true }: UseMonitoringProps) => {
+export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true, healthHistoryRange = 24 }: UseMonitoringProps) => {
   const {
     monitorSearch,
     monitorSearchResults,
     monitorSearching,
     monitorSelectedDevice,
     monitorOverview,
+    monitorHealthHistory,
     monitorRealtime,
     monitorTrend,
     monitorTrendInterface,
@@ -40,6 +43,8 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
     monitorAlertsPageSize,
     monitorAlertsSeverity,
     monitorAlertsPhase,
+    monitorIncidents,
+    monitorIncidentTotal,
     monitorLoading,
     monitorPageVisible,
     monitorDashboardSiteFilter,
@@ -56,6 +61,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
     setMonitorSearching,
     setMonitorSelectedDevice,
     setMonitorOverview,
+    setMonitorHealthHistory,
     setMonitorRealtime,
     setMonitorTrend,
     setMonitorTrendInterface,
@@ -73,6 +79,8 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
     setMonitorAlertsPage,
     setMonitorAlertsSeverity,
     setMonitorAlertsPhase,
+    setMonitorIncidents,
+    setMonitorIncidentTotal,
     setMonitorLoading,
     setMonitorPageVisible,
     setMonitorDashboardSiteFilter,
@@ -113,6 +121,41 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
       if (isAbortError(error)) return;
     }
   }, [setHostResources]);
+
+  const fetchMonitoringHealthHistory = useCallback(async (rangeHours = 24, signal?: AbortSignal) => {
+    try {
+      const resp = await fetch(`/api/device-health/history?range_hours=${rangeHours}`, { signal });
+      if (!resp.ok) return null;
+      const payload = await resp.json() as DeviceHealthHistoryResponse;
+      setMonitorHealthHistory(payload);
+      return payload;
+    } catch (error) {
+      if (isAbortError(error)) return null;
+      return null;
+    }
+  }, [setMonitorHealthHistory]);
+
+  const fetchMonitoringCollectionStatus = useCallback(async (signal?: AbortSignal) => {
+    const token = localStorage.getItem('netops_token');
+    const resp = await fetch('/api/monitoring/collection-status', { signal, headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!resp.ok) throw new Error('Unable to load collection status');
+    return await resp.json() as { items: any[]; summary?: Record<string, unknown> };
+  }, []);
+
+  const fetchMonitoringHealthDevices = useCallback(async (filters: {
+    health_status?: string;
+    availability_status?: string;
+    collection_status?: string;
+  } = {}, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value && value !== 'all') params.set(key, value);
+    }
+    params.set('limit', '200');
+    const resp = await fetch(`/api/monitoring/health-devices?${params.toString()}`, { signal });
+    if (!resp.ok) throw new Error('Unable to load health drilldown');
+    return await resp.json() as MonitoringHealthDevicesResponse;
+  }, []);
 
   const outboundHeaders = useCallback(() => {
     const token = localStorage.getItem('netops_token');
@@ -226,7 +269,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
         phase: state.monitorAlertsPhase,
       });
       if (state.monitorSelectedDevice?.id) params.set('device_id', state.monitorSelectedDevice.id);
-      const resp = await fetch(`/api/monitoring/alerts?${params.toString()}`, { signal });
+      const resp = await fetch(`/api/monitoring/alerts?${params.toString()}`, { signal, headers: outboundHeaders() });
       if (!resp.ok) return;
       const data = await resp.json();
       if (reqEpoch !== monitorRequestEpochRef.current) return;
@@ -235,7 +278,79 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
     } catch (error) {
       if (isAbortError(error)) return;
     }
-  }, [setMonitorAlerts, setMonitorAlertTotal]);
+  }, [outboundHeaders, setMonitorAlerts, setMonitorAlertTotal]);
+
+  const fetchMonitoringIncidents = useCallback(async (signal?: AbortSignal) => {
+    const reqEpoch = monitorRequestEpochRef.current;
+    try {
+      const params = new URLSearchParams({ status: 'active', page: '1', page_size: '8' });
+      const resp = await fetch(`/api/monitoring/incidents?${params.toString()}`, {
+        signal,
+        headers: outboundHeaders(),
+      });
+      if (!resp.ok) return;
+      const data = await resp.json() as MonitoringIncidentListResponse;
+      if (reqEpoch !== monitorRequestEpochRef.current) return;
+      setMonitorIncidents(Array.isArray(data.items) ? data.items : []);
+      setMonitorIncidentTotal(typeof data.total === 'number' ? data.total : 0);
+    } catch (error) {
+      if (isAbortError(error)) return;
+    }
+  }, [outboundHeaders, setMonitorIncidentTotal, setMonitorIncidents]);
+
+  const fetchMonitoringIncidentDetail = useCallback(async (incidentId: string, signal?: AbortSignal) => {
+    if (!incidentId) return null;
+    const resp = await fetch(`/api/monitoring/incidents/${encodeURIComponent(incidentId)}`, {
+      signal,
+      headers: outboundHeaders(),
+    });
+    if (!resp.ok) return null;
+    const payload = await resp.json() as { item?: MonitoringIncident };
+    return payload.item || null;
+  }, [outboundHeaders]);
+
+  const fetchMonitoringIncidentImpact = useCallback(async (incidentId: string, signal?: AbortSignal) => {
+    if (!incidentId) return null;
+    const resp = await fetch(`/api/monitoring/incidents/${encodeURIComponent(incidentId)}/impact`, {
+      signal,
+      headers: outboundHeaders(),
+    });
+    if (!resp.ok) return null;
+    return await resp.json() as MonitoringIncidentImpact;
+  }, [outboundHeaders]);
+
+  const runMonitoringDeviceDiagnostics = useCallback(async (deviceId: string) => {
+    if (!deviceId) return null;
+    const resp = await fetch(`/api/monitoring/device/${encodeURIComponent(deviceId)}/diagnostics`, {
+      method: 'POST',
+      headers: { ...outboundHeaders(), 'Content-Type': 'application/json' },
+    });
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const detail = payload?.detail?.message || payload?.detail || 'Unable to diagnose collection';
+      throw new Error(String(detail));
+    }
+    return payload;
+  }, [outboundHeaders]);
+
+  const updateMonitoringIncident = useCallback(async (
+    incidentId: string,
+    action: 'acknowledge' | 'assign' | 'resolve',
+    body: Record<string, string>,
+  ) => {
+    const resp = await fetch(`/api/monitoring/incidents/${encodeURIComponent(incidentId)}/${action}`, {
+      method: 'POST',
+      headers: { ...outboundHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const detail = payload?.detail?.message || payload?.detail || 'Unable to update incident';
+      throw new Error(String(detail));
+    }
+    await fetchMonitoringIncidents();
+    return payload.item as MonitoringIncident | undefined;
+  }, [fetchMonitoringIncidents, outboundHeaders]);
 
   const fetchMonitoringRealtime = useCallback(async (deviceId: string, signal?: AbortSignal) => {
     const reqEpoch = monitorRequestEpochRef.current;
@@ -319,6 +434,26 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
     };
   }, [isAuthenticated, activeTab, fetchMonitoringOverview, monitorPageVisible]);
 
+  // Fleet health history powers the NOC trend view. Keep this separate from
+  // host-resource telemetry so a missing device sample is not presented as a
+  // healthy zero.
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'monitoring') return;
+    let controller: AbortController | null = null;
+    const run = () => {
+      if (controller) controller.abort();
+      controller = new AbortController();
+      fetchMonitoringHealthHistory(healthHistoryRange, controller.signal);
+    };
+    run();
+    if (!monitorPageVisible) return () => { if (controller) controller.abort(); };
+    const timer = window.setInterval(run, 30000);
+    return () => {
+      window.clearInterval(timer);
+      if (controller) controller.abort();
+    };
+  }, [activeTab, fetchMonitoringHealthHistory, healthHistoryRange, isAuthenticated, monitorPageVisible]);
+
   // Outbound health is sampled by the backend every minute. Polling the latest
   // aggregate more slowly keeps the dashboard responsive without duplicating
   // probe traffic from the browser.
@@ -356,6 +491,25 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
       if (currentController) currentController.abort();
     };
   }, [isAuthenticated, activeTab, fetchMonitoringAlerts, monitorPageVisible]);
+
+  // Incident projection polling. Incidents are a compact read model over the
+  // alert timeline, so poll them with the same cadence as the dashboard feed.
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'monitoring') return;
+    let currentController: AbortController | null = null;
+    const runIncidents = () => {
+      if (currentController) currentController.abort();
+      currentController = new AbortController();
+      fetchMonitoringIncidents(currentController.signal);
+    };
+    runIncidents();
+    if (!monitorPageVisible) return;
+    const timer = window.setInterval(runIncidents, 10000);
+    return () => {
+      window.clearInterval(timer);
+      if (currentController) currentController.abort();
+    };
+  }, [isAuthenticated, activeTab, fetchMonitoringIncidents, monitorPageVisible]);
 
   // Reset alerts page on filter change
   useEffect(() => {
@@ -474,6 +628,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
     monitorSearchResults, monitorSearching,
     monitorSelectedDevice, setMonitorSelectedDevice,
     monitorOverview,
+    monitorHealthHistory,
     monitorRealtime, setMonitorRealtime,
     monitorTrend,
     monitorTrendInterface, setMonitorTrendInterface,
@@ -492,6 +647,8 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
     monitorAlertsPageSize,
     monitorAlertsSeverity, setMonitorAlertsSeverity,
     monitorAlertsPhase, setMonitorAlertsPhase,
+    monitorIncidents,
+    monitorIncidentTotal,
     monitorLoading,
     monitorPageVisible,
     monitorDashboardSiteFilter, setMonitorDashboardSiteFilter,
@@ -506,7 +663,15 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true 
     outboundHistoryHours,
     setOutboundHistoryHours,
     fetchMonitoringOverview,
+    fetchMonitoringHealthHistory,
+    fetchMonitoringCollectionStatus,
+    fetchMonitoringHealthDevices,
     fetchMonitoringAlerts,
+    fetchMonitoringIncidents,
+    fetchMonitoringIncidentDetail,
+    fetchMonitoringIncidentImpact,
+    runMonitoringDeviceDiagnostics,
+    updateMonitoringIncident,
     fetchMonitoringRealtime,
     fetchHostResources,
     fetchOutboundHealth,

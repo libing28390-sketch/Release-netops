@@ -60,6 +60,14 @@ const ChangeOrderComponent: React.FC<Props> = ({
   const isCreateView = initialView === 'create';
   const navigate = useNavigate();
   const location = useLocation();
+  const incidentIdFromQuery = useMemo(
+    () => new URLSearchParams(location.search).get('incident_id') || '',
+    [location.search],
+  );
+  const orderIdFromQuery = useMemo(
+    () => new URLSearchParams(location.search).get('order_id') || '',
+    [location.search],
+  );
 
   // ── Data state ──
   const [orders, setOrders] = useState<IChangeOrder[]>([]);
@@ -271,6 +279,49 @@ const ChangeOrderComponent: React.FC<Props> = ({
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
+
+  useEffect(() => {
+    if (!isCreateView || !incidentIdFromQuery || editingOrder) return;
+    let cancelled = false;
+    const loadIncidentContext = async () => {
+      try {
+        const token = localStorage.getItem('netops_token');
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const [detailResponse, impactResponse] = await Promise.all([
+          fetch(`/api/monitoring/incidents/${encodeURIComponent(incidentIdFromQuery)}`, { headers }),
+          fetch(`/api/monitoring/incidents/${encodeURIComponent(incidentIdFromQuery)}/impact`, { headers }),
+        ]);
+        if (cancelled || !detailResponse.ok) return;
+        const detail = await detailResponse.json();
+        const impact = impactResponse.ok ? await impactResponse.json() : null;
+        const affectedNodes = Array.isArray(impact?.nodes)
+          ? impact.nodes.filter((node: any) => node?.impact_scope === 'affected')
+          : [];
+        const targetDevices = affectedNodes.map((node: any) => ({
+          hostname: node.hostname || node.id || '',
+          ip_address: node.ip_address || '',
+        })).filter((device: any) => device.hostname || device.ip_address);
+        setForm((current) => ({
+          ...current,
+          incident_id: incidentIdFromQuery,
+          title: current.title || `[${detail.incident_key || incidentIdFromQuery}] ${detail.title || 'Monitoring incident'}`,
+          description: current.description || detail.summary || '',
+          target_devices: current.target_devices.length > 0
+            ? current.target_devices
+            : targetDevices.length > 0
+              ? targetDevices
+              : detail.ip_address || detail.hostname
+                ? [{ hostname: detail.hostname || '', ip_address: detail.ip_address || '' }]
+                : current.target_devices,
+        }));
+      } catch {
+        // The incident link is still preserved even when context enrichment is unavailable.
+        setForm((current) => ({ ...current, incident_id: incidentIdFromQuery }));
+      }
+    };
+    loadIncidentContext();
+    return () => { cancelled = true; };
+  }, [editingOrder, incidentIdFromQuery, isCreateView]);
 
   const getDefaultPrePostCheck = (platformKey: string, category?: string, name?: string): { pre_check: string[]; post_check: string[] } => {
     const plat = (platformKey || '').toLowerCase();
@@ -1041,6 +1092,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
     const existingCs = order.control_sheet || {};
     setForm({
       title: `${order.title} (${zh ? '副本' : 'Copy'})`,
+      incident_id: order.incident_id || '',
       description: order.description,
       order_type: order.order_type,
       priority: order.priority,
@@ -1187,6 +1239,25 @@ const ChangeOrderComponent: React.FC<Props> = ({
     }
   };
 
+  useEffect(() => {
+    if (!orderIdFromQuery || isCreateView) return;
+    let cancelled = false;
+    const loadLinkedOrder = async () => {
+      try {
+        const resp = await fetch(`/api/change-orders/${encodeURIComponent(orderIdFromQuery)}`, { headers: authHeaders() });
+        const data = await resp.json();
+        if (!cancelled && data.success && data.data) {
+          setSelectedOrder(data.data);
+          fetchTimeline(data.data.id);
+        }
+      } catch {
+        // The list remains usable even if a linked order was removed or unavailable.
+      }
+    };
+    loadLinkedOrder();
+    return () => { cancelled = true; };
+  }, [authHeaders, fetchTimeline, isCreateView, orderIdFromQuery]);
+
   // ── Open Edit modal ──
   const openEdit = (order: IChangeOrder) => {
     const templateSnapshot = isCommandTemplateSnapshot(order.command_template) ? order.command_template : null;
@@ -1209,6 +1280,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
     };
     setForm({
       title: order.title,
+      incident_id: order.incident_id || '',
       description: order.description,
       order_type: order.order_type,
       priority: order.priority,

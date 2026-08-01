@@ -71,6 +71,28 @@ class ComplianceScanRequest(BaseModel):
     device_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
+class GoldenBaselineRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=2_000)
+    scope: dict[str, Any] = Field(default_factory=dict)
+    source_type: Literal["snapshot", "template", "inline"] = "snapshot"
+    snapshot_id: str = Field(default="", max_length=120)
+    template_id: str = Field(default="", max_length=120)
+    expected_config: str = Field(default="", max_length=1_000_000)
+    enabled: bool = True
+
+
+class ChangeValidationWorkflowRequest(BaseModel):
+    device_id: str = Field(min_length=1, max_length=120)
+    change_order_id: str = Field(default="", max_length=120)
+    before_snapshot_id: str = Field(default="", max_length=120)
+    expected_snapshot_id: str = Field(default="", max_length=120)
+    after_snapshot_id: str = Field(default="", max_length=120)
+    stage: Literal["precheck", "dry_run", "approval", "executing", "postcheck", "rollback", "closed"] = "precheck"
+    dry_run: bool = True
+    note: str = Field(default="", max_length=2_000)
+
+
 class InlineDiffRequest(BaseModel):
     device_id: str = Field(default="", max_length=120)
     before_content: str = Field(max_length=1_000_000)
@@ -514,6 +536,137 @@ def link_config_diff_source(
         conn.close()
 
 
+@router.get("/config-diff/baselines")
+def list_golden_baselines(_user=require_permission("configuration", "read")):
+    conn = get_db_connection()
+    try:
+        return [dict(row) for row in conn.execute(
+            "SELECT * FROM config_golden_baselines ORDER BY enabled DESC, updated_at DESC"
+        ).fetchall()]
+    finally:
+        conn.close()
+
+
+@router.post("/config-diff/baselines")
+def create_golden_baseline(
+    body: GoldenBaselineRequest,
+    user=require_permission("configuration", "update"),
+):
+    if body.source_type == "snapshot" and not body.snapshot_id:
+        raise HTTPException(status_code=422, detail="快照型基线必须指定 snapshot_id")
+    if body.source_type == "inline" and not body.expected_config.strip():
+        raise HTTPException(status_code=422, detail="内置文本型基线不能为空")
+    conn = get_db_connection()
+    try:
+        if body.snapshot_id:
+            snapshot = conn.execute("SELECT id FROM config_snapshots WHERE id = ?", (body.snapshot_id,)).fetchone()
+            if not snapshot:
+                raise HTTPException(status_code=404, detail="基线快照不存在")
+        baseline_id = str(uuid.uuid4())
+        now = _now()
+        conn.execute(
+            """
+            INSERT INTO config_golden_baselines (
+                id, name, description, scope_json, source_type, snapshot_id,
+                template_id, expected_config, enabled, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                baseline_id, body.name, body.description, json.dumps(body.scope, ensure_ascii=False),
+                body.source_type, body.snapshot_id, body.template_id, body.expected_config,
+                1 if body.enabled else 0, user.get("username") or "", now, now,
+            ),
+        )
+        conn.commit()
+        return {"id": baseline_id, "success": True}
+    finally:
+        conn.close()
+
+
+@router.delete("/config-diff/baselines/{baseline_id}")
+def delete_golden_baseline(baseline_id: str, _user=require_permission("configuration", "update")):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute("DELETE FROM config_golden_baselines WHERE id = ?", (baseline_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="黄金基线不存在")
+        conn.commit()
+        return {"success": True}
+    finally:
+        conn.close()
+
+
+@router.get("/config-diff/workflows")
+def list_change_validation_workflows(
+    device_id: str = Query(default="", max_length=120),
+    limit: int = Query(default=50, ge=1, le=200),
+    _user=require_permission("configuration", "read"),
+):
+    conn = get_db_connection()
+    try:
+        if device_id:
+            return [dict(row) for row in conn.execute(
+                "SELECT * FROM config_change_validation_workflows WHERE device_id = ? ORDER BY updated_at DESC LIMIT ?",
+                (device_id, limit),
+            ).fetchall()]
+        return [dict(row) for row in conn.execute(
+            "SELECT * FROM config_change_validation_workflows ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()]
+    finally:
+        conn.close()
+
+
+@router.post("/config-diff/workflows")
+def create_change_validation_workflow(
+    body: ChangeValidationWorkflowRequest,
+    user=require_permission("configuration", "execute"),
+):
+    conn = get_db_connection()
+    try:
+        dry_run_result: dict[str, Any] = {}
+        risk_summary: dict[str, Any] = {}
+        if body.dry_run and body.before_snapshot_id and body.expected_snapshot_id:
+            analysis = _analyze(conn, DiffAnalysisRequest(
+                device_id=body.device_id,
+                snapshot_a_id=body.before_snapshot_id,
+                snapshot_b_id=body.expected_snapshot_id,
+                mode="normalized",
+                force_refresh=False,
+            ))
+            dry_run_result = {
+                "has_changes": analysis.get("has_changes"),
+                "changed_objects": analysis.get("summary", {}).get("changed_objects", 0),
+                "unified_diff_lines": len(analysis.get("unified_diff", [])),
+                "requires_mfa": analysis.get("requires_mfa", False),
+            }
+            risk_summary = analysis.get("summary", {}).get("risk_counts", {})
+        workflow_id = str(uuid.uuid4())
+        now = _now()
+        conn.execute(
+            """
+            INSERT INTO config_change_validation_workflows (
+                id, change_order_id, device_id, before_snapshot_id,
+                expected_snapshot_id, after_snapshot_id, stage,
+                dry_run_result_json, risk_summary_json, precheck_result_json,
+                postcheck_result_json, rollback_plan_json, requires_mfa,
+                approved_by, executed_by, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', '{}', 1, '', ?, ?, ?, ?)
+            """,
+            (
+                workflow_id, body.change_order_id, body.device_id, body.before_snapshot_id,
+                body.expected_snapshot_id, body.after_snapshot_id, body.stage,
+                json.dumps(dry_run_result, ensure_ascii=False), json.dumps(risk_summary, ensure_ascii=False),
+                json.dumps({"note": body.note}, ensure_ascii=False), user.get("username") or "",
+                body.stage, now, now,
+            ),
+        )
+        conn.commit()
+        return {"id": workflow_id, "success": True, "stage": body.stage, "dry_run": dry_run_result, "risk_summary": risk_summary}
+    finally:
+        conn.close()
+
+
 @router.get("/config-diff/compliance/rules")
 def list_config_compliance_rules(
     _user=require_permission("configuration", "read"),
@@ -692,4 +845,3 @@ def scan_config_compliance(
         }
     finally:
         conn.close()
-

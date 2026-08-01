@@ -303,6 +303,7 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
             conn,
             title=payload['title'],
             description=payload['description'],
+            incident_id=payload.get('incident_id', ''),
             order_type=payload['order_type'],
             priority=payload['priority'],
             status=payload.get('status', 'draft'),

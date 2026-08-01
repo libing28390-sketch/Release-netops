@@ -56,6 +56,7 @@ export const EMPTY_CONTROL_SHEET = {
 
 export const EMPTY_FORM = {
   title: '',
+  incident_id: '',
   description: '',
   order_type: 'config_change',
   priority: 'medium',

@@ -603,7 +603,22 @@ def _build_connection_params(device_info: dict[str, Any], auth_role: str = 'auto
 
 
 def _resolve_ntc_platform(platform: str) -> str:
-    return NTC_PLATFORM_MAP.get(platform, 'cisco_ios')
+    """Resolve the secondary parser without crossing a vendor boundary.
+
+    ``NTC_PLATFORM_MAP`` contains the platform families with a dedicated NTC
+    grammar.  Older code used Cisco IOS as the catch-all value when an entry
+    was missing, which could silently parse a recognised non-Cisco platform
+    with the wrong column grammar (for example a DPtech variant).  The
+    canonical Nexora/TextFSM platform is the only safe fallback; an unknown
+    value is kept as-is so the caller reports an unmatched parse instead of
+    manufacturing Cisco-shaped records.
+    """
+    normalized = str(platform or '').strip().lower()
+    mapped = NTC_PLATFORM_MAP.get(normalized)
+    if mapped:
+        return mapped
+    from core.textfsm import resolve_textfsm_platform
+    return resolve_textfsm_platform(normalized) or normalized
 
 
 def _normalize_records(parsed: Any) -> list[dict[str, Any]]:

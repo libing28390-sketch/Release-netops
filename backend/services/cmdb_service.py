@@ -1245,11 +1245,59 @@ def delete_vrf(conn, vrf_id: str) -> None:
 # VLANs
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: bool = False, q: str = '', status: str = 'all', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
+def _build_vlan_scope_tree(conn, rows: list[dict]) -> list[dict]:
+    """Build the CMDB asset hierarchy for VLAN evidence rows."""
+    root = {"id": "root", "kind": "root", "label": "All assets", "count": 0, "branch": {}, "children": []}
+    metadata = {
+        str(row['id']): dict(row)
+        for row in conn.execute(
+            """SELECT d.id,
+                      COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), 'unassigned') AS site_id,
+                      COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), NULLIF(d.site, ''), 'Unassigned site') AS site_name,
+                      COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS asset_type,
+                      COALESCE(NULLIF(pa.device_category, ''), NULLIF(d.device_category, ''), 'other') AS device_category,
+                      COALESCE(NULLIF(pa.device_role, ''), NULLIF(d.role, ''), 'unassigned') AS device_role
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               LEFT JOIN sites s ON (
+                   s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''))
+                   OR (COALESCE(d.site_id, '') = '' AND (s.site_code = d.site OR s.site_name = d.site))
+               )"""
+        ).fetchall()
+    }
+
+    def find_or_create(parent: dict, node_id: str, kind: str, label: str, branch: dict) -> dict:
+        node = next((item for item in parent['children'] if item['id'] == node_id), None)
+        if node is None:
+            node = {'id': node_id, 'kind': kind, 'label': label or 'Unassigned', 'count': 0, 'branch': branch, 'children': []}
+            parent['children'].append(node)
+        node['count'] += 1
+        return node
+
+    for row in rows:
+        device = metadata.get(str(row.get('device_id') or ''), {})
+        site_id = str(device.get('site_id') or row.get('site_id') or 'unassigned')
+        site_name = str(device.get('site_name') or row.get('site_name') or 'Unassigned site')
+        asset_type = str(device.get('asset_type') or 'network_device')
+        category = str(device.get('device_category') or 'other')
+        role = str(device.get('device_role') or 'unassigned')
+        root['count'] += 1
+        site_branch = {'site_id': site_id}
+        site = find_or_create(root, f'site:{site_id}', 'site', site_name, site_branch)
+        asset = find_or_create(site, f"{site['id']}:type:{asset_type}", 'type', asset_type, {**site_branch, 'asset_type': asset_type})
+        category_node = find_or_create(asset, f"{asset['id']}:category:{category}", 'category', category, {**site_branch, 'asset_type': asset_type, 'device_category': category})
+        find_or_create(category_node, f"{category_node['id']}:role:{role}", 'role', role, {**site_branch, 'asset_type': asset_type, 'device_category': category, 'device_role': '' if role == 'unassigned' else role})
+    return [root]
+
+
+def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: bool = False, q: str = '', status: str = 'all', asset_type: str = '', device_category: str = '', device_role: str = '', page: int | None = None, page_size: int = 20) -> list[dict] | dict:
     clauses, params = [], []
     if site_id:
-        clauses.append("site_id = ?")
-        params.append(site_id)
+        if site_id == 'unassigned':
+            clauses.append("COALESCE(site_id, '') = ''")
+        else:
+            clauses.append("site_id = ?")
+            params.append(site_id)
     if tenant_id:
         clauses.append("tenant_id = ?")
         params.append(tenant_id)
@@ -1484,6 +1532,13 @@ def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: b
         )
         result.append(item)
     expanded = _expand_vlan_rows_by_device(conn, result) if device_scoped else result
+    full_expanded = list(expanded)
+    if asset_type:
+        expanded = [row for row in expanded if str(row.get('asset_type') or 'network_device') == asset_type]
+    if device_category:
+        expanded = [row for row in expanded if str(row.get('device_category') or 'other') == device_category]
+    if device_role:
+        expanded = [row for row in expanded if str(row.get('device_role') or 'unassigned') == device_role]
     if page is None:
         return expanded
     normalized_page_size = min(max(int(page_size or 20), 1), 100)
@@ -1505,6 +1560,7 @@ def list_vlans(conn, site_id: str = '', tenant_id: str = '', *, device_scoped: b
         'page': normalized_page,
         'page_size': normalized_page_size,
         'site_summary': sorted(site_counts.values(), key=lambda item: str(item['label']).lower()),
+        'tree': _build_vlan_scope_tree(conn, full_expanded),
         'summary': {
             'total': len(expanded),
             'gateways': sum(1 for row in expanded if str(row.get('gateway') or '').strip()),
@@ -1524,6 +1580,19 @@ def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
     are different observations.
     """
     from services.vlan_discovery_service import parse_vlan_id_from_interface, parse_vlan_values
+
+    device_metadata = {
+        str(row['id']): dict(row)
+        for row in conn.execute(
+            """SELECT d.id,
+                      COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), 'unassigned') AS resolved_site_id,
+                      COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS asset_type,
+                      COALESCE(NULLIF(pa.device_category, ''), NULLIF(d.device_category, ''), 'other') AS device_category,
+                      COALESCE(NULLIF(pa.device_role, ''), NULLIF(d.role, ''), 'unassigned') AS device_role
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id"""
+        ).fetchall()
+    }
 
     scoped_rows: list[dict] = []
     for item in vlan_rows:
@@ -1616,10 +1685,15 @@ def _expand_vlan_rows_by_device(conn, vlan_rows: list[dict]) -> list[dict]:
             arp_times = [row['last_updated'] for row in arp_rows if row['last_updated']]
             mac_times = [row['last_updated'] for row in mac_rows if row['last_updated']]
             device_row = dict(item)
+            device_info = device_metadata.get(device_id, {})
             device_row.update({
                 'device_id': device_id,
                 'device_hostname': device_hostname,
                 'device_ip': device_ip,
+                'asset_type': device_info.get('asset_type') or 'network_device',
+                'device_category': device_info.get('device_category') or 'other',
+                'device_role': device_info.get('device_role') or 'unassigned',
+                'site_id': device_info.get('resolved_site_id') or device_row.get('site_id') or '',
                 'device_count': 1,
                 'device_names': device_hostname,
                 'port_count': len(port_detail_rows),

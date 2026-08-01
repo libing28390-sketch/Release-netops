@@ -10,17 +10,17 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
     p = str(platform or '').strip().lower()
     
     # Map vendor names to vendor keys
-    if 'huawei' in v or 'vrp' in v:
+    if 'huawei' in v or 'vrp' in v or '华为' in v:
         v_key = 'huawei'
-    elif 'h3c' in v or 'comware' in v or 'hp' in v:
+    elif 'h3c' in v or 'comware' in v or 'hp' in v or '华三' in v:
         v_key = 'h3c'
-    elif 'ruijie' in v or 'rgos' in v:
+    elif 'ruijie' in v or 'rgos' in v or '锐捷' in v:
         v_key = 'ruijie'
-    elif 'zte' in v or 'zxros' in v:
+    elif 'zte' in v or 'zxros' in v or '中兴' in v:
         v_key = 'zte'
-    elif 'maipu' in v:
+    elif 'maipu' in v or '迈普' in v:
         v_key = 'maipu'
-    elif 'dptech' in v:
+    elif 'dptech' in v or '迪普' in v:
         v_key = 'dptech'
     elif 'juniper' in v or 'junos' in v:
         v_key = 'juniper'
@@ -89,17 +89,17 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
             return 'arista_eos'
 
     # Normalization of platform aliases
-    if 'huawei' in p or 'vrp' in p:
+    if 'huawei' in p or 'vrp' in p or '华为' in p:
         return 'huawei_vrp'
-    elif 'h3c' in p or 'comware' in p:
+    elif 'h3c' in p or 'comware' in p or '华三' in p:
         return 'h3c_comware'
-    elif 'ruijie' in p or 'rgos' in p:
+    elif 'ruijie' in p or 'rgos' in p or '锐捷' in p:
         return 'ruijie_rgos'
-    elif 'zte' in p or 'zxros' in p:
+    elif 'zte' in p or 'zxros' in p or '中兴' in p:
         return 'zte_zxros'
-    elif 'maipu' in p:
+    elif 'maipu' in p or '迈普' in p or 'mypower' in p:
         return 'maipu'
-    elif 'dptech' in p:
+    elif 'dptech' in p or 'conplat' in p or '迪普' in p:
         return 'dptech_ios'
     elif 'juniper' in p or 'junos' in p:
         return 'juniper_junos'

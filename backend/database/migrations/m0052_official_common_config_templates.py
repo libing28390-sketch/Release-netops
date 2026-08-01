@@ -74,8 +74,8 @@ no vlan {{ vlan_id | default(10) }}""",
             """vlan {{ vlan_id | default(10) }}
  name {{ vlan_name | default("USERS") }}
 interface Vlan{{ vlan_id | default(10) }}
- description {{ interface_description | default("USER_GATEWAY") }}
  ip address {{ gateway_ip | default("192.0.2.1") }} {{ netmask | default("255.255.255.0") }}
+ description {{ interface_description | default("USER_GATEWAY") }}
  no shutdown""",
             """interface Vlan{{ vlan_id | default(10) }}
  shutdown
@@ -161,10 +161,11 @@ undo vlan {{ vlan_id | default(10) }}""",
             "VLANIF 三层网关（华为 VRP）", "routing", "Huawei", "huawei_vrp", "V200R023 / V300R024",
             "创建 VLANIF 并配置 IPv4 网关。",
             """vlan {{ vlan_id | default(10) }}
+ description {{ vlan_name | default("USERS") }}
 quit
 interface Vlanif{{ vlan_id | default(10) }}
- description {{ interface_description | default("USER_GATEWAY") }}
- ip address {{ gateway_ip | default("192.0.2.1") }} {{ netmask | default("255.255.255.0") }}""",
+ ip address {{ gateway_ip | default("192.0.2.1") }} {{ netmask | default("255.255.255.0") }}
+ description {{ interface_description | default("USER_GATEWAY") }}""",
             """undo interface Vlanif{{ vlan_id | default(10) }}
 undo vlan {{ vlan_id | default(10) }}""",
             "https://info.support.huawei.com/enterprise/en/doc/EDOC1100419268/221a9cda/configuration-examples-for-vlans",
@@ -252,10 +253,11 @@ undo vlan {{ vlan_id | default(10) }}""",
             "Vlan-interface 三层网关（H3C Comware）", "routing", "H3C", "h3c_comware", "Comware 7 R66xx/R67xx",
             "创建 VLAN 接口并配置 IPv4 网关。",
             """vlan {{ vlan_id | default(10) }}
+ description {{ vlan_name | default("USERS") }}
 quit
 interface Vlan-interface{{ vlan_id | default(10) }}
- description {{ interface_description | default("USER_GATEWAY") }}
- ip address {{ gateway_ip | default("192.0.2.1") }} {{ netmask | default("255.255.255.0") }}""",
+ ip address {{ gateway_ip | default("192.0.2.1") }} {{ netmask | default("255.255.255.0") }}
+ description {{ interface_description | default("USER_GATEWAY") }}""",
             """undo interface Vlan-interface{{ vlan_id | default(10) }}
 undo vlan {{ vlan_id | default(10) }}""",
             "https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Reference_Guides/Command_References/H3C_S6805_S9850_CRs_Release_6715-18388/00/?CHID=1036877",

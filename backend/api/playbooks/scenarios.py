@@ -45,6 +45,15 @@ _PLAYBOOK_PLATFORM_ALIASES: dict[str, str] = {
     'eos': 'arista_eos',
     'ruijie': 'ruijie_rgos',
     'rgos': 'ruijie_rgos',
+    'ruijie_os': 'ruijie_rgos',
+    'zte': 'zte_zxros',
+    'zxros': 'zte_zxros',
+    'maipu_network': 'maipu',
+    'maipu_mypower': 'maipu',
+    'mypower': 'maipu',
+    'dptech': 'dptech_conplat',
+    'dptech_ios': 'dptech_conplat',
+    'dptech_conplat_fw': 'dptech_conplat_fw',
 }
 
 _PLAYBOOK_PLATFORM_FALLBACKS: dict[str, tuple[str, ...]] = {

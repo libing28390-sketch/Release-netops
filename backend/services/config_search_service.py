@@ -43,6 +43,12 @@ SEARCH_SCOPES = {
     "LATEST_RUNNING",
     "ALL_LATEST",
     "HISTORY",
+    "RUNNING_HISTORY",
+    "STARTUP_HISTORY",
+    "BASELINE",
+    "TIME_RANGE",
+    "SPECIFIC_VERSION",
+    "TEMPLATES",
 }
 
 MAX_QUERY_LENGTH = 512
@@ -516,11 +522,12 @@ def _select_snapshot_rows(conn, scope: str, filters: dict[str, Any]) -> list[dic
     field_map = {
         "vendors": "COALESCE(cs.vendor, '')",
         "platforms": "COALESCE(d.platform, '')",
-        "sites": "COALESCE(d.site, '')",
+        "sites": "COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), NULLIF(d.site, ''))",
         "roles": "COALESCE(d.role, '')",
         "device_ids": "cs.device_id",
         "config_types": "COALESCE(cs.config_type, 'running')",
         "integrity": "COALESCE(cs.integrity_status, 'unknown')",
+        "snapshot_ids": "cs.id",
     }
     for key, column in field_map.items():
         values = [str(value) for value in (filters.get(key) or []) if str(value).strip()]
@@ -544,6 +551,15 @@ def _select_snapshot_rows(conn, scope: str, filters: dict[str, Any]) -> list[dic
         )
     elif scope == "LATEST_RUNNING":
         clauses.append("COALESCE(cs.config_type, 'running') = 'running'")
+    elif scope == "RUNNING_HISTORY":
+        clauses.append("COALESCE(cs.config_type, 'running') = 'running'")
+    elif scope == "STARTUP_HISTORY":
+        clauses.append("COALESCE(cs.config_type, 'running') = 'startup'")
+    elif scope == "BASELINE":
+        clauses.append(
+            "EXISTS (SELECT 1 FROM config_baselines cb "
+            "WHERE cb.snapshot_id = cs.id AND cb.device_id = cs.device_id)"
+        )
 
     rows = conn.execute(
         f"""
@@ -555,12 +571,16 @@ def _select_snapshot_rows(conn, scope: str, filters: dict[str, Any]) -> list[dic
                COALESCE(cs.raw_hash, '') AS raw_hash,
                COALESCE(d.ip_address, '') AS ip_address,
                COALESCE(d.platform, '') AS platform,
-               COALESCE(d.site, '') AS site,
+               COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), NULLIF(d.site, '')) AS site,
                COALESCE(d.role, '') AS role,
                COALESCE(d.status, '') AS device_status,
                COALESCE(d.hostname, cs.hostname, '') AS device_hostname
         FROM config_snapshots cs
         LEFT JOIN devices d ON d.id = cs.device_id
+        LEFT JOIN sites s ON (
+            s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, ''))
+            OR (COALESCE(d.site_id, '') = '' AND (s.site_code = d.site OR s.site_name = d.site))
+        )
         WHERE {' AND '.join(clauses)}
         ORDER BY cs.timestamp DESC
         LIMIT {MAX_SNAPSHOT_CANDIDATES}
@@ -568,7 +588,7 @@ def _select_snapshot_rows(conn, scope: str, filters: dict[str, Any]) -> list[dic
         tuple(params),
     ).fetchall()
     mapped = [dict(row) for row in rows]
-    if scope == "HISTORY":
+    if scope in {"HISTORY", "RUNNING_HISTORY", "STARTUP_HISTORY", "TIME_RANGE", "SPECIFIC_VERSION", "BASELINE"}:
         return mapped
 
     latest: list[dict[str, Any]] = []
@@ -636,12 +656,31 @@ def _index_snapshot(conn, row: dict[str, Any], content: str, objects: list[Confi
             ),
         )
     for item in objects:
+        attributes = dict(item.attributes)
+        parent_type = str(attributes.get("parent_type") or "")
+        parent_name = str(attributes.get("parent_name") or "")
+        confidence = float(attributes.get("confidence") or 0.75)
+        object_hash = hashlib.sha256(
+            f"{item.object_type}|{item.object_key}|{item.search_text}".encode("utf-8")
+        ).hexdigest()
+        seen = conn.execute(
+            """
+            SELECT MIN(first_seen_at) AS first_seen_at, MAX(last_seen_at) AS last_seen_at
+            FROM config_search_objects
+            WHERE device_id = ? AND object_type = ? AND object_key = ?
+            """,
+            (row["device_id"], item.object_type, item.object_key),
+        ).fetchone()
+        timestamp = str(row.get("timestamp") or _utc_now())
+        first_seen_at = str(seen["first_seen_at"] or timestamp) if seen else timestamp
         conn.execute(
             """
             INSERT INTO config_search_objects (
                 id, snapshot_id, device_id, vendor, object_type, object_key,
-                start_line, end_line, search_text, attributes_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                start_line, end_line, search_text, attributes_json, parent_type,
+                parent_name, object_hash, first_seen_at, last_seen_at,
+                current_present, confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
             (
                 str(uuid.uuid4()),
@@ -653,7 +692,13 @@ def _index_snapshot(conn, row: dict[str, Any], content: str, objects: list[Confi
                 item.start_line,
                 item.end_line,
                 item.search_text,
-                json.dumps(item.attributes, ensure_ascii=False),
+                json.dumps(attributes, ensure_ascii=False),
+                parent_type,
+                parent_name,
+                object_hash,
+                first_seen_at,
+                timestamp,
+                confidence,
             ),
         )
 
@@ -704,6 +749,16 @@ def search_configurations(
     timeline: dict[str, list[str]] = defaultdict(list)
     index_updates = 0
     try:
+        if normalized_scope == "TEMPLATES":
+            return _search_templates(
+                conn,
+                query=query,
+                interpretation=interpretation,
+                page=page,
+                page_size=page_size,
+                actor_username=actor_username,
+                started=started,
+            )
         rows = _select_snapshot_rows(conn, normalized_scope, filters)
         for row in rows:
             if files_read >= MAX_FILE_READS:
@@ -790,6 +845,12 @@ def search_configurations(
         )
         total = len(matched_results)
         total_matches = sum(item["total_matches"] for item in matched_results)
+        total_objects = len({
+            (item["device_id"], match.get("object_type"), match.get("object_key"))
+            for item in matched_results
+            for match in item.get("matches", [])
+            if match.get("object_type") != "line"
+        })
         start = (page - 1) * page_size
         paged = matched_results[start : start + page_size]
         for item in paged:
@@ -803,8 +864,10 @@ def search_configurations(
             """
             INSERT INTO config_search_audit (
                 id, actor_username, query_text, search_type, search_scope,
-                filters_json, result_count, duration_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                filters_json, result_count, duration_ms, created_at,
+                result_device_count, result_object_count, result_line_count,
+                viewed_sensitive_content
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid.uuid4()),
@@ -816,6 +879,10 @@ def search_configurations(
                 total,
                 duration_ms,
                 _utc_now(),
+                len({item["device_id"] for item in matched_results}),
+                total_objects,
+                total_matches,
+                1 if include_sensitive else 0,
             ),
         )
         conn.commit()
@@ -833,6 +900,7 @@ def search_configurations(
                 "devices": len({item["device_id"] for item in matched_results}),
                 "snapshots": total,
                 "matches": total_matches,
+                "objects": total_objects,
                 "searched_snapshots": files_read,
                 "index_updates": index_updates,
                 "duration_ms": duration_ms,
@@ -849,19 +917,158 @@ def search_configurations(
         conn.close()
 
 
-def rebuild_index(*, limit: int = MAX_FILE_READS) -> dict[str, Any]:
+def _search_templates(
+    conn,
+    *,
+    query: str,
+    interpretation: SearchInterpretation,
+    page: int,
+    page_size: int,
+    actor_username: str,
+    started: float,
+) -> dict[str, Any]:
+    """Search reusable templates without mixing them with device snapshots."""
+    rows = conn.execute(
+        """
+        SELECT id, name, vendor, platform_family, category, content,
+               current_version, updated_at, source_type, status
+        FROM templates
+        ORDER BY updated_at DESC, name ASC
+        LIMIT 2000
+        """
+    ).fetchall()
+    results: list[dict[str, Any]] = []
+    for raw in rows:
+        row = dict(raw)
+        lines = str(row.get("content") or "").splitlines()
+        matches = []
+        device = {
+            "vendor": row.get("vendor") or "",
+            "platform": row.get("platform_family") or "",
+            "site": "",
+            "role": "template",
+            "hostname": row.get("name") or "",
+            "ip_address": "",
+        }
+        for index, line in enumerate(lines):
+            matched, reason, score = _line_matches(line, interpretation, device=device)
+            if matched:
+                matches.append({
+                    "line": index + 1,
+                    "content": redact_config_line(line),
+                    "context": [{"line": index + 1, "content": redact_config_line(line)}],
+                    "match_reason": reason,
+                    "object_type": "template",
+                    "object_key": row.get("category") or "",
+                    "score": score,
+                })
+            if len(matches) >= MAX_MATCHES_PER_DEVICE:
+                break
+        if matches:
+            results.append({
+                "device_id": "",
+                "hostname": row.get("name") or "",
+                "ip_address": "",
+                "vendor": row.get("vendor") or "",
+                "platform": row.get("platform_family") or "",
+                "site": "",
+                "role": "template",
+                "device_status": row.get("status") or "",
+                "snapshot_id": row["id"],
+                "snapshot_time": row.get("updated_at") or "",
+                "trigger": row.get("source_type") or "",
+                "integrity_status": "verified",
+                "config_type": "template",
+                "total_matches": len(matches),
+                "matches": matches,
+                "score": sum(item["score"] for item in matches),
+                "first_seen": row.get("updated_at") or "",
+                "last_seen": row.get("updated_at") or "",
+                "occurrence_count": 1,
+            })
+    results.sort(key=lambda item: item["score"], reverse=True)
+    total = len(results)
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    start = (page - 1) * page_size
+    conn.execute(
+        """
+        INSERT INTO config_search_audit (
+            id, actor_username, query_text, search_type, search_scope,
+            filters_json, result_count, duration_ms, created_at,
+            result_device_count, result_object_count, result_line_count
+        ) VALUES (?, ?, ?, ?, 'TEMPLATES', '{}', ?, ?, ?, 0, ?, ?)
+        """,
+        (
+            str(uuid.uuid4()), actor_username, query, interpretation.search_type,
+            total, duration_ms, _utc_now(), total,
+            sum(item["total_matches"] for item in results),
+        ),
+    )
+    conn.commit()
+    return {
+        "query": query,
+        "interpretation": {
+            "search_type": interpretation.search_type,
+            "normalized_query": interpretation.normalized_query,
+            "title": interpretation.title,
+            "description": interpretation.description,
+            "warnings": list(interpretation.warnings),
+        },
+        "scope": "TEMPLATES",
+        "summary": {
+            "devices": 0,
+            "snapshots": total,
+            "matches": sum(item["total_matches"] for item in results),
+            "objects": total,
+            "searched_snapshots": len(rows),
+            "index_updates": 0,
+            "duration_ms": duration_ms,
+            "truncated": False,
+        },
+        "facets": _build_facets(results),
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+        "results": results[start:start + page_size],
+    }
+
+
+def rebuild_index(
+    *,
+    limit: int = MAX_FILE_READS,
+    scope_type: str = "all",
+    scope_value: str = "",
+) -> dict[str, Any]:
     conn = get_db_connection()
     indexed = 0
     failed = 0
     objects_count = 0
     try:
+        clauses = ["1 = 1"]
+        params: list[Any] = []
+        if scope_type == "device" and scope_value:
+            clauses.append("cs.device_id = ?")
+            params.append(scope_value)
+        elif scope_type == "platform" and scope_value:
+            clauses.append("LOWER(COALESCE(d.platform, '')) = ?")
+            params.append(scope_value.lower())
+        elif scope_type == "parser_version" and scope_value:
+            clauses.append(
+                "NOT EXISTS (SELECT 1 FROM config_search_documents sd "
+                "WHERE sd.snapshot_id = cs.id AND sd.parser_version = ?)"
+            )
+            params.append(scope_value)
         rows = conn.execute(
             f"""
-            SELECT cs.id, cs.device_id, cs.vendor, cs.file_path, cs.raw_hash
+            SELECT cs.id, cs.device_id, cs.vendor, cs.file_path, cs.raw_hash, cs.timestamp
             FROM config_snapshots cs
+            LEFT JOIN devices d ON d.id = cs.device_id
+            WHERE {' AND '.join(clauses)}
             ORDER BY cs.timestamp DESC
             LIMIT {max(1, min(int(limit), MAX_SNAPSHOT_CANDIDATES))}
-            """
+            """,
+            tuple(params),
         ).fetchall()
         for raw_row in rows:
             row = dict(raw_row)
@@ -879,6 +1086,8 @@ def rebuild_index(*, limit: int = MAX_FILE_READS) -> dict[str, Any]:
             "parsed_objects": objects_count,
             "failed_snapshots": failed,
             "parser_version": PARSER_VERSION,
+            "scope_type": scope_type,
+            "scope_value": scope_value,
         }
     finally:
         conn.close()

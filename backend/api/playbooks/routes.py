@@ -431,9 +431,42 @@ async def parse_device_output(execution_id: str, device_id: str, payload: dict =
     请求体：{ "platform": "cisco_ios", "command": "show version", "output": "..." }
     若不传 output，则从数据库中读取该设备的 execute phase 输出。
     """
-    from core.textfsm import _find_template, parse_with_textfsm, resolve_textfsm_platform
+    from core.platform_utils import normalize_device_platform
+    from core.textfsm import (
+        _find_template,
+        _template_platform_candidates,
+        parse_with_textfsm,
+        resolve_textfsm_platform,
+    )
 
-    platform = (payload.get('platform') or '').strip()
+    # Bind parser selection to the actual asset.  The old endpoint trusted a
+    # client-supplied platform, which allowed a playbook result from one
+    # vendor to be parsed with another vendor's grammar.
+    device_conn = get_db_connection()
+    try:
+        device_row = device_conn.execute(
+            'SELECT platform, vendor FROM devices WHERE id = ? OR ip_address = ?',
+            (device_id, device_id),
+        ).fetchone()
+    finally:
+        device_conn.close()
+    if not device_row:
+        raise HTTPException(status_code=404, detail='Device not found')
+
+    actual_platform = normalize_device_platform(device_row['vendor'], device_row['platform'] or '')
+    requested_platform = (payload.get('platform') or '').strip()
+    actual_candidates = set(_template_platform_candidates(actual_platform))
+    if requested_platform:
+        requested_candidates = set(_template_platform_candidates(requested_platform))
+        if not actual_candidates.intersection(requested_candidates):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Parser platform '{requested_platform}' does not match "
+                    f"device platform '{actual_platform}'"
+                ),
+            )
+    platform = actual_platform
     command = (payload.get('command') or '').strip()
     raw_output = payload.get('output')
 

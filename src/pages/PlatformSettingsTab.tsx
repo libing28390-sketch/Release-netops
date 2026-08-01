@@ -24,6 +24,7 @@ import {
   Maximize2,
   Minimize2,
   Plus,
+  Pencil,
   RefreshCw,
   Save,
   Search,
@@ -41,6 +42,7 @@ import { useNavigate } from 'react-router-dom';
 import type { ConfigTemplate, Device } from '../types';
 import PageHero from '../components/PageHero';
 import { apiRequest, authHeaders } from '../api/http';
+import { VENDOR_PLATFORMS } from './AssetManagement/constants';
 
 type ConfigWorkspaceView = 'source' | 'rendered' | 'checks';
 type TemplateType = 'Jinja2' | 'YAML';
@@ -98,6 +100,21 @@ interface TemplateDetail extends ConfigTemplate {
     example_values: Record<string, unknown>;
   };
   compatibility?: Array<Record<string, unknown>>;
+}
+
+interface TemplateEditorForm {
+  name: string;
+  vendor: string;
+  platform: string;
+  category: string;
+  description: string;
+  software_version: string;
+  usage_notes: string;
+  risk_notes: string;
+  content: string;
+  rollback: string;
+  example_values: string;
+  variable_schema: TemplateVariable[];
 }
 
 interface RenderIssue {
@@ -190,8 +207,46 @@ const VENDOR_STYLE: Record<string, { chip: string; gradient: string; label: stri
   H3C: { chip: 'bg-amber-50 text-amber-700 ring-amber-100', gradient: 'from-amber-500 to-orange-500', label: 'H3C' },
   Juniper: { chip: 'bg-emerald-50 text-emerald-700 ring-emerald-100', gradient: 'from-emerald-500 to-teal-600', label: 'Juniper' },
   Arista: { chip: 'bg-orange-50 text-orange-700 ring-orange-100', gradient: 'from-orange-500 to-amber-500', label: 'Arista' },
+  Ruijie: { chip: 'bg-violet-50 text-violet-700 ring-violet-100', gradient: 'from-violet-500 to-fuchsia-500', label: 'Ruijie' },
+  ZTE: { chip: 'bg-indigo-50 text-indigo-700 ring-indigo-100', gradient: 'from-indigo-500 to-blue-600', label: 'ZTE' },
+  Maipu: { chip: 'bg-teal-50 text-teal-700 ring-teal-100', gradient: 'from-teal-500 to-emerald-500', label: 'Maipu' },
+  DPtech: { chip: 'bg-orange-50 text-orange-700 ring-orange-100', gradient: 'from-orange-500 to-red-500', label: 'DPtech' },
   Custom: { chip: 'bg-slate-100 text-slate-600 ring-slate-200', gradient: 'from-slate-500 to-slate-700', label: 'Custom' },
 };
+
+const CONFIG_VENDOR_PLATFORM_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
+  ...VENDOR_PLATFORMS,
+  Cisco: [
+    { value: 'cisco_ios', label: 'Cisco IOS' },
+    { value: 'cisco_iosxe', label: 'Cisco IOS XE' },
+    { value: 'cisco_xe', label: 'Cisco IOS-XE' },
+    { value: 'cisco_nxos', label: 'Cisco NX-OS' },
+    { value: 'cisco_iosxr', label: 'Cisco IOS-XR' },
+    { value: 'cisco_asa', label: 'Cisco ASA' },
+  ],
+  Huawei: [
+    { value: 'huawei_vrp', label: 'Huawei VRP' },
+    { value: 'huawei_vrpv8', label: 'Huawei VRP8' },
+    { value: 'huawei_smartax', label: 'Huawei SmartAX' },
+    { value: 'huawei_usg', label: 'Huawei USG' },
+  ],
+  H3C: [
+    { value: 'hp_comware', label: 'H3C Comware V5' },
+    { value: 'h3c_comware', label: 'H3C Comware V7' },
+    { value: 'h3c_comware9', label: 'H3C Comware V9' },
+  ],
+  Ruijie: [{ value: 'ruijie_rgos', label: 'Ruijie RGOS' }, { value: 'ruijie_os', label: 'Ruijie OS (alias)' }],
+  ZTE: [{ value: 'zte_zxros', label: 'ZTE ZXROS' }],
+  Maipu: [{ value: 'maipu', label: 'Maipu MyPowerOS' }, { value: 'maipu_mypower', label: 'Maipu MyPower (alias)' }],
+  DPtech: [
+    { value: 'dptech_ios', label: 'DPTech IOS' },
+    { value: 'dptech_conplat', label: 'DPTech Conplat' },
+    { value: 'dptech_conplat_fw', label: 'DPTech Conplat FW' },
+  ],
+  Custom: [{ value: 'custom', label: 'Custom platform' }],
+};
+
+const CONFIG_VENDOR_OPTIONS = Object.keys(CONFIG_VENDOR_PLATFORM_OPTIONS);
 
 const SOURCE_LABELS: Record<string, string> = {
   user: '用户填写',
@@ -201,6 +256,30 @@ const SOURCE_LABELS: Record<string, string> = {
   system: '系统计算',
   device: '设备上下文',
 };
+
+const PARAMETER_TYPE_LABELS: Record<string, { zh: string; en: string }> = {
+  string: { zh: '文本', en: 'Text' },
+  text: { zh: '单行文本', en: 'Single-line text' },
+  integer: { zh: '整数', en: 'Integer' },
+  vlan_id: { zh: 'VLAN 编号', en: 'VLAN ID' },
+  ipv4_address: { zh: 'IPv4 地址', en: 'IPv4 address' },
+  ipv4_netmask: { zh: 'IPv4 子网掩码', en: 'IPv4 netmask' },
+  ipv4_wildcard_mask: { zh: 'IPv4 通配符掩码', en: 'IPv4 wildcard mask' },
+  ipv4_network: { zh: 'IPv4 网段', en: 'IPv4 network' },
+  ipv6_address: { zh: 'IPv6 地址', en: 'IPv6 address' },
+  ipv6_network: { zh: 'IPv6 网段', en: 'IPv6 network' },
+  interface: { zh: '接口名称', en: 'Interface name' },
+  asn: { zh: 'BGP ASN', en: 'BGP ASN' },
+  ospf_area: { zh: 'OSPF 区域 ID', en: 'OSPF area ID' },
+  vlan_list: { zh: 'VLAN 列表', en: 'VLAN list' },
+  hostname: { zh: '主机名', en: 'Hostname' },
+  mac_address: { zh: 'MAC 地址', en: 'MAC address' },
+  boolean: { zh: '开关', en: 'Boolean' },
+  list: { zh: '列表', en: 'List' },
+  password: { zh: '敏感值', en: 'Secret' },
+};
+
+const parameterTypeLabel = (type: string, zh: boolean) => PARAMETER_TYPE_LABELS[type]?.[zh ? 'zh' : 'en'] || type;
 
 const PREVIEW_TABS: Array<{ id: PreviewTab; zh: string; en: string; icon: React.ReactNode }> = [
   { id: 'preview', zh: '命令预览', en: 'Preview', icon: <FileCode2 size={13} /> },
@@ -219,6 +298,24 @@ const parseJson = <T,>(value: string | undefined, fallback: T): T => {
   } catch {
     return fallback;
   }
+};
+
+const formatModelPattern = (pattern: unknown) => {
+  const raw = String(pattern || '').trim();
+  if (!raw) return '';
+  const readable = raw
+    .replace(/\\s\*/g, ' ')
+    .replace(/\\s\?/g, ' ')
+    .replace(/\\s/g, ' ')
+    .replace(/\\([.*+?^${}()|[\]\\])/g, '$1')
+    .replace(/\\d(?:\{\d+,?\d*\}|\+)/g, '数字')
+    .replace(/\(\?:/g, '')
+    .replace(/[()]/g, '')
+    .replace(/[?$^]/g, '')
+    .replace(/\|/g, ' / ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return readable || raw;
 };
 
 const formatLastUsed = (value: string | null | undefined, zh: boolean) => {
@@ -240,7 +337,25 @@ const downloadText = (content: string, filename: string, type = 'text/plain;char
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const copyText = async (content: string) => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(content);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = content;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('Clipboard is unavailable');
 };
 
 const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
@@ -293,9 +408,18 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   const [versionDiff, setVersionDiff] = useState<string[]>([]);
   const [versionDiffLoading, setVersionDiffLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ name: '', vendor: 'Cisco', platform: 'cisco_iosxe', category: 'interface' });
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(null);
+  const [createForm, setCreateForm] = useState<TemplateEditorForm>({
+    name: '', vendor: 'Cisco', platform: 'cisco_iosxe', category: 'interface',
+    description: '', software_version: '', usage_notes: '', risk_notes: '',
+    content: '', rollback: '', example_values: '{}', variable_schema: [],
+  });
   const [creatingTemplate, setCreatingTemplate] = useState(false);
   const parameterDrafts = useRef<Record<string, Record<string, unknown>>>({});
+  const previousTemplateIdRef = useRef(selectedTemplateId);
+  const activeTemplateIdRef = useRef(selectedTemplateId);
+  const loadRequestRef = useRef(0);
+  const draftStorageKey = (templateId: string) => `nexora.config-template-draft.${templateId}`;
 
   useEffect(() => {
     setTemplates(configTemplates);
@@ -313,17 +437,26 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
 
   const loadTemplate = useCallback(async (templateId: string) => {
     if (!templateId || templateId.startsWith('draft-')) return;
+    const requestId = ++loadRequestRef.current;
     setDetailLoading(true);
     try {
       const [templateDetail, templateProfiles] = await Promise.all([
         apiRequest<TemplateDetail>(`/api/config-templates/${encodeURIComponent(templateId)}`),
         apiRequest<ParameterProfile[]>(`/api/config-templates/${encodeURIComponent(templateId)}/parameter-profiles`),
       ]);
+      if (requestId !== loadRequestRef.current || activeTemplateIdRef.current !== templateId) return;
       setDetail(templateDetail);
       setProfiles(templateProfiles || []);
-      setSourceContent(templateDetail.version?.source || templateDetail.content || '');
-      setSourceDirty(false);
-      const draft = parameterDrafts.current[templateId];
+      let storedDraft: { parameters?: Record<string, unknown>; source?: string } | null = null;
+      try {
+        const raw = window.localStorage.getItem(draftStorageKey(templateId));
+        storedDraft = raw ? JSON.parse(raw) as { parameters?: Record<string, unknown>; source?: string } : null;
+      } catch {
+        storedDraft = null;
+      }
+      setSourceContent(storedDraft?.source || templateDetail.version?.source || templateDetail.content || '');
+      setSourceDirty(Boolean(storedDraft?.source));
+      const draft = parameterDrafts.current[templateId] || storedDraft?.parameters;
       setParameters(draft || {});
       setParameterSources(
         draft
@@ -340,22 +473,63 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
       setVersionTo(templateDetail.current_version || versions[0]?.version || '1.0');
       setVersionFrom(versions[1]?.version || versions[0]?.version || '1.0');
     } catch (error) {
+      if (requestId !== loadRequestRef.current || activeTemplateIdRef.current !== templateId) return;
       showToast(
         error instanceof Error ? error.message : (zh ? '模板详情加载失败' : 'Failed to load template details'),
         'error',
       );
     } finally {
-      setDetailLoading(false);
+      if (requestId === loadRequestRef.current) setDetailLoading(false);
     }
   }, [showToast, zh]);
 
   useEffect(() => {
-    if (selectedTemplateId) {
-      void loadTemplate(selectedTemplateId);
-    } else if (templates.length > 0) {
-      onSelectTemplateIdChange(templates[0].id);
+    const previousId = previousTemplateIdRef.current;
+    activeTemplateIdRef.current = selectedTemplateId;
+    if (previousId && previousId !== selectedTemplateId) {
+      // A parameter draft belongs to the template it was created for. Never
+      // carry it into another template, including drafts kept by an earlier
+      // page visit or by a background refresh.
+      parameterDrafts.current = {};
+      try {
+        Object.keys(window.localStorage)
+          .filter((key) => key.startsWith('nexora.config-template-draft.'))
+          .forEach((key) => window.localStorage.removeItem(key));
+      } catch {
+        // Local storage is optional; in-memory state is still cleared below.
+      }
+      setDetail(null);
+      setProfiles([]);
+      setParameters({});
+      setParameterSources({});
+      setSourceContent('');
+      setSourceDirty(false);
+      setSelectedProfileId('');
+      setProfileName('');
+      setRenderResult(null);
+      setLastSuccessfulResult(null);
+      setRenderState('idle');
+      setPreviewTab('preview');
+      setPreviewSearch('');
+      setGroupCollapsed({});
     }
-  }, [loadTemplate, onSelectTemplateIdChange, selectedTemplateId, templates]);
+    previousTemplateIdRef.current = selectedTemplateId;
+  }, [selectedTemplateId]);
+
+  useEffect(() => {
+    if (!selectedTemplateId) {
+      if (templates.length > 0) {
+        onSelectTemplateIdChange(templates[0].id);
+      }
+      return;
+    }
+    // Shared template lookups refresh in the background. Do not reload the
+    // current detail when only the left-hand list changed; that would reset
+    // in-progress parameters, preview results, and the selected preview tab.
+    if (detail?.id !== selectedTemplateId) {
+      void loadTemplate(selectedTemplateId);
+    }
+  }, [detail?.id, loadTemplate, onSelectTemplateIdChange, selectedTemplateId, templates]);
 
   const schema = detail?.variable_schema || detail?.version?.variable_schema || [];
 
@@ -401,9 +575,10 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
 
   const runRender = useCallback(async (showFeedback = false) => {
     if (!detail?.id) return;
+    const templateId = detail.id;
     setRenderState('rendering');
     try {
-      const result = await apiRequest<RenderResult>(`/api/config-templates/${encodeURIComponent(detail.id)}/render`, {
+      const result = await apiRequest<RenderResult>(`/api/config-templates/${encodeURIComponent(templateId)}/render`, {
         method: 'POST',
         body: JSON.stringify({
           version: detail.current_version || detail.version?.version || '',
@@ -416,6 +591,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
           },
         }),
       });
+      if (activeTemplateIdRef.current !== templateId) return;
       setRenderResult(result);
       if (result.success) {
         setLastSuccessfulResult(result);
@@ -426,6 +602,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
         if (showFeedback) showToast(zh ? '参数或模板校验未通过' : 'Validation failed', 'warning');
       }
     } catch (error) {
+      if (activeTemplateIdRef.current !== templateId) return;
       setRenderState('error');
       if (showFeedback) {
         showToast(error instanceof Error ? error.message : (zh ? '渲染失败' : 'Render failed'), 'error');
@@ -477,10 +654,34 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     Array.from(new Set(templates.map((item) => String(item[key] || '')).filter(Boolean))).sort()
   ), [templates]);
 
+  const vendorOptions = useMemo(() => (
+    Array.from(new Set([
+      ...CONFIG_VENDOR_OPTIONS,
+      ...templates.map((item) => String(item.vendor || '')).filter(Boolean),
+    ])).sort()
+  ), [templates]);
+
+  const platformOptions = useMemo(() => {
+    const catalogPlatforms = vendorFilter !== 'all'
+      ? (CONFIG_VENDOR_PLATFORM_OPTIONS[vendorFilter] || []).map((item) => item.value)
+      : [];
+    const templatePlatforms = templates
+      .filter((item) => vendorFilter === 'all' || String(item.vendor || '') === vendorFilter)
+      .map((item) => String(item.platform_family || ''))
+      .filter(Boolean);
+    return Array.from(new Set([...catalogPlatforms, ...templatePlatforms])).sort();
+  }, [templates, vendorFilter]);
+
+  useEffect(() => {
+    if (platformFilter !== 'all' && !platformOptions.includes(platformFilter)) {
+      setPlatformFilter('all');
+    }
+  }, [platformFilter, platformOptions]);
+
   const selectTemplate = useCallback((id: string) => {
-    if (detail?.id) parameterDrafts.current[detail.id] = parameters;
+    if (id === selectedTemplateId) return;
     onSelectTemplateIdChange(id);
-  }, [detail?.id, onSelectTemplateIdChange, parameters]);
+  }, [onSelectTemplateIdChange, selectedTemplateId]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -501,10 +702,17 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     setParameters((current) => {
       const next = { ...current, [name]: value };
       if (detail?.id) parameterDrafts.current[detail.id] = next;
+      if (detail?.id) {
+        try {
+          window.localStorage.setItem(draftStorageKey(detail.id), JSON.stringify({ parameters: next, source: sourceContent }));
+        } catch {
+          // Draft recovery is best effort and must never block parameter editing.
+        }
+      }
       return next;
     });
     setParameterSources((current) => ({ ...current, [name]: source }));
-  }, [detail?.id]);
+  }, [detail?.id, sourceContent]);
 
   const loadExamples = useCallback(() => {
     if (!detail) return;
@@ -524,6 +732,9 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     setParameterSources({});
     setSelectedProfileId('');
     if (detail?.id) parameterDrafts.current[detail.id] = {};
+    if (detail?.id) {
+      try { window.localStorage.removeItem(draftStorageKey(detail.id)); } catch { /* best effort */ }
+    }
   }, [detail?.id]);
 
   const loadProfile = useCallback((profileId: string) => {
@@ -596,6 +807,135 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     }
   }, [detail, showToast, zh]);
 
+  const resetEditorForm = useCallback(() => {
+    setCreateForm({
+      name: '', vendor: 'Cisco', platform: 'cisco_iosxe', category: 'interface',
+      description: '', software_version: '', usage_notes: '', risk_notes: '',
+      content: zh
+        ? '! 自定义配置模板\n! 使用 {{ description | default("example") }} 定义带默认值的参数\n'
+        : '! Custom configuration template\n! Use {{ description | default("example") }} for a parameter with a default\n',
+      rollback: '', example_values: '{}', variable_schema: [],
+    });
+  }, [zh]);
+
+  const openTemplateEditor = useCallback((template?: ConfigTemplate | TemplateDetail) => {
+    const selected = template as TemplateDetail | undefined;
+    const schema = selected?.variable_schema
+      || parseJson<TemplateVariable[]>(selected?.variable_schema_json, []);
+    const examples = selected?.example_values
+      || parseJson<Record<string, unknown>>(selected?.example_values_json, {});
+    const source = selected?.id === detail?.id
+      ? sourceContent
+      : (selected?.version?.source || selected?.content || '');
+    setEditingTemplateId(selected?.id || null);
+    setCreateForm({
+      name: selected?.name || '',
+      vendor: selected?.vendor || 'Cisco',
+      platform: selected?.platform_family || 'cisco_iosxe',
+      category: selected?.category || 'interface',
+      description: selected?.description || '',
+      software_version: selected?.software_version || '',
+      usage_notes: selected?.usage_notes || '',
+      risk_notes: selected?.risk_notes || '',
+      content: source || (zh ? '! 请在此输入配置命令\n' : '! Enter configuration commands here\n'),
+      rollback: selected?.rollback || selected?.version?.rollback_source || '',
+      example_values: JSON.stringify(examples, null, 2),
+      variable_schema: schema,
+    });
+    setShowCreate(true);
+  }, [detail?.id, sourceContent, zh]);
+
+  const updateEditorVariable = useCallback((index: number, patch: Partial<TemplateVariable>) => {
+    setCreateForm((current) => ({
+      ...current,
+      variable_schema: current.variable_schema.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item),
+    }));
+  }, []);
+
+  const saveTemplateEditor = useCallback(async () => {
+    if (!createForm.name.trim() || !createForm.content.trim()) return;
+    let exampleValues: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(createForm.example_values || '{}');
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Example values must be a JSON object');
+      exampleValues = parsed as Record<string, unknown>;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '示例值 JSON 格式错误' : 'Example values must be valid JSON'), 'error');
+      return;
+    }
+    setCreatingTemplate(true);
+    try {
+      const payload = {
+        name: createForm.name.trim(),
+        type: 'Jinja2',
+        category: createForm.category,
+        vendor: createForm.vendor,
+        platform_family: createForm.platform,
+        software_version: createForm.software_version,
+        description: createForm.description,
+        usage_notes: createForm.usage_notes,
+        risk_notes: createForm.risk_notes,
+        content: createForm.content,
+        rollback: createForm.rollback,
+        variable_schema: createForm.variable_schema,
+        example_values: exampleValues,
+        actor_username: 'current-user',
+      };
+      const result = await apiRequest<{ id?: string; success: boolean }>(
+        editingTemplateId ? `/api/templates/${encodeURIComponent(editingTemplateId)}` : '/api/templates',
+        { method: editingTemplateId ? 'PUT' : 'POST', body: JSON.stringify(payload) },
+      );
+      const items = await refreshTemplates();
+      const targetId = result.id || editingTemplateId || '';
+      setShowCreate(false);
+      setEditingTemplateId(null);
+      if (targetId && items.some((item) => item.id === targetId)) {
+        selectTemplate(targetId);
+        await loadTemplate(targetId);
+      }
+      showToast(editingTemplateId ? (zh ? '自定义模板已更新，字段和示例已同步' : 'Custom template updated') : (zh ? '自定义模板已创建，字段和示例已生成' : 'Custom template created'), 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '模板保存失败' : 'Failed to save template'), 'error');
+    } finally {
+      setCreatingTemplate(false);
+    }
+  }, [createForm, editingTemplateId, loadTemplate, refreshTemplates, selectTemplate, showToast, zh]);
+
+  const deleteTemplate = useCallback(async (template: ConfigTemplate) => {
+    if (template.is_official || template.source_type === 'official') {
+      showToast(zh ? '内置模板不可删除，请先复制为自定义模板' : 'Official templates are read-only; copy one first', 'warning');
+      return;
+    }
+    if (!window.confirm(zh ? `确定归档自定义模板“${template.name}”吗？归档后不会再出现在模板库中。` : `Archive custom template "${template.name}"? It will be hidden from the library.`)) return;
+    try {
+      await apiRequest(`/api/templates/${encodeURIComponent(template.id)}`, { method: 'DELETE' });
+      const items = await refreshTemplates();
+      if (selectedTemplateId === template.id) {
+        setDetail(null);
+        const next = items[0];
+        if (next) selectTemplate(next.id);
+      }
+      showToast(zh ? '模板已归档' : 'Template archived', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '模板删除失败' : 'Failed to archive template'), 'error');
+    }
+  }, [refreshTemplates, selectTemplate, selectedTemplateId, showToast, zh]);
+
+  const copyTemplate = useCallback(async (template: ConfigTemplate) => {
+    try {
+      const result = await apiRequest<{ id: string }>(`/api/config-templates/${encodeURIComponent(template.id)}/copy`, { method: 'POST' });
+      const items = await refreshTemplates();
+      const copied = items.find((item) => item.id === result.id);
+      if (copied) {
+        selectTemplate(copied.id);
+        await loadTemplate(copied.id);
+      }
+      showToast(zh ? `已复制“${template.name}”，现在可以编辑自定义副本` : `Copied “${template.name}” as an editable custom template`, 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '复制模板失败' : 'Failed to copy template'), 'error');
+    }
+  }, [loadTemplate, refreshTemplates, selectTemplate, showToast, zh]);
+
   const saveSource = useCallback(async () => {
     if (!detail?.id || !sourceContent.trim()) return;
     setSourceSaving(true);
@@ -610,6 +950,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
         }),
       });
       setSourceDirty(false);
+      try { window.localStorage.removeItem(draftStorageKey(detail.id)); } catch { /* best effort */ }
       await refreshTemplates();
       await loadTemplate(detail.id);
       showToast(zh ? '模板源码已保存，审核状态已重置为草稿' : 'Template saved and review status reset to draft', 'success');
@@ -619,40 +960,6 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
       setSourceSaving(false);
     }
   }, [detail, loadTemplate, refreshTemplates, showToast, sourceContent, zh]);
-
-  const createTemplate = useCallback(async () => {
-    if (!createForm.name.trim()) return;
-    setCreatingTemplate(true);
-    try {
-      const payload = {
-        name: createForm.name.trim(),
-        type: 'Jinja2',
-        category: createForm.category,
-        vendor: createForm.vendor,
-        platform_family: createForm.platform,
-        content: zh
-          ? '# 在此输入配置命令，使用 {{ variable_name }} 定义参数\n'
-          : '# Enter commands here; use {{ variable_name }} for parameters\n',
-        rollback: '',
-        description: '',
-        lastUsed: null,
-      };
-      const result = await apiRequest<{ id?: string; success: boolean }>('/api/templates', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-      const items = await refreshTemplates();
-      setShowCreate(false);
-      setCreateForm({ name: '', vendor: 'Cisco', platform: 'cisco_iosxe', category: 'interface' });
-      const created = result.id ? items.find((item) => item.id === result.id) : items.find((item) => item.name === payload.name);
-      if (created) selectTemplate(created.id);
-      showToast(zh ? '新模板已创建' : 'Template created', 'success');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : (zh ? '模板创建失败' : 'Failed to create template'), 'error');
-    } finally {
-      setCreatingTemplate(false);
-    }
-  }, [createForm, refreshTemplates, selectTemplate, showToast, zh]);
 
   const importTemplate = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -826,6 +1133,9 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
         </select>
       );
     }
+    if (item.type === 'text' && item.allow_multiline === false) {
+      return <input {...commonProps} type="text" autoComplete="off" />;
+    }
     if (['text', 'list', 'object', 'command_block'].includes(item.type)) {
       return <textarea {...commonProps} rows={item.type === 'text' ? 3 : 2} />;
     }
@@ -852,7 +1162,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             <button type="button" onClick={() => importRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 shadow-sm hover:border-cyan-300 hover:text-cyan-700">
               <Import size={14} /> {zh ? '导入模板' : 'Import'}
             </button>
-            <button type="button" onClick={() => setShowCreate(true)} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-cyan-200">
+            <button type="button" onClick={() => { resetEditorForm(); setEditingTemplateId(null); setShowCreate(true); }} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-cyan-200">
               <Plus size={14} /> {zh ? '新建模板' : 'New template'}
             </button>
           </>
@@ -903,8 +1213,8 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-1.5">
                   {[
-                    [vendorFilter, setVendorFilter, zh ? '全部厂商' : 'All vendors', distinct('vendor')],
-                    [platformFilter, setPlatformFilter, zh ? '全部平台' : 'All platforms', distinct('platform_family')],
+                    [vendorFilter, setVendorFilter, zh ? '全部厂商' : 'All vendors', vendorOptions],
+                    [platformFilter, setPlatformFilter, zh ? '全部平台' : 'All platforms', platformOptions],
                     [categoryFilter, setCategoryFilter, zh ? '全部场景' : 'All scenarios', distinct('category')],
                     [sourceFilter, setSourceFilter, zh ? '全部来源' : 'All sources', ['official', 'custom', 'team', 'mine']],
                     [statusFilter, setStatusFilter, zh ? '全部状态' : 'All statuses', ['published', 'draft', 'review', 'archived']],
@@ -953,6 +1263,19 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                       <button type="button" onClick={() => void toggleFavorite(template)} className={`absolute right-2 top-2 rounded-lg p-1.5 transition ${template.is_favorite ? 'text-amber-500' : 'text-slate-300 opacity-0 hover:text-amber-500 group-hover:opacity-100'}`} title={zh ? '收藏模板' : 'Favorite'}>
                         <Star size={13} fill={template.is_favorite ? 'currentColor' : 'none'} />
                       </button>
+                      {!template.is_official && template.source_type !== 'official' && (
+                        <>
+                          <button type="button" onClick={(event) => { event.stopPropagation(); openTemplateEditor(template); }} className="absolute right-9 top-2 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-cyan-50 hover:text-cyan-700 group-hover:opacity-100" title={zh ? '编辑自定义模板' : 'Edit custom template'}>
+                            <Pencil size={12} />
+                          </button>
+                          <button type="button" onClick={(event) => { event.stopPropagation(); void deleteTemplate(template); }} className="absolute bottom-2 right-2 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100" title={zh ? '归档模板' : 'Archive template'}>
+                            <Trash2 size={12} />
+                          </button>
+                        </>
+                      )}
+                      <button type="button" onClick={(event) => { event.stopPropagation(); void copyTemplate(template); }} className="absolute bottom-2 right-9 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-cyan-50 hover:text-cyan-700 group-hover:opacity-100" title={zh ? '复制为自定义模板' : 'Copy as custom template'}>
+                        <Copy size={12} />
+                      </button>
                     </div>
                   );
                 })}
@@ -978,6 +1301,8 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             </div>
             {detail && (
               <div className="mt-3 flex flex-wrap gap-1.5">
+                <button type="button" onClick={() => void copyTemplate(detail)} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[9px] font-bold text-violet-700 hover:bg-violet-100"><Copy size={10} className="mr-1 inline" />{zh ? '复制为自定义' : 'Copy as custom'}</button>
+                {!detail.is_official && detail.source_type !== 'official' && <button type="button" onClick={() => openTemplateEditor(detail)} className="rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1 text-[9px] font-bold text-cyan-700 hover:bg-cyan-100"><Pencil size={10} className="mr-1 inline" />{zh ? '编辑模板' : 'Edit template'}</button>}
                 <button type="button" onClick={loadExamples} className="rounded-lg border border-slate-200 px-2 py-1 text-[9px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><Sparkles size={10} className="mr-1 inline" />{zh ? '加载示例' : 'Example'}</button>
                 <button type="button" onClick={resetParameters} className="rounded-lg border border-slate-200 px-2 py-1 text-[9px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><RefreshCw size={10} className="mr-1 inline" />{zh ? '重置参数' : 'Reset'}</button>
                 <button type="button" onClick={() => void runRender(true)} className="rounded-lg bg-slate-900 px-2 py-1 text-[9px] font-bold text-white"><WandSparkles size={10} className="mr-1 inline" />{zh ? '立即渲染' : 'Render'}</button>
@@ -1019,6 +1344,26 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   ))}
                 </div>
 
+                {(detail.compatibility || []).length > 0 && (
+                  <div className="mb-3 rounded-xl border border-cyan-100 bg-cyan-50/50 p-3">
+                    <div className="flex items-center gap-1.5 text-[10px] font-black text-cyan-800">
+                      <Layers size={12} /> {zh ? '平台与型号系列适配' : 'Platform and model/series compatibility'}
+                    </div>
+                    <p className="mt-1 text-[9px] leading-4 text-cyan-700">
+                      {zh ? '平台表示命令行/操作系统方言；型号和系列仅用于兼容性预检，不会被误当成新的平台。' : 'Platform means the CLI/OS dialect; model and series are used for compatibility pre-checks, not as new platforms.'}
+                    </p>
+                    <div className="mt-2 space-y-1.5">
+                      {(detail.compatibility || []).map((item, index) => (
+                        <div key={`${String(item.platform || '')}-${index}`} className="flex flex-wrap items-center gap-1.5 text-[8px] text-slate-600">
+                          <span className="rounded bg-white px-1.5 py-0.5 font-bold text-cyan-700">{String(item.vendor || detail.vendor || '')}</span>
+                          <code className="rounded bg-white px-1.5 py-0.5 text-slate-500">{String(item.platform || detail.platform_family || '')}</code>
+                          {item.model_pattern && <span className="truncate rounded bg-white px-1.5 py-0.5" title={zh ? '适用型号/系列' : 'Supported model/series'}>{zh ? '型号/系列' : 'Model/series'}: {formatModelPattern(item.model_pattern)}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {groupedSchema.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center">
                     <FileJson size={24} className="mx-auto text-slate-200" />
@@ -1044,7 +1389,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                                 <div className="mb-1.5 flex items-center gap-2">
                                   <span className="text-[10px] font-bold text-slate-700">{item.label || item.name}</span>
                                   {item.required ? <span className="text-[9px] font-black text-rose-500">*</span> : <span className="text-[8px] text-slate-400">{zh ? '可选' : 'optional'}</span>}
-                                  <code className="ml-auto text-[8px] text-slate-300">{item.type}</code>
+                                  <code className="ml-auto text-[8px] text-slate-300">{parameterTypeLabel(item.type, zh)}</code>
                                 </div>
                                 {renderVariableInput(item)}
                                 <div className="mt-1 flex items-start gap-2">
@@ -1099,11 +1444,20 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   </div>
                   <button type="button" onClick={() => setWrapPreview((value) => !value)} className={`rounded-lg border p-1.5 ${wrapPreview ? 'border-cyan-200 bg-cyan-50 text-cyan-700' : 'border-slate-200 text-slate-500'}`} title={zh ? '自动换行' : 'Wrap'}><WrapText size={12} /></button>
                   <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => {
-                    void navigator.clipboard.writeText(visibleRender?.rendered_output || '');
-                    showToast(t('copied'), 'success');
+                    void copyText(visibleRender?.rendered_output || '')
+                      .then(() => showToast(t('copied'), 'success'))
+                      .catch(() => showToast(zh ? '复制失败，请手动选择文本复制' : 'Copy failed; select the text manually', 'error'));
                   }} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30" title={zh ? '复制全部' : 'Copy all'}><Copy size={12} /></button>
-                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => visibleRender && downloadText(visibleRender.rendered_output, `${safeFileName(detail?.name || 'config')}.txt`)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30" title="TXT"><Download size={12} /></button>
-                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => visibleRender && downloadText(visibleRender.rendered_output, `${safeFileName(detail?.name || 'config')}.cfg`)} className="rounded-lg border border-slate-200 px-2 py-1 text-[8px] font-bold text-slate-500 disabled:opacity-30">CFG</button>
+                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => {
+                    if (!visibleRender) return;
+                    downloadText(visibleRender.rendered_output, `${safeFileName(detail?.name || 'config')}.txt`);
+                    showToast(zh ? '已下载 TXT 配置' : 'TXT configuration downloaded', 'success');
+                  }} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30" title="TXT" aria-label={zh ? '下载 TXT 配置' : 'Download TXT'}><Download size={12} /></button>
+                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => {
+                    if (!visibleRender) return;
+                    downloadText(visibleRender.rendered_output, `${safeFileName(detail?.name || 'config')}.cfg`);
+                    showToast(zh ? '已下载 CFG 配置' : 'CFG configuration downloaded', 'success');
+                  }} className="rounded-lg border border-slate-200 px-2 py-1 text-[8px] font-bold text-slate-500 disabled:opacity-30" aria-label={zh ? '下载 CFG 配置' : 'Download CFG'}>CFG</button>
                 </>
               )}
               <button type="button" onClick={() => setFullscreen((value) => !value)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500">{fullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}</button>
@@ -1148,8 +1502,12 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   </button>
                 </div>
                 <textarea value={sourceContent} onChange={(event) => {
-                  setSourceContent(event.target.value);
+                  const nextSource = event.target.value;
+                  setSourceContent(nextSource);
                   setSourceDirty(true);
+                  if (detail?.id) {
+                    try { window.localStorage.setItem(draftStorageKey(detail.id), JSON.stringify({ parameters, source: nextSource })); } catch { /* best effort */ }
+                  }
                 }} spellCheck={false} className="min-h-0 flex-1 resize-none bg-[#0b1220] p-5 font-mono text-xs leading-6 text-slate-300 outline-none" />
               </div>
             )}
@@ -1237,25 +1595,34 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
 
       {showCreate && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl border border-white/40 bg-white p-5 shadow-2xl">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><Plus size={18} /></span>
-              <div className="flex-1">
-                <h3 className="text-sm font-black text-slate-800">{zh ? '新建配置模板' : 'New configuration template'}</h3>
-                <p className="text-[10px] text-slate-400">{zh ? '新模板以自定义草稿创建，不会直接发布或执行。' : 'Created as a custom draft; never published or executed directly.'}</p>
-              </div>
+          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/40 bg-white shadow-2xl">
+            <div className="flex shrink-0 items-center gap-3 border-b border-slate-100 p-5">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700">{editingTemplateId ? <Pencil size={17} /> : <Plus size={18} />}</span>
+              <div className="flex-1"><h3 className="text-sm font-black text-slate-800">{editingTemplateId ? (zh ? '编辑自定义模板' : 'Edit custom template') : (zh ? '新建自定义模板' : 'New custom template')}</h3><p className="text-[10px] text-slate-400">{zh ? '保存后自动解析字段、生成示例上下文并执行 Jinja2 语法校验；内置模板不可直接修改。' : 'Saving infers fields, builds the example context, and validates Jinja2 syntax; built-in templates stay read-only.'}</p></div>
               <button type="button" onClick={() => setShowCreate(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={15} /></button>
             </div>
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <label className="col-span-2 space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '模板名称' : 'Name'} *</span><input value={createForm.name} onChange={(event) => setCreateForm((current) => ({ ...current, name: event.target.value }))} className={fieldClass} autoFocus /></label>
-              <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '厂商' : 'Vendor'}</span><select value={createForm.vendor} onChange={(event) => setCreateForm((current) => ({ ...current, vendor: event.target.value }))} className={fieldClass}>{['Cisco', 'Huawei', 'H3C', 'Juniper', 'Arista', 'Custom'].map((value) => <option key={value}>{value}</option>)}</select></label>
-              <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '平台' : 'Platform'}</span><input value={createForm.platform} onChange={(event) => setCreateForm((current) => ({ ...current, platform: event.target.value }))} className={fieldClass} /></label>
-              <label className="col-span-2 space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '配置场景' : 'Scenario'}</span><select value={createForm.category} onChange={(event) => setCreateForm((current) => ({ ...current, category: event.target.value }))} className={fieldClass}>{['vlan', 'interface', 'routing', 'ospf', 'bgp', 'acl', 'qos', 'snmp', 'ntp', 'aaa', 'security', 'system', 'other'].map((value) => <option key={value}>{value}</option>)}</select></label>
+            <div className="min-h-0 overflow-y-auto p-5">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="col-span-2 space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '模板名称' : 'Name'} *</span><input value={createForm.name} onChange={(event) => setCreateForm((current) => ({ ...current, name: event.target.value }))} className={fieldClass} autoFocus /></label>
+                <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '厂商' : 'Vendor'}</span><select value={createForm.vendor} onChange={(event) => setCreateForm((current) => ({ ...current, vendor: event.target.value, platform: CONFIG_VENDOR_PLATFORM_OPTIONS[event.target.value]?.[0]?.value || 'custom' }))} className={fieldClass}>{CONFIG_VENDOR_OPTIONS.map((value) => <option key={value}>{value}</option>)}</select></label>
+                <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '平台/系统' : 'Platform'}</span><select value={createForm.platform} onChange={(event) => setCreateForm((current) => ({ ...current, platform: event.target.value }))} className={fieldClass}>{(CONFIG_VENDOR_PLATFORM_OPTIONS[createForm.vendor] || CONFIG_VENDOR_PLATFORM_OPTIONS.Custom).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '配置场景' : 'Scenario'}</span><select value={createForm.category} onChange={(event) => setCreateForm((current) => ({ ...current, category: event.target.value }))} className={fieldClass}>{['vlan', 'interface', 'routing', 'ospf', 'bgp', 'acl', 'qos', 'snmp', 'ntp', 'aaa', 'security', 'system', 'other'].map((value) => <option key={value}>{value}</option>)}</select></label>
+                <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '软件版本范围' : 'Software version'}</span><input value={createForm.software_version} onChange={(event) => setCreateForm((current) => ({ ...current, software_version: event.target.value }))} placeholder="例如 V300R019 / 17.x" className={fieldClass} /></label>
+                <label className="col-span-2 space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '模板说明' : 'Description'}</span><textarea value={createForm.description} onChange={(event) => setCreateForm((current) => ({ ...current, description: event.target.value }))} rows={2} className={fieldClass} /></label>
+                <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '使用说明' : 'Usage notes'}</span><textarea value={createForm.usage_notes} onChange={(event) => setCreateForm((current) => ({ ...current, usage_notes: event.target.value }))} rows={3} className={fieldClass} placeholder="说明进入模式、前置条件和适用型号" /></label>
+                <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '风险说明' : 'Risk notes'}</span><textarea value={createForm.risk_notes} onChange={(event) => setCreateForm((current) => ({ ...current, risk_notes: event.target.value }))} rows={3} className={fieldClass} placeholder="说明可能影响业务的命令和回滚要求" /></label>
+              </div>
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? 'Jinja2 配置源' : 'Jinja2 source'} *</span><textarea value={createForm.content} onChange={(event) => setCreateForm((current) => ({ ...current, content: event.target.value }))} rows={12} spellCheck={false} className="w-full resize-y rounded-xl border border-slate-200 bg-[#0b1220] px-3 py-2 font-mono text-[11px] leading-5 text-cyan-100 outline-none focus:border-cyan-400" /></label>
+                <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '回滚源（可选）' : 'Rollback source (optional)'}</span><textarea value={createForm.rollback} onChange={(event) => setCreateForm((current) => ({ ...current, rollback: event.target.value }))} rows={12} spellCheck={false} className="w-full resize-y rounded-xl border border-slate-200 bg-[#0b1220] px-3 py-2 font-mono text-[11px] leading-5 text-rose-100 outline-none focus:border-cyan-400" /></label>
+              </div>
+              <div className="mt-3 rounded-xl border border-cyan-100 bg-cyan-50 p-3 text-[10px] leading-5 text-cyan-800"><p className="font-black">{zh ? '格式要求' : 'Format rules'}</p><p>{zh ? '参数使用小写蛇形命名，例如 ' : 'Use lower snake_case parameter names, for example '}<code className="rounded bg-white px-1">{'{{ vlan_id | default(100) }}'}</code>{zh ? '。字段会从源代码自动识别；示例值必须是 JSON 对象，供预览和校验使用。危险命令请填写回滚源。' : '. Fields are inferred from source; example values must be a JSON object for preview and validation. Add rollback for risky commands.'}</p></div>
+              <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1.2fr]">
+                <label className="space-y-1.5"><span className="text-[10px] font-bold text-slate-500">{zh ? '示例值 JSON' : 'Example values JSON'}</span><textarea value={createForm.example_values} onChange={(event) => setCreateForm((current) => ({ ...current, example_values: event.target.value }))} rows={8} spellCheck={false} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[11px] leading-5 text-slate-700 outline-none focus:border-cyan-400" placeholder={'{\n  "vlan_id": 100\n}'} /></label>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="flex items-center gap-2"><span className="flex-1 text-[10px] font-black text-slate-600">{zh ? '字段定义（可选）' : 'Field definitions (optional)'}</span><button type="button" onClick={() => setCreateForm((current) => ({ ...current, variable_schema: [...current.variable_schema, { name: `variable_${current.variable_schema.length + 1}`, label: '', type: 'string', required: false, description: '', example_value: '' }] }))} className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-white px-2 py-1 text-[9px] font-bold text-cyan-700"><Plus size={11} />{zh ? '添加字段' : 'Add field'}</button></div><p className="mt-1 text-[9px] leading-4 text-slate-400">{zh ? '只保留源代码实际使用的字段；标签、类型、必填和示例会覆盖自动推断。' : 'Only source-used fields are kept; label, type, required, and example override inference.'}</p><div className="mt-2 max-h-72 space-y-2 overflow-y-auto">{createForm.variable_schema.length === 0 ? <p className="rounded-lg border border-dashed border-slate-200 px-3 py-5 text-center text-[10px] text-slate-400">{zh ? '保存时将根据 Jinja2 源码自动生成字段' : 'Fields will be inferred from Jinja2 source when saved'}</p> : createForm.variable_schema.map((item, index) => (<div key={`${item.name}-${index}`} className="rounded-lg border border-slate-200 bg-white p-2"><div className="grid grid-cols-12 gap-1.5"><input value={item.name} onChange={(event) => updateEditorVariable(index, { name: event.target.value })} className="col-span-3 rounded-lg border border-slate-200 px-2 py-1.5 text-[10px]" placeholder="name" /><input value={item.label || ''} onChange={(event) => updateEditorVariable(index, { label: event.target.value })} className="col-span-3 rounded-lg border border-slate-200 px-2 py-1.5 text-[10px]" placeholder={zh ? '显示名称' : 'Label'} /><select value={item.type || 'string'} onChange={(event) => updateEditorVariable(index, { type: event.target.value })} className="col-span-3 rounded-lg border border-slate-200 px-2 py-1.5 text-[10px]"><option value="string">{zh ? '文本' : 'Text'}</option><option value="integer">{zh ? '整数' : 'Integer'}</option><option value="ipv4_address">IPv4</option><option value="ipv4_netmask">{zh ? '子网掩码' : 'Netmask'}</option><option value="vlan_id">VLAN ID</option><option value="interface">{zh ? '接口' : 'Interface'}</option><option value="password">{zh ? '敏感值' : 'Secret'}</option></select><label className="col-span-2 flex items-center justify-center gap-1 rounded-lg border border-slate-200 px-1 text-[9px] text-slate-500"><input type="checkbox" checked={Boolean(item.required)} onChange={(event) => updateEditorVariable(index, { required: event.target.checked })} />{zh ? '必填' : 'Req.'}</label><button type="button" onClick={() => setCreateForm((current) => ({ ...current, variable_schema: current.variable_schema.filter((_, itemIndex) => itemIndex !== index) }))} className="col-span-1 rounded-lg border border-rose-100 text-rose-500 hover:bg-rose-50"><Trash2 size={11} className="mx-auto" /></button><input value={item.example_value === undefined || item.example_value === null ? '' : String(item.example_value)} onChange={(event) => updateEditorVariable(index, { example_value: event.target.value })} className="col-span-4 rounded-lg border border-slate-200 px-2 py-1.5 text-[10px]" placeholder={zh ? '示例值' : 'Example'} /><input value={item.description || ''} onChange={(event) => updateEditorVariable(index, { description: event.target.value })} className="col-span-8 rounded-lg border border-slate-200 px-2 py-1.5 text-[10px]" placeholder={zh ? '字段说明和格式要求' : 'Description and format requirements'} /></div></div>))}</div></div>
+              </div>
             </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setShowCreate(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600">{zh ? '取消' : 'Cancel'}</button>
-              <button type="button" disabled={!createForm.name.trim() || creatingTemplate} onClick={() => void createTemplate()} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2 text-xs font-black text-white disabled:opacity-40">{creatingTemplate ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{zh ? '创建草稿' : 'Create draft'}</button>
-            </div>
+            <div className="flex shrink-0 justify-end gap-2 border-t border-slate-100 bg-white p-4"><button type="button" onClick={() => setShowCreate(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600">{zh ? '取消' : 'Cancel'}</button><button type="button" disabled={!createForm.name.trim() || !createForm.content.trim() || creatingTemplate} onClick={() => void saveTemplateEditor()} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2 text-xs font-black text-white disabled:opacity-40">{creatingTemplate ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}{editingTemplateId ? (zh ? '保存模板' : 'Save template') : (zh ? '创建草稿' : 'Create draft')}</button></div>
           </div>
         </div>
       )}

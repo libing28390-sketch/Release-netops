@@ -116,6 +116,9 @@ tools/node/
 !**/deploy/**/*.md
 !**/*.github/**/*.md
 !.github/**/*.md
+!blog/user-manuals/
+!blog/user-manuals/**/*.md
+!blog/用户使用手册索引_20260801.md
 !**/.agents/AGENTS.md
 !**/.agents/skills/**/SKILL.md
 !**/.agents/skills/**/references/**/*.md

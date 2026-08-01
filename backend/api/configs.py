@@ -26,6 +26,39 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _build_device_scope_tree(rows: list[dict]) -> list[dict]:
+    """Build the CMDB-compatible site/type/category/role hierarchy."""
+    root = {
+        "id": "root",
+        "kind": "root",
+        "label": "All assets",
+        "count": 0,
+        "branch": {},
+        "children": [],
+    }
+
+    def find_or_create(parent: dict, node_id: str, kind: str, label: str, branch: dict, count: int) -> dict:
+        node = next((item for item in parent["children"] if item["id"] == node_id), None)
+        if node is None:
+            node = {"id": node_id, "kind": kind, "label": label or "Unassigned", "count": 0, "branch": branch, "children": []}
+            parent["children"].append(node)
+        node["count"] += count
+        return node
+
+    for row in rows:
+        site_id = str(row.get("site_id") or "unassigned")
+        site_name = str(row.get("site_name") or row.get("site_code") or "Unassigned site")
+        asset_type = str(row.get("asset_type") or "network_device")
+        category = str(row.get("device_category") or "other")
+        role = str(row.get("device_role") or "unassigned")
+        root["count"] += 1
+        site = find_or_create(root, f"site:{site_id}", "site", site_name, {"site_id": site_id}, 1)
+        asset = find_or_create(site, f"{site['id']}:type:{asset_type}", "type", asset_type, {"site_id": site.get("branch", {}).get("site_id", ""), "asset_type": asset_type}, 1)
+        device_category = find_or_create(asset, f"{asset['id']}:category:{category}", "category", category, {"site_id": site.get("branch", {}).get("site_id", ""), "asset_type": asset_type, "device_category": category}, 1)
+        find_or_create(device_category, f"{device_category['id']}:role:{role}", "role", role, {"site_id": site.get("branch", {}).get("site_id", ""), "asset_type": asset_type, "device_category": category, "device_role": "" if role == "unassigned" else role}, 1)
+    return [root]
+
 # Backup root directory - relative to cwd (d:\nexora-automation)
 BACKUP_ROOT = os.path.join(os.getcwd(), 'backup')
 
@@ -311,6 +344,10 @@ def _finish_backup_run(run_id: str, *, error_message: str = '') -> None:
 @router.get('/configs/devices-with-backups')
 def list_devices_with_backups(
     search: str = Query(default='', description='Search hostname or IP'),
+    site_id: str = Query(default='', description='Filter by site'),
+    asset_type: str = Query(default='', description='Filter by asset type'),
+    device_category: str = Query(default='', description='Filter by device category'),
+    device_role: str = Query(default='', description='Filter by device role'),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
 ):
@@ -337,14 +374,39 @@ def list_devices_with_backups(
 
         where_sql = f"WHERE ({platform_conditions})"
         params: list = list(platform_params)
+        if site_id:
+            site_expr = "COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), '')"
+            if site_id == 'unassigned':
+                where_sql += f" AND {site_expr} = ''"
+            else:
+                where_sql += f" AND {site_expr} = ?"
+                params.append(site_id)
+        if asset_type:
+            where_sql += " AND COALESCE(NULLIF(pa.asset_type, ''), 'network_device') = ?"
+            params.append(asset_type)
+        if device_category:
+            where_sql += " AND COALESCE(NULLIF(pa.device_category, ''), NULLIF(d.device_category, ''), 'other') = ?"
+            params.append(device_category)
+        if device_role:
+            where_sql += " AND COALESCE(NULLIF(pa.device_role, ''), NULLIF(d.role, ''), 'unassigned') = ?"
+            params.append(device_role)
         if search and search.strip():
             fuzzy = f"%{search.strip().lower()}%"
-            where_sql += " AND (LOWER(d.hostname) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ?)"
-            params.extend([fuzzy, fuzzy])
+            where_sql += " AND (LOWER(d.hostname) LIKE ? OR LOWER(COALESCE(d.ip_address, '')) LIKE ? OR LOWER(COALESCE(s.site_name, '')) LIKE ?)"
+            params.extend([fuzzy, fuzzy, fuzzy])
+
+        joins_sql = """
+            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+            LEFT JOIN sites s ON (
+                s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''))
+                OR (COALESCE(d.site_id, '') = '' AND (s.site_code = d.site OR s.site_name = d.site))
+            )
+        """
 
         count_sql = f'''
             SELECT COUNT(DISTINCT d.id)
             FROM devices d
+            {joins_sql}
             {where_sql}
         '''
         total = conn.execute(count_sql, tuple(params)).fetchone()[0]
@@ -352,26 +414,36 @@ def list_devices_with_backups(
         offset = (page - 1) * page_size
         # Devices sorted by whether they've been backed up (backed-up first),
         # then by most recent backup time, then by hostname.
-        rows = conn.execute(f'''
+        all_rows = conn.execute(f'''
             SELECT d.id, d.hostname, d.ip_address, d.platform, d.status,
+                   COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''), NULLIF(d.site, ''), '') AS site_id,
+                   COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), NULLIF(d.site, ''), 'Unassigned site') AS site_name,
+                   COALESCE(NULLIF(s.site_code, ''), '') AS site_code,
+                   COALESCE(NULLIF(pa.asset_type, ''), 'network_device') AS asset_type,
+                   COALESCE(NULLIF(pa.device_category, ''), NULLIF(d.device_category, ''), 'other') AS device_category,
+                   COALESCE(NULLIF(pa.device_role, ''), NULLIF(d.role, ''), 'unassigned') AS device_role,
                    COUNT(cs.id) AS backup_count,
                    MAX(cs.timestamp) AS latest_backup
             FROM devices d
+            {joins_sql}
             LEFT JOIN config_snapshots cs ON cs.device_id = d.id
             {where_sql}
-            GROUP BY d.id
+            GROUP BY d.id, d.hostname, d.ip_address, d.platform, d.status, d.site_id, d.site,
+                     s.site_name, s.site_code, pa.site_id, pa.asset_type, pa.device_category,
+                     pa.device_role, d.device_category, d.role
             ORDER BY
                 CASE WHEN COUNT(cs.id) > 0 THEN 0 ELSE 1 END,
                 COALESCE(MAX(cs.timestamp), '') DESC,
                 d.hostname
-            LIMIT ? OFFSET ?
-        ''', tuple([*params, page_size, offset])).fetchall()
+        ''', tuple(params)).fetchall()
+        rows = all_rows[offset:offset + page_size]
 
         return {
             'items': [dict(r) for r in rows],
             'total': total,
             'page': page,
             'page_size': page_size,
+            'tree': _build_device_scope_tree([dict(r) for r in all_rows]),
         }
     finally:
         conn.close()

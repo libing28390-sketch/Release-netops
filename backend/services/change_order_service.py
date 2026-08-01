@@ -38,6 +38,7 @@ def generate_order_number(conn) -> str:
 
 
 def create_change_order(conn, *, title: str, description: str = '',
+                        incident_id: str = '',
                         order_type: str = 'config_change', priority: str = 'medium',
                         status: str = 'draft',
                         requester_id: str = '', requester_username: str = '',
@@ -61,7 +62,7 @@ def create_change_order(conn, *, title: str, description: str = '',
     conn.execute(
         '''
         INSERT INTO change_orders (
-            id, order_number, title, description, order_type, priority, status,
+            id, order_number, title, description, incident_id, order_type, priority, status,
             requester_id, requester_username,
             assigned_initial_reviewer_id, assigned_initial_reviewer_username,
             assigned_final_approver_id, assigned_final_approver_username,
@@ -71,10 +72,10 @@ def create_change_order(conn, *, title: str, description: str = '',
             authorization_exempt,
             control_sheet_json,
             created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         (
-            order_id, order_number, title, description, order_type, priority, status,
+            order_id, order_number, title, description, incident_id, order_type, priority, status,
             requester_id, requester_username,
             assigned_initial_reviewer_id, assigned_initial_reviewer_username,
             assigned_final_approver_id, assigned_final_approver_username,
@@ -100,7 +101,7 @@ def update_change_order(conn, order_id: str, updates: dict, *, commit: bool = Tr
         return None
 
     allowed_fields = {
-        'title', 'description', 'order_type', 'priority', 'status',
+        'title', 'description', 'incident_id', 'order_type', 'priority', 'status',
         'approver_id', 'approver_username',
         'initial_reviewer_id', 'initial_reviewer_username',
         'final_approver_id', 'final_approver_username',

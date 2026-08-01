@@ -4,6 +4,7 @@ export interface ChangeOrder {
   id: string;
   order_number: string;
   title: string;
+  incident_id?: string;
   description: string;
   order_type: string;
   priority: string;

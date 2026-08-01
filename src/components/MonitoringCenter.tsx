@@ -2,13 +2,13 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, ChevronLeft, ChevronRight, RefreshCw,
-  AlertTriangle, CheckCircle2, XCircle, Shield,
+  AlertTriangle, CheckCircle2, Database, HeartPulse,
   Zap, Bell, Clock, ArrowUpRight, Eye, Activity,
   Radio, Play, ChevronDown, ChevronUp,
   Terminal, Download, Wrench, Map as MapIcon, Globe, Layers, BarChart3,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';
-import type { Device, HostResourceSnapshot, HostResourceHistoryPayload } from '../types';
+import type { Device, HostResourceSnapshot, HostResourceHistoryPayload, MonitoringHealthDevice, MonitoringIncident, MonitoringIncidentImpact } from '../types';
 import DateTimePicker from './DateTimePicker';
 import PageHero from './PageHero';
 import { useChartTheme } from '../hooks/useChartTheme';
@@ -80,26 +80,34 @@ const HealthSegment: React.FC<{
   label: string; count: number; total: number; color: string; onClick?: () => void;
 }> = ({ label, count, total, color, onClick }) => {
   const pct = total > 0 ? (count / total) * 100 : 0;
-  return (
-    <button type="button" onClick={onClick} className="group flex items-center gap-3 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-4 py-3 transition-all hover:border-black/20 hover:shadow-sm">
+  const className = `group flex items-center gap-3 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-4 py-3 transition-all ${onClick ? 'cursor-pointer hover:border-black/20 hover:shadow-sm' : 'cursor-default'}`;
+  const details = (
+    <>
       <span className="h-8 w-1.5 rounded-full" style={{ backgroundColor: color }} />
       <div className="min-w-0 flex-1">
         <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-text)]">{label}</p>
         <p className="mt-0.5 text-xl font-bold text-[var(--app-text)]">{count}</p>
       </div>
       <span className="text-xs font-semibold text-[var(--muted-text)]">{pct.toFixed(0)}%</span>
-    </button>
+    </>
+  );
+  return onClick ? (
+    <button type="button" onClick={onClick} className={className}>{details}</button>
+  ) : (
+    <div className={className}>{details}</div>
   );
 };
 
 const RiskDeviceRow: React.FC<{
   device: any; language: 'zh' | 'en'; onClick: () => void; index: number;
 }> = ({ device, language, onClick, index }) => {
+  const scoreAvailable = device.health_score_available !== false && device.health_score != null;
   const statusColor = device.health_status === 'critical' ? '#ef4444' : device.health_status === 'warning' ? '#f59e0b' : device.health_status === 'healthy' ? '#10b981' : '#94a3b8';
-  const statusLabel = device.health_status === 'critical' ? (language === 'zh' ? '严重' : 'Critical') : device.health_status === 'warning' ? (language === 'zh' ? '告警' : 'Warning') : device.health_status === 'healthy' ? (language === 'zh' ? '健康' : 'Healthy') : (language === 'zh' ? '未知' : 'Unknown');
+  const statusLabel = device.health_status === 'critical' ? (language === 'zh' ? '严重' : 'Critical') : device.health_status === 'warning' ? (language === 'zh' ? '告警' : 'Warning') : device.health_status === 'healthy' ? (language === 'zh' ? '健康' : 'Healthy') : (language === 'zh' ? '待评估' : 'Not evaluated');
+  const availabilityLabel = device.availability_status === 'offline' ? (language === 'zh' ? '离线' : 'Offline') : device.availability_status === 'online' ? (language === 'zh' ? '在线' : 'Online') : (language === 'zh' ? '未知' : 'Unknown');
   const isOffline = String(device.status || '').toLowerCase() === 'offline';
-  const score = device.health_score ?? 0;
-  const scoreColor = score < 30 ? '#ef4444' : score < 60 ? '#f59e0b' : '#10b981';
+  const score = scoreAvailable ? Number(device.health_score) : null;
+  const scoreColor = score == null ? '#94a3b8' : score < 30 ? '#ef4444' : score < 60 ? '#f59e0b' : '#10b981';
   return (
     <button type="button" onClick={onClick} className="group w-full flex items-center gap-3 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-3 py-2.5 text-left transition-all hover:border-red-300 hover:bg-red-50/30" style={{ borderLeftWidth: 3, borderLeftColor: statusColor }}>
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-black/5 text-[10px] font-bold text-[var(--muted-text)]">{index + 1}</span>
@@ -108,11 +116,12 @@ const RiskDeviceRow: React.FC<{
           <p className="text-sm font-semibold text-[var(--app-text)] truncate">{device.hostname || device.ip_address}</p>
           {isOffline && <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-red-500" title="Offline" />}
         </div>
-        <p className="text-[11px] text-[var(--muted-text)] truncate">{[device.site, device.platform].filter(Boolean).join(' · ') || device.ip_address}</p>
+      <p className="text-[11px] text-[var(--muted-text)] truncate">{[device.site, device.platform, availabilityLabel].filter(Boolean).join(' · ') || device.ip_address}</p>
+      <p className="mt-0.5 truncate text-[10px] text-[var(--muted-text)]">{device.health_summary || (language === 'zh' ? '\u6682\u65e0\u5065\u5eb7\u539f\u56e0' : 'No health finding')} · {device.open_alert_count || 0} {language === 'zh' ? '\u6761\u6d3b\u8dc3\u544a\u8b66' : 'open alerts'}</p>
       </div>
       <div className="shrink-0 flex items-center gap-2.5">
         <span className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${statusColor}18`, color: statusColor }}>{statusLabel}</span>
-        <span className="text-lg font-extrabold tabular-nums" style={{ color: scoreColor }}>{score}</span>
+        <span className="text-lg font-extrabold tabular-nums" style={{ color: scoreColor }}>{score == null ? '--' : score}</span>
       </div>
       <ArrowUpRight size={14} className="shrink-0 text-[var(--muted-text)] opacity-0 transition-opacity group-hover:opacity-100" />
     </button>
@@ -216,6 +225,21 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const [nocClock, setNocClock] = useState(() => new Date());
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [impactedShowAll, setImpactedShowAll] = useState(false);
+  const [selectedIncident, setSelectedIncident] = useState<MonitoringIncident | null>(null);
+  const [incidentDetailLoading, setIncidentDetailLoading] = useState(false);
+  const [incidentMutationLoading, setIncidentMutationLoading] = useState(false);
+  const [incidentAssignee, setIncidentAssignee] = useState('');
+  const [incidentImpact, setIncidentImpact] = useState<MonitoringIncidentImpact | null>(null);
+  const [incidentImpactLoading, setIncidentImpactLoading] = useState(false);
+  const [incidentDiagnostics, setIncidentDiagnostics] = useState<any | null>(null);
+  const [incidentDiagnosticsLoading, setIncidentDiagnosticsLoading] = useState(false);
+  const [collectionDrilldownOpen, setCollectionDrilldownOpen] = useState(false);
+  const [collectionDrilldownLoading, setCollectionDrilldownLoading] = useState(false);
+  const [collectionStatusItems, setCollectionStatusItems] = useState<any[]>([]);
+  const [healthDrilldownFilter, setHealthDrilldownFilter] = useState<string | null>(null);
+  const [healthDrilldownLoading, setHealthDrilldownLoading] = useState(false);
+  const [healthDrilldownItems, setHealthDrilldownItems] = useState<MonitoringHealthDevice[]>([]);
+  const [healthHistoryRange, setHealthHistoryRange] = useState<1 | 24 | 168>(24);
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [hostResourceAlertView, setHostResourceAlertView] = useState<'active' | 'history'>('active');
   const advancedSectionRef = useRef<HTMLDivElement | null>(null);
@@ -229,6 +253,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     monitorSelectedDevice,
     setMonitorSelectedDevice,
     monitorOverview,
+    monitorHealthHistory,
     monitorRealtime,
     setMonitorRealtime,
     monitorTrend,
@@ -261,6 +286,8 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     setMonitorAlertsSeverity,
     monitorAlertsPhase,
     setMonitorAlertsPhase,
+    monitorIncidents,
+    monitorIncidentTotal,
     monitorLoading,
     monitorPageVisible,
     monitorDashboardSiteFilter,
@@ -302,10 +329,95 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   // Get fetch functions from the hook (they use store internally)
   const {
     fetchMonitoringOverview,
+    fetchMonitoringHealthHistory,
     fetchMonitoringAlerts,
+    fetchMonitoringIncidentDetail,
+    fetchMonitoringIncidentImpact,
+    fetchMonitoringCollectionStatus,
+    fetchMonitoringHealthDevices,
+    runMonitoringDeviceDiagnostics,
+    updateMonitoringIncident,
     fetchMonitoringRealtime,
     fetchHostResources,
-  } = useMonitoring({ isAuthenticated, activeTab: 'monitoring', language, pollOutbound: false });
+  } = useMonitoring({ isAuthenticated, activeTab: 'monitoring', language, pollOutbound: false, healthHistoryRange });
+
+  const openIncidentDetail = useCallback(async (incident: MonitoringIncident) => {
+    setSelectedIncident(incident);
+    setIncidentAssignee(incident.assigned_to || '');
+    setIncidentDetailLoading(true);
+    setIncidentImpact(null);
+    setIncidentImpactLoading(true);
+    setIncidentDiagnostics(null);
+    try {
+      const [detail, impact] = await Promise.all([
+        fetchMonitoringIncidentDetail(incident.id),
+        fetchMonitoringIncidentImpact(incident.id),
+      ]);
+      if (detail) setSelectedIncident(detail);
+      if (impact) setIncidentImpact(impact);
+    } finally {
+      setIncidentDetailLoading(false);
+      setIncidentImpactLoading(false);
+    }
+  }, [fetchMonitoringIncidentDetail, fetchMonitoringIncidentImpact]);
+
+  const runIncidentDiagnostics = useCallback(async () => {
+    const deviceId = selectedIncident?.primary_device_id;
+    if (!deviceId || incidentDiagnosticsLoading) return;
+    setIncidentDiagnosticsLoading(true);
+    try {
+      const result = await runMonitoringDeviceDiagnostics(deviceId);
+      setIncidentDiagnostics(result);
+      showToast(language === 'zh' ? '采集链路诊断已完成' : 'Collection diagnostics completed', result?.status === 'success' ? 'success' : 'warning');
+      fetchMonitoringOverview();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (language === 'zh' ? '采集诊断失败' : 'Collection diagnostics failed'), 'error');
+    } finally {
+      setIncidentDiagnosticsLoading(false);
+    }
+  }, [fetchMonitoringOverview, incidentDiagnosticsLoading, language, runMonitoringDeviceDiagnostics, selectedIncident, showToast]);
+
+  const openCollectionDrilldown = useCallback(async () => {
+    setCollectionDrilldownOpen(true);
+    setCollectionDrilldownLoading(true);
+    try {
+      const payload = await fetchMonitoringCollectionStatus();
+      setCollectionStatusItems(Array.isArray(payload?.items) ? payload.items : []);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (language === 'zh' ? '加载采集状态失败' : 'Unable to load collection status'), 'error');
+    } finally {
+      setCollectionDrilldownLoading(false);
+    }
+  }, [fetchMonitoringCollectionStatus, language, showToast]);
+
+  const openHealthDrilldown = useCallback(async (filter: { label: string; health_status?: string; availability_status?: string; collection_status?: string }) => {
+    setHealthDrilldownFilter(filter.label);
+    setHealthDrilldownLoading(true);
+    try {
+      const query = Object.fromEntries(Object.entries(filter).filter(([key]) => key !== 'label')) as { health_status?: string; availability_status?: string; collection_status?: string };
+      const payload = await fetchMonitoringHealthDevices(query);
+      setHealthDrilldownItems(payload.items || []);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (language === 'zh' ? '加载健康下钻失败' : 'Unable to load health drilldown'), 'error');
+    } finally {
+      setHealthDrilldownLoading(false);
+    }
+  }, [fetchMonitoringHealthDevices, language, showToast]);
+
+  const mutateIncident = useCallback(async (action: 'acknowledge' | 'assign' | 'resolve', body: Record<string, string>) => {
+    if (!selectedIncident) return;
+    setIncidentMutationLoading(true);
+    try {
+      const updated = await updateMonitoringIncident(selectedIncident.id, action, body);
+      if (updated) setSelectedIncident(updated);
+      showToast(language === 'zh' ? '事件状态已更新' : 'Incident updated', 'success');
+      fetchMonitoringOverview();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (language === 'zh' ? '事件更新失败' : 'Unable to update incident'), 'error');
+    } finally {
+      setIncidentMutationLoading(false);
+    }
+  }, [fetchMonitoringOverview, language, selectedIncident, showToast, updateMonitoringIncident]);
 
   const fetchHostResourceHistory = useCallback(async (rangeHours = hostResourceRange) => {
     setHostResourceHistoryLoading(true);
@@ -743,6 +855,11 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const hostHistoricalAlerts = hostAlertHistory.slice(0, 10);
   const deviceHealthSummary = monitorOverview?.device_health_summary || null;
   const riskyDevices = Array.isArray(monitorOverview?.top_risky_devices) ? monitorOverview.top_risky_devices : [];
+  const platformHealth = monitorOverview?.platform_health || null;
+  const healthHistoryData = (monitorHealthHistory?.series || []).map((point) => ({
+    ...point,
+    time: formatTs(point.ts, true),
+  }));
 
   /* NOC auto-refresh (30s) */
   useEffect(() => {
@@ -792,24 +909,30 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   /* derived data for dashboard */
   const onlineDevices = monitorOverview?.online_devices ?? 0;
   const rawTotalDevices = (monitorOverview?.online_devices ?? 0) + (monitorOverview?.offline_devices ?? 0);
-  const totalDevices = rawTotalDevices > 0 ? rawTotalDevices : (deviceHealthSummary?.total_devices ?? 0);
-  const offlineDevices = totalDevices - onlineDevices;
+  const totalDevices = monitorOverview?.total_devices ?? (rawTotalDevices > 0 ? rawTotalDevices : (deviceHealthSummary?.total_devices ?? 0));
+  const offlineDevices = monitorOverview?.offline_devices ?? deviceHealthSummary?.offline_devices ?? Math.max(0, totalDevices - onlineDevices);
+  const unknownAvailabilityDevices = monitorOverview?.unknown_devices ?? deviceHealthSummary?.unknown_availability_devices ?? 0;
   const openAlerts = monitorOverview?.open_alerts ?? 0;
   const healthyCount = deviceHealthSummary?.healthy ?? 0;
   const warningCount = deviceHealthSummary?.warning ?? 0;
   const criticalCount = deviceHealthSummary?.critical ?? 0;
   const unknownCount = deviceHealthSummary?.unknown ?? 0;
-  const healthTotal = healthyCount + warningCount + criticalCount + unknownCount;
-  const healthPct = healthTotal > 0 ? Math.round((healthyCount / healthTotal) * 100) : 0;
+  const healthTotal = deviceHealthSummary?.total_devices ?? (healthyCount + warningCount + criticalCount + unknownCount);
+  const healthEvaluableCount = deviceHealthSummary?.health_evaluable_count ?? (healthyCount + warningCount + criticalCount);
+  const healthPct = healthEvaluableCount > 0 ? Math.round((healthyCount / healthEvaluableCount) * 100) : null;
+  const collectionAnomalyDevices = monitorOverview?.collection_anomaly_devices ?? deviceHealthSummary?.collection_anomaly_devices ?? 0;
+  const dataConfidenceAvg = monitorOverview?.data_confidence_avg ?? deviceHealthSummary?.data_confidence_avg ?? null;
+  const lastCollectionAt = monitorOverview?.last_collection_at ?? deviceHealthSummary?.last_collection_at ?? null;
   const healthBarWidth = (count: number) => {
     if (healthTotal <= 0 || count <= 0) return '0%';
     const pct = (count / healthTotal) * 100;
     // Ensure tiny segments are still visible (min 6%)
     return `${Math.max(6, pct)}%`;
   };
-  const criticalAlertCount = defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'critical').length;
-  const majorAlertCount = defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'major').length;
-  const warningAlertCount = defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'warning').length;
+  const alertSeverityCounts = monitorOverview?.open_alert_severity_counts || {};
+  const criticalAlertCount = alertSeverityCounts.critical ?? defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'critical').length;
+  const majorAlertCount = alertSeverityCounts.major ?? defaultOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'major').length;
+  const warningAlertCount = alertSeverityCounts.warning ?? defaultOpenAlerts.filter((a: any) => !['critical', 'major'].includes(String(a.severity || '').toLowerCase())).length;
 
   const nocTimeStr = nocClock.toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -842,6 +965,11 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
               <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
               {refreshing ? (language === 'zh' ? '刷新中' : 'Sync') : (language === 'zh' ? '立即刷新' : 'Refresh')}
             </button>
+            <span className="hidden rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1.5 text-[10px] text-[var(--muted-text)] xl:inline-flex xl:items-center xl:gap-1.5" title={language === 'zh' ? '\u6570\u636e\u53ef\u4fe1\u5ea6\u4e0e\u6700\u8fd1\u91c7\u96c6\u65f6\u95f4' : 'Data confidence and last collection'}>
+              <span className={lastCollectionAt ? 'text-emerald-600' : 'text-amber-600'}>●</span>
+              {lastCollectionAt ? formatTs(lastCollectionAt, true) : (language === 'zh' ? '\u6682\u65e0\u91c7\u96c6' : 'No collection')}
+              <span>· {dataConfidenceAvg == null ? '--' : Math.round(dataConfidenceAvg)}%</span>
+            </span>
             <span className="tabular-nums text-[11px] font-mono text-[var(--muted-text)]">{nocTimeStr}</span>
           </>
         }
@@ -872,43 +1000,204 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         </button>
       )}
 
-      {/* SECTION 1: SEVERITY-FIRST STATUS CARDS */}
+      {/* SECTION 1: EXPLICIT NOC DIMENSIONS */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatusCard
-          label={language === 'zh' ? 'P1 \u4e25\u91cd' : 'P1 Critical'}
-          value={`${criticalCount} / ${criticalAlertCount}`}
-          tone="red"
-          pulse={criticalCount > 0 || criticalAlertCount > 0}
-          sub={`${criticalCount} ${language === 'zh' ? '\u8bbe\u5907' : 'devices'} · ${criticalAlertCount} ${language === 'zh' ? '\u544a\u8b66' : 'alerts'}`}
+          label={language === 'zh' ? '\u8bbe\u5907\u53ef\u7528\u6027' : 'Availability'}
+          value={`${onlineDevices} / ${totalDevices}`}
+          tone={offlineDevices > 0 ? 'amber' : 'green'}
+          pulse={offlineDevices > 0}
+          sub={`${offlineDevices} ${language === 'zh' ? '\u79bb\u7ebf' : 'offline'} · ${unknownAvailabilityDevices} ${language === 'zh' ? '\u72b6\u6001\u672a\u77e5' : 'unknown'}`}
+          onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u79bb\u7ebf\u8bbe\u5907' : 'Offline devices', availability_status: offlineDevices > 0 ? 'offline' : 'online' })}
+          icon={<Radio size={14} />}
+        />
+        <StatusCard
+          label={language === 'zh' ? '\u5065\u5eb7\u8bc4\u4f30' : 'Health Evaluation'}
+          value={healthPct == null ? '--' : `${healthPct}%`}
+          tone={healthPct == null ? 'default' : healthPct >= 85 ? 'green' : healthPct >= 60 ? 'amber' : 'red'}
+          sub={`${healthyCount} ${language === 'zh' ? '\u5065\u5eb7' : 'healthy'} / ${healthEvaluableCount} ${language === 'zh' ? '\u53ef\u8bc4\u4f30' : 'evaluable'} · ${dataConfidenceAvg == null ? '--' : `${Math.round(dataConfidenceAvg)}%`} ${language === 'zh' ? '\u6570\u636e\u53ef\u4fe1\u5ea6' : 'confidence'}`}
+          onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u5065\u5eb7\u8bbe\u5907' : 'Healthy devices', health_status: 'healthy' })}
+          icon={<HeartPulse size={14} />}
+        />
+        <StatusCard
+          label={language === 'zh' ? '\u91c7\u96c6\u5b8c\u6574\u6027' : 'Collection Integrity'}
+          value={collectionAnomalyDevices}
+          tone={collectionAnomalyDevices > 0 ? 'amber' : 'green'}
+          sub={language === 'zh' ? '\u53f0\u8bbe\u5907\u5b58\u5728\u5931\u8d25\u3001\u8fc7\u671f\u6216\u90e8\u5206\u5931\u8d25\u91c7\u96c6' : 'devices with failed, stale, or partial collection'}
+          onClick={openCollectionDrilldown}
+          icon={<Database size={14} />}
+        />
+        <StatusCard
+          label={language === 'zh' ? '\u6d3b\u52a8\u544a\u8b66' : 'Active Alerts'}
+          value={openAlerts}
+          tone={openAlerts > 0 ? 'red' : 'green'}
+          sub={`${criticalAlertCount} ${language === 'zh' ? '\u4e25\u91cd' : 'critical'} · ${majorAlertCount} ${language === 'zh' ? '\u4e3b\u8981' : 'major'} · ${warningAlertCount} ${language === 'zh' ? '\u4e00\u822c' : 'warning'}`}
           onClick={() => navigate('/alerts')}
-          icon={<XCircle size={14} />}
-        />
-        <StatusCard
-          label={language === 'zh' ? 'P2 \u4e3b\u8981' : 'P2 Major'}
-          value={`${offlineDevices} / ${majorAlertCount}`}
-          tone={(offlineDevices + majorAlertCount) > 0 ? 'amber' : 'default'}
-          sub={`${offlineDevices} ${language === 'zh' ? '\u79bb\u7ebf' : 'offline'} · ${majorAlertCount} ${language === 'zh' ? '\u544a\u8b66' : 'alerts'}`}
-          onClick={() => navigate('/alerts')}
-          icon={<AlertTriangle size={14} />}
-        />
-        <StatusCard
-          label={language === 'zh' ? 'P3 \u6b21\u8981' : 'P3 Warning'}
-          value={`${warningCount} / ${warningAlertCount}`}
-          tone={(warningCount + warningAlertCount) > 0 ? 'amber' : 'default'}
-          sub={`${warningCount} ${language === 'zh' ? '\u8bbe\u5907' : 'devices'} · ${warningAlertCount} ${language === 'zh' ? '\u544a\u8b66' : 'alerts'}`}
-          onClick={() => navigate('/health')}
-          icon={<Shield size={14} />}
-        />
-        <StatusCard
-          label={language === 'zh' ? '\u6b63\u5e38' : 'Normal'}
-          value={healthyCount}
-          tone="green"
-          sub={`${totalDevices} ${language === 'zh' ? '\u603b\u8bbe\u5907' : 'total'} · ${onlineDevices} ${language === 'zh' ? '\u5728\u7ebf' : 'online'} · ${healthPct}%`}
-          icon={<CheckCircle2 size={14} />}
+          icon={<Bell size={14} />}
         />
       </div>
 
-      {/* SECTION 2: MIDDLE - HEALTH + RISK */}
+      {/* ACTIVE INCIDENTS: grouped operator-facing work queue */}
+      <section className="ops-surface rounded-2xl p-5 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-rose-600">{language === 'zh' ? '事件聚合' : 'Incident Queue'}</p>
+            <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '活跃事件与处置' : 'Active incidents & response'}</h3>
+            <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '关联同一设备的连通性告警，避免重复派单，并保留原始告警时间线。' : 'Grouped alerts become one actionable incident while the original timeline remains available.'}</p>
+          </div>
+          <button type="button" onClick={() => navigate('/alerts')} className="rounded-lg border border-[var(--card-border)] px-3 py-1.5 text-[11px] font-semibold text-[var(--muted-text)] hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700">
+            {language === 'zh' ? `查看全部 ${monitorIncidentTotal} 个` : `View all ${monitorIncidentTotal}`}
+          </button>
+        </div>
+        {monitorIncidents.length > 0 ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            {monitorIncidents.slice(0, 8).map((incident) => {
+              const severity = String(incident.severity || 'warning').toLowerCase();
+              const tone = severity === 'critical' ? 'border-rose-300 bg-rose-50/60' : severity === 'major' ? 'border-orange-300 bg-orange-50/60' : 'border-amber-200 bg-amber-50/50';
+              return (
+                <button key={incident.id} type="button" onClick={() => openIncidentDetail(incident)} className={`group rounded-xl border px-3 py-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm ${tone}`}>
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/80 text-rose-600"><AlertTriangle size={14} /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-bold text-[var(--app-text)]">{incident.title}</span>
+                        <span className="shrink-0 rounded-full bg-white/80 px-2 py-0.5 text-[9px] font-bold uppercase text-[var(--muted-text)]">{incident.status}</span>
+                      </span>
+                      <span className="mt-1 block truncate text-[10px] text-[var(--muted-text)]">{incident.hostname || incident.primary_device_id || '--'} · {incident.site || (language === 'zh' ? '未分配站点' : 'No site')}</span>
+                      <span className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold text-[var(--muted-text)]">
+                        <span className="rounded-full bg-white/80 px-2 py-0.5">{incident.impact_alert_count} {language === 'zh' ? '条告警' : 'alerts'}</span>
+                        <span className="rounded-full bg-white/80 px-2 py-0.5">{incident.impact_device_count} {language === 'zh' ? '台设备' : 'devices'}</span>
+                        <span className="rounded-full bg-white/80 px-2 py-0.5">{severity}</span>
+                      </span>
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-[var(--card-border)] px-4 py-6 text-center text-sm text-[var(--muted-text)]">
+            <CheckCircle2 size={20} className="mx-auto mb-2 text-emerald-500" />
+            {language === 'zh' ? '当前没有活跃事件。' : 'No active incidents.'}
+          </div>
+        )}
+      </section>
+
+      <section className="ops-surface rounded-2xl p-5 platform-health-section">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-600">{language === 'zh' ? '平台自监控' : 'Platform health'}</p>
+            <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '监控平台运行状态' : 'Monitoring platform status'}</h3>
+          </div>
+          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${platformHealth?.collectors?.status === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{platformHealth?.collectors?.status === 'degraded' ? (language === 'zh' ? '存在采集器异常' : 'Collector degraded') : (language === 'zh' ? '平台正常' : 'Platform healthy')}</span>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+          <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '数据库' : 'Database'}</p><p className="mt-1 text-sm font-bold text-emerald-600">{language === 'zh' ? '正常' : 'Healthy'}</p></div>
+          <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '采集器' : 'Collectors'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{platformHealth?.collectors?.total ?? '--'} <span className="text-[10px] font-normal text-[var(--muted-text)]">/ {platformHealth?.collectors?.failed ?? 0} {language === 'zh' ? '异常' : 'failed'}</span></p></div>
+          <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '采集异常设备' : 'Collection anomalies'}</p><p className="mt-1 text-sm font-bold text-amber-600">{collectionAnomalyDevices}</p></div>
+          <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '最近采集' : 'Last collection'}</p><p className="mt-1 truncate text-sm font-bold text-[var(--app-text)]">{lastCollectionAt ? formatTs(lastCollectionAt, true) : '--'}</p></div>
+        </div>
+         <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u961f\u5217\u7b49\u5f85' : 'Queue pending'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{platformHealth?.queue?.arp?.pending ?? '--'}</p></div>
+           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u6700\u8fd1\u91c7\u96c6\u5ef6\u8fdf' : 'Collection delay'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{lastCollectionAt ? formatTs(lastCollectionAt, true) : '--'}</p></div>
+           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u5bbf\u4e3b CPU' : 'Host CPU'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{hostResources?.cpu_percent == null ? '--' : `${Math.round(hostResources.cpu_percent)}%`}</p></div>
+           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u5bbf\u4e3b\u5185\u5b58' : 'Host memory'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{hostResources?.memory_percent == null ? '--' : `${Math.round(hostResources.memory_percent)}%`}</p></div>
+         </div>
+         {collectionDrilldownOpen && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">{language === 'zh' ? '采集异常明细' : 'Collection anomaly details'}</span>
+              <button type="button" onClick={() => setCollectionDrilldownOpen(false)} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-[var(--muted-text)] hover:bg-white/70">{language === 'zh' ? '收起' : 'Collapse'}</button>
+            </div>
+            {collectionDrilldownLoading ? <p className="mt-2 text-[11px] text-[var(--muted-text)]">{language === 'zh' ? '正在加载采集状态…' : 'Loading collection status…'}</p> : (
+              <div className="mt-2 max-h-36 space-y-1.5 overflow-auto">
+                {collectionStatusItems.filter((item) => !['healthy', 'success', 'ok'].includes(String(item.effective_status || item.status || '').toLowerCase())).slice(0, 20).map((item, index) => (
+                  <div key={`${item.device_id || item.collector || 'item'}-${index}`} className="flex items-center justify-between gap-2 rounded-lg bg-white/70 px-2.5 py-1.5 text-[10px]">
+                    <span className="truncate font-semibold text-[var(--app-text)]">{item.hostname || item.device_id || item.collector || '--'}</span>
+                    <span className="shrink-0 font-bold text-amber-700">{item.effective_status || item.status || 'unknown'}</span>
+                  </div>
+                ))}
+                {!collectionStatusItems.some((item) => !['healthy', 'success', 'ok'].includes(String(item.effective_status || item.status || '').toLowerCase())) && <p className="py-2 text-center text-[11px] text-emerald-700">{language === 'zh' ? '当前没有独立采集异常。' : 'No independent collection anomalies.'}</p>}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+       <section className="ops-surface rounded-2xl p-5">
+         <div className="flex flex-wrap items-start justify-between gap-3">
+           <div>
+             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-600">{language === 'zh' ? '\u5065\u5eb7\u8d8b\u52bf' : 'Health trend'}</p>
+             <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '\u5168\u7f51\u5065\u5eb7\u8d8b\u52bf' : 'Fleet health trend'}</h3>
+             <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u4ee5\u91c7\u96c6\u5feb\u7167\u5c55\u793a\u5728\u7ebf\u7387\u548c\u91c7\u96c6\u6210\u529f\u7387\uff0c\u672a\u77e5\u6570\u636e\u4e0d\u4f1a\u88ab\u5f53\u4f5c\u5065\u5eb7\u3002' : 'Snapshot-based availability and collection success; unknown data is not counted as healthy.'}</p>
+             <p className="mt-1 text-[10px] text-[var(--muted-text)]">{language === 'zh' ? ('\u65f6\u95f4\u8303\u56f4\uff1a' + (healthHistoryRange === 1 ? '1\u5c0f\u65f6' : healthHistoryRange === 24 ? '24\u5c0f\u65f6' : '7\u5929') + ' \u00b7 \u91c7\u6837\u70b9\uff1a' + (monitorHealthHistory?.sample_count ?? 0)) : ('Range: ' + (healthHistoryRange === 168 ? '7 days' : healthHistoryRange + ' hours') + ' · Samples: ' + (monitorHealthHistory?.sample_count ?? 0))}</p>
+           </div>
+           <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] p-0.5">
+                {([1, 24, 168] as const).map((hours) => (
+                  <button key={hours} type="button" onClick={() => { setHealthHistoryRange(hours); fetchMonitoringHealthHistory(hours); }} className={`rounded-md px-2 py-1 text-[10px] font-semibold ${healthHistoryRange === hours ? 'bg-sky-100 text-sky-700' : 'text-[var(--muted-text)] hover:bg-black/[0.03]'}`}>
+                    {hours === 1 ? '1h' : hours === 24 ? '24h' : '7d'}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => fetchMonitoringHealthHistory(healthHistoryRange)} className="inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] px-2.5 py-1 text-[10px] font-semibold text-sky-700 hover:border-sky-300 hover:bg-sky-50">
+                <RefreshCw size={11} />{language === 'zh' ? '\u5237\u65b0\u8d8b\u52bf' : 'Refresh'}
+              </button>
+            </div>
+         </div>
+         <div className="mt-3 grid grid-cols-3 gap-2">
+           {[
+             [language === 'zh' ? '\u65b0\u589e\u544a\u8b66' : 'New alerts', monitorHealthHistory?.new_alerts ?? 0, 'text-rose-600'],
+             [language === 'zh' ? '\u5df2\u6062\u590d' : 'Recovered', monitorHealthHistory?.recovered_alerts ?? 0, 'text-emerald-600'],
+             [language === 'zh' ? '\u5e73\u5747\u6062\u590d\u65f6\u95f4' : 'Avg MTTR', monitorHealthHistory?.avg_mttr_minutes == null ? '--' : `${monitorHealthHistory.avg_mttr_minutes}m`, 'text-amber-600'],
+           ].map(([label, value, tone]) => (
+             <div key={String(label)} className="rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-3 py-2">
+               <p className="text-[10px] text-[var(--muted-text)]">{label}</p>
+               <p className={`mt-1 text-sm font-bold ${tone}`}>{value}</p>
+             </div>
+           ))}
+         </div>
+         <div className="mt-3 h-44 rounded-xl border border-[var(--card-border)] bg-black/[0.015] p-2">
+           {healthHistoryData.length > 0 ? (
+             <ResponsiveContainer width="100%" height="100%">
+               <AreaChart data={healthHistoryData} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+                 <CartesianGrid strokeDasharray="3 3" stroke={ct.grid} vertical={false} />
+                 <XAxis dataKey="time" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} minTickGap={36} />
+                 <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(value) => `${value}%`} tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} width={34} />
+                 <Tooltip contentStyle={{ borderRadius: 12, border: `1px solid ${ct.grid}`, background: 'var(--card-bg)', fontSize: 11 }} formatter={(value: any, name: any) => [`${Number(value || 0).toFixed(1)}%`, String(name)]} />
+                 <Area type="monotone" dataKey="online_rate" name={language === 'zh' ? '\u5728\u7ebf\u7387' : 'Online rate'} stroke="#0ea5e9" fill="#0ea5e920" strokeWidth={2} isAnimationActive={false} connectNulls />
+                 <Area type="monotone" dataKey="collection_success_rate" name={language === 'zh' ? '\u91c7\u96c6\u6210\u529f\u7387' : 'Collection success'} stroke="#8b5cf6" fill="none" strokeWidth={2} isAnimationActive={false} connectNulls />
+               </AreaChart>
+             </ResponsiveContainer>
+           ) : (
+             <div className="flex h-full items-center justify-center gap-2 text-sm text-[var(--muted-text)]"><BarChart3 size={20} className="opacity-50" />{language === 'zh' ? '\u6682\u65e0\u5065\u5eb7\u8d8b\u52bf\u6570\u636e' : 'No health samples yet'}</div>
+           )}
+          </div>
+          <div className="mt-3 rounded-xl border border-[var(--card-border)] bg-black/[0.015] p-3">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600">{language === 'zh' ? '\u544a\u8b66\u8d8b\u52bf' : 'Alert trend'}</span>
+              <span className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u6d3b\u8dc3 / \u4e25\u91cd' : 'open / critical'}</span>
+            </div>
+            <div className="h-28">
+              {healthHistoryData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={healthHistoryData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={ct.grid} vertical={false} />
+                    <XAxis dataKey="time" tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} minTickGap={32} />
+                    <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} width={26} />
+                    <Tooltip contentStyle={{ borderRadius: 10, border: `1px solid ${ct.grid}`, background: 'var(--card-bg)', fontSize: 10 }} />
+                    <Area type="monotone" dataKey="open_alerts" name={language === 'zh' ? '\u6d3b\u8dc3\u544a\u8b66' : 'Open alerts'} stroke="#f97316" fill="#f9731620" strokeWidth={2} isAnimationActive={false} connectNulls />
+                    <Area type="monotone" dataKey="critical_open_alerts" name={language === 'zh' ? '\u4e25\u91cd\u544a\u8b66' : 'Critical alerts'} stroke="#ef4444" fill="none" strokeWidth={2} isAnimationActive={false} connectNulls />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u6682\u65e0\u544a\u8b66\u8d8b\u52bf\u6570\u636e' : 'No alert trend data'}</div>
+              )}
+            </div>
+          </div>
+        </section>
+
+       {/* SECTION 2: MIDDLE - HEALTH + RISK */}
       <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-4">
 
         {/* LEFT: Fleet Health Distribution */}
@@ -918,14 +1207,15 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-600">{language === 'zh' ? '\u5168\u7f51\u5065\u5eb7' : 'Fleet Health'}</p>
               <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '\u5065\u5eb7\u5206\u5e03\u603b\u89c8' : 'Health Distribution'}</h3>
               <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u57fa\u4e8e\u8bbe\u5907\u72b6\u6001\u3001\u544a\u8b66\u548c\u5065\u5eb7\u8bc4\u5206\u7efc\u5408\u8ba1\u7b97\u3002' : 'Computed from device status, alerts, and health scores.'}</p>
+              <p className="mt-1 text-[10px] text-[var(--muted-text)]">{lastCollectionAt ? (language === 'zh' ? `\u6700\u8fd1\u91c7\u96c6\uff1a${formatTs(lastCollectionAt, true)}` : `Last collection: ${formatTs(lastCollectionAt, true)}`) : (language === 'zh' ? '\u6682\u65e0\u91c7\u96c6\u6210\u529f\u8bb0\u5f55' : 'No successful collection recorded')}</p>
             </div>
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 flex-col items-center justify-center rounded-2xl border border-sky-200 bg-sky-50 text-sky-700">
-                <span className="text-lg font-extrabold leading-none">{healthPct}%</span>
-                <span className="mt-1 text-[8px] font-bold uppercase tracking-wider">{language === 'zh' ? '\u5065\u5eb7' : 'health'}</span>
+                <span className="text-lg font-extrabold leading-none">{healthPct == null ? '--' : `${healthPct}%`}</span>
+                <span className="mt-1 text-[8px] font-bold uppercase tracking-wider">{language === 'zh' ? '\u5065\u5eb7\u8bc4\u4f30\u7387' : 'evaluable'}</span>
               </div>
               <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-text)]">
-                {language === 'zh' ? `${healthTotal} \u53f0\u8bbe\u5907` : `${healthTotal} devices`}
+                {language === 'zh' ? `${healthTotal} \u53f0\u8bbe\u5907 · ${healthEvaluableCount} \u53ef\u8bc4\u4f30` : `${healthTotal} devices · ${healthEvaluableCount} evaluable`}
               </span>
             </div>
           </div>
@@ -948,11 +1238,34 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
           )}
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <HealthSegment label={language === 'zh' ? '\u5065\u5eb7' : 'Healthy'} count={healthyCount} total={healthTotal} color="#10b981" onClick={() => navigate('/health')} />
-            <HealthSegment label={language === 'zh' ? '\u544a\u8b66' : 'Warning'} count={warningCount} total={healthTotal} color="#f59e0b" onClick={() => navigate('/health')} />
-            <HealthSegment label={language === 'zh' ? '\u4e25\u91cd' : 'Critical'} count={criticalCount} total={healthTotal} color="#ef4444" onClick={() => navigate('/health')} />
-            <HealthSegment label={language === 'zh' ? '\u672a\u77e5' : 'Unknown'} count={unknownCount} total={healthTotal} color="#94a3b8" />
+            <HealthSegment label={language === 'zh' ? '\u5065\u5eb7' : 'Healthy'} count={healthyCount} total={healthTotal} color="#10b981" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u5065\u5eb7\u8bbe\u5907' : 'Healthy devices', health_status: 'healthy' })} />
+            <HealthSegment label={language === 'zh' ? '\u544a\u8b66' : 'Warning'} count={warningCount} total={healthTotal} color="#f59e0b" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u544a\u8b66\u8bbe\u5907' : 'Warning devices', health_status: 'warning' })} />
+            <HealthSegment label={language === 'zh' ? '\u4e25\u91cd' : 'Critical'} count={criticalCount} total={healthTotal} color="#ef4444" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u4e25\u91cd\u8bbe\u5907' : 'Critical devices', health_status: 'critical' })} />
+            <HealthSegment label={language === 'zh' ? '\u672a\u77e5' : 'Unknown'} count={unknownCount} total={healthTotal} color="#94a3b8" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u672a\u77e5\u8bbe\u5907' : 'Unknown devices', health_status: 'unknown' })} />
           </div>
+
+          {healthDrilldownFilter && (
+            <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-sky-700">{healthDrilldownFilter}</p>
+                  <p className="mt-1 text-[11px] text-[var(--muted-text)]">{healthDrilldownLoading ? (language === 'zh' ? '\u6b63\u5728\u52a0\u8f7d\u4e0b\u94bb\u7ed3\u679c\u2026' : 'Loading drilldown…') : `${healthDrilldownItems.length} ${language === 'zh' ? '\u53f0\u8bbe\u5907' : 'devices'}`}</p>
+                </div>
+                <button type="button" onClick={() => setHealthDrilldownFilter(null)} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-[var(--muted-text)] hover:bg-white/70">{language === 'zh' ? '\u6536\u8d77' : 'Collapse'}</button>
+              </div>
+              {!healthDrilldownLoading && (
+                <div className="mt-2 max-h-44 space-y-1.5 overflow-auto">
+                  {healthDrilldownItems.map((item) => (
+                    <button key={item.id} type="button" onClick={() => openMonitorDevice(item)} className="flex w-full items-center justify-between gap-2 rounded-lg bg-white/75 px-2.5 py-2 text-left text-[10px] hover:bg-white">
+                      <span className="min-w-0 truncate font-semibold text-[var(--app-text)]">{item.hostname || item.ip_address || item.id}</span>
+                      <span className="shrink-0 text-[var(--muted-text)]">{item.health_status || 'unknown'} · {item.collection_status || 'unknown'}</span>
+                    </button>
+                  ))}
+                  {!healthDrilldownItems.length && <p className="py-2 text-center text-[11px] text-[var(--muted-text)]">{language === 'zh' ? '\u6ca1\u6709\u5339\u914d\u8bbe\u5907' : 'No matching devices'}</p>}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Host resource telemetry is now shown under Server Monitoring. */}
           {false && hostResources && (
@@ -1225,6 +1538,124 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       </div>
 
       </div>
+      {selectedIncident && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-label={language === 'zh' ? '事件详情' : 'Incident detail'}>
+          <div className="w-full max-w-2xl rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-rose-600">{selectedIncident.incident_key}</p>
+                <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{selectedIncident.title}</h3>
+                <p className="mt-1 text-xs text-[var(--muted-text)]">{selectedIncident.summary || '--'}</p>
+              </div>
+              <button type="button" onClick={() => setSelectedIncident(null)} className="rounded-lg px-2 py-1 text-lg text-[var(--muted-text)] hover:bg-black/5" aria-label={language === 'zh' ? '关闭' : 'Close'}>×</button>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                [language === 'zh' ? '严重级别' : 'Severity', selectedIncident.severity],
+                [language === 'zh' ? '状态' : 'Status', selectedIncident.status],
+                [language === 'zh' ? '影响设备' : 'Devices', selectedIncident.impact_device_count],
+                [language === 'zh' ? '关联告警' : 'Alerts', selectedIncident.impact_alert_count],
+              ].map(([label, value]) => <div key={String(label)} className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{label}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{value}</p></div>)}
+            </div>
+            <div className="mt-4 max-h-56 space-y-1.5 overflow-auto rounded-xl border border-[var(--card-border)] p-2">
+              {incidentDetailLoading ? <p className="p-4 text-center text-xs text-[var(--muted-text)]">{language === 'zh' ? '正在加载事件时间线…' : 'Loading incident timeline…'}</p> : (selectedIncident.timeline || selectedIncident.alerts || []).map((alert: any) => (
+                  <div key={`${alert.event_type || 'alert'}-${alert.id}`} className="rounded-lg bg-black/[0.025] px-3 py-2">
+                    <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-[var(--app-text)]">{alert.event_type && alert.event_type !== 'alert' ? alert.event_type : (alert.title || alert.message)}</span><span className="text-[10px] text-[var(--muted-text)]">{formatTs(alert.created_at, true)}</span></div>
+                  <p className="mt-0.5 text-[10px] text-[var(--muted-text)]">{alert.message || '--'} · {alert.severity || 'warning'}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 rounded-xl border border-[var(--card-border)] bg-sky-50/50 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-sky-700">{language === 'zh' ? '拓扑影响范围' : 'Topology impact'}</span>
+                {incidentImpact && <span className="text-[10px] font-semibold text-[var(--muted-text)]">{incidentImpact.summary.affected_devices} {language === 'zh' ? '台受影响设备' : 'affected devices'} · {incidentImpact.summary.related_links} {language === 'zh' ? '条关联链路' : 'related links'}</span>}
+              </div>
+              {incidentImpactLoading ? <p className="mt-2 text-[11px] text-[var(--muted-text)]">{language === 'zh' ? '正在加载拓扑关系…' : 'Loading topology impact…'}</p> : incidentImpact?.links.length ? (
+                <div className="mt-2 space-y-1.5">
+                  {incidentImpact.links.slice(0, 4).map((link) => <div key={link.id} className="flex items-center justify-between gap-2 rounded-lg bg-white/70 px-2.5 py-1.5 text-[10px] text-[var(--muted-text)]"><span className="truncate font-semibold text-[var(--app-text)]">{link.source_hostname || link.source_device_id || '--'} → {link.target_hostname || link.target_device_id || '--'}</span><span className="shrink-0">{link.status || '--'} · {link.confidence != null ? `${Math.round(link.confidence * 100)}%` : '--'}</span></div>)}
+                </div>
+              ) : <p className="mt-2 text-[11px] text-[var(--muted-text)]">{language === 'zh' ? '暂无可用拓扑链路，影响范围以事件关联设备为准。' : 'No topology links are available; scope is based on incident devices.'}</p>}
+            </div>
+            {incidentImpact?.inference && (
+              <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-violet-700">{language === 'zh' ? '根因推断依据' : 'Root-cause inference'}</span>
+                  <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold text-violet-700">{incidentImpact.inference.confidence}</span>
+                </div>
+                <div className="mt-2 space-y-1 text-[10px] text-[var(--muted-text)]">
+                  {incidentImpact.inference.evidence.map((evidence) => <p key={evidence}>• {evidence}</p>)}
+                  <p className="text-violet-700">{language === 'zh' ? '该结论仅基于当前证据，需由运维人员确认。' : incidentImpact.inference.disclaimer}</p>
+                </div>
+              </div>
+            )}
+            {incidentImpact?.business_impact && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700">{language === 'zh' ? '业务影响' : 'Business impact'}</span>
+                  <span className="text-[10px] font-semibold text-slate-500">{incidentImpact.business_impact.confidence}</span>
+                </div>
+                <p className="mt-1 text-[10px] text-[var(--muted-text)]">{incidentImpact.business_impact.sites.length ? incidentImpact.business_impact.sites.join(' · ') : (language === 'zh' ? '暂无站点业务映射' : 'No site mapping')}</p>
+                {incidentImpact.business_impact.data_gaps.map((gap) => <p key={gap} className="mt-1 text-[10px] text-amber-700">{gap}</p>)}
+              </div>
+            )}
+            <div className="mt-3 rounded-xl border border-[var(--card-border)] bg-amber-50/50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700">{language === 'zh' ? '采集链路诊断' : 'Collection diagnostics'}</p>
+                  <p className="mt-1 text-[11px] text-[var(--muted-text)]">{language === 'zh' ? '检查设备到采集器的连通性、凭据和最近采集状态。' : 'Check connectivity, credentials, and recent collector state.'}</p>
+                </div>
+                <button type="button" disabled={!selectedIncident.primary_device_id || incidentDiagnosticsLoading} onClick={runIncidentDiagnostics} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-100 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-50">
+                  <Activity size={12} className={incidentDiagnosticsLoading ? 'animate-pulse' : ''} />
+                  {incidentDiagnosticsLoading ? (language === 'zh' ? '诊断中…' : 'Diagnosing…') : (language === 'zh' ? '立即诊断' : 'Run diagnostics')}
+                </button>
+              </div>
+              {incidentDiagnostics && (
+                <div className="mt-2 space-y-1.5 text-[10px]">
+                  {Object.entries(incidentDiagnostics.checks || {}).map(([checkName, checkValue]: [string, any]) => (
+                    <div key={checkName} className="flex items-center justify-between gap-2 rounded-lg bg-white/70 px-2.5 py-1.5">
+                      <span className="font-semibold text-[var(--app-text)]">{checkName}</span>
+                      <span className={`shrink-0 font-bold ${checkValue?.status === 'success' ? 'text-emerald-700' : checkValue?.status === 'skipped' || checkValue?.status === 'not_configured' ? 'text-slate-500' : 'text-rose-700'}`}>{checkValue?.status || '--'}</span>
+                    </div>
+                  ))}
+                  <div className="rounded-lg bg-white/70 px-2.5 py-2"><span className="text-[var(--muted-text)]">{language === 'zh' ? '结果' : 'Result'}</span><p className={`mt-0.5 font-bold ${incidentDiagnostics.status === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>{incidentDiagnostics.status || '--'}</p></div>
+                  <div className="rounded-lg bg-white/70 px-2.5 py-2"><span className="text-[var(--muted-text)]">{language === 'zh' ? '诊断项' : 'Checks'}</span><p className="mt-0.5 font-bold text-[var(--app-text)]">{Array.isArray(incidentDiagnostics.checks) ? incidentDiagnostics.checks.length : '--'}</p></div>
+                  <p className="col-span-2 truncate text-[var(--muted-text)]" title={incidentDiagnostics.message || incidentDiagnostics.summary || ''}>{incidentDiagnostics.message || incidentDiagnostics.summary || (language === 'zh' ? '已返回诊断结果' : 'Diagnostic result returned')}</p>
+                </div>
+              )}
+            </div>
+            {selectedIncident.work_orders?.length ? (
+              <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">{language === 'zh' ? '关联工单' : 'Linked work orders'}</p>
+                <div className="mt-2 space-y-1.5">
+                  {selectedIncident.work_orders.map((order) => (
+                    <button key={order.id} type="button" onClick={() => navigate(`/change-orders/all?order_id=${encodeURIComponent(order.id)}`)} className="flex w-full items-center justify-between gap-2 rounded-lg bg-white/80 px-2.5 py-1.5 text-left text-[10px] hover:bg-white">
+                      <span className="truncate font-semibold text-[var(--app-text)]">{order.order_number} · {order.title}</span>
+                      <span className="shrink-0 font-bold text-indigo-700">{order.status}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <div className="mt-4 rounded-xl border border-[var(--card-border)] bg-black/[0.02] p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="mr-auto text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)]">{language === 'zh' ? '处置操作' : 'Response actions'}</span>
+                <button type="button" disabled={incidentMutationLoading || selectedIncident.status === 'acknowledged'} onClick={() => mutateIncident('acknowledge', { status: 'acknowledged' })} className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 disabled:cursor-not-allowed disabled:opacity-50">{language === 'zh' ? '确认' : 'Acknowledge'}</button>
+                <button type="button" disabled={incidentMutationLoading || selectedIncident.status === 'investigating'} onClick={() => mutateIncident('acknowledge', { status: 'investigating' })} className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-700 disabled:cursor-not-allowed disabled:opacity-50">{language === 'zh' ? '调查中' : 'Investigate'}</button>
+                <button type="button" disabled={incidentMutationLoading || selectedIncident.status === 'resolved'} onClick={() => { if (window.confirm(language === 'zh' ? '确认关闭该事件并同步关闭关联告警吗？' : 'Resolve this incident and its related alerts?')) mutateIncident('resolve', {}); }} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">{language === 'zh' ? '关闭事件' : 'Resolve'}</button>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <input value={incidentAssignee} onChange={(event) => setIncidentAssignee(event.target.value)} placeholder={language === 'zh' ? '输入负责人用户名' : 'Assignee username'} className="min-w-0 flex-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1.5 text-xs text-[var(--app-text)] outline-none focus:border-sky-300" />
+                <button type="button" disabled={incidentMutationLoading || !incidentAssignee.trim()} onClick={() => mutateIncident('assign', { assignee: incidentAssignee.trim() })} className="rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{incidentMutationLoading ? (language === 'zh' ? '处理中…' : 'Updating…') : (language === 'zh' ? '分派' : 'Assign')}</button>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              {selectedIncident.primary_device_id && <button type="button" onClick={() => { openMonitorDevice({ id: selectedIncident.primary_device_id, hostname: selectedIncident.hostname, ip_address: selectedIncident.ip_address }); setSelectedIncident(null); }} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-100">{language === 'zh' ? '查看设备' : 'View device'}</button>}
+              <button type="button" onClick={() => navigate(`/change-orders/new?incident_id=${encodeURIComponent(selectedIncident.id)}`)} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">{language === 'zh' ? '\u521b\u5efa\u5de5\u5355' : 'Create work order'}</button>
+              <button type="button" onClick={() => navigate('/alerts')} className="rounded-lg border border-[var(--card-border)] px-3 py-1.5 text-xs font-semibold text-[var(--muted-text)] hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700">{language === 'zh' ? '打开告警中心' : 'Open alert center'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

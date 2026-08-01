@@ -43,6 +43,26 @@ _OFFICIAL_REFERENCES = {
         "url": "https://www.h3c.com/en/d_202004/1283136_294551_0.htm",
         "scope": "Comware 7 CLI views, syntax, and undo commands",
     }],
+    "ruijie": [{
+        "title": "Ruijie RGOS official configuration example",
+        "url": "https://community.ruijienetworks.com/forum.php?mod=viewthread&tid=9145",
+        "scope": "RGOS VLAN, VLAN interface, trunk, access port, and OSPF configuration example",
+    }],
+    "zte": [{
+        "title": "ZTE ZXR10 official configuration/documentation package index",
+        "url": "https://www.zte.com.cn/content/dam/zte-site/res-www-zte-com-cn/trust_center/eucc/ZTE_IPN_Common_Criteria_Security_Evaluation_Certified_Configuration.pdf",
+        "scope": "ZXR10 5960/9900/M6000 series documentation and command-reference package list",
+    }],
+    "dptech": [{
+        "title": "DPtech Ethernet Switches official data sheet",
+        "url": "https://www.dptech.com/uploadfile/2024/0806/20240806041441420.pdf",
+        "scope": "ConPlat VLAN, interface, routing, NTP, and management capability scope",
+    }],
+    "maipu": [{
+        "title": "Maipu IFW400 official user manual",
+        "url": "https://www.maipu.com/upfiles/tinymce/files/20260602/fa464387f51f47b49b37387f2cb25665.pdf",
+        "scope": "Maipu interface/VLAN interface and IP address format",
+    }],
 }
 
 _ALLOWED_FILTERS = {
@@ -235,6 +255,14 @@ def _vendor_key(vendor: str, platform: str) -> str:
         return "huawei"
     if "h3c" in value or "comware" in value:
         return "h3c"
+    if "ruijie" in value or "rgos" in value:
+        return "ruijie"
+    if "zte" in value or "zxros" in value:
+        return "zte"
+    if "dptech" in value or "conplat" in value:
+        return "dptech"
+    if "maipu" in value or "mypower" in value:
+        return "maipu"
     return ""
 
 
@@ -244,6 +272,10 @@ def _vendor_family_warnings(rendered: str, vendor_key: str) -> list[dict]:
         "cisco": re.compile(r"^\s*(?:system-view|display\s|undo\s)", re.I | re.M),
         "huawei": re.compile(r"^\s*(?:configure\s+terminal|show\s+running-config|no\s+interface)\b", re.I | re.M),
         "h3c": re.compile(r"^\s*(?:configure\s+terminal|show\s+running-config|commit\s*$)", re.I | re.M),
+        "ruijie": re.compile(r"^\s*(?:system-view|display\s|undo\s)", re.I | re.M),
+        "zte": re.compile(r"^\s*(?:system-view|display\s|undo\s)", re.I | re.M),
+        "dptech": re.compile(r"^\s*(?:system-view|display\s|undo\s)", re.I | re.M),
+        "maipu": re.compile(r"^\s*(?:system-view|display\s|undo\s)", re.I | re.M),
     }
     pattern = families.get(vendor_key)
     if pattern and pattern.search(rendered):

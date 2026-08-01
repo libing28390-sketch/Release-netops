@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, CheckCircle2, LayoutGrid, List, Server, Terminal, Cpu, X, ChevronDown } from 'lucide-react';
+import { Search, CheckCircle2, LayoutGrid, List, Server, Terminal, Cpu, X, ChevronDown, ChevronRight, Filter } from 'lucide-react';
 import type { Device } from '../../../types';
 import Pagination from '../../../components/Pagination';
 import { DEVICE_PAGE_SIZE } from '../constants';
@@ -79,6 +79,8 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
   handleClearSelection,
   devices,
 }) => {
+  const [filterCollapsed, setFilterCollapsed] = useState(false);
+
   return (
     <motion.div
       initial={{ opacity: 0, x: -20 }}
@@ -89,11 +91,19 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
     >
       <div className="flex-1 min-h-0 flex gap-3 overflow-hidden">
         {/* Left: Quick Filter Panel */}
-        <div className="w-[200px] flex-shrink-0 bg-white rounded-xl border border-gray-100 overflow-hidden flex flex-col">
-          <div className="px-3 py-2.5 border-b border-gray-100 flex items-center justify-between">
+        <div className={`${filterCollapsed ? 'w-[42px]' : 'w-[200px]'} flex-shrink-0 bg-white rounded-xl border border-gray-100 overflow-hidden flex flex-col transition-[width] duration-200`}>
+          {filterCollapsed && (
+            <button type="button" onClick={() => setFilterCollapsed(false)} className="flex h-10 w-full items-center justify-center text-gray-400 hover:bg-cyan-50 hover:text-cyan-600" title={isZh ? '展开快速筛选' : 'Expand quick filters'} aria-label={isZh ? '展开快速筛选' : 'Expand quick filters'}>
+              <Filter size={13} />
+            </button>
+          )}
+          {!filterCollapsed && <div className="px-3 py-2.5 border-b border-gray-100 flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
               {isZh ? '快速筛选' : 'Quick Filter'}
             </span>
+            <button type="button" onClick={() => setFilterCollapsed(true)} className="rounded-md p-1 text-gray-400 hover:bg-cyan-50 hover:text-cyan-600" title={isZh ? '折叠快速筛选' : 'Collapse quick filters'} aria-label={isZh ? '折叠快速筛选' : 'Collapse quick filters'}>
+              <ChevronRight size={14} className="rotate-180" />
+            </button>
             {(treeFilterSite || treeFilterRole) && (
               <button
                 onClick={() => {
@@ -105,8 +115,8 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
                 {isZh ? '清除' : 'Clear'}
               </button>
             )}
-          </div>
-          <div className="flex-1 min-h-0 overflow-auto p-2.5 space-y-3">
+          </div>}
+          {!filterCollapsed && <div className="flex-1 min-h-0 overflow-auto p-2.5 space-y-3">
             {/* Search */}
             <div>
               <label className="text-[10px] font-semibold text-gray-400 block mb-1.5">{isZh ? '搜索设备' : 'Search'}</label>
@@ -185,7 +195,7 @@ export const DeviceSelectionStep: React.FC<DeviceSelectionStepProps> = ({
             <div className="pt-2 border-t border-gray-100 text-[10px] text-gray-400">
               {isZh ? '匹配' : 'Found'} <span className="font-semibold text-gray-600">{filteredDevices.length}</span> {isZh ? '台设备' : 'devices'}
             </div>
-          </div>
+          </div>}
         </div>
 
         {/* Right Area: Table/Grid list */}

@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Literal, Optional
 import heapq
 import json
 import logging
@@ -13,9 +13,10 @@ from api.users import validate_session_token
 from core.rbac import require_role
 from database import get_db_connection, fetch_interface_data
 from services.audit_service import log_audit_event
-from services.device_health_service import annotate_devices_with_health, build_health_overview
+from services.device_health_service import annotate_devices_with_health, build_health_overview, load_devices_for_health
 from services.collection_status_service import collection_status_summary, list_collection_status
 from services.collection_diagnostics_service import diagnose_device_collection
+from services.monitoring_incident_service import assign_incident, get_incident, get_incident_impact, list_incidents, update_incident_status
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -37,6 +38,14 @@ _overview_cache: dict[str, object] = {
     'expires_at': None,
     'payload': None,
 }
+
+
+class MonitoringIncidentStatusRequest(BaseModel):
+    status: Literal['acknowledged', 'investigating'] = 'acknowledged'
+
+
+class MonitoringIncidentAssignRequest(BaseModel):
+    assignee: str = Field(min_length=1, max_length=120)
 
 
 @router.get('/monitoring/collection-status')
@@ -191,11 +200,16 @@ def search_online_devices(
         pattern = f"%{qv}%"
         rows = conn.execute(
             '''
-            SELECT id, hostname, ip_address, platform, role, site, status, device_category
-            FROM devices
-            WHERE status = 'online'
-                            AND (LOWER(hostname) LIKE LOWER(?) OR LOWER(ip_address) LIKE LOWER(?))
-            ORDER BY hostname ASC
+            SELECT d.id, d.hostname, d.ip_address, d.platform, d.role,
+                   COALESCE(NULLIF(s.site_name, ''),
+                            CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END,
+                            '') AS site,
+                   d.status, d.device_category
+            FROM devices d
+            LEFT JOIN sites s ON s.id = d.site_id
+            WHERE d.status = 'online'
+              AND (LOWER(d.hostname) LIKE LOWER(?) OR LOWER(d.ip_address) LIKE LOWER(?))
+            ORDER BY d.hostname ASC
             LIMIT ?
             ''',
             (pattern, pattern, limit),
@@ -221,14 +235,23 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         stats_window_start = (now_utc - timedelta(minutes=stats_window_minutes)).isoformat()
         hot_interface_limit = 24
 
-        total_online = conn.execute(
-            "SELECT COUNT(*) AS c FROM devices WHERE status = 'online'"
-        ).fetchone()['c']
+        device_counts = conn.execute(
+            '''
+            SELECT
+                COUNT(*) AS total_devices,
+                SUM(CASE WHEN status = 'online' THEN 1 ELSE 0 END) AS online_devices,
+                SUM(CASE WHEN status = 'offline' THEN 1 ELSE 0 END) AS offline_devices,
+                SUM(CASE WHEN status IS NULL OR status NOT IN ('online', 'offline') THEN 1 ELSE 0 END) AS unknown_devices
+            FROM devices
+            '''
+        ).fetchone()
+        total_online = int(device_counts['online_devices'] or 0)
 
         devices_rows = conn.execute(
-            "SELECT id, hostname, ip_address, platform, status, compliance, role, site, "
-            "cpu_usage, memory_usage, temp, fan_status, psu_status "
-            "FROM devices WHERE status = 'online'"
+            "SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role, "
+            "COALESCE(NULLIF(s.site_name, ''), CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END, '') AS site, "
+            "d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category "
+            "FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.status = 'online'"
         ).fetchall()
         devices = []
         for r in devices_rows:
@@ -309,6 +332,19 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         open_alerts = conn.execute(
             "SELECT COUNT(*) AS c FROM alert_events WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') != 'suppressed'"
         ).fetchone()['c']
+        open_alert_severity_rows = conn.execute(
+            '''
+            SELECT LOWER(COALESCE(severity, 'warning')) AS severity, COUNT(*) AS count
+            FROM alert_events
+            WHERE resolved_at IS NULL AND COALESCE(workflow_status, 'open') != 'suppressed'
+            GROUP BY LOWER(COALESCE(severity, 'warning'))
+            '''
+        ).fetchall()
+        open_alert_severity_counts = {'critical': 0, 'major': 0, 'warning': 0}
+        for row in open_alert_severity_rows:
+            severity = str(row['severity'] or 'warning').lower()
+            bucket = severity if severity in {'critical', 'major'} else 'warning'
+            open_alert_severity_counts[bucket] += int(row['count'] or 0)
         alerts_24h = conn.execute(
             "SELECT COUNT(*) AS c FROM alert_events WHERE created_at >= ?",
             (last_24h,),
@@ -327,9 +363,12 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
                 d.ip_address,
                 d.platform,
                 d.role,
-                d.site
+                COALESCE(NULLIF(s.site_name, ''),
+                         CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END,
+                         '') AS site
             FROM alert_events a
             LEFT JOIN devices d ON d.id = a.device_id
+            LEFT JOIN sites s ON s.id = d.site_id
             WHERE a.resolved_at IS NULL AND COALESCE(a.workflow_status, 'open') != 'suppressed'
             ORDER BY a.created_at DESC
             LIMIT 8
@@ -338,6 +377,9 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
 
         payload = {
             'online_devices': int(total_online),
+            'offline_devices': int(device_counts['offline_devices'] or 0),
+            'unknown_devices': int(device_counts['unknown_devices'] or 0),
+            'total_devices': int(device_counts['total_devices'] or 0),
             'interfaces_up': interfaces_up,
             'interfaces_down': interfaces_down,
             'high_util_interfaces': high_util,
@@ -347,6 +389,7 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
             'drops_window': int(recent_totals['drops_window']),
             'stats_window_minutes': stats_window_minutes,
             'open_alerts': int(open_alerts),
+            'open_alert_severity_counts': open_alert_severity_counts,
             'alerts_24h': int(alerts_24h),
             'top_hot_interfaces': top_hot_interfaces,
             'recent_open_alerts': [dict(r) for r in recent_open_alerts],
@@ -358,11 +401,13 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         online_dicts = [dict(row) for row in devices]
         non_online_rows = conn.execute(
             '''
-            SELECT id, hostname, ip_address, platform, status, compliance, role, site,
-                   cpu_usage, memory_usage, temp, fan_status, psu_status
-            FROM devices
-            WHERE status != 'online'
-            ORDER BY hostname ASC
+            SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role,
+                   COALESCE(NULLIF(s.site_name, ''), CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END, '') AS site,
+                   d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category
+            FROM devices d
+            LEFT JOIN sites s ON s.id = d.site_id
+            WHERE d.status IS NULL OR d.status != 'online'
+            ORDER BY d.hostname ASC
             '''
         ).fetchall()
         non_online_dicts = []
@@ -374,6 +419,35 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         evaluated_devices = annotate_devices_with_health(conn, all_device_dicts)
         payload['device_health_summary'] = build_health_overview(evaluated_devices)
         payload['top_risky_devices'] = payload['device_health_summary']['top_risky_devices']
+        # The health summary is the authoritative source for availability and
+        # collection dimensions because it covers every device, not only the
+        # online rows used for interface telemetry.
+        payload['online_devices'] = payload['device_health_summary']['online_devices']
+        payload['offline_devices'] = payload['device_health_summary']['offline_devices']
+        payload['unknown_devices'] = payload['device_health_summary']['unknown_availability_devices']
+        payload['collection_anomaly_devices'] = payload['device_health_summary']['collection_anomaly_devices']
+        payload['data_confidence_avg'] = payload['device_health_summary']['data_confidence_avg']
+        payload['last_collection_at'] = payload['device_health_summary']['last_collection_at']
+        collection_summary = collection_status_summary()
+        by_status = collection_summary.get('by_status') or {}
+        collector_count = len(collection_summary.get('by_collector') or {})
+        collector_failures = sum(int(by_status.get(key) or 0) for key in ('failed', 'stale', 'partial_failed', 'unknown'))
+        payload['platform_health'] = {
+            'database': {'status': 'healthy'},
+            'collectors': {
+                'total': collector_count,
+                'failed': collector_failures,
+                'status': 'degraded' if collector_failures else 'healthy',
+            },
+            'queue': collection_summary.get('queues') or {},
+            'sweeps': collection_summary.get('sweeps') or {},
+            'updated_at': now_utc.isoformat(),
+        }
+        incident_page = list_incidents(conn, status='active', page=1, page_size=100)
+        incident_items = incident_page['items']
+        payload['active_incidents'] = int(incident_page['total'])
+        payload['critical_incidents'] = sum(1 for item in incident_items if str(item.get('severity') or '').lower() == 'critical')
+        payload['top_incidents'] = incident_items[:5]
 
         with _overview_cache_lock:
             _overview_cache['payload'] = payload
@@ -857,6 +931,211 @@ def monitoring_alerts(
             'page': page,
             'page_size': page_size,
         }
+    finally:
+        conn.close()
+
+
+@router.get('/monitoring/health-devices')
+def monitoring_health_devices(
+    health_status: str = Query(default='all'),
+    availability_status: str = Query(default='all'),
+    collection_status: str = Query(default='all'),
+    limit: int = Query(default=100, ge=1, le=500),
+    user=require_role("Viewer"),
+):
+    """Return the exact device set behind a monitoring-center metric.
+
+    This endpoint is intentionally read-only and evaluates the same health
+    model used by ``/monitoring/overview``.  The UI can therefore drill down
+    without rebuilding a second, subtly different status calculation.
+    """
+    conn = get_db_connection()
+    try:
+        evaluated = annotate_devices_with_health(conn, load_devices_for_health(conn))
+        health_filter = (health_status or 'all').strip().lower()
+        availability_filter = (availability_status or 'all').strip().lower()
+        collection_filter = (collection_status or 'all').strip().lower()
+        items = [
+            device for device in evaluated
+            if (health_filter == 'all' or str(device.get('health_status') or 'unknown').lower() == health_filter)
+            and (availability_filter == 'all' or str(device.get('availability_status') or 'unknown').lower() == availability_filter)
+            and (collection_filter == 'all' or str(device.get('collection_status') or 'unknown').lower() == collection_filter)
+        ]
+        items.sort(key=lambda device: (
+            {'critical': 0, 'warning': 1, 'unknown': 2, 'healthy': 3}.get(str(device.get('health_status') or 'unknown'), 9),
+            str(device.get('hostname') or ''),
+        ))
+        safe_items = [
+            {
+                key: device.get(key)
+                for key in (
+                    'id', 'hostname', 'ip_address', 'platform', 'role', 'site', 'status',
+                    'availability_status', 'collection_status', 'collection_last_success_at',
+                    'data_confidence', 'health_status', 'health_score', 'health_score_available',
+                    'health_summary', 'health_reasons', 'open_alert_count',
+                )
+            }
+            for device in items[:limit]
+        ]
+        return {
+            'items': safe_items,
+            'total': len(items),
+            'filters': {
+                'health_status': health_filter,
+                'availability_status': availability_filter,
+                'collection_status': collection_filter,
+            },
+        }
+    finally:
+        conn.close()
+
+
+@router.get('/monitoring/incidents')
+def monitoring_incidents(
+    status: str = Query(default='active'),
+    severity: str = Query(default='all'),
+    site: str = Query(default='all'),
+    device_id: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    _user=require_role('Viewer'),
+):
+    """Return the incident projection for NOC triage and drill-down."""
+    conn = get_db_connection()
+    try:
+        return list_incidents(
+            conn,
+            status=status,
+            severity=severity,
+            site=site,
+            device_id=device_id,
+            page=page,
+            page_size=page_size,
+        )
+    finally:
+        conn.close()
+
+
+@router.get('/monitoring/incidents/{incident_id}')
+def monitoring_incident_detail(incident_id: str, _user=require_role('Viewer')):
+    conn = get_db_connection()
+    try:
+        item = get_incident(conn, incident_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail='Incident not found')
+        return {'item': item}
+    finally:
+        conn.close()
+
+
+@router.get('/monitoring/incidents/{incident_id}/impact')
+def monitoring_incident_impact(incident_id: str, _user=require_role('Viewer')):
+    """Return the affected devices and known topology links for one incident."""
+    conn = get_db_connection()
+    try:
+        item = get_incident_impact(conn, incident_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail='Incident not found')
+        return item
+    finally:
+        conn.close()
+
+
+@router.post('/monitoring/incidents/{incident_id}/acknowledge')
+def acknowledge_monitoring_incident(
+    incident_id: str,
+    payload: MonitoringIncidentStatusRequest,
+    user=require_role('Operator'),
+):
+    actor = str(user.get('username') or 'system').strip() or 'system'
+    next_status = payload.status
+    conn = get_db_connection()
+    try:
+        try:
+            item = update_incident_status(conn, incident_id, next_status, actor)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail='Incident not found')
+        log_audit_event(
+            event_type='MONITORING_INCIDENT_STATUS',
+            category='monitoring',
+            severity='medium',
+            status='success',
+            summary=f'Updated monitoring incident {incident_id} to {next_status}',
+            actor_username=actor,
+            actor_role=user.get('role'),
+            target_type='monitoring_incident',
+            target_id=incident_id,
+            target_name=item.get('title'),
+            device_id=item.get('primary_device_id'),
+            details={'status': next_status},
+        )
+        return {'success': True, 'item': item}
+    finally:
+        conn.close()
+
+
+@router.post('/monitoring/incidents/{incident_id}/assign')
+def assign_monitoring_incident(
+    incident_id: str,
+    payload: MonitoringIncidentAssignRequest,
+    user=require_role('Operator'),
+):
+    assignee = payload.assignee.strip()
+    if not assignee:
+        raise HTTPException(status_code=400, detail='assignee is required')
+    conn = get_db_connection()
+    try:
+        item = assign_incident(conn, incident_id, assignee)
+        if item is None:
+            raise HTTPException(status_code=404, detail='Incident not found')
+        log_audit_event(
+            event_type='MONITORING_INCIDENT_ASSIGN',
+            category='monitoring',
+            severity='medium',
+            status='success',
+            summary=f'Assigned monitoring incident {incident_id} to {assignee}',
+            actor_username=user.get('username'),
+            actor_role=user.get('role'),
+            target_type='monitoring_incident',
+            target_id=incident_id,
+            target_name=item.get('title'),
+            device_id=item.get('primary_device_id'),
+            details={'assignee': assignee},
+        )
+        return {'success': True, 'item': item}
+    finally:
+        conn.close()
+
+
+@router.post('/monitoring/incidents/{incident_id}/resolve')
+def resolve_monitoring_incident(
+    incident_id: str,
+    payload: Optional[MonitoringIncidentStatusRequest] = Body(default=None),
+    user=require_role('Operator'),
+):
+    actor = str(user.get('username') or 'system').strip() or 'system'
+    conn = get_db_connection()
+    try:
+        item = update_incident_status(conn, incident_id, 'resolved', actor)
+        if item is None:
+            raise HTTPException(status_code=404, detail='Incident not found')
+        log_audit_event(
+            event_type='MONITORING_INCIDENT_RESOLVE',
+            category='monitoring',
+            severity='medium',
+            status='success',
+            summary=f'Resolved monitoring incident {incident_id}',
+            actor_username=actor,
+            actor_role=user.get('role'),
+            target_type='monitoring_incident',
+            target_id=incident_id,
+            target_name=item.get('title'),
+            device_id=item.get('primary_device_id'),
+            details={'status': 'resolved'},
+        )
+        return {'success': True, 'item': item}
     finally:
         conn.close()
 

@@ -21,14 +21,17 @@ from core.rbac import require_permission
 from database import get_db_connection
 from services.config_template_center_service import (
     checksum,
+    enrich_variable_schema,
     infer_variable_schema,
     json_value,
+    normalize_template_definition,
     redact_output,
     redact_parameter_values,
     render_template_center,
     template_quality_score,
     validate_parameters,
 )
+from services.config_vendor_platform_service import validate_vendor_platform
 
 
 router = APIRouter()
@@ -76,6 +79,7 @@ class TemplateImportRequest(BaseModel):
     template: dict[str, Any]
     version: dict[str, Any] = Field(default_factory=dict)
     expected_checksum: str = Field(default="", max_length=128)
+    signature: str = Field(default="", max_length=512)
 
 
 class TaskDraftRequest(TemplateRenderRequest):
@@ -85,6 +89,25 @@ class TaskDraftRequest(TemplateRenderRequest):
 class VendorComparisonRequest(BaseModel):
     template_ids: list[str] = Field(min_length=2, max_length=5)
     parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class TemplateTestRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    version: str = Field(default="", max_length=40)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    expected_contains: list[str] = Field(default_factory=list, max_length=100)
+    expected_not_contains: list[str] = Field(default_factory=list, max_length=100)
+    expected_risk_level: str = Field(default="", max_length=20)
+
+
+class TemplateReviewRequest(BaseModel):
+    version: str = Field(default="", max_length=40)
+    action: Literal["submit", "approve", "reject", "publish", "archive"]
+    note: str = Field(default="", max_length=2_000)
+
+
+class ProfileImportRequest(BaseModel):
+    profile: dict[str, Any]
 
 
 def _now() -> str:
@@ -128,10 +151,19 @@ def _version_row(conn, template: dict[str, Any], version: str = "") -> dict[str,
 
 
 def _schema_for(template: dict[str, Any], version: dict[str, Any]) -> list[dict[str, Any]]:
+    source = version.get("source") or template.get("content") or ""
     schema = json_value(version.get("variable_schema_json"), [])
     if not schema:
         schema = json_value(template.get("variable_schema_json"), [])
-    return schema or infer_variable_schema(version.get("source") or template.get("content") or "")
+    examples = json_value(version.get("example_values_json"), {})
+    if not examples:
+        examples = json_value(template.get("example_values_json"), {})
+    normalized_schema, _ = normalize_template_definition(
+        source,
+        variable_schema=schema or infer_variable_schema(source),
+        example_values=examples,
+    )
+    return normalized_schema
 
 
 def _serialize_template(
@@ -144,6 +176,12 @@ def _serialize_template(
 ) -> dict[str, Any]:
     version = _version_row(conn, template, version_name)
     schema = _schema_for(template, version)
+    normalized_schema, normalized_examples = normalize_template_definition(
+        version.get("source") or template.get("content") or "",
+        variable_schema=schema,
+        example_values=json_value(version.get("example_values_json"), {}) or json_value(template.get("example_values_json"), {}),
+    )
+    schema = normalized_schema
     quality = template_quality_score(template, schema)
     favorite = False
     if username:
@@ -183,11 +221,11 @@ def _serialize_template(
                 "version": {
                     **version,
                     "variable_schema": schema,
-                    "example_values": json_value(version.get("example_values_json"), {}),
+                    "example_values": normalized_examples,
                     "render_options": json_value(version.get("render_options_json"), {}),
                 },
                 "variable_schema": schema,
-                "example_values": json_value(version.get("example_values_json"), {}),
+                "example_values": normalized_examples,
                 "versions": [dict(row) for row in versions] or [
                     {
                         "id": "",
@@ -229,6 +267,8 @@ def list_config_templates(
 ):
     clauses = ["1 = 1"]
     params: list[Any] = []
+    if not status:
+        clauses.append("COALESCE(status, 'draft') <> 'archived'")
     if keyword:
         clauses.append(
             """
@@ -630,6 +670,231 @@ def delete_parameter_profile(
         conn.close()
 
 
+@router.get("/config-templates/{template_id}/parameter-profiles/{profile_id}/export")
+def export_parameter_profile(
+    template_id: str,
+    profile_id: str,
+    user=require_permission("configuration", "export"),
+):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT * FROM config_template_parameter_profiles
+            WHERE id = ? AND template_id = ?
+              AND (scope IN ('global', 'official_example') OR created_by = ?)
+            """,
+            (profile_id, template_id, user.get("username") or ""),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="参数方案不存在或无权导出")
+        payload = dict(row)
+        payload["values"] = json_value(payload.pop("values_json"), {})
+        payload["value_sources"] = json_value(payload.pop("value_sources_json"), {})
+        payload["is_default"] = bool(payload.get("is_default"))
+        return Response(
+            content=json.dumps({"format": "nexora-template-profile", "profile": payload}, ensure_ascii=False, indent=2),
+            media_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="template-profile-{profile_id}.json"'},
+        )
+    finally:
+        conn.close()
+
+
+@router.post("/config-templates/{template_id}/parameter-profiles/import")
+def import_parameter_profile(
+    template_id: str,
+    body: ProfileImportRequest,
+    user=require_permission("configuration", "create"),
+):
+    profile = body.profile
+    request = ParameterProfileRequest(
+        name=str(profile.get("name") or "导入参数方案"),
+        description=str(profile.get("description") or ""),
+        version=str(profile.get("template_version") or profile.get("version") or ""),
+        values=profile.get("values") if isinstance(profile.get("values"), dict) else {},
+        value_sources=profile.get("value_sources") if isinstance(profile.get("value_sources"), dict) else {},
+        scope="private",
+        is_default=False,
+    )
+    return create_parameter_profile(template_id, request, user)
+
+
+@router.get("/config-templates/{template_id}/statistics")
+def get_template_statistics(
+    template_id: str,
+    user=require_permission("configuration", "read"),
+):
+    conn = get_db_connection()
+    try:
+        _template_row(conn, template_id)
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN render_status IN ('success', 'warning') THEN 1 ELSE 0 END) AS success_count,
+                   SUM(CASE WHEN render_status NOT IN ('success', 'warning') THEN 1 ELSE 0 END) AS failure_count,
+                   MAX(created_at) AS last_rendered_at
+            FROM config_template_render_history
+            WHERE template_id = ? AND (created_by = ? OR ? = 'Administrator')
+            """,
+            (template_id, user.get("username") or "", user.get("role") or ""),
+        ).fetchone()
+        total = int(row["total"] or 0)
+        success_count = int(row["success_count"] or 0)
+        return {
+            "total_renders": total,
+            "success_count": success_count,
+            "failure_count": int(row["failure_count"] or 0),
+            "success_rate": round(success_count / total * 100, 1) if total else None,
+            "last_rendered_at": row["last_rendered_at"] or "",
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/config-templates/{template_id}/tests")
+def list_template_tests(template_id: str, _user=require_permission("configuration", "read")):
+    conn = get_db_connection()
+    try:
+        _template_row(conn, template_id)
+        rows = conn.execute(
+            "SELECT * FROM config_template_tests WHERE template_id = ? ORDER BY created_at DESC",
+            (template_id,),
+        ).fetchall()
+        return [
+            {
+                **dict(row),
+                "parameters": json_value(row["parameters_json"], {}),
+                "expected_contains": json_value(row["expected_contains_json"], []),
+                "expected_not_contains": json_value(row["expected_not_contains_json"], []),
+                "last_result": json_value(row["last_result_json"], {}),
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+@router.post("/config-templates/{template_id}/tests")
+def create_template_test(
+    template_id: str,
+    body: TemplateTestRequest,
+    user=require_permission("configuration", "create"),
+):
+    conn = get_db_connection()
+    try:
+        _template_row(conn, template_id)
+        test_id = str(uuid.uuid4())
+        now = _now()
+        conn.execute(
+            """
+            INSERT INTO config_template_tests (
+                id, template_id, template_version, name, parameters_json,
+                expected_contains_json, expected_not_contains_json,
+                expected_risk_level, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                test_id, template_id, body.version or "1.0", body.name,
+                json.dumps(body.parameters, ensure_ascii=False),
+                json.dumps(body.expected_contains, ensure_ascii=False),
+                json.dumps(body.expected_not_contains, ensure_ascii=False),
+                body.expected_risk_level, user.get("username") or "", now, now,
+            ),
+        )
+        conn.commit()
+        return {"id": test_id, "success": True}
+    finally:
+        conn.close()
+
+
+@router.post("/config-templates/{template_id}/tests/{test_id}/run")
+def run_template_test(
+    template_id: str,
+    test_id: str,
+    user=require_permission("configuration", "read"),
+):
+    conn = get_db_connection()
+    try:
+        template = _template_row(conn, template_id)
+        row = conn.execute(
+            "SELECT * FROM config_template_tests WHERE id = ? AND template_id = ?",
+            (test_id, template_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="模板测试用例不存在")
+        test = dict(row)
+        request = TemplateRenderRequest(
+            version=test.get("template_version") or "",
+            parameters=json_value(test.get("parameters_json"), {}),
+        )
+        result, _version, _schema = _render_for_template(conn, template, request)
+        output = result.get("rendered_output") or ""
+        contains = json_value(test.get("expected_contains_json"), [])
+        not_contains = json_value(test.get("expected_not_contains_json"), [])
+        failures = [f"缺少期望文本: {item}" for item in contains if str(item) not in output]
+        failures.extend(f"不应出现文本: {item}" for item in not_contains if str(item) in output)
+        expected_risk = str(test.get("expected_risk_level") or "")
+        if expected_risk and result.get("risk_level") != expected_risk:
+            failures.append(f"风险等级期望 {expected_risk}，实际 {result.get('risk_level')}")
+        test_result = {"success": bool(result.get("success")) and not failures, "failures": failures, "render_status": result.get("render_status")}
+        status = "passed" if test_result["success"] else "failed"
+        conn.execute(
+            "UPDATE config_template_tests SET last_status = ?, last_result_json = ?, last_run_at = ?, updated_at = ? WHERE id = ?",
+            (status, json.dumps(test_result, ensure_ascii=False), _now(), _now(), test_id),
+        )
+        conn.commit()
+        return {"id": test_id, **test_result}
+    finally:
+        conn.close()
+
+
+@router.get("/config-templates/{template_id}/reviews")
+def list_template_reviews(template_id: str, _user=require_permission("configuration", "read")):
+    conn = get_db_connection()
+    try:
+        _template_row(conn, template_id)
+        return [dict(row) for row in conn.execute(
+            "SELECT * FROM config_template_reviews WHERE template_id = ? ORDER BY reviewed_at DESC",
+            (template_id,),
+        ).fetchall()]
+    finally:
+        conn.close()
+
+
+@router.post("/config-templates/{template_id}/reviews")
+def review_template(
+    template_id: str,
+    body: TemplateReviewRequest,
+    user=require_permission("configuration", "update"),
+):
+    if body.action in {"approve", "publish", "archive"} and user.get("role") not in {"Administrator", "Operator"}:
+        raise HTTPException(status_code=403, detail="当前角色不能完成模板审核或发布")
+    conn = get_db_connection()
+    try:
+        template = _template_row(conn, template_id)
+        version = _version_row(conn, template, body.version)
+        now = _now()
+        status_map = {"submit": "review", "approve": "review", "reject": "draft", "publish": "published", "archive": "archived"}
+        status = status_map[body.action]
+        conn.execute(
+            "INSERT INTO config_template_reviews (id, template_id, template_version, action, note, reviewer, reviewed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), template_id, version.get("version") or "1.0", body.action, body.note, user.get("username") or "", now),
+        )
+        conn.execute(
+            "UPDATE templates SET status = ?, validation_status = ?, updated_at = ? WHERE id = ?",
+            (status, "approved" if body.action in {"approve", "publish"} else status, now, template_id),
+        )
+        conn.execute(
+            "UPDATE config_template_versions SET status = ?, published_at = ? WHERE template_id = ? AND version = ?",
+            (status, now if status == "published" else "", template_id, version.get("version") or "1.0"),
+        )
+        conn.commit()
+        return {"success": True, "status": status, "version": version.get("version") or "1.0"}
+    finally:
+        conn.close()
+
+
 @router.post("/config-templates/{template_id}/versions")
 def create_template_version(
     template_id: str,
@@ -639,7 +904,7 @@ def create_template_version(
     conn = get_db_connection()
     try:
         template = _template_row(conn, template_id)
-        schema = body.variable_schema or infer_variable_schema(body.source)
+        schema = enrich_variable_schema(body.variable_schema or infer_variable_schema(body.source), body.source)
         now = _now()
         version_id = str(uuid.uuid4())
         try:
@@ -853,6 +1118,55 @@ def copy_config_template(
                 0,
             ),
         )
+        source_version = conn.execute(
+            "SELECT * FROM config_template_versions WHERE template_id = ? AND version = ?",
+            (template_id, source.get("current_version") or "1.0"),
+        ).fetchone()
+        if source_version:
+            version = dict(source_version)
+            conn.execute(
+                """
+                INSERT INTO config_template_versions (
+                    id, template_id, version, source, rollback_source,
+                    variable_schema_json, example_values_json, render_options_json,
+                    change_summary, checksum, status, created_by, created_at, published_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()), new_id, version.get("version") or "1.0",
+                    version.get("source") or source.get("content") or "",
+                    version.get("rollback_source") or source.get("rollback") or "",
+                    version.get("variable_schema_json") or source.get("variable_schema_json") or "[]",
+                    version.get("example_values_json") or source.get("example_values_json") or "{}",
+                    version.get("render_options_json") or "{}", "Copied from template",
+                    version.get("checksum") or checksum(source.get("content") or ""),
+                    "draft", user.get("username") or "", now, "",
+                ),
+            )
+        compatibility_rows = conn.execute(
+            """
+            SELECT vendor, platform, model_pattern, min_version, max_version,
+                   required_capabilities_json, excluded_versions_json
+            FROM config_template_compatibility WHERE template_id = ?
+            """,
+            (template_id,),
+        ).fetchall()
+        for compatibility in compatibility_rows:
+            row = dict(compatibility)
+            conn.execute(
+                """
+                INSERT INTO config_template_compatibility (
+                    id, template_id, vendor, platform, model_pattern, min_version,
+                    max_version, required_capabilities_json, excluded_versions_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()), new_id, row.get("vendor") or "", row.get("platform") or "",
+                    row.get("model_pattern") or "", row.get("min_version") or "",
+                    row.get("max_version") or "", row.get("required_capabilities_json") or "[]",
+                    row.get("excluded_versions_json") or "[]",
+                ),
+            )
         conn.commit()
         return {"id": new_id, "success": True}
     finally:
@@ -901,9 +1215,21 @@ def import_config_template(
         raise HTTPException(status_code=422, detail="导入文件校验和不匹配")
     if body.template.get("is_official") and user.get("role") != "Administrator":
         raise HTTPException(status_code=403, detail="非管理员不能导入为官方模板")
+    signature_status = "unsigned"
+    if body.signature:
+        signature_status = "verified" if body.signature == actual_checksum else "invalid"
+        if signature_status == "invalid":
+            raise HTTPException(status_code=422, detail="模板签名校验失败；请重新导出或联系模板发布者")
 
     template_id = str(uuid.uuid4())
-    schema = body.version.get("variable_schema") or infer_variable_schema(source)
+    schema = enrich_variable_schema(body.version.get("variable_schema") or infer_variable_schema(source), source)
+    try:
+        template_vendor, template_platform = validate_vendor_platform(
+            body.template.get("vendor") or "",
+            body.template.get("platform_family") or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     now = _now()
     conn = get_db_connection()
     try:
@@ -923,12 +1249,12 @@ def import_config_template(
                 body.template.get("name") or "导入模板",
                 body.template.get("type") or "Jinja2",
                 "custom",
-                body.template.get("vendor") or "",
+                template_vendor,
                 source,
                 body.version.get("rollback_source") or body.template.get("rollback") or "",
                 None,
                 body.template.get("description") or "",
-                body.template.get("platform_family") or "",
+                template_platform,
                 body.template.get("software_version") or "",
                 body.template.get("official_reference") if user.get("role") == "Administrator" else "",
                 "draft",
@@ -949,6 +1275,19 @@ def import_config_template(
                 0,
                 0,
                 0,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO config_template_import_audit (
+                id, template_id, source_type, source_name, checksum,
+                expected_checksum, signature_status, imported_by, imported_at
+            ) VALUES (?, ?, 'custom', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()), template_id, body.template.get("name") or "",
+                actual_checksum, body.expected_checksum, signature_status,
+                user.get("username") or "", now,
             ),
         )
         conn.commit()
@@ -1049,4 +1388,3 @@ def create_automation_task_from_template(
         }
     finally:
         conn.close()
-

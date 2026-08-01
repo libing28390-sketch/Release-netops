@@ -64,8 +64,14 @@ export interface Device {
   sys_name?: string;
   sys_location?: string;
   sys_contact?: string;
+  availability_status?: 'online' | 'offline' | 'unknown';
+  collection_status?: string;
+  collection_last_success_at?: string | null;
+  collection_failures?: Array<{ collector: string; status: string; error_code?: string; message?: string }>;
+  data_confidence?: number;
+  health_score_available?: boolean;
   health_status?: 'healthy' | 'warning' | 'critical' | 'unknown';
-  health_score?: number;
+  health_score?: number | null;
   health_summary?: string;
   health_reasons?: string[];
   open_alert_count?: number;
@@ -604,11 +610,21 @@ export interface HostResourceHistoryPayload {
 
 export interface DeviceHealthOverview {
   total_devices: number;
-  average_score: number;
+  average_score: number | null;
   healthy: number;
   warning: number;
   critical: number;
   unknown: number;
+  health_evaluable_count?: number;
+  health_score_available?: boolean;
+  online_devices?: number;
+  offline_devices?: number;
+  unknown_availability_devices?: number;
+  collection_anomaly_devices?: number;
+  data_confidence_avg?: number | null;
+  last_collection_at?: string | null;
+  availability?: Record<string, number>;
+  collection?: Record<string, number>;
   top_risky_devices: Device[];
 }
 
@@ -626,6 +642,82 @@ export interface DeviceHealthDetailResponse {
   recent_open_alerts: DeviceHealthAlertItem[];
 }
 
+export interface MonitoringIncident {
+  id: string;
+  incident_key: string;
+  title: string;
+  summary: string;
+  severity: string;
+  status: string;
+  source: string;
+  root_cause_alert_id?: string | null;
+  primary_device_id?: string | null;
+  site?: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  impact_device_count: number;
+  impact_alert_count: number;
+  related_alert_count?: number;
+  acknowledged_by?: string | null;
+  acknowledged_at?: string | null;
+  assigned_to?: string | null;
+  resolved_at?: string | null;
+  hostname?: string | null;
+  ip_address?: string | null;
+  alerts?: DeviceHealthAlertItem[];
+  timeline?: DeviceHealthAlertItem[];
+  impact_devices?: Array<{ device_id: string; hostname?: string }>;
+  work_orders?: Array<{ id: string; order_number: string; title: string; status: string }>;
+}
+
+export interface MonitoringIncidentListResponse {
+  items: MonitoringIncident[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface MonitoringIncidentImpact {
+  incident_id: string;
+  nodes: Array<{
+    id: string;
+    hostname?: string;
+    ip_address?: string;
+    role?: string;
+    site?: string;
+  }>;
+  links: Array<{
+    id: string;
+    source_device_id?: string;
+    target_device_id?: string;
+    source_hostname?: string;
+    target_hostname?: string;
+    source_port?: string;
+    target_port?: string;
+    status?: string;
+    confidence?: number;
+    discovery_source?: string;
+  }>;
+  summary: {
+    affected_devices: number;
+    related_links: number;
+    topology_available: boolean;
+  };
+  inference?: {
+    root_cause_alert_id?: string | null;
+    confidence: string;
+    evidence: string[];
+    disclaimer?: string;
+  };
+  business_impact?: {
+    sites: string[];
+    services: string[];
+    business_units: string[];
+    confidence: string;
+    data_gaps: string[];
+  };
+}
+
 export interface DeviceHealthHistoryPoint {
   ts: string;
   average_score: number;
@@ -634,19 +726,33 @@ export interface DeviceHealthHistoryPoint {
   warning: number;
   critical: number;
   unknown: number;
+  online_devices?: number;
+  collection_healthy_devices?: number;
+  collection_anomaly_devices?: number;
+  open_alerts?: number;
+  critical_open_alerts?: number;
+  online_rate?: number;
+  collection_success_rate?: number;
 }
 
 export interface DeviceHealthHistoryResponse {
   range_hours: number;
   sample_count: number;
   series: DeviceHealthHistoryPoint[];
+  new_alerts?: number;
+  recovered_alerts?: number;
+  avg_mttr_minutes?: number | null;
 }
 
 export interface DeviceHealthTrendPoint {
   ts: string;
   status: string;
+  availability_status?: string;
+  collection_status?: string;
+  data_confidence?: number;
+  health_score_available?: boolean;
   health_status: string;
-  health_score: number;
+  health_score: number | null;
   open_alert_count: number;
   critical_open_alerts: number;
   major_open_alerts: number;
@@ -734,6 +840,36 @@ export interface TagDefinition {
   built_in: number;       // 1=预定义, 0=自定义
   assignment_count?: number;
   created_at: string;
+}
+
+export interface MonitoringHealthDevice {
+  id: string;
+  hostname?: string | null;
+  ip_address?: string | null;
+  platform?: string | null;
+  role?: string | null;
+  site?: string | null;
+  status?: string | null;
+  availability_status?: string | null;
+  collection_status?: string | null;
+  collection_last_success_at?: string | null;
+  data_confidence?: number | null;
+  health_status?: string | null;
+  health_score?: number | null;
+  health_score_available?: boolean;
+  health_summary?: string | null;
+  health_reasons?: string[];
+  open_alert_count?: number;
+}
+
+export interface MonitoringHealthDevicesResponse {
+  items: MonitoringHealthDevice[];
+  total: number;
+  filters: {
+    health_status: string;
+    availability_status: string;
+    collection_status: string;
+  };
 }
 
 export type TopologyTagOperator = 'and' | 'or' | 'not';
