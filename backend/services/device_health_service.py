@@ -13,7 +13,7 @@ DEVICE_HEALTH_RETENTION_DAYS = 30
 _SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
 DEVICE_HEALTH_SELECT = (
     'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role, '
-    "COALESCE(NULLIF(s.site_name, ''), CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END, '') AS site, "
+    "COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site, "
     'd.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category'
 )
 
@@ -112,6 +112,10 @@ def _build_collection_stats(conn, device_ids: list[str]) -> dict[str, dict[str, 
     except Exception:
         # Older installations may not have the optional collector table yet.
         # The caller still receives an explicit unknown state.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return result
 
     grouped: dict[str, list[dict[str, Any]]] = {}
@@ -670,7 +674,7 @@ def fetch_device_health_history(conn, range_hours: int = 24) -> dict[str, Any]:
 
 def fetch_device_health_trend(conn, device_id: str, range_hours: int = 24) -> dict[str, Any]:
     device_row = conn.execute(
-        "SELECT d.id, d.hostname, d.ip_address, d.platform, d.role, COALESCE(NULLIF(s.site_name, ''), CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END, '') AS site FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = ?",
+        "SELECT d.id, d.hostname, d.ip_address, d.platform, d.role, COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = ?",
         (device_id,),
     ).fetchone()
     if not device_row:

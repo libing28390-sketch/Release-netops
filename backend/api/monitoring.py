@@ -232,7 +232,7 @@ def search_online_devices(
             '''
             SELECT d.id, d.hostname, d.ip_address, d.platform, d.role,
                    COALESCE(NULLIF(s.site_name, ''),
-                            CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END,
+                            CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END,
                             '') AS site,
                    d.status, d.device_category
             FROM devices d
@@ -279,7 +279,7 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
 
         devices_rows = conn.execute(
             "SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role, "
-            "COALESCE(NULLIF(s.site_name, ''), CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END, '') AS site, "
+            "COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site, "
             "d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category "
             "FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.status = 'online'"
         ).fetchall()
@@ -394,7 +394,7 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
                 d.platform,
                 d.role,
                 COALESCE(NULLIF(s.site_name, ''),
-                         CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END,
+                         CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END,
                          '') AS site
             FROM alert_events a
             LEFT JOIN devices d ON d.id = a.device_id
@@ -432,7 +432,7 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         non_online_rows = conn.execute(
             '''
             SELECT d.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.role,
-                   COALESCE(NULLIF(s.site_name, ''), CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END, '') AS site,
+                   COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, '') AS site,
                    d.cpu_usage, d.memory_usage, d.temp, d.fan_status, d.psu_status, d.device_category
             FROM devices d
             LEFT JOIN sites s ON s.id = d.site_id

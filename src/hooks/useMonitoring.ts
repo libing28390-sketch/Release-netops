@@ -142,6 +142,11 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     return await resp.json() as { items: any[]; summary?: Record<string, unknown> };
   }, []);
 
+  const outboundHeaders = useCallback(() => {
+    const token = localStorage.getItem('netops_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
+
   const fetchMonitoringHealthDevices = useCallback(async (filters: {
     health_status?: string;
     availability_status?: string;
@@ -156,15 +161,14 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
       if (value && value !== 'all') params.set(key, value);
     }
     params.set('limit', '200');
-    const resp = await fetch(`/api/monitoring/health-devices?${params.toString()}`, { signal });
-    if (!resp.ok) throw new Error('Unable to load health drilldown');
-    return await resp.json() as MonitoringHealthDevicesResponse;
-  }, []);
-
-  const outboundHeaders = useCallback(() => {
-    const token = localStorage.getItem('netops_token');
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }, []);
+    const resp = await fetch(`/api/monitoring/health-devices?${params.toString()}`, { signal, headers: outboundHeaders() });
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const detail = payload?.detail?.message || payload?.detail;
+      throw new Error(detail ? String(detail) : 'Unable to load health drilldown');
+    }
+    return payload as MonitoringHealthDevicesResponse;
+  }, [outboundHeaders]);
 
   const fetchMonitoringIncidentPlaybookRecommendations = useCallback(async (incidentId: string, signal?: AbortSignal) => {
     if (!incidentId) return null;

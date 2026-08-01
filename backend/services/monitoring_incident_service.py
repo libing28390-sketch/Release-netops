@@ -114,7 +114,7 @@ def _active_alerts(conn) -> list[dict[str, Any]]:
                a.workflow_status, a.assignee, a.ack_by, a.ack_at, a.note,
                a.updated_at, d.hostname, d.ip_address,
                COALESCE(NULLIF(s.site_name, ''),
-                        CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END,
+                        CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END,
                         '') AS site
         FROM alert_events a
         LEFT JOIN devices d ON d.id = a.device_id
@@ -326,7 +326,7 @@ def get_incident(conn, incident_id_value: str, *, sync: bool = True) -> dict[str
         """
         SELECT a.*, ia.is_root, d.hostname, d.ip_address,
                COALESCE(NULLIF(s.site_name, ''),
-                        CASE WHEN COALESCE(d.site, '') LIKE 'site-%' THEN '' ELSE COALESCE(d.site, '') END,
+                        CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END,
                         '') AS site
         FROM monitoring_incident_alerts ia
         JOIN alert_events a ON a.id = ia.alert_id

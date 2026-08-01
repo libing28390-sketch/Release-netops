@@ -65,6 +65,29 @@ _POOL_SIZE = int(os.environ.get('DB_POOL_SIZE', '16'))
 _PG_OVERFLOW_MAX = max(0, int(os.environ.get('DB_POOL_OVERFLOW_MAX', '4')))
 _PG_ACQUIRE_TIMEOUT = max(0.1, float(os.environ.get('DB_POOL_ACQUIRE_TIMEOUT_SECONDS', '10')))
 
+_LIKE_RE = re.compile(r'\bLIKE\b', re.IGNORECASE)
+
+
+def _adapt_pg_sql(sql: str) -> str:
+    """Translate project ``?`` placeholders to psycopg2 safely."""
+    translated = sql.replace('?', '%s')
+    result: list[str] = []
+    index = 0
+    while index < len(translated):
+        char = translated[index]
+        if char != '%':
+            result.append(char)
+            index += 1
+            continue
+        next_char = translated[index + 1] if index + 1 < len(translated) else ''
+        if next_char in {'s', '%', '('}:
+            result.append('%' + next_char)
+            index += 2
+        else:
+            result.append('%%')
+            index += 1
+    return ''.join(result)
+
 # ── PostgreSQL Connection pooling wrappers ──
 if _USE_PG:
     _pg_pool: psycopg2.pool.ThreadedConnectionPool | None = None
@@ -181,8 +204,6 @@ if _USE_PG:
             if _pg_pool is None:
                 _initialize_pg_pool()
 
-    _LIKE_RE = re.compile(r'\bLIKE\b', re.IGNORECASE)
-
     class _PgCursor:
         __slots__ = ('_cur',)
         def __init__(self, cur):
@@ -190,9 +211,8 @@ if _USE_PG:
 
         @staticmethod
         def _adapt(sql: str) -> str:
-            sql = sql.replace('?', '%s')
             sql = _LIKE_RE.sub('ILIKE', sql)
-            return sql
+            return _adapt_pg_sql(sql)
 
         def execute(self, sql, params=None):
             self._cur.execute(self._adapt(sql), params)
@@ -493,4 +513,11 @@ def fetch_interface_data(conn, device_id: str) -> list[dict]:
         return [dict(r) for r in intf_rows]
     except Exception as exc:
         logger.warning(f"Failed to fetch interface data for device {device_id}: {exc}")
+        try:
+            # A missing optional telemetry table/column aborts a PostgreSQL
+            # transaction. Reset it before the caller performs the next
+            # device-level health query.
+            conn.rollback()
+        except Exception:
+            pass
         return []
