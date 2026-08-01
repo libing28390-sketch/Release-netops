@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
+import asyncio
 import heapq
 import json
 import logging
 import threading
 import time
+import uuid
 from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -54,6 +56,11 @@ class MonitoringIncidentStatusRequest(BaseModel):
 
 class MonitoringIncidentAssignRequest(BaseModel):
     assignee: str = Field(min_length=1, max_length=120)
+
+
+class MonitoringIncidentPlaybookExecuteRequest(BaseModel):
+    scenario_id: str = Field(min_length=1, max_length=160)
+    variables: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.get('/monitoring/collection-status')
@@ -477,6 +484,14 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         except Exception:
             # Older deployments may not have the optional queue/worker tables.
             # The response reports unknown rather than claiming the platform is healthy.
+            # PostgreSQL marks the current transaction as failed after a missing
+            # relation/column error.  Reset it before continuing with the
+            # incident projection query below; otherwise the next read raises
+            # InFailedSqlTransaction and the whole monitoring overview fails.
+            try:
+                conn.rollback()
+            except Exception:
+                logger.debug('Unable to rollback optional platform-health probe', exc_info=True)
             runtime_queues = {}
             runtime_workers = {}
         try:
@@ -1164,6 +1179,103 @@ def monitoring_incident_playbook_recommendations(incident_id: str, user=require_
         return item
     finally:
         conn.close()
+
+
+@router.post('/monitoring/incidents/{incident_id}/playbooks/execute')
+async def execute_monitoring_incident_playbook(
+    incident_id: str,
+    payload: MonitoringIncidentPlaybookExecuteRequest,
+    user=require_role('Operator'),
+):
+    """Manually run one recommended read-only Playbook for the incident device.
+
+    This endpoint intentionally refuses every scenario that contains an
+    execute phase.  Configuration changes continue through the normal
+    Playbook/change-order approval contract.
+    """
+    conn = get_db_connection()
+    try:
+        recommendation_set = recommend_incident_playbooks(conn, incident_id)
+        if recommendation_set is None:
+            raise HTTPException(status_code=404, detail='Incident not found')
+        recommendation = next(
+            (item for item in recommendation_set.get('items') or [] if item.get('scenario_id') == payload.scenario_id),
+            None,
+        )
+        if not recommendation or not recommendation.get('manual_execution_allowed'):
+            raise HTTPException(status_code=400, detail='Only a recommended read-only Playbook can be started from an incident')
+        device_id = str(recommendation.get('device_id') or '').strip()
+        if not device_id:
+            raise HTTPException(status_code=400, detail='Incident has no primary device')
+
+        from api.playbooks.engine import _run_playbook
+        from api.playbooks.scenarios import _all_scenarios, resolve_platform_phases
+
+        scenario = next((item for item in _all_scenarios() if item.get('id') == payload.scenario_id), None)
+        if not scenario:
+            raise HTTPException(status_code=404, detail='Playbook scenario not found')
+        phases_catalog = scenario.get('platform_phases') or {}
+        device_row = conn.execute('SELECT platform, vendor FROM devices WHERE id = ?', (device_id,)).fetchone()
+        if not device_row:
+            raise HTTPException(status_code=404, detail='Incident device not found')
+        try:
+            phases, resolved_platform = resolve_platform_phases(
+                phases_catalog,
+                recommendation_set.get('device', {}).get('platform'),
+                device_row['vendor'],
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if phases.get('execute'):
+            raise HTTPException(status_code=400, detail='Configuration Playbooks cannot be executed from monitoring incidents')
+        execution_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        scenario_name = scenario.get('name') or payload.scenario_id
+        conn.execute(
+            '''INSERT INTO playbook_executions
+               (id, scenario_id, scenario_name, platform, device_ids, variables, status, dry_run, author, concurrency, phases_json, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, 1, ?, ?, ?)''',
+            (
+                execution_id,
+                payload.scenario_id,
+                scenario_name,
+                resolved_platform,
+                json.dumps([device_id]),
+                json.dumps(payload.variables or {}, ensure_ascii=False),
+                str(user.get('username') or 'system'),
+                json.dumps(phases_catalog, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        append_incident_timeline(
+            conn,
+            incident_id,
+            'playbook_started',
+            str(user.get('username') or 'system'),
+            f'Read-only Playbook {scenario_name} started for incident device',
+            {'execution_id': execution_id, 'scenario_id': payload.scenario_id, 'platform': resolved_platform, 'device_id': device_id},
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    asyncio.create_task(_run_playbook(execution_id, [device_id], phases_catalog, payload.variables or {}, False, 1, resolved_platform, 0))
+    log_audit_event(
+        event_type='MONITORING_PLAYBOOK_EXECUTION',
+        category='monitoring',
+        severity='medium',
+        status='pending',
+        summary=f'Started read-only Playbook {scenario_name} from incident {incident_id}',
+        actor_username=user.get('username'),
+        actor_role=user.get('role'),
+        target_type='monitoring_incident',
+        target_id=incident_id,
+        target_name=scenario_name,
+        execution_id=execution_id,
+        details={'scenario_id': payload.scenario_id, 'platform': resolved_platform, 'device_id': device_id, 'read_only': True},
+    )
+    return {'execution_id': execution_id, 'status': 'pending', 'scenario_id': payload.scenario_id, 'platform': resolved_platform, 'read_only': True}
 
 
 @router.post('/monitoring/incidents/{incident_id}/acknowledge')

@@ -193,8 +193,8 @@ textarea {
 }
 
 .monitoring-cockpit-frame {
-  width: min(100%, 1720px);
-  margin-inline: auto;
+  width: 100%;
+  margin-inline: 0;
 }
 
 .ops-incident-ribbon {

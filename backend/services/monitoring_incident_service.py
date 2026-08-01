@@ -397,7 +397,7 @@ def get_incident_impact(conn, incident_id_value: str, *, sync: bool = True) -> d
     if device_ids:
         placeholders = ",".join("?" for _ in device_ids)
         rows = conn.execute(
-            f"SELECT id, hostname, ip_address, site FROM devices WHERE id IN ({placeholders})",
+            f"SELECT id, hostname, ip_address, site, site_id, role FROM devices WHERE id IN ({placeholders})",
             tuple(device_ids),
         ).fetchall()
         nodes = [dict(row) for row in rows]
@@ -430,7 +430,7 @@ def get_incident_impact(conn, incident_id_value: str, *, sync: bool = True) -> d
         if neighbor_ids:
             neighbor_placeholders = ",".join("?" for _ in neighbor_ids)
             neighbor_rows = conn.execute(
-                f"SELECT id, hostname, ip_address, site FROM devices WHERE id IN ({neighbor_placeholders})",
+                f"SELECT id, hostname, ip_address, site, site_id, role FROM devices WHERE id IN ({neighbor_placeholders})",
                 tuple(neighbor_ids),
             ).fetchall()
             nodes.extend(dict(row) for row in neighbor_rows)
@@ -450,7 +450,73 @@ def get_incident_impact(conn, incident_id_value: str, *, sync: bool = True) -> d
         evidence.append(f"Topology evidence: {len(links)} related link(s)")
     if incident.get("source"):
         evidence.append(f"Alert source: {incident.get('source')}")
+    topology_degree: dict[str, int] = defaultdict(int)
+    for link in links:
+        for field in ("source_device_id", "target_device_id"):
+            link_device_id = str(link.get(field) or "").strip()
+            if link_device_id:
+                topology_degree[link_device_id] += 1
+    candidate_scores: dict[str, int] = {}
+    for node in nodes:
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            continue
+        role = str(node.get("role") or "").lower()
+        role_weight = 30 if "core" in role else 20 if any(value in role for value in ("distribution", "aggregation", "汇聚")) else 10 if any(value in role for value in ("firewall", "router", "load", "出口", "路由")) else 0
+        candidate_scores[node_id] = topology_degree.get(node_id, 0) * 10 + role_weight
+    if root_alert and root_alert.get("device_id"):
+        root_id = str(root_alert.get("device_id"))
+        candidate_scores[root_id] = candidate_scores.get(root_id, 0) + 40
+    root_candidate_id = max(candidate_scores, key=candidate_scores.get) if candidate_scores else None
+    root_candidate = next((node for node in nodes if str(node.get("id") or "") == root_candidate_id), None)
+    if root_candidate:
+        evidence.append(
+            f"Topology heuristic candidate: {root_candidate.get('hostname') or root_candidate_id} "
+            f"({candidate_scores.get(root_candidate_id, 0)} points from alert, role, and link degree)"
+        )
+    site_ids = sorted({str(node.get("site_id") or "") for node in nodes if node.get("site_id")})
     site_names = sorted({str(node.get("site") or "") for node in nodes if node.get("site")})
+    site_contacts: list[dict[str, Any]] = []
+    business_systems: set[str] = set()
+    business_units: set[str] = set()
+    business_owners: set[str] = set()
+    data_gaps: list[str] = []
+    if site_ids:
+        site_placeholders = ",".join("?" for _ in site_ids)
+        try:
+            site_rows = conn.execute(
+                f"SELECT id, site_name, contact_name, contact_phone, contact_email FROM sites WHERE id IN ({site_placeholders})",
+                tuple(site_ids),
+            ).fetchall()
+            for row in site_rows:
+                item = dict(row)
+                if item.get("site_name"):
+                    site_names.append(str(item["site_name"]))
+                if any(item.get(key) for key in ("contact_name", "contact_phone", "contact_email")):
+                    site_contacts.append({
+                        "site_id": item.get("id"),
+                        "site_name": item.get("site_name") or item.get("id"),
+                        "name": item.get("contact_name") or "",
+                        "phone": item.get("contact_phone") or "",
+                        "email": item.get("contact_email") or "",
+                    })
+        except Exception:
+            data_gaps.append("Site contact details are unavailable in the current CMDB snapshot.")
+        try:
+            binding_rows = conn.execute(
+                f"SELECT business_system, department, owner, business_level FROM vlan_business_bindings WHERE site_id IN ({site_placeholders}) AND COALESCE(status, 'active') = 'active'",
+                tuple(site_ids),
+            ).fetchall()
+            for row in binding_rows:
+                business_systems.add(str(row["business_system"] or "").strip())
+                business_units.add(str(row["department"] or "").strip())
+                business_owners.add(str(row["owner"] or "").strip())
+        except Exception:
+            data_gaps.append("No VLAN business binding data is available for the affected site scope.")
+    if not site_names:
+        data_gaps.append("Affected devices do not have a user-defined site mapping.")
+    if not business_systems:
+        data_gaps.append("No active business-system binding is configured for the affected sites.")
     return {
         "incident_id": incident_id_value,
         "nodes": nodes,
@@ -464,16 +530,22 @@ def get_incident_impact(conn, incident_id_value: str, *, sync: bool = True) -> d
         },
         "inference": {
             "root_cause_alert_id": incident.get("root_cause_alert_id"),
-            "confidence": "high" if root_alert and links else "medium" if root_alert or links else "low",
+            "candidate_device_id": root_candidate_id,
+            "candidate_hostname": root_candidate.get("hostname") if root_candidate else None,
+            "candidate_score": candidate_scores.get(root_candidate_id) if root_candidate_id else None,
+            "method": "topology_role_alert_heuristic",
+            "confidence": "high" if root_alert and links and root_candidate_id else "medium" if root_alert or links else "low",
             "evidence": evidence,
-            "disclaimer": "Inference is evidence-based and must be confirmed by an operator.",
+            "disclaimer": "The candidate is an evidence-based topology heuristic, not a confirmed root cause; an operator must verify it.",
         },
         "business_impact": {
-            "sites": site_names,
-            "services": [],
-            "business_units": [],
-            "confidence": "low",
-            "data_gaps": ["No CMDB service/business-owner mapping is configured for the affected devices."],
+            "sites": sorted(set(site_names)),
+            "services": sorted(value for value in business_systems if value),
+            "business_units": sorted(value for value in business_units if value),
+            "owners": sorted(value for value in business_owners if value),
+            "contacts": site_contacts,
+            "confidence": "high" if business_systems and site_contacts else "medium" if business_systems or site_contacts else "low",
+            "data_gaps": data_gaps or ["Business impact is derived from current CMDB relationships and may be incomplete."],
         },
     }
 
@@ -626,6 +698,7 @@ def recommend_incident_playbooks(conn, incident_id_value: str) -> dict[str, Any]
             "device_hostname": device.get("hostname") or device_id,
             "read_only": True,
             "execution_allowed": False,
+            "manual_execution_allowed": True,
             "command_count": len(pre_check),
             "matched_domain": matched_domain,
             "reason": "Platform-compatible read-only checks are available; execution still requires an explicit automation workflow." if not matched_domain else f"Matches the incident signal domain: {matched_domain}.",
@@ -646,6 +719,7 @@ def recommend_incident_playbooks(conn, incident_id_value: str) -> dict[str, Any]
         "policy": {
             "read_only_only": True,
             "automatic_execution": False,
+            "manual_execution": True,
             "message": "Only platform-compatible read-only Playbooks are shown. Configuration Playbooks must continue through the change-order approval workflow.",
         },
     }

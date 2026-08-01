@@ -235,6 +235,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const [incidentDiagnosticsLoading, setIncidentDiagnosticsLoading] = useState(false);
   const [incidentRecommendations, setIncidentRecommendations] = useState<MonitoringPlaybookRecommendationsResponse | null>(null);
   const [incidentRecommendationsLoading, setIncidentRecommendationsLoading] = useState(false);
+  const [incidentPlaybookRunning, setIncidentPlaybookRunning] = useState<string | null>(null);
   const [collectionDrilldownOpen, setCollectionDrilldownOpen] = useState(false);
   const [collectionDrilldownLoading, setCollectionDrilldownLoading] = useState(false);
   const [collectionStatusItems, setCollectionStatusItems] = useState<any[]>([]);
@@ -336,6 +337,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     fetchMonitoringIncidentDetail,
     fetchMonitoringIncidentImpact,
     fetchMonitoringIncidentPlaybookRecommendations,
+    runMonitoringIncidentPlaybook,
     fetchMonitoringCollectionStatus,
     fetchMonitoringHealthDevices,
     runMonitoringDeviceDiagnostics,
@@ -384,6 +386,25 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
       setIncidentDiagnosticsLoading(false);
     }
   }, [fetchMonitoringOverview, incidentDiagnosticsLoading, language, runMonitoringDeviceDiagnostics, selectedIncident, showToast]);
+
+  const runIncidentPlaybook = useCallback(async (scenarioId: string) => {
+    if (!selectedIncident || incidentPlaybookRunning) return;
+    setIncidentPlaybookRunning(scenarioId);
+    try {
+      const result = await runMonitoringIncidentPlaybook(selectedIncident.id, scenarioId);
+      showToast(
+        language === 'zh' ? `只读 Playbook 已启动${result.platform ? `（${result.platform}）` : ''}` : 'Read-only Playbook started',
+        'success',
+      );
+      const detail = await fetchMonitoringIncidentDetail(selectedIncident.id);
+      if (detail) setSelectedIncident(detail);
+      fetchMonitoringOverview();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (language === 'zh' ? 'Playbook 启动失败' : 'Unable to start Playbook'), 'error');
+    } finally {
+      setIncidentPlaybookRunning(null);
+    }
+  }, [fetchMonitoringIncidentDetail, fetchMonitoringOverview, incidentPlaybookRunning, language, runMonitoringIncidentPlaybook, selectedIncident, showToast]);
 
   const openCollectionDrilldown = useCallback(async () => {
     setCollectionDrilldownOpen(true);
@@ -984,8 +1005,8 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         }
       />
 
-      <div className="ops-page-scroll flex-1 overflow-auto px-6 py-5">
-      <div className="monitoring-cockpit-frame space-y-5 pb-3">
+      <div className="ops-page-scroll flex-1 overflow-auto p-4 md:p-6">
+      <div className="monitoring-cockpit-frame space-y-4 pb-2">
 
       {/* CRITICAL BANNER */}
       {(criticalCount > 0 || criticalAlertCount > 0) && (
@@ -1595,6 +1616,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                   <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold text-violet-700">{incidentImpact.inference.confidence}</span>
                 </div>
                 <div className="mt-2 space-y-1 text-[10px] text-[var(--muted-text)]">
+                  {incidentImpact.inference.candidate_hostname && <p className="font-semibold text-violet-800">{language === 'zh' ? '自动根因候选：' : 'Automatic root-cause candidate: '}{incidentImpact.inference.candidate_hostname}{incidentImpact.inference.candidate_score != null ? ` · ${incidentImpact.inference.candidate_score}` : ''}</p>}
                   {incidentImpact.inference.evidence.map((evidence) => <p key={evidence}>• {evidence}</p>)}
                   <p className="text-violet-700">{language === 'zh' ? '该结论仅基于当前证据，需由运维人员确认。' : incidentImpact.inference.disclaimer}</p>
                 </div>
@@ -1607,6 +1629,9 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                   <span className="text-[10px] font-semibold text-slate-500">{incidentImpact.business_impact.confidence}</span>
                 </div>
                 <p className="mt-1 text-[10px] text-[var(--muted-text)]">{incidentImpact.business_impact.sites.length ? incidentImpact.business_impact.sites.join(' · ') : (language === 'zh' ? '暂无站点业务映射' : 'No site mapping')}</p>
+                {incidentImpact.business_impact.services.length > 0 && <p className="mt-1 text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '业务系统：' : 'Services: '}{incidentImpact.business_impact.services.join(' · ')}</p>}
+                {incidentImpact.business_impact.owners?.length ? <p className="mt-1 text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '业务负责人：' : 'Owners: '}{incidentImpact.business_impact.owners.join(' · ')}</p> : null}
+                {incidentImpact.business_impact.contacts?.length ? <p className="mt-1 text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '站点联系人：' : 'Contacts: '}{incidentImpact.business_impact.contacts.map((contact) => contact.name || contact.email || contact.phone).filter(Boolean).join(' · ')}</p> : null}
                 {incidentImpact.business_impact.data_gaps.map((gap) => <p key={gap} className="mt-1 text-[10px] text-amber-700">{gap}</p>)}
               </div>
             )}
@@ -1651,7 +1676,10 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                         <p className="truncate text-[11px] font-bold text-[var(--app-text)]">{language === 'zh' ? (recommendation.name_zh || recommendation.name) : recommendation.name}</p>
                         <p className="mt-0.5 text-[10px] text-[var(--muted-text)]">{recommendation.command_count} {language === 'zh' ? '条只读检查命令' : 'read-only checks'} · {recommendation.reason}</p>
                       </div>
-                      <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{language === 'zh' ? '只读' : 'READ ONLY'}</span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{language === 'zh' ? '只读' : 'READ ONLY'}</span>
+                        {recommendation.manual_execution_allowed && <button type="button" disabled={incidentPlaybookRunning !== null} onClick={() => runIncidentPlaybook(recommendation.scenario_id)} className="rounded-lg border border-emerald-200 bg-white px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50">{incidentPlaybookRunning === recommendation.scenario_id ? (language === 'zh' ? '启动中' : 'Starting') : (language === 'zh' ? '执行检查' : 'Run check')}</button>}
+                      </div>
                     </div>
                   ))}
                 </div>

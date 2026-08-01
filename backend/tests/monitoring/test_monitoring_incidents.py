@@ -25,7 +25,8 @@ def _connection() -> sqlite3.Connection:
             site TEXT,
             site_id TEXT,
             platform TEXT,
-            vendor TEXT
+            vendor TEXT,
+            role TEXT
         )
         """
     )
@@ -72,7 +73,7 @@ def _connection() -> sqlite3.Connection:
         """
     )
     conn.execute("INSERT INTO sites VALUES (?, ?)", ("site-wh", "华北数据中心"))
-    conn.execute("INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, ?)", ("d-1", "edge-1", "192.0.2.1", "site-wh", "site-wh", "cisco_ios", "Cisco"))
+    conn.execute("INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ("d-1", "edge-1", "192.0.2.1", "site-wh", "site-wh", "cisco_ios", "Cisco", "access"))
     return conn
 
 
@@ -147,7 +148,7 @@ def test_incident_impact_uses_topology_links_for_affected_devices() -> None:
             """,
             ("a-1", "ping_unreachable:d-1", "network_monitor", "critical", "Device offline", "offline", "d-1", "2026-08-01T01:00:00+00:00"),
         )
-        conn.execute("INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, ?)", ("d-2", "core-2", "192.0.2.2", "site-wh", "site-wh", "cisco_ios", "Cisco"))
+        conn.execute("INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ("d-2", "core-2", "192.0.2.2", "site-wh", "site-wh", "cisco_ios", "Cisco", "core"))
         conn.execute(
             "INSERT INTO topology_links VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("link-1", "d-1", "d-2", "edge-1", "core-2", "Gi1/0/1", "Gi1/0/1", "up", 0.98, "lldp", "2026-08-01T01:00:00+00:00"),

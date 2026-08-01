@@ -705,6 +705,10 @@ export interface MonitoringIncidentImpact {
   };
   inference?: {
     root_cause_alert_id?: string | null;
+    candidate_device_id?: string | null;
+    candidate_hostname?: string | null;
+    candidate_score?: number | null;
+    method?: string;
     confidence: string;
     evidence: string[];
     disclaimer?: string;
@@ -713,6 +717,8 @@ export interface MonitoringIncidentImpact {
     sites: string[];
     services: string[];
     business_units: string[];
+    owners?: string[];
+    contacts?: Array<{ site_id?: string; site_name?: string; name?: string; phone?: string; email?: string }>;
     confidence: string;
     data_gaps: string[];
   };
@@ -893,6 +899,7 @@ export interface MonitoringPlaybookRecommendation {
   device_hostname?: string;
   read_only: boolean;
   execution_allowed: boolean;
+  manual_execution_allowed?: boolean;
   command_count: number;
   matched_domain?: string | null;
   reason?: string;

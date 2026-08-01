@@ -176,6 +176,20 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     return await resp.json() as MonitoringPlaybookRecommendationsResponse;
   }, [outboundHeaders]);
 
+  const runMonitoringIncidentPlaybook = useCallback(async (incidentId: string, scenarioId: string, variables: Record<string, unknown> = {}) => {
+    const resp = await fetch(`/api/monitoring/incidents/${encodeURIComponent(incidentId)}/playbooks/execute`, {
+      method: 'POST',
+      headers: { ...outboundHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario_id: scenarioId, variables }),
+    });
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const detail = payload?.detail?.message || payload?.detail || 'Unable to start incident Playbook';
+      throw new Error(String(detail));
+    }
+    return payload as { execution_id?: string; status?: string; scenario_id?: string; platform?: string; read_only?: boolean };
+  }, [outboundHeaders]);
+
   const fetchOutboundHealth = useCallback(async (signal?: AbortSignal, historyHours?: number) => {
     const range = historyHours ?? useMonitoringStore.getState().outboundHistoryHours;
     try {
@@ -686,6 +700,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     fetchMonitoringIncidentDetail,
     fetchMonitoringIncidentImpact,
     fetchMonitoringIncidentPlaybookRecommendations,
+    runMonitoringIncidentPlaybook,
     runMonitoringDeviceDiagnostics,
     updateMonitoringIncident,
     fetchMonitoringRealtime,
