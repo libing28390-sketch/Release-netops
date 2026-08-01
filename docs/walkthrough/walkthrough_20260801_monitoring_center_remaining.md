@@ -34,14 +34,24 @@ unrelated modules are outside this change set.
 - Business impact shows known site scope and explicitly reports missing CMDB
   service/business-owner mappings instead of inventing business facts.
 - Quick collection diagnostics show each DNS, SSH/TCP, and SNMP check status.
+- Health drill-down accepts site, role, alert-severity, and problem-keyword
+  filters while preserving the canonical user-entered site name.
+- Incident detail loads only platform-compatible read-only Playbook
+  recommendations.  Configuration Playbooks are intentionally excluded and
+  remain subject to the change-order approval workflow.
+- Diagnostics, recommendation views, and incident-linked work-order creation
+  append durable timeline events.
 
 ### Trends and platform self-monitoring
 
 - Health trend supports 1 hour, 24 hour, and 7 day ranges.
 - Trend data includes online rate, collection success rate, active/critical alert
   counts, new alerts, recovered alerts, and average recovery time.
-- The platform health section exposes database/collector state, collector queue
-  backlog, collection delay, and host CPU/memory when the metrics are available.
+- The platform health section exposes database/collector state, per-collector
+  queue backlog, worker slots, active Playbook WebSocket sessions, Redis
+  configuration state, collection delay, and host CPU/memory when the metrics
+  are available. Unknown or unconfigured dependencies are not reported as
+  healthy.
 - Risk ranking gives core, aggregation, firewall, router, and load-balancer
   roles higher impact weight within the same health state.
 
@@ -58,7 +68,7 @@ unrelated modules are outside this change set.
 
 ```text
 .venv\\Scripts\\python.exe -m pytest -q backend/tests/monitoring backend/tests/vendor_audit
-# 284 passed
+# 285 passed
 
 npm run lint
 # passed (tsc --noEmit)
@@ -82,10 +92,12 @@ claimed as complete:
 
 - automated topology root-cause inference beyond evidence presentation;
 - authoritative service, business-unit, owner, and SLA relationships in CMDB;
-- automatic platform-aware Playbook recommendation and asynchronous Playbook
-  execution with approval/risk gates;
-- full runtime monitoring of Redis/WebSocket/worker heartbeats and host disk/
-  network metrics.
+- asynchronous Playbook execution directly from the incident drawer with
+  approval/risk gates.  The current release is recommendation-only and routes
+  configuration changes through the existing automation/change-order flow;
+- full Redis latency/auth probes, worker heartbeat age, and host disk/network
+  metrics; the current UI reports the runtime facts that are available and
+  labels unconfigured/unverified dependencies explicitly.
 
 These items should be implemented only after the corresponding CMDB ownership
 model and Playbook execution contract are confirmed, so the NOC does not expose

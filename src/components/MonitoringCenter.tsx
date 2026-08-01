@@ -8,7 +8,7 @@ import {
   Terminal, Download, Wrench, Map as MapIcon, Globe, Layers, BarChart3,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';
-import type { Device, HostResourceSnapshot, HostResourceHistoryPayload, MonitoringHealthDevice, MonitoringIncident, MonitoringIncidentImpact } from '../types';
+import type { Device, HostResourceSnapshot, HostResourceHistoryPayload, MonitoringHealthDevice, MonitoringIncident, MonitoringIncidentImpact, MonitoringPlaybookRecommendationsResponse } from '../types';
 import DateTimePicker from './DateTimePicker';
 import PageHero from './PageHero';
 import { useChartTheme } from '../hooks/useChartTheme';
@@ -233,6 +233,8 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const [incidentImpactLoading, setIncidentImpactLoading] = useState(false);
   const [incidentDiagnostics, setIncidentDiagnostics] = useState<any | null>(null);
   const [incidentDiagnosticsLoading, setIncidentDiagnosticsLoading] = useState(false);
+  const [incidentRecommendations, setIncidentRecommendations] = useState<MonitoringPlaybookRecommendationsResponse | null>(null);
+  const [incidentRecommendationsLoading, setIncidentRecommendationsLoading] = useState(false);
   const [collectionDrilldownOpen, setCollectionDrilldownOpen] = useState(false);
   const [collectionDrilldownLoading, setCollectionDrilldownLoading] = useState(false);
   const [collectionStatusItems, setCollectionStatusItems] = useState<any[]>([]);
@@ -333,6 +335,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     fetchMonitoringAlerts,
     fetchMonitoringIncidentDetail,
     fetchMonitoringIncidentImpact,
+    fetchMonitoringIncidentPlaybookRecommendations,
     fetchMonitoringCollectionStatus,
     fetchMonitoringHealthDevices,
     runMonitoringDeviceDiagnostics,
@@ -348,25 +351,30 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
     setIncidentImpact(null);
     setIncidentImpactLoading(true);
     setIncidentDiagnostics(null);
+    setIncidentRecommendations(null);
+    setIncidentRecommendationsLoading(true);
     try {
-      const [detail, impact] = await Promise.all([
+      const [detail, impact, recommendations] = await Promise.all([
         fetchMonitoringIncidentDetail(incident.id),
         fetchMonitoringIncidentImpact(incident.id),
+        fetchMonitoringIncidentPlaybookRecommendations(incident.id),
       ]);
       if (detail) setSelectedIncident(detail);
       if (impact) setIncidentImpact(impact);
+      if (recommendations) setIncidentRecommendations(recommendations);
     } finally {
       setIncidentDetailLoading(false);
       setIncidentImpactLoading(false);
+      setIncidentRecommendationsLoading(false);
     }
-  }, [fetchMonitoringIncidentDetail, fetchMonitoringIncidentImpact]);
+  }, [fetchMonitoringIncidentDetail, fetchMonitoringIncidentImpact, fetchMonitoringIncidentPlaybookRecommendations]);
 
   const runIncidentDiagnostics = useCallback(async () => {
     const deviceId = selectedIncident?.primary_device_id;
     if (!deviceId || incidentDiagnosticsLoading) return;
     setIncidentDiagnosticsLoading(true);
     try {
-      const result = await runMonitoringDeviceDiagnostics(deviceId);
+      const result = await runMonitoringDeviceDiagnostics(deviceId, selectedIncident?.id);
       setIncidentDiagnostics(result);
       showToast(language === 'zh' ? '采集链路诊断已完成' : 'Collection diagnostics completed', result?.status === 'success' ? 'success' : 'warning');
       fetchMonitoringOverview();
@@ -856,6 +864,7 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const deviceHealthSummary = monitorOverview?.device_health_summary || null;
   const riskyDevices = Array.isArray(monitorOverview?.top_risky_devices) ? monitorOverview.top_risky_devices : [];
   const platformHealth = monitorOverview?.platform_health || null;
+  const workerRunningCount = Object.values((platformHealth?.workers || {}) as Record<string, { running?: number }>).reduce((total, item) => total + Number(item?.running || 0), 0);
   const healthHistoryData = (monitorHealthHistory?.series || []).map((point) => ({
     ...point,
     time: formatTs(point.ts, true),
@@ -1102,6 +1111,9 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
            <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u6700\u8fd1\u91c7\u96c6\u5ef6\u8fdf' : 'Collection delay'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{lastCollectionAt ? formatTs(lastCollectionAt, true) : '--'}</p></div>
            <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u5bbf\u4e3b CPU' : 'Host CPU'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{hostResources?.cpu_percent == null ? '--' : `${Math.round(hostResources.cpu_percent)}%`}</p></div>
            <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u5bbf\u4e3b\u5185\u5b58' : 'Host memory'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{hostResources?.memory_percent == null ? '--' : `${Math.round(hostResources.memory_percent)}%`}</p></div>
+           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? 'Worker 槽位' : 'Worker slots'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{workerRunningCount || '--'}</p></div>
+           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? 'WebSocket 会话' : 'WebSocket sessions'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{platformHealth?.websocket?.active_sessions ?? '--'}</p></div>
+           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? 'Redis' : 'Redis'}</p><p className={`mt-1 text-sm font-bold ${platformHealth?.redis?.status === 'not_configured' ? 'text-slate-500' : 'text-amber-600'}`}>{platformHealth?.redis?.status || '--'}</p></div>
          </div>
          {collectionDrilldownOpen && (
           <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
@@ -1622,6 +1634,28 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                   <p className="col-span-2 truncate text-[var(--muted-text)]" title={incidentDiagnostics.message || incidentDiagnostics.summary || ''}>{incidentDiagnostics.message || incidentDiagnostics.summary || (language === 'zh' ? '已返回诊断结果' : 'Diagnostic result returned')}</p>
                 </div>
               )}
+            </div>
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">{language === 'zh' ? '平台感知 Playbook 建议' : 'Platform-aware Playbook recommendations'}</p>
+                  <p className="mt-1 text-[11px] text-[var(--muted-text)]">{language === 'zh' ? '仅展示与设备平台匹配、没有配置执行阶段的只读检查。配置变更仍需工单审批。' : 'Only platform-compatible read-only checks are shown. Configuration changes still require an approved work order.'}</p>
+                </div>
+                {incidentRecommendations?.device?.platform && <span className="shrink-0 rounded-full bg-white/80 px-2 py-1 text-[10px] font-bold text-emerald-700">{incidentRecommendations.device.platform}</span>}
+              </div>
+              {incidentRecommendationsLoading ? <p className="mt-2 text-[11px] text-[var(--muted-text)]">{language === 'zh' ? '正在匹配平台与厂商…' : 'Matching vendor and platform…'}</p> : incidentRecommendations?.items?.length ? (
+                <div className="mt-2 space-y-1.5">
+                  {incidentRecommendations.items.slice(0, 3).map((recommendation) => (
+                    <div key={recommendation.scenario_id} className="flex items-start justify-between gap-2 rounded-lg bg-white/75 px-2.5 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-[11px] font-bold text-[var(--app-text)]">{language === 'zh' ? (recommendation.name_zh || recommendation.name) : recommendation.name}</p>
+                        <p className="mt-0.5 text-[10px] text-[var(--muted-text)]">{recommendation.command_count} {language === 'zh' ? '条只读检查命令' : 'read-only checks'} · {recommendation.reason}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{language === 'zh' ? '只读' : 'READ ONLY'}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="mt-2 text-[11px] text-[var(--muted-text)]">{incidentRecommendations?.message || (language === 'zh' ? '当前平台暂无安全只读 Playbook，建议先执行采集诊断。' : 'No safe read-only Playbook is available for this platform; run collection diagnostics first.')}</p>}
             </div>
             {selectedIncident.work_orders?.length ? (
               <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">

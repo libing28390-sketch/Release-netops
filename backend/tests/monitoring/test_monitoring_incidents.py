@@ -7,6 +7,7 @@ from services.monitoring_incident_service import (
     get_incident,
     incident_group_key,
     list_incidents,
+    recommend_incident_playbooks,
     sync_incidents,
     update_incident_status,
 )
@@ -22,7 +23,9 @@ def _connection() -> sqlite3.Connection:
             hostname TEXT,
             ip_address TEXT,
             site TEXT,
-            site_id TEXT
+            site_id TEXT,
+            platform TEXT,
+            vendor TEXT
         )
         """
     )
@@ -69,7 +72,7 @@ def _connection() -> sqlite3.Connection:
         """
     )
     conn.execute("INSERT INTO sites VALUES (?, ?)", ("site-wh", "华北数据中心"))
-    conn.execute("INSERT INTO devices VALUES (?, ?, ?, ?, ?)", ("d-1", "edge-1", "192.0.2.1", "site-wh", "site-wh"))
+    conn.execute("INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, ?)", ("d-1", "edge-1", "192.0.2.1", "site-wh", "site-wh", "cisco_ios", "Cisco"))
     return conn
 
 
@@ -144,7 +147,7 @@ def test_incident_impact_uses_topology_links_for_affected_devices() -> None:
             """,
             ("a-1", "ping_unreachable:d-1", "network_monitor", "critical", "Device offline", "offline", "d-1", "2026-08-01T01:00:00+00:00"),
         )
-        conn.execute("INSERT INTO devices VALUES (?, ?, ?, ?, ?)", ("d-2", "core-2", "192.0.2.2", "site-wh", "site-wh"))
+        conn.execute("INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, ?)", ("d-2", "core-2", "192.0.2.2", "site-wh", "site-wh", "cisco_ios", "Cisco"))
         conn.execute(
             "INSERT INTO topology_links VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("link-1", "d-1", "d-2", "edge-1", "core-2", "Gi1/0/1", "Gi1/0/1", "up", 0.98, "lldp", "2026-08-01T01:00:00+00:00"),
@@ -156,5 +159,40 @@ def test_incident_impact_uses_topology_links_for_affected_devices() -> None:
         assert impact["summary"]["topology_nodes"] == 2
         assert impact["summary"]["related_links"] == 1
         assert {node["impact_scope"] for node in impact["nodes"]} == {"affected", "neighbor"}
+    finally:
+        conn.close()
+
+
+def test_playbook_recommendations_are_platform_bound_and_read_only(monkeypatch) -> None:
+    conn = _connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO alert_events
+                (id, dedupe_key, source, severity, title, message, device_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("a-1", "snmp_unreachable:d-1", "network_monitor", "critical", "SNMP failed", "No SNMP response", "d-1", "2026-08-01T01:00:00+00:00"),
+        )
+        incident = list_incidents(conn, status="active")["items"][0]
+        import api.playbooks.scenarios as scenario_module
+        monkeypatch.setattr(
+            scenario_module,
+            "_all_scenarios",
+            lambda: [{
+                "id": "safe-check",
+                "name": "Safe check",
+                "name_zh": "安全检查",
+                "risk": "low",
+                "platform_phases": {"cisco_ios": {"pre_check": ["show version"], "execute": [], "post_check": [], "rollback": []}},
+            }],
+        )
+        result = recommend_incident_playbooks(conn, incident["id"])
+        assert result is not None
+        assert result["device"]["platform"] == "cisco_ios"
+        assert result["items"][0]["scenario_id"] == "safe-check"
+        assert result["items"][0]["read_only"] is True
+        assert result["items"][0]["execution_allowed"] is False
+        assert result["policy"]["automatic_execution"] is False
     finally:
         conn.close()

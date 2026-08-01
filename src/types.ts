@@ -860,6 +860,9 @@ export interface MonitoringHealthDevice {
   health_summary?: string | null;
   health_reasons?: string[];
   open_alert_count?: number;
+  critical_open_alerts?: number;
+  major_open_alerts?: number;
+  warning_open_alerts?: number;
 }
 
 export interface MonitoringHealthDevicesResponse {
@@ -869,7 +872,44 @@ export interface MonitoringHealthDevicesResponse {
     health_status: string;
     availability_status: string;
     collection_status: string;
+    site?: string;
+    role?: string;
+    severity?: string;
+    problem_type?: string;
   };
+}
+
+export interface MonitoringPlaybookRecommendation {
+  scenario_id: string;
+  name: string;
+  name_zh?: string;
+  description?: string;
+  description_zh?: string;
+  category?: string;
+  risk?: string;
+  platform?: string;
+  vendor?: string;
+  device_id: string;
+  device_hostname?: string;
+  read_only: boolean;
+  execution_allowed: boolean;
+  command_count: number;
+  matched_domain?: string | null;
+  reason?: string;
+  score?: number;
+}
+
+export interface MonitoringPlaybookRecommendationsResponse {
+  incident_id: string;
+  device?: { id: string; hostname?: string; platform?: string; vendor?: string } | null;
+  matched_domains?: string[];
+  items: MonitoringPlaybookRecommendation[];
+  policy?: {
+    read_only_only?: boolean;
+    automatic_execution?: boolean;
+    message?: string;
+  };
+  message?: string;
 }
 
 export type TopologyTagOperator = 'and' | 'or' | 'not';

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useMonitoringStore } from '../store/monitoringStore';
 import type { OutboundTarget } from '../types/outbound';
-import type { DeviceHealthHistoryResponse, MonitoringHealthDevicesResponse, MonitoringIncident, MonitoringIncidentImpact, MonitoringIncidentListResponse } from '../types';
+import type { DeviceHealthHistoryResponse, MonitoringHealthDevicesResponse, MonitoringIncident, MonitoringIncidentImpact, MonitoringIncidentListResponse, MonitoringPlaybookRecommendationsResponse } from '../types';
 
 interface UseMonitoringProps {
   isAuthenticated: boolean;
@@ -146,6 +146,10 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     health_status?: string;
     availability_status?: string;
     collection_status?: string;
+    site?: string;
+    role?: string;
+    severity?: string;
+    problem_type?: string;
   } = {}, signal?: AbortSignal) => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(filters)) {
@@ -161,6 +165,16 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, []);
+
+  const fetchMonitoringIncidentPlaybookRecommendations = useCallback(async (incidentId: string, signal?: AbortSignal) => {
+    if (!incidentId) return null;
+    const resp = await fetch(`/api/monitoring/incidents/${encodeURIComponent(incidentId)}/playbook-recommendations`, {
+      signal,
+      headers: outboundHeaders(),
+    });
+    if (!resp.ok) return null;
+    return await resp.json() as MonitoringPlaybookRecommendationsResponse;
+  }, [outboundHeaders]);
 
   const fetchOutboundHealth = useCallback(async (signal?: AbortSignal, historyHours?: number) => {
     const range = historyHours ?? useMonitoringStore.getState().outboundHistoryHours;
@@ -319,9 +333,10 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     return await resp.json() as MonitoringIncidentImpact;
   }, [outboundHeaders]);
 
-  const runMonitoringDeviceDiagnostics = useCallback(async (deviceId: string) => {
+  const runMonitoringDeviceDiagnostics = useCallback(async (deviceId: string, incidentId?: string) => {
     if (!deviceId) return null;
-    const resp = await fetch(`/api/monitoring/device/${encodeURIComponent(deviceId)}/diagnostics`, {
+    const query = incidentId ? `?incident_id=${encodeURIComponent(incidentId)}` : '';
+    const resp = await fetch(`/api/monitoring/device/${encodeURIComponent(deviceId)}/diagnostics${query}`, {
       method: 'POST',
       headers: { ...outboundHeaders(), 'Content-Type': 'application/json' },
     });
@@ -670,6 +685,7 @@ export const useMonitoring = ({ isAuthenticated, activeTab, pollOutbound = true,
     fetchMonitoringIncidents,
     fetchMonitoringIncidentDetail,
     fetchMonitoringIncidentImpact,
+    fetchMonitoringIncidentPlaybookRecommendations,
     runMonitoringDeviceDiagnostics,
     updateMonitoringIncident,
     fetchMonitoringRealtime,

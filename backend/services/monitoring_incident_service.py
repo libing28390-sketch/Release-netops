@@ -59,6 +59,23 @@ def _append_timeline(
     )
 
 
+def append_incident_timeline(
+    conn,
+    incident_id_value: str,
+    event_type: str,
+    actor: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Append a durable operator/audit event to an incident timeline.
+
+    The internal helper is used by incident state transitions.  This public
+    wrapper lets diagnostics, work-order handoff, and safe Playbook
+    recommendations use the same timeline without duplicating SQL.
+    """
+    _append_timeline(conn, incident_id_value, event_type, actor, message, details)
+
+
 def _severity(alert: dict[str, Any]) -> str:
     value = str(alert.get("severity") or "warning").strip().lower()
     return value if value in SEVERITY_RANK else "warning"
@@ -521,3 +538,114 @@ def assign_incident(conn, incident_id_value: str, assignee: str) -> dict[str, An
     _append_timeline(conn, incident_id_value, "incident_assigned", assignee, f"Incident assigned to {assignee}", {"assignee": assignee})
     conn.commit()
     return get_incident(conn, incident_id_value, sync=False)
+
+
+def recommend_incident_playbooks(conn, incident_id_value: str) -> dict[str, Any] | None:
+    """Return platform-bound, read-only Playbook recommendations.
+
+    Recommendations deliberately exclude any scenario with an execute phase.
+    A monitoring incident must never turn into a configuration change merely
+    because an operator opened the detail drawer.  The existing Playbook
+    catalog remains the source of commands and platform compatibility.
+    """
+    incident = get_incident(conn, incident_id_value, sync=False)
+    if incident is None:
+        return None
+
+    device_id = str(incident.get("primary_device_id") or "").strip()
+    device = None
+    if device_id:
+        row = conn.execute(
+            "SELECT id, hostname, platform, vendor FROM devices WHERE id = ?",
+            (device_id,),
+        ).fetchone()
+        device = dict(row) if row else None
+    if not device:
+        return {
+            "incident_id": incident_id_value,
+            "device": None,
+            "items": [],
+            "message": "No primary device is available for platform-bound recommendations.",
+        }
+
+    # Local import avoids making the monitoring projection depend on the
+    # Playbook router during application import.
+    from api.playbooks.scenarios import _normalize_playbook_platform, resolve_platform_phases, _all_scenarios
+
+    platform = _normalize_playbook_platform(device.get("platform"), device.get("vendor"))
+    incident_text = " ".join(
+        str(incident.get(field) or "")
+        for field in ("title", "summary", "source")
+    ).lower()
+    markers = {
+        "reachability": ("offline", "unreachable", "snmp", "ssh", "ping", "probe", "connect", "采集", "连通"),
+        "hardware": ("fan", "power", "temperature", "hardware", "风扇", "电源", "温度"),
+        "routing": ("bgp", "ospf", "route", "routing", "路由", "邻居"),
+        "interface": ("interface", "port", "link", "flap", "error", "接口", "链路"),
+    }
+    matched_domains = [name for name, values in markers.items() if any(value in incident_text for value in values)]
+
+    recommendations: list[dict[str, Any]] = []
+    for scenario in _all_scenarios():
+        scenario_id = str(scenario.get("id") or "").strip()
+        if not scenario_id:
+            continue
+        try:
+            phases, resolved_platform = resolve_platform_phases(
+                scenario.get("platform_phases") or {},
+                platform,
+                device.get("vendor"),
+            )
+        except KeyError:
+            continue
+        execute_commands = phases.get("execute") or []
+        if execute_commands:
+            continue
+        pre_check = phases.get("pre_check") or []
+        if not pre_check:
+            continue
+        scenario_text = " ".join(
+            str(scenario.get(field) or "")
+            for field in ("id", "name", "description", "name_zh", "description_zh", "category")
+        ).lower()
+        matched_domain = next((domain for domain in matched_domains if any(marker in scenario_text for marker in markers[domain])), None)
+        score = 100 if matched_domain else 10
+        if str(scenario.get("id")) == "domestic-readonly-inspection" and "reachability" in matched_domains:
+            score += 20
+        recommendations.append({
+            "scenario_id": scenario_id,
+            "name": scenario.get("name") or scenario_id,
+            "name_zh": scenario.get("name_zh") or scenario.get("name") or scenario_id,
+            "description": scenario.get("description") or "",
+            "description_zh": scenario.get("description_zh") or scenario.get("description") or "",
+            "category": scenario.get("category") or "Operations",
+            "risk": str(scenario.get("risk") or "low").lower(),
+            "platform": resolved_platform,
+            "vendor": device.get("vendor") or "",
+            "device_id": device_id,
+            "device_hostname": device.get("hostname") or device_id,
+            "read_only": True,
+            "execution_allowed": False,
+            "command_count": len(pre_check),
+            "matched_domain": matched_domain,
+            "reason": "Platform-compatible read-only checks are available; execution still requires an explicit automation workflow." if not matched_domain else f"Matches the incident signal domain: {matched_domain}.",
+            "score": score,
+        })
+
+    recommendations.sort(key=lambda item: (-int(item.get("score") or 0), str(item.get("name") or "")))
+    return {
+        "incident_id": incident_id_value,
+        "device": {
+            "id": device_id,
+            "hostname": device.get("hostname") or device_id,
+            "platform": platform,
+            "vendor": device.get("vendor") or "",
+        },
+        "matched_domains": matched_domains,
+        "items": recommendations[:5],
+        "policy": {
+            "read_only_only": True,
+            "automatic_execution": False,
+            "message": "Only platform-compatible read-only Playbooks are shown. Configuration Playbooks must continue through the change-order approval workflow.",
+        },
+    }

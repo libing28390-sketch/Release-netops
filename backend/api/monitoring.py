@@ -16,7 +16,15 @@ from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health, build_health_overview, load_devices_for_health
 from services.collection_status_service import collection_status_summary, list_collection_status
 from services.collection_diagnostics_service import diagnose_device_collection
-from services.monitoring_incident_service import assign_incident, get_incident, get_incident_impact, list_incidents, update_incident_status
+from services.monitoring_incident_service import (
+    append_incident_timeline,
+    assign_incident,
+    get_incident,
+    get_incident_impact,
+    list_incidents,
+    recommend_incident_playbooks,
+    update_incident_status,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -72,11 +80,26 @@ def monitoring_device_collection_status(device_id: str):
 
 
 @router.post('/monitoring/device/{device_id}/diagnostics')
-async def monitoring_device_diagnostics(device_id: str, request: Request):
+async def monitoring_device_diagnostics(device_id: str, request: Request, incident_id: Optional[str] = Query(default=None)):
     _require_monitoring_session(request)
     result = await diagnose_device_collection(device_id)
     if result is None:
         raise HTTPException(status_code=404, detail='Device not found')
+    if incident_id:
+        actor = str(_require_monitoring_session(request).get('username') or 'system').strip() or 'system'
+        conn = get_db_connection()
+        try:
+            append_incident_timeline(
+                conn,
+                incident_id,
+                'diagnostics_completed',
+                actor,
+                f'Collection diagnostics completed for {result.get("hostname") or device_id}',
+                {'device_id': device_id, 'status': result.get('status'), 'checks': result.get('checks') or {}},
+            )
+            conn.commit()
+        finally:
+            conn.close()
     return result
 
 
@@ -432,14 +455,58 @@ def monitoring_overview(force_refresh: bool = Query(default=False)):
         by_status = collection_summary.get('by_status') or {}
         collector_count = len(collection_summary.get('by_collector') or {})
         collector_failures = sum(int(by_status.get(key) or 0) for key in ('failed', 'stale', 'partial_failed', 'unknown'))
+        runtime_queues: dict[str, dict[str, int]] = {}
+        runtime_workers: dict[str, dict[str, int]] = {}
+        try:
+            queue_rows = conn.execute(
+                'SELECT collector, status, COUNT(*) AS count FROM collector_task_queue GROUP BY collector, status'
+            ).fetchall()
+            for row in queue_rows:
+                collector = str(row['collector'] or 'unknown')
+                runtime_queues.setdefault(collector, {})[str(row['status'] or 'unknown')] = int(row['count'] or 0)
+            for collector, counts in runtime_queues.items():
+                counts['total'] = sum(value for key, value in counts.items() if key != 'total')
+                counts['pending'] = int(counts.get('pending') or 0)
+                counts['running'] = int(counts.get('running') or 0)
+            worker_rows = conn.execute(
+                'SELECT collector, status, COUNT(*) AS count FROM collector_worker_slots GROUP BY collector, status'
+            ).fetchall()
+            for row in worker_rows:
+                collector = str(row['collector'] or 'unknown')
+                runtime_workers.setdefault(collector, {})[str(row['status'] or 'unknown')] = int(row['count'] or 0)
+        except Exception:
+            # Older deployments may not have the optional queue/worker tables.
+            # The response reports unknown rather than claiming the platform is healthy.
+            runtime_queues = {}
+            runtime_workers = {}
+        try:
+            from api.playbooks.manager import ws_manager
+            websocket_connections = sum(len(items) for items in ws_manager.connections.values())
+            websocket_sessions = len(ws_manager.connections)
+        except Exception:
+            websocket_connections = None
+            websocket_sessions = None
+        import os
+        redis_configured = bool(os.environ.get('REDIS_URL') or os.environ.get('REDIS_HOST'))
         payload['platform_health'] = {
-            'database': {'status': 'healthy'},
+            'database': {'status': 'healthy', 'checked_at': now_utc.isoformat()},
             'collectors': {
                 'total': collector_count,
                 'failed': collector_failures,
                 'status': 'degraded' if collector_failures else 'healthy',
             },
-            'queue': collection_summary.get('queues') or {},
+            'queue': runtime_queues or (collection_summary.get('queues') or {}),
+            'workers': runtime_workers,
+            'websocket': {
+                'status': 'healthy' if websocket_connections is not None else 'unknown',
+                'active_connections': websocket_connections,
+                'active_sessions': websocket_sessions,
+            },
+            'redis': {
+                'status': 'configured_unverified' if redis_configured else 'not_configured',
+                'configured': redis_configured,
+                'message': 'Redis health probe is not configured in this deployment.' if not redis_configured else 'Redis endpoint is configured; external probe is required for latency/auth validation.',
+            },
             'sweeps': collection_summary.get('sweeps') or {},
             'updated_at': now_utc.isoformat(),
         }
@@ -940,6 +1007,10 @@ def monitoring_health_devices(
     health_status: str = Query(default='all'),
     availability_status: str = Query(default='all'),
     collection_status: str = Query(default='all'),
+    site: str = Query(default='all'),
+    role: str = Query(default='all'),
+    severity: str = Query(default='all'),
+    problem_type: str = Query(default='all'),
     limit: int = Query(default=100, ge=1, le=500),
     user=require_role("Viewer"),
 ):
@@ -955,11 +1026,37 @@ def monitoring_health_devices(
         health_filter = (health_status or 'all').strip().lower()
         availability_filter = (availability_status or 'all').strip().lower()
         collection_filter = (collection_status or 'all').strip().lower()
+        site_filter = (site or 'all').strip().lower()
+        role_filter = (role or 'all').strip().lower()
+        severity_filter = (severity or 'all').strip().lower()
+        problem_filter = (problem_type or 'all').strip().lower()
+
+        def matches_problem(device: dict) -> bool:
+            if problem_filter == 'all':
+                return True
+            reasons = ' '.join(str(item) for item in (device.get('health_reasons') or [])).lower()
+            collection_failures = ' '.join(
+                f"{item.get('collector', '')} {item.get('status', '')} {item.get('message', '')}"
+                for item in (device.get('collection_failures') or [])
+                if isinstance(item, dict)
+            ).lower()
+            haystack = f"{reasons} {collection_failures} {device.get('health_summary') or ''}".lower()
+            return problem_filter in haystack
+
         items = [
             device for device in evaluated
             if (health_filter == 'all' or str(device.get('health_status') or 'unknown').lower() == health_filter)
             and (availability_filter == 'all' or str(device.get('availability_status') or 'unknown').lower() == availability_filter)
             and (collection_filter == 'all' or str(device.get('collection_status') or 'unknown').lower() == collection_filter)
+            and (site_filter == 'all' or str(device.get('site') or '').strip().lower() == site_filter)
+            and (role_filter == 'all' or str(device.get('role') or '').strip().lower() == role_filter)
+            and (
+                severity_filter == 'all'
+                or (severity_filter == 'critical' and int(device.get('critical_open_alerts') or 0) > 0)
+                or (severity_filter == 'major' and int(device.get('major_open_alerts') or 0) > 0)
+                or (severity_filter == 'warning' and int(device.get('warning_open_alerts') or 0) > 0)
+            )
+            and matches_problem(device)
         ]
         items.sort(key=lambda device: (
             {'critical': 0, 'warning': 1, 'unknown': 2, 'healthy': 3}.get(str(device.get('health_status') or 'unknown'), 9),
@@ -973,6 +1070,7 @@ def monitoring_health_devices(
                     'availability_status', 'collection_status', 'collection_last_success_at',
                     'data_confidence', 'health_status', 'health_score', 'health_score_available',
                     'health_summary', 'health_reasons', 'open_alert_count',
+                    'critical_open_alerts', 'major_open_alerts', 'warning_open_alerts',
                 )
             }
             for device in items[:limit]
@@ -984,6 +1082,10 @@ def monitoring_health_devices(
                 'health_status': health_filter,
                 'availability_status': availability_filter,
                 'collection_status': collection_filter,
+                'site': site_filter,
+                'role': role_filter,
+                'severity': severity_filter,
+                'problem_type': problem_filter,
             },
         }
     finally:
@@ -1036,6 +1138,29 @@ def monitoring_incident_impact(incident_id: str, _user=require_role('Viewer')):
         item = get_incident_impact(conn, incident_id)
         if item is None:
             raise HTTPException(status_code=404, detail='Incident not found')
+        return item
+    finally:
+        conn.close()
+
+
+@router.get('/monitoring/incidents/{incident_id}/playbook-recommendations')
+def monitoring_incident_playbook_recommendations(incident_id: str, user=require_role('Viewer')):
+    """Return safe, platform-aware read-only Playbook recommendations."""
+    conn = get_db_connection()
+    try:
+        item = recommend_incident_playbooks(conn, incident_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail='Incident not found')
+        actor = str(user.get('username') or 'system').strip() or 'system'
+        append_incident_timeline(
+            conn,
+            incident_id,
+            'playbook_recommendations_viewed',
+            actor,
+            'Platform-aware read-only Playbook recommendations viewed',
+            {'count': len(item.get('items') or []), 'platform': (item.get('device') or {}).get('platform')},
+        )
+        conn.commit()
         return item
     finally:
         conn.close()

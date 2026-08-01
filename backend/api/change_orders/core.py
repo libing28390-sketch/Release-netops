@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from database import get_db_connection, PROJECT_ROOT
 from core.rbac import require_role
 from services.audit_service import log_audit_event
+from services.monitoring_incident_service import append_incident_timeline
 from services.change_order_service import (
     create_change_order,
     update_change_order,
@@ -342,6 +343,15 @@ def api_create_change_order(body: ChangeOrderCreate, user=require_role("Operator
             },
             conn=conn,
         )
+        if payload.get('incident_id'):
+            append_incident_timeline(
+                conn,
+                str(payload['incident_id']),
+                'work_order_created',
+                str(user.get('username') or 'system'),
+                f"Work order {order['order_number']} created for incident",
+                {'order_id': order['id'], 'order_number': order['order_number'], 'status': order.get('status')},
+            )
         conn.commit()
         return {'success': True, 'data': order, 'message': f"工单 {order['order_number']} 创建成功"}
     finally:
