@@ -1,5 +1,5 @@
 import pytest
-from core.textfsm import parse_with_textfsm
+from core.textfsm import list_template_suggestions, parse_with_textfsm
 from services.normalizers.factory import NormalizerFactory
 from services.normalizers.zte import ZTENormalizer
 
@@ -221,6 +221,11 @@ def test_zte_show_lldp_neighbor():
     assert records[0]["INTERFACE"] == "xxvgei-0/1/1/40"
     assert records[0]["HOLDTIME"] == "102"
     assert records[1]["INTERFACE"] == "cgei-0/1/1/55"
+
+
+def test_zte_lldp_suggestions_expose_only_the_canonical_command():
+    suggestions = list_template_suggestions("zte_zxros", "show lldp", 8)
+    assert [item["command"] for item in suggestions] == ["show lldp neighbor"]
 
 
 def test_zte_show_vlan():

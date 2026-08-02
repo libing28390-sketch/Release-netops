@@ -33,13 +33,17 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
   const [customCommand, setCustomCommand] = useState('');
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const targetSignature = targetDevices.map((device) => `${device.id}:${device.platform || ''}`).join('|');
+  const isZteTarget = targetDevices.length > 0 && targetDevices.every(
+    (device) => String(device.platform || '').trim().toLowerCase() === 'zte_zxros'
+  );
 
   // Clear previous command when the overlay is triggered/re-opened
   useEffect(() => {
     if (hasTargets) {
-      setCustomCommand('');
+      setCustomCommand(isZteTarget ? 'show lldp neighbor' : '');
     }
-  }, [hasTargets]);
+  }, [hasTargets, isZteTarget, targetSignature]);
 
   useEffect(() => {
     const query = customCommand.trim();

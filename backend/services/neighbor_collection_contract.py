@@ -36,7 +36,7 @@ LLDP_COMMAND_WHITELIST: dict[str, frozenset[str]] = {
     "huawei_vrp": frozenset({"display lldp neighbor", "display lldp neighbor brief", "display lldp neighbor verbose"}),
     "h3c_comware": frozenset({"display lldp neighbor", "display lldp neighbor-information list", "display lldp neighbor-information verbose"}),
     "ruijie_rgos": frozenset({"show lldp neighbors", "show lldp neighbors detail"}),
-    "zte_zxros": frozenset({"show lldp neighbor", "show lldp neighbor brief", "show lldp neighbors", "show lldp neighbors detail"}),
+    "zte_zxros": frozenset({"show lldp neighbor", "show lldp neighbors", "show lldp neighbors detail"}),
     "dptech_ios": frozenset({"show lldp neighbors", "show lldp neighbors detail"}),
     "maipu": frozenset({"show lldp neighbors", "show lldp neighbors detail"}),
 }

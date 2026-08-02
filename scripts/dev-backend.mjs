@@ -2,7 +2,9 @@ import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 
-const port = Number(process.env.BACKEND_PORT || 5010);
+// 5010 is reserved by Hyper-V/WSL on some Windows hosts and fails with
+// WinError 10013. Keep BACKEND_PORT as an explicit override for deployments.
+const port = Number(process.env.BACKEND_PORT || 5310);
 
 function isNetOpsBackendRunning() {
   return new Promise((resolve) => {

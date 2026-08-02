@@ -1754,16 +1754,17 @@ async def snmp_test(device_id: str):
                             
                             conn2.execute('''
                                 INSERT INTO interfaces (
-                                    id, device_id, interface_name, description, admin_status, oper_status,
+                                    id, device_id, interface_name, if_index, description, admin_status, oper_status,
                                     mac_address, speed, bandwidth, duplex, interface_type, switchport_mode, ip_enabled
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 ON CONFLICT(device_id, interface_name) DO UPDATE SET
+                                    if_index = excluded.if_index,
                                     description = excluded.description,
                                     admin_status = excluded.admin_status,
                                     oper_status = excluded.oper_status,
                                     speed = excluded.speed,
                                     bandwidth = excluded.bandwidth
-                            ''', (f"intf-{uuid.uuid4().hex[:12]}", device_id, iname, desc, status, status, '', speed_bps, speed_bps, 'auto', 'physical', 'access', 0))
+                            ''', (f"intf-{uuid.uuid4().hex[:12]}", device_id, iname, iface.get('if_index'), desc, status, status, '', speed_bps, speed_bps, 'auto', 'physical', 'access', 0))
                     conn2.commit()
                 finally:
                     conn2.close()

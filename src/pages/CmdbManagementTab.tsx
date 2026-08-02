@@ -1502,6 +1502,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [rows, setRows] = useState<any[]>([]);
   const [sites, setSites] = useState<any[]>([]);
   const [vrfs, setVrfs] = useState<any[]>([]);
+  const [vlanCatalog, setVlanCatalog] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [interfaceSyncing, setInterfaceSyncing] = useState(false);
   const [interfaceJobStatus, setInterfaceJobStatus] = useState<any | null>(null);
@@ -1665,6 +1666,35 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     () => [{ value: '', label: '（无）', labelEn: '(none)' }, ...sites.map(s => ({ value: s.id, label: `${s.site_code} · ${s.site_name}`, labelEn: `${s.site_code} · ${s.site_name}` }))],
     [sites, zh]
   );
+
+  const vlanBusinessOptions = useMemo(() => {
+    const selectedSite = String(form.site_id || '');
+    const scopedById = new Map<string, any>();
+    vlanCatalog
+      .filter(vlan => String(vlan.site_id || '') === selectedSite)
+      .forEach(vlan => {
+        const key = `${selectedSite}:${vlan.vlan_id}`;
+        if (!scopedById.has(key)) scopedById.set(key, vlan);
+      });
+    const scoped = Array.from(scopedById.values()).sort((left, right) => Number(left.vlan_id || 0) - Number(right.vlan_id || 0));
+    const options = scoped.map(vlan => ({
+      value: String(vlan.vlan_id),
+      label: `VLAN ${vlan.vlan_id} · ${vlan.name || `VLAN ${vlan.vlan_id}`}`,
+      labelEn: `VLAN ${vlan.vlan_id} · ${vlan.name || `VLAN ${vlan.vlan_id}`}`,
+    }));
+    const current = String(form.vlan_id || '');
+    if (current && !options.some(option => option.value === current)) {
+      options.unshift({
+        value: current,
+        label: `VLAN ${current} · 未找到当前站点记录`,
+        labelEn: `VLAN ${current} · not found in selected site`,
+      });
+    }
+    return [
+      { value: '', label: scoped.length ? '请选择 VLAN' : '当前站点暂无可关联 VLAN', labelEn: scoped.length ? 'Select VLAN' : 'No VLANs available for this site' },
+      ...options,
+    ];
+  }, [form.site_id, form.vlan_id, vlanCatalog]);
 
   useEffect(() => {
     if (!modalOpen || tab !== 'sites' || geoCatalog) return;
@@ -1848,6 +1878,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       { key: 'mac_address', label: 'MAC', labelEn: 'MAC', hideInForm: true },
       { key: 'switchport_mode', label: '交换模式', labelEn: 'Switchport', hideInForm: true },
       { key: 'access_vlan', label: 'Access VLAN', labelEn: 'Access VLAN', hideInForm: true },
+      { key: 'native_vlan', label: 'Native VLAN', labelEn: 'Native VLAN', hideInForm: true },
+      { key: 'allowed_vlans', label: 'Allowed VLAN', labelEn: 'Allowed VLANs', hideInForm: true },
       { key: 'vrf_name', label: 'VRF', labelEn: 'VRF', hideInForm: true },
       { key: 'ip_count', label: 'IP数', labelEn: 'IPs', hideInForm: true },
       { key: 'link_count', label: '链路数', labelEn: 'Links', hideInForm: true },
@@ -1895,22 +1927,22 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       { key: 'status', label: '状态', labelEn: 'Status', type: 'select', options: VLAN_STATUS_OPTS },
     ],
     'vlan-business': [
-      { key: 'vlan_id', label: 'VLAN ID', labelEn: 'VLAN ID', type: 'number', required: true, placeholder: '1-4094' },
-      { key: 'site_id', label: 'Site', labelEn: 'Site', type: 'select' },
+      { key: 'vlan_id', label: 'VLAN', labelEn: 'VLAN', type: 'select', required: true },
+      { key: 'site_id', label: '站点', labelEn: 'Site', type: 'select' },
       { key: 'vrf_id', label: 'VRF', labelEn: 'VRF', type: 'select' },
-      { key: 'business_system', label: 'Business System', labelEn: 'Business System', required: true },
-      { key: 'department', label: 'Department', labelEn: 'Department', required: true },
-      { key: 'owner', label: 'Owner', labelEn: 'Owner', required: true },
-      { key: 'business_level', label: 'Business Level', labelEn: 'Business Level', type: 'select', options: [
-        { value: 'P1', label: 'P1', labelEn: 'P1' }, { value: 'P2', label: 'P2', labelEn: 'P2' },
-        { value: 'P3', label: 'P3', labelEn: 'P3' }, { value: 'P4', label: 'P4', labelEn: 'P4' },
+      { key: 'business_system', label: '业务系统', labelEn: 'Business System', required: true },
+      { key: 'department', label: '部门', labelEn: 'Department', required: true },
+      { key: 'owner', label: '负责人', labelEn: 'Owner', required: true },
+      { key: 'business_level', label: '业务等级', labelEn: 'Business Level', type: 'select', options: [
+        { value: 'P1', label: 'P1（关键）', labelEn: 'P1' }, { value: 'P2', label: 'P2（重要）', labelEn: 'P2' },
+        { value: 'P3', label: 'P3（一般）', labelEn: 'P3' }, { value: 'P4', label: 'P4（低）', labelEn: 'P4' },
       ] },
-      { key: 'status', label: 'Status', labelEn: 'Status', type: 'select', options: [
-        { value: 'active', label: 'Active', labelEn: 'Active' }, { value: 'planned', label: 'Planned', labelEn: 'Planned' },
-        { value: 'retired', label: 'Retired', labelEn: 'Retired' },
+      { key: 'status', label: '状态', labelEn: 'Status', type: 'select', options: [
+        { value: 'active', label: '启用', labelEn: 'Active' }, { value: 'planned', label: '规划中', labelEn: 'Planned' },
+        { value: 'retired', label: '已停用', labelEn: 'Retired' },
       ] },
-      { key: 'description', label: 'Description', labelEn: 'Description' },
-      { key: 'updated_at', label: 'Last Confirmed', labelEn: 'Last Confirmed', hideInForm: true },
+      { key: 'description', label: '描述', labelEn: 'Description' },
+      { key: 'updated_at', label: '最后确认', labelEn: 'Last Confirmed', hideInForm: true },
     ],
     tenants: [
       { key: 'name', label: '租户名称', labelEn: 'Name', required: true },
@@ -1934,7 +1966,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     try {
       let endpoint = endpointFor(tab);
       if (tab === 'interfaces') {
-        const params = new URLSearchParams({ has_ip: 'true' });
+        // The CMDB interface view is the source for both L2 and L3 facts.
+        // Do not hide physical access ports or VLANIF/SVI rows merely because
+        // they do not carry an IP address.
+        const params = new URLSearchParams();
         if (search.trim()) params.set('search', search.trim());
         if (interfaceDeviceFilter) params.set('device_id', interfaceDeviceFilter);
         params.set('page', String(interfacePage));
@@ -2254,6 +2289,19 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   useEffect(() => {
     apiList<any>('/api/cmdb/sites').then(data => setSites(dedupeSiteRows(data))).catch(() => {});
     apiList<any>('/api/cmdb/vrfs').then(setVrfs).catch(() => {});
+    let cancelled = false;
+    const loadVlanCatalog = async () => {
+      try {
+        const firstPage = await apiListPage<any>('/api/cmdb/vlans?page=1&page_size=100&status=all');
+        const pages = Array.from({ length: Math.max(0, firstPage.total_pages - 1) }, (_, index) => index + 2);
+        const remaining = await Promise.all(pages.map(pageNumber => apiListPage<any>(`/api/cmdb/vlans?page=${pageNumber}&page_size=100&status=all`)));
+        if (!cancelled) setVlanCatalog([firstPage, ...remaining].flatMap(pageData => pageData.items));
+      } catch {
+        if (!cancelled) setVlanCatalog([]);
+      }
+    };
+    void loadVlanCatalog();
+    return () => { cancelled = true; };
   }, []);
 
   // Reset page number on tab or search change
@@ -3582,7 +3630,13 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   && ['username', 'account_role', 'old_password', 'old_enable_password', 'password', 'enable_password'].includes(fd.key))
                 && !(tab === 'credentials' && !String(form.credential_type || '').startsWith('snmp')
                   && ['snmp_community', 'snmp_server'].includes(fd.key))).map(fd => {
-                const opts = fd.key === 'site_id' ? siteOptions : fd.key === 'vrf_id' ? vrfOptions : fd.options;
+                const opts = fd.key === 'site_id'
+                  ? siteOptions
+                  : fd.key === 'vrf_id'
+                    ? vrfOptions
+                    : fd.key === 'vlan_id' && tab === 'vlan-business'
+                      ? vlanBusinessOptions
+                      : fd.options;
                 const isGeoField = tab === 'sites' && ['country', 'state_province', 'city', 'district'].includes(fd.key);
                 const geoOpts = isGeoField ? geoSelectOptions[fd.key as 'country' | 'state_province' | 'city' | 'district'] : [];
                 const geoFieldDisabled = geoLoading || Boolean(geoError)
@@ -3658,7 +3712,16 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                     ) : fd.type === 'select' && opts ? (
                       <select
                         value={form[fd.key] ?? ''}
-                        onChange={e => setForm({ ...form, [fd.key]: e.target.value })}
+                        onChange={e => {
+                          const nextValue = e.target.value;
+                          if (tab === 'vlan-business' && fd.key === 'site_id') {
+                            const currentVlan = String(form.vlan_id || '');
+                            const stillValid = vlanCatalog.some(vlan => String(vlan.site_id || '') === nextValue && String(vlan.vlan_id) === currentVlan);
+                            setForm({ ...form, site_id: nextValue, vlan_id: stillValid ? currentVlan : '' });
+                          } else {
+                            setForm({ ...form, [fd.key]: nextValue });
+                          }
+                        }}
                         className="w-full px-3 py-2 rounded-xl text-sm border border-black/10 bg-white text-[#164e63] outline-none focus:border-[#06b6d4]/45 focus:ring-2 focus:ring-[#06b6d4]/10 transition-all"
                       >
                         {opts.map(o => <option key={o.value} value={o.value}>{zh ? o.label : (o.labelEn || o.label)}</option>)}

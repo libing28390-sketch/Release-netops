@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "npm run dev:internal",
-    "wait:backend": "node -e \"const path=require('path');const port=process.env.BACKEND_PORT||'5010';const waitOn=path.join(process.cwd(),'node_modules','wait-on','bin','wait-on');require('child_process').execFileSync(process.execPath,[waitOn,'tcp:127.0.0.1:'+port,'--interval','500','--timeout','120000'],{stdio:'inherit'})\"",
+    "wait:backend": "node -e \"const path=require('path');const port=process.env.BACKEND_PORT||'5310';const waitOn=path.join(process.cwd(),'node_modules','wait-on','bin','wait-on');require('child_process').execFileSync(process.execPath,[waitOn,'tcp:127.0.0.1:'+port,'--interval','500','--timeout','120000'],{stdio:'inherit'})\"",
     "dev:backend:win": "node scripts/dev-backend.mjs",
     "dev:backend:linux": "node scripts/dev-backend.mjs",
     "dev:backend": "node scripts/dev-backend.mjs",

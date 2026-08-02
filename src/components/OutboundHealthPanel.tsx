@@ -287,7 +287,7 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <button type="button" onClick={openNew} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50">
-                  <Plus size={13} />{zh ? '新增指标' : 'Add target'}
+                  <Plus size={13} />{zh ? '新增探测目标' : 'Add target'}
                 </button>
                 <button type="button" onClick={() => onRefresh()} className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--card-border)] px-3 py-2 text-xs font-semibold text-[var(--muted-text)] hover:border-sky-300 hover:text-sky-700">
                   <RefreshCw size={13} />{zh ? '刷新' : 'Refresh'}

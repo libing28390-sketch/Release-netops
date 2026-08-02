@@ -1,7 +1,14 @@
 import sqlite3
 
+import pytest
+
 from database.migrations.m0044_vlan_discovery_metadata import upgrade
-from services.cmdb_service import export_vlans, list_vlans
+from services.cmdb_service import (
+    create_vlan_business_binding,
+    export_vlans,
+    list_vlans,
+    update_vlan_business_binding,
+)
 from services.vlan_discovery_service import (
     parse_vlan_id_from_interface,
     parse_vlan_values,
@@ -158,6 +165,41 @@ def test_cisco_and_huawei_vlan_textfsm_records_project_members_to_interfaces(iso
     conn.close()
 
 
+def test_vlan_projection_updates_short_and_long_interface_aliases(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, site_id, site) VALUES (?, ?, ?, ?, ?)",
+        ("device-vlan-alias", "SW-alias", "online", "", ""),
+    )
+    for interface_id, interface_name in (
+        ("intf-ge", "GE0/0/4"),
+        ("intf-gigabit", "GigabitEthernet0/0/4"),
+    ):
+        conn.execute(
+            """INSERT INTO interfaces
+               (id, device_id, interface_name, admin_status, oper_status, interface_type, switchport_mode)
+               VALUES (?, ?, ?, 'up', 'up', 'physical', 'access')""",
+            (interface_id, "device-vlan-alias", interface_name),
+        )
+    conn.commit()
+
+    project_vlan_records("device-vlan-alias", [{
+        "vlan_id": "20",
+        "vlan_name": "USER-NET",
+        "interfaces": ["GE0/0/4"],
+    }])
+
+    rows = conn.execute(
+        "SELECT interface_name, access_vlan, admin_status, oper_status FROM interfaces WHERE device_id = ? ORDER BY interface_name",
+        ("device-vlan-alias",),
+    ).fetchall()
+    assert [(row["interface_name"], row["access_vlan"], row["admin_status"], row["oper_status"]) for row in rows] == [
+        ("GE0/0/4", 20, "up", "up"),
+        ("GigabitEthernet0/0/4", 20, "up", "up"),
+    ]
+    conn.close()
+
+
 def test_default_vlan_facts_are_not_projected_as_business_vlans(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     conn.execute(
@@ -175,4 +217,44 @@ def test_default_vlan_facts_are_not_projected_as_business_vlans(isolated_db):
     result = sync_observed_vlans()
     assert result["observed"] == 0
     assert conn.execute("SELECT COUNT(*) FROM vlans WHERE vlan_id = 1").fetchone()[0] == 0
+    conn.close()
+
+
+def test_vlan_business_binding_requires_a_vlan_in_the_same_site_scope(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO sites (id, site_code, site_name, status) VALUES (?, ?, ?, ?)",
+        ("site-vlan-business", "WH", "WH Data Center", "active"),
+    )
+    conn.execute(
+        "INSERT INTO vlans (id, vlan_id, name, site_id, tenant_id) VALUES (?, ?, ?, ?, ?)",
+        ("vlan-site-10", 10, "APP-NET", "site-vlan-business", "tenant-default"),
+    )
+    conn.commit()
+
+    with pytest.raises(ValueError, match="does not exist"):
+        create_vlan_business_binding(
+            conn,
+            site_id="site-vlan-business",
+            vrf_id="",
+            vlan_id=20,
+            business_system="Finance",
+            department="财务部",
+            owner="Alice",
+        )
+
+    binding = create_vlan_business_binding(
+        conn,
+        site_id="site-vlan-business",
+        vrf_id="",
+        vlan_id=10,
+        business_system="Finance",
+        department="财务部",
+        owner="Alice",
+    )
+    assert binding["vlan_id"] == 10
+    assert binding["site_id"] == "site-vlan-business"
+
+    with pytest.raises(ValueError, match="does not exist"):
+        update_vlan_business_binding(conn, binding["id"], vlan_id=20)
     conn.close()

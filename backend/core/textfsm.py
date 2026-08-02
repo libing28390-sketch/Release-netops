@@ -536,7 +536,9 @@ def smart_parse_cli(
     if not clean_output:
         clean_output = output.strip()
 
-    # For ZTE ZXROS show lldp neighbor brief, merge wrapped Port ID lines
+    # ZTE ZXROS may wrap long peer-port/platform fields across adjacent lines.
+    # Keep the merge in the canonical ``show lldp neighbor`` parser path so
+    # the same normalization is used by topology and automation collection.
     if platform == 'zte_zxros' and command and 'show lldp neighbor' in command.lower():
         lines = clean_output.splitlines()
         processed_lines = []

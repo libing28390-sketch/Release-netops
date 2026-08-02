@@ -843,6 +843,12 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
                 interfaces[idx]['speed_mbps'] = spd
 
         # Octets
+        for idx, val in hc_in_rows:
+            if idx in interfaces and val.isdigit():
+                interfaces[idx]['in_octets_hc'] = int(val)
+        for idx, val in hc_out_rows:
+            if idx in interfaces and val.isdigit():
+                interfaces[idx]['out_octets_hc'] = int(val)
         for idx, val in in_rows:
             if idx in interfaces and val.isdigit():
                 interfaces[idx]['in_octets'] = int(val)
@@ -888,10 +894,18 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
             continue
         result.append({
             'name': data.get('name', 'Unknown'),
+            'if_index': int(data.get('index') or 0) if str(data.get('index') or '').isdigit() else None,
             'status': data.get('status', 'unknown'),
             'speed_mbps': data.get('speed_mbps', 0),
             'in_octets': data.get('in_octets', 0),
             'out_octets': data.get('out_octets', 0),
+            'in_octets_hc': data.get('in_octets_hc'),
+            'out_octets_hc': data.get('out_octets_hc'),
+            'in_octets_32': data.get('in_octets') if not data.get('in_octets_hc') else None,
+            'out_octets_32': data.get('out_octets') if not data.get('out_octets_hc') else None,
+            'counter_width': 64 if data.get('in_octets_hc') is not None and data.get('out_octets_hc') is not None else 32,
+            'counter_source': 'ifHCInOctets/ifHCOutOctets' if data.get('in_octets_hc') is not None and data.get('out_octets_hc') is not None else 'ifInOctets/ifOutOctets',
+            'counter_quality': 'hc64' if data.get('in_octets_hc') is not None and data.get('out_octets_hc') is not None else 'legacy32_fallback',
             'description': data.get('description', ''),
             'in_errors': data.get('in_errors', 0),
             'out_errors': data.get('out_errors', 0),
@@ -904,3 +918,31 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
 
     _set_result_cache(cache_key, result)
     return result
+
+
+async def collect_interface_data_detailed(ip: str, community: str = 'public', port: int = 161) -> dict:
+    """Return IF-MIB data with an explicit, secret-free collection outcome.
+
+    The legacy collector intentionally returns a best-effort list for existing
+    callers. WAN monitoring needs to distinguish a complete walk from a
+    missing/partial walk so that a failed poll cannot be interpreted as an
+    interface-down sample. This wrapper keeps the old API stable while adding
+    the stricter contract for the WAN domain.
+    """
+    try:
+        result = await collect_interface_data(ip, community, port)
+    except Exception as exc:  # pragma: no cover - defensive boundary
+        message = str(exc).lower()
+        status = 'auth_failed' if any(token in message for token in ('authentication', 'authorization', 'community')) else 'timeout' if 'timeout' in message else 'device_unreachable'
+        return {'status': status, 'items': [], 'error_code': status, 'error_message': type(exc).__name__}
+    if result:
+        return {'status': 'success', 'items': result, 'error_code': '', 'error_message': ''}
+    # The underlying best-effort walker suppresses transport details. A
+    # failed/empty walk is therefore recorded as timeout-like evidence rather
+    # than as a successful empty inventory.
+    return {
+        'status': 'timeout',
+        'items': [],
+        'error_code': 'timeout',
+        'error_message': 'SNMP IF-MIB walk returned no interfaces',
+    }

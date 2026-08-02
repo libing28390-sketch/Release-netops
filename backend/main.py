@@ -174,6 +174,40 @@ async def lifespan(app: FastAPI):
         'interval', minutes=5, id='outbound_egress_sampler', replace_existing=True,
         max_instances=1, coalesce=True,
     )
+    from services.wan_link_service import run_wan_collection_once
+    scheduler.add_job(
+        synchronized_scheduler_job('wan_link_sampler', expire_seconds=55)(run_wan_collection_once),
+        'interval', seconds=60, id='wan_link_sampler', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    from services.wan_p1_service import apply_wan_retention_once, ensure_wan_partitions_once, rollup_wan_samples_once
+    scheduler.add_job(synchronized_scheduler_job('wan_partition_maintenance', expire_seconds=900)(ensure_wan_partitions_once), 'cron', hour=2, minute=10, id='wan_partition_maintenance', replace_existing=True)
+    scheduler.add_job(
+        synchronized_scheduler_job('wan_rollup', expire_seconds=240)(rollup_wan_samples_once),
+        'interval', minutes=5, id='wan_rollup', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('wan_retention', expire_seconds=900)(apply_wan_retention_once),
+        'cron', hour=3, minute=20, id='wan_retention', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    from services.wan_p2_service import build_capacity_recommendations, calculate_wan_baselines, recompute_wan_correlations
+    scheduler.add_job(
+        synchronized_scheduler_job('wan_correlations', expire_seconds=240)(recompute_wan_correlations),
+        'interval', minutes=5, id='wan_correlations', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('wan_baselines', expire_seconds=900)(calculate_wan_baselines),
+        'cron', hour=2, minute=40, id='wan_baselines', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('wan_capacity', expire_seconds=900)(build_capacity_recommendations),
+        'cron', hour=4, minute=10, id='wan_capacity', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
     
     reschedule_backup(schedule_cfg)
     

@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Globe2, Loader2, Plus } from 'lucide-react';
+import { Activity, AlertTriangle, Globe2, Loader2, Plus } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend, ReferenceArea } from 'recharts';
 import PageHero from '../components/PageHero';
 import OutboundHealthPanel from '../components/OutboundHealthPanel';
+import WanLinkPanel from '../components/WanLinkPanel';
+import WanAlertEventsPanel from '../components/WanAlertEventsPanel';
+import WanCorrelationCockpit from '../components/WanCorrelationCockpit';
+import WanOperationsPanel from '../components/WanOperationsPanel';
+import WanCapacityReviewPanel from '../components/WanCapacityReviewPanel';
+import WanCorrelationEvidencePanel from '../components/WanCorrelationEvidencePanel';
+import WanMaintenanceEditPanel from '../components/WanMaintenanceEditPanel';
 import { useCoreApp } from '../contexts/AppDomainContext';
-import type { OutboundTargetHistoryResponse } from '../types/outbound';
+import type { OutboundHealthResponse, OutboundTargetHistoryResponse } from '../types/outbound';
 
 const CustomTooltip = ({ active, payload, label, zh }: any) => {
   if (active && payload && payload.length) {
@@ -64,6 +71,141 @@ const targetGroupLabel = (group: string, zh: boolean) => ({
   web: 'Web',
   business: zh ? '业务' : 'Business',
 }[group] || group);
+
+const OutboundOverviewSummary: React.FC<{
+  data: OutboundHealthResponse | null;
+  loading: boolean;
+  language: 'zh' | 'en';
+  onRefresh: () => Promise<unknown>;
+  onOpenAvailability: () => void;
+}> = ({ data, loading, language, onRefresh, onOpenAvailability }) => {
+  const zh = language === 'zh';
+  const current = data?.current;
+  const status = current?.status || 'unknown';
+  const statusTone = status === 'healthy'
+    ? { text: 'text-emerald-700', border: 'border-emerald-200', bg: 'bg-emerald-50/60', dot: 'bg-emerald-500' }
+    : status === 'degraded'
+      ? { text: 'text-amber-700', border: 'border-amber-200', bg: 'bg-amber-50/60', dot: 'bg-amber-500' }
+      : status === 'unavailable'
+        ? { text: 'text-rose-700', border: 'border-rose-200', bg: 'bg-rose-50/60', dot: 'bg-rose-500' }
+        : { text: 'text-slate-600', border: 'border-slate-200', bg: 'bg-slate-50/70', dot: 'bg-slate-400' };
+  const statusLabel = status === 'healthy'
+    ? (zh ? '正常' : 'Healthy')
+    : status === 'degraded'
+      ? (zh ? '部分异常' : 'Degraded')
+      : status === 'unavailable'
+        ? (zh ? '不可用' : 'Unavailable')
+        : (zh ? '暂无数据' : 'No data');
+  const cards = [
+    { label: zh ? '综合状态' : 'Overall status', value: statusLabel },
+    { label: zh ? '可用率' : 'Availability', value: current?.availability_percent == null ? '--' : `${Math.round(current.availability_percent)}%` },
+    { label: zh ? '成功目标' : 'Successful targets', value: current ? `${current.success_count} / ${current.total_count}` : '--' },
+    { label: zh ? '平均时延' : 'Average latency', value: current?.average_latency_ms == null ? '--' : `${Math.round(current.average_latency_ms)} ms` },
+    { label: zh ? '探测目标' : 'Probe targets', value: data?.targets.length ?? '--' },
+  ];
+  const availability = Math.max(0, Math.min(100, Number(current?.availability_percent ?? 0)));
+  const trendData = useMemo(() => (data?.history || []).slice(-24).map((item) => ({
+    time: formatTime(item.finished_at, zh),
+    availability: Number(item.availability_percent ?? 0),
+    latency: item.average_latency_ms == null ? null : Number(item.average_latency_ms),
+  })), [data?.history, zh]);
+
+  return (
+    <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-4 shadow-sm md:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-600">{zh ? '出口监控摘要' : 'Egress monitoring summary'}</p>
+          <h2 className="mt-1 text-xl font-extrabold text-[var(--app-text)]">{zh ? '互联网出口综合总览' : 'Internet egress overview'}</h2>
+          <p className="mt-1 text-xs text-[var(--muted-text)]">{zh ? '汇总平台出口服务状态，详细探测结果请进入服务可用性。' : 'A compact status summary; open Service availability for probe details.'}</p>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => void onRefresh()} className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--card-border)] px-3 py-2 text-xs font-semibold text-[var(--muted-text)] hover:border-cyan-300 hover:text-cyan-700">
+            <Activity size={13} />{loading ? (zh ? '刷新中…' : 'Refreshing…') : (zh ? '刷新' : 'Refresh')}
+          </button>
+          <button type="button" onClick={onOpenAvailability} className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-700">
+            {zh ? '查看服务可用性' : 'View availability'}
+          </button>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {cards.map((card, index) => (
+          <div key={card.label} className={`rounded-xl border px-3 py-3 ${index === 0 ? `${statusTone.border} ${statusTone.bg}` : 'border-[var(--card-border)] bg-black/[0.02]'}`}>
+            <p className="text-[10px] font-bold text-[var(--muted-text)]">{card.label}</p>
+            <p className={`mt-1 text-lg font-extrabold ${index === 0 ? statusTone.text : 'text-[var(--app-text)]'}`}>
+              {index === 0 && <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${statusTone.dot}`} />}
+              {card.value}
+            </p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)]">
+        <div className="rounded-xl border border-[var(--card-border)] bg-black/[0.02] p-3">
+          <p className="text-[10px] font-bold text-[var(--muted-text)]">{zh ? '可用率环形图' : 'Availability ring'}</p>
+          <div className="mt-3 flex justify-center">
+            <div className="relative h-32 w-32 rounded-full" style={{ background: `conic-gradient(#10b981 ${availability * 3.6}deg, #e2e8f0 0deg)` }}>
+              <div className="absolute inset-3 flex items-center justify-center rounded-full bg-[var(--card-bg)]">
+                <span className="text-2xl font-extrabold text-[var(--app-text)]">{current ? `${Math.round(availability)}%` : '--'}</span>
+              </div>
+            </div>
+          </div>
+          <p className="mt-2 text-center text-[10px] text-[var(--muted-text)]">{current ? (zh ? '当前监测窗口' : 'Current monitoring window') : (zh ? '等待首个有效样本' : 'Waiting for a valid sample')}</p>
+        </div>
+        <div className="min-h-[220px] rounded-xl border border-[var(--card-border)] bg-black/[0.02] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10px] font-bold text-[var(--muted-text)]">{zh ? '24 小时可用率 / 时延趋势' : '24-hour availability / latency trend'}</p>
+            <div className="flex items-center gap-3 text-[10px] text-[var(--muted-text)]"><span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" />{zh ? '可用率' : 'Availability'}</span><span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-sky-500" />{zh ? '平均时延' : 'Latency'}</span></div>
+          </div>
+          {trendData.length ? (
+            <div className="mt-2 h-[180px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trendData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="overviewAvailability" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10b981" stopOpacity={0.28} /><stop offset="95%" stopColor="#10b981" stopOpacity={0.02} /></linearGradient>
+                    <linearGradient id="overviewLatency" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.22} /><stop offset="95%" stopColor="#0ea5e9" stopOpacity={0.02} /></linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="time" hide />
+                  <YAxis yAxisId="availability" domain={[0, 100]} tick={{ fontSize: 10 }} tickFormatter={(value) => `${value}%`} />
+                  <YAxis yAxisId="latency" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(value) => `${value}ms`} />
+                  <Tooltip formatter={(value: number | string | undefined, name: string | undefined) => [value == null ? '--' : `${Math.round(Number(value))}${name === 'availability' ? '%' : ' ms'}`, name === 'availability' ? (zh ? '可用率' : 'Availability') : (zh ? '平均时延' : 'Latency')]} />
+                  <Area yAxisId="availability" type="monotone" dataKey="availability" stroke="#10b981" fill="url(#overviewAvailability)" strokeWidth={2} dot={false} />
+                  <Area yAxisId="latency" type="monotone" dataKey="latency" stroke="#0ea5e9" fill="url(#overviewLatency)" strokeWidth={2} dot={false} connectNulls />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : <div className="flex h-[180px] items-center justify-center text-xs text-[var(--muted-text)]">{zh ? '暂无趋势样本；完成一次探测后将在此展示' : 'No trend samples yet; run a probe to populate this chart.'}</div>}
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="rounded-xl border border-[var(--card-border)] bg-black/[0.02] p-3">
+          <p className="text-[10px] font-bold text-[var(--muted-text)]">{zh ? '分组状态' : 'Group status'}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {Object.entries(current?.groups || {}).map(([group, item]) => (
+              <span key={group} className="rounded-full border border-[var(--card-border)] px-2.5 py-1 text-[10px] font-semibold text-[var(--app-text)]">
+                {targetGroupLabel(group, zh)} · {item.success_count}/{item.total_count} · {Math.round(item.availability_percent)}%
+              </span>
+            ))}
+            {!current?.groups || Object.keys(current.groups).length === 0 ? <span className="text-xs text-[var(--muted-text)]">{zh ? '暂无分组数据' : 'No group data'}</span> : null}
+          </div>
+        </div>
+        <div className="rounded-xl border border-[var(--card-border)] bg-black/[0.02] p-3">
+          <p className="text-[10px] font-bold text-[var(--muted-text)]">{zh ? '最近检查' : 'Last check'}</p>
+          <p className="mt-1 text-sm font-extrabold text-[var(--app-text)]">{formatTime(current?.checked_at, zh)}</p>
+          <p className="mt-1 text-[10px] text-[var(--muted-text)]">{current?.status_reason || (zh ? '等待首个有效样本' : 'Waiting for the first valid sample')}</p>
+        </div>
+      </div>
+      {current?.status_reasons && current.status_reasons.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {current.status_reasons.slice(0, 3).map((reason, index) => (
+            <div key={`${reason.type}-${index}`} className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs font-semibold text-amber-800">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />{reason.message}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+};
 
 const TargetHistoryCard: React.FC<{
   data: OutboundTargetHistoryResponse | null;
@@ -334,6 +476,7 @@ const OutboundHealthPage: React.FC = () => {
     deleteOutboundTarget,
   } = useCoreApp();
   const zh = language === 'zh';
+  const [view, setView] = useState<'overview' | 'availability' | 'links' | 'alerts' | 'analysis' | 'operations'>('overview');
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
   const [addTargetRequest, setAddTargetRequest] = useState(0);
 
@@ -402,14 +545,27 @@ const OutboundHealthPage: React.FC = () => {
         subtitle={zh ? '独立查看平台服务器的公网连通性、目标结果和历史趋势' : 'Platform server egress connectivity, target results, and historical trends'}
         eyebrow={zh ? '实时监控' : 'Real-time monitoring'}
       />
-      <div className="sticky top-0 z-20 border-b border-[var(--card-border)] bg-[var(--app-bg)]/95 px-4 py-3 backdrop-blur md:px-6">
+      <div className="border-b border-[var(--card-border)] bg-[var(--app-bg)] px-4 pt-3 md:px-6">
+        <div className="flex flex-wrap gap-2">
+          {([
+            ['overview', zh ? '综合总览' : 'Overview'],
+            ['availability', zh ? '服务可用性' : 'Service availability'],
+            ['links', zh ? '出口链路' : 'WAN links'],
+            ['alerts', zh ? '告警事件' : 'Alert events'],
+            ['analysis', zh ? '故障与容量' : 'Correlation & capacity'],
+            ['operations', zh ? '运维与报告' : 'Operations & reports'],
+          ] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setView(key)} className={`rounded-t-xl border px-3 py-2 text-xs font-bold ${view === key ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-transparent text-[var(--muted-text)] hover:bg-black/[0.03]'}`}>{label}</button>)}
+        </div>
+      </div>
+      {view !== 'overview' && <div className="sticky top-0 z-20 border-b border-[var(--card-border)] bg-[var(--app-bg)]/95 px-4 py-3 backdrop-blur md:px-6">
+        {view === 'links' || view === 'alerts' || view === 'analysis' || view === 'operations' ? <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold text-[var(--app-text)]">{view === 'links' ? (zh ? '出口链路' : 'WAN links') : view === 'alerts' ? (zh ? '出口告警事件' : 'WAN alert events') : view === 'analysis' ? (zh ? '故障关联与容量' : 'Correlation & capacity') : (zh ? '运维与报告' : 'Operations & reports')}</p><p className="mt-0.5 text-[10px] text-[var(--muted-text)]">{zh ? '按需加载服务端摘要和详情' : 'Load server-side summaries and details on demand'}</p></div></div> : <>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-bold text-[var(--app-text)]">{zh ? '指标快捷切换' : 'Quick target switcher'}</p>
             <p className="mt-0.5 text-[10px] text-[var(--muted-text)]">{zh ? '选择指标后直接查看单项历史结果' : 'Select a target to view its individual history'}</p>
           </div>
           <button type="button" onClick={() => setAddTargetRequest((value) => value + 1)} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700">
-            <Plus size={14} />{zh ? '新增指标' : 'Add target'}
+            <Plus size={14} />{zh ? '新增探测目标' : 'Add target'}
           </button>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -487,8 +643,15 @@ const OutboundHealthPage: React.FC = () => {
           })}
           {!outboundHealth?.targets?.length && <span className="text-xs text-[var(--muted-text)]">{zh ? '暂无已启用的探测指标' : 'No probe targets configured'}</span>}
         </div>
-      </div>
+        </>}
+      </div>}
       <div className="p-4 md:p-6">
+        {view === 'overview' && <OutboundOverviewSummary data={outboundHealth} loading={outboundLoading} language={language} onRefresh={() => fetchOutboundHealth(undefined, outboundHistoryHours)} onOpenAvailability={() => setView('availability')} />}
+        {view === 'links' && <WanLinkPanel />}
+        {view === 'alerts' && <WanAlertEventsPanel />}
+         {view === 'analysis' && <><WanCorrelationCockpit /><WanCorrelationEvidencePanel /><WanCapacityReviewPanel /></>}
+         {view === 'operations' && <><WanOperationsPanel /><WanMaintenanceEditPanel /></>}
+        {view === 'availability' && <>
         <TargetHistoryCard data={outboundTargetHistory?.target.id === selectedTargetId ? outboundTargetHistory : null} loading={outboundTargetHistoryLoading} language={language} historyHours={outboundHistoryHours} />
         <OutboundHealthPanel
           language={language}
@@ -507,6 +670,7 @@ const OutboundHealthPage: React.FC = () => {
           showTargetSelector={false}
           addTargetRequest={addTargetRequest}
         />
+        </>}
       </div>
     </div>
   );

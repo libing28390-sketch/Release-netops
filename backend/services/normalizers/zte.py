@@ -107,7 +107,5 @@ class ZTENormalizer(BaseNormalizer):
 
     def parse_neighbors(self, device_id: str, raw_lldp: str) -> list[Neighbor]:
         records = textfsm_records(self._PLATFORMS, "show lldp neighbor", raw_lldp)
-        if not records:
-            records = textfsm_records(self._PLATFORMS, "show lldp neighbor brief", raw_lldp)
         parsed = [neighbor for record in records if (neighbor := neighbor_from_record(device_id, record))]
         return parsed or regex_lldp_neighbors(device_id, raw_lldp)

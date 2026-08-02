@@ -490,24 +490,42 @@ def list_cmdb_interfaces(
         if current is None:
             items_by_identity[identity] = candidate
             continue
-        current_score = (
-            bool(current.get('interface_ip')),
-            str(current.get('oper_status') or '').lower() not in {'', 'unknown'},
-            str(current.get('admin_status') or '').lower() not in {'', 'unknown'},
-            int(current.get('link_count') or 0) > 0,
-            -len(str(current.get('interface_name') or '')),
-        )
         candidate_score = (
             bool(candidate.get('interface_ip')),
             str(candidate.get('oper_status') or '').lower() not in {'', 'unknown'},
             str(candidate.get('admin_status') or '').lower() not in {'', 'unknown'},
+            bool(
+                candidate.get('access_vlan')
+                or candidate.get('native_vlan')
+                or str(candidate.get('allowed_vlans') or '').strip()
+            ),
             int(candidate.get('link_count') or 0) > 0,
             -len(str(candidate.get('interface_name') or '')),
         )
+        current_score = (
+            bool(current.get('interface_ip')),
+            str(current.get('oper_status') or '').lower() not in {'', 'unknown'},
+            str(current.get('admin_status') or '').lower() not in {'', 'unknown'},
+            bool(
+                current.get('access_vlan')
+                or current.get('native_vlan')
+                or str(current.get('allowed_vlans') or '').strip()
+            ),
+            int(current.get('link_count') or 0) > 0,
+            -len(str(current.get('interface_name') or '')),
+        )
         preferred, secondary = (candidate, current) if candidate_score > current_score else (current, candidate)
-        for field in ('interface_ip', 'description', 'mac_address', 'speed', 'bandwidth', 'vrf_id', 'last_flapped'):
-            if not preferred.get(field) and secondary.get(field):
+        for field in (
+            'interface_ip', 'description', 'mac_address', 'speed', 'bandwidth', 'vrf_id', 'last_flapped',
+            'interface_type', 'switchport_mode', 'access_vlan', 'native_vlan', 'allowed_vlans',
+        ):
+            preferred_value = str(preferred.get(field) or '').strip().lower()
+            if preferred_value in {'', 'unknown', '-', '--'} and secondary.get(field) not in (None, ''):
                 preferred[field] = secondary[field]
+        for field in ('admin_status', 'oper_status'):
+            if str(preferred.get(field) or '').strip().lower() in {'', 'unknown', '-', '--'}:
+                if str(secondary.get(field) or '').strip().lower() not in {'', 'unknown', '-', '--'}:
+                    preferred[field] = secondary[field]
         preferred['ip_count'] = max(int(preferred.get('ip_count') or 0), int(secondary.get('ip_count') or 0))
         preferred['link_count'] = max(int(preferred.get('link_count') or 0), int(secondary.get('link_count') or 0))
         items_by_identity[identity] = preferred
@@ -520,6 +538,34 @@ def list_cmdb_interfaces(
     # IP fields yet. This keeps CMDB and /assets/nsot on the same IP authority
     # without copying or mutating NSOT data here.
     if has_ip is True:
+        interface_facts_by_identity: dict[tuple[str, str], dict] = {}
+        try:
+            all_interface_rows = conn.execute(
+                """SELECT device_id, interface_name, interface_type, switchport_mode,
+                          access_vlan, native_vlan, allowed_vlans, admin_status, oper_status,
+                          mac_address, description, speed, bandwidth, vrf_id, ip_enabled, last_flapped
+                   FROM interfaces"""
+            ).fetchall()
+        except Exception:
+            all_interface_rows = []
+        for interface_row in all_interface_rows:
+            fact = _row_to_dict(interface_row)
+            identity = (
+                str(fact.get('device_id') or ''),
+                normalize_interface_name(fact.get('interface_name')).lower(),
+            )
+            if not identity[1]:
+                continue
+            current_fact = interface_facts_by_identity.setdefault(identity, fact)
+            for field in (
+                'interface_type', 'switchport_mode', 'access_vlan', 'native_vlan', 'allowed_vlans',
+                'admin_status', 'oper_status', 'mac_address', 'description', 'speed', 'bandwidth',
+                'vrf_id', 'ip_enabled', 'last_flapped',
+            ):
+                current_value = str(current_fact.get(field) or '').strip().lower()
+                candidate_value = fact.get(field)
+                if current_value in {'', 'unknown', '-', '--'} and candidate_value not in (None, ''):
+                    current_fact[field] = candidate_value
         try:
             inventory_rows = conn.execute(
                 """
@@ -529,7 +575,11 @@ def list_cmdb_interfaces(
                        i.id AS skeleton_interface_id,
                        i.admin_status AS skeleton_admin_status,
                        i.oper_status AS skeleton_oper_status,
+                       i.interface_type AS skeleton_interface_type,
                        i.switchport_mode AS skeleton_switchport_mode,
+                       i.access_vlan AS skeleton_access_vlan,
+                       i.native_vlan AS skeleton_native_vlan,
+                       i.allowed_vlans AS skeleton_allowed_vlans,
                        i.mac_address AS skeleton_mac_address,
                        i.description AS skeleton_description,
                        i.speed AS skeleton_speed,
@@ -589,6 +639,7 @@ def list_cmdb_interfaces(
                 if inventory.get('last_seen'):
                     existing['last_seen'] = inventory.get('last_seen')
                 continue
+            interface_fact = interface_facts_by_identity.get(identity, {})
             fallback_item = {
                 'id': inventory.get('skeleton_interface_id') or f"ipinv-{inventory_device_id}-{interface_name}-{ip_value}",
                 'device_id': inventory_device_id,
@@ -608,11 +659,11 @@ def list_cmdb_interfaces(
                 'mac_address': inventory.get('skeleton_mac_address') or '',
                 'speed': inventory.get('skeleton_speed'),
                 'bandwidth': inventory.get('skeleton_bandwidth'),
-                'interface_type': inventory.get('type') or 'unknown',
-                'switchport_mode': inventory.get('skeleton_switchport_mode') or 'routed',
-                'access_vlan': None,
-                'native_vlan': None,
-                'allowed_vlans': '',
+                'interface_type': inventory.get('skeleton_interface_type') or interface_fact.get('interface_type') or inventory.get('type') or 'unknown',
+                'switchport_mode': inventory.get('skeleton_switchport_mode') or interface_fact.get('switchport_mode') or 'routed',
+                'access_vlan': inventory.get('skeleton_access_vlan') if inventory.get('skeleton_access_vlan') is not None else interface_fact.get('access_vlan'),
+                'native_vlan': inventory.get('skeleton_native_vlan') if inventory.get('skeleton_native_vlan') is not None else interface_fact.get('native_vlan'),
+                'allowed_vlans': inventory.get('skeleton_allowed_vlans') or interface_fact.get('allowed_vlans') or '',
                 'vrf_id': inventory.get('skeleton_vrf_id'),
                 'vrf_name': '',
                 'ip_enabled': inventory.get('skeleton_ip_enabled') if inventory.get('skeleton_ip_enabled') is not None else 1,
@@ -1960,6 +2011,19 @@ def _validate_binding_scope(conn, site_id: str, vrf_id: str) -> None:
         raise ValueError(f'VRF not found: {vrf_id}')
 
 
+def _validate_binding_vlan(conn, site_id: str, vlan_id: int) -> None:
+    """Require the business binding to point at a VLAN in the same site scope."""
+    row = conn.execute(
+        '''SELECT 1 FROM vlans
+           WHERE vlan_id = ? AND COALESCE(site_id, '') = ?
+           LIMIT 1''',
+        (int(vlan_id), site_id),
+    ).fetchone()
+    if not row:
+        scope = f' site {site_id}' if site_id else ' the global scope'
+        raise ValueError(f'VLAN {vlan_id} does not exist in{scope}')
+
+
 def _ensure_binding_unique(
     conn,
     *,
@@ -1998,6 +2062,7 @@ def create_vlan_business_binding(conn, **fields) -> dict:
     if status not in {'active', 'planned', 'retired'}:
         raise ValueError('status must be active, planned or retired')
     _validate_binding_scope(conn, site_id, vrf_id)
+    _validate_binding_vlan(conn, site_id, vlan_id)
     _ensure_binding_unique(
         conn,
         site_id=site_id,
@@ -2037,6 +2102,7 @@ def update_vlan_business_binding(conn, binding_id: str, **fields) -> dict:
     if status not in {'active', 'planned', 'retired'}:
         raise ValueError('status must be active, planned or retired')
     _validate_binding_scope(conn, site_id, vrf_id)
+    _validate_binding_vlan(conn, site_id, vlan_id)
     _ensure_binding_unique(
         conn,
         site_id=site_id,

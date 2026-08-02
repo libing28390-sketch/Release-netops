@@ -274,7 +274,7 @@ def api_list_cmdb_devices(_user=require_role("Viewer")):
 
 @router.get("/cmdb/interfaces")
 def api_list_cmdb_interfaces(
-    has_ip: bool = Query(default=True, description="Only return interfaces with an assigned IP by default"),
+    has_ip: Optional[bool] = Query(default=None, description="Optionally filter by whether an interface has an assigned IP"),
     device_id: Optional[str] = Query(default=None),
     search: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),

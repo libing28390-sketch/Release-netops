@@ -240,6 +240,18 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
         vlan_count = 0
         interface_count = 0
         now = _now()
+        interface_rows_by_key: dict[str, list[dict[str, Any]]] = {}
+        for interface_row in conn.execute(
+            "SELECT id, interface_name, allowed_vlans FROM interfaces WHERE device_id = ?",
+            (device_id,),
+        ).fetchall():
+            interface_key = normalize_interface_name(interface_row["interface_name"])
+            if interface_key:
+                interface_rows_by_key.setdefault(interface_key, []).append({
+                    "id": interface_row["id"],
+                    "interface_name": interface_row["interface_name"],
+                    "allowed_vlans": interface_row["allowed_vlans"],
+                })
         for record in records:
             if not isinstance(record, dict):
                 continue
@@ -284,46 +296,78 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
             for interface_name in _record_interfaces(record):
                 interface_key = normalize_interface_name(interface_name)
                 if parse_vlan_id_from_interface(interface_name) == vlan_id:
-                    conn.execute(
-                        "UPDATE interfaces SET interface_type = 'svi', switchport_mode = 'l3', is_l3 = TRUE WHERE device_id = ? AND LOWER(TRIM(interface_name)) = LOWER(TRIM(?))",
-                        (device_id, interface_name),
-                    )
+                    matching = interface_rows_by_key.get(interface_key, [])
+                    if matching:
+                        for existing in matching:
+                            conn.execute(
+                                "UPDATE interfaces SET interface_type = 'svi', switchport_mode = 'l3', is_l3 = TRUE WHERE id = ?",
+                                (existing["id"],),
+                            )
+                    else:
+                        svi_id = f"intf-{uuid.uuid4().hex[:12]}"
+                        conn.execute(
+                            """INSERT INTO interfaces
+                               (id, device_id, interface_name, description, admin_status, oper_status,
+                                interface_type, switchport_mode, is_l3, ip_enabled, last_seen)
+                               VALUES (?, ?, ?, '', 'unknown', 'unknown', 'svi', 'l3', TRUE, 0, ?)""",
+                            (svi_id, device_id, interface_name, now),
+                        )
+                        interface_rows_by_key.setdefault(interface_key, []).append({
+                            "id": svi_id,
+                            "interface_name": interface_name,
+                            "allowed_vlans": "",
+                        })
+                    interface_count += 1
                     continue
-                existing = conn.execute(
-                    "SELECT id, allowed_vlans FROM interfaces WHERE device_id = ? AND LOWER(TRIM(interface_name)) = LOWER(TRIM(?)) LIMIT 1",
-                    (device_id, interface_name),
-                ).fetchone()
+                matching = interface_rows_by_key.get(interface_key, [])
                 if mode == "TG":
-                    current = parse_vlan_values(existing["allowed_vlans"]) if existing else set()
+                    current: set[int] = set()
+                    for existing in matching:
+                        current |= parse_vlan_values(existing.get("allowed_vlans"))
                     current.add(vlan_id)
                     allowed = ",".join(str(value) for value in sorted(current))
-                    if existing:
-                        conn.execute(
-                            "UPDATE interfaces SET switchport_mode = 'trunk', allowed_vlans = ?, last_seen = ? WHERE id = ?",
-                            (allowed, now, existing["id"]),
-                        )
+                    if matching:
+                        for existing in matching:
+                            conn.execute(
+                                "UPDATE interfaces SET switchport_mode = 'trunk', allowed_vlans = ?, last_seen = ? WHERE id = ?",
+                                (allowed, now, existing["id"]),
+                            )
+                            existing["allowed_vlans"] = allowed
                     else:
+                        interface_id = f"intf-{uuid.uuid4().hex[:12]}"
                         conn.execute(
                             """INSERT INTO interfaces
                                (id, device_id, interface_name, description, admin_status, oper_status,
                                 interface_type, switchport_mode, allowed_vlans, is_l3, ip_enabled, last_seen)
                                VALUES (?, ?, ?, '', 'unknown', 'unknown', 'physical', 'trunk', ?, FALSE, 0, ?)""",
-                            (f"intf-{uuid.uuid4().hex[:12]}", device_id, interface_name, allowed, now),
+                            (interface_id, device_id, interface_name, allowed, now),
                         )
+                        interface_rows_by_key.setdefault(interface_key, []).append({
+                            "id": interface_id,
+                            "interface_name": interface_name,
+                            "allowed_vlans": allowed,
+                        })
                 else:
-                    if existing:
-                        conn.execute(
-                            "UPDATE interfaces SET switchport_mode = 'access', access_vlan = ?, interface_type = CASE WHEN interface_type = 'svi' THEN 'svi' ELSE 'physical' END, last_seen = ? WHERE id = ?",
-                            (vlan_id, now, existing["id"]),
-                        )
+                    if matching:
+                        for existing in matching:
+                            conn.execute(
+                                "UPDATE interfaces SET switchport_mode = 'access', access_vlan = ?, interface_type = CASE WHEN interface_type = 'svi' THEN 'svi' ELSE 'physical' END, last_seen = ? WHERE id = ?",
+                                (vlan_id, now, existing["id"]),
+                            )
                     else:
+                        interface_id = f"intf-{uuid.uuid4().hex[:12]}"
                         conn.execute(
                             """INSERT INTO interfaces
                                (id, device_id, interface_name, description, admin_status, oper_status,
                                 interface_type, switchport_mode, access_vlan, is_l3, ip_enabled, last_seen)
                                VALUES (?, ?, ?, '', 'unknown', 'unknown', 'physical', 'access', ?, FALSE, 0, ?)""",
-                            (f"intf-{uuid.uuid4().hex[:12]}", device_id, interface_name, vlan_id, now),
+                            (interface_id, device_id, interface_name, vlan_id, now),
                         )
+                        interface_rows_by_key.setdefault(interface_key, []).append({
+                            "id": interface_id,
+                            "interface_name": interface_name,
+                            "allowed_vlans": "",
+                        })
                 interface_count += 1
         conn.commit()
         return {"vlans": vlan_count, "interfaces": interface_count}

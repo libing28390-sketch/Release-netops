@@ -1,4 +1,5 @@
-from services.interface_collection_service import _status_record
+from core.interface_utils import normalize_interface_name
+from services.interface_collection_service import _build_interface_status_rows, _looks_like_interface_name, _status_record
 from services.scheduler_service import normalize_collected_interface_rate
 
 
@@ -17,6 +18,34 @@ def test_ntc_lowercase_loopback_record_is_collected_with_status() -> None:
     assert ip_address == '5.5.5.5'
     assert admin_status == 'up'
     assert oper_status == 'up'
+
+
+def test_interface_status_snapshot_keeps_ipless_ports_and_vlanifs() -> None:
+    parsed, rows = _build_interface_status_rows(
+        [
+            {'interface': 'GigabitEthernet0/0/4', 'ip_address': 'unassigned', 'status': 'up', 'proto': 'up'},
+            {'interface': 'Vlanif20', 'ip_address': '10.253.20.2', 'status': 'up', 'proto': 'up'},
+        ],
+        {},
+        {},
+    )
+
+    assert set(parsed) == {'gi0/0/4', 'vlan20'}
+    by_key = {normalize_interface_name(row['interface_name']): row for row in rows}
+    assert by_key['gi0/0/4']['interface_ip'] == ''
+    assert by_key['gi0/0/4']['admin_status'] == 'up'
+    assert by_key['gi0/0/4']['oper_status'] == 'up'
+    assert by_key['vlan20']['interface_ip'] == '10.253.20.2'
+
+
+def test_interface_status_snapshot_ignores_parser_header_fragments() -> None:
+    assert _looks_like_interface_name('The') is False
+    _, rows = _build_interface_status_rows(
+        [{'interface': 'The', 'status': 'up', 'proto': 'up'}],
+        {},
+        {},
+    )
+    assert rows == []
 
 
 def test_interface_rate_text_is_normalized_before_numeric_db_write() -> None:

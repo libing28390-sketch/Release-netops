@@ -31,6 +31,7 @@ from core.crypto import decrypt_credential
 from services.vault_service import resolve_device_credentials
 from services.network_access_limiter import limited_connect_handler
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
+from core.interface_utils import normalize_interface_name as normalize_canonical_interface_name
 from services.operational_data_service import (
     collect_operational_data,
     ROLE_EXCLUDED_CATEGORIES,
@@ -57,16 +58,8 @@ MAX_SSH_WORKERS_MIN = 5
 MAX_SSH_WORKERS_MAX = 15
 
 def normalize_interface_name(name: str) -> str:
-    if not name:
-        return ""
-    name = name.strip()
-    name = re.sub(r'^(eth|ethernet)\s*(\d)', r'Ethernet\2', name, flags=re.I)
-    name = re.sub(r'^(gi|gigabitethernet)\s*(\d)', r'GigabitEthernet\2', name, flags=re.I)
-    name = re.sub(r'^(te|ten-gigabitethernet|tengigabitethernet)\s*(\d)', r'TenGigabitEthernet\2', name, flags=re.I)
-    name = re.sub(r'^(lo|loopback)\s*(\d)', r'Loopback\2', name, flags=re.I)
-    name = re.sub(r'^(vl|vlan)\s*(\d)', r'Vlan\2', name, flags=re.I)
-    name = re.sub(r'\s+', '', name)
-    return name
+    """Use the shared vendor-neutral interface key for locator joins."""
+    return normalize_canonical_interface_name(name)
 
 
 def _calc_ssh_workers(device_count: int) -> int:
@@ -1037,8 +1030,9 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
             endpoint = conn.execute(
                 '''SELECT ne.ip, ne.mac, ne.hostname, ne.asset_type, ne.switch_id,
                           ne.switch_port, ne.vlan, ne.vrf, ne.site, ne.source_type,
-                          ne.last_seen, d.hostname AS switch_name, d.owner_team,
-                          d.criticality, COALESCE(s.site_name, s.site_code, d.site) AS device_site
+                           ne.last_seen, d.hostname AS switch_name, d.owner_team,
+                           d.criticality, d.site_id AS device_site_id,
+                           COALESCE(s.site_name, s.site_code, d.site) AS device_site
                    FROM network_endpoints ne
                    LEFT JOIN devices d ON d.id = ne.switch_id
                    LEFT JOIN sites s ON s.id = COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, ''))
@@ -1139,27 +1133,79 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                     (switch_id,),
                 ).fetchall()
                 port_key = normalize_interface_name(str(port)).lower()
-                interface = next(
-                    (row for row in interface_rows if normalize_interface_name(str(row['interface_name'] or '')).lower() == port_key),
-                    None,
+                matching_interfaces = [
+                    row for row in interface_rows
+                    if normalize_interface_name(str(row['interface_name'] or '')).lower() == port_key
+                ]
+                interface = max(
+                    matching_interfaces,
+                    key=lambda row: (
+                        str(row['oper_status'] or '').strip().lower() not in {'', 'unknown', '-', '--'},
+                        str(row['admin_status'] or '').strip().lower() not in {'', 'unknown', '-', '--'},
+                        bool(row['access_vlan'] or row['native_vlan'] or str(row['allowed_vlans'] or '').strip()),
+                        bool(str(row['description'] or '').strip()),
+                        str(row['last_seen'] or ''),
+                    ),
+                    default=None,
                 )
                 if interface:
+                    interface_data = {key: interface[key] for key in interface.keys()}
+                    for candidate in matching_interfaces:
+                        for field in ('description', 'switchport_mode', 'access_vlan', 'native_vlan', 'allowed_vlans'):
+                            current_value = str(interface_data.get(field) or '').strip().lower()
+                            candidate_value = candidate[field]
+                            if current_value in {'', 'unknown', '-', '--'} and candidate_value not in (None, ''):
+                                interface_data[field] = candidate_value
+                        for field in ('admin_status', 'oper_status'):
+                            current_value = str(interface_data.get(field) or '').strip().lower()
+                            candidate_value = str(candidate[field] or '').strip().lower()
+                            if current_value in {'', 'unknown', '-', '--'} and candidate_value not in {'', 'unknown', '-', '--'}:
+                                interface_data[field] = candidate[field]
                     l2.update({
-                        'description': interface['description'] or '',
-                        'admin_status': interface['admin_status'] or '',
-                        'oper_status': interface['oper_status'] or '',
-                        'mode': interface['switchport_mode'] or '',
-                        'native_vlan': str(interface['native_vlan']) if interface['native_vlan'] else '',
-                        'allowed_vlans': interface['allowed_vlans'] or '',
+                        'description': interface_data.get('description') or '',
+                        'admin_status': interface_data.get('admin_status') or '',
+                        'oper_status': interface_data.get('oper_status') or '',
+                        'mode': interface_data.get('switchport_mode') or '',
+                        'native_vlan': str(interface_data.get('native_vlan')) if interface_data.get('native_vlan') else '',
+                        'allowed_vlans': interface_data.get('allowed_vlans') or '',
                     })
                     if not l2['vlan']:
-                        interface_vlan = parse_vlan_id_from_interface(interface['interface_name'])
-                        interface_vlan = interface_vlan or _parse_vlan_id(interface['access_vlan']) or _parse_vlan_id(interface['native_vlan'])
+                        interface_vlan = parse_vlan_id_from_interface(interface_data.get('interface_name'))
+                        interface_vlan = interface_vlan or _parse_vlan_id(interface_data.get('access_vlan')) or _parse_vlan_id(interface_data.get('native_vlan'))
                         if interface_vlan:
                             l2['vlan'] = str(interface_vlan)
                             l2['vlan_source'] = 'interface_snapshot'
-                    set_if_empty(context['l3'], 'vrf', interface['vrf_name'])
-                    context['freshness']['interface_last_seen'] = interface['last_seen'] or ''
+                    set_if_empty(context['l3'], 'vrf', interface_data.get('vrf_name'))
+                    context['freshness']['interface_last_seen'] = interface_data.get('last_seen') or ''
+
+                # VLAN discovery can create an access-port row before the
+                # interface-status collector has a CLI/IP snapshot for that
+                # port, leaving admin/oper status as ``unknown``.  The
+                # network monitor already has a fresher IF-MIB status for the
+                # same device/port; use it as the fallback for the locator.
+                telemetry_rows = conn.execute(
+                    '''SELECT interface_name, status, ts
+                       FROM interface_telemetry_raw
+                       WHERE device_id = ?
+                       ORDER BY ts DESC
+                       LIMIT 500''',
+                    (switch_id,),
+                ).fetchall()
+                telemetry = next(
+                    (
+                        row for row in telemetry_rows
+                        if normalize_interface_name(str(row['interface_name'] or '')).lower() == port_key
+                    ),
+                    None,
+                )
+                telemetry_status = str(telemetry['status'] or '').strip().lower() if telemetry else ''
+                if telemetry_status in {'up', 'down', 'testing'}:
+                    if str(l2.get('admin_status') or '').strip().lower() in {'', 'unknown', '-', '--'}:
+                        l2['admin_status'] = telemetry_status
+                    if str(l2.get('oper_status') or '').strip().lower() in {'', 'unknown', '-', '--'}:
+                        l2['oper_status'] = telemetry_status
+                    if not context['freshness']['interface_last_seen'] or str(telemetry['ts'] or '') > str(context['freshness']['interface_last_seen']):
+                        context['freshness']['interface_last_seen'] = telemetry['ts'] or ''
 
             # Resolve the gateway SVI/VLANIF even when the endpoint is not
             # currently present in the access-switch tables.
@@ -1196,6 +1242,9 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                         l2['vlan_source'] = 'vlanif_interface'
                     context['freshness']['interface_last_seen'] = gateway_interface['last_seen'] or context['freshness']['interface_last_seen']
 
+            resolved_site_id = str(best_prefix['site_id'] or '') if best_prefix else ''
+            if not resolved_site_id and endpoint:
+                resolved_site_id = str(endpoint['device_site_id'] or '')
             vlan_number = _parse_vlan_id(l2.get('vlan'))
             if vlan_number:
                 vlan_row = conn.execute(
@@ -1203,9 +1252,7 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                        WHERE vlan_id = ? AND (? = '' OR COALESCE(site_id, '') = ?)
                        ORDER BY CASE WHEN COALESCE(site_id, '') = ? THEN 0 ELSE 1 END
                        LIMIT 1''',
-                    (vlan_number, str(best_prefix['site_id'] or '') if best_prefix else '',
-                     str(best_prefix['site_id'] or '') if best_prefix else '',
-                     str(best_prefix['site_id'] or '') if best_prefix else ''),
+                     (vlan_number, resolved_site_id, resolved_site_id, resolved_site_id),
                 ).fetchone()
                 if vlan_row:
                     l2['vlan_name'] = vlan_row['name'] or ''
@@ -1216,9 +1263,7 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                          AND (site_id = ? OR (site_id = '' AND ? = ''))
                          AND status <> 'retired'
                        ORDER BY business_system''',
-                    (vlan_number,
-                     str(best_prefix['site_id'] or '') if best_prefix else '',
-                     str(best_prefix['site_id'] or '') if best_prefix else ''),
+                     (vlan_number, resolved_site_id, resolved_site_id),
                 ).fetchall()
                 if binding_rows:
                     context['business']['business_systems'] = [row['business_system'] for row in binding_rows]

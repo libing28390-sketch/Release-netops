@@ -10,6 +10,53 @@ DEVICE = {
 }
 
 
+def test_locator_normalizes_huawei_ge_and_gigabitethernet_as_the_same_port():
+    assert ip_locator_service.normalize_interface_name("GE0/0/4") == "gi0/0/4"
+    assert ip_locator_service.normalize_interface_name("GigabitEthernet0/0/4") == "gi0/0/4"
+
+
+def test_locator_context_falls_back_to_latest_interface_telemetry(isolated_db):
+    conn = isolated_db["module"].get_db_connection()
+    conn.execute(
+        "INSERT INTO devices (id, hostname, status, site_id, site) VALUES (?, ?, ?, ?, ?)",
+        ("device-locator-switch", "LSW4", "online", "", ""),
+    )
+    conn.execute(
+        """INSERT INTO network_endpoints
+           (id, ip, mac, hostname, switch_id, switch_port, vlan, first_seen, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "endpoint-locator-1", "10.253.10.10", "5489985666e2", "endpoint-1",
+            "device-locator-switch", "GE0/0/4", "10", "2026-08-02T21:50:00+08:00", "2026-08-02T21:54:00+08:00",
+        ),
+    )
+    conn.execute(
+        """INSERT INTO interfaces
+           (id, device_id, interface_name, admin_status, oper_status, switchport_mode, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            "interface-locator-1", "device-locator-switch", "GigabitEthernet0/0/4",
+            "unknown", "unknown", "access", "2026-08-02T21:54:00+00:00",
+        ),
+    )
+    conn.execute(
+        """INSERT INTO interface_telemetry_raw
+           (ts, device_id, interface_name, status)
+           VALUES (?, ?, ?, ?)""",
+        ("2026-08-02T21:55:00+00:00", "device-locator-switch", "GE0/0/4", "up"),
+    )
+    conn.commit()
+
+    context = ip_locator_service._get_ip_locator_context("10.253.10.10")
+
+    assert context["l2"]["switch_name"] == "LSW4"
+    assert context["l2"]["admin_status"] == "up"
+    assert context["l2"]["oper_status"] == "up"
+    assert context["l2"]["mode"] == "access"
+    assert context["freshness"]["interface_last_seen"] == "2026-08-02T21:55:00+00:00"
+    conn.close()
+
+
 def test_normalize_arp_record_accepts_textfsm_standard_fields():
     record = ip_locator_service._normalize_arp_record(
         {
