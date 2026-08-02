@@ -528,11 +528,45 @@ def _resolve_categories(
 
 
 def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[str]]:
-    # Never send Cisco commands to a recognized non-Cisco platform when a
-    # catalog entry is missing; surface an empty category instead.
+    # Prefer the published action catalog for system profiles.  A recognized
+    # profile with no mapping is explicitly unsupported; it must not inherit a
+    # stale vendor command from the legacy catalog.
     normalized_platform = _normalize_platform(platform)
     catalog = COMMAND_CATALOG.get(normalized_platform, {})
-    resolved = {category: catalog.get(category, []) for category in categories}
+    action_by_category = {
+        'neighbors': 'get_lldp_neighbors', 'interfaces': 'get_interface_brief',
+        'arp': 'get_arp_table', 'mac_table': 'get_mac_table', 'vlan': 'get_vlan_table',
+        'routing_table': 'get_route_table', 'bgp': 'get_bgp_neighbors',
+        'ospf': 'get_ospf_neighbors', 'eth_trunk': 'get_link_aggregation',
+        'transceiver': 'get_transceivers', 'version': 'get_version',
+    }
+    from services.platform_registry_service import SYSTEM_PROFILES, resolve_action_mapping, normalize_platform_code
+    canonical_profile = normalize_platform_code(normalized_platform)
+    known_system_profile = any(item['platform_code'] == canonical_profile for item in SYSTEM_PROFILES)
+    registry_available = False
+    if known_system_profile:
+        try:
+            from database import get_db_connection
+            registry_conn = get_db_connection()
+            try:
+                registry_conn.execute("SELECT 1 FROM platform_profiles LIMIT 1").fetchone()
+                registry_available = True
+            finally:
+                registry_conn.close()
+        except Exception:
+            # A pre-migration process can still serve the legacy system catalog;
+            # once m0072 exists, missing mappings remain explicitly unsupported.
+            registry_available = False
+    resolved: dict[str, list[str]] = {}
+    for category in categories:
+        action_code = action_by_category.get(category)
+        if action_code and known_system_profile and registry_available:
+            try:
+                resolved[category] = [resolve_action_mapping(canonical_profile, action_code)['command']]
+            except Exception:
+                resolved[category] = []
+        else:
+            resolved[category] = catalog.get(category, [])
     for command in resolved.get('neighbors', []):
         # Catch catalog regressions before a transport session is opened.
         assert_lldp_command(normalized_platform, command, scenario_id='neighbor_lldp')

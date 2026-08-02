@@ -92,6 +92,17 @@ def resolve_discovery_profile(platform: str) -> tuple[str, dict]:
     key = str(platform or '').strip().lower()
     key = PLATFORM_ALIASES.get(key, key)
     if key not in COMMAND_PROFILES:
+        # P0 system profiles may be more precise than the legacy discovery
+        # catalog. Keep the parser identity explicit and obtain commands from
+        # the published platform Release below.
+        from services.platform_registry_service import SYSTEM_PROFILES, normalize_platform_code
+        canonical = normalize_platform_code(key)
+        seeded = next((item for item in SYSTEM_PROFILES if item['platform_code'] == canonical), None)
+        if seeded:
+            return canonical, {
+                'version': '', 'interfaces': '', 'brief': '', 'neighbors': '',
+                'normalizer': seeded['parser_platform'],
+            }
         raise ValueError(f"Unsupported discovery platform '{platform}'. Refusing Cisco command fallback.")
     return key, COMMAND_PROFILES[key]
 
@@ -115,8 +126,16 @@ class DiscoveryService:
             outputs: dict[str, str] = {}
             driver = DriverFactory.get_driver(driver_type, device_info)
             with driver:
+                action_by_output = {
+                    'version': 'get_version',
+                    'interfaces': 'get_interfaces',
+                    'brief': 'get_interface_brief',
+                    'neighbors': 'get_lldp_neighbors',
+                }
+                from services.platform_registry_service import resolve_action_mapping
                 for output_key in ('version', 'interfaces', 'brief', 'neighbors'):
-                    command = profile[output_key]
+                    mapping = resolve_action_mapping(device_info.get('platform') or platform_key, action_by_output[output_key])
+                    command = mapping['command']
                     result = driver.send_command(command)
                     outputs[output_key] = result.output if result.success else ''
                     record_observation(

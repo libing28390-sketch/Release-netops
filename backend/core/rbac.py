@@ -43,8 +43,15 @@ ADMIN_ONLY_PATHS = {
 
 RESOURCE_ACTIONS = {
     'Administrator': {'*'},
-    'Operator': {'read', 'create', 'update', 'execute', 'reserve', 'allocate', 'release', 'export', 'approve_low_risk'},
-    'Viewer': {'read'},
+    # Keep the legacy generic actions and add the P0 permission vocabulary.
+    # The current role model is intentionally backward compatible; finer
+    # recommended roles can narrow these sets in a later tenant-role migration.
+    'Operator': {
+        'read', 'view', 'create', 'update', 'edit_draft', 'submit', 'approve', 'publish', 'rollback',
+        'bind_device', 'test', 'execute', 'schedule', 'reserve', 'allocate', 'release', 'export',
+        'approve_low_risk',
+    },
+    'Viewer': {'read', 'view'},
 }
 
 

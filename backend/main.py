@@ -64,6 +64,7 @@ from api.ip_locator import router as ip_locator_router
 from api.inspections import router as inspections_router
 from api.collection_plans import router as collection_plans_router
 from api.textfsm_templates import router as textfsm_templates_router
+from api.platform_registry import router as platform_registry_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
@@ -487,6 +488,7 @@ app.include_router(compliance_router,     prefix="/api")
 app.include_router(inspections_router,    prefix="/api")
 app.include_router(collection_plans_router, prefix="/api")
 app.include_router(textfsm_templates_router, prefix="/api")
+app.include_router(platform_registry_router, prefix="/api")
 app.include_router(change_orders_router,  prefix="/api")
 app.include_router(pam_router,            prefix="/api")
 app.include_router(audit_router,          prefix="/api")
