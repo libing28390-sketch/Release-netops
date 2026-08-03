@@ -158,13 +158,14 @@ def _write_config_file(vendor: str, hostname: str, ts: datetime, trigger: str, c
     filename = f"{ts.strftime('%Y%m%d_%H%M%S')}_{trigger}.cfg"
     abs_path = os.path.join(dir_path, filename)
     data = gzip.compress(content.encode('utf-8'))
-    # Encrypt backup files if a valid encryption key is configured
+    # Configuration snapshots are raw sensitive output; fail closed if the
+    # application key is unavailable instead of writing a plaintext archive.
     try:
         from core.crypto import _get_fernet
         f = _get_fernet()
         data = b'ENCRYPTED:' + f.encrypt(data)
-    except Exception:
-        pass  # Encryption key not configured - store plaintext
+    except Exception as exc:
+        raise RuntimeError('CONFIG_BACKUP_ENCRYPTION_UNAVAILABLE') from exc
     with open(abs_path, 'wb') as fh:
         fh.write(data)
     return os.path.relpath(abs_path, BACKUP_ROOT).replace(os.sep, '/')
@@ -1686,16 +1687,36 @@ async def run_scheduled_backup(
         async with sem:
             for attempt in range(run_retry_count + 1):
                 try:
-                    driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
-                    service = AutomationService(driver_type=driver_type)
                     commands = [_backup_cmd]
-
-                    # Use the shared execution pool so policy concurrency and the
-                    # global SSH limiter both remain effective.
-                    results = await asyncio.get_event_loop().run_in_executor(
-                        service.orchestrator.executor,
-                        lambda: service.execute_commands(d, commands, is_config=False)
-                    )
+                    if d.get('platform_profile_id'):
+                        from services.platform_registry_service import execute_platform_action
+                        registry_result = await asyncio.to_thread(
+                            execute_platform_action,
+                            str(d['id']),
+                            'get_running_config',
+                            user={
+                                'id': f"config-backup:{d['id']}",
+                                'username': 'config-backup',
+                                'role': 'Administrator',
+                                'tenant_id': d.get('tenant_id') or '',
+                            },
+                            include_raw_output=True,
+                        )
+                        output = str(registry_result.get('raw_output') or '')
+                        results = [{
+                            'success': bool(registry_result.get('success')),
+                            'output': output,
+                            'error': registry_result.get('error') or registry_result.get('error_code'),
+                        }]
+                    else:
+                        driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
+                        service = AutomationService(driver_type=driver_type)
+                        # Use the shared execution pool so policy concurrency and the
+                        # global SSH limiter both remain effective.
+                        results = await asyncio.get_event_loop().run_in_executor(
+                            service.orchestrator.executor,
+                            lambda: service.execute_commands(d, commands, is_config=False)
+                        )
 
                     if results and results[0].get('success', False):
                         output = results[0].get('output') or results[0].get('stdout') or ''

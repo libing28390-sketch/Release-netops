@@ -12,11 +12,15 @@ import hashlib
 import json
 import logging
 import re
+import time
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from database import get_db_connection
+from services.playbook_output_service import protect_output
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +59,39 @@ ACTION_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {"action_code": "get_running_config", "name_zh": "获取运行配置", "name_en": "Get Running Config", "purpose": "配置备份和审计", "risk": "sensitive", "consumers": ["configuration", "inspection"], "fields": ["configuration"], "max_records": 1},
 )
 
+PARAMETERIZED_ACTION_DEFINITIONS: tuple[dict[str, Any], ...] = (
+    {"action_code": "get_route_table_vrf", "name_zh": "VRF 路由表", "name_en": "Get VRF Route Table", "purpose": "Collect routes in an explicit VRF", "risk": "low", "consumers": ["diagnostics", "collection"], "fields": ["prefix", "next_hop", "interface"], "optional_fields": ["vrf_name"], "field_types": {"prefix": "string", "next_hop": "string", "interface": "string", "vrf_name": "string"}, "parameters": {"vrf": "string"}, "max_records": 20000},
+    {"action_code": "get_arp_table_vrf", "name_zh": "VRF ARP 表", "name_en": "Get VRF ARP Table", "purpose": "Collect ARP entries in an explicit VRF", "risk": "low", "consumers": ["diagnostics", "ip_locator", "collection"], "fields": ["ip", "mac", "interface"], "optional_fields": ["vlan", "vrf_name"], "field_types": {"ip": "string", "mac": "string", "interface": "string", "vlan": "integer", "vrf_name": "string"}, "parameters": {"vrf": "string"}, "max_records": 10000},
+    {"action_code": "get_mac_table_vrf", "name_zh": "VRF MAC 表", "name_en": "Get VRF MAC Table", "purpose": "Collect MAC entries in an explicit VRF", "risk": "low", "consumers": ["diagnostics", "ip_locator", "collection"], "fields": ["mac", "vlan", "interface"], "optional_fields": ["type", "vrf_name"], "field_types": {"mac": "string", "vlan": "integer", "interface": "string", "type": "string", "vrf_name": "string"}, "parameters": {"vrf": "string"}, "max_records": 10000},
+    {"action_code": "get_bgp_neighbors_vrf", "name_zh": "VRF BGP 邻居", "name_en": "Get VRF BGP Neighbors", "purpose": "Collect BGP peers in an explicit VRF", "risk": "low", "consumers": ["diagnostics", "inspection", "collection"], "fields": ["neighbor", "asn", "state"], "optional_fields": ["vrf_name", "uptime"], "field_types": {"neighbor": "string", "asn": "integer", "state": "string", "vrf_name": "string", "uptime": "string"}, "parameters": {"vrf": "string"}, "max_records": 1000},
+    {"action_code": "get_bgp_routes", "name_zh": "BGP 路由表", "name_en": "Get BGP Routes", "purpose": "Collect the global BGP routing table", "risk": "low", "consumers": ["collection", "scheduler"], "fields": ["prefix", "next_hop", "metric", "as_path"], "optional_fields": ["local_pref", "weight", "origin", "is_best"], "field_types": {"prefix": "string", "next_hop": "string", "metric": "integer", "as_path": "string", "local_pref": "integer", "weight": "integer", "origin": "string", "is_best": "boolean"}, "max_records": 20000},
+    {"action_code": "get_bgp_routes_vrf", "name_zh": "VRF BGP 路由表", "name_en": "Get VRF BGP Routes", "purpose": "Collect BGP routes in an explicit VRF", "risk": "low", "consumers": ["collection", "scheduler"], "fields": ["prefix", "next_hop", "metric", "as_path"], "optional_fields": ["local_pref", "weight", "origin", "is_best", "vrf_name"], "field_types": {"prefix": "string", "next_hop": "string", "metric": "integer", "as_path": "string", "local_pref": "integer", "weight": "integer", "origin": "string", "is_best": "boolean", "vrf_name": "string"}, "parameters": {"vrf": "string"}, "max_records": 20000},
+)
+
+DEFAULT_ACTION_DEVICE_TYPES = ["router", "switch", "firewall"]
+
+
+def iter_action_definitions() -> tuple[dict[str, Any], ...]:
+    """Return complete action metadata used by fresh and upgrade seeds."""
+    items: list[dict[str, Any]] = []
+    for item in ACTION_DEFINITIONS + PARAMETERIZED_ACTION_DEFINITIONS:
+        fields = [str(field) for field in item.get("fields") or []]
+        optional = [str(field) for field in item.get("optional_fields") or []]
+        field_types = dict(item.get("field_types") or {})
+        for field in fields + optional:
+            field_types.setdefault(field, "string")
+        items.append({
+            **item,
+            "device_types": list(item.get("device_types") or DEFAULT_ACTION_DEVICE_TYPES),
+            "fields": fields,
+            "optional_fields": optional,
+            "field_types": field_types,
+            "parameters": dict(item.get("parameters") or {}),
+            "timeout_seconds": int(item.get("timeout_seconds") or 30),
+        })
+    return tuple(items)
+
+
 SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
     {"platform_code": "cisco_ios", "name_zh": "Cisco IOS", "name_en": "Cisco IOS", "vendor": "Cisco", "connection_driver": "cisco_ios", "parser_platform": "cisco_ios"},
     {"platform_code": "huawei_vrp", "name_zh": "Huawei VRP", "name_en": "Huawei VRP", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrp"},
@@ -82,15 +119,124 @@ PLATFORM_ALIASES = {
 # The commands are explicit data, never inferred from a requested vendor and
 # never allowed to silently fall back to Cisco.
 PLATFORM_ACTION_COMMANDS: dict[str, dict[str, str]] = {
-    "cisco_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show etherchannel summary", "get_arp_table": "show ip arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan brief", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes cpu", "get_memory": "show processes memory", "get_fans": "show environment fan", "get_power": "show environment power", "get_temperature": "show environment temperature", "get_clock": "show clock", "get_running_config": "show running-config"},
-    "huawei_vrp": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display eth-trunk", "get_arp_table": "display arp", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer", "get_ospf_neighbors": "display ospf peer brief", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory-usage", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display temperature", "get_clock": "display clock", "get_running_config": "display current-configuration"},
-    "h3c_comware": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor-information list", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display link-aggregation verbose", "get_arp_table": "display arp all", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan brief", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer ipv4", "get_ospf_neighbors": "display ospf peer", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display environment", "get_clock": "display clock", "get_running_config": "display current-configuration"},
+    "cisco_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show etherchannel summary", "get_arp_table": "show ip arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan brief", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes cpu", "get_memory": "show processes memory", "get_fans": "show environment fan", "get_power": "show environment power", "get_temperature": "show environment temperature", "get_clock": "show clock", "get_running_config": "show running-config"},
+    "huawei_vrp": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "dis eth-trunk", "get_arp_table": "display arp", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer", "get_ospf_neighbors": "display ospf peer brief", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory-usage", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display temperature", "get_clock": "display clock", "get_running_config": "display current-configuration"},
+    "hp_comware": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor-information list", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display link-aggregation verbose", "get_arp_table": "display arp all", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan brief", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer ipv4 unicast", "get_ospf_neighbors": "display ospf peer", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display environment", "get_clock": "display clock", "get_running_config": "display current-configuration"},
     "juniper_junos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interfaces": "show interfaces detail", "get_interface_brief": "show interfaces terse", "get_ip_interfaces": "show interfaces terse", "get_route_table": "show route", "get_clock": "show system uptime", "get_running_config": "show configuration"},
     "arista_eos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show port-channel summary", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes top once", "get_memory": "show version", "get_clock": "show clock", "get_running_config": "show running-config"},
     "ruijie_rgos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_transceivers": "show interfaces transceiver", "get_cpu": "show cpu", "get_memory": "show memory", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature", "get_clock": "show clock"},
     "zte_zxros": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbor", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac table", "get_route_table": "show ip forwarding route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_transceivers": "show opticalinfo brief", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature detail", "get_clock": "show clock"},
     "dptech_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp all", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_cpu": "show cpu usage", "get_memory": "show memory", "get_clock": "show clock"},
     "maipu": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address all", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_transceivers": "show optical all", "get_cpu": "show cpu monitor", "get_memory": "show memory utilization", "get_fans": "show system fan", "get_power": "show system power", "get_clock": "show clock"},
+}
+
+PLATFORM_ACTION_COMMANDS["cisco_ios"].update({
+    "get_route_table_vrf": "show ip route vrf {{vrf}}",
+    "get_arp_table_vrf": "show ip arp vrf {{vrf}}",
+    "get_mac_table_vrf": "show mac address-table vrf {{vrf}}",
+    "get_bgp_neighbors_vrf": "show ip bgp vrf {{vrf}} summary",
+})
+PLATFORM_ACTION_COMMANDS["huawei_vrp"].update({
+    "get_route_table_vrf": "display ip routing-table vpn-instance {{vrf}}",
+    "get_arp_table_vrf": "display arp vpn-instance {{vrf}}",
+    "get_mac_table_vrf": "display mac-address vpn-instance {{vrf}}",
+    "get_bgp_neighbors_vrf": "display bgp vpnv4 vpn-instance {{vrf}} peer",
+})
+PLATFORM_ACTION_COMMANDS["hp_comware"].update({
+    "get_route_table_vrf": "display ip routing-table vpn-instance {{vrf}}",
+    "get_arp_table_vrf": "display arp vpn-instance {{vrf}}",
+    "get_mac_table_vrf": "display mac-address vpn-instance {{vrf}}",
+    "get_bgp_neighbors_vrf": "display bgp peer ipv4 vpn-instance {{vrf}}",
+})
+PLATFORM_ACTION_COMMANDS["arista_eos"].update({
+    "get_route_table_vrf": "show ip route vrf {{vrf}}",
+    "get_arp_table_vrf": "show arp vrf {{vrf}}",
+    "get_mac_table_vrf": "show mac address-table vrf {{vrf}}",
+    "get_bgp_neighbors_vrf": "show ip bgp vrf {{vrf}} summary",
+    "get_bgp_routes": "show ip bgp",
+    "get_bgp_routes_vrf": "show ip bgp vrf {{vrf}}",
+})
+PLATFORM_ACTION_COMMANDS["cisco_ios"].update({"get_bgp_routes": "show ip bgp", "get_bgp_routes_vrf": "show ip bgp vrf {{vrf}}"})
+PLATFORM_ACTION_COMMANDS["huawei_vrp"].update({"get_bgp_routes": "display bgp routing-table", "get_bgp_routes_vrf": "display bgp vpnv4 vpn-instance {{vrf}} routing-table"})
+PLATFORM_ACTION_COMMANDS["hp_comware"].update({"get_bgp_routes": "display bgp routing-table ipv4 unicast", "get_bgp_routes_vrf": "display bgp vpnv4 vpn-instance {{vrf}} routing-table"})
+PLATFORM_ACTION_COMMANDS["ruijie_rgos"].update({"get_bgp_routes": "show ip bgp", "get_bgp_routes_vrf": "show ip bgp vrf {{vrf}}"})
+
+_SENSITIVE_OUTPUT_PATTERNS = (
+    re.compile(r"(\b(?:password|passwd|secret|community|token|api[-_ ]?key|private[-_ ]?key)\s*[:=]?\s*)([^\s,;]+)", re.IGNORECASE),
+    re.compile(r"(\bsnmp-server\s+community\s+)([^\s]+)", re.IGNORECASE),
+    re.compile(r"(\bauthorization\s+key\s+)([^\s]+)", re.IGNORECASE),
+)
+_ACTION_PARAMETER_RE = re.compile(r"\{\{\s*([a-z][a-z0-9_]*)\s*\}\}")
+_ACTION_PARAMETER_VALUE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$")
+
+_ALLOWED_COMMAND_PREFIXES_BY_DRIVER = {
+    "juniper_junos": {"show"},
+    "cisco_ios": {"show", "get"},
+    "huawei_vrp": {"display", "dis", "show", "get"},
+    "hp_comware": {"display", "dis", "show", "get"},
+    "arista_eos": {"show", "get"},
+    "zte_zxros": {"show", "get"},
+    "ruijie_os": {"show", "get"},
+    "dptech_ios": {"show", "get"},
+    "maipu": {"show", "get"},
+    "netmiko": {"show", "display", "get"},
+    "scrapli": {"show", "display", "get"},
+    "mock": {"show", "display", "get"},
+}
+
+_ACTION_PARAMETER_ALLOWLIST = {
+    "get_route_table": {"target", "vrf"},
+    "get_arp_table": {"target", "vrf"},
+    "get_mac_table": {"target", "mac", "vrf"},
+    "get_bgp_neighbors": {"vrf"},
+    "get_route_table_vrf": {"vrf"},
+    "get_arp_table_vrf": {"vrf"},
+    "get_mac_table_vrf": {"vrf"},
+    "get_bgp_neighbors_vrf": {"vrf"},
+    "get_bgp_routes_vrf": {"vrf"},
+}
+
+
+def _validate_action_parameter_contract(action_code: str, command: str) -> None:
+    placeholders = set(_ACTION_PARAMETER_RE.findall(str(command or "")))
+    allowed = _ACTION_PARAMETER_ALLOWLIST.get(action_code, set())
+    unknown = sorted(placeholders - allowed)
+    if unknown:
+        raise PlatformRegistryError(
+            "UNSUPPORTED_ACTION_PARAMETERS",
+            f"Action {action_code} does not declare parameter(s): {', '.join(unknown)}",
+        )
+
+_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "vendor": ("vendor", "vendor_name", "manufacturer", "manufacturer_name"),
+    "model": ("model", "model_name", "product_model"),
+    "version": ("version", "software_version", "version_string", "release"),
+    "interface": ("interface", "interface_name", "intf", "port", "port_name", "destination_port"),
+    "local_interface": ("local_interface", "local_intf", "local_port", "local_port_name"),
+    "remote_interface": ("remote_interface", "remote_intf", "remote_port", "neighbor_interface"),
+    "remote_device": ("remote_device", "remote_hostname", "remote_system_name", "neighbor"),
+    "admin_status": ("admin_status", "admin_state", "admin"),
+    "oper_status": ("oper_status", "oper_state", "line_protocol", "protocol_status"),
+    "status": ("status", "state", "health", "phy_status"),
+    "ip_address": ("ip_address", "ip_addr", "ipv4_address", "address"),
+    "prefix_length": ("prefix_length", "prefix_len", "mask_length"),
+    "mac_address": ("mac_address", "mac_addr", "hardware_address", "mac"),
+    "description": ("description", "desc", "interface_description"),
+    "speed": ("speed", "bandwidth", "link_speed"),
+    "group": ("group", "bundle", "aggregation_group", "trunk"),
+    "member": ("member", "member_interface", "member_port", "ports"),
+    "ip": ("ip", "ip_address", "ip_addr", "address"),
+    "mac": ("mac", "mac_address", "mac_addr", "hardware_address", "destination_address"),
+    "vlan": ("vlan", "vlan_id", "vlanid"),
+    "name": ("name", "interface_name", "sensor_name", "module"),
+    "prefix": ("prefix", "network", "destination", "route"),
+    "next_hop": ("next_hop", "nexthop", "next_hop_ip", "gateway"),
+    "neighbor": ("neighbor", "neighbor_id", "peer", "peer_address"),
+    "asn": ("asn", "remote_as", "remote_asn", "peer_as"),
+    "state": ("state", "status", "peer_state", "session_state"),
+    "clock": ("clock", "time", "current_time"),
+    "timezone": ("timezone", "time_zone", "tz"),
+    "configuration": ("configuration", "config", "running_config", "output"),
 }
 
 
@@ -113,6 +259,14 @@ def _json(value: Any) -> str:
 def _checksum(value: Any) -> str:
     raw = value if isinstance(value, str) else _json(value)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def redact_raw_output(output: str) -> str:
+    """Redact common credential material before raw output leaves the resolver."""
+    redacted = str(output or "")
+    for pattern in _SENSITIVE_OUTPUT_PATTERNS:
+        redacted = pattern.sub(r"\1<redacted>", redacted)
+    return redacted
 
 
 def normalize_platform_code(value: str) -> str:
@@ -141,11 +295,43 @@ def is_safe_read_command(command: str, connection_driver: str) -> bool:
     if re.search(r"[<>`$]", command):
         return False
     prefix = command.split(None, 1)[0].lower()
-    if prefix not in {"show", "display", "get"}:
-        return False
-    if connection_driver in {"juniper_junos"} and prefix != "show":
+    allowed_prefixes = _ALLOWED_COMMAND_PREFIXES_BY_DRIVER.get(connection_driver, {"show", "display", "get"})
+    if prefix not in allowed_prefixes:
         return False
     return True
+
+
+def _render_action_command(command: str, parameters: dict[str, Any] | None = None) -> str:
+    """Render only explicitly declared scalar action parameters.
+
+    Release commands may contain ``{{parameter}}`` placeholders.  Values are
+    deliberately restricted to token-safe characters so parameterized actions
+    cannot turn the resolver into a command injection surface.
+    """
+    template = str(command or "").strip()
+    supplied = parameters or {}
+    if not isinstance(supplied, dict):
+        raise PlatformRegistryError("INVALID_ACTION_PARAMETERS", "Action parameters must be an object")
+    if len(supplied) > 16:
+        raise PlatformRegistryError("INVALID_ACTION_PARAMETERS", "Too many action parameters")
+    placeholders = set(_ACTION_PARAMETER_RE.findall(template))
+    unknown = sorted(str(key) for key in supplied if str(key) not in placeholders)
+    if unknown:
+        raise PlatformRegistryError("UNSUPPORTED_ACTION_PARAMETERS", f"Unsupported action parameters: {', '.join(unknown)}")
+    missing = sorted(placeholders - {str(key) for key in supplied})
+    if missing:
+        raise PlatformRegistryError("MISSING_ACTION_PARAMETERS", f"Missing action parameters: {', '.join(missing)}")
+
+    rendered = template
+    for key in placeholders:
+        value = supplied.get(key)
+        if isinstance(value, bool) or value is None:
+            raise PlatformRegistryError("INVALID_ACTION_PARAMETERS", f"Action parameter {key} must be a scalar token")
+        token = str(value).strip()
+        if not _ACTION_PARAMETER_VALUE_RE.fullmatch(token):
+            raise PlatformRegistryError("INVALID_ACTION_PARAMETERS", f"Action parameter {key} contains unsafe characters")
+        rendered = re.sub(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", token, rendered)
+    return rendered
 
 
 def _row_dict(row: Any) -> dict[str, Any] | None:
@@ -157,6 +343,29 @@ def _profile_scope_clause(user: dict[str, Any]) -> tuple[str, list[Any]]:
     if tenant_id:
         return "AND (p.tenant_id IS NULL OR p.tenant_id = ?)", [tenant_id]
     return "", []
+
+
+def _device_stats_join(user: dict[str, Any]) -> tuple[str, list[Any]]:
+    """Return tenant-scoped device aggregates for registry read views.
+
+    System profiles are visible to a tenant, but their device counts must not
+    disclose devices belonging to another tenant.  Administrators without a
+    tenant context retain the existing all-scope behaviour.
+    """
+    tenant_id = str(user.get("tenant_id") or "")
+    return (
+        """
+        LEFT JOIN (
+            SELECT d.platform_profile_id,
+                   COUNT(*) AS bound_device_count,
+                   SUM(CASE WHEN LOWER(COALESCE(d.status, '')) IN ('online', 'active', 'up') THEN 1 ELSE 0 END) AS online_device_count
+            FROM devices d
+            WHERE (? = '' OR d.tenant_id = ?)
+            GROUP BY d.platform_profile_id
+        ) device_stats ON device_stats.platform_profile_id = p.id
+        """,
+        [tenant_id, tenant_id],
+    )
 
 
 def _assert_profile_access(conn, profile_id: str, user: dict[str, Any]) -> dict[str, Any]:
@@ -174,11 +383,17 @@ def list_profiles(user: dict[str, Any]) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
         scope_sql, params = _profile_scope_clause(user)
+        device_stats_sql, device_stats_params = _device_stats_join(user)
         rows = conn.execute(
-            f"""SELECT p.*, r.release_number AS current_release_number, r.checksum AS current_release_checksum
+            f"""SELECT p.*, r.release_number AS current_release_number, r.checksum AS current_release_checksum,
+                       r.status AS current_release_status, r.validation_status AS current_release_validation_status,
+                       (SELECT COUNT(*) FROM platform_release_actions ra WHERE ra.release_id = p.current_release_id) AS current_action_count,
+                       COALESCE(device_stats.bound_device_count, 0) AS bound_device_count,
+                       COALESCE(device_stats.online_device_count, 0) AS online_device_count
                 FROM platform_profiles p LEFT JOIN platform_releases r ON r.id = p.current_release_id
+                {device_stats_sql}
                 WHERE p.status <> 'ARCHIVED' {scope_sql} ORDER BY p.source, p.platform_code""",
-            params,
+            [*device_stats_params, *params],
         ).fetchall()
         return [_row_dict(row) for row in rows]
     finally:
@@ -189,9 +404,17 @@ def get_profile(profile_id: str, user: dict[str, Any]) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         scope_sql, params = _profile_scope_clause(user)
+        device_stats_sql, device_stats_params = _device_stats_join(user)
         row = conn.execute(
-            f"SELECT p.*, r.release_number AS current_release_number, r.checksum AS current_release_checksum FROM platform_profiles p LEFT JOIN platform_releases r ON r.id = p.current_release_id WHERE p.id = ? {scope_sql}",
-            [profile_id, *params],
+            f"""SELECT p.*, r.release_number AS current_release_number, r.checksum AS current_release_checksum,
+                       r.status AS current_release_status, r.validation_status AS current_release_validation_status,
+                       (SELECT COUNT(*) FROM platform_release_actions ra WHERE ra.release_id = p.current_release_id) AS current_action_count,
+                       COALESCE(device_stats.bound_device_count, 0) AS bound_device_count,
+                       COALESCE(device_stats.online_device_count, 0) AS online_device_count
+                FROM platform_profiles p LEFT JOIN platform_releases r ON r.id = p.current_release_id
+                {device_stats_sql}
+                WHERE p.id = ? {scope_sql}""",
+            [*device_stats_params, profile_id, *params],
         ).fetchone()
         if not row:
             raise PlatformRegistryError("PLATFORM_NOT_FOUND", "Platform profile not found", status_code=404)
@@ -234,6 +457,13 @@ def create_release(profile_id: str, payload: dict[str, Any], user: dict[str, Any
     now = _now()
     conn = get_db_connection()
     try:
+        import database as _database
+        if _database._USE_PG:
+            # Serialize release-number allocation per profile on PostgreSQL.
+            conn.execute("SELECT id FROM platform_profiles WHERE id = ? FOR UPDATE", (profile_id,)).fetchone()
+        else:
+            # SQLite's writer lock closes the MAX()+1 race for local installs.
+            conn.execute("BEGIN IMMEDIATE")
         next_number = conn.execute("SELECT COALESCE(MAX(release_number), 0) + 1 AS next_number FROM platform_releases WHERE profile_id = ?", (profile_id,)).fetchone()["next_number"]
         conn.execute(
             """INSERT INTO platform_releases (id, profile_id, release_number, status, connection_driver, parser_platform, safety_policy_json, checksum, created_by, created_at, updated_at, lock_version)
@@ -265,19 +495,14 @@ def list_release_actions(profile_id: str, user: dict[str, Any]) -> list[dict[str
         conn.close()
 
 
-def resolve_action_mapping(platform_code: str, action_code: str) -> dict[str, Any]:
-    """Resolve a system profile action for legacy consumers that only have a platform key.
-
-    It is intentionally strict: an absent mapping is an unsupported action,
-    never a Cisco command fallback.
-    """
-    canonical = normalize_platform_code(platform_code)
+@lru_cache(maxsize=1024)
+def _resolve_action_mapping_cached(canonical: str, action_code: str) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         row = conn.execute(
             """SELECT p.platform_code, p.connection_driver, p.parser_platform, r.id AS platform_release_id,
                       r.release_number, r.checksum AS release_checksum, a.command, a.parser_template_version_id,
-                      a.field_contract_json
+                      a.field_contract_json, a.command_checksum
                FROM platform_profiles p JOIN platform_releases r ON r.id = p.current_release_id AND r.status = 'PUBLISHED'
                JOIN platform_release_actions a ON a.release_id = r.id
                WHERE p.platform_code = ? AND a.action_code = ? AND p.source = 'SYSTEM'""",
@@ -288,6 +513,232 @@ def resolve_action_mapping(platform_code: str, action_code: str) -> dict[str, An
         return _row_dict(row) or {}
     finally:
         conn.close()
+
+
+def preview_platform_migration(user: dict[str, Any]) -> dict[str, Any]:
+    """Return a read-only migration preview without changing the legacy path.
+
+    The preview deliberately reports data-quality conflicts instead of trying
+    to repair them implicitly.  This lets an administrator review legacy
+    platform values and file-based templates before enabling any write flow.
+    """
+    conn = get_db_connection()
+    try:
+        tenant_id = str(user.get("tenant_id") or "")
+        device_scope = "WHERE (? = '' OR d.tenant_id = ?)"
+        device_rows = conn.execute(
+            f"""SELECT d.id, d.hostname, d.platform, d.platform_profile_id,
+                       d.platform_source, d.platform_locked, d.tenant_id,
+                       p.platform_code AS bound_platform_code,
+                       p.source AS bound_profile_source
+                FROM devices d
+                LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id
+                {device_scope}
+                ORDER BY d.hostname, d.id""",
+            (tenant_id, tenant_id),
+        ).fetchall()
+
+        known_aliases = set(PLATFORM_ALIASES)
+        known_aliases.update(PLATFORM_ALIASES.values())
+        device_conflicts: list[dict[str, Any]] = []
+        counts = {
+            "total": len(device_rows),
+            "bound": 0,
+            "unbound": 0,
+            "legacy_platform_values": 0,
+            "unknown_platform_values": 0,
+            "locked": 0,
+        }
+        for row in device_rows:
+            item = _row_dict(row) or {}
+            platform = str(item.get("platform") or "").strip().lower()
+            bound = str(item.get("platform_profile_id") or "").strip()
+            if bound:
+                counts["bound"] += 1
+            else:
+                counts["unbound"] += 1
+            if bool(item.get("platform_locked")):
+                counts["locked"] += 1
+            if platform:
+                counts["legacy_platform_values"] += 1
+                if platform not in known_aliases:
+                    counts["unknown_platform_values"] += 1
+                    device_conflicts.append({
+                        "kind": "UNKNOWN_PLATFORM",
+                        "device_id": item.get("id"),
+                        "hostname": item.get("hostname") or "",
+                        "platform": item.get("platform") or "",
+                    })
+            if bound and not item.get("bound_platform_code"):
+                device_conflicts.append({
+                    "kind": "MISSING_PROFILE",
+                    "device_id": item.get("id"),
+                    "hostname": item.get("hostname") or "",
+                    "platform_profile_id": bound,
+                })
+
+        template_root = Path(__file__).resolve().parents[2] / "data" / "textfsm_templates"
+        template_files = sorted(template_root.glob("*.textfsm")) if template_root.exists() else []
+        known_parser_platforms = {str(item.get("parser_platform") or "") for item in SYSTEM_PROFILES}
+        template_conflicts = []
+        for path in template_files:
+            stem = path.stem.lower()
+            if not any(stem.startswith(f"{platform.lower()}_") for platform in known_parser_platforms):
+                template_conflicts.append({
+                    "kind": "UNKNOWN_TEMPLATE_PLATFORM",
+                    "filename": path.name,
+                })
+
+        registry_templates = conn.execute(
+            "SELECT COUNT(*) FROM parser_template_versions WHERE status = 'PUBLISHED'"
+        ).fetchone()
+        return {
+            "read_only": True,
+            "legacy_compatibility_unchanged": True,
+            "devices": counts,
+            "device_conflicts": device_conflicts,
+            "file_templates": {
+                "count": len(template_files),
+                "published_registry_versions": int(registry_templates[0] if registry_templates else 0),
+                "conflicts": template_conflicts,
+            },
+            "summary": {
+                "conflict_count": len(device_conflicts) + len(template_conflicts),
+                "safe_to_review": True,
+            },
+        }
+    finally:
+        conn.close()
+
+
+def invalidate_platform_registry_cache() -> None:
+    """Invalidate immutable release/action lookups after a publication change."""
+    _resolve_action_mapping_cached.cache_clear()
+
+
+def resolve_action_mapping(platform_code: str, action_code: str) -> dict[str, Any]:
+    """Resolve a system profile action for legacy consumers that only have a platform key.
+
+    It is intentionally strict: an absent mapping is an unsupported action,
+    never a Cisco command fallback.
+    """
+    canonical = normalize_platform_code(platform_code)
+    return dict(_resolve_action_mapping_cached(canonical, action_code))
+
+
+def resolve_device_action_code(device_id: str, command: str) -> str | None:
+    """Find an exact action mapping for a device's published release.
+
+    This is deliberately exact and returns ``None`` when the device is not
+    registry-bound, so legacy custom inspection commands cannot be silently
+    reinterpreted as a different logical action.
+    """
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """SELECT a.action_code
+               FROM devices d
+               JOIN platform_profiles p ON p.id = d.platform_profile_id
+               JOIN platform_releases r ON r.id = p.current_release_id AND r.status = 'PUBLISHED'
+               JOIN platform_release_actions a ON a.release_id = r.id
+               WHERE d.id = ? AND LOWER(TRIM(a.command)) = LOWER(TRIM(?))""",
+            (device_id, command),
+        ).fetchone()
+        return str(row["action_code"]) if row else None
+    finally:
+        conn.close()
+
+
+def preview_platform_action(
+    device_id: str,
+    action_code: str,
+    *,
+    user: dict[str, Any],
+    parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve a published action without opening a device connection."""
+    if not action_code or not re.fullmatch(r"[a-z][a-z0-9_]{2,63}", action_code):
+        raise PlatformRegistryError("INVALID_ACTION_CODE", "Invalid action_code")
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            """SELECT d.*, p.id AS profile_id, p.connection_driver, p.parser_platform, p.current_release_id,
+                      r.release_number, r.checksum AS release_checksum, a.command, a.command_checksum,
+                      a.parser_template_version_id, def.sensitive_level
+               FROM devices d
+               LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id
+               LEFT JOIN platform_releases r ON r.id = p.current_release_id AND r.status = 'PUBLISHED'
+               LEFT JOIN platform_release_actions a ON a.release_id = r.id AND a.action_code = ?
+               LEFT JOIN action_definitions def ON def.action_code = ?
+               WHERE d.id = ?""",
+            (action_code, action_code, device_id),
+        ).fetchone()
+        if not row:
+            raise PlatformRegistryError("DEVICE_NOT_FOUND", "Device not found", status_code=404)
+        device = _row_dict(row) or {}
+        tenant_id = str(user.get("tenant_id") or "")
+        if tenant_id and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
+            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current tenant scope", status_code=403)
+        if user.get("role") != "Administrator" and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
+            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "A tenant-scoped user is required for this device", status_code=403)
+        from core.rbac import authorize_resource
+        if not authorize_resource(
+            user,
+            "command",
+            "execute",
+            tenant_id=device.get("tenant_id"),
+            site_id=device.get("site_id") or device.get("site"),
+            device_group_id=device.get("device_group_id"),
+        ):
+            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+        if not device.get("current_release_id") or not device.get("release_number"):
+            raise PlatformRegistryError("NO_PUBLISHED_RELEASE", "Device has no published platform release")
+        if not device.get("command"):
+            raise PlatformRegistryError("UNSUPPORTED_ACTION", "The current platform release does not map this action")
+        _validate_action_parameter_contract(action_code, device["command"])
+        resolved_command = _render_action_command(device["command"], parameters)
+        if not is_safe_read_command(resolved_command, device.get("connection_driver") or ""):
+            raise PlatformRegistryError("UNSAFE_COMMAND", "Release contains an unsafe command")
+        if device.get("sensitive_level") == "sensitive" and user.get("role") != "Administrator":
+            raise PlatformRegistryError("SENSITIVE_ACTION_FORBIDDEN", "Sensitive action requires Administrator permission", status_code=403)
+        return {
+            "success": True,
+            "action_code": action_code,
+            "platform_release_id": device["current_release_id"],
+            "release_number": device["release_number"],
+            "release_checksum": device["release_checksum"],
+            "command": resolved_command,
+            "command_checksum": device.get("command_checksum"),
+            "resolved_command_checksum": _checksum(resolved_command),
+            "parser_template_version_id": device.get("parser_template_version_id"),
+        }
+    finally:
+        conn.close()
+
+
+def _record_platform_action_run(conn, device: dict[str, Any], metadata: dict[str, Any], raw_output: str = "") -> None:
+    """Persist non-sensitive action telemetry; raw failure output is encrypted only."""
+    raw_ciphertext = None
+    raw_placeholder = "{}"
+    raw_expiry = None
+    if raw_output and not metadata.get("success"):
+        raw_ciphertext, raw_placeholder, raw_expiry, _encrypted = protect_output(raw_output)
+    conn.execute(
+        """INSERT INTO platform_action_runs
+           (id, tenant_id, device_id, platform_profile_id, platform_release_id,
+            action_code, parser_template_version_id, status, failure_stage,
+            error_code, record_count, duration_ms, output_bytes, raw_output,
+            raw_output_encrypted, raw_output_expires_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            str(uuid.uuid4()), device.get("tenant_id"), device.get("id"), device.get("profile_id"),
+            metadata.get("platform_release_id"), metadata.get("action_code"),
+            metadata.get("parser_template_version_id"), "SUCCESS" if metadata.get("success") else "FAILED",
+            metadata.get("failure_stage"), metadata.get("error_code"), int(metadata.get("record_count") or 0),
+            int(metadata.get("duration_ms") or 0), int(metadata.get("output_bytes") or 0), raw_placeholder,
+            raw_ciphertext, raw_expiry, _now(),
+        ),
+    )
 
 
 def _release_for_id(conn, release_id: str, *, lock: bool = False) -> dict[str, Any]:
@@ -304,7 +755,10 @@ def _release_for_id(conn, release_id: str, *, lock: bool = False) -> dict[str, A
 def update_release_action(release_id: str, action_code: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     conn = get_db_connection()
     try:
-        release = _release_for_id(conn, release_id)
+        import database as _database
+        if not _database._USE_PG:
+            conn.execute("BEGIN IMMEDIATE")
+        release = _release_for_id(conn, release_id, lock=_database._USE_PG)
         profile = _assert_profile_access(conn, release["profile_id"], user)
         if release["status"] != "DRAFT":
             raise PlatformRegistryError("RELEASE_IMMUTABLE", "Only draft releases can be edited")
@@ -314,11 +768,27 @@ def update_release_action(release_id: str, action_code: str, payload: dict[str, 
         command = str(payload.get("command") or "").strip()
         if not is_safe_read_command(command, profile["connection_driver"]):
             raise PlatformRegistryError("UNSAFE_COMMAND", "Only one read-only show/display command is allowed")
+        _validate_action_parameter_contract(action_code, command)
         parser_version_id = payload.get("parser_template_version_id") or None
         if parser_version_id:
-            exists = conn.execute("SELECT 1 FROM parser_template_versions WHERE id = ?", (parser_version_id,)).fetchone()
-            if not exists:
+            parser_version = conn.execute(
+                """SELECT v.id, v.status, t.tenant_id, t.platform_profile_id, t.platform_code, t.source
+                   FROM parser_template_versions v
+                   JOIN parser_templates t ON t.id = v.template_id
+                   WHERE v.id = ?""",
+                (parser_version_id,),
+            ).fetchone()
+            if not parser_version:
                 raise PlatformRegistryError("PARSER_VERSION_NOT_FOUND", "Parser template version not found", status_code=404)
+            if parser_version["status"] != "PUBLISHED":
+                raise PlatformRegistryError("PARSER_VERSION_NOT_PUBLISHED", "Only published parser versions can be bound to a release")
+            if parser_version["platform_code"] != profile["parser_platform"]:
+                raise PlatformRegistryError("PARSER_PLATFORM_MISMATCH", "Parser version platform does not match the release platform")
+            if parser_version["source"] == "SYSTEM":
+                if parser_version["tenant_id"] or parser_version["platform_profile_id"] not in {None, profile["id"]}:
+                    raise PlatformRegistryError("PARSER_SCOPE_DENIED", "System parser version is outside the release scope", status_code=403)
+            elif parser_version["tenant_id"] != profile["tenant_id"] or parser_version["platform_profile_id"] != profile["id"]:
+                raise PlatformRegistryError("PARSER_SCOPE_DENIED", "Parser version is outside the release scope", status_code=403)
         contract = payload.get("field_contract") or {"required": json.loads(definition["required_fields_json"] or "[]"), "optional": json.loads(definition["optional_fields_json"] or "[]")}
         now = _now()
         action_id = str(uuid.uuid4())
@@ -331,6 +801,7 @@ def update_release_action(release_id: str, action_code: str, payload: dict[str, 
         actions = [dict(row) for row in conn.execute("SELECT action_code, command, parser_template_version_id, field_contract_json FROM platform_release_actions WHERE release_id = ? ORDER BY action_code", (release_id,)).fetchall()]
         conn.execute("UPDATE platform_releases SET checksum = ?, updated_at = ?, lock_version = lock_version + 1 WHERE id = ?", (_checksum(actions), now, release_id))
         conn.commit()
+        invalidate_platform_registry_cache()
         return _row_dict(conn.execute("SELECT * FROM platform_release_actions WHERE release_id = ? AND action_code = ?", (release_id, action_code)).fetchone()) or {}
     except PlatformRegistryError:
         raise
@@ -348,12 +819,19 @@ def validate_release(release_id: str, user: dict[str, Any]) -> dict[str, Any]:
         profile = _assert_profile_access(conn, release["profile_id"], user)
         actions = conn.execute("SELECT a.*, d.max_output_bytes, d.max_records FROM platform_release_actions a JOIN action_definitions d ON d.action_code = a.action_code WHERE a.release_id = ?", (release_id,)).fetchall()
         errors: list[dict[str, str]] = []
+        regression: list[dict[str, Any]] = []
         for action in actions:
             if not is_safe_read_command(action["command"], profile.get("connection_driver", "")):
                 errors.append({"code": "UNSAFE_COMMAND", "action_code": action["action_code"]})
+            if action["parser_template_version_id"]:
+                try:
+                    from services.parser_template_service import run_published_version_regression
+                    regression.append(run_published_version_regression(conn, action["parser_template_version_id"]))
+                except PlatformRegistryError as exc:
+                    errors.append({"code": "HISTORICAL_REGRESSION_FAILED", "action_code": action["action_code"], "detail": exc.code})
         if not actions:
             errors.append({"code": "NO_ACTIONS", "message": "Release must contain at least one action"})
-        result = {"valid": not errors, "errors": errors, "action_count": len(actions), "checksum": release.get("checksum")}
+        result = {"valid": not errors, "errors": errors, "action_count": len(actions), "regression": regression, "checksum": release.get("checksum")}
         conn.execute("UPDATE platform_releases SET validation_status = ?, validation_result_json = ?, updated_at = ? WHERE id = ?", ("PASSED" if not errors else "FAILED", _json(result), _now(), release_id))
         conn.commit()
         return result
@@ -365,24 +843,57 @@ def transition_release(release_id: str, event: str, user: dict[str, Any]) -> dic
     target = {"submit": ("DRAFT", "IN_REVIEW"), "approve": ("IN_REVIEW", "APPROVED"), "publish": ("APPROVED", "PUBLISHED")}.get(event)
     if not target:
         raise PlatformRegistryError("INVALID_RELEASE_EVENT", "Unsupported release transition")
-    validation = validate_release(release_id, user)
-    if event in {"submit", "approve", "publish"} and not validation["valid"]:
-        raise PlatformRegistryError("RELEASE_VALIDATION_FAILED", "Release validation failed")
     conn = get_db_connection()
     try:
+        import database as _database
+        if not _database._USE_PG:
+            conn.execute("BEGIN IMMEDIATE")
         release = _release_for_id(conn, release_id, lock=True)
-        _assert_profile_access(conn, release["profile_id"], user)
+        profile = _assert_profile_access(conn, release["profile_id"], user)
+        if event == "publish" and _database._USE_PG:
+            conn.execute("SELECT id FROM platform_profiles WHERE id = ? FOR UPDATE", (release["profile_id"],)).fetchone()
         if release["status"] != target[0]:
             raise PlatformRegistryError("INVALID_RELEASE_STATE", f"Release must be {target[0]} before {event}")
         if event == "approve" and release.get("created_by") == (user.get("id") or user.get("username")):
             raise PlatformRegistryError("SELF_APPROVAL_FORBIDDEN", "The creator cannot approve their own release", status_code=403)
+        if event in {"approve", "publish"} and user.get("role") != "Administrator":
+            raise PlatformRegistryError("RELEASE_ROLE_FORBIDDEN", "Only Administrator can approve or publish a release", status_code=403)
         now = _now()
+        # Validate the exact action rows held by the same transaction that
+        # changes status.  This removes the old validate-then-publish race.
+        actions = conn.execute(
+            "SELECT a.command, a.action_code FROM platform_release_actions a WHERE a.release_id = ?",
+            (release_id,),
+        ).fetchall()
+        errors: list[dict[str, str]] = []
+        regression: list[dict[str, Any]] = []
+        for action in actions:
+            if not is_safe_read_command(action["command"], profile.get("connection_driver", "")):
+                errors.append({"code": "UNSAFE_COMMAND", "action_code": action["action_code"]})
+            action_version_id = action["parser_template_version_id"] if "parser_template_version_id" in action.keys() else None
+            if action_version_id:
+                try:
+                    from services.parser_template_service import run_published_version_regression
+                    regression.append(run_published_version_regression(conn, action_version_id))
+                except PlatformRegistryError as exc:
+                    errors.append({"code": "HISTORICAL_REGRESSION_FAILED", "action_code": action["action_code"], "detail": exc.code})
+        if not actions:
+            errors.append({"code": "NO_ACTIONS", "message": "Release must contain at least one action"})
+        validation = {"valid": not errors, "errors": errors, "action_count": len(actions), "regression": regression, "checksum": release.get("checksum")}
+        conn.execute(
+            "UPDATE platform_releases SET validation_status = ?, validation_result_json = ?, updated_at = ? WHERE id = ?",
+            ("PASSED" if not errors else "FAILED", _json(validation), now, release_id),
+        )
+        if errors:
+            conn.commit()
+            raise PlatformRegistryError("RELEASE_VALIDATION_FAILED", "Release validation failed")
         conn.execute("UPDATE platform_releases SET status = ?, updated_at = ?, lock_version = lock_version + 1, approved_by = CASE WHEN ? = 'APPROVED' THEN ? ELSE approved_by END, published_by = CASE WHEN ? = 'PUBLISHED' THEN ? ELSE published_by END WHERE id = ?", (target[1], now, target[1], user.get("id") or user.get("username") or "", target[1], user.get("id") or user.get("username") or "", release_id))
         conn.execute("INSERT INTO platform_release_audit_logs (id, release_id, event_type, actor_id, actor_username, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), release_id, event.upper(), user.get("id"), user.get("username"), _json({"from": target[0], "to": target[1]}), now))
         if event == "publish":
             conn.execute("UPDATE platform_releases SET status = 'DEPRECATED', updated_at = ? WHERE profile_id = ? AND status = 'PUBLISHED' AND id <> ?", (now, release["profile_id"], release_id))
             conn.execute("UPDATE platform_profiles SET current_release_id = ?, updated_at = ?, lock_version = lock_version + 1 WHERE id = ?", (release_id, now, release["profile_id"]))
         conn.commit()
+        invalidate_platform_registry_cache()
         return _release_for_id(conn, release_id)
     except PlatformRegistryError:
         raise
@@ -394,8 +905,15 @@ def transition_release(release_id: str, event: str, user: dict[str, Any]) -> dic
 
 
 def rollback_profile(profile_id: str, release_id: str | None, user: dict[str, Any]) -> dict[str, Any]:
+    if user.get("role") != "Administrator":
+        raise PlatformRegistryError("RELEASE_ROLE_FORBIDDEN", "Only Administrator can roll back a release", status_code=403)
     conn = get_db_connection()
     try:
+        import database as _database
+        if _database._USE_PG:
+            conn.execute("SELECT id FROM platform_profiles WHERE id = ? FOR UPDATE", (profile_id,)).fetchone()
+        else:
+            conn.execute("BEGIN IMMEDIATE")
         profile = _assert_profile_access(conn, profile_id, user)
         target = release_id or conn.execute("SELECT id FROM platform_releases WHERE profile_id = ? AND status = 'DEPRECATED' ORDER BY release_number DESC LIMIT 1", (profile_id,)).fetchone()
         target_id = release_id or (target["id"] if target else None)
@@ -410,32 +928,136 @@ def rollback_profile(profile_id: str, release_id: str | None, user: dict[str, An
         conn.execute("UPDATE platform_profiles SET current_release_id = ?, updated_at = ?, lock_version = lock_version + 1 WHERE id = ?", (target_id, now, profile_id))
         conn.execute("INSERT INTO platform_release_audit_logs (id, release_id, event_type, actor_id, actor_username, metadata_json, created_at) VALUES (?, ?, 'ROLLBACK', ?, ?, ?, ?)", (str(uuid.uuid4()), target_id, user.get("id"), user.get("username"), _json({"profile_id": profile_id}), now))
         conn.commit()
+        invalidate_platform_registry_cache()
         return _row_dict(conn.execute("SELECT * FROM platform_releases WHERE id = ?", (target_id,)).fetchone()) or {}
     finally:
         conn.close()
 
 
-def _normalize_records(records: list[dict[str, Any]], max_records: int) -> list[dict[str, Any]]:
+def _canonical_field_name(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
+
+
+def _normalize_records(
+    records: list[dict[str, Any]],
+    max_records: int,
+    *,
+    expected_fields: set[str] | None = None,
+) -> list[dict[str, Any]]:
     result = []
+    expected = {_canonical_field_name(item) for item in (expected_fields or set())}
     for record in records[:max_records]:
         normalized = {}
         for key, value in (record or {}).items():
-            canonical = re.sub(r"[^a-z0-9]+", "_", str(key).strip().lower()).strip("_")
+            canonical = _canonical_field_name(key)
             normalized[canonical] = value.strip() if isinstance(value, str) else value
+        for target in expected:
+            if target in normalized:
+                continue
+            for alias in _FIELD_ALIASES.get(target, (target,)):
+                alias_key = _canonical_field_name(alias)
+                if alias_key in normalized:
+                    normalized[target] = normalized[alias_key]
+                    break
         result.append(normalized)
     return result
 
 
-def execute_platform_action(device_id: str, action_code: str, *, user: dict[str, Any], driver_factory=None) -> dict[str, Any]:
+def _field_contract(value: Any) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        contract = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, json.JSONDecodeError):
+        raise PlatformRegistryError("INVALID_FIELD_CONTRACT", "Field contract must be valid JSON")
+    if not isinstance(contract, dict):
+        raise PlatformRegistryError("INVALID_FIELD_CONTRACT", "Field contract must be an object")
+    required = contract.get("required") or contract.get("required_fields") or []
+    optional = contract.get("optional") or contract.get("optional_fields") or []
+    types = contract.get("types") or contract.get("field_types") or {}
+    if not isinstance(required, list) or not isinstance(optional, list) or not isinstance(types, dict):
+        raise PlatformRegistryError("INVALID_FIELD_CONTRACT", "Field contract has an invalid shape")
+    return {
+        "required": [_canonical_field_name(item) for item in required if str(item).strip()],
+        "optional": [_canonical_field_name(item) for item in optional if str(item).strip()],
+        "types": {_canonical_field_name(key): str(kind).lower() for key, kind in types.items()},
+    }
+
+
+def _coerce_field_types(records: list[dict[str, Any]], contract: dict[str, Any]) -> None:
+    """Convert scalar TextFSM strings to the declared contract types."""
+    for record in records:
+        for field, kind in (contract.get("types") or {}).items():
+            value = record.get(field)
+            if value in (None, "") or not isinstance(value, str):
+                continue
+            stripped = value.strip()
+            try:
+                if kind == "integer" and re.fullmatch(r"[-+]?\d+", stripped):
+                    record[field] = int(stripped)
+                elif kind == "number" and re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)", stripped):
+                    record[field] = float(stripped) if "." in stripped else int(stripped)
+                elif kind == "boolean" and stripped.lower() in {"true", "yes", "up", "on", "1"}:
+                    record[field] = True
+                elif kind == "boolean" and stripped.lower() in {"false", "no", "down", "off", "0"}:
+                    record[field] = False
+            except (TypeError, ValueError):
+                continue
+
+
+def _validate_field_contract(records: list[dict[str, Any]], contract: dict[str, Any]) -> None:
+    if not contract:
+        return
+    required = set(contract.get("required") or [])
+    types = contract.get("types") or {}
+    for index, record in enumerate(records):
+        missing = sorted(field for field in required if record.get(field) in (None, ""))
+        if missing:
+            raise PlatformRegistryError("FIELD_CONTRACT_VIOLATION", f"Record {index} is missing required fields: {', '.join(missing)}")
+        for field, kind in types.items():
+            if field not in record or record[field] in (None, ""):
+                continue
+            value = record[field]
+            valid = {
+                "string": isinstance(value, str),
+                "integer": isinstance(value, int) and not isinstance(value, bool),
+                "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+                "boolean": isinstance(value, bool),
+            }.get(kind)
+            if valid is False:
+                raise PlatformRegistryError("FIELD_CONTRACT_VIOLATION", f"Record {index} field {field} has invalid type")
+
+
+def execute_platform_action(
+    device_id: str,
+    action_code: str,
+    *,
+    user: dict[str, Any],
+    parameters: dict[str, Any] | None = None,
+    driver_factory=None,
+    include_raw_output: bool = False,
+) -> dict[str, Any]:
     """Execute one action from the device's immutable current release."""
     if not action_code or not re.fullmatch(r"[a-z][a-z0-9_]{2,63}", action_code):
         raise PlatformRegistryError("INVALID_ACTION_CODE", "Invalid action_code")
     conn = get_db_connection()
-    def _audit(event_type: str, metadata: dict[str, Any]) -> None:
+    started_at = time.perf_counter()
+
+    def _audit(event_type: str, metadata: dict[str, Any], raw_output: str = "") -> None:
+        metadata = {
+            **metadata,
+            "duration_ms": max(0, int((time.perf_counter() - started_at) * 1000)),
+            "output_bytes": len(raw_output.encode("utf-8", errors="ignore")) if raw_output else 0,
+        }
+        try:
+            _record_platform_action_run(conn, device, metadata, raw_output)
+        except Exception:
+            conn.rollback()
+            logger.warning("Failed to persist platform action telemetry", exc_info=True)
         try:
             conn.execute(
                 "INSERT INTO platform_release_audit_logs (id, release_id, event_type, actor_id, actor_username, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), str(metadata.get("platform_release_id") or ""), event_type, user.get("id"), user.get("username"), _json(metadata)),
+                (str(uuid.uuid4()), str(metadata.get("platform_release_id") or ""), event_type, user.get("id"), user.get("username"), _json(metadata), _now()),
             )
             conn.commit()
         except Exception:
@@ -444,7 +1066,9 @@ def execute_platform_action(device_id: str, action_code: str, *, user: dict[str,
     try:
         row = conn.execute(
             """SELECT d.*, p.id AS profile_id, p.platform_code, p.connection_driver, p.parser_platform, p.current_release_id, r.checksum AS release_checksum,
-                      r.release_number, a.command, a.parser_template_version_id, a.field_contract_json, a.command_checksum, def.max_output_bytes, def.max_records, def.sensitive_level
+                      r.release_number, a.command, a.parser_template_version_id, a.field_contract_json, a.command_checksum,
+                      def.required_fields_json, def.optional_fields_json, def.field_types_json,
+                      def.max_output_bytes, def.max_records, def.timeout_seconds, def.sensitive_level
                FROM devices d LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id
                LEFT JOIN platform_releases r ON r.id = p.current_release_id AND r.status = 'PUBLISHED'
                LEFT JOIN platform_release_actions a ON a.release_id = r.id AND a.action_code = ?
@@ -457,14 +1081,49 @@ def execute_platform_action(device_id: str, action_code: str, *, user: dict[str,
         tenant_id = str(user.get("tenant_id") or "")
         if tenant_id and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
             raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current tenant scope", status_code=403)
+        if user.get("role") != "Administrator" and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
+            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "A tenant-scoped user is required for this device", status_code=403)
+        from core.rbac import authorize_resource
+        if not authorize_resource(
+            user,
+            "command",
+            "execute",
+            tenant_id=device.get("tenant_id"),
+            site_id=device.get("site_id") or device.get("site"),
+            device_group_id=device.get("device_group_id"),
+        ):
+            raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
         if not device.get("current_release_id") or not device.get("release_number"):
             raise PlatformRegistryError("NO_PUBLISHED_RELEASE", "Device has no published platform release")
         if not device.get("command"):
             raise PlatformRegistryError("UNSUPPORTED_ACTION", "The current platform release does not map this action")
         if device.get("sensitive_level") == "sensitive" and user.get("role") != "Administrator":
             raise PlatformRegistryError("SENSITIVE_ACTION_FORBIDDEN", "get_running_config requires Administrator permission", status_code=403)
-        if not is_safe_read_command(device["command"], device.get("connection_driver") or ""):
+        _validate_action_parameter_contract(action_code, device["command"])
+        resolved_command = _render_action_command(device["command"], parameters)
+        if not is_safe_read_command(resolved_command, device.get("connection_driver") or ""):
             raise PlatformRegistryError("UNSAFE_COMMAND", "Release contains an unsafe command")
+        template = None
+        if device.get("parser_template_version_id"):
+            template = conn.execute(
+                """SELECT v.content, v.status, v.checksum, v.field_contract_json, t.tenant_id, t.platform_profile_id,
+                          t.platform_code, t.source
+                   FROM parser_template_versions v
+                   JOIN parser_templates t ON t.id = v.template_id
+                   WHERE v.id = ?""",
+                (device["parser_template_version_id"],),
+            ).fetchone()
+            if not template:
+                raise PlatformRegistryError("PARSER_VERSION_NOT_FOUND", "Release parser version not found", status_code=409)
+            if template["status"] != "PUBLISHED":
+                raise PlatformRegistryError("PARSER_VERSION_NOT_PUBLISHED", "Release parser version is not published", status_code=409)
+            if template["platform_code"] != device.get("parser_platform"):
+                raise PlatformRegistryError("PARSER_PLATFORM_MISMATCH", "Release parser version does not match the device platform", status_code=409)
+            if template["source"] != "SYSTEM" and (
+                template["tenant_id"] != device.get("tenant_id")
+                or template["platform_profile_id"] != device.get("profile_id")
+            ):
+                raise PlatformRegistryError("PARSER_SCOPE_DENIED", "Release parser version is outside the device scope", status_code=403)
         if driver_factory is None:
             from drivers.factory import DriverFactory
             driver_factory = DriverFactory
@@ -473,36 +1132,67 @@ def execute_platform_action(device_id: str, action_code: str, *, user: dict[str,
         device["platform"] = device.get("parser_platform") or device.get("platform")
         driver = driver_factory.get_driver(driver_type, device)
         with driver:
-            result = driver.send_command(device["command"])
+            result = driver.send_command(resolved_command)
         output = str(getattr(result, "output", "") or "")
         if not getattr(result, "success", False):
-            response = {"success": False, "error_code": "CONNECTION_OR_COMMAND_FAILED", "error": getattr(result, "error", "Command execution failed"), "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "command": device["command"]}
-            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "error_code": response["error_code"]})
+            response = {"success": False, "error_code": "CONNECTION_OR_COMMAND_FAILED", "error": getattr(result, "error", "Command execution failed"), "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "command": resolved_command, "resolved_command_checksum": _checksum(resolved_command)}
+            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "connection", "error_code": response["error_code"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None})
             return response
         max_bytes = int(device.get("max_output_bytes") or 2_000_000)
         if len(output.encode("utf-8", errors="ignore")) > max_bytes:
             response = {"success": False, "error_code": "OUTPUT_LIMIT_EXCEEDED", "error": "Command output exceeds the action limit", "action_code": action_code, "platform_release_id": device["current_release_id"]}
-            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "error_code": response["error_code"]})
+            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "output_limit", "error_code": response["error_code"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
             return response
         try:
-            from core.textfsm import parse_with_template_content, smart_parse_cli
+            from services.textfsm_sandbox_service import TextFSMSandboxError, parse_template_in_sandbox
+            from core.textfsm import smart_parse_cli
             if device.get("parser_template_version_id"):
-                template = conn.execute("SELECT content FROM parser_template_versions WHERE id = ?", (device["parser_template_version_id"],)).fetchone()
-                records = parse_with_template_content(template["content"], output) if template else []
+                records = parse_template_in_sandbox(
+                    template["content"],
+                    output,
+                    timeout_seconds=int(device.get("timeout_seconds") or 30),
+                    max_output_bytes=max_bytes,
+                    max_records=int(device.get("max_records") or 1000),
+                ) if template else []
             else:
-                parsed = smart_parse_cli(output=output, command=device["command"], platform=device.get("parser_platform"))
+                parsed = smart_parse_cli(output=output, command=resolved_command, platform=device.get("parser_platform"))
                 records = parsed.get("data") or [] if parsed.get("success") else []
+            contract = _field_contract(device.get("field_contract_json"))
+            if not contract and template:
+                contract = _field_contract(template["field_contract_json"])
+            if not contract and device.get("required_fields_json"):
+                contract = _field_contract({
+                    "required": json.loads(device["required_fields_json"] or "[]"),
+                    "optional": json.loads(device.get("optional_fields_json") or "[]"),
+                    "types": json.loads(device.get("field_types_json") or "{}"),
+                })
+            expected_fields = set(contract.get("required") or []) | set(contract.get("optional") or []) | set((contract.get("types") or {}).keys())
+            normalized_records = _normalize_records(
+                records,
+                int(device.get("max_records") or 1000),
+                expected_fields=expected_fields,
+            )
+            _coerce_field_types(normalized_records, contract)
+            _validate_field_contract(normalized_records, contract)
+        except PlatformRegistryError as contract_exc:
+            response = {"success": False, "error_code": contract_exc.code, "error": contract_exc.message, "action_code": action_code, "platform_release_id": device["current_release_id"]}
+            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "parse_contract", "error_code": contract_exc.code, "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
+            return response
+        except TextFSMSandboxError as sandbox_exc:
+            response = {"success": False, "error_code": sandbox_exc.code, "error": sandbox_exc.message, "action_code": action_code, "platform_release_id": device["current_release_id"], "raw_output": redact_raw_output(output) if include_raw_output else None}
+            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "parser", "error_code": sandbox_exc.code, "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
+            return response
         except Exception as parse_exc:
             logger.warning("Platform action parse failed action=%s device=%s: %s", action_code, device_id, parse_exc)
-            response = {"success": False, "error_code": "TEMPLATE_NOT_MATCHED", "error": "Parser template failed", "action_code": action_code, "platform_release_id": device["current_release_id"]}
-            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "error_code": response["error_code"]})
+            response = {"success": False, "error_code": "TEMPLATE_NOT_MATCHED", "error": "Parser template failed", "action_code": action_code, "platform_release_id": device["current_release_id"], "raw_output": redact_raw_output(output) if include_raw_output else None}
+            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "parser", "error_code": response["error_code"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
             return response
         if not records and action_code not in {"get_running_config", "get_clock"}:
-            response = {"success": False, "error_code": "TEMPLATE_NOT_MATCHED", "error": "Parser returned no records", "action_code": action_code, "platform_release_id": device["current_release_id"]}
-            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "error_code": response["error_code"]})
+            response = {"success": False, "error_code": "TEMPLATE_NOT_MATCHED", "error": "Parser returned no records", "action_code": action_code, "platform_release_id": device["current_release_id"], "raw_output": redact_raw_output(output) if include_raw_output else None}
+            _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "parser", "error_code": response["error_code"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
             return response
-        response = {"success": True, "error_code": None, "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "release_checksum": device["release_checksum"], "command": device["command"], "records": _normalize_records(records, int(device.get("max_records") or 1000)), "raw_output": output if action_code == "get_running_config" else None}
-        _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": True, "command_checksum": device.get("command_checksum")})
+        response = {"success": True, "error_code": None, "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "release_checksum": device["release_checksum"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None, "records": normalized_records, "raw_output": redact_raw_output(output) if include_raw_output else None}
+        _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": True, "record_count": len(normalized_records), "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
         return response
     finally:
         conn.close()

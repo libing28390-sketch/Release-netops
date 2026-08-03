@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   Activity,
@@ -25,6 +25,7 @@ import type {
 } from '../types';
 import { connectionCheckBadgeMeta, formatConnectionCheckTime } from '../utils/connectionHelpers';
 import { useChartTheme } from '../hooks/useChartTheme';
+import { apiRequest } from '../api/http';
 
 interface DeviceOperationalCategory {
   key: string;
@@ -44,6 +45,21 @@ interface DeviceOperationalData {
   };
   collected_at?: string;
   categories?: DeviceOperationalCategory[];
+}
+
+interface PlatformProfileOption {
+  id: string;
+  platform_code: string;
+  name_zh?: string;
+  name_en?: string;
+  source?: string;
+}
+
+interface PlatformIdentificationResult {
+  status?: string;
+  commands?: string[];
+  selected?: { platform_profile_id?: string; platform_code?: string; name_zh?: string; name_en?: string } | null;
+  suggestions?: Array<{ platform_profile_id?: string; platform_code?: string; name_zh?: string; name_en?: string; score?: number }>;
 }
 
 interface DeviceDetailModalProps {
@@ -121,6 +137,67 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   onGoToAutomation,
 }) => {
   const ct = useChartTheme();
+  const [platformProfiles, setPlatformProfiles] = useState<PlatformProfileOption[]>([]);
+  const [platformProfilesLoading, setPlatformProfilesLoading] = useState(false);
+  const [platformDetectionLoading, setPlatformDetectionLoading] = useState(false);
+  const [platformBindingLoading, setPlatformBindingLoading] = useState(false);
+  const [platformResult, setPlatformResult] = useState<PlatformIdentificationResult | null>(null);
+  const [platformError, setPlatformError] = useState('');
+  const [selectedPlatformProfileId, setSelectedPlatformProfileId] = useState(viewingDevice.platform_profile_id || '');
+  const [lockPlatformBinding, setLockPlatformBinding] = useState(Boolean(viewingDevice.platform_locked));
+
+  useEffect(() => {
+    let active = true;
+    setSelectedPlatformProfileId(viewingDevice.platform_profile_id || '');
+    setLockPlatformBinding(Boolean(viewingDevice.platform_locked));
+    setPlatformResult(null);
+    setPlatformError('');
+    setPlatformProfilesLoading(true);
+    void apiRequest<{ data: PlatformProfileOption[] }>('/api/platform-registry/profiles')
+      .then((response) => { if (active) setPlatformProfiles(response.data || []); })
+      .catch(() => { if (active) setPlatformProfiles([]); })
+      .finally(() => { if (active) setPlatformProfilesLoading(false); });
+    return () => { active = false; };
+  }, [viewingDevice.id, viewingDevice.platform_locked, viewingDevice.platform_profile_id]);
+
+  const detectPlatform = async () => {
+    setPlatformDetectionLoading(true);
+    setPlatformError('');
+    try {
+      const response = await apiRequest<{ data: PlatformIdentificationResult }>(
+        `/api/devices/${encodeURIComponent(viewingDevice.id)}/platform-detect`,
+        { method: 'POST', body: '{}' },
+      );
+      setPlatformResult(response.data);
+      const selected = response.data?.selected?.platform_profile_id;
+      if (selected) setSelectedPlatformProfileId(selected);
+    } catch (cause) {
+      setPlatformError(cause instanceof Error ? cause.message : (language === 'zh' ? '自动识别失败' : 'Platform detection failed'));
+    } finally {
+      setPlatformDetectionLoading(false);
+    }
+  };
+
+  const bindPlatform = async () => {
+    if (!selectedPlatformProfileId) {
+      setPlatformError(language === 'zh' ? '请选择要绑定的平台' : 'Select a platform to bind');
+      return;
+    }
+    setPlatformBindingLoading(true);
+    setPlatformError('');
+    try {
+      await apiRequest(`/api/devices/${encodeURIComponent(viewingDevice.id)}/platform-binding`, {
+        method: 'PUT',
+        body: JSON.stringify({ platform_profile_id: selectedPlatformProfileId, lock: lockPlatformBinding }),
+      });
+      setPlatformError('');
+      setPlatformResult((current) => current ? { ...current, status: 'BOUND' } : { status: 'BOUND' });
+    } catch (cause) {
+      setPlatformError(cause instanceof Error ? cause.message : (language === 'zh' ? '平台绑定失败' : 'Platform binding failed'));
+    } finally {
+      setPlatformBindingLoading(false);
+    }
+  };
   const deviceTrendInsights = useMemo(() => {
     const series = deviceHealthTrend?.series || [];
     if (series.length === 0) {
@@ -237,6 +314,32 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                   <div className="flex justify-between text-sm"><span className="text-black/40">{t('ipAddress')}</span><span className="font-mono">{viewingDevice.ip_address}</span></div>
                   <div className="flex justify-between text-sm"><span className="text-black/40">{t('platform')}</span><span className="font-medium">{viewingDevice.platform}</span></div>
                   <div className="flex justify-between text-sm"><span className="text-black/40">{t('status')}</span><span className={`text-[10px] font-bold uppercase ${viewingDevice.status === 'online' ? 'text-emerald-600' : 'text-red-600'}`}>{viewingDevice.status}</span></div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-cyan-900">{language === 'zh' ? '平台识别与绑定' : 'Platform identification & binding'}</h4>
+                    <p className="mt-1 text-[11px] text-cyan-800/70">{language === 'zh' ? '只使用连接驱动提供的版本命令；锁定后自动识别只提示差异。' : 'Uses only driver-provided version commands; locked bindings are not overwritten by detection.'}</p>
+                  </div>
+                  <button type="button" onClick={() => void detectPlatform()} disabled={platformDetectionLoading} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-cyan-700 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
+                    {platformDetectionLoading ? <RotateCcw size={12} className="animate-spin" /> : <Activity size={12} />}
+                    {language === 'zh' ? '自动识别' : 'Detect'}
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  <select value={selectedPlatformProfileId} onChange={(event) => setSelectedPlatformProfileId(event.target.value)} disabled={platformProfilesLoading || platformBindingLoading} className="w-full rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-cyan-500">
+                    <option value="">{platformProfilesLoading ? (language === 'zh' ? '正在加载平台…' : 'Loading platforms…') : (language === 'zh' ? '选择人工绑定平台' : 'Select platform for manual binding')}</option>
+                    {platformProfiles.map((profile) => <option key={profile.id} value={profile.id}>{language === 'zh' ? (profile.name_zh || profile.platform_code) : (profile.name_en || profile.platform_code)} · {profile.source || 'CUSTOM'}</option>)}
+                  </select>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="inline-flex items-center gap-2 text-[11px] text-cyan-900"><input type="checkbox" checked={lockPlatformBinding} onChange={(event) => setLockPlatformBinding(event.target.checked)} />{language === 'zh' ? '人工锁定绑定' : 'Lock manual binding'}</label>
+                    <button type="button" onClick={() => void bindPlatform()} disabled={platformBindingLoading || !selectedPlatformProfileId} className="rounded-lg border border-cyan-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-800 disabled:opacity-50">{platformBindingLoading ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存绑定' : 'Save binding')}</button>
+                  </div>
+                  <div className="text-[11px] text-cyan-900/70">{language === 'zh' ? '当前：' : 'Current: '}<span className="font-semibold">{viewingDevice.platform || 'unknown'}</span>{viewingDevice.platform_locked ? (language === 'zh' ? ' · 已锁定' : ' · locked') : ''}</div>
+                  {platformResult && <div className="rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-[11px] text-cyan-900"><span className="font-semibold">{platformResult.status || '—'}</span>{platformResult.commands?.length ? <span className="ml-2 text-cyan-700/70">{platformResult.commands.join(', ')}</span> : null}{platformResult.suggestions?.length ? <div className="mt-1 space-y-1">{platformResult.suggestions.slice(0, 3).map((item) => <button type="button" key={item.platform_profile_id || item.platform_code} onClick={() => item.platform_profile_id && setSelectedPlatformProfileId(item.platform_profile_id)} className="block w-full rounded-md px-1.5 py-1 text-left hover:bg-cyan-50">{item.name_zh || item.platform_code} <span className="text-cyan-700/60">({Number(item.score || 0).toFixed(2)})</span></button>)}</div> : null}</div>}
+                  {platformError && <div className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-700">{platformError}</div>}
                 </div>
               </div>
 

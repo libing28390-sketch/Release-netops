@@ -282,8 +282,16 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
             is_server = False
             if device_ids:
                 placeholders = ','.join(['?'] * len(device_ids))
-                rows = conn.execute(f'SELECT platform, device_category FROM devices WHERE id IN ({placeholders})', device_ids).fetchall()
+                rows = conn.execute(f'SELECT platform, device_category, platform_profile_id FROM devices WHERE id IN ({placeholders})', device_ids).fetchall()
                 if rows:
+                    if any(r.get('platform_profile_id') for r in rows):
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                'code': 'PLATFORM_ACTION_REQUIRED',
+                                'message': 'Registry-bound devices must execute published platform actions or Playbooks; raw automation commands are not allowed',
+                            },
+                        )
                     is_server = all(
                         any(t in str(r['platform'] or '').lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
                         or str(r['device_category'] or '').lower() == 'server'

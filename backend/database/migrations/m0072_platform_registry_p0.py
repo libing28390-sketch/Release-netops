@@ -136,15 +136,15 @@ def _create_tables(cursor, use_pg: bool) -> None:
 
 
 def _seed_action_definitions(cursor) -> None:
-    from services.platform_registry_service import ACTION_DEFINITIONS
+    from services.platform_registry_service import iter_action_definitions
 
     now = _now()
-    for item in ACTION_DEFINITIONS:
+    for item in iter_action_definitions():
         cursor.execute(
             """INSERT INTO action_definitions (action_code, name_zh, name_en, purpose, risk_level, device_types_json, required_fields_json, optional_fields_json, field_types_json, max_output_bytes, max_records, timeout_seconds, sensitive_level, consumers_json, read_only, created_at)
-               VALUES (?, ?, ?, ?, ?, '[]', ?, '[]', '{}', ?, ?, 30, ?, ?, 1, ?)
-               ON CONFLICT(action_code) DO UPDATE SET name_zh=excluded.name_zh, name_en=excluded.name_en, purpose=excluded.purpose, risk_level=excluded.risk_level, required_fields_json=excluded.required_fields_json, max_records=excluded.max_records, sensitive_level=excluded.sensitive_level, consumers_json=excluded.consumers_json""",
-            (item["action_code"], item["name_zh"], item["name_en"], item["purpose"], item["risk"], _json(item.get("fields") or []), 2_000_000, int(item.get("max_records") or 1000), "sensitive" if item["risk"] == "sensitive" else "normal", _json(item.get("consumers") or []), now),
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+               ON CONFLICT(action_code) DO UPDATE SET name_zh=excluded.name_zh, name_en=excluded.name_en, purpose=excluded.purpose, risk_level=excluded.risk_level, device_types_json=excluded.device_types_json, required_fields_json=excluded.required_fields_json, optional_fields_json=excluded.optional_fields_json, field_types_json=excluded.field_types_json, max_records=excluded.max_records, timeout_seconds=excluded.timeout_seconds, sensitive_level=excluded.sensitive_level, consumers_json=excluded.consumers_json""",
+            (item["action_code"], item["name_zh"], item["name_en"], item["purpose"], item["risk"], _json(item.get("device_types") or []), _json(item.get("fields") or []), _json(item.get("optional_fields") or []), _json(item.get("field_types") or {}), 2_000_000, int(item.get("max_records") or 1000), int(item.get("timeout_seconds") or 30), "sensitive" if item["risk"] == "sensitive" else "normal", _json(item.get("consumers") or []), now),
         )
 
 

@@ -873,6 +873,82 @@ def parse_mac_table_regex(output: str) -> list[dict]:
                 })
     return entries
 
+
+def _collect_registry_interfaces(device: dict) -> list[dict]:
+    """Collect interface inventory through the published platform actions."""
+    from services.platform_registry_service import execute_platform_action
+
+    user = {
+        'id': f"scheduler:{device.get('id') or 'unknown'}",
+        'username': 'scheduler-collector',
+        'role': 'Operator',
+        'tenant_id': device.get('tenant_id') or '',
+    }
+    action_records: dict[str, list[dict]] = {}
+    for action_code in ('get_interfaces', 'get_interface_brief', 'get_ip_interfaces'):
+        try:
+            result = execute_platform_action(str(device['id']), action_code, user=user)
+        except Exception as exc:
+            logger.warning(
+                "Registry interface action failed device=%s action=%s: %s",
+                device.get('hostname') or device.get('id'), action_code, exc,
+            )
+            continue
+        if result.get('success'):
+            action_records[action_code] = result.get('records') or []
+
+    merged: dict[str, dict] = {}
+
+    def merge_record(record: dict, *, source: str) -> None:
+        name = str(record.get('interface') or record.get('local_interface') or '').strip()
+        if not name:
+            return
+        key = normalize_interface_name(name).lower()
+        item = merged.setdefault(key, {
+            'device_id': device['id'],
+            'name': name,
+            'description': '',
+            'admin_status': 'unknown',
+            'oper_status': 'unknown',
+            'primary_ip': None,
+            'ip_address': None,
+            'is_l3': None,
+            'mac_address': '',
+            'mtu': 1500,
+            'speed': 0.0,
+            'bandwidth': 0.0,
+            'duplex': 'auto',
+            'switchport_mode': 'l3',
+            'access_vlan': None,
+        })
+        item['name'] = item.get('name') or name
+        if source == 'get_interfaces':
+            item['description'] = str(record.get('description') or item['description'] or '')
+            item['mac_address'] = str(record.get('mac_address') or item['mac_address'] or '')
+            rate = normalize_collected_interface_rate(record.get('speed'))
+            item['speed'] = rate
+            item['bandwidth'] = rate
+        if source in {'get_interface_brief', 'get_ip_interfaces'}:
+            if record.get('admin_status') not in (None, ''):
+                item['admin_status'] = normalize_collected_interface_status(record.get('admin_status'))
+            if record.get('oper_status') not in (None, ''):
+                item['oper_status'] = normalize_collected_interface_status(record.get('oper_status'))
+        ip_value = str(record.get('ip_address') or record.get('ip') or '').strip()
+        if ip_value:
+            item['primary_ip'] = ip_value
+            item['ip_address'] = ip_value
+            item['is_l3'] = True
+            item['switchport_mode'] = 'l3'
+
+    for action_code, records in action_records.items():
+        for record in records:
+            merge_record(record, source=action_code)
+    for item in merged.values():
+        if item['is_l3'] is None:
+            item['is_l3'] = False
+            item['switchport_mode'] = 'access'
+    return list(merged.values())
+
 def sync_topology_and_interfaces_job():
     """System periodic task: Collect interfaces and topology LLDP neighbors."""
     logger.info("[Scheduler Job] Starting sync_topology_and_interfaces_job...")
@@ -896,6 +972,9 @@ def sync_topology_and_interfaces_job():
     from drivers.ssh_compat import build_netmiko_compatibility_kwargs
     
     def collect_device_interfaces(device: dict) -> list[dict]:
+        if device.get('platform_profile_id'):
+            return _collect_registry_interfaces(device)
+
         ip = device.get('ip_address')
         port = int(device.get('management_port') or device.get('port') or 22)
         from drivers.ssh_compat import is_ssh_port_open
@@ -1844,6 +1923,30 @@ def sync_bgp_routes_job():
 
         # ── 2. Collect per-VRF BGP tables ──────────────────────────
         if cmdb_vrfs:
+            if dev.get('platform_profile_id'):
+                from services.platform_registry_service import execute_platform_action
+                registry_user = {
+                    'id': f"scheduler:{dev_id}",
+                    'username': 'scheduler-collector',
+                    'role': 'Operator',
+                    'tenant_id': dev.get('tenant_id') or '',
+                }
+                for vrf_name in cmdb_vrfs:
+                    try:
+                        result = execute_platform_action(
+                            str(dev_id),
+                            'get_bgp_routes_vrf',
+                            user=registry_user,
+                            parameters={'vrf': vrf_name},
+                        )
+                        if result.get('success'):
+                            res.extend(_normalize_records(result.get('records') or [], dev_id, vrf_name, local_as))
+                    except Exception as exc:
+                        logger.debug(
+                            "[Scheduler Job] Registry BGP VRF collection failed for %s/%s: %s",
+                            dev.get('hostname'), vrf_name, exc,
+                        )
+                return res
             vrf_cmd_template = VRF_BGP_CMD.get(platform, VRF_BGP_CMD['cisco_ios'])
             try:
                 conn_params = _build_connection_params(dev)

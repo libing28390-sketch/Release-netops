@@ -45,8 +45,10 @@ const InspectionTab = lazy(() => import('../pages/InspectionTab'));
 const ExecutionScheduleTab = lazy(() => import('../pages/ExecutionScheduleTab'));
 const InspectionItemsTab = lazy(() => import('../pages/InspectionItemsTab'));
 const TextFSMTemplatesTab = lazy(() => import('../pages/TextFSMTemplatesTab'));
+const ParserRegistryTab = lazy(() => import('../pages/ParserRegistryTab'));
 const ScheduledJobsTab = lazy(() => import('../pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
+const PlatformRegistryTab = lazy(() => import('../pages/PlatformRegistryTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
 const CmdbManagementTab = lazy(() => import('../pages/CmdbManagementTab'));
 const CmdbAssetManagementTab = lazy(() => import('../pages/CmdbAssetManagementTab'));
@@ -948,6 +950,12 @@ const AppMainContent: React.FC = () => {
         </Suspense>
       )}
 
+      {activeTab === 'automation' && automationPage === 'textfsm-registry' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <ParserRegistryTab language={language} />
+        </Suspense>
+      )}
+
       {activeTab === 'compliance' && isFeatureEnabled('compliance') && (
         <Suspense fallback={lazyPanelFallback}>
           <ComplianceTab
@@ -1125,6 +1133,12 @@ const AppMainContent: React.FC = () => {
             onConfigScopeSiteChange={setConfigScopeSite}
             showToast={showToast}
           />
+        </Suspense>
+      )}
+
+      {activeTab === 'platform-registry' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <PlatformRegistryTab language={language} />
         </Suspense>
       )}
 

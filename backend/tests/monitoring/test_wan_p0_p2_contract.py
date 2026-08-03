@@ -12,6 +12,13 @@ def _run_async(coroutine):
         asyncio.set_event_loop(asyncio.new_event_loop())
 
 
+def _sample_table() -> str:
+    """Use the PostgreSQL partitioned table when the PG contract is active."""
+    from database import _USE_PG
+
+    return "wan_link_samples_1m_partitioned" if _USE_PG else "wan_link_samples_1m"
+
+
 def _seed_link(conn):
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     conn.execute("INSERT INTO devices (id, hostname, ip_address, site, snmp_community, snmp_port) VALUES (?, ?, ?, ?, ?, ?)", ("wan-device", "edge", "192.0.2.10", "HQ", "public", 161))
@@ -40,7 +47,8 @@ def test_failed_collection_keeps_last_valid_rate_and_does_not_increment_down(iso
 
     conn = get_db_connection()
     try:
-        rows = [dict(row) for row in conn.execute("SELECT * FROM wan_link_samples_1m ORDER BY sampled_at").fetchall()]
+        sample_table = _sample_table()
+        rows = [dict(row) for row in conn.execute(f"SELECT * FROM {sample_table} ORDER BY sampled_at").fetchall()]
         status = dict(conn.execute("SELECT * FROM wan_link_current_status WHERE link_id = ?", ("wan-link",)).fetchone())
     finally:
         conn.close()
@@ -59,12 +67,13 @@ def test_p1_rollup_and_p2_binding_contract(isolated_db):
     conn = get_db_connection()
     try:
         link = _seed_link(conn)
+        sample_table = _sample_table()
         target_id = "probe-target"
         conn.execute("INSERT INTO outbound_probe_targets (id, target_name, host, port, probe_type, is_active, enabled, group_name, url, expected_status_code, expected_keyword, timeout_ms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, TRUE, TRUE, ?, ?, ?, ?, ?, ?, ?)", (target_id, "DNS target", "example.com", 53, "DNS", "business", "", 200, "", 2000, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
         now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
         for offset in range(0, 10):
             sample_time = (now - timedelta(minutes=offset)).isoformat()
-            conn.execute("INSERT INTO wan_link_samples_1m (id, link_id, sampled_at, download_bps, upload_bps, download_util_pct, upload_util_pct, collection_status, quality_flags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'success', '{}', ?)", (f"sample-{offset}", link["id"], sample_time, 100_000_000, 50_000_000, 50, 50, sample_time))
+            conn.execute(f"INSERT INTO {sample_table} (id, link_id, sampled_at, download_bps, upload_bps, download_util_pct, upload_util_pct, collection_status, quality_flags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'success', '{{}}', ?)", (f"sample-{offset}", link["id"], sample_time, 100_000_000, 50_000_000, 50, 50, sample_time))
         conn.commit()
     finally:
         conn.close()
@@ -83,22 +92,23 @@ def test_alert_episode_can_recover_and_fire_again(isolated_db):
     conn = get_db_connection()
     try:
         link = _seed_link(conn)
+        sample_table = _sample_table()
         base = datetime.now(timezone.utc).replace(second=0, microsecond=0)
         _ensure_alert_rules(conn, link, base.isoformat())
         for offset in range(3):
             sampled = (base - timedelta(minutes=offset)).isoformat()
-            conn.execute("INSERT INTO wan_link_samples_1m (id, link_id, sampled_at, collection_status, oper_status, download_util_pct, upload_util_pct, quality_flags, created_at) VALUES (?, ?, ?, 'success', 'down', 0, 0, '{}', ?)", (f"down-{offset}", link["id"], sampled, sampled))
+            conn.execute(f"INSERT INTO {sample_table} (id, link_id, sampled_at, collection_status, oper_status, download_util_pct, upload_util_pct, quality_flags, created_at) VALUES (?, ?, ?, 'success', 'down', 0, 0, '{{}}', ?)", (f"down-{offset}", link["id"], sampled, sampled))
         assert _evaluate_alerts(conn, link, base.isoformat()) == 1
         first_event = conn.execute("SELECT id, status FROM wan_alert_events WHERE link_id = ?", (link["id"],)).fetchone()
         assert first_event["status"] == "firing"
         for offset in range(2):
             sampled = (base + timedelta(minutes=offset + 1)).isoformat()
-            conn.execute("INSERT INTO wan_link_samples_1m (id, link_id, sampled_at, collection_status, oper_status, download_util_pct, upload_util_pct, quality_flags, created_at) VALUES (?, ?, ?, 'success', 'up', 0, 0, '{}', ?)", (f"up-{offset}", link["id"], sampled, sampled))
+            conn.execute(f"INSERT INTO {sample_table} (id, link_id, sampled_at, collection_status, oper_status, download_util_pct, upload_util_pct, quality_flags, created_at) VALUES (?, ?, ?, 'success', 'up', 0, 0, '{{}}', ?)", (f"up-{offset}", link["id"], sampled, sampled))
         _evaluate_alerts(conn, link, (base + timedelta(minutes=3)).isoformat())
         assert conn.execute("SELECT status FROM wan_alert_events WHERE id = ?", (first_event["id"],)).fetchone()[0] == "resolved"
         for offset in range(3):
             sampled = (base + timedelta(minutes=5 + offset)).isoformat()
-            conn.execute("INSERT INTO wan_link_samples_1m (id, link_id, sampled_at, collection_status, oper_status, download_util_pct, upload_util_pct, quality_flags, created_at) VALUES (?, ?, ?, 'success', 'down', 0, 0, '{}', ?)", (f"down-again-{offset}", link["id"], sampled, sampled))
+            conn.execute(f"INSERT INTO {sample_table} (id, link_id, sampled_at, collection_status, oper_status, download_util_pct, upload_util_pct, quality_flags, created_at) VALUES (?, ?, ?, 'success', 'down', 0, 0, '{{}}', ?)", (f"down-again-{offset}", link["id"], sampled, sampled))
         _evaluate_alerts(conn, link, (base + timedelta(minutes=8)).isoformat())
         assert conn.execute("SELECT COUNT(*) FROM wan_alert_events WHERE link_id = ?", (link["id"],)).fetchone()[0] == 2
     finally:
@@ -112,10 +122,11 @@ def test_long_history_is_server_downsampled_with_contract_metadata(isolated_db):
     conn = get_db_connection()
     try:
         link = _seed_link(conn)
+        sample_table = _sample_table()
         base = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(days=30)
         for offset in range(30 * 24 * 60):
             sampled = (base + timedelta(minutes=offset)).isoformat()
-            conn.execute("INSERT INTO wan_link_samples_1m (id, link_id, sampled_at, collection_status, download_bps, upload_bps, quality_flags, created_at) VALUES (?, ?, ?, 'success', ?, ?, '{}', ?)", (f"history-{offset}", link["id"], sampled, 100_000_000, 50_000_000, sampled))
+            conn.execute(f"INSERT INTO {sample_table} (id, link_id, sampled_at, collection_status, download_bps, upload_bps, quality_flags, created_at) VALUES (?, ?, ?, 'success', ?, ?, '{{}}', ?)", (f"history-{offset}", link["id"], sampled, 100_000_000, 50_000_000, sampled))
         conn.commit()
     finally:
         conn.close()
@@ -223,7 +234,8 @@ def test_probe_binding_requires_enabled_target_and_records_route_evidence(isolat
     finally:
         conn.close()
     binding = upsert_probe_binding({"link_id": link["id"], "target_id": "disabled-target", "route_mode": "source_ip", "source_ip": "192.0.2.10"}, {"username": "operator"})
-    assert "verified_source_ip" in binding["route_evidence_json"]
+    evidence = binding["route_evidence_json"]
+    assert "verified_source_ip" in (evidence if isinstance(evidence, str) else str(evidence.get("evidence_status", "")))
 
 
 def test_recurring_maintenance_window_is_applied_without_stopping_collection(isolated_db):

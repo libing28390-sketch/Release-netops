@@ -73,7 +73,7 @@ def upsert_probe_binding(payload: dict[str, Any], actor: dict[str, Any], binding
         route_evidence = {"mode": route_mode, "source_ip_configured": bool(source_ip), "evidence_status": "verified_source_ip" if route_mode == "source_ip" else "insufficient_default_route"}
         conn.execute("""INSERT INTO wan_probe_bindings (id, link_id, target_id, route_mode, source_ip, priority, enabled, created_by, created_at, updated_at, route_evidence_json, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET link_id=excluded.link_id, target_id=excluded.target_id, route_mode=excluded.route_mode, source_ip=excluded.source_ip, priority=excluded.priority, enabled=excluded.enabled, updated_at=excluded.updated_at, route_evidence_json=excluded.route_evidence_json, updated_by=excluded.updated_by""", (item_id, link_id, target_id, route_mode, source_ip, int(payload.get("priority") or 100), bool(payload.get("enabled", True)), str(actor.get("username") or actor.get("id") or ""), now, now, json.dumps(route_evidence), str(actor.get("username") or actor.get("id") or "")))
         after_row = conn.execute("SELECT * FROM wan_probe_bindings WHERE id = ?", (item_id,)).fetchone()
-        conn.execute("INSERT INTO wan_probe_binding_audit (id, binding_id, action, actor_id, actor_name, before_json, after_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (f"wan-binding-audit-{uuid.uuid4().hex}", item_id, "update" if before_row else "create", str(actor.get("id") or ""), str(actor.get("username") or ""), json.dumps(dict(before_row) if before_row else {}), json.dumps(dict(after_row) if after_row else {}), now))
+        conn.execute("INSERT INTO wan_probe_binding_audit (id, binding_id, action, actor_id, actor_name, before_json, after_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (f"wan-binding-audit-{uuid.uuid4().hex}", item_id, "update" if before_row else "create", str(actor.get("id") or ""), str(actor.get("username") or ""), json.dumps(dict(before_row) if before_row else {}, default=str), json.dumps(dict(after_row) if after_row else {}, default=str), now))
         conn.commit()
         return dict(after_row)
     finally:
@@ -120,7 +120,7 @@ def delete_probe_binding(binding_id: str, actor: dict[str, Any]) -> bool:
             return False
         now = _now()
         conn.execute("DELETE FROM wan_probe_bindings WHERE id = ?", (binding_id,))
-        conn.execute("INSERT INTO wan_probe_binding_audit (id, binding_id, action, actor_id, actor_name, before_json, after_json, created_at) VALUES (?, ?, 'delete', ?, ?, ?, '{}', ?)", (f"wan-binding-audit-{uuid.uuid4().hex}", binding_id, str(actor.get("id") or ""), str(actor.get("username") or ""), json.dumps(dict(before)), now))
+        conn.execute("INSERT INTO wan_probe_binding_audit (id, binding_id, action, actor_id, actor_name, before_json, after_json, created_at) VALUES (?, ?, 'delete', ?, ?, ?, '{}', ?)", (f"wan-binding-audit-{uuid.uuid4().hex}", binding_id, str(actor.get("id") or ""), str(actor.get("username") or ""), json.dumps(dict(before), default=str), now))
         conn.commit()
         return True
     finally:

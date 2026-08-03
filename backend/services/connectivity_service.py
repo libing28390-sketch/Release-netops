@@ -147,7 +147,8 @@ def _load_device(device_id: str | int) -> dict | None:
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT id, asset_id, hostname, ip_address, platform, username, password, enable_password, priv_username, management_port AS port, credential_source, vault_path, cpu_usage, memory_usage "
+            "SELECT id, asset_id, hostname, ip_address, platform, username, password, enable_password, priv_username, management_port AS port, credential_source, vault_path, cpu_usage, memory_usage, "
+            "platform_profile_id, platform_source, platform_locked, tenant_id, site_id, site, device_group_id "
             "FROM devices WHERE id = ?", (device_id,)
         ).fetchone()
         if not row:
@@ -175,10 +176,20 @@ def _build_device_info(dev: dict) -> dict:
         'password': dev.get('password', ''),
         'enable_password': dev.get('enable_password', ''),
         'port': dev.get('port') or dev.get('management_port') or 22,
+        'platform_profile_id': dev.get('platform_profile_id'),
+        'platform_source': dev.get('platform_source'),
+        'platform_locked': dev.get('platform_locked'),
+        'tenant_id': dev.get('tenant_id'),
+        'site_id': dev.get('site_id') or dev.get('site'),
+        'device_group_id': dev.get('device_group_id'),
     }
 
 
 def _device_ping(device_info: dict, target: str, count: int = 4, source: str = '') -> dict[str, Any]:
+    if device_info.get('platform_profile_id'):
+        # The registry does not currently publish a ping action. Fail closed
+        # instead of sending an arbitrary command to a bound device.
+        raise ValueError('platform_registry:UNSUPPORTED_ACTION: ping is not a published platform action')
     """通过 SSH 到设备执行 ping 命令，解析结果。"""
     dtype = (device_info.get('device_type') or '').lower()
     ip = device_info.get('ip_address', '')
@@ -248,6 +259,8 @@ def _device_ping(device_info: dict, target: str, count: int = 4, source: str = '
 
 
 def _device_traceroute(device_info: dict, target: str, source: str = '') -> dict[str, Any]:
+    if device_info.get('platform_profile_id'):
+        raise ValueError('platform_registry:UNSUPPORTED_ACTION: traceroute is not a published platform action')
     """通过 SSH 到设备执行 traceroute 命令。"""
     dtype = (device_info.get('device_type') or '').lower()
     ip = device_info.get('ip_address', '')

@@ -40,6 +40,16 @@ import {
   getStatusMap,
 } from './helpers';
 
+type ExecutionApproval = {
+  id: string;
+  title?: string;
+  message?: string;
+  required_role?: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  requested_by_username?: string;
+  decision_reason?: string;
+};
+
 const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
   t,
   language,
@@ -76,6 +86,10 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
   const isZh = language === 'zh';
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const isLive = !!(activeExecutionId && executionStatus === 'running');
+  const [executionApprovals, setExecutionApprovals] = useState<ExecutionApproval[]>([]);
+  const [approvalsLoading, setApprovalsLoading] = useState(false);
+  const [approvalActionId, setApprovalActionId] = useState('');
+  const [approvalError, setApprovalError] = useState('');
 
   // ── TextFSM parse state (per command block key) ──
   // key format: `${phase}::${command}` for per-command granularity
@@ -106,6 +120,56 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
     const token = localStorage.getItem('netops_token');
     return token ? { Authorization: `Bearer ${token}` } : {};
   })();
+
+  useEffect(() => {
+    const executionId = selectedExecutionDetail?.id;
+    if (!executionId || selectedExecutionDetail?.status !== 'awaiting_approval') {
+      setExecutionApprovals([]);
+      setApprovalError('');
+      return;
+    }
+    let active = true;
+    setApprovalsLoading(true);
+    setApprovalError('');
+    const token = localStorage.getItem('netops_token');
+    void fetch(`/api/playbooks/${encodeURIComponent(executionId)}/approvals`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload?.detail?.message || payload?.detail || 'Failed to load approval gates');
+        if (active) setExecutionApprovals(payload.data || []);
+      })
+      .catch((cause) => { if (active) setApprovalError(cause instanceof Error ? cause.message : 'Failed to load approval gates'); })
+      .finally(() => { if (active) setApprovalsLoading(false); });
+    return () => { active = false; };
+  }, [selectedExecutionDetail?.id, selectedExecutionDetail?.status]);
+
+  const decideExecutionApproval = async (approval: ExecutionApproval, decision: 'approve' | 'reject') => {
+    const executionId = selectedExecutionDetail?.id;
+    if (!executionId || approval.status !== 'PENDING') return;
+    const reason = decision === 'reject' ? window.prompt(isZh ? '请输入拒绝原因' : 'Reason for rejection') : '';
+    if (decision === 'reject' && reason === null) return;
+    setApprovalActionId(approval.id);
+    setApprovalError('');
+    const token = localStorage.getItem('netops_token');
+    try {
+      const response = await fetch(`/api/playbooks/${encodeURIComponent(executionId)}/approvals/${encodeURIComponent(approval.id)}/${decision}`, {
+        method: 'POST',
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason || '' }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.detail?.message || payload?.detail || 'Approval decision failed');
+      setExecutionApprovals((current) => current.map((item) => item.id === approval.id ? (payload.data?.approval || { ...item, status: decision === 'approve' ? 'APPROVED' : 'REJECTED' }) : item));
+      await onRefreshHistory();
+      if (selectedExecutionDetail) await onSelectExecution(selectedExecutionDetail);
+    } catch (cause) {
+      setApprovalError(cause instanceof Error ? cause.message : (isZh ? '审批操作失败' : 'Approval decision failed'));
+    } finally {
+      setApprovalActionId('');
+    }
+  };
 
   // Parse a single command's output via TextFSM
   const handleParseCommand = useCallback(async (
@@ -563,6 +627,8 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
       success: { label: isZh ? '执行成功' : 'Success', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
       running: { label: isZh ? '执行中' : 'Running', cls: 'bg-cyan-50 text-cyan-700', dot: 'bg-cyan-500 animate-pulse' },
       pending: { label: isZh ? '排队中' : 'Pending', cls: 'bg-blue-50 text-blue-700', dot: 'bg-blue-500' },
+      awaiting_approval: { label: isZh ? '待审批' : 'Awaiting approval', cls: 'bg-violet-50 text-violet-700', dot: 'bg-violet-500' },
+      approval_rejected: { label: isZh ? '审批拒绝' : 'Approval rejected', cls: 'bg-rose-50 text-rose-700', dot: 'bg-rose-500' },
       dry_run_complete: { label: isZh ? '模拟完成' : 'Dry-Run', cls: 'bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
     };
     return statusMap[status || ''] || { 
@@ -919,7 +985,33 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                 </div>
               </div>
 
-              {/* Modal Content */}
+              {/* Approval gates are rendered before the device output so a pending execution cannot be mistaken for a started task. */}
+              {!isLive && selectedExecutionDetail?.status === 'awaiting_approval' && (
+                <div className="shrink-0 border-b border-violet-100 bg-violet-50/60 px-6 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-violet-900">{isZh ? '执行审批门' : 'Execution approval gates'}</div>
+                    {approvalsLoading && <Loader2 size={14} className="animate-spin text-violet-500" />}
+                  </div>
+                  {approvalError && <div className="mt-2 rounded-lg bg-rose-50 px-2.5 py-2 text-[10px] text-rose-700">{approvalError}</div>}
+                  <div className="mt-2 space-y-2">
+                    {executionApprovals.map((approval) => (
+                      <div key={approval.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-100 bg-white px-3 py-2 text-[10px]">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-800">{approval.title || approval.id}</div>
+                          <div className="mt-0.5 text-slate-500">{approval.message || (isZh ? '该执行需要审批后才会启动设备任务。' : 'This execution must be approved before device tasks start.')}</div>
+                        </div>
+                        {approval.status === 'PENDING' ? (
+                          <div className="flex shrink-0 gap-1.5">
+                            <button type="button" onClick={() => void decideExecutionApproval(approval, 'approve')} disabled={approvalActionId === approval.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">{approvalActionId === approval.id ? '...' : (isZh ? '批准' : 'Approve')}</button>
+                            <button type="button" onClick={() => void decideExecutionApproval(approval, 'reject')} disabled={approvalActionId === approval.id} className="rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 font-semibold text-rose-700 disabled:opacity-50">{isZh ? '拒绝' : 'Reject'}</button>
+                          </div>
+                        ) : <span className={`rounded-full px-2 py-1 font-semibold ${approval.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{approval.status}</span>}
+                      </div>
+                    ))}
+                    {!approvalsLoading && executionApprovals.length === 0 && <div className="text-[10px] text-violet-700/70">{isZh ? '未找到审批记录。' : 'No approval records found.'}</div>}
+                  </div>
+                </div>
+              )}
               <div className="flex-1 overflow-hidden relative">
                 {isLive ? (
                   /* Live Streaming Panel */
@@ -976,6 +1068,8 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                       failed: { label: isZh ? '失败' : 'Failed', cls: 'bg-red-500 text-white' },
                       partial_failure: { label: isZh ? '部分失败' : 'Partial Failure', cls: 'bg-amber-500 text-white' },
                       dry_run_complete: { label: 'DRY-RUN', cls: 'bg-cyan-500 text-white' },
+                      awaiting_approval: { label: isZh ? '待审批' : 'Awaiting approval', cls: 'bg-violet-500 text-white' },
+                      approval_rejected: { label: isZh ? '审批拒绝' : 'Approval rejected', cls: 'bg-rose-500 text-white' },
                     };
                     const executionSt = executionStatusMap[execution.status || ''] || { label: execution.status || 'Failed', cls: 'bg-red-500 text-white' };
 

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer } from 'recharts';
 import OutputActions from '../../../components/OutputActions';
-import type { UnifiedExecutionLog, InspDetailTab } from '../types';
+import type { UnifiedExecutionLog, InspDetailTab, PlaybookExecutionApproval } from '../types';
 import type { Device } from '../../../types';
 import { splitOutputByCommand, downloadInspExcel, downloadInspJSON } from '../helpers';
 
@@ -42,6 +42,11 @@ interface ExecutionDetailProps {
   // Playbook
   pbDetail: any;
   pbDevices: any[];
+  pbApprovals: PlaybookExecutionApproval[];
+  pbApprovalsLoading: boolean;
+  pbApprovalActionId: string;
+  pbApprovalError: string;
+  onPlaybookApproval: (approval: PlaybookExecutionApproval, decision: 'approve' | 'reject') => void;
   selectedPbDevice: any;
   pbDeviceDetail: any;
   onSelectPbDevice: (deviceId: string) => void;
@@ -57,7 +62,8 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
   trendData, trendLoading, setTrendData,
   onParseCmd, onCopyText, onFetchTrend,
   setCollapsedCmds, setInspParseResults,
-  pbDetail, pbDevices, selectedPbDevice, pbDeviceDetail, onSelectPbDevice, devices,
+  pbDetail, pbDevices, pbApprovals, pbApprovalsLoading, pbApprovalActionId, pbApprovalError, onPlaybookApproval,
+  selectedPbDevice, pbDeviceDetail, onSelectPbDevice, devices,
 }) => {
   if (!selectedLog) return null;
 
@@ -112,6 +118,33 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = ({
                 </button>
               </div>
             </div>
+
+            {selectedLog.source === 'playbook' && selectedLog.status === 'awaiting_approval' && (
+              <div className="shrink-0 border-b border-violet-100 bg-violet-50/60 px-6 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-violet-900">{zh ? '执行审批门' : 'Execution approval gates'}</div>
+                  {pbApprovalsLoading && <Loader2 size={14} className="animate-spin text-violet-500" />}
+                </div>
+                {pbApprovalError && <div className="mt-2 rounded-lg bg-rose-50 px-2.5 py-2 text-[10px] text-rose-700">{pbApprovalError}</div>}
+                <div className="mt-2 space-y-2">
+                  {pbApprovals.map((approval) => (
+                    <div key={approval.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-100 bg-white px-3 py-2 text-[10px]">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-slate-800">{approval.title || approval.id}</div>
+                        <div className="mt-0.5 text-slate-500">{approval.message || (zh ? '审批通过前不会启动设备任务。' : 'Device tasks remain paused until approval.')}</div>
+                      </div>
+                      {approval.status === 'PENDING' ? (
+                        <div className="flex shrink-0 gap-1.5">
+                          <button type="button" onClick={() => onPlaybookApproval(approval, 'approve')} disabled={pbApprovalActionId === approval.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 font-semibold text-white disabled:opacity-50">{pbApprovalActionId === approval.id ? '...' : (zh ? '批准' : 'Approve')}</button>
+                          <button type="button" onClick={() => onPlaybookApproval(approval, 'reject')} disabled={pbApprovalActionId === approval.id} className="rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 font-semibold text-rose-700 disabled:opacity-50">{zh ? '拒绝' : 'Reject'}</button>
+                        </div>
+                      ) : <span className={`rounded-full px-2 py-1 font-semibold ${approval.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{approval.status}</span>}
+                    </div>
+                  ))}
+                  {!pbApprovalsLoading && pbApprovals.length === 0 && <div className="text-[10px] text-violet-700/70">{zh ? '未找到审批记录。' : 'No approval records found.'}</div>}
+                </div>
+              </div>
+            )}
 
             {/* Content */}
             <div className="flex-1 overflow-hidden relative">

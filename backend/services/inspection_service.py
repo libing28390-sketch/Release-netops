@@ -216,6 +216,40 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_cred
     from drivers.ssh_compat import build_netmiko_compatibility_kwargs
     from services.vault_service import resolve_device_credentials
 
+    registry_outputs: dict[str, str] = {}
+    remaining_commands = list(commands)
+    if device.get('platform_profile_id'):
+        from services.platform_registry_service import execute_platform_action, resolve_device_action_code
+
+        registry_user = {
+            'id': f"inspection:{device.get('id') or 'unknown'}",
+            'username': 'inspection-collector',
+            'role': 'Administrator' if use_admin_creds else 'Operator',
+            'tenant_id': device.get('tenant_id') or '',
+        }
+        remaining_commands = []
+        for command in commands:
+            action_code = resolve_device_action_code(str(device.get('id') or ''), command)
+            if not action_code:
+                registry_outputs[command] = '__ERROR__: platform_registry: UNSUPPORTED_ACTION: command is not mapped by the published release'
+                continue
+            try:
+                action_result = execute_platform_action(
+                    str(device['id']),
+                    action_code,
+                    user=registry_user,
+                    include_raw_output=True,
+                )
+                if action_result.get('success'):
+                    registry_outputs[command] = str(action_result.get('raw_output') or '')
+                else:
+                    registry_outputs[command] = f"__ERROR__: {action_result.get('error_code') or 'ACTION_FAILED'}: {action_result.get('error') or 'Platform action failed'}"
+            except Exception as exc:
+                registry_outputs[command] = f"__ERROR__: platform_registry: {exc}"
+
+    if not remaining_commands:
+        return registry_outputs
+
     platform = (device.get('platform') or 'cisco_ios').lower()
     is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware', 'h3c_comware9', 'hp_comware'}
 
@@ -281,7 +315,7 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_cred
                     except Exception as en_err:
                         results['__ENABLE_FAILED__'] = str(en_err)
 
-            for cmd in commands:
+            for cmd in remaining_commands:
                 try:
                     output = conn.send_command(
                         cmd,
@@ -300,7 +334,7 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_cred
     except Exception as e:
         raise RuntimeError(f"SSH 连接失败: {e}") from e
 
-    return results
+    return {**registry_outputs, **results}
 
 
 def _apply_parse_filter(records: list[dict], parse_filter_json: str) -> list[dict]:
@@ -995,17 +1029,25 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
 
     # R10.3: raw_outputs_json 大小限制 — 超过 10MB 时截断最长的命令输出
     _RAW_OUTPUTS_MAX_BYTES = 10 * 1024 * 1024  # 10MB
-    raw_outputs_json = json.dumps(raw_outputs, ensure_ascii=False)
+    # Inspection needs the raw text only while parsing.  Persist a redacted
+    # copy so password/community/token material cannot enter the ordinary
+    # inspection result table, including legacy/unbound-device paths.
+    from services.platform_registry_service import redact_raw_output
+    safe_raw_outputs = {
+        command: redact_raw_output(str(output or ''))
+        for command, output in raw_outputs.items()
+    }
+    raw_outputs_json = json.dumps(safe_raw_outputs, ensure_ascii=False)
     if len(raw_outputs_json.encode('utf-8')) > _RAW_OUTPUTS_MAX_BYTES:
         # 按命令输出长度降序，逐个截断直到总大小 < 10MB
         truncated_count = 0
         while len(json.dumps(raw_outputs, ensure_ascii=False).encode('utf-8')) > _RAW_OUTPUTS_MAX_BYTES:
             # 找到最长的命令输出
-            longest_cmd = max(raw_outputs.keys(), key=lambda k: len(str(raw_outputs.get(k, ''))))
-            current_len = len(str(raw_outputs[longest_cmd]))
+            longest_cmd = max(safe_raw_outputs.keys(), key=lambda k: len(str(safe_raw_outputs.get(k, ''))))
+            current_len = len(str(safe_raw_outputs[longest_cmd]))
             # 截断到当前长度的一半，并保留 [TRUNCATED] 标记
             new_len = max(1024, current_len // 2)
-            raw_outputs[longest_cmd] = str(raw_outputs[longest_cmd])[:new_len] + "\n... [TRUNCATED: 输出过大] ..."
+            safe_raw_outputs[longest_cmd] = str(safe_raw_outputs[longest_cmd])[:new_len] + "\n... [TRUNCATED: 输出过大] ..."
             truncated_count += 1
             if truncated_count > 50:
                 break  # safety guard
@@ -1015,7 +1057,7 @@ def _inspect_network_device(device: dict, alert_stats: dict, inspection_items: l
             '原始输出超过 10MB，已截断',
             severity='info',
         ))
-        raw_outputs_json = json.dumps(raw_outputs, ensure_ascii=False)
+        raw_outputs_json = json.dumps(safe_raw_outputs, ensure_ascii=False)
 
     result['findings_json'] = json.dumps(findings, ensure_ascii=False)
     result['raw_outputs_json'] = raw_outputs_json
@@ -1430,7 +1472,10 @@ def _inspect_server_device(device: dict[str, Any], alert_stats: dict[str, int], 
 
     result['metrics_json'] = json.dumps(metrics_results, ensure_ascii=False)
     result['findings_json'] = json.dumps(findings, ensure_ascii=False)
-    result['raw_outputs_json'] = json.dumps(raw_outputs, ensure_ascii=False)
+    result['raw_outputs_json'] = json.dumps({
+        command: redact_raw_output(str(output or ''))
+        for command, output in raw_outputs.items()
+    }, ensure_ascii=False)
 
     # 指标智能分析（与网络设备一致）：基于阈值 + 历史对比生成结论/建议。
     try:

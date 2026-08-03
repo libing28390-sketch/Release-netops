@@ -64,7 +64,8 @@ from api.ip_locator import router as ip_locator_router
 from api.inspections import router as inspections_router
 from api.collection_plans import router as collection_plans_router
 from api.textfsm_templates import router as textfsm_templates_router
-from api.platform_registry import router as platform_registry_router
+from api.parser_templates import router as parser_templates_router
+from api.platform_registry import router as platform_registry_router, device_registry_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
@@ -162,6 +163,13 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         synchronized_scheduler_job('device_telemetry_sampler', expire_seconds=55)(record_device_telemetry_snapshot),
         'interval', minutes=1, id='device_telemetry_sampler', replace_existing=True
+    )
+
+    from services.playbook_output_service import cleanup_expired_playbook_outputs
+    scheduler.add_job(
+        synchronized_scheduler_job('playbook_output_retention', expire_seconds=23 * 3600)(cleanup_expired_playbook_outputs),
+        'cron', hour=3, minute=40, id='playbook_output_retention', replace_existing=True,
+        max_instances=1, coalesce=True,
     )
 
     from services.outbound_probe_service import record_outbound_egress_snapshot, run_outbound_probe_once
@@ -488,7 +496,9 @@ app.include_router(compliance_router,     prefix="/api")
 app.include_router(inspections_router,    prefix="/api")
 app.include_router(collection_plans_router, prefix="/api")
 app.include_router(textfsm_templates_router, prefix="/api")
+app.include_router(parser_templates_router, prefix="/api")
 app.include_router(platform_registry_router, prefix="/api")
+app.include_router(device_registry_router, prefix="/api")
 app.include_router(change_orders_router,  prefix="/api")
 app.include_router(pam_router,            prefix="/api")
 app.include_router(audit_router,          prefix="/api")

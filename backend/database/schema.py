@@ -703,6 +703,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         ('switching_capacity_gbps', 'REAL DEFAULT 0.0'),
         ('tenant_id', "TEXT DEFAULT ''"),
         ('site_id', "TEXT DEFAULT ''"),
+        ('device_group_id', "TEXT DEFAULT ''"),
         ('rack_id', "TEXT DEFAULT ''"),
         ('device_type_id', "TEXT DEFAULT ''"),
         ('asset_tag', "TEXT DEFAULT ''"),
@@ -720,6 +721,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
          ('collection_policy_json', "TEXT DEFAULT '{}'")
      ]:
         ensure_column('devices', col, dtype)
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_devices_device_group_id ON devices(device_group_id)')
 
     # Migration for script management enhancements
     for col, dtype in [
@@ -800,6 +802,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     CREATE TABLE IF NOT EXISTS custom_scenarios (
         id TEXT PRIMARY KEY,
         data_json TEXT NOT NULL,
+        tenant_id TEXT,
         created_by TEXT DEFAULT 'admin',
         created_at TEXT,
         updated_at TEXT
@@ -3061,12 +3064,45 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     if unlinked:
         for dev in unlinked:
             match = cursor.execute(
-                "SELECT id FROM physical_assets WHERE asset_type='network_device' AND (hostname = ? OR management_ip = ?) LIMIT 1",
-                (dev['hostname'], dev['ip_address'])
+                """SELECT pa.id
+                   FROM physical_assets pa
+                   WHERE pa.asset_type = 'network_device'
+                     AND (pa.hostname = ? OR pa.management_ip = ?)
+                     AND NOT EXISTS (
+                         SELECT 1 FROM devices d2
+                         WHERE d2.asset_id = pa.id AND d2.id <> ?
+                     )
+                   ORDER BY pa.id
+                   LIMIT 1""",
+                (dev['hostname'], dev['ip_address'], dev['id'])
             ).fetchone()
             if match:
                 cursor.execute('UPDATE devices SET asset_id = ? WHERE id = ?', (match['id'], dev['id']))
             else:
+                # Identity fields on physical_assets are globally unique. A
+                # legacy/shared database can contain two CMDB devices with
+                # the same hostname or management IP; keep the second device
+                # unlinked rather than failing the entire bootstrap while
+                # trying to create a duplicate asset.
+                identity_checks = []
+                identity_params = []
+                for column, value in (
+                    ('hostname', dev['hostname']),
+                    ('serial_number', dev['sn']),
+                    ('management_ip', dev['ip_address']),
+                ):
+                    if str(value or '').strip():
+                        identity_checks.append(f"LOWER(TRIM({column})) = LOWER(TRIM(?))")
+                        identity_params.append(value)
+                if identity_checks and cursor.execute(
+                    "SELECT 1 FROM physical_assets WHERE " + " OR ".join(identity_checks) + " LIMIT 1",
+                    identity_params,
+                ).fetchone():
+                    logger.warning(
+                        "[migration] Leaving device %s unlinked because its asset identity is already in use",
+                        dev['id'],
+                    )
+                    continue
                 asset_id = f"asset-{uuid.uuid4().hex[:12]}"
                 now_str = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
                 cursor.execute('''

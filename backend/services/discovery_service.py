@@ -7,11 +7,11 @@ applied only by reconciliation actions.
 from __future__ import annotations
 
 import logging
+import hashlib
 from dataclasses import asdict
 from typing import Any
 
 from database.core import get_db_connection
-from drivers.factory import DriverFactory
 from services.normalizers.factory import NormalizerFactory
 from services.reconciliation_service import (
     complete_discovery_run,
@@ -99,16 +99,23 @@ def resolve_discovery_profile(platform: str) -> tuple[str, dict]:
         canonical = normalize_platform_code(key)
         seeded = next((item for item in SYSTEM_PROFILES if item['platform_code'] == canonical), None)
         if seeded:
+            normalizer = 'h3c_comware' if seeded['parser_platform'] == 'hp_comware' else seeded['parser_platform']
             return canonical, {
                 'version': '', 'interfaces': '', 'brief': '', 'neighbors': '',
-                'normalizer': seeded['parser_platform'],
+                'normalizer': normalizer,
             }
         raise ValueError(f"Unsupported discovery platform '{platform}'. Refusing Cisco command fallback.")
     return key, COMMAND_PROFILES[key]
 
 
 class DiscoveryService:
-    def discover_device(self, device_id: str, *, requested_by: str = 'system') -> dict:
+    def discover_device(
+        self,
+        device_id: str,
+        *,
+        requested_by: str = 'system',
+        requested_by_user: dict[str, Any] | None = None,
+    ) -> dict:
         conn = get_db_connection()
         run_id = create_discovery_run(
             run_type='device_cli', requested_by=requested_by,
@@ -121,30 +128,55 @@ class DiscoveryService:
                 raise ValueError(f"Device {device_id} not found in CMDB")
             device_info = dict(row)
             platform_key, profile = resolve_discovery_profile(device_info.get('platform') or '')
-            driver_type = device_info.get('connection_method') or 'netmiko'
-
             outputs: dict[str, str] = {}
-            driver = DriverFactory.get_driver(driver_type, device_info)
-            with driver:
-                action_by_output = {
-                    'version': 'get_version',
-                    'interfaces': 'get_interfaces',
-                    'brief': 'get_interface_brief',
-                    'neighbors': 'get_lldp_neighbors',
-                }
-                from services.platform_registry_service import resolve_action_mapping
-                for output_key in ('version', 'interfaces', 'brief', 'neighbors'):
-                    mapping = resolve_action_mapping(device_info.get('platform') or platform_key, action_by_output[output_key])
-                    command = mapping['command']
-                    result = driver.send_command(command)
-                    outputs[output_key] = result.output if result.success else ''
-                    record_observation(
-                        run_id, source_device_id=device_id, source_type='cli',
-                        observed_type='cli_output', observed_key=f'{device_id}:{output_key}',
-                        payload={'command': command, 'platform': platform_key,
-                                 'success': bool(result.success), 'output': outputs[output_key]},
-                        confidence=0.9 if result.success else 0.2, conn=conn,
-                    )
+            action_by_output = {
+                'version': 'get_version',
+                'interfaces': 'get_interfaces',
+                'brief': 'get_interface_brief',
+                'neighbors': 'get_lldp_neighbors',
+            }
+            from services.platform_registry_service import execute_platform_action
+            action_user = requested_by_user or {
+                'id': f'discovery:{requested_by}',
+                'username': requested_by,
+                'role': 'Administrator',
+                'tenant_id': device_info.get('tenant_id') or '',
+            }
+            for output_key in ('version', 'interfaces', 'brief', 'neighbors'):
+                action_code = action_by_output[output_key]
+                action_result = execute_platform_action(
+                    device_id,
+                    action_code,
+                    user=action_user,
+                    include_raw_output=True,
+                )
+                outputs[output_key] = action_result.get('raw_output') or ''
+                output_text = str(outputs[output_key])
+                record_observation(
+                    run_id, source_device_id=device_id, source_type='cli',
+                    observed_type='cli_output', observed_key=f'{device_id}:{output_key}',
+                    payload={
+                        'command': action_result.get('command'),
+                        'platform': platform_key,
+                        'action_code': action_code,
+                        'platform_release_id': action_result.get('platform_release_id'),
+                        'command_checksum': action_result.get('command_checksum'),
+                        'parser_template_version_id': action_result.get('parser_template_version_id'),
+                        'success': bool(action_result.get('success')),
+                        # Keep the CLI output in memory for the normalizer,
+                        # but never persist a device echo/config in the
+                        # general discovery observation JSON.  The resolver
+                        # already redacts returned diagnostics; persistence
+                        # additionally stores only non-sensitive evidence.
+                        'output_metadata': {
+                            'byte_length': len(output_text.encode('utf-8', errors='ignore')),
+                            'sha256': hashlib.sha256(output_text.encode('utf-8', errors='ignore')).hexdigest(),
+                            'persisted': False,
+                        },
+                        'error_code': action_result.get('error_code'),
+                    },
+                    confidence=0.9 if action_result.get('success') else 0.2, conn=conn,
+                )
 
             findings: list[dict[str, Any]] = []
             parsed_summary = {'device': 0, 'interfaces': 0, 'neighbors': 0, 'raw_only': profile['normalizer'] is None}

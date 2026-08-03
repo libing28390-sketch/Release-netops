@@ -41,18 +41,70 @@ ADMIN_ONLY_PATHS = {
     '/api/users',
 }
 
+RESOURCE_ACTION_CATALOG = {
+    'platform': {'view', 'create', 'edit_draft', 'submit', 'approve', 'publish', 'rollback', 'bind_device'},
+    'command': {'view', 'edit_draft', 'test', 'execute'},
+    'textfsm': {'view', 'create', 'edit_draft', 'test', 'submit', 'approve', 'publish', 'rollback'},
+    'sample_output': {'upload', 'view', 'delete'},
+    'playbook': {'view', 'create', 'edit_draft', 'test', 'submit', 'approve', 'publish', 'execute', 'schedule', 'rollback'},
+}
+
+# Recommended role profiles are declarative metadata until the user/role
+# tables gain named tenant roles.  Route dependencies still use the existing
+# Administrator/Operator/Viewer identities, but the catalog prevents a new
+# endpoint from silently inventing an unreviewed permission vocabulary.
+RECOMMENDED_ROLE_PROFILES = {
+    'Platform Viewer': {
+        'platform': {'view'}, 'command': {'view'}, 'textfsm': {'view'},
+        'sample_output': {'view'}, 'playbook': {'view'},
+    },
+    'Template Developer': {
+        'platform': {'view'}, 'command': {'view', 'test'},
+        'textfsm': {'view', 'create', 'edit_draft', 'test', 'submit'},
+        'sample_output': {'upload', 'view', 'delete'}, 'playbook': {'view'},
+    },
+    'Platform Maintainer': {
+        'platform': {'view', 'create', 'edit_draft', 'submit', 'bind_device'},
+        'command': {'view', 'edit_draft', 'test'}, 'textfsm': {'view'},
+        'sample_output': {'view'}, 'playbook': {'view'},
+    },
+    'Playbook Author': {
+        'platform': {'view'}, 'command': {'view', 'test'}, 'textfsm': {'view'},
+        'sample_output': {'view'},
+        'playbook': {'view', 'create', 'edit_draft', 'test', 'submit'},
+    },
+    'Release Manager': {
+        'platform': {'view', 'approve', 'publish', 'rollback'},
+        'command': {'view'}, 'textfsm': {'view', 'approve', 'publish', 'rollback'},
+        'sample_output': {'view'},
+        'playbook': {'view', 'approve', 'publish', 'rollback'},
+    },
+    'Automation Operator': {
+        'platform': {'view'}, 'command': {'view', 'execute'}, 'textfsm': {'view'},
+        'sample_output': {'view'}, 'playbook': {'view', 'execute', 'schedule'},
+    },
+    'System Administrator': {'*': {'*'}},
+}
+
+
 RESOURCE_ACTIONS = {
     'Administrator': {'*'},
-    # Keep the legacy generic actions and add the P0 permission vocabulary.
-    # The current role model is intentionally backward compatible; finer
-    # recommended roles can narrow these sets in a later tenant-role migration.
+    # Operator is the author/executor role.  Approval, publication and
+    # rollback stay Administrator-only until a dedicated tenant role/profile
+    # model is introduced; otherwise the old broad set defeats separation of
+    # duties even when individual routes use resource permissions.
     'Operator': {
-        'read', 'view', 'create', 'update', 'edit_draft', 'submit', 'approve', 'publish', 'rollback',
-        'bind_device', 'test', 'execute', 'schedule', 'reserve', 'allocate', 'release', 'export',
-        'approve_low_risk',
+        'read', 'view', 'create', 'update', 'edit_draft', 'submit',
+        'bind_device', 'test', 'execute', 'schedule', 'upload', 'delete',
+        'reserve', 'allocate', 'release', 'export',
     },
     'Viewer': {'read', 'view'},
 }
+
+
+def permission_catalog() -> dict[str, list[str]]:
+    """Return the stable resource/action vocabulary for UI and API clients."""
+    return {resource: sorted(actions) for resource, actions in RESOURCE_ACTION_CATALOG.items()}
 
 
 def _get_current_user(request: Request) -> dict | None:

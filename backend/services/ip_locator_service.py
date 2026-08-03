@@ -620,6 +620,46 @@ def _targeted_arp_query(device_info: dict, target_ip: str, vrf: str = None) -> d
     支持可选的 vrf 参数，用于在特定的 VRF 虚拟路由上下文中查询 ARP 表。
     失败时回退到全表采集。
     """
+    # Registry-bound devices use the published standard action and filter the
+    # normalized records locally.  This keeps the locator out of the
+    # vendor-specific command and pipe syntax while preserving the legacy
+    # targeted-query fallback for unbound/older assets.
+    if device_info.get('platform_profile_id'):
+        try:
+            from services.platform_registry_service import execute_platform_action
+
+            result = execute_platform_action(
+                str(device_info['id']),
+                'get_arp_table_vrf' if vrf else 'get_arp_table',
+                user={
+                    'id': f'ip-locator:{device_info.get("id") or "unknown"}',
+                    'username': 'ip-locator',
+                    'role': 'Operator',
+                    'tenant_id': device_info.get('tenant_id') or '',
+                },
+                parameters={'vrf': vrf} if vrf else None,
+            )
+            if result.get('success'):
+                for record in result.get('records') or []:
+                    normalized = _normalize_arp_record(record, device_info)
+                    if normalized and normalized['ip'] == target_ip:
+                        return {
+                            'ip': target_ip,
+                            'mac': normalized['mac'],
+                            'mac_display': _format_mac(normalized['mac']),
+                            'interface': normalized['interface'],
+                            'vlan': normalized.get('vlan', ''),
+                            'source_device_id': normalized['source_device_id'],
+                            'source_device': normalized['source_device'],
+                        }
+                return None
+        except Exception as exc:
+            logger.debug(f"[IPLocator] Registry ARP query failed on {device_info.get('ip_address')}: {exc}")
+        # A registry-bound device must not fall back to a vendor-specific
+        # targeted command.  Unsupported/failed published actions are an
+        # explicit result, not permission to bypass the release boundary.
+        return None
+
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     
     if vrf:
@@ -726,6 +766,44 @@ def _targeted_mac_query(device_info: dict, target_mac: str) -> list[dict]:
     向设备发送精确 MAC 地址表查询命令。
     target_mac 为 12 位 hex（无分隔符），函数内部转为设备所需格式。
     """
+    if device_info.get('platform_profile_id'):
+        try:
+            from services.platform_registry_service import execute_platform_action
+
+            result = execute_platform_action(
+                str(device_info['id']),
+                'get_mac_table',
+                user={
+                    'id': f'ip-locator:{device_info.get("id") or "unknown"}',
+                    'username': 'ip-locator',
+                    'role': 'Operator',
+                    'tenant_id': device_info.get('tenant_id') or '',
+                },
+            )
+            if result.get('success'):
+                records = []
+                for record in result.get('records') or []:
+                    mac_norm = _normalize_mac(str(_record_value(
+                        record, 'mac', 'mac_address', 'destination_address', 'hardware_address'
+                    ) or ''))
+                    if mac_norm != target_mac:
+                        continue
+                    port_field = _record_value(record, 'interface', 'destination_port', 'port')
+                    vlan = _record_value(record, 'vlan', 'vlan_id', 'vid')
+                    records.append({
+                        'mac': mac_norm,
+                        'port': str(port_field or '').strip(),
+                        'vlan': str(vlan or '').strip(),
+                        'vlan_source': 'mac_table',
+                        'type': _record_value(record, 'type', 'entry_type'),
+                        'switch_id': device_info.get('id'),
+                        'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
+                    })
+                return records
+        except Exception as exc:
+            logger.debug(f"[IPLocator] Registry MAC query failed on {device_info.get('ip_address')}: {exc}")
+        return []
+
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     cmd_template = _TARGETED_MAC_COMMANDS.get(platform)
 
@@ -834,6 +912,37 @@ def _check_local_device_ip(device_info: dict, target_ip: str, vrf: str = None) -
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     if platform in _ARP_UNSUPPORTED_PLATFORMS:
         return None
+
+    if device_info.get('platform_profile_id') and not vrf:
+        try:
+            from services.platform_registry_service import execute_platform_action
+
+            result = execute_platform_action(
+                str(device_info['id']),
+                'get_ip_interfaces',
+                user={
+                    'id': f"ip-locator:{device_info.get('id') or 'unknown'}",
+                    'username': 'ip-locator',
+                    'role': 'Operator',
+                    'tenant_id': device_info.get('tenant_id') or '',
+                },
+            )
+            if result.get('success'):
+                for record in result.get('records') or []:
+                    ip_value = str(record.get('ip_address') or record.get('ip') or '').strip()
+                    if target_ip == ip_value or target_ip in ip_value.split('/')[:1]:
+                        intf_name = str(record.get('interface') or record.get('local_interface') or '').strip()
+                        if intf_name:
+                            return {
+                                'ip': target_ip,
+                                'interface': intf_name,
+                                'device_id': device_info.get('id'),
+                                'device_name': device_info.get('hostname') or device_info.get('ip_address'),
+                            }
+                return None
+        except Exception as exc:
+            logger.debug(f"[IPLocator] Registry local IP query failed on {device_info.get('ip_address')}: {exc}")
+            return None
     
     if platform in ('huawei_vrp', 'h3c_comware'):
         cmd = 'display ip interface brief'
@@ -2898,6 +3007,33 @@ def _set_cached_endpoint(
 
 def _collect_full_mac_table_from_device(device_info: dict) -> list[dict]:
     """从单台交换机采集完整的 MAC 地址表（所有 VLAN）。"""
+    if device_info.get('platform_profile_id'):
+        try:
+            from services.platform_registry_service import execute_platform_action
+            result = execute_platform_action(
+                str(device_info['id']),
+                'get_mac_table',
+                user={
+                    'id': f"ip-locator:{device_info.get('id') or 'unknown'}",
+                    'username': 'ip-locator',
+                    'role': 'Operator',
+                    'tenant_id': device_info.get('tenant_id') or '',
+                },
+            )
+            return [
+                {
+                    'mac': str(_record_value(record, 'mac', 'mac_address') or '').strip(),
+                    'vlan': str(_record_value(record, 'vlan', 'vlan_id') or '').strip(),
+                    'port': str(_record_value(record, 'interface', 'destination_port', 'port') or '').strip(),
+                    'type': str(_record_value(record, 'type', 'entry_type') or '').strip(),
+                    'switch_id': device_info.get('id'),
+                    'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
+                }
+                for record in (result.get('records') or [] if result.get('success') else [])
+            ]
+        except Exception as exc:
+            logger.debug("[MAC Collector] Registry collection failed: %s", exc)
+            return []
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     if platform in ('huawei_vrp', 'h3c_comware'):
         cmd = 'display mac-address'
@@ -3370,6 +3506,33 @@ def _collect_device_interface_ips(device_info: dict) -> list[dict]:
     platform = str(device_info.get('platform') or 'cisco_ios').lower()
     if platform in _ARP_UNSUPPORTED_PLATFORMS:
         return []
+    if device_info.get('platform_profile_id'):
+        try:
+            from services.platform_registry_service import execute_platform_action
+            result = execute_platform_action(
+                str(device_info['id']),
+                'get_ip_interfaces',
+                user={
+                    'id': f"ip-locator:{device_info.get('id') or 'unknown'}",
+                    'username': 'ip-locator',
+                    'role': 'Operator',
+                    'tenant_id': device_info.get('tenant_id') or '',
+                },
+            )
+            return [
+                {
+                    'ip': str(record.get('ip_address') or record.get('ip') or '').strip(),
+                    'mask': str(record.get('prefix_length') or record.get('mask') or '').strip(),
+                    'interface': str(record.get('interface') or record.get('local_interface') or '').strip(),
+                    'device_id': device_info.get('id'),
+                    'device_name': device_info.get('hostname') or device_info.get('ip_address'),
+                }
+                for record in (result.get('records') or [] if result.get('success') else [])
+                if str(record.get('ip_address') or record.get('ip') or '').strip()
+            ]
+        except Exception as exc:
+            logger.debug("[IP Inventory] Registry interface collection failed: %s", exc)
+            return []
 
     # Prefer detailed interface command that returns masks
     if platform in ('huawei_vrp', 'h3c_comware'):
@@ -4062,6 +4225,9 @@ def parse_routing_table(output: str, platform: str) -> list[dict]:
 
 
 def _collect_device_vrfs(dev: dict) -> list[str]:
+    if dev.get('platform_profile_id'):
+        configured = dev.get('vrf') or dev.get('vrf_name')
+        return [str(configured).strip()] if configured else ['default']
     import re
     platform = str(dev.get('platform') or 'cisco_ios').lower()
     if platform in ('huawei_vrp', 'h3c_comware'):
@@ -4139,6 +4305,46 @@ def run_route_collector():
     all_routes_to_save = []
 
     def collect_device_routes(dev: dict) -> list[dict]:
+        if dev.get('platform_profile_id'):
+            from services.platform_registry_service import execute_platform_action
+            registry_user = {
+                'id': f"route-collector:{dev.get('id')}",
+                'username': 'route-collector',
+                'role': 'Operator',
+                'tenant_id': dev.get('tenant_id') or '',
+            }
+            vrfs = [str(dev.get('vrf') or 'default')]
+            all_device_routes: list[dict] = []
+            for vrf in vrfs:
+                action_code = 'get_route_table_vrf' if vrf != 'default' else 'get_route_table'
+                try:
+                    result = execute_platform_action(
+                        str(dev['id']), action_code,
+                        user=registry_user,
+                        parameters={'vrf': vrf} if vrf != 'default' else None,
+                    )
+                    for record in result.get('records') or [] if result.get('success') else []:
+                        prefix = str(record.get('prefix') or record.get('destination') or '').strip()
+                        if not prefix:
+                            continue
+                        all_device_routes.append({
+                            'device_id': dev['id'],
+                            'vrf_name': vrf,
+                            'prefix': prefix.split('/', 1)[0],
+                            'mask': prefix.split('/', 1)[1] if '/' in prefix else '',
+                            'next_hop': str(record.get('next_hop') or record.get('nexthop') or '').strip(),
+                            'protocol': str(record.get('protocol') or record.get('route_type') or '').strip(),
+                            'interface': str(record.get('interface') or record.get('outgoing_interface') or '').strip(),
+                            'metric': record.get('metric') or 0,
+                            'preference': record.get('preference'),
+                        })
+                except Exception as exc:
+                    logger.debug(
+                        "[Route Collector] Registry route collection failed for %s/%s: %s",
+                        dev.get('hostname') or dev.get('ip_address'), vrf, exc,
+                    )
+            return all_device_routes
+
         ip = dev.get('ip_address')
         port = int(dev.get('port') or dev.get('management_port') or 22)
         from drivers.ssh_compat import is_ssh_port_open

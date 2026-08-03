@@ -95,6 +95,8 @@ const HistoryList: React.FC<HistoryListProps> = ({
                   success: { label: zh ? '已完成' : 'Completed', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
                   running: { label: zh ? '执行中' : 'Running', cls: 'bg-cyan-50 text-cyan-700', dot: 'bg-cyan-500' },
                   failed: { label: zh ? '已失败' : 'Failed', cls: 'bg-red-50 text-red-700', dot: 'bg-red-500' },
+                  awaiting_approval: { label: zh ? '待审批' : 'Awaiting approval', cls: 'bg-violet-50 text-violet-700', dot: 'bg-violet-500' },
+                  approval_rejected: { label: zh ? '审批拒绝' : 'Approval rejected', cls: 'bg-rose-50 text-rose-700', dot: 'bg-rose-500' },
                 };
                 const st = statusMap[log.status] || { label: log.status, cls: 'bg-slate-50 text-slate-600', dot: 'bg-slate-400' };
                 

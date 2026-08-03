@@ -25,13 +25,26 @@ class ConnectionManager:
         if execution_id not in self.connections:
             return
         dead = []
+        safe_event = self._redact_event(event)
         for ws in self.connections[execution_id]:
             try:
-                await ws.send_json(event)
+                await ws.send_json(safe_event)
             except Exception:
                 dead.append(ws)
         for ws in dead:
             self.disconnect(execution_id, ws)
+
+    @staticmethod
+    def _redact_event(value):
+        from services.platform_registry_service import redact_raw_output
+
+        if isinstance(value, dict):
+            return {key: ConnectionManager._redact_event(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [ConnectionManager._redact_event(item) for item in value]
+        if isinstance(value, str):
+            return redact_raw_output(value)
+        return value
 
 ws_manager = ConnectionManager()
 

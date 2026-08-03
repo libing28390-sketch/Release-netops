@@ -22,6 +22,43 @@ class DeviceConnectionError(Exception):
 logger = logging.getLogger(__name__)
 
 
+async def _execute_registry_diagnostic_action(
+    device: dict,
+    action_code: str,
+    *,
+    parameters: dict | None = None,
+    include_raw_output: bool = False,
+) -> dict | None:
+    """Run a diagnostic read through the published registry for bound devices."""
+    if not device.get('id') or not device.get('platform_profile_id'):
+        return None
+    from services.platform_registry_service import execute_platform_action
+
+    user = {
+        'id': f'diagnose:{device.get("id")}',
+        'username': 'diagnose-service',
+        'role': 'Operator',
+        'tenant_id': device.get('tenant_id') or '',
+    }
+    try:
+        return await asyncio.to_thread(
+            execute_platform_action,
+            str(device['id']),
+            action_code,
+            user=user,
+            parameters=parameters,
+            include_raw_output=include_raw_output,
+        )
+    except Exception as exc:
+        logger.debug("Registry diagnostic action failed device=%s action=%s: %s", device.get('id'), action_code, exc)
+        return {
+            'success': False,
+            'error_code': 'REGISTRY_ACTION_FAILED',
+            'error': str(exc),
+            'records': [],
+        }
+
+
 def _normalize_link_status(value: object) -> str:
     """Normalize collector/CLI status values to the diagnostic state model."""
     raw = str(value or '').strip().lower()
@@ -1187,6 +1224,40 @@ async def trace_route_path_async(
                 'is_cached': False,
             })
 
+            if dev.get('platform_profile_id'):
+                normalized_command = str(command or '').lower()
+                action_code = None
+                if 'bgp' in normalized_command:
+                    action_code = 'get_bgp_neighbors_vrf' if current_vrf and current_vrf != 'default' else 'get_bgp_neighbors'
+                elif 'arp' in normalized_command:
+                    action_code = 'get_arp_table_vrf' if current_vrf and current_vrf != 'default' else 'get_arp_table'
+                elif 'mac' in normalized_command:
+                    action_code = 'get_mac_table_vrf' if current_vrf and current_vrf != 'default' else 'get_mac_table'
+                elif 'route' in normalized_command or 'routing-table' in normalized_command:
+                    action_code = 'get_route_table_vrf' if current_vrf and current_vrf != 'default' else 'get_route_table'
+                elif 'lldp' in normalized_command:
+                    action_code = 'get_lldp_neighbors'
+                elif 'interface' in normalized_command:
+                    action_code = 'get_interface_brief'
+                elif 'cpu' in normalized_command:
+                    action_code = 'get_cpu'
+                elif 'memory' in normalized_command:
+                    action_code = 'get_memory'
+                if not action_code:
+                    raise DeviceConnectionError('platform_registry:UNSUPPORTED_ACTION: diagnostic command is not a registered action')
+                registry_result = await _execute_registry_diagnostic_action(
+                    dev,
+                    action_code,
+                    parameters={'vrf': current_vrf} if action_code.endswith('_vrf') else None,
+                    include_raw_output=True,
+                )
+                if not registry_result or not registry_result.get('success'):
+                    raise DeviceConnectionError(
+                        f"platform_registry:{(registry_result or {}).get('error_code') or 'ACTION_FAILED'}:"
+                        f"{(registry_result or {}).get('error') or 'registered diagnostic action failed'}"
+                    )
+                return str(registry_result.get('raw_output') or '')
+
             if client is None:
                 port = int(dev.get('port') or dev.get('management_port') or 22)
                 from drivers.ssh_compat import is_ssh_port_open
@@ -1825,17 +1896,40 @@ async def run_diagnose_async(
     if source_dev_id:
         dev = _load_device(source_dev_id)
         if dev:
-            dev_label = dev.get('hostname') or dev.get('ip_address')
-            platform = dev.get('platform') or 'cisco_ios'
-            cmd = f"show ip route vrf {active_vrf} {target_ip}" if active_vrf else f"show ip route {target_ip}"
-            if "huawei" in platform.lower() or "vrp" in platform.lower():
-                cmd = f"display ip routing-table vpn-instance {active_vrf} {target_ip}" if active_vrf else f"display ip routing-table {target_ip}"
-            try:
-                route_out = await asyncio.to_thread(_send_command, dev, cmd, True)
-                if "directly connected" in route_out.lower() or "connected" in route_out.lower():
-                    is_direct_subnet = True
-            except Exception:
-                pass
+            registry_result = await _execute_registry_diagnostic_action(
+                dev,
+                'get_route_table_vrf' if active_vrf else 'get_route_table',
+                parameters={'vrf': active_vrf} if active_vrf else None,
+            )
+            if registry_result is not None:
+                if registry_result.get('success'):
+                    try:
+                        target_obj = ipaddress.ip_address(target_ip)
+                    except ValueError:
+                        target_obj = None
+                    for record in registry_result.get('records') or []:
+                        prefix = str(record.get('prefix') or '').strip()
+                        if not target_obj or not prefix:
+                            continue
+                        try:
+                            network = ipaddress.ip_network(prefix, strict=False)
+                        except ValueError:
+                            continue
+                        protocol = str(record.get('protocol') or record.get('route_type') or '').lower()
+                        if target_obj in network and (not protocol or protocol in {'connected', 'local', 'direct'}):
+                            is_direct_subnet = True
+                            break
+            else:
+                platform = dev.get('platform') or 'cisco_ios'
+                cmd = f"show ip route vrf {active_vrf} {target_ip}" if active_vrf else f"show ip route {target_ip}"
+                if "huawei" in platform.lower() or "vrp" in platform.lower():
+                    cmd = f"display ip routing-table vpn-instance {active_vrf} {target_ip}" if active_vrf else f"display ip routing-table {target_ip}"
+                try:
+                    route_out = await asyncio.to_thread(_send_command, dev, cmd, True)
+                    if "directly connected" in route_out.lower() or "connected" in route_out.lower():
+                        is_direct_subnet = True
+                except Exception:
+                    pass
 
     steps[2].update({"status": "success", "message": f"目标分类完成：目标 IP {target_ip} 属于 {'直连' if is_direct_subnet else '远程'} 网段。", "log": f"Subnet Classification: {'DIRECT_SUBNET' if is_direct_subnet else 'REMOTE_SUBNET'}"})
 
@@ -1845,19 +1939,33 @@ async def run_diagnose_async(
     if source_dev_id:
         dev = _load_device(source_dev_id)
         if dev:
-            platform = dev.get('platform') or 'cisco_ios'
-            cmd = f"show ip arp vrf {active_vrf} {target_ip}" if active_vrf else f"show ip arp {target_ip}"
-            if "huawei" in platform.lower() or "vrp" in platform.lower():
-                cmd = f"display arp vpn-instance {active_vrf} | include {target_ip}" if active_vrf else f"display arp | include {target_ip}"
-            try:
-                arp_out = await asyncio.to_thread(_send_command, dev, cmd, True)
-                arp_log += f"[{dev.get('hostname')}]# {cmd}\n{arp_out}\n"
-                if re.search(r'\b' + re.escape(target_ip) + r'\b', arp_out):
-                    mac_m = re.search(r'([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}|[0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2})', arp_out)
-                    if mac_m:
-                        target_mac = mac_m.group(1)
-            except Exception as e:
-                arp_log += f"Error executing ARP check: {e}\n"
+            registry_result = await _execute_registry_diagnostic_action(
+                dev,
+                'get_arp_table_vrf' if active_vrf else 'get_arp_table',
+                parameters={'vrf': active_vrf} if active_vrf else None,
+            )
+            if registry_result is not None:
+                records = registry_result.get('records') or [] if registry_result.get('success') else []
+                for record in records:
+                    if str(record.get('ip') or record.get('ip_address') or '').strip() != target_ip:
+                        continue
+                    target_mac = str(record.get('mac') or record.get('mac_address') or '').strip()
+                    break
+                arp_log = f"[{dev.get('hostname')}] registry get_arp_table returned {len(records)} normalized record(s)\n"
+            else:
+                platform = dev.get('platform') or 'cisco_ios'
+                cmd = f"show ip arp vrf {active_vrf} {target_ip}" if active_vrf else f"show ip arp {target_ip}"
+                if "huawei" in platform.lower() or "vrp" in platform.lower():
+                    cmd = f"display arp vpn-instance {active_vrf} | include {target_ip}" if active_vrf else f"display arp | include {target_ip}"
+                try:
+                    arp_out = await asyncio.to_thread(_send_command, dev, cmd, True)
+                    arp_log += f"[{dev.get('hostname')}]# {cmd}\n{arp_out}\n"
+                    if re.search(r'\b' + re.escape(target_ip) + r'\b', arp_out):
+                        mac_m = re.search(r'([0-9a-fA-F]{4}\.[0-9a-fA-F]{4}\.[0-9a-fA-F]{4}|[0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2})', arp_out)
+                        if mac_m:
+                            target_mac = mac_m.group(1)
+                except Exception as e:
+                    arp_log += f"Error executing ARP check: {e}\n"
 
     if arp_found or target_mac:
         mac_to_show = target_mac or (arp_row.get('mac') if arp_row else 'N/A')
@@ -1875,12 +1983,26 @@ async def run_diagnose_async(
     if mac_norm and source_dev_id:
         dev = _load_device(source_dev_id)
         if dev and (dev.get('role') or '').lower() in ('switch', 'access', 'distribution', 'core', 'l2', 'l3switch'):
-            cmd = f"show mac address-table address {target_mac}"
-            try:
-                mac_out = await asyncio.to_thread(_send_command, dev, cmd, True)
-                mac_log += f"[{dev.get('hostname')}]# {cmd}\n{mac_out}\n"
-            except Exception as e:
-                mac_log += f"MAC Check Error: {e}\n"
+            registry_result = await _execute_registry_diagnostic_action(
+                dev,
+                'get_mac_table_vrf' if active_vrf else 'get_mac_table',
+                parameters={'vrf': active_vrf} if active_vrf else None,
+            )
+            if registry_result is not None:
+                records = registry_result.get('records') or [] if registry_result.get('success') else []
+                matching_records = [
+                    record for record in records
+                    if str(record.get('mac') or record.get('mac_address') or '').replace('.', '').replace(':', '').replace('-', '').lower() == mac_norm
+                ]
+                if matching_records:
+                    mac_log = f"[{dev.get('hostname')}] registry get_mac_table matched {len(matching_records)} normalized record(s)\n"
+            else:
+                cmd = f"show mac address-table address {target_mac}"
+                try:
+                    mac_out = await asyncio.to_thread(_send_command, dev, cmd, True)
+                    mac_log += f"[{dev.get('hostname')}]# {cmd}\n{mac_out}\n"
+                except Exception as e:
+                    mac_log += f"MAC Check Error: {e}\n"
     
     steps[4].update({"status": "success" if mac_log else "warning", "message": "MAC 定位查询已执行，结果需结合实时接口状态确认。" if mac_log else "未定位到目标主机的二层物理交换机端口，不能据此判定二层链路正常。", "log": mac_log or "No switch port tracking needed for remote subnet route hops.", "snapshot": _snapshot_meta(diagnosis_run_id, 'live_cli' if mac_log else 'derived')})
 

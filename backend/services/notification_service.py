@@ -605,12 +605,10 @@ def send_all_channels(channels: dict, alert: dict) -> list[dict]:
     return results
 
 
-def dispatch_to_all_users(alert: dict) -> list[dict]:
-    """
-    遍历所有用户，根据其个人通知偏好（enabled/disabled）分发告警。
-    自动去重 (platform, webhook_url)，防止对同一个群组机器人重复发消息。
-    """
+def _dispatch_to_users(alert: dict, tenant_id: str | None = None) -> list[dict]:
+    """Dispatch through configured channels without crossing tenant scope."""
     from database import get_db_connection
+    tenant_id = str(tenant_id or '').strip()
     conn = get_db_connection()
     try:
         # 1. 获取全局通道配置（作为 URL 和 Secret 的来源）
@@ -620,9 +618,12 @@ def dispatch_to_all_users(alert: dict) -> list[dict]:
         global_map = {r['platform']: dict(r) for r in global_rows}
 
         # 2. 获取所有用户的通知偏好
-        user_rows = conn.execute(
-            "SELECT notification_channels, preferred_language FROM users WHERE status = 'active'"
-        ).fetchall()
+        user_query = "SELECT notification_channels, preferred_language FROM users WHERE status = 'active'"
+        user_params: list[str] = []
+        if tenant_id:
+            user_query += " AND tenant_id = ?"
+            user_params.append(tenant_id)
+        user_rows = conn.execute(user_query, user_params).fetchall()
 
         # 3. 汇总去重后的发送目标
         # targets: (platform, url) -> {secret, lang}
@@ -674,7 +675,21 @@ def dispatch_to_all_users(alert: dict) -> list[dict]:
 
         return results
     except Exception as e:
-        logger.error(f"[Notify] dispatch_to_all_users error: {e}")
+        logger.error(f"[Notify] scoped notification dispatch error: {e}")
         return []
     finally:
         conn.close()
+
+
+def dispatch_to_all_users(alert: dict) -> list[dict]:
+    """Dispatch to all configured active users (legacy alert path)."""
+    return _dispatch_to_users(alert)
+
+
+def dispatch_to_tenant_users(alert: dict, tenant_id: str) -> list[dict]:
+    """Dispatch only to active users in the Playbook execution tenant."""
+    tenant_id = str(tenant_id or '').strip()
+    if not tenant_id:
+        logger.warning('[Notify] tenant-scoped dispatch rejected without tenant_id')
+        return []
+    return _dispatch_to_users(alert, tenant_id=tenant_id)

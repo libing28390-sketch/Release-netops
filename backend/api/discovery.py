@@ -15,7 +15,11 @@ def api_discover_device(
 ):
     """Trigger synchronous active discovery on a single device ID."""
     svc = DiscoveryService()
-    res = svc.discover_device(device_id, requested_by=user.get('username', 'system'))
+    res = svc.discover_device(
+        device_id,
+        requested_by=user.get('username', 'system'),
+        requested_by_user=user,
+    )
     if not res.get("success", False):
         raise HTTPException(status_code=500, detail=res.get("error", "Discovery run failed"))
     return res

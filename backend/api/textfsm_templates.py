@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from core.rbac import require_role
+from core.rbac import require_permission, require_role
 from core.textfsm import (
     list_templates,
     list_template_suggestions,
@@ -20,9 +20,9 @@ from core.textfsm import (
     save_custom_template,
     delete_custom_template,
     get_supported_platforms,
-    parse_with_template_content,
     smart_parse_cli,
 )
+from services.textfsm_sandbox_service import TextFSMSandboxError, parse_template_in_sandbox
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ def api_list_templates(
     source: str = Query('', description='按来源过滤：builtin|custom'),
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=200),
-    _user=require_role('Viewer'),
+    _user=require_permission('textfsm', 'view'),
 ):
     """列出所有模板（内置 + 自定义），自定义模板同名时覆盖内置。"""
     items = list_templates(platform_filter=platform, search=search)
@@ -60,7 +60,7 @@ def api_list_templates(
 
 
 @router.get('/textfsm/platforms')
-def api_list_platforms(_user=require_role('Viewer')):
+def api_list_platforms(_user=require_permission('textfsm', 'view')):
     """返回所有可用的平台列表（从已加载的模板中提取）。"""
     return {
         'success': True,
@@ -74,7 +74,7 @@ def api_command_suggestions(
     platform: str = Query('', description='资产平台'),
     query: str = Query('', min_length=0, description='命令模糊查询'),
     limit: int = Query(8, ge=1, le=20),
-    _user=require_role('Viewer'),
+    _user=require_permission('textfsm', 'view'),
 ):
     """Return real template commands matching an abbreviated CLI query."""
     return {
@@ -85,7 +85,7 @@ def api_command_suggestions(
 
 
 @router.get('/textfsm/templates/{filename}')
-def api_get_template(filename: str, _user=require_role('Viewer')):
+def api_get_template(filename: str, _user=require_permission('textfsm', 'view')):
     """获取单个模板的内容。"""
     try:
         content, source = get_template_content(filename)
@@ -111,7 +111,7 @@ def api_get_template(filename: str, _user=require_role('Viewer')):
 @router.post('/textfsm/templates')
 def api_create_template(
     body: dict = Body(...),
-    _user=require_role('Operator'),
+    _user=require_permission('textfsm', 'create'),
 ):
     """
     创建自定义模板。
@@ -153,7 +153,7 @@ def api_create_template(
 def api_update_template(
     filename: str,
     body: dict = Body(...),
-    _user=require_role('Operator'),
+    _user=require_permission('textfsm', 'edit_draft'),
 ):
     """更新自定义模板内容。"""
     content = body.get('content') or ''
@@ -198,7 +198,7 @@ def api_delete_template(filename: str, _user=require_role('Administrator')):
 @router.post('/textfsm/test')
 def api_test_template(
     body: dict = Body(...),
-    _user=require_role('Operator'),
+    _user=require_permission('textfsm', 'test'),
 ):
     """
     在线测试模板：传入模板内容 + 样本输出，返回解析结果。
@@ -216,7 +216,15 @@ def api_test_template(
         raise HTTPException(status_code=400, detail='样本输出不能为空')
 
     try:
-        records = parse_with_template_content(content, sample)
+        records = parse_template_in_sandbox(
+            content,
+            sample,
+            timeout_seconds=30,
+            max_template_bytes=256_000,
+            max_output_bytes=2_000_000,
+            max_records=1_000,
+            max_fields=128,
+        )
         return {
             'success': True,
             'data': {
@@ -226,18 +234,19 @@ def api_test_template(
             },
             'message': '解析成功' if records else '模板匹配为空，请检查模板规则是否与样本匹配',
         }
-    except ValueError as e:
+    except TextFSMSandboxError as e:
         return {
             'success': False,
             'data': None,
-            'message': str(e),
+            'error_code': e.code,
+            'message': e.message,
         }
 
 
 @router.post('/textfsm/auto-generate')
 def api_auto_generate_template(
     body: dict = Body(...),
-    _user=require_role('Operator'),
+    _user=require_permission('textfsm', 'test'),
 ):
     """
     输入样本输出文本，自动分析表头生成 TextFSM 模板框架。
@@ -264,7 +273,7 @@ def api_auto_generate_template(
 @router.post('/textfsm/smart-parse')
 def api_smart_parse_cli(
     body: dict = Body(...),
-    _user=require_role('Operator'),
+    _user=require_permission('textfsm', 'test'),
 ):
     """
     智能结构化 CLI 解析接口，支持输入回显样本、命令、平台以及设备软硬件版本信息进行多层解析。

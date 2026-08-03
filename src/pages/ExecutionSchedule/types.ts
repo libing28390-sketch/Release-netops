@@ -102,5 +102,15 @@ export interface UnifiedExecutionLog {
   name: string;
 }
 
+export interface PlaybookExecutionApproval {
+  id: string;
+  title?: string;
+  message?: string;
+  required_role?: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  requested_by_username?: string;
+  decision_reason?: string;
+}
+
 export type InspSubTab = 'schedules' | 'history';
 export type InspDetailTab = 'raw' | 'snapshot' | 'analysis' | 'compliance';

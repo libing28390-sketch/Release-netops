@@ -4,10 +4,15 @@ from datetime import datetime, timezone
 
 from database import get_db_connection
 from services.audit_service import log_audit_event
+from core.rbac import RESOURCE_ACTION_CATALOG
 
 
 VALID_SCOPE_TYPES = {'global', 'tenant', 'site', 'device_group'}
-VALID_ACTIONS = {'read', 'create', 'update', 'delete', 'execute', 'approve', 'approve_low_risk', 'export', 'allocate', 'reserve', 'release', '*'}
+VALID_ACTIONS = {
+    'read', 'create', 'update', 'delete', 'execute', 'approve', 'approve_low_risk',
+    'export', 'allocate', 'reserve', 'release', '*',
+    *{action for actions in RESOURCE_ACTION_CATALOG.values() for action in actions},
+}
 
 
 def list_user_scopes(user_id: str) -> list[dict]:

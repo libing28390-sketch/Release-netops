@@ -1091,6 +1091,34 @@ def _collapse_aggregation_groups(
 
 
 async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], str]:
+    if device.get('platform_profile_id'):
+        from services.platform_registry_service import PlatformRegistryError, execute_platform_action
+
+        user = {
+            'id': f"topology:{device.get('id') or 'unknown'}",
+            'username': 'topology-collector',
+            'role': 'Operator',
+            'tenant_id': device.get('tenant_id') or '',
+        }
+        try:
+            result = await asyncio.to_thread(
+                execute_platform_action,
+                str(device['id']),
+                'get_lldp_neighbors',
+                user=user,
+                include_raw_output=True,
+            )
+        except PlatformRegistryError as exc:
+            raise RuntimeError(f"platform_registry:{exc.code}:{exc.message}") from exc
+        if not result.get('success'):
+            raise RuntimeError(f"platform_registry:{result.get('error_code') or 'ACTION_FAILED'}:{result.get('error') or 'LLDP action failed'}")
+        observations: list[dict[str, Any]] = []
+        for item in result.get('records') or []:
+            observation = _extract_observation_fields(item, 'lldp')
+            if observation['neighbor_name_raw'] and observation['source_port_raw']:
+                observations.append(observation)
+        return observations, 'platform-registry'
+
     platform = normalize_topology_platform(device.get('platform'))
     device_type = PLATFORM_MAP.get(platform)
     if not device_type:

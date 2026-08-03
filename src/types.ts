@@ -14,6 +14,9 @@ export interface Device {
   hostname: string;
   ip_address: string;
   platform: string;
+  platform_profile_id?: string | null;
+  platform_source?: string;
+  platform_locked?: number | boolean;
   status: 'online' | 'offline' | 'pending';
   compliance: 'compliant' | 'non-compliant' | 'unknown';
   lifecycle_status?: 'staging' | 'production' | 'maintenance' | 'decommissioned';
@@ -141,7 +144,7 @@ export interface Job {
   id: string;
   device_id: string;
   task_name: string;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'rolled_back';
+  status: 'pending' | 'awaiting_approval' | 'approval_rejected' | 'running' | 'success' | 'failed' | 'rolled_back';
   output?: string;
   created_at: string;
 }

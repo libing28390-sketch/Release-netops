@@ -86,6 +86,14 @@ def test_vlan_summary_exposes_endpoint_evidence_for_arp_and_mac(isolated_db):
         ("device-endpoint-1", "SW-endpoint", "online", "site-endpoint", "SITE-ENDPOINT"),
     )
     conn.execute(
+        "INSERT INTO sites (id, site_code, site_name, status) VALUES (?, ?, ?, ?)",
+        ("site-endpoint", "SITE-ENDPOINT", "SITE-ENDPOINT", "active"),
+    )
+    conn.execute(
+        "INSERT INTO tenants (id, name, description) VALUES (?, ?, ?)",
+        ("tenant-1", "Tenant 1", "VLAN endpoint evidence test"),
+    )
+    conn.execute(
         "INSERT INTO vlans (id, vlan_id, name, site_id, tenant_id) VALUES (?, ?, ?, ?, ?)",
         ("vlan-endpoint-1", 7, "VPC7-NETWORK", "site-endpoint", "tenant-1"),
     )
@@ -160,7 +168,7 @@ def test_cisco_and_huawei_vlan_textfsm_records_project_members_to_interfaces(iso
         ("GE0/0/4", 10, "access"),
         ("Gi0/1", 7, "access"),
     ]
-    vlans = conn.execute("SELECT vlan_id, name FROM vlans WHERE site_id = '' ORDER BY vlan_id").fetchall()
+    vlans = conn.execute("SELECT vlan_id, name FROM vlans WHERE COALESCE(site_id, '') = '' ORDER BY vlan_id").fetchall()
     assert [(row["vlan_id"], row["name"]) for row in vlans] == [(7, "VPC7-NETWORK"), (10, "VLAN 10")]
     conn.close()
 

@@ -76,6 +76,53 @@ def test_normalize_arp_record_accepts_textfsm_standard_fields():
     }
 
 
+def test_targeted_arp_query_uses_published_registry_action_for_bound_device(monkeypatch):
+    device = {**DEVICE, "platform_profile_id": "system-profile-cisco_ios", "tenant_id": "tenant-1"}
+    monkeypatch.setattr(
+        "services.platform_registry_service.execute_platform_action",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "records": [{
+                "IP_ADDRESS": "10.1.1.1",
+                "MAC_ADDRESS": "02e0-f102-0023",
+                "INTERFACE": "Gi1/0/1",
+            }],
+        },
+    )
+
+    result = ip_locator_service._targeted_arp_query(device, "10.1.1.1")
+
+    assert result["mac"] == "02e0f1020023"
+    assert result["interface"] == "Gi1/0/1"
+
+
+def test_targeted_mac_query_uses_published_registry_action_for_bound_device(monkeypatch):
+    device = {**DEVICE, "platform_profile_id": "system-profile-cisco_ios", "tenant_id": "tenant-1"}
+    monkeypatch.setattr(
+        "services.platform_registry_service.execute_platform_action",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "records": [{
+                "MAC_ADDRESS": "02e0-f102-0023",
+                "VLAN_ID": "12",
+                "DESTINATION_PORT": "Gi1/0/1",
+            }],
+        },
+    )
+
+    result = ip_locator_service._targeted_mac_query(device, "02e0f1020023")
+
+    assert result == [{
+        "mac": "02e0f1020023",
+        "port": "Gi1/0/1",
+        "vlan": "12",
+        "vlan_source": "mac_table",
+        "type": "",
+        "switch_id": "device-1",
+        "switch_name": "sw-01",
+    }]
+
+
 def test_format_mac_uses_platform_hyphen_style():
     assert ip_locator_service._format_mac("548998106981") == "5489-9810-6981"
 

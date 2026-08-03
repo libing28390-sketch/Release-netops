@@ -573,6 +573,97 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
     return resolved
 
 
+_REGISTRY_ACTION_BY_CATEGORY = {
+    'neighbors': 'get_lldp_neighbors',
+    'interfaces': 'get_interface_brief',
+    'arp': 'get_arp_table',
+    'mac_table': 'get_mac_table',
+    'vlan': 'get_vlan_table',
+    'routing_table': 'get_route_table',
+    'bgp': 'get_bgp_neighbors',
+    'bgp_routes': 'get_bgp_routes',
+    'ospf': 'get_ospf_neighbors',
+    'eth_trunk': 'get_link_aggregation',
+    'transceiver': 'get_transceivers',
+    'version': 'get_version',
+}
+
+_REGISTRY_VRF_ACTION_BY_CATEGORY = {
+    'arp': 'get_arp_table_vrf',
+    'mac_table': 'get_mac_table_vrf',
+    'routing_table': 'get_route_table_vrf',
+    'bgp': 'get_bgp_neighbors_vrf',
+    'bgp_routes': 'get_bgp_routes_vrf',
+}
+
+
+def _collect_registry_categories(
+    device_info: dict[str, Any],
+    platform: str,
+    categories: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Collect standard categories through the published platform resolver."""
+    from services.platform_registry_service import PlatformRegistryError, execute_platform_action
+
+    user = {
+        'id': f"collector:{device_info.get('id') or 'unknown'}",
+        'username': 'collector',
+        'role': 'Operator',
+        'tenant_id': device_info.get('tenant_id') or '',
+    }
+    results: dict[str, dict[str, Any]] = {}
+    for category in categories:
+        vrf = str(device_info.get('active_vrf') or device_info.get('vrf') or '').strip()
+        action_code = _REGISTRY_VRF_ACTION_BY_CATEGORY.get(category) if vrf else None
+        action_code = action_code or _REGISTRY_ACTION_BY_CATEGORY[category]
+        category_result: dict[str, Any] = {
+            'key': category,
+            'success': False,
+            'commands': [],
+            'count': 0,
+            'records': [],
+            'raw_outputs': [],
+            'parser': 'platform-registry',
+            'parse_status': 'failed',
+        }
+        try:
+            result = execute_platform_action(
+                str(device_info['id']),
+                action_code,
+                user=user,
+                parameters={'vrf': vrf} if vrf and action_code in _REGISTRY_VRF_ACTION_BY_CATEGORY.values() else None,
+            )
+            command = result.get('command')
+            if command:
+                category_result['commands'] = [command]
+            raw_output = result.get('raw_output')
+            if raw_output is not None:
+                category_result['raw_outputs'] = [{'command': command, 'output': raw_output}]
+            category_result['records'] = result.get('records') or []
+            category_result['count'] = len(category_result['records'])
+            category_result['success'] = bool(result.get('success'))
+            category_result['parse_status'] = 'matched' if category_result['records'] else (
+                'unsupported_by_platform' if result.get('error_code') == 'UNSUPPORTED_ACTION' else 'unmatched'
+            )
+            category_result['platform_release_id'] = result.get('platform_release_id')
+            category_result['release_checksum'] = result.get('release_checksum')
+            category_result['command_checksum'] = result.get('command_checksum')
+            category_result['parser_template_version_id'] = result.get('parser_template_version_id')
+            category_result['parser_template_checksum'] = result.get('parser_template_checksum')
+            if result.get('error'):
+                category_result['error'] = result['error']
+            if result.get('error_code'):
+                category_result['error_code'] = result['error_code']
+        except PlatformRegistryError as exc:
+            category_result['error_code'] = exc.code
+            category_result['error'] = exc.message
+            category_result['parse_status'] = 'unsupported_by_platform' if exc.code == 'UNSUPPORTED_ACTION' else 'failed'
+        except Exception as exc:
+            category_result['error'] = str(exc)
+        results[category] = category_result
+    return results
+
+
 def _first_complete_pair(*pairs: tuple[str, str]) -> tuple[str, str]:
     for username, password in pairs:
         if username and password:
@@ -1370,6 +1461,47 @@ def collect_operational_data(
         }
         return payload
 
+    registry_bound = bool(device_info.get('id') and device_info.get('platform_profile_id'))
+    registry_categories = [
+        category for category in selected_categories
+        if category in _REGISTRY_ACTION_BY_CATEGORY
+    ] if registry_bound else []
+    if registry_categories:
+        payload['categories'].extend(
+            _collect_registry_categories(device_info, platform, registry_categories).values()
+        )
+    if registry_bound:
+        # A bound device may only execute an action from its published
+        # release.  Categories without a registered action are returned as an
+        # explicit unsupported result; they must not open a legacy Netmiko
+        # session with a vendor catalog command.
+        for category in selected_categories:
+            if category in registry_categories:
+                continue
+            payload['categories'].append({
+                'key': category,
+                'success': False,
+                'commands': [],
+                'count': 0,
+                'records': [],
+                'raw_outputs': [],
+                'parser': 'platform-registry',
+                'parse_status': 'unsupported_by_platform',
+                'error_code': 'UNSUPPORTED_ACTION',
+                'error': f'Category {category} has no published platform action',
+            })
+        legacy_categories = []
+    else:
+        legacy_categories = list(selected_categories)
+    if not legacy_categories:
+        payload['summary'] = {
+            'requested_categories': selected_categories,
+            'successful_categories': sum(1 for item in payload['categories'] if item.get('success')),
+            'failed_categories': sum(1 for item in payload['categories'] if not item.get('success')),
+            'total_records': sum(int(item.get('count') or 0) for item in payload['categories']),
+        }
+        return payload
+
     with limited_connect_handler(device_info, ConnectHandler, **conn_params) as client:
         if conn_params.get('secret'):
             try:
@@ -1377,7 +1509,7 @@ def collect_operational_data(
             except Exception:
                 pass
 
-        for category in selected_categories:
+        for category in legacy_categories:
             category_commands = commands_by_category.get(category, [])
             category_result: dict[str, Any] = {
                 'key': category,
@@ -1435,6 +1567,8 @@ def collect_operational_data(
 
 
 def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_role: str = 'auto') -> dict[str, Any]:
+    if device_info.get('platform_profile_id'):
+        raise ValueError('Registry-bound devices require a published action_code; raw custom commands are not allowed')
     from core.platform_utils import normalize_device_platform
     platform = normalize_device_platform(device_info.get('vendor'), device_info.get('platform') or 'cisco_ios')
     conn_params = _build_connection_params(device_info, auth_role=auth_role)

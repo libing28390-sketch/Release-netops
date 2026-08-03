@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import type { Job, ScheduledTask, Script, ConfigTemplate, SessionUser, Device } from '../types';
 import { isAutomationPlatformSupported, normalizeAutomationPlatform } from '../pages/AutomationExecute/helpers';
+import { authHeaders } from '../api/http';
 
 const QUICK_QUERY_TIMEOUT_MS = 45_000;
 
@@ -366,8 +367,8 @@ export const useAutomation = ({
   const loadScenarios = useCallback(async () => {
     try {
       const [scenResp, platResp] = await Promise.all([
-        fetch('/api/playbooks/scenarios'),
-        fetch('/api/playbooks/platforms'),
+        fetch('/api/playbooks/scenarios', { headers: authHeaders() }),
+        fetch('/api/playbooks/platforms', { headers: authHeaders() }),
       ]);
       if (scenResp.ok) setScenarios(await scenResp.json());
       if (platResp.ok) setPlatforms(await platResp.json());
@@ -384,7 +385,7 @@ export const useAutomation = ({
         status: statusFilter,
         scenario: scenarioFilter,
       });
-      const resp = await fetch(`/api/playbooks?${params}`);
+      const resp = await fetch(`/api/playbooks?${params}`, { headers: authHeaders() });
       if (resp.ok) {
         const d = await resp.json();
         setPlaybookExecutions((d.items || []).map((e: any) => ({ ...e, _type: 'playbook' })));
@@ -416,7 +417,7 @@ export const useAutomation = ({
         id: row.id,
         device_id: '',
         task_name: row.scenario_name || (language === 'zh' ? '未命名作业' : 'Unnamed Job'),
-        // Status values from playbook engine: success | failed | partial | running | pending.
+        // Status values from playbook engine: success | failed | partial | running | pending | awaiting_approval | approval_rejected.
         // `partial` / `running` / `pending` are not part of the Job union but the
         // dashboard's filters only react to 'success' and 'failed' so passing them
         // through is harmless; we cast to satisfy TS.
@@ -642,12 +643,8 @@ export const useAutomation = ({
 
   useEffect(() => {
     if (activeTab === 'automation') {
-      if (automationPage === 'playbooks') { 
-        navigate('/automation/execute'); 
-        return; 
-      }
       loadScenarios();
-      if (automationPage === 'execute' || automationPage === 'scenarios' || automationPage === 'history') {
+      if (automationPage === 'execute' || automationPage === 'scenarios' || automationPage === 'playbooks' || automationPage === 'history') {
         loadPlaybookHistory();
       }
     }

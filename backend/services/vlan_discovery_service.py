@@ -236,6 +236,7 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
         if not device:
             return {"vlans": 0, "interfaces": 0}
         site_id = str(device["site_id"] or device["site"] or "")
+        site_scope = site_id or None
         tenant_id = str(device["tenant_id"] or "tenant-default")
         vlan_count = 0
         interface_count = 0
@@ -284,7 +285,7 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                        (id, vlan_id, name, site_id, status, tenant_id, discovery_source,
                         first_discovered_at, last_discovered_at, discovery_run_id)
                        VALUES (?, ?, ?, ?, 'active', ?, 'vlan_command', ?, ?, '')""",
-                    (vlan_id_pk, vlan_id, vlan_name, site_id, tenant_id, now, now),
+                    (vlan_id_pk, vlan_id, vlan_name, site_scope, tenant_id, now, now),
                 )
                 vlan = {"id": vlan_id_pk, "name": vlan_name}
             vlan_count += 1
@@ -300,8 +301,8 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                     if matching:
                         for existing in matching:
                             conn.execute(
-                                "UPDATE interfaces SET interface_type = 'svi', switchport_mode = 'l3', is_l3 = TRUE WHERE id = ?",
-                                (existing["id"],),
+                                "UPDATE interfaces SET interface_type = 'svi', switchport_mode = 'l3', is_l3 = ? WHERE id = ?",
+                                (1, existing["id"]),
                             )
                     else:
                         svi_id = f"intf-{uuid.uuid4().hex[:12]}"
@@ -309,8 +310,8 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                             """INSERT INTO interfaces
                                (id, device_id, interface_name, description, admin_status, oper_status,
                                 interface_type, switchport_mode, is_l3, ip_enabled, last_seen)
-                               VALUES (?, ?, ?, '', 'unknown', 'unknown', 'svi', 'l3', TRUE, 0, ?)""",
-                            (svi_id, device_id, interface_name, now),
+                               VALUES (?, ?, ?, '', 'unknown', 'unknown', 'svi', 'l3', ?, 0, ?)""",
+                            (svi_id, device_id, interface_name, 1, now),
                         )
                         interface_rows_by_key.setdefault(interface_key, []).append({
                             "id": svi_id,
@@ -339,8 +340,8 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                             """INSERT INTO interfaces
                                (id, device_id, interface_name, description, admin_status, oper_status,
                                 interface_type, switchport_mode, allowed_vlans, is_l3, ip_enabled, last_seen)
-                               VALUES (?, ?, ?, '', 'unknown', 'unknown', 'physical', 'trunk', ?, FALSE, 0, ?)""",
-                            (interface_id, device_id, interface_name, allowed, now),
+                               VALUES (?, ?, ?, '', 'unknown', 'unknown', 'physical', 'trunk', ?, ?, 0, ?)""",
+                            (interface_id, device_id, interface_name, allowed, 0, now),
                         )
                         interface_rows_by_key.setdefault(interface_key, []).append({
                             "id": interface_id,
@@ -360,8 +361,8 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                             """INSERT INTO interfaces
                                (id, device_id, interface_name, description, admin_status, oper_status,
                                 interface_type, switchport_mode, access_vlan, is_l3, ip_enabled, last_seen)
-                               VALUES (?, ?, ?, '', 'unknown', 'unknown', 'physical', 'access', ?, FALSE, 0, ?)""",
-                            (interface_id, device_id, interface_name, vlan_id, now),
+                               VALUES (?, ?, ?, '', 'unknown', 'unknown', 'physical', 'access', ?, ?, 0, ?)""",
+                            (interface_id, device_id, interface_name, vlan_id, 0, now),
                         )
                         interface_rows_by_key.setdefault(interface_key, []).append({
                             "id": interface_id,
@@ -402,8 +403,8 @@ def sync_observed_vlans() -> dict[str, int]:
                 # The interface name is deterministic evidence that this is
                 # an L3 SVI, independent of whichever collector wrote it.
                 conn.execute(
-                    "UPDATE interfaces SET interface_type = 'svi', switchport_mode = 'l3', is_l3 = TRUE WHERE device_id = ? AND interface_name = ?",
-                    (row["device_id"], row["interface_name"]),
+                    "UPDATE interfaces SET interface_type = 'svi', switchport_mode = 'l3', is_l3 = ? WHERE device_id = ? AND interface_name = ?",
+                    (1, row["device_id"], row["interface_name"]),
                 )
                 names.add(svi_vlan)
                 source = "interface_svi"
@@ -433,6 +434,7 @@ def sync_observed_vlans() -> dict[str, int]:
         created = 0
         updated = 0
         for (site_id, vlan_id), sources in observed.items():
+            site_scope = site_id or None
             existing = conn.execute(
                 "SELECT id, name, discovery_source, first_discovered_at "
                 "FROM vlans WHERE COALESCE(site_id, '') = ? AND vlan_id = ? LIMIT 1",
@@ -447,7 +449,7 @@ def sync_observed_vlans() -> dict[str, int]:
                     "status = COALESCE(NULLIF(status, ''), 'active'), "
                     "discovery_source = ?, first_discovered_at = COALESCE(first_discovered_at, ?), "
                     "last_discovered_at = ?, discovery_run_id = ? WHERE id = ?",
-                    (site_id, f"VLAN {vlan_id}", source, now, now, "", existing["id"]),
+                    (site_scope, f"VLAN {vlan_id}", source, now, now, "", existing["id"]),
                 )
                 updated += 1
             else:
@@ -458,7 +460,7 @@ def sync_observed_vlans() -> dict[str, int]:
                     "VALUES (?, ?, ?, ?, 'active', 'tenant-default', ?, ?, ?, ?)",
                     (
                         f"vlan-{uuid.uuid4().hex[:12]}", vlan_id, f"VLAN {vlan_id}",
-                        site_id, source, now, now, "",
+                        site_scope, source, now, now, "",
                     ),
                 )
                 created += 1

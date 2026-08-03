@@ -64,6 +64,7 @@ export const usePageTitle = ({
       return map[inventorySubPage] || inventorySubPage;
     }
     if (activeTab === 'users') return t('userManagement');
+    if (activeTab === 'platform-registry') return language === 'zh' ? '平台注册表' : 'Platform Registry';
     if (activeTab === 'alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';
     if (activeTab === 'alert-history') return language === 'zh' ? '历史告警' : 'Alert History';
     if (activeTab === 'alert-rules') return language === 'zh' ? '告警规则' : 'Alert Rules';

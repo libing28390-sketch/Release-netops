@@ -121,6 +121,8 @@ export function getRouteContext(pathname: string): RouteContext {
       automationPage = 'metrics';
     } else if (second === 'textfsm') {
       automationPage = 'textfsm-templates';
+    } else if (second === 'textfsm-registry') {
+      automationPage = 'textfsm-registry';
     } else if (second === 'scripts') {
       automationPage = 'scripts';
     } else {
@@ -148,6 +150,8 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'audit';
     } else if (second === 'users') {
       activeTab = 'users';
+    } else if (second === 'platforms') {
+      activeTab = 'platform-registry';
     } else if (second === 'credentials') {
       activeTab = 'credentials';
     } else {

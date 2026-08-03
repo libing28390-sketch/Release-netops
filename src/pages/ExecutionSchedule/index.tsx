@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { CalendarClock, Plus, X, RotateCcw } from 'lucide-react';
 import PageHero from '../../components/PageHero';
 import { useSystem } from '../../hooks/useSystem';
-import type { ExecutionScheduleTabProps, ScheduledJob, FormState, ValidatedDevice, EligibleApprover, UnifiedExecutionLog, InspSubTab, InspDetailTab } from './types';
+import type { ExecutionScheduleTabProps, ScheduledJob, FormState, ValidatedDevice, EligibleApprover, UnifiedExecutionLog, InspSubTab, InspDetailTab, PlaybookExecutionApproval } from './types';
 import { INITIAL_FORM } from './constants';
 import { serializeTagFilter, EMPTY_TAG_FILTER } from '../../components/TagConditionPicker';
 import { fmtDateTime } from './helpers';
@@ -102,6 +102,10 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
   const [pbDevices, setPbDevices] = useState<any[]>([]);
   const [selectedPbDevice, setSelectedPbDevice] = useState<any>(null);
   const [pbDeviceDetail, setPbDeviceDetail] = useState<any>(null);
+  const [pbApprovals, setPbApprovals] = useState<PlaybookExecutionApproval[]>([]);
+  const [pbApprovalsLoading, setPbApprovalsLoading] = useState(false);
+  const [pbApprovalActionId, setPbApprovalActionId] = useState('');
+  const [pbApprovalError, setPbApprovalError] = useState('');
 
   // Approval states
   const [approvers, setApprovers] = useState<EligibleApprover[]>([]);
@@ -393,6 +397,8 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
     setPbDevices([]);
     setSelectedPbDevice(null);
     setPbDeviceDetail(null);
+    setPbApprovals([]);
+    setPbApprovalError('');
 
     try {
       if (log.source === 'inspection') {
@@ -409,6 +415,22 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         if (pbResp.ok) {
           const j = await pbResp.json();
           setPbDetail(j);
+        }
+        if (log.status === 'awaiting_approval') {
+          setPbApprovalsLoading(true);
+          try {
+            const approvalResp = await fetch(`/api/playbooks/${log.id}/approvals`, { headers: authHeaders });
+            if (approvalResp.ok) {
+              const approvalPayload = await approvalResp.json();
+              setPbApprovals(approvalPayload.data || []);
+            } else {
+              setPbApprovalError(zh ? '审批记录加载失败' : 'Failed to load approval gates');
+            }
+          } catch {
+            setPbApprovalError(zh ? '审批记录加载失败' : 'Failed to load approval gates');
+          } finally {
+            setPbApprovalsLoading(false);
+          }
         }
         const devResp = await fetch(`/api/playbooks/${log.id}/devices?page=1&page_size=100`, { headers: authHeaders });
         if (devResp.ok) {
@@ -429,6 +451,33 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
       console.error(e);
     } finally {
       setLogDetailLoading(false);
+    }
+  };
+
+  const handlePlaybookApproval = async (approval: PlaybookExecutionApproval, decision: 'approve' | 'reject') => {
+    if (!selectedLog || selectedLog.source !== 'playbook' || approval.status !== 'PENDING') return;
+    const reason = decision === 'reject' ? window.prompt(zh ? '请输入拒绝原因' : 'Reason for rejection') : '';
+    if (decision === 'reject' && reason === null) return;
+    setPbApprovalActionId(approval.id);
+    setPbApprovalError('');
+    try {
+      const response = await fetch(`/api/playbooks/${encodeURIComponent(selectedLog.id)}/approvals/${encodeURIComponent(approval.id)}/${decision}`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ reason: reason || '' }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload?.detail?.message || payload?.detail || (zh ? '审批操作失败' : 'Approval decision failed'));
+      setPbApprovals((current) => current.map((item) => item.id === approval.id ? (payload.data?.approval || { ...item, status: decision === 'approve' ? 'APPROVED' : 'REJECTED' }) : item));
+      const nextStatus = payload.data?.execution_status;
+      if (nextStatus) setSelectedLog((current) => current ? { ...current, status: nextStatus } : current);
+      await fetchInspRuns();
+      showToast(zh ? (decision === 'approve' ? '审批已通过，执行已恢复' : '审批已拒绝') : (decision === 'approve' ? 'Approval granted; execution resumed' : 'Approval rejected'), decision === 'approve' ? 'success' : 'info');
+    } catch (cause) {
+      setPbApprovalError(cause instanceof Error ? cause.message : (zh ? '审批操作失败' : 'Approval decision failed'));
+    } finally {
+      setPbApprovalActionId('');
+      setPbApprovalsLoading(false);
     }
   };
 
@@ -1010,6 +1059,11 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         setInspParseResults={setInspParseResults}
         pbDetail={pbDetail}
         pbDevices={pbDevices}
+        pbApprovals={pbApprovals}
+        pbApprovalsLoading={pbApprovalsLoading}
+        pbApprovalActionId={pbApprovalActionId}
+        pbApprovalError={pbApprovalError}
+        onPlaybookApproval={handlePlaybookApproval}
         selectedPbDevice={selectedPbDevice}
         pbDeviceDetail={pbDeviceDetail}
         onSelectPbDevice={handleSelectPbDevice}
