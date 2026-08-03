@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import logging
 import os
-from pydantic import BaseModel, Field
+from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Path, Query
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from core.rbac import require_permission, require_role
+from fastapi import APIRouter, HTTPException, Path, Query
+
+from core.rbac import require_permission
 from services.platform_registry_service import (
+    ALLOWED_CONNECTION_DRIVERS,
     PlatformRegistryError,
     create_profile,
     create_release,
@@ -31,6 +34,7 @@ from services.platform_registry_service import (
 )
 from services.platform_identification_service import (
     bind_device,
+    bind_devices_batch,
     identify_device,
     identify_device_live,
     list_identification_conflicts,
@@ -41,9 +45,66 @@ router = APIRouter(prefix="/platform-registry", tags=["platform-registry"])
 logger = logging.getLogger(__name__)
 
 
+class _PlatformRequestModel(BaseModel):
+    """Keep registry write contracts explicit and reject silent typos."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+def _validate_observations(value: dict[str, str]) -> dict[str, str]:
+    if len(value) > 16:
+        raise ValueError("observations must contain at most 16 command outputs")
+    for command, output in value.items():
+        if len(str(command)) > 128:
+            raise ValueError("observation command is too long")
+        if len(str(output)) > 2_000_000:
+            raise ValueError("observation output is too large")
+    return value
+
+
+class PlatformProfileCreateRequest(_PlatformRequestModel):
+    platform_code: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]{2,63}$")
+    name_zh: str = Field(default="", max_length=128)
+    name_en: str = Field(default="", max_length=128)
+    vendor: str = Field(default="", max_length=128)
+    connection_driver: str = Field(..., min_length=1, max_length=64)
+    parser_platform: str = Field(..., min_length=1, max_length=64)
+    description: str = Field(default="", max_length=2_000)
+    tenant_id: str | None = Field(default=None, max_length=128)
+
+
+class PlatformReleaseCreateRequest(_PlatformRequestModel):
+    safety_policy: dict[str, Any] = Field(default_factory=lambda: {"read_only": True})
+
+
+class PlatformActionUpdateRequest(_PlatformRequestModel):
+    command: str = Field(..., min_length=1, max_length=512)
+    parser_template_version_id: str | None = Field(default=None, max_length=128)
+    field_contract: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlatformRollbackRequest(_PlatformRequestModel):
+    release_id: str | None = Field(default=None, max_length=128)
+
+
+class PlatformActionRequest(_PlatformRequestModel):
+    device_id: str = Field(..., min_length=1, max_length=128)
+    action_code: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]{2,63}$")
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlatformFailureSampleRequest(_PlatformRequestModel):
+    sample_name: str = Field(default="", max_length=128)
+    expected_records: list[Any] = Field(default_factory=list, max_length=10_000)
+
+
 class PlatformIdentifyRequest(BaseModel):
     observations: dict[str, str] = Field(..., min_length=1)
     platform_code: str = Field(default="", max_length=64)
+
+    model_config = ConfigDict(extra="forbid")
+
+    _observations_limit = field_validator("observations")(_validate_observations)
 
 
 class PlatformBindingRequest(BaseModel):
@@ -51,10 +112,35 @@ class PlatformBindingRequest(BaseModel):
     lock: bool = False
     force: bool = False
 
+    model_config = ConfigDict(extra="forbid")
+
+
+class PlatformBatchBindingRequest(BaseModel):
+    device_ids: list[str] = Field(..., min_length=1, max_length=200)
+    platform_profile_id: str = Field(..., min_length=1, max_length=128)
+    lock: bool = False
+    force: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("device_ids")
+    @classmethod
+    def validate_device_ids(cls, value: list[str]) -> list[str]:
+        normalized = [str(item).strip() for item in value]
+        if any(not item for item in normalized):
+            raise ValueError("device_ids must contain non-empty values")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("device_ids must not contain duplicates")
+        return normalized
+
 
 class PlatformDetectRequest(BaseModel):
     observations: dict[str, str] = Field(default_factory=dict)
     platform_code: str = Field(default="", max_length=64)
+
+    model_config = ConfigDict(extra="forbid")
+
+    _observations_limit = field_validator("observations")(_validate_observations)
 
 
 # Compatibility endpoints keep device-facing consumers independent from the
@@ -91,6 +177,21 @@ def api_list_profiles(user=require_permission("platform", "read")):
     return {"success": True, "data": _call(list_profiles, user), "message": ""}
 
 
+@router.get("/capabilities")
+def api_registry_capabilities(user=require_permission("platform", "read")):
+    enabled = os.environ.get("PLATFORM_REGISTRY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+    return {
+        "success": True,
+        "data": {
+            "write_enabled": enabled,
+            "allowed_connection_drivers": sorted(ALLOWED_CONNECTION_DRIVERS),
+            "legacy_textfsm_fallback_enabled": os.environ.get("LEGACY_TEXTFSM_FILE_FALLBACK_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"},
+            "legacy_command_catalog_enabled": os.environ.get("LEGACY_COMMAND_CATALOG_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"},
+        },
+        "message": "",
+    }
+
+
 @router.get("/migration/preview")
 def api_preview_platform_migration(user=require_permission("platform", "read")):
     """Preview legacy device/template migration conflicts without mutation."""
@@ -116,9 +217,9 @@ def api_list_identification_conflicts(
 
 
 @router.post("/profiles")
-def api_create_profile(payload: dict = Body(...), user=require_permission("platform", "create")):
+def api_create_profile(payload: PlatformProfileCreateRequest, user=require_permission("platform", "create")):
     _require_registry_enabled()
-    return {"success": True, "data": _call(create_profile, payload, user), "message": "Platform profile created"}
+    return {"success": True, "data": _call(create_profile, payload.model_dump(exclude_none=True), user), "message": "Platform profile created"}
 
 
 @router.get("/profiles/{profile_id}")
@@ -127,20 +228,24 @@ def api_get_profile(profile_id: str = Path(..., min_length=1), user=require_perm
 
 
 @router.post("/profiles/{profile_id}/releases")
-def api_create_release(profile_id: str, payload: dict = Body(default={}), user=require_permission("platform", "edit_draft")):
+def api_create_release(profile_id: str, payload: PlatformReleaseCreateRequest | None = None, user=require_permission("platform", "edit_draft")):
     _require_registry_enabled()
-    return {"success": True, "data": _call(create_release, profile_id, payload, user), "message": "Draft release created"}
+    return {"success": True, "data": _call(create_release, profile_id, (payload or PlatformReleaseCreateRequest()).model_dump(), user), "message": "Draft release created"}
 
 
 @router.get("/profiles/{profile_id}/actions")
-def api_list_actions(profile_id: str, user=require_permission("command", "view")):
-    return {"success": True, "data": _call(list_release_actions, profile_id, user), "message": ""}
+def api_list_actions(
+    profile_id: str,
+    release_id: str | None = Query(default=None, min_length=1, max_length=128),
+    user=require_permission("command", "view"),
+):
+    return {"success": True, "data": _call(list_release_actions, profile_id, user, release_id), "message": ""}
 
 
 @router.put("/releases/{release_id}/actions/{action_code}")
-def api_update_action(release_id: str, action_code: str, payload: dict = Body(...), user=require_permission("command", "edit_draft")):
+def api_update_action(release_id: str, action_code: str, payload: PlatformActionUpdateRequest, user=require_permission("command", "edit_draft")):
     _require_registry_enabled()
-    return {"success": True, "data": _call(update_release_action, release_id, action_code, payload, user), "message": "Action mapping saved"}
+    return {"success": True, "data": _call(update_release_action, release_id, action_code, payload.model_dump(exclude_none=True), user), "message": "Action mapping saved"}
 
 
 @router.post("/releases/{release_id}/validate")
@@ -168,48 +273,34 @@ def api_publish_release(release_id: str, user=require_permission("platform", "pu
 
 
 @router.post("/profiles/{profile_id}/rollback")
-def api_rollback_profile(profile_id: str, payload: dict = Body(default={}), user=require_permission("platform", "rollback")):
+def api_rollback_profile(profile_id: str, payload: PlatformRollbackRequest | None = None, user=require_permission("platform", "rollback")):
     _require_registry_enabled()
-    return {"success": True, "data": _call(rollback_profile, profile_id, payload.get("release_id"), user), "message": "Platform rolled back"}
+    return {"success": True, "data": _call(rollback_profile, profile_id, payload.release_id if payload else None, user), "message": "Platform rolled back"}
 
 
 @router.post("/actions/execute")
-def api_execute_action(payload: dict = Body(...), user=require_permission("command", "execute")):
+def api_execute_action(payload: PlatformActionRequest, user=require_permission("command", "execute")):
     _require_registry_enabled()
-    device_id = str(payload.get("device_id") or "").strip()
-    action_code = str(payload.get("action_code") or "").strip()
-    if not device_id or not action_code:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_ACTION_REQUEST", "message": "device_id and action_code are required"})
-    parameters = payload.get("parameters") or {}
-    if not isinstance(parameters, dict):
-        raise HTTPException(status_code=400, detail={"code": "INVALID_ACTION_PARAMETERS", "message": "parameters must be an object"})
-    return {"success": True, "data": _call(execute_platform_action, device_id, action_code, user=user, parameters=parameters), "message": ""}
+    return {"success": True, "data": _call(execute_platform_action, payload.device_id.strip(), payload.action_code.strip(), user=user, parameters=payload.parameters), "message": ""}
 
 
 @router.post("/actions/preview")
-def api_preview_action(payload: dict = Body(...), user=require_permission("command", "execute")):
+def api_preview_action(payload: PlatformActionRequest, user=require_permission("command", "execute")):
     """Resolve a published action and parameters without opening a device connection."""
     _require_registry_enabled()
-    device_id = str(payload.get("device_id") or "").strip()
-    action_code = str(payload.get("action_code") or "").strip()
-    parameters = payload.get("parameters") or {}
-    if not device_id or not action_code:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_ACTION_REQUEST", "message": "device_id and action_code are required"})
-    if not isinstance(parameters, dict):
-        raise HTTPException(status_code=400, detail={"code": "INVALID_ACTION_PARAMETERS", "message": "parameters must be an object"})
-    return {"success": True, "data": _call(preview_platform_action, device_id, action_code, user=user, parameters=parameters), "message": ""}
+    return {"success": True, "data": _call(preview_platform_action, payload.device_id.strip(), payload.action_code.strip(), user=user, parameters=payload.parameters), "message": ""}
 
 
 @router.post("/runs/{run_id}/parser-sample")
 def api_create_sample_from_failed_run(
     run_id: str = Path(..., min_length=1),
-    payload: dict = Body(default={}),
+    payload: PlatformFailureSampleRequest | None = None,
     user=require_permission("sample_output", "upload"),
 ):
     _require_registry_enabled()
     return {
         "success": True,
-        "data": _call(create_sample_from_failed_run, run_id, payload, user),
+        "data": _call(create_sample_from_failed_run, run_id, (payload or PlatformFailureSampleRequest()).model_dump(), user),
         "message": "Redacted failure output stored as an encrypted parser sample",
     }
 
@@ -249,12 +340,13 @@ def api_identify_device_live(device_id: str, user=require_permission("platform",
 @device_registry_router.post("/devices/{device_id}/platform-detect")
 def api_device_platform_detect(
     device_id: str,
-    payload: PlatformDetectRequest = PlatformDetectRequest(),
+    payload: PlatformDetectRequest | None = None,
     user=require_permission("platform", "view"),
 ):
     _require_registry_enabled()
-    if payload.observations:
-        data = _call(identify_device, device_id, payload.observations, user, platform_code=payload.platform_code)
+    request = payload or PlatformDetectRequest()
+    if request.observations:
+        data = _call(identify_device, device_id, request.observations, user, platform_code=request.platform_code)
     else:
         data = _call(identify_device_live, device_id, user)
     return {"success": True, "data": data, "message": ""}
@@ -278,4 +370,24 @@ def api_device_platform_binding(
             force=payload.force,
         ),
         "message": "Device platform binding saved",
+    }
+
+
+@device_registry_router.post("/devices/platform-binding/batch")
+def api_device_platform_binding_batch(
+    payload: PlatformBatchBindingRequest,
+    user=require_permission("platform", "bind_device"),
+):
+    _require_registry_enabled()
+    return {
+        "success": True,
+        "data": _call(
+            bind_devices_batch,
+            payload.device_ids,
+            payload.platform_profile_id,
+            user,
+            lock=payload.lock,
+            force=payload.force,
+        ),
+        "message": "Batch device platform binding saved",
     }

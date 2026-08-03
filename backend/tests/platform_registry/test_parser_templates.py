@@ -12,14 +12,22 @@ from services.parser_template_service import (
     create_sample,
     create_template,
     create_version,
+    delete_sample,
+    deprecate_version,
     fork_template,
+    list_audit_logs,
     list_samples,
+    list_templates_page,
     list_templates,
     publish_version,
     regression_test_template,
     run_published_version_regression,
+    rollback_version,
+    sandbox_test,
     submit_version,
+    template_impact,
     test_version as run_version_test,
+    update_version,
 )
 from services.platform_registry_service import PlatformRegistryError
 
@@ -153,3 +161,71 @@ def test_parser_template_fork_creates_tenant_owned_draft(isolated_db):
     assert forked["tenant_id"] == "tenant-1"
     assert forked["forked_from_template_id"] == system["id"]
     assert forked["initial_version"]["status"] == "DRAFT"
+
+
+def test_parser_draft_update_sandbox_persists_summary_and_audit(isolated_db):
+    owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
+    template = create_template({"platform_code": "cisco_ios", "template_code": "DRAFT_UPDATE"}, owner)
+    version = create_version(template["id"], {"content": VALID_TEMPLATE}, owner)
+    updated = update_version(version["id"], {"content": VALID_TEMPLATE + "\n", "field_contract": {}, "lock_version": version.get("lock_version")}, owner)
+    assert updated["checksum"] != version["checksum"]
+    result = sandbox_test(
+        {"version_id": updated["id"], "content": updated["content"], "field_contract": {}, "sample_output": "hello\n", "persist": True, "lock_version": updated.get("lock_version")},
+        owner,
+    )
+    assert result["records"] == [{"field": "hello"}]
+    assert result["summary"]["duration_ms"] >= 0
+    assert {row["event_type"] for row in list_audit_logs(template["id"], owner)} >= {"VERSION_UPDATED", "SANDBOX_PERSISTED"}
+    page = list_templates_page(owner, search="DRAFT_UPDATE", page=1, page_size=10)
+    assert page["total"] == 1
+    assert page["items"][0]["template_code"] == "DRAFT_UPDATE"
+
+
+def test_system_version_can_be_sandboxed_without_mutation(isolated_db):
+    user = {"id": "viewer-1", "username": "viewer", "role": "Operator", "tenant_id": "tenant-1"}
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        template_id = "system-sandbox-template"
+        version_id = "system-sandbox-version"
+        conn.execute(
+            """INSERT INTO parser_templates (id, tenant_id, platform_code, template_code, source, status, created_by, created_at, updated_at)
+               VALUES (?, NULL, 'cisco_ios', 'SYSTEM_SANDBOX', 'SYSTEM', 'ACTIVE', 'system', 'now', 'now')""",
+            (template_id,),
+        )
+        conn.execute(
+            """INSERT INTO parser_template_versions (id, template_id, version_number, status, content, checksum, field_contract_json, test_summary_json, created_by, created_at, updated_at)
+               VALUES (?, ?, 1, 'PUBLISHED', ?, 'checksum', '{}', '{}', 'system', 'now', 'now')""",
+            (version_id, template_id, VALID_TEMPLATE),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    result = sandbox_test({"version_id": version_id, "sample_output": "hello\n"}, user)
+    assert result["records"] == [{"field": "hello"}]
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        stored = conn.execute("SELECT test_summary_json FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert stored == "{}"
+
+
+def test_published_version_can_be_deprecated_and_rolled_back(isolated_db, monkeypatch):
+    monkeypatch.setattr(settings, "CREDENTIAL_ENCRYPTION_KEY", "test-parser-rollback-key")
+    monkeypatch.setattr(crypto, "_aes_key", None)
+    owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
+    reviewer = {"id": "reviewer-1", "username": "reviewer", "role": "Administrator", "tenant_id": "tenant-1"}
+    template = create_template({"platform_code": "cisco_ios", "template_code": "ROLLBACK_TEST"}, owner)
+    first = create_version(template["id"], {"content": VALID_TEMPLATE}, owner)
+    run_version_test(first["id"], {"sample_output": "one\n"}, owner)
+    submitted_first = submit_version(first["id"], owner)
+    approved_first = approve_version(submitted_first["id"], reviewer)
+    publish_version(approved_first["id"], reviewer)
+    second = create_version(template["id"], {"content": VALID_TEMPLATE.replace("FIELD", "OTHER")}, owner)
+    run_version_test(second["id"], {"sample_output": "two\n"}, owner)
+    submitted_second = submit_version(second["id"], owner)
+    approved = approve_version(submitted_second["id"], reviewer)
+    publish_version(approved["id"], reviewer)
+    deprecate_version(approved["id"], reviewer)
+    rolled = rollback_version(first["id"], reviewer)
+    assert rolled["status"] == "PUBLISHED"

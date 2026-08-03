@@ -1,10 +1,11 @@
-"""Collect interface state for the CMDB interface view.
+"""Collect IP-bearing interface state for the CMDB interface view.
 
 The automation "Interfaces" quick query is the source of truth for the
 device-side state.  This worker reuses its command catalog and TextFSM parser,
-then enriches the parsed state with NSOT's ``ip_inventory``.  An IP address is
-optional: physical access ports, VLANIF/SVI interfaces, loopbacks and routed
-subinterfaces all need their own admin/oper state in the same CMDB snapshot.
+then enriches the parsed state with NSOT's ``ip_inventory`` so the CMDB
+interface projection keeps its historical IP-bearing contract.  Topology
+discovery maintains any additional physical/member interface rows it needs
+for link identity separately.
 """
 
 from __future__ import annotations
@@ -133,17 +134,18 @@ def _build_interface_status_rows(
     inventory: dict[str, dict[str, Any]],
     descriptions: dict[str, dict[str, str]],
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
-    """Build a status snapshot without filtering out interfaces lacking an IP.
+    """Build the historical IP-bearing interface snapshot.
 
-    Huawei/H3C interface brief output commonly contains both L3 interfaces
-    (for example ``Vlanif20``) and L2 access ports.  Older code discarded the
-    latter because it required an IP before creating a row.  Keep every
-    parsed interface and use IP inventory only as an address enrichment
-    source, while also merging aliases such as ``GE0/0/4`` and
-    ``GigabitEthernet0/0/4`` by their canonical key.
+    ``display interface brief`` contains L2 ports as well as L3 interfaces,
+    but this CMDB collector is intentionally an IP inventory projection.  A
+    successful command response containing direct IPs is authoritative; for
+    status-only vendor output, retain the known IP-bearing rows from
+    ``ip_inventory``.  Topology link discovery is responsible for creating
+    physical endpoint rows when it needs them.
     """
     inventory_ips = {key: value.get("ip", "") for key, value in inventory.items()}
     parsed_by_interface: dict[str, dict[str, Any]] = {}
+    parser_ip_keys: set[str] = set()
 
     for record in records:
         if not isinstance(record, dict):
@@ -155,11 +157,16 @@ def _build_interface_status_rows(
         if not key:
             continue
 
+        interface_ip = direct_ip or inventory_ips.get(key, "")
+        if direct_ip:
+            parser_ip_keys.add(key)
+        if not interface_ip:
+            continue
         parsed = parsed_by_interface.setdefault(
             key,
             {
                 "interface_name": interface_name,
-                "interface_ip": "",
+                "interface_ip": interface_ip,
                 "admin_status": "unknown",
                 "oper_status": "unknown",
                 "description": None,
@@ -167,22 +174,23 @@ def _build_interface_status_rows(
         )
         if interface_name and not parsed.get("interface_name"):
             parsed["interface_name"] = interface_name
-        if direct_ip or not parsed.get("interface_ip"):
-            parsed["interface_ip"] = direct_ip or inventory_ips.get(key, "")
+        if interface_ip and not parsed.get("interface_ip"):
+            parsed["interface_ip"] = interface_ip
         parsed["admin_status"] = _prefer_status(parsed["admin_status"], admin_status)
         parsed["oper_status"] = _prefer_status(parsed["oper_status"], oper_status)
         if descriptions.get(key, {}).get("description") is not None:
             parsed["description"] = descriptions[key]["description"]
 
-    # Preserve inventory-only rows for platforms whose status command omits
-    # some interfaces, but never let the presence of an IP determine whether
-    # an interface is persisted.
-    current_keys = set(parsed_by_interface) | set(inventory)
+    # If the vendor response includes direct IPs, it is the current snapshot;
+    # otherwise keep the previously discovered IP-bearing inventory rows.
+    current_keys = parser_ip_keys or set(inventory)
     rows: list[dict[str, Any]] = []
     for key in sorted(current_keys):
         item = inventory.get(key, {})
         parsed = parsed_by_interface.get(key, {})
         interface_ip = parsed.get("interface_ip") or item.get("ip", "")
+        if not interface_ip:
+            continue
         rows.append(
             {
                 "interface_name": parsed.get("interface_name") or item.get("interface") or key,

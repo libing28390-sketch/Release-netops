@@ -21,7 +21,6 @@ from database import get_db_connection
 from services.vault_service import resolve_collector_credentials
 from services.network_access_limiter import limited_connect_handler
 from services.collection_status_service import record_collection_result
-from services.normalizers.common import parse_speed_bps
 from services.neighbor_collection_contract import assert_lldp_command, normalize_neighbor_record
 from drivers.ssh_compat import build_netmiko_compatibility_kwargs
 
@@ -40,6 +39,15 @@ TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS = max(
 DISCOVERY_LEASE_SECONDS = max(30, int(os.environ.get('TOPOLOGY_DISCOVERY_LEASE_SECONDS', '90')))
 DISCOVERY_DEFAULT_TIMEOUT_SECONDS = max(30, int(os.environ.get('TOPOLOGY_DISCOVERY_TIMEOUT_SECONDS', '300')))
 DISCOVERY_DEFAULT_MAX_ATTEMPTS = max(1, int(os.environ.get('TOPOLOGY_DISCOVERY_MAX_ATTEMPTS', '2')))
+# Devices are independent discovery units, but the SSH limiter still keeps
+# operations against the same device serialized.  A bounded run-level lane
+# removes the historical device-by-device waterfall without overloading the
+# network or the devices' VTY/CLI sessions.
+DISCOVERY_DEVICE_CONCURRENCY = max(
+    1,
+    int(os.environ.get('TOPOLOGY_DISCOVERY_DEVICE_CONCURRENCY', '6')),
+)
+DISCOVERY_RETRYABLE_ERROR_CODES = frozenset({'ssh_unreachable'})
 
 PLATFORM_MAP = {
     'cisco_ios': 'cisco_ios',
@@ -114,11 +122,29 @@ def topology_error_code(exc: Exception) -> str:
         return 'platform_unsupported'
     if 'authentication' in message or 'auth fail' in message:
         return 'ssh_authentication_failed'
-    if 'closed/unreachable' in message or 'timed out' in message or 'timeout' in message:
+    if any(
+        marker in message
+        for marker in (
+            'closed/unreachable',
+            'timed out',
+            'timeout',
+            'connection refused',
+            'connection reset',
+            'no route to host',
+            'network is unreachable',
+            'tcp connection to device failed',
+            'ssh connection failed',
+        )
+    ):
         return 'ssh_unreachable'
     if 'parse' in message or 'template' in message:
         return 'neighbor_parse_failed'
     return 'topology_discovery_failed'
+
+
+def _should_retry_discovery(error_code: str, attempt: int, max_attempts: int) -> bool:
+    """Retry only transport failures that can plausibly recover by themselves."""
+    return attempt < max_attempts and error_code in DISCOVERY_RETRYABLE_ERROR_CODES
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -770,7 +796,7 @@ def _load_interface_aggregation_map(conn) -> dict[tuple[str, str], dict[str, Any
     return result
 
 
-def _sync_aggregation_inventory(device: dict[str, Any]) -> dict[str, int]:
+def _sync_aggregation_inventory(device: dict[str, Any], platform_action_session=None) -> dict[str, int]:
     """Persist vendor-specific LAG membership for the next topology rebuild.
 
     LLDP exposes physical member ports, while the aggregation command
@@ -783,23 +809,21 @@ def _sync_aggregation_inventory(device: dict[str, Any]) -> dict[str, int]:
     try:
         from services.operational_data_service import collect_operational_data
 
-        # Refresh the interface summary and the aggregation inventory in the
-        # same read-only session used by topology refresh.  This keeps the
-        # graph's port identity/rate data aligned with the LLDP snapshot.
+        # The CMDB interface collector owns interface status.  Topology only
+        # refreshes the vendor-specific parent/member relationship needed to
+        # collapse LLDP member links into one logical aggregation edge.
         payload = collect_operational_data(
             device,
-            categories=['interfaces', 'eth_trunk'],
+            categories=['eth_trunk'],
             auth_role='admin',
-            policy_override_categories={'interfaces', 'eth_trunk'},
+            _platform_action_session=platform_action_session,
         )
         category = next((item for item in payload.get('categories', []) if item.get('key') == 'eth_trunk'), None)
         records = list(category.get('records') or []) if category else []
-        interface_category = next((item for item in payload.get('categories', []) if item.get('key') == 'interfaces'), None)
-        interface_records = list(interface_category.get('records') or []) if interface_category else []
     except Exception as exc:  # noqa: BLE001
         logger.info('Aggregation inventory skipped for %s: %s', device.get('hostname'), exc)
         return {'parents': 0, 'members': 0}
-    if not records and not interface_records:
+    if not records:
         return {'parents': 0, 'members': 0}
 
     def value(record: dict[str, Any], *keys: str) -> str:
@@ -827,11 +851,6 @@ def _sync_aggregation_inventory(device: dict[str, Any]) -> dict[str, int]:
         interface_rows = conn.execute(
             'SELECT id, interface_name FROM interfaces WHERE device_id = ?', (device_id,)
         ).fetchall()
-        interface_exact_map = {
-            str(row['interface_name'] or '').strip().lower(): str(row['id'])
-            for row in interface_rows
-            if str(row['interface_name'] or '').strip()
-        }
         interface_map = {
             normalize_interface_name(row['interface_name']).lower(): str(row['id'])
             for row in interface_rows
@@ -859,51 +878,6 @@ def _sync_aggregation_inventory(device: dict[str, Any]) -> dict[str, int]:
                 (device_id, device_id),
             )
 
-        # Persist the latest interface status/capacity when the command
-        # parser supplied it.  Route-mode rows may not include speed, so a
-        # blank value deliberately preserves the last known rate; topology
-        # rendering also has a name-based capacity fallback.
-        for record in interface_records:
-            interface_name = clean_member(value(record, 'INTERFACE', 'NAME', 'PORT'))
-            if not interface_name:
-                continue
-            normalized_name = normalize_interface_name(interface_name).lower()
-            # Prefer the exact vendor spelling when it already exists.  The
-            # normalized fallback then reuses a long/short alias row instead
-            # of inserting a second row with the same raw name.
-            interface_id = interface_exact_map.get(interface_name.lower()) or interface_map.get(normalized_name)
-            if not interface_id:
-                interface_id = str(uuid.uuid4())
-                conn.execute(
-                    '''
-                    INSERT INTO interfaces (
-                        id, device_id, interface_name, interface_type,
-                        admin_status, oper_status, speed, bandwidth
-                    ) VALUES (?, ?, ?, 'physical', 'unknown', 'unknown', 0, 0)
-                    ''',
-                    (interface_id, device_id, interface_name),
-                )
-                interface_map[normalized_name] = interface_id
-                interface_exact_map[interface_name.lower()] = interface_id
-            link_status = value(record, 'LINK', 'STATUS', 'OPER_STATUS').lower()
-            oper_status = 'up' if link_status in {'up', 'active', 'selected'} else (
-                'down' if link_status in {'down', 'adm', 'stby', 'inactive'} else ''
-            )
-            speed_bps = parse_speed_bps(value(record, 'SPEED', 'BANDWIDTH'))
-            assignments = ['interface_name = ?']
-            params: list[Any] = [interface_name]
-            if oper_status:
-                assignments.append('oper_status = ?')
-                params.append(oper_status)
-            if speed_bps and speed_bps > 0:
-                assignments.extend(['speed = ?', 'bandwidth = ?'])
-                params.extend([speed_bps, speed_bps])
-            params.append(interface_id)
-            conn.execute(
-                f"UPDATE interfaces SET {', '.join(assignments)} WHERE id = ?",
-                params,
-            )
-            interfaces += 1
         grouped: dict[str, list[dict[str, Any]]] = {}
         for record in records:
             parent_name = clean_member(value(record, 'AGGREGATE_INTERFACE', 'ETH_TRUNK', 'PORT_CHANNEL', 'PORTCHANNEL', 'BUNDLE'))
@@ -1090,7 +1064,11 @@ def _collapse_aggregation_groups(
     return collapsed
 
 
-async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list[tuple[str, str]]) -> tuple[list[dict[str, Any]], str]:
+async def _collect_neighbors_with_netmiko(
+    device: dict[str, Any],
+    commands: list[tuple[str, str]],
+    platform_action_session=None,
+) -> tuple[list[dict[str, Any]], str]:
     if device.get('platform_profile_id'):
         from services.platform_registry_service import PlatformRegistryError, execute_platform_action
 
@@ -1101,12 +1079,17 @@ async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list
             'tenant_id': device.get('tenant_id') or '',
         }
         try:
+            action_kwargs = {
+                'user': user,
+                'include_raw_output': True,
+            }
+            if platform_action_session is not None:
+                action_kwargs['_session'] = platform_action_session
             result = await asyncio.to_thread(
                 execute_platform_action,
                 str(device['id']),
                 'get_lldp_neighbors',
-                user=user,
-                include_raw_output=True,
+                **action_kwargs,
             )
         except PlatformRegistryError as exc:
             raise RuntimeError(f"platform_registry:{exc.code}:{exc.message}") from exc
@@ -1172,7 +1155,7 @@ async def _collect_neighbors_with_netmiko(device: dict[str, Any], commands: list
     return collected, 'netmiko'
 
 
-async def _collect_device_observations(device: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+async def _collect_device_observations(device: dict[str, Any], platform_action_session=None) -> tuple[list[dict[str, Any]], str]:
     ip = device.get('ip_address')
     port = int(device.get('management_port') or device.get('port') or 22)
     from drivers.ssh_compat import is_ssh_port_open
@@ -1185,7 +1168,11 @@ async def _collect_device_observations(device: dict[str, Any]) -> tuple[list[dic
     for protocol, command in commands:
         assert_lldp_command(platform, command, scenario_id='topology_lldp')
     try:
-        observations, method = await _collect_neighbors_with_netmiko(device, commands)
+        observations, method = await _collect_neighbors_with_netmiko(
+            device,
+            commands,
+            platform_action_session=platform_action_session,
+        )
         return observations, method
     except Exception as exc:  # noqa: BLE001
         logger.error('Netmiko topology discovery failed for %s: %s', device.get('hostname'), exc)
@@ -1879,8 +1866,40 @@ async def discover_device_neighbors(
         if not device.get('ip_address') or not device.get('username') or not device.get('password'):
             raise RuntimeError('device_credentials_incomplete')
 
-        observations, method = await _collect_device_observations(device)
-        aggregation_summary = await asyncio.to_thread(_sync_aggregation_inventory, device)
+        platform_action_session = None
+        if device.get('platform_profile_id'):
+            from services.platform_registry_service import PlatformActionSession
+
+            platform_action_session = PlatformActionSession(
+                str(device_id),
+                {
+                    'id': f"topology:{device.get('id') or 'unknown'}",
+                    'username': 'topology-collector',
+                    'role': 'Operator',
+                    'tenant_id': device.get('tenant_id') or '',
+                },
+            )
+            # Opening the driver is blocking; keep one session per device but
+            # do not serialize login handshakes across the discovery batch.
+            await asyncio.to_thread(platform_action_session.__enter__)
+        try:
+            if platform_action_session is None:
+                # Keep the legacy no-profile call shape for integrations and
+                # tests that provide a one-argument observation collector.
+                observations, method = await _collect_device_observations(device)
+            else:
+                observations, method = await _collect_device_observations(
+                    device,
+                    platform_action_session=platform_action_session,
+                )
+            aggregation_summary = await asyncio.to_thread(
+                _sync_aggregation_inventory,
+                device,
+                platform_action_session,
+            )
+        finally:
+            if platform_action_session is not None:
+                await asyncio.to_thread(platform_action_session.__exit__, None, None, None)
         observations = _deduplicate_observations(observations)
         match_summary = _replace_device_observations(device, observations, run_id)
         total_links = rebuild_links_from_observations() if rebuild_links else None
@@ -2036,6 +2055,124 @@ def request_cancel_discovery_run(run_id: str) -> bool:
         conn.close()
 
 
+async def _execute_discovery_device(
+    run_id: str,
+    device_id: str,
+    timeout_seconds: int,
+    max_attempts: int,
+) -> dict[str, Any]:
+    """Run one device's discovery lifecycle and return its run-level result."""
+    for attempt in range(1, max_attempts + 1):
+        _update_run_device(
+            run_id,
+            device_id,
+            status='running',
+            started_at=_utc_now_iso(),
+            last_attempt_at=_utc_now_iso(),
+            attempt_count=attempt,
+        )
+        try:
+            result = await asyncio.wait_for(
+                discover_device_neighbors(device_id, run_id, rebuild_links=False),
+                timeout=timeout_seconds,
+            )
+            _update_run_device(
+                run_id,
+                device_id,
+                status='success',
+                discovery_method=result['discovery_method'],
+                completed_at=_utc_now_iso(),
+                observations_count=result['observations_count'],
+                matched_links_count=result['matched_links_count'],
+                error_code='',
+                error_message='',
+            )
+            return {
+                'device_id': device_id,
+                'success': True,
+                'observations_count': int(result['observations_count']),
+            }
+        except Exception as exc:  # noqa: BLE001
+            error_code = topology_error_code(exc)
+            logger.warning(
+                'Topology discovery failed for device %s in run %s (attempt %s/%s): %s',
+                device_id, run_id, attempt, max_attempts, exc,
+            )
+            if _is_run_cancel_requested(run_id):
+                _update_run_device(
+                    run_id,
+                    device_id,
+                    status='cancelled',
+                    completed_at=_utc_now_iso(),
+                    error_code='discovery_cancelled',
+                    error_message='Discovery cancelled while this device was being processed',
+                )
+                return {'device_id': device_id, 'cancelled': True}
+            if _should_retry_discovery(error_code, attempt, max_attempts):
+                logger.info(
+                    'Retrying transient topology discovery failure for device %s in run %s',
+                    device_id,
+                )
+                continue
+            _update_run_device(
+                run_id,
+                device_id,
+                status='failed',
+                completed_at=_utc_now_iso(),
+                error_code=error_code,
+                error_message=str(exc)[:500],
+            )
+            return {
+                'device_id': device_id,
+                'success': False,
+                'error_code': error_code,
+                'error_message': str(exc)[:500],
+            }
+
+    # The loop always returns after the final attempt; keep a defensive result
+    # so a future retry-policy change cannot leave a device in ``running``.
+    error_code = 'topology_discovery_failed'
+    _update_run_device(
+        run_id,
+        device_id,
+        status='failed',
+        completed_at=_utc_now_iso(),
+        error_code=error_code,
+        error_message='Topology discovery exhausted its retry policy',
+    )
+    return {
+        'device_id': device_id,
+        'success': False,
+        'error_code': error_code,
+        'error_message': 'Topology discovery exhausted its retry policy',
+    }
+
+
+async def _discovery_lease_heartbeat(
+    run_id: str,
+    worker_id: str,
+    stop_event: asyncio.Event,
+    lease_lost: asyncio.Event,
+) -> None:
+    """Keep a long-running parallel batch from losing its run lease."""
+    interval = max(5.0, min(30.0, DISCOVERY_LEASE_SECONDS / 3))
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            return
+        except asyncio.TimeoutError:
+            try:
+                renewed = await asyncio.to_thread(_renew_discovery_lease, run_id, worker_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning('Failed to renew topology discovery lease %s: %s', run_id, exc)
+                lease_lost.set()
+                return
+            if not renewed:
+                logger.warning('Topology discovery lease lost for run %s', run_id)
+                lease_lost.set()
+                return
+
+
 async def execute_discovery_run(run_id: str, device_ids: list[str]):
     worker_id = f'{os.getpid()}:{uuid.uuid4()}'
     if not _claim_discovery_run(run_id, worker_id):
@@ -2047,14 +2184,21 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
     failed_devices = 0
     total_observations = 0
     cancelled = False
+    heartbeat_stop = asyncio.Event()
+    lease_lost = asyncio.Event()
+    heartbeat_task = asyncio.create_task(
+        _discovery_lease_heartbeat(run_id, worker_id, heartbeat_stop, lease_lost)
+    )
     try:
-        for index, device_id in enumerate(device_ids):
-            if not _renew_discovery_lease(run_id, worker_id):
+        concurrency = min(DISCOVERY_DEVICE_CONCURRENCY, max(1, len(device_ids)))
+        for batch_start in range(0, len(device_ids), concurrency):
+            if lease_lost.is_set() or not _renew_discovery_lease(run_id, worker_id):
                 _update_run(run_id, status='failed', last_error_code='discovery_lease_lost')
                 return
             if _is_run_cancel_requested(run_id):
                 cancelled = True
-                for pending_device_id in device_ids[index:]:
+                pending_device_ids = device_ids[batch_start:]
+                for pending_device_id in pending_device_ids:
                     _update_run_device(
                         run_id,
                         pending_device_id,
@@ -2065,50 +2209,48 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
                     )
                 break
 
-            for attempt in range(1, max_attempts + 1):
-                _update_run_device(
-                    run_id,
-                    device_id,
-                    status='running',
-                    started_at=_utc_now_iso(),
-                    last_attempt_at=_utc_now_iso(),
-                    attempt_count=attempt,
-                )
-                try:
-                    result = await asyncio.wait_for(
-                        discover_device_neighbors(device_id, run_id, rebuild_links=False),
-                        timeout=timeout_seconds,
+            batch_device_ids = device_ids[batch_start:batch_start + concurrency]
+            batch_results = await asyncio.gather(
+                *(
+                    _execute_discovery_device(
+                        run_id,
+                        device_id,
+                        timeout_seconds,
+                        max_attempts,
                     )
-                    success_devices += 1
-                    total_observations += int(result['observations_count'])
+                    for device_id in batch_device_ids
+                ),
+                return_exceptions=True,
+            )
+            for device_id, result in zip(batch_device_ids, batch_results):
+                if isinstance(result, BaseException):
+                    error_message = str(result)[:500]
+                    error_code = topology_error_code(
+                        result if isinstance(result, Exception) else RuntimeError(error_message)
+                    )
+                    logger.error(
+                        'Topology discovery worker crashed for device %s in run %s: %s',
+                        device_id,
+                        run_id,
+                        result,
+                    )
+                    failed_devices += 1
                     _update_run_device(
                         run_id,
                         device_id,
-                        status='success',
-                        discovery_method=result['discovery_method'],
+                        status='failed',
                         completed_at=_utc_now_iso(),
-                        observations_count=result['observations_count'],
-                        matched_links_count=result['matched_links_count'],
-                        error_code='',
-                        error_message='',
+                        error_code=error_code,
+                        error_message=error_message,
                     )
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    error_code = topology_error_code(exc)
-                    logger.warning(
-                        'Topology discovery failed for device %s in run %s (attempt %s/%s): %s',
-                        device_id, run_id, attempt, max_attempts, exc,
-                    )
-                    if attempt >= max_attempts:
-                        failed_devices += 1
-                        _update_run_device(
-                            run_id,
-                            device_id,
-                            status='failed',
-                            completed_at=_utc_now_iso(),
-                            error_code=error_code,
-                            error_message=str(exc)[:500],
-                        )
+                    continue
+                if result.get('cancelled'):
+                    cancelled = True
+                elif result.get('success'):
+                    success_devices += 1
+                    total_observations += int(result.get('observations_count') or 0)
+                else:
+                    failed_devices += 1
 
             _update_run(
                 run_id,
@@ -2116,6 +2258,27 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
                 failed_devices=failed_devices,
                 total_observations=total_observations,
             )
+            if lease_lost.is_set():
+                _update_run(run_id, status='failed', last_error_code='discovery_lease_lost')
+                return
+            if cancelled:
+                pending_device_ids = device_ids[batch_start + len(batch_device_ids):]
+                for pending_device_id in pending_device_ids:
+                    _update_run_device(
+                        run_id,
+                        pending_device_id,
+                        status='cancelled',
+                        completed_at=_utc_now_iso(),
+                        error_code='discovery_cancelled',
+                        error_message='Discovery cancelled before this device was processed',
+                    )
+                break
+
+        if not cancelled and _is_run_cancel_requested(run_id):
+            cancelled = True
+        if lease_lost.is_set():
+            _update_run(run_id, status='failed', last_error_code='discovery_lease_lost')
+            return
 
         total_links = rebuild_links_from_observations()
         final_status = (
@@ -2133,6 +2296,7 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
             'cancelled': cancelled,
             'max_attempts': max_attempts,
             'timeout_seconds': timeout_seconds,
+            'device_concurrency': concurrency,
         }
         _update_run(
             run_id,
@@ -2159,6 +2323,12 @@ async def execute_discovery_run(run_id: str, device_ids: list[str]):
             lease_expires_at=None,
             heartbeat_at=_utc_now_iso(),
         )
+    finally:
+        heartbeat_stop.set()
+        try:
+            await heartbeat_task
+        except Exception:  # noqa: BLE001
+            logger.debug('Topology discovery lease heartbeat stopped with an error', exc_info=True)
 
 
 def get_current_links(

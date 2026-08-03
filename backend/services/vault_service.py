@@ -196,10 +196,10 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     Returns the SSH account fields plus ``snmp_community``. Callers must never
     log or return the resolved dictionary.
 
-    Enable-secret fallback policy:
-      If `enable_password` is not explicitly set, fall back to the admin password
-      (then the generic password). This matches the UI contract "Enable Secret
-      toggle ON but blank = use admin password as enable secret".
+    Enable-secret policy:
+      `enable_password` is independent from SSH login credentials. It is
+      returned only when explicitly configured and is never inferred from an
+      admin or normal login password.
     """
     from core.crypto import decrypt_credential
 
@@ -425,12 +425,9 @@ def resolve_device_credentials(device: dict) -> dict[str, str]:
     # (or the generic password as a last resort). This is what users
     # expect when the "Enable Secret" UI toggle is ON but the input is
     # left blank — the system should automatically use the admin creds.
-    if not resolved.get('enable_password'):
-        resolved['enable_password'] = (
-            resolved.get('admin_password') or
-            resolved.get('password') or
-            ''
-        )
+    # Enable Secret is independent from both SSH login roles. An empty value
+    # means the device does not require privilege escalation; never turn a
+    # normal/admin login password into an implicit Enable secret.
 
     return resolved
 

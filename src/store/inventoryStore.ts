@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Device } from '../types';
+import { displaySiteLabel } from '../utils/deviceUtils';
 
 // ─── Inline normalizer (mirrors useInventory.normalizeDeviceRecord) ───────────
 // Keeping this in the store means fetchInventory() needs no external argument,
@@ -46,7 +47,7 @@ const normalizeDeviceRecord = (raw: any): Device => {
         ? raw.compliance
         : 'unknown',
     role: typeof raw?.role === 'string' ? raw.role : '',
-    site: typeof raw?.site === 'string' ? raw.site : '',
+    site: displaySiteLabel(raw),
     model: typeof raw?.model === 'string' ? raw.model : '',
     version: typeof raw?.version === 'string' ? raw.version : '',
     sn: typeof raw?.sn === 'string' ? raw.sn : '',

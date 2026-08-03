@@ -88,6 +88,8 @@ def iter_action_definitions() -> tuple[dict[str, Any], ...]:
             "field_types": field_types,
             "parameters": dict(item.get("parameters") or {}),
             "timeout_seconds": int(item.get("timeout_seconds") or 30),
+            "raw_output_retention_days": int(item.get("raw_output_retention_days") or 1),
+            "failure_output_retention_days": int(item.get("failure_output_retention_days") or 7),
         })
     return tuple(items)
 
@@ -120,7 +122,7 @@ PLATFORM_ALIASES = {
 # never allowed to silently fall back to Cisco.
 PLATFORM_ACTION_COMMANDS: dict[str, dict[str, str]] = {
     "cisco_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show etherchannel summary", "get_arp_table": "show ip arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan brief", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes cpu", "get_memory": "show processes memory", "get_fans": "show environment fan", "get_power": "show environment power", "get_temperature": "show environment temperature", "get_clock": "show clock", "get_running_config": "show running-config"},
-    "huawei_vrp": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "dis eth-trunk", "get_arp_table": "display arp", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer", "get_ospf_neighbors": "display ospf peer brief", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory-usage", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display temperature", "get_clock": "display clock", "get_running_config": "display current-configuration"},
+    "huawei_vrp": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display eth-trunk", "get_arp_table": "display arp", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer", "get_ospf_neighbors": "display ospf peer brief", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory-usage", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display temperature", "get_clock": "display clock", "get_running_config": "display current-configuration"},
     "hp_comware": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor-information list", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display link-aggregation verbose", "get_arp_table": "display arp all", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan brief", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer ipv4 unicast", "get_ospf_neighbors": "display ospf peer", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display environment", "get_clock": "display clock", "get_running_config": "display current-configuration"},
     "juniper_junos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interfaces": "show interfaces detail", "get_interface_brief": "show interfaces terse", "get_ip_interfaces": "show interfaces terse", "get_route_table": "show route", "get_clock": "show system uptime", "get_running_config": "show configuration"},
     "arista_eos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show port-channel summary", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes top once", "get_memory": "show version", "get_clock": "show clock", "get_running_config": "show running-config"},
@@ -338,6 +340,113 @@ def _row_dict(row: Any) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+class PlatformActionSession:
+    """Hold one read-only driver context for several registry actions.
+
+    The public action boundary remains action-scoped for authorization,
+    parser validation, and audit telemetry.  A trusted collector can opt into
+    this private session only when several read-only actions belong to the
+    same device/release, avoiding a fresh SSH login for every command.
+    """
+
+    def __init__(self, device_id: str, user: dict[str, Any], driver_factory=None):
+        self.device_id = str(device_id)
+        self.user = user or {}
+        self.driver_factory = driver_factory
+        self._driver = None
+        self._release_id = ''
+        self._connection_driver = ''
+        self._parser_platform = ''
+
+    def __enter__(self):
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                """SELECT d.*, p.connection_driver, p.parser_platform,
+                          p.current_release_id, r.release_number
+                   FROM devices d
+                   LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id
+                   LEFT JOIN platform_releases r
+                     ON r.id = p.current_release_id AND r.status = 'PUBLISHED'
+                   WHERE d.id = ?""",
+                (self.device_id,),
+            ).fetchone()
+            device = _row_dict(row)
+            if not device:
+                raise PlatformRegistryError("DEVICE_NOT_FOUND", "Device not found", status_code=404)
+
+            tenant_id = str(self.user.get("tenant_id") or "")
+            if tenant_id and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
+                raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current tenant scope", status_code=403)
+            if self.user.get("role") != "Administrator" and device.get("tenant_id") and tenant_id != str(device["tenant_id"]):
+                raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "A tenant-scoped user is required for this device", status_code=403)
+            from core.rbac import authorize_resource
+            if not authorize_resource(
+                self.user,
+                "command",
+                "execute",
+                tenant_id=device.get("tenant_id"),
+                site_id=device.get("site_id") or device.get("site"),
+                device_group_id=device.get("device_group_id"),
+            ):
+                raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+            if not device.get("current_release_id") or not device.get("release_number"):
+                raise PlatformRegistryError("NO_PUBLISHED_RELEASE", "Device has no published platform release")
+
+            from services.vault_service import resolve_collector_credentials
+            collector_credentials = resolve_collector_credentials(device, ssh_role="normal")
+            ssh_credentials = collector_credentials["ssh"]
+            device["username"] = ssh_credentials["username"] or ""
+            device["password"] = ssh_credentials["password"] or ""
+            device["enable_password"] = ssh_credentials["enable_password"] or ""
+            driver_type = CONNECTION_DRIVER_TO_IMPLEMENTATION.get(
+                device.get("connection_driver"), device.get("connection_driver")
+            )
+            device["driver_type"] = driver_type
+            device["platform"] = device.get("parser_platform") or device.get("platform")
+            if self.driver_factory is None:
+                from drivers.factory import DriverFactory
+                self.driver_factory = DriverFactory
+            self._driver = self.driver_factory.get_driver(driver_type, device)
+            try:
+                self._driver.__enter__()
+            except Exception as exc:
+                try:
+                    self._driver.__exit__(type(exc), exc, exc.__traceback__)
+                finally:
+                    self._driver = None
+                raise
+            self._release_id = str(device.get("current_release_id") or "")
+            self._connection_driver = str(device.get("connection_driver") or "")
+            self._parser_platform = str(device.get("parser_platform") or "")
+            return self
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._driver is not None:
+            try:
+                return self._driver.__exit__(exc_type, exc_val, exc_tb)
+            finally:
+                self._driver = None
+        return None
+
+    def matches(self, device: dict[str, Any]) -> bool:
+        return (
+            str(device.get("current_release_id") or "") == self._release_id
+            and str(device.get("connection_driver") or "") == self._connection_driver
+            and str(device.get("parser_platform") or "") == self._parser_platform
+        )
+
+    def send_command(self, command: str):
+        if self._driver is None:
+            raise PlatformRegistryError("ACTION_SESSION_CLOSED", "Platform action session is closed")
+        return self._driver.send_command(command)
+
+
 def _profile_scope_clause(user: dict[str, Any]) -> tuple[str, list[Any]]:
     tenant_id = str(user.get("tenant_id") or "")
     if tenant_id:
@@ -420,6 +529,26 @@ def get_profile(profile_id: str, user: dict[str, Any]) -> dict[str, Any]:
             raise PlatformRegistryError("PLATFORM_NOT_FOUND", "Platform profile not found", status_code=404)
         result = _row_dict(row) or {}
         result["releases"] = [_row_dict(item) for item in conn.execute("SELECT * FROM platform_releases WHERE profile_id = ? ORDER BY release_number DESC", (profile_id,)).fetchall()]
+        result["identification_rules"] = [
+            _row_dict(item) for item in conn.execute(
+                """SELECT id, command, match_type, pattern, logic_group, rule_order,
+                          confidence, negate, enabled FROM platform_identification_rules
+                   WHERE platform_profile_id = ? ORDER BY rule_order, id""",
+                (profile_id,),
+            ).fetchall()
+        ]
+        result["parser_templates"] = [
+            _row_dict(item) for item in conn.execute(
+                """SELECT t.id, t.platform_code, t.template_code, t.name, t.source,
+                          t.status, COUNT(v.id) AS version_count
+                   FROM parser_templates t
+                   LEFT JOIN parser_template_versions v ON v.template_id = t.id
+                   WHERE t.platform_profile_id = ?
+                   GROUP BY t.id, t.platform_code, t.template_code, t.name, t.source, t.status
+                   ORDER BY t.template_code""",
+                (profile_id,),
+            ).fetchall()
+        ]
         return result
     finally:
         conn.close()
@@ -479,16 +608,24 @@ def create_release(profile_id: str, payload: dict[str, Any], user: dict[str, Any
         conn.close()
 
 
-def list_release_actions(profile_id: str, user: dict[str, Any]) -> list[dict[str, Any]]:
-    get_profile(profile_id, user)
+def list_release_actions(profile_id: str, user: dict[str, Any], release_id: str | None = None) -> list[dict[str, Any]]:
+    profile = get_profile(profile_id, user)
+    target_release_id = str(release_id or profile.get("current_release_id") or "").strip()
     conn = get_db_connection()
     try:
+        if target_release_id:
+            release = conn.execute(
+                "SELECT id, profile_id FROM platform_releases WHERE id = ?",
+                (target_release_id,),
+            ).fetchone()
+            if not release or str(release["profile_id"]) != str(profile_id):
+                raise PlatformRegistryError("RELEASE_NOT_FOUND", "Platform release not found", status_code=404)
         rows = conn.execute(
             """SELECT d.*, a.command, a.parser_template_version_id, a.field_contract_json, a.command_checksum
                FROM action_definitions d LEFT JOIN platform_release_actions a
-                 ON a.action_code = d.action_code AND a.release_id = (SELECT current_release_id FROM platform_profiles WHERE id = ?)
+                 ON a.action_code = d.action_code AND a.release_id = ?
                ORDER BY d.action_code""",
-            (profile_id,),
+            (target_release_id or None,),
         ).fetchall()
         return [_row_dict(row) for row in rows]
     finally:
@@ -721,8 +858,25 @@ def _record_platform_action_run(conn, device: dict[str, Any], metadata: dict[str
     raw_ciphertext = None
     raw_placeholder = "{}"
     raw_expiry = None
+    retention_days = 7
+    try:
+        policy = conn.execute(
+            "SELECT raw_output_retention_days, failure_output_retention_days "
+            "FROM action_definitions WHERE action_code = ?",
+            (metadata.get("action_code"),),
+        ).fetchone()
+        if policy:
+            selected_retention = policy[1] if not metadata.get("success") else policy[0]
+            retention_days = max(1, min(3650, int(selected_retention or retention_days)))
+    except Exception:
+        # Older isolated test schemas may not have the policy columns yet. The
+        # safe failure retention default remains bounded and encrypted.
+        retention_days = 7
     if raw_output and not metadata.get("success"):
-        raw_ciphertext, raw_placeholder, raw_expiry, _encrypted = protect_output(raw_output)
+        raw_ciphertext, raw_placeholder, raw_expiry, _encrypted = protect_output(
+            raw_output,
+            retention_days=retention_days,
+        )
     conn.execute(
         """INSERT INTO platform_action_runs
            (id, tenant_id, device_id, platform_profile_id, platform_release_id,
@@ -856,13 +1010,15 @@ def transition_release(release_id: str, event: str, user: dict[str, Any]) -> dic
             raise PlatformRegistryError("INVALID_RELEASE_STATE", f"Release must be {target[0]} before {event}")
         if event == "approve" and release.get("created_by") == (user.get("id") or user.get("username")):
             raise PlatformRegistryError("SELF_APPROVAL_FORBIDDEN", "The creator cannot approve their own release", status_code=403)
-        if event in {"approve", "publish"} and user.get("role") != "Administrator":
-            raise PlatformRegistryError("RELEASE_ROLE_FORBIDDEN", "Only Administrator can approve or publish a release", status_code=403)
+        if event in {"approve", "publish"}:
+            from core.rbac import authorize_resource
+            if not authorize_resource(user, "platform", event, tenant_id=profile.get("tenant_id")):
+                raise PlatformRegistryError("RELEASE_ROLE_FORBIDDEN", f"Platform permission is required to {event} a release", status_code=403)
         now = _now()
         # Validate the exact action rows held by the same transaction that
         # changes status.  This removes the old validate-then-publish race.
         actions = conn.execute(
-            "SELECT a.command, a.action_code FROM platform_release_actions a WHERE a.release_id = ?",
+            "SELECT a.command, a.action_code, a.parser_template_version_id FROM platform_release_actions a WHERE a.release_id = ?",
             (release_id,),
         ).fetchall()
         errors: list[dict[str, str]] = []
@@ -905,8 +1061,6 @@ def transition_release(release_id: str, event: str, user: dict[str, Any]) -> dic
 
 
 def rollback_profile(profile_id: str, release_id: str | None, user: dict[str, Any]) -> dict[str, Any]:
-    if user.get("role") != "Administrator":
-        raise PlatformRegistryError("RELEASE_ROLE_FORBIDDEN", "Only Administrator can roll back a release", status_code=403)
     conn = get_db_connection()
     try:
         import database as _database
@@ -915,6 +1069,9 @@ def rollback_profile(profile_id: str, release_id: str | None, user: dict[str, An
         else:
             conn.execute("BEGIN IMMEDIATE")
         profile = _assert_profile_access(conn, profile_id, user)
+        from core.rbac import authorize_resource
+        if not authorize_resource(user, "platform", "rollback", tenant_id=profile.get("tenant_id")):
+            raise PlatformRegistryError("RELEASE_ROLE_FORBIDDEN", "Platform rollback permission is required", status_code=403)
         target = release_id or conn.execute("SELECT id FROM platform_releases WHERE profile_id = ? AND status = 'DEPRECATED' ORDER BY release_number DESC LIMIT 1", (profile_id,)).fetchone()
         target_id = release_id or (target["id"] if target else None)
         if not target_id:
@@ -1036,6 +1193,7 @@ def execute_platform_action(
     parameters: dict[str, Any] | None = None,
     driver_factory=None,
     include_raw_output: bool = False,
+    _session: PlatformActionSession | None = None,
 ) -> dict[str, Any]:
     """Execute one action from the device's immutable current release."""
     if not action_code or not re.fullmatch(r"[a-z][a-z0-9_]{2,63}", action_code):
@@ -1124,15 +1282,34 @@ def execute_platform_action(
                 or template["platform_profile_id"] != device.get("profile_id")
             ):
                 raise PlatformRegistryError("PARSER_SCOPE_DENIED", "Release parser version is outside the device scope", status_code=403)
-        if driver_factory is None:
-            from drivers.factory import DriverFactory
-            driver_factory = DriverFactory
-        driver_type = CONNECTION_DRIVER_TO_IMPLEMENTATION.get(device.get("connection_driver"), device.get("connection_driver"))
-        device["driver_type"] = driver_type
-        device["platform"] = device.get("parser_platform") or device.get("platform")
-        driver = driver_factory.get_driver(driver_type, device)
-        with driver:
-            result = driver.send_command(resolved_command)
+        if _session is not None:
+            if not _session.matches(device):
+                raise PlatformRegistryError("ACTION_SESSION_STALE", "Platform action session no longer matches the current release")
+            result = _session.send_command(resolved_command)
+        else:
+            if driver_factory is None:
+                from drivers.factory import DriverFactory
+                driver_factory = DriverFactory
+            # Every registry action is a network read and must use the same
+            # credential contract as topology, inspection, and other collectors.
+            # The row above intentionally selects ``d.*`` for scope and audit
+            # metadata, but its legacy credential columns may be empty when the
+            # device is bound to a shared credential-center entry. Resolve the
+            # ordinary SSH account before handing the device to a driver; never
+            # pass the raw database password field through this boundary.
+            from services.vault_service import resolve_collector_credentials
+
+            collector_credentials = resolve_collector_credentials(device, ssh_role="normal")
+            ssh_credentials = collector_credentials["ssh"]
+            device["username"] = ssh_credentials["username"] or ""
+            device["password"] = ssh_credentials["password"] or ""
+            device["enable_password"] = ssh_credentials["enable_password"] or ""
+            driver_type = CONNECTION_DRIVER_TO_IMPLEMENTATION.get(device.get("connection_driver"), device.get("connection_driver"))
+            device["driver_type"] = driver_type
+            device["platform"] = device.get("parser_platform") or device.get("platform")
+            driver = driver_factory.get_driver(driver_type, device)
+            with driver:
+                result = driver.send_command(resolved_command)
         output = str(getattr(result, "output", "") or "")
         if not getattr(result, "success", False):
             response = {"success": False, "error_code": "CONNECTION_OR_COMMAND_FAILED", "error": getattr(result, "error", "Command execution failed"), "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "command": resolved_command, "resolved_command_checksum": _checksum(resolved_command)}

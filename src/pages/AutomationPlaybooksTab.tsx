@@ -68,6 +68,7 @@ interface AutomationPlaybooksTabProps {
   onPreview: () => Promise<void> | void;
   onExecuteValidation: () => Promise<void> | void;
   onExecuteApply: () => Promise<void> | void;
+  currentUser?: { role?: string; role_profile?: string };
 }
 
 const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
@@ -94,6 +95,7 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
   onPreview,
   onExecuteValidation,
   onExecuteApply,
+  currentUser,
 }) => {
   const [viewMode, setViewMode] = useState<'execute' | 'versions'>('execute');
 
@@ -110,7 +112,7 @@ const AutomationPlaybooksTab: React.FC<AutomationPlaybooksTabProps> = ({
         <button type="button" onClick={() => setViewMode('execute')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === 'execute' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>{language === 'zh' ? '执行场景' : 'Execute scenario'}</button>
         <button type="button" onClick={() => setViewMode('versions')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === 'versions' ? 'bg-cyan-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>{language === 'zh' ? '受控版本编辑' : 'Controlled versions'}</button>
       </div>
-      {viewMode === 'versions' ? <PlaybookVersionEditor language={language} scenarios={filteredScenarios} /> : <>
+      {viewMode === 'versions' ? <PlaybookVersionEditor language={language} scenarios={filteredScenarios} currentUser={currentUser} /> : <>
       <div className="mb-4 rounded-xl border border-black/10 bg-black/[0.02] px-4 py-3 text-xs text-black/60">
         {language === 'zh'
           ? '标准流程：选择场景 -> 填写变量 -> 选择目标设备 -> Preview Commands -> Validation / Apply Changes。'

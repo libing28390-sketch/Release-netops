@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
-from api.platform_registry import _require_registry_enabled
+from api.platform_registry import (
+    PlatformActionRequest,
+    PlatformActionUpdateRequest,
+    PlatformBatchBindingRequest,
+    PlatformProfileCreateRequest,
+    PlatformReleaseCreateRequest,
+    PlatformRollbackRequest,
+    _require_registry_enabled,
+)
 from core.rbac import authorize_resource, permission_catalog, RECOMMENDED_ROLE_PROFILES
 from services.platform_registry_service import preview_platform_migration
 
@@ -21,6 +30,42 @@ def test_registry_write_and_execution_gate_can_be_enabled(monkeypatch):
     _require_registry_enabled()
 
 
+def test_platform_write_request_models_reject_unknown_fields_and_bound_values():
+    profile = PlatformProfileCreateRequest(
+        platform_code="tenant_edge",
+        connection_driver="netmiko",
+        parser_platform="tenant_edge",
+    )
+    assert profile.model_dump()["platform_code"] == "tenant_edge"
+    assert PlatformReleaseCreateRequest().safety_policy == {"read_only": True}
+    assert PlatformRollbackRequest(release_id="release-1").release_id == "release-1"
+    assert PlatformActionUpdateRequest(command="show version").command == "show version"
+
+    with pytest.raises(ValidationError):
+        PlatformProfileCreateRequest(
+            platform_code="tenant_edge",
+            connection_driver="netmiko",
+            parser_platform="tenant_edge",
+            unexpected="reject-me",
+        )
+    with pytest.raises(ValidationError):
+        PlatformActionRequest(device_id="device-1", action_code="bad-action", parameters={})
+
+
+def test_platform_binding_request_models_normalize_and_reject_duplicate_batches():
+    request = PlatformBatchBindingRequest(
+        device_ids=[" device-1 ", "device-2"],
+        platform_profile_id="profile-1",
+    )
+    assert request.device_ids == ["device-1", "device-2"]
+
+    with pytest.raises(ValidationError):
+        PlatformBatchBindingRequest(
+            device_ids=["device-1", " device-1"],
+            platform_profile_id="profile-1",
+        )
+
+
 def test_operator_cannot_approve_publish_or_rollback_resources():
     operator = {"id": "operator-1", "username": "operator", "role": "Operator", "tenant_id": "tenant-1"}
     assert authorize_resource(operator, "playbook", "execute", tenant_id="tenant-1")
@@ -36,6 +81,23 @@ def test_permission_catalog_exposes_reviewed_resource_actions_and_roles():
     assert catalog["sample_output"] == ["delete", "upload", "view"]
     assert "Template Developer" in RECOMMENDED_ROLE_PROFILES
     assert "Release Manager" in RECOMMENDED_ROLE_PROFILES
+    assert "Scheduler Administrator" in RECOMMENDED_ROLE_PROFILES
+
+
+def test_named_profiles_separate_authoring_review_and_schedule_permissions():
+    author = {"id": "author-1", "role": "Operator", "role_profile": "Platform Maintainer"}
+    reviewer = {"id": "reviewer-1", "role": "Operator", "role_profile": "Release Manager"}
+    scheduler = {"id": "scheduler-1", "role": "Operator", "role_profile": "Scheduler Administrator"}
+    operator = {"id": "operator-2", "role": "Operator", "role_profile": "Automation Operator"}
+
+    assert authorize_resource(author, "platform", "create")
+    assert not authorize_resource(author, "platform", "publish")
+    assert authorize_resource(reviewer, "platform", "approve")
+    assert authorize_resource(reviewer, "platform", "publish")
+    assert authorize_resource(scheduler, "playbook", "schedule")
+    assert not authorize_resource(scheduler, "playbook", "execute")
+    assert authorize_resource(operator, "playbook", "execute")
+    assert not authorize_resource(operator, "playbook", "schedule")
 
 
 def test_migration_preview_is_read_only_and_reports_legacy_conflicts(isolated_db):

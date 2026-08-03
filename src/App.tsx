@@ -76,6 +76,7 @@ import { useDeviceConnectionAndSnmp } from './hooks/useDeviceConnectionAndSnmp';
 import { useDeviceDetail } from './hooks/useDeviceDetail';
 import { useInventoryImportExport } from './hooks/useInventoryImportExport';
 import { AppProviders } from './contexts/AppProviders';
+import { authHeaders } from './api/http';
 
 // Types imported from ./types — re-export User as UserType to avoid clash with lucide-react User icon
 
@@ -247,7 +248,7 @@ const App: React.FC = () => {
     savedQueries,
     handleRerun,
     handleClearSelection
-  } = useAutomation({ currentUser, language, showToast, navigate, setSelectedDevice, devices, selectedDevice, activeTab, automationPage });
+  } = useAutomation({ currentUser, isAuthenticated, language, showToast, navigate, setSelectedDevice, devices, selectedDevice, activeTab, automationPage });
 
   const {
     globalVars,
@@ -352,7 +353,7 @@ const App: React.FC = () => {
         status: statusFilter,
         ...(search ? { search } : {}),
       });
-      const resp = await fetch(`/api/playbooks/${executionId}/devices?${params}`);
+      const resp = await fetch(`/api/playbooks/${executionId}/devices?${params}`, { headers: authHeaders() });
       if (resp.ok) {
         const data = await resp.json();
         setSelectedExecDevices(data.items || []);
@@ -674,17 +675,26 @@ const App: React.FC = () => {
 
   // Fetch actual users for account switching AFTER setUsers is initialized
   useEffect(() => {
-    if (isAuthenticated) {
-      const token = localStorage.getItem('netops_token');
-      fetch('/api/users', { 
-        headers: token ? { Authorization: `Bearer ${token}` } : {} 
+    if (!isAuthenticated) return;
+    const token = localStorage.getItem('netops_token');
+    // ``isAuthenticated`` can briefly lead localStorage during startup,
+    // cross-tab logout, or token rotation. Never issue an anonymous request
+    // to the administrator-only users endpoint in that window.
+    if (!token) return;
+    fetch('/api/users', { headers: authHeaders() })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          window.dispatchEvent(new Event('netops:auth-expired'));
+          return null;
+        }
+        if (!response.ok) return null;
+        return data;
       })
-        .then(r => r.json())
-        .then(data => {
-          if (Array.isArray(data)) setUsers(data);
-        })
-        .catch(() => {});
-    }
+      .then(data => {
+        if (Array.isArray(data)) setUsers(data);
+      })
+      .catch(() => {});
   }, [isAuthenticated, setUsers]);
   const [trendDays, setTrendDays] = useState<7 | 30>(7);
   const [dashBannerCollapsed, setDashBannerCollapsed] = useState(false);
@@ -806,13 +816,17 @@ const App: React.FC = () => {
    */
   const fetchSharedLookups = useCallback(async () => {
     try {
+      const headers = authHeaders();
       const [scriptsRes, usersRes, templatesRes, varsRes] = await Promise.all([
-        fetch('/api/scripts'),
-        fetch('/api/users'),
-        fetch('/api/templates'),
-        fetch('/api/vars')
+        fetch('/api/scripts', { headers }),
+        fetch('/api/users', { headers }),
+        fetch('/api/templates', { headers }),
+        fetch('/api/vars', { headers })
       ]);
 
+      if (usersRes.status === 401) {
+        window.dispatchEvent(new Event('netops:auth-expired'));
+      }
       if (scriptsRes.ok) setScripts(await scriptsRes.json());
       if (usersRes.ok) setUsers(await usersRes.json());
       if (templatesRes.ok) {
@@ -1440,7 +1454,7 @@ const App: React.FC = () => {
 
     setSelectedExecutionLoading(true);
     try {
-      const response = await fetch(`/api/playbooks/${execution.id}/summary`);
+      const response = await fetch(`/api/playbooks/${execution.id}/summary`, { headers: authHeaders() });
       if (response.ok) {
         setSelectedExecutionDetail(await response.json());
       }
@@ -1459,7 +1473,7 @@ const App: React.FC = () => {
     if (!confirmed) return;
 
     try {
-      const response = await fetch(`/api/playbooks/${execution.id}`, { method: 'DELETE' });
+      const response = await fetch(`/api/playbooks/${execution.id}`, { method: 'DELETE', headers: authHeaders() });
       if (!response.ok) {
         showToast(language === 'zh' ? '删除失败' : 'Delete failed', 'error');
         return;
@@ -1493,7 +1507,7 @@ const App: React.FC = () => {
     setSelectedDeviceDetailLoading(true);
     setSelectedDeviceDetail(null);
     try {
-      const response = await fetch(`/api/playbooks/${activeExecutionId}/devices/${deviceId}`);
+      const response = await fetch(`/api/playbooks/${activeExecutionId}/devices/${deviceId}`, { headers: authHeaders() });
       if (response.ok) {
         setSelectedDeviceDetail(await response.json());
       }

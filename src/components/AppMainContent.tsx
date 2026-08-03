@@ -856,6 +856,7 @@ const AppMainContent: React.FC = () => {
             onPreview={() => previewPlaybook(selectedScenario, playbookPlatform, playbookVars)}
             onExecuteValidation={() => executePlaybook(true)}
             onExecuteApply={() => executePlaybook(false)}
+            currentUser={currentUser}
           />
         </Suspense>
       )}
@@ -952,7 +953,7 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'automation' && automationPage === 'textfsm-registry' && (
         <Suspense fallback={lazyPanelFallback}>
-          <ParserRegistryTab language={language} />
+          <ParserRegistryTab language={language} currentUser={currentUser} />
         </Suspense>
       )}
 
@@ -1138,7 +1139,7 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'platform-registry' && (
         <Suspense fallback={lazyPanelFallback}>
-          <PlatformRegistryTab language={language} />
+          <PlatformRegistryTab language={language} currentUser={currentUser} />
         </Suspense>
       )}
 

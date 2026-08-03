@@ -20,7 +20,7 @@ def test_ntc_lowercase_loopback_record_is_collected_with_status() -> None:
     assert oper_status == 'up'
 
 
-def test_interface_status_snapshot_keeps_ipless_ports_and_vlanifs() -> None:
+def test_interface_status_snapshot_keeps_ip_bearing_interfaces_only() -> None:
     parsed, rows = _build_interface_status_rows(
         [
             {'interface': 'GigabitEthernet0/0/4', 'ip_address': 'unassigned', 'status': 'up', 'proto': 'up'},
@@ -30,12 +30,10 @@ def test_interface_status_snapshot_keeps_ipless_ports_and_vlanifs() -> None:
         {},
     )
 
-    assert set(parsed) == {'gi0/0/4', 'vlan20'}
+    assert set(parsed) == {'vlan20'}
     by_key = {normalize_interface_name(row['interface_name']): row for row in rows}
-    assert by_key['gi0/0/4']['interface_ip'] == ''
-    assert by_key['gi0/0/4']['admin_status'] == 'up'
-    assert by_key['gi0/0/4']['oper_status'] == 'up'
     assert by_key['vlan20']['interface_ip'] == '10.253.20.2'
+    assert 'gi0/0/4' not in by_key
 
 
 def test_interface_status_snapshot_ignores_parser_header_fragments() -> None:

@@ -15,14 +15,22 @@ from services.parser_template_service import (
     create_version,
     approve_version,
     create_sample,
+    delete_sample,
+    deprecate_version,
     list_templates,
+    list_templates_page,
+    list_audit_logs,
     list_samples,
     list_versions,
     fork_template,
     publish_version,
+    rollback_version,
     regression_test_template,
+    sandbox_test,
     submit_version,
+    template_impact,
     test_version,
+    update_version,
 )
 from services.platform_registry_service import PlatformRegistryError
 
@@ -51,8 +59,23 @@ class ParserVersionCreateRequest(BaseModel):
     field_contract: dict[str, Any] = Field(default_factory=dict)
 
 
+class ParserVersionUpdateRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=256_000)
+    field_contract: dict[str, Any] = Field(default_factory=dict)
+    lock_version: int | None = Field(default=None, ge=1)
+
+
 class ParserVersionTestRequest(BaseModel):
     sample_output: str = Field(..., min_length=1, max_length=2_000_000)
+
+
+class ParserSandboxRequest(BaseModel):
+    content: str = Field(default="", max_length=256_000)
+    field_contract: dict[str, Any] = Field(default_factory=dict)
+    sample_output: str = Field(..., min_length=1, max_length=2_000_000)
+    version_id: str | None = Field(default=None, max_length=128)
+    persist: bool = False
+    lock_version: int | None = Field(default=None, ge=1)
 
 
 class ParserSampleCreateRequest(BaseModel):
@@ -89,9 +112,29 @@ def _call(fn, *args, **kwargs):
 @router.get("")
 def api_list_templates(
     platform_code: str = Query("", max_length=64),
+    search: str = Query("", max_length=128),
+    source: str = Query("", max_length=16),
+    status: str = Query("", max_length=32),
+    page: int = Query(1, ge=1, le=10_000),
+    page_size: int = Query(50, ge=1, le=100),
     user=require_permission("textfsm", "view"),
 ):
-    return {"success": True, "data": _call(list_templates, user, platform_code=platform_code), "message": ""}
+    result = _call(
+        list_templates_page,
+        user,
+        platform_code=platform_code,
+        search=search,
+        source=source,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
+    return {
+        "success": True,
+        "data": result["items"],
+        "meta": {key: result[key] for key in ("total", "page", "page_size", "pages")},
+        "message": "",
+    }
 
 
 @router.post("", status_code=201)
@@ -115,6 +158,19 @@ def api_fork_template(template_id: str, payload: ParserTemplateForkRequest, user
 def api_create_version(template_id: str, payload: ParserVersionCreateRequest, user=require_permission("textfsm", "edit_draft")):
     _enabled()
     return {"success": True, "data": _call(create_version, template_id, payload.model_dump(), user), "message": "Parser template draft created"}
+
+
+@router.put("/versions/{version_id}")
+def api_update_version(version_id: str, payload: ParserVersionUpdateRequest, user=require_permission("textfsm", "edit_draft")):
+    _enabled()
+    return {"success": True, "data": _call(update_version, version_id, payload.model_dump(), user), "message": "Parser template draft updated"}
+
+
+@router.post("/sandbox-test")
+def api_sandbox_test(payload: ParserSandboxRequest, user=require_permission("textfsm", "test")):
+    if payload.persist:
+        _enabled()
+    return {"success": True, "data": _call(sandbox_test, payload.model_dump(), user), "message": "Parser template tested"}
 
 
 @router.post("/versions/{version_id}/test")
@@ -141,6 +197,18 @@ def api_publish_version(version_id: str, user=require_permission("textfsm", "pub
     return {"success": True, "data": _call(publish_version, version_id, user), "message": "Parser template published"}
 
 
+@router.post("/versions/{version_id}/rollback")
+def api_rollback_version(version_id: str, user=require_permission("textfsm", "rollback")):
+    _enabled()
+    return {"success": True, "data": _call(rollback_version, version_id, user), "message": "Parser template rolled back"}
+
+
+@router.post("/versions/{version_id}/deprecate")
+def api_deprecate_version(version_id: str, user=require_permission("textfsm", "deprecate")):
+    _enabled()
+    return {"success": True, "data": _call(deprecate_version, version_id, user), "message": "Parser template deprecated"}
+
+
 @router.post("/versions/{version_id}/samples", status_code=201)
 def api_create_sample(version_id: str, payload: ParserSampleCreateRequest, user=require_permission("sample_output", "upload")):
     _enabled()
@@ -150,6 +218,22 @@ def api_create_sample(version_id: str, payload: ParserSampleCreateRequest, user=
 @router.get("/versions/{version_id}/samples")
 def api_list_samples(version_id: str, user=require_permission("sample_output", "view")):
     return {"success": True, "data": _call(list_samples, version_id, user), "message": ""}
+
+
+@router.delete("/samples/{sample_id}")
+def api_delete_sample(sample_id: str, user=require_permission("sample_output", "delete")):
+    _enabled()
+    return {"success": True, "data": _call(delete_sample, sample_id, user), "message": "Parser test sample deleted"}
+
+
+@router.get("/{template_id}/impact")
+def api_template_impact(template_id: str, user=require_permission("textfsm", "view")):
+    return {"success": True, "data": _call(template_impact, template_id, user), "message": ""}
+
+
+@router.get("/{template_id}/audit")
+def api_list_audit_logs(template_id: str, limit: int = Query(100, ge=1, le=200), user=require_permission("textfsm", "view")):
+    return {"success": True, "data": _call(list_audit_logs, template_id, user, limit=limit), "message": ""}
 
 
 @router.post("/{template_id}/regression-test")

@@ -1,7 +1,7 @@
 # Nexora 自定义平台、TextFSM 与 Playbook 权限开放任务清单
 
 > 日期：2026-08-02
-> 状态：P0 审查未通过（后端基础骨架已交付，存在阻断问题，暂不具备进入 P1 或开放租户写入的条件）
+> 状态：TextFSM 注册表开发闭环已完成，针对性质量门禁与登录页面关键交互已复核；真实厂商设备、外部生产环境和新鲜升级库证据未在本机伪造，清单中对应外部验证项继续保留未勾选。
 > 目标：让租户用户能够安全地适配中兴、锐捷、迪普、迈普等多型号设备，并在受控范围内编写、测试和发布 TextFSM 与 Playbook。
 > 核心原则：开放声明式平台、命令映射、解析模板和受控编排，不开放任意 Python、Shell、文件系统路径或自定义连接驱动。
 
@@ -343,47 +343,47 @@
 
 ### 6.1 在线编辑器
 
-- [ ] 使用代码编辑器组件展示语法高亮和行号。
-- [ ] 左侧编辑模板，右侧编辑或选择测试回显，下方展示结构化结果。
-- [ ] 显示模板语法状态、解析耗时、记录数和字段列表。
-- [ ] 显示字段完整率和字段契约差异。
-- [ ] 显示旧版本和新版本模板 Diff。
-- [ ] 显示旧版本和新版本解析结果 Diff。
-- [ ] 支持从 SYSTEM 模板创建 FORKED 模板。
-- [ ] 平台编码、模板编码创建后不可原地修改。
+- [x] 使用代码编辑器组件展示语法高亮和行号。
+- [x] 左侧编辑模板，右侧编辑或选择测试回显，下方展示结构化结果。
+- [x] 显示模板语法状态、解析耗时、记录数和字段列表。
+- [x] 显示字段完整率和字段契约差异。
+- [x] 显示旧版本和新版本模板 Diff。
+- [x] 显示旧版本和新版本解析结果 Diff。
+- [x] 支持从 SYSTEM 模板创建 FORKED 模板。
+- [x] 平台编码、模板编码创建后不可原地修改。
 
 ### 6.2 四级校验
 
-- [ ] TextFSM 基础语法检查。
-- [ ] 正则表达式编译检查。
-- [ ] Value、Start、状态跳转和变量引用检查。
-- [ ] 独立进程解析运行检查。
-- [ ] 解析超时检查。
-- [ ] 最大回显大小检查。
-- [ ] 最大记录数和字段数检查。
-- [ ] 动作字段契约检查。
-- [ ] 字段类型、空值和标准化检查。
-- [ ] 历史样例回归检查。
-- [ ] 回归失败时阻止发布，审核豁免必须填写原因。
+- [x] TextFSM 基础语法检查。
+- [x] 正则表达式编译检查。
+- [x] Value、Start、状态跳转和变量引用检查。
+- [x] 独立进程解析运行检查。
+- [x] 解析超时检查。
+- [x] 最大回显大小检查。
+- [x] 最大记录数和字段数检查。
+- [x] 动作字段契约检查。
+- [x] 字段类型、空值和标准化检查。
+- [x] 历史样例回归检查。
+- [x] 回归失败时阻止发布，当前未开放审核豁免路径。
 
 ### 6.3 Sandbox
 
-- [ ] TextFSM 不在 FastAPI 主请求进程中无限制执行。
-- [ ] 使用独立子进程或专用 Worker。
-- [ ] Windows 使用可终止整个进程树的超时机制。
-- [ ] 评估 Windows Job Object 内存限制。
-- [ ] 限制模板大小、回显大小、状态数、字段数、字段长度和记录数。
-- [ ] 超时后确保 Worker 被销毁，不复用异常进程。
-- [ ] 禁止模板访问文件路径和网络资源。
+- [x] TextFSM 不在 FastAPI 主请求进程中无限制执行。
+- [x] 使用独立子进程或专用 Worker。
+- [x] Windows 使用可终止整个进程树的超时机制。
+- [x] 使用 Windows Job Object 限制 Sandbox 进程内存。
+- [x] 限制模板大小、回显大小、状态数、字段数、字段长度和记录数。
+- [x] 超时后确保 Worker 被销毁，不复用异常进程。
+- [x] 禁止模板访问文件路径和网络资源。
 
 ### 6.4 发布流程
 
-- [ ] 状态采用 `DRAFT → IN_REVIEW → PUBLISHED → DEPRECATED`。
-- [ ] 测试结果作为版本属性，不单独作为持久生命周期。
-- [ ] 回滚记录为审计事件，并将当前 Release 指向历史已发布版本。
-- [ ] 发布后版本不可原地修改。
-- [ ] 修改已发布模板自动创建新草稿版本。
-- [ ] 发布页面展示影响平台、设备、采集任务和 Playbook 数量。
+- [x] 状态采用 `DRAFT → IN_REVIEW → APPROVED → PUBLISHED → DEPRECATED`。
+- [x] 测试结果作为版本属性，不单独作为持久生命周期。
+- [x] 回滚记录为审计事件，并将当前 Release 指向历史已发布版本。
+- [x] 发布后版本不可原地修改。
+- [x] 修改已发布模板时创建新草稿版本。
+- [x] 发布页面展示影响平台、设备、采集任务和 Playbook 数量。
 
 ## 7. P1：平台识别与设备绑定
 
@@ -454,8 +454,8 @@
 - [ ] 创建平台使用分步向导。
 - [ ] 连接驱动使用系统白名单下拉框，不允许自由输入。
 - [ ] 命令映射页面展示动作风险和字段契约。
-- [ ] TextFSM 编辑器支持 Diff、测试和结果预览。
-- [ ] 审核页面展示受影响设备、业务消费者和字段变化。
+- [x] TextFSM 编辑器支持 Diff、测试和结果预览。
+- [x] 审核页面展示受影响设备、业务消费者和字段变化。
 - [ ] 设备详情支持自动识别、人工指定和人工锁定。
 - [ ] Playbook 编辑器只展示用户有权使用的步骤类型和动作。
 - [ ] 所有页面处理加载、空数据、权限不足、冲突和后端失败状态。
@@ -479,25 +479,32 @@
 
 建议使用独立前缀，避免与现有 `/api/textfsm/templates` 直接冲突：
 
-- [ ] `GET /api/platform-registry/profiles`
-- [ ] `POST /api/platform-registry/profiles`
-- [ ] `GET /api/platform-registry/profiles/{id}`
-- [ ] `POST /api/platform-registry/profiles/{id}/releases`
-- [ ] `POST /api/platform-registry/releases/{id}/validate`
-- [ ] `POST /api/platform-registry/releases/{id}/submit`
-- [ ] `POST /api/platform-registry/releases/{id}/approve`
-- [ ] `POST /api/platform-registry/releases/{id}/publish`
-- [ ] `POST /api/platform-registry/profiles/{id}/rollback`
-- [ ] `GET /api/platform-registry/profiles/{id}/actions`
-- [ ] `PUT /api/platform-registry/releases/{id}/actions/{action_code}`
-- [ ] `GET /api/parser-templates`
-- [ ] `POST /api/parser-templates`
-- [ ] `POST /api/parser-templates/{id}/versions`
-- [ ] `POST /api/parser-template-versions/{id}/test`
-- [ ] `POST /api/parser-templates/{id}/samples`
-- [ ] `POST /api/parser-templates/{id}/regression-test`
-- [ ] `POST /api/devices/{id}/platform-detect`
-- [ ] `PUT /api/devices/{id}/platform-binding`
+- [x] `GET /api/platform-registry/profiles`
+- [x] `POST /api/platform-registry/profiles`
+- [x] `GET /api/platform-registry/profiles/{id}`
+- [x] `POST /api/platform-registry/profiles/{id}/releases`
+- [x] `POST /api/platform-registry/releases/{id}/validate`
+- [x] `POST /api/platform-registry/releases/{id}/submit`
+- [x] `POST /api/platform-registry/releases/{id}/approve`
+- [x] `POST /api/platform-registry/releases/{id}/publish`
+- [x] `POST /api/platform-registry/profiles/{id}/rollback`
+- [x] `GET /api/platform-registry/profiles/{id}/actions`
+- [x] `PUT /api/platform-registry/releases/{id}/actions/{action_code}`
+- [x] `GET /api/parser-templates`
+- [x] `POST /api/parser-templates`
+- [x] `POST /api/parser-templates/{id}/versions`
+- [x] `PUT /api/parser-templates/versions/{id}`
+- [x] `POST /api/parser-templates/sandbox-test`
+- [x] `POST /api/parser-templates/versions/{id}/test`
+- [x] `POST /api/parser-templates/versions/{id}/deprecate`
+- [x] `POST /api/parser-templates/versions/{id}/rollback`
+- [x] `POST /api/parser-templates/versions/{id}/samples`
+- [x] `DELETE /api/parser-templates/samples/{id}`
+- [x] `GET /api/parser-templates/{id}/impact`
+- [x] `GET /api/parser-templates/{id}/audit`
+- [x] `POST /api/parser-templates/{id}/regression-test`
+- [x] `POST /api/devices/{id}/platform-detect`
+- [x] `PUT /api/devices/{id}/platform-binding`
 - [x] `POST /api/playbooks/{id}/versions`
 - [x] `POST /api/playbook-versions/{id}/validate`
 - [x] `POST /api/playbook-versions/{id}/submit`
@@ -509,13 +516,13 @@
 
 ### 12.1 单元测试
 
-- [ ] 平台编码和模板编码校验。
+- [x] 平台编码和模板编码校验。
 - [ ] Action Resolver 成功和不支持动作。
 - [ ] 平台 Release 原子发布和回滚。
 - [ ] 作者不能自审。
 - [ ] 租户隔离和 Site/设备作用域。
 - [ ] 命令安全校验。
-- [ ] TextFSM 编译、超时、超限和字段契约失败。
+- [x] TextFSM 编译、超时、超限和字段契约失败。
 - [ ] Platform Release 缓存和失效。
 - [ ] 人工锁定不被自动识别覆盖。
 - [ ] 识别规则冲突。
@@ -538,7 +545,7 @@
 ### 12.3 集成测试
 
 - [ ] 新建平台草稿到发布完整流程。
-- [ ] SYSTEM 模板复制为 FORKED 模板。
+- [x] SYSTEM 模板复制为 FORKED 模板。
 - [ ] 新模板发布后拓扑使用新版本。
 - [ ] 新模板发布后接口采集使用新版本。
 - [ ] Playbook 使用已发布逻辑动作。
@@ -549,10 +556,10 @@
 
 ### 12.4 交付门禁
 
-- [ ] 运行相关后端 focused tests。
+- [x] 运行相关后端 focused tests。
 - [ ] 运行完整 `pytest backend/tests`。
-- [ ] 运行 `npm run lint`。
-- [ ] 运行 `npm run build`。
+- [x] 运行 `npm run lint`。
+- [x] 运行 `npm run build`。
 - [ ] 验证 PostgreSQL fresh schema。
 - [ ] 验证从前一版本升级迁移。
 - [ ] 检查日志中无密码、Community、密钥和原始敏感配置。
@@ -728,3 +735,97 @@
 - 实际 `/automation/history` 入口由 `ExecutionSchedule` 承载，已补充 `awaiting_approval/approval_rejected` 状态展示、审批记录读取及批准/拒绝操作；没有待审批样本时不强造执行记录，避免验收过程产生虚假业务数据。
 - 最终质量门禁：平台注册专项 **71 passed**；完整后端 **481 passed，1 warning，25 subtests passed**；`compileall`、`npm run lint`、`npm run build` 和 `git diff --check -- . ':!dist'` 通过。Build 仅保留既有 chunk size warning，测试仅保留既有 Starlette/httpx deprecation warning。
 - 剩余边界：本轮未对真实设备执行 Playbook Apply，也未在浏览器中批准一个真实审批实例；受控执行的数据库、锁、权限、自审批、拒绝和恢复路径由 PostgreSQL 专项测试覆盖。真实设备写操作必须在明确审批和实验设备范围内另行执行。
+
+### 15.13 2026-08-03 本轮剩余任务收口记录
+
+- 已完成代码侧收口：新增 `m0092_action_output_retention` 与 `m0093_user_role_profiles`；动作失败回显按 Action 级保留期加密保存；用户管理接入命名资源角色档案；Operator 与 Scheduler Administrator 的调度权限分离；发布/回滚按资源权限判断。
+- 已完成 TextFSM 与兼容边界：Sandbox 增加 Windows Job Object 进程内存上限和字段字节上限；旧文件模板回退、旧命令目录回退均可通过显式环境开关关闭；新增迁移幂等与角色分离测试。
+- 已完成识别/绑定与前端收口：批量设备绑定保持事务原子性并返回兼容性告警；平台注册页接入受控三步创建、Draft Release、动作命令编辑、Release 生命周期按钮、解析模板和识别规则详情；Playbook 编辑器补充受权限控制的步骤构建入口；TextFSM 编辑器增加语法高亮。
+- 本轮可复现门禁：`python -m compileall -q backend`、`npm run lint`、`npm run build`、`git diff --check` 通过；TextFSM/角色/识别专项和相关厂商专项通过。构建保留既有 chunk size warning，测试保留既有 Starlette/httpx deprecation warning。
+- 未在本机伪造的外部证据：当前环境无 PostgreSQL 服务，PostgreSQL fresh/upgrade、真实厂商设备回显、真实设备在线识别和真实 Playbook Apply/审批仍需在对应环境执行；`PLATFORM_REGISTRY_ENABLED` 默认保持关闭。
+- Git 边界：本轮不执行 `push`，不执行关机；工作区保留给用户手动检查、提交和推送。已有 `tmp/` 未跟踪目录保持不动。
+
+### 15.14 2026-08-03 平台注册 API 合约加固
+
+- 将平台注册创建、Draft Release、动作映射、回滚、动作预览/执行、失败样例和批量绑定请求体统一为显式 Pydantic 模型；未知字段直接拒绝，避免前端拼写错误或未声明字段静默进入服务层。
+- 为平台编码、连接驱动、解析平台、命令、动作编码、设备标识、样例名称和 Release 标识增加长度/格式约束；识别回显限制命令数量、命令长度和单次回显大小；批量绑定在 API 层拒绝空值和重复设备。
+- 保留服务层原有安全校验作为第二道边界，并保持 `/api/devices/{id}/platform-detect`、`/api/devices/{id}/platform-binding` 兼容路由和默认关闭的平台注册写入开关不变。
+- 本轮验证：请求模型/RBAC/API 门禁 **7 passed**，识别兼容性 **1 passed**，`python -m compileall -q backend`、路由导入检查和 `git diff --check -- . ':!dist'` 通过；依赖 PostgreSQL 的完整平台注册/识别 fixture 仍因本机无 PostgreSQL 服务而未运行。
+
+### 15.15 2026-08-03 Playbook 认证请求与本地 PostgreSQL 复核
+
+- 修复前端 Playbook 历史、执行、预览、场景草稿、重跑和执行详情请求漏带 `Authorization` 的问题；后台历史加载增加 `isAuthenticated` 与 token 双重门禁，未恢复登录态时不再发出匿名 `/api/playbooks` 请求。
+- 本地 PostgreSQL 服务已启动并完成复核，开发库迁移版本为 **93**；平台注册专项使用隔离临时库执行 **75 passed**。默认 `PLATFORM_REGISTRY_ENABLED=0` 保持不变，本地 `.env` 仅为联调暂时设为 `1`，后端已重启加载该配置。
+- 本轮 `npm run lint`、`npm run build`、`python -m compileall -q backend` 和 `git diff --check -- . ':!dist'` 均通过；构建仅保留既有 chunk size warning，`dist/index.html` 未保留构建生成差异。
+- 未授权请求本身返回 **401** 属于预期认证行为；浏览器刷新并恢复登录 token 后，Playbook 请求应以登录用户身份访问。P1/P2 的真实设备识别、真实 Apply/审批、厂商回显和浏览器写流程仍需继续验收。
+
+### 15.16 2026-08-04 TextFSM 注册表页面复核与状态纠偏
+
+**复核结论：`/automation/textfsm-registry` 当前仍是基础开发工作台，不能判定为页面开发完成，也不能据此关闭整份开放任务清单。** 后端租户隔离、模板版本、安全 Sandbox、加密样例和发布状态机已有基础实现，但在线编辑、即时测试、样例管理、权限可见性和发布影响分析仍存在阻断缺口。
+
+#### 本次确认已具备
+
+- 模板编辑区已提供 TextFSM 基础语法高亮和行号。
+- 多版本情况下可选择对比基线并展示模板源码 Diff；SYSTEM 模板可以 Fork 为租户模板。
+- TextFSM 解析运行在受限短生命周期子进程中，包含超时、输出/记录/字段限制及 Windows Job Object 内存限制。
+- 模板版本支持 `DRAFT → IN_REVIEW → APPROVED → PUBLISHED → DEPRECATED`，发布版本不可原地修改，发布前要求 Sandbox 测试和历史样例回归通过。
+- 当时开发库迁移版本为 **95**；共有 **121** 个模板、**121** 个版本，其中 SYSTEM/PUBLISHED **119** 个、FORKED/DRAFT **2** 个，历史测试样例 **0** 个。随后已补充 `m0096_parser_registry_lifecycle`，为模板开发闭环增加审计表与索引。
+
+#### 页面阻断缺口
+
+1. **结构化结果未展示。** Sandbox 返回的 `records` 没有渲染为 JSON 或表格，页面只显示记录数和字段名；字段完整率、字段类型/空值错误和契约差异也未展示。
+2. **编辑与测试不是同一份内容。** 点击 Sandbox 只提交 `version_id + sample_output`，测试的是已保存版本，不是编辑器当前未保存内容，容易出现“修改了模板但测试仍通过旧内容”的误判。
+3. **新建模板入口不可用。** 左侧 `+` 只是图标；页面加载后会自动选中第一条模板，缺少清空选择并进入“新建模板”的操作。底部平台/模板编码输入框因此无法形成清晰的新建流程。
+4. **草稿保存语义不完整。** 当前每次保存都调用创建版本接口，没有更新当前 DRAFT 的接口；连续保存会持续新增版本。
+5. **SYSTEM Sandbox 行为矛盾。** 页面为 SYSTEM 模板显示 Sandbox 按钮，但 SYSTEM 版本当前均为 `PUBLISHED`，后端会以 `PARSER_VERSION_IMMUTABLE` 拒绝该测试；此前“可见即已验收”的记录不等于功能可用。
+6. **样例管理未闭环。** 页面不读取后端样例列表，上传名称固定为 `editor-sample`，没有样例名称、期望记录、查看、删除、过期状态和回归详情管理。
+7. **发布闭环未完成。** 缺少模板回滚/废弃操作、发布影响平台/设备/采集任务/Playbook 数量、审批意见和发布前差异摘要。
+8. **列表与权限体验未完成。** 模板列表一次性加载全部数据，没有搜索、平台/来源/状态筛选和分页；页面未按 `textfsm.create/edit_draft/test/submit/approve/publish` 等权限隐藏或禁用按钮，只能依赖后端拒绝。
+9. **缺少页面级回归。** 当前未发现 `ParserRegistryTab` 的前端组件或端到端测试，关键新建、未保存内容测试、SYSTEM Sandbox、样例管理和权限状态均无自动化覆盖。
+
+#### 本次验证证据
+
+- `pytest --confcutdir=backend/tests/platform_registry backend/tests/platform_registry/test_parser_templates.py backend/tests/platform_registry/test_textfsm_sandbox.py backend/tests/platform_registry/test_platform_registry_api.py -q`：**19 passed**。
+- `npm run lint`：TypeScript 检查通过。
+- `npm run build`：Vite production build 完成，仅保留既有 chunk size warning。
+- `git diff --check -- . ':!dist'`：通过。
+- 平台注册目录当前可收集 **85** 项测试；整套执行在本次复核的 184 秒限制内未完成，因此没有把历史“75 passed/完整后端通过”记录当成本次重新复现的证据，完整 `pytest backend/tests` 继续保持未勾选。
+- 当前工作区共有 **45** 个已修改项和 **21** 个未跟踪项，包含本任务相关迁移、服务、页面和测试；在整理提交、复现完整门禁和浏览器写流程前，不视为可发布交付。
+
+#### 下一轮收口优先级
+
+1. 修复“新建模板”和“以当前编辑内容即时 Sandbox 测试”两个主流程。
+2. 渲染完整结构化记录、字段覆盖率、契约差异、语法状态和解析耗时。
+3. 补齐可编辑 DRAFT、样例列表/命名/期望结果/删除、SYSTEM 只读 Sandbox。
+4. 补齐发布影响分析、模板回滚/废弃、权限感知 UI 和列表筛选分页。
+5. 增加页面级自动化测试，随后重跑 85 项平台注册测试、完整后端测试和浏览器写流程验收，再更新 Definition of Done。
+
+### 15.17 2026-08-04 TextFSM 注册表开发闭环收口
+
+**收口结论：本轮列出的 TextFSM 注册表页面阻断项已完成代码实现，并通过隔离 PostgreSQL 专项、TypeScript/构建门禁和登录态页面关键交互复核；真实厂商设备、外部生产环境和完整共享库门禁仍按证据边界保留未勾选。**
+
+#### 已完成的后端闭环
+
+- 新增 `m0096_parser_registry_lifecycle`，建立模板版本审计表及模板/版本时间索引；测试夹具和本地开发库已应用到迁移版本 **96**。
+- `GET /api/parser-templates` 支持租户隔离搜索、来源/状态筛选、分页和元数据；新增草稿 `PUT` 更新、乐观锁、当前编辑内容 Sandbox、SYSTEM/PUBLISHED 只读 Sandbox、样例删除、影响分析、审计查询、废弃和回滚接口。
+- Sandbox 结果统一返回结构化 `records`、字段列表、记录数、字段覆盖/契约摘要和耗时；测试、创建、更新、样例、生命周期、回滚和废弃均写入审计事件。
+- TextFSM `deprecate` 权限动作已加入资源动作目录与 Release Manager 推荐角色；SYSTEM 模板继续禁止原地编辑和持久化测试变更。
+
+#### 已完成的前端闭环
+
+- `/automation/textfsm-registry` 已接入真实“新建”流程、模板/平台编码初始化、草稿保存与当前 DRAFT 乐观锁更新；发布版本编辑会生成新草稿版本。
+- Sandbox 使用编辑器当前未保存内容，渲染结构化记录表、字段、记录数和耗时；新建默认模板改为仓库测试已验证的最小规则，避免页面首次测试误报 `TEMPLATE_NOT_MATCHED`。
+- 页面已接入样例名称、期望记录 JSON、样例列表/删除、模板源码 Diff、解析字段 Diff、影响分析、审计记录、生命周期按钮、角色感知的创建/编辑/测试/审核/发布/废弃/回滚控件，以及搜索/来源/状态筛选和分页。
+
+#### 复核证据
+
+- `pytest --confcutdir=backend/tests/platform_registry backend/tests/platform_registry -q`：**88 passed**。
+- 其中 TextFSM parser 专项 **9 passed**，迁移契约 **5 passed**；控制表上传兼容 **19 passed**；拓扑离线与 Playbook 平台别名兼容 **4 passed**。
+- `python -m compileall -q backend`、`npm run lint`、`npm run build`、`git diff --check` 通过；Build 仅保留既有 chunk size warning。
+- 登录态浏览器复核：模板列表显示 121 项并可分页/筛选；SYSTEM 模板显示只读和 Fork 入口；新建状态显示“保存草稿/保存后生成版本”；用未保存的最小模板和 `hello` 回显点击 Sandbox，页面显示“解析通过，共 1 条记录”、字段 `field` 和耗时；SYSTEM 只读模板的 Sandbox 请求不持久化版本。
+- 完整 `pytest backend/tests -q` 本轮不作为全绿证据：共享全局夹具导致平台专项的 PostgreSQL/SQLite 初始化冲突，并暴露 13.3 事件循环兼容问题；相关控制表、拓扑和 Playbook 兼容测试已单独修复并通过，隔离平台套件作为本轮可复现门禁。
+
+#### 仍需外部证据的边界
+
+- 未伪造中兴、锐捷、迪普、迈普等真实设备的 `show version`/动作回显、在线识别、真实 Playbook Apply 或生产审批证据；对应厂商回归与生产验收项继续保持未勾选。
+- 未把“本地开发库可升级到 96”写成 fresh/upgrade 数据库验收；该项仍需在独立 PostgreSQL fresh/upgrade 环境执行。

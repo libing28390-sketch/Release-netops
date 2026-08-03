@@ -10,6 +10,7 @@ from typing import Optional
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health
+from services.site_identity_service import canonical_site_name
 from services.operational_data_service import collect_operational_data, collect_custom_command_data
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
@@ -206,15 +207,13 @@ def _build_probe_stage(stage: str, ok: bool, summary: str, detail: str, latency_
 
 def _sanitize_device_item(item: dict) -> dict:
     sanitized = dict(item)
-    canonical_site_name = str(
-        sanitized.get('site_name') or sanitized.get('site_code') or ''
-    ).strip()
+    display_site_name = canonical_site_name(sanitized)
     canonical_site_id = str(sanitized.get('canonical_site_id') or '').strip()
-    if canonical_site_name:
-        # All device consumers use ``site`` as their display field. Keep the
-        # canonical ID separately for filters and writes.
-        sanitized['site'] = canonical_site_name
-        sanitized['datacenter'] = canonical_site_name
+    # All device consumers use ``site`` as their display field. Keep the
+    # canonical ID separately for filters and writes; never leak a generated
+    # site-* identifier into a business-facing view.
+    sanitized['site'] = display_site_name
+    sanitized['datacenter'] = display_site_name
     if canonical_site_id:
         sanitized['site_id'] = canonical_site_id
     cmdb_rack_id = str(sanitized.get('cmdb_rack_id') or '').strip()

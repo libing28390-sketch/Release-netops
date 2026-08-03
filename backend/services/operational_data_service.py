@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 import re
 from typing import Any
 
@@ -557,6 +558,9 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
             # A pre-migration process can still serve the legacy system catalog;
             # once m0072 exists, missing mappings remain explicitly unsupported.
             registry_available = False
+    legacy_catalog_enabled = os.environ.get("LEGACY_COMMAND_CATALOG_ENABLED", "1").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     resolved: dict[str, list[str]] = {}
     for category in categories:
         action_code = action_by_category.get(category)
@@ -565,8 +569,10 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
                 resolved[category] = [resolve_action_mapping(canonical_profile, action_code)['command']]
             except Exception:
                 resolved[category] = []
-        else:
+        elif legacy_catalog_enabled:
             resolved[category] = catalog.get(category, [])
+        else:
+            resolved[category] = []
     for command in resolved.get('neighbors', []):
         # Catch catalog regressions before a transport session is opened.
         assert_lldp_command(normalized_platform, command, scenario_id='neighbor_lldp')
@@ -601,6 +607,7 @@ def _collect_registry_categories(
     device_info: dict[str, Any],
     platform: str,
     categories: list[str],
+    platform_action_session=None,
 ) -> dict[str, dict[str, Any]]:
     """Collect standard categories through the published platform resolver."""
     from services.platform_registry_service import PlatformRegistryError, execute_platform_action
@@ -627,12 +634,13 @@ def _collect_registry_categories(
             'parse_status': 'failed',
         }
         try:
-            result = execute_platform_action(
-                str(device_info['id']),
-                action_code,
-                user=user,
-                parameters={'vrf': vrf} if vrf and action_code in _REGISTRY_VRF_ACTION_BY_CATEGORY.values() else None,
-            )
+            action_kwargs = {
+                'user': user,
+                'parameters': {'vrf': vrf} if vrf and action_code in _REGISTRY_VRF_ACTION_BY_CATEGORY.values() else None,
+            }
+            if platform_action_session is not None:
+                action_kwargs['_session'] = platform_action_session
+            result = execute_platform_action(str(device_info['id']), action_code, **action_kwargs)
             command = result.get('command')
             if command:
                 category_result['commands'] = [command]
@@ -1433,6 +1441,7 @@ def collect_operational_data(
     categories: list[str] | None = None,
     auth_role: str = 'auto',
     policy_override_categories: set[str] | None = None,
+    _platform_action_session=None,
 ) -> dict[str, Any]:
     role = str(device_info.get('role') or '').strip()
     selected_categories = _resolve_categories(
@@ -1468,7 +1477,12 @@ def collect_operational_data(
     ] if registry_bound else []
     if registry_categories:
         payload['categories'].extend(
-            _collect_registry_categories(device_info, platform, registry_categories).values()
+            _collect_registry_categories(
+                device_info,
+                platform,
+                registry_categories,
+                platform_action_session=_platform_action_session,
+            ).values()
         )
     if registry_bound:
         # A bound device may only execute an action from its published

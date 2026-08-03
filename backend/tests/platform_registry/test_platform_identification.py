@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from services.platform_identification_service import (
+    _binding_compatibility,
     bind_device,
     identify_device,
     identify_device_live,
@@ -40,6 +41,18 @@ def _insert_rule(conn, profile_id: str, *, pattern: str, confidence: float = 0.9
         (str(uuid.uuid4()), profile_id, "show version", match_type, pattern, confidence, "now"),
     )
     conn.commit()
+
+
+def test_binding_compatibility_blocks_high_risk_execution_for_unverified_platform():
+    result = _binding_compatibility(
+        {"vendor": "Acme", "device_type": "router"},
+        {"vendor": "Other", "adaptation_status": "UNVERIFIED", "sample_status": "MISSING"},
+    )
+    assert result["status"] == "WARNING"
+    assert result["high_risk_execution_blocked"] is True
+    assert {item["code"] for item in result["warnings"]} == {
+        "VENDOR_PLATFORM_MISMATCH", "PLATFORM_ADAPTATION_UNVERIFIED",
+    }
 
 
 def test_platform_identification_is_declarative_and_binding_is_locked(isolated_db, monkeypatch):
@@ -227,5 +240,24 @@ def test_live_identification_command_families_match_driver_contract(
 def test_seeded_domestic_identification_keywords(isolated_db, platform_code, output):
     user = _user("tenant-1")
     result = identify_platforms({"show version": output}, user, platform_code=platform_code)
+    assert result["status"] == "MATCHED"
+    assert result["selected"]["platform_code"] == platform_code
+
+
+@pytest.mark.parametrize(
+    ("platform_code", "command", "output"),
+    [
+        ("cisco_ios", "show version", "Cisco IOS XE Software, Version 17.9.4"),
+        ("arista_eos", "show version", "Arista DCS-7050SX3-48YC8\nSoftware image version: 4.29.2F"),
+        ("h3c_comware", "display version", "H3C Comware Software, Version 7.1.064"),
+        ("huawei_vrp", "display version", "Huawei Versatile Routing Platform Software\nVRP (R) software, Version 8.24"),
+        ("juniper_junos", "show version", "JUNOS Software Release [21.4R3-S5.4]"),
+    ],
+)
+def test_seeded_core_identification_keywords_use_driver_command(
+    isolated_db, platform_code, command, output,
+):
+    user = _user("tenant-1")
+    result = identify_platforms({command: output}, user, platform_code=platform_code)
     assert result["status"] == "MATCHED"
     assert result["selected"]["platform_code"] == platform_code

@@ -1966,10 +1966,10 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     try {
       let endpoint = endpointFor(tab);
       if (tab === 'interfaces') {
-        // The CMDB interface view is the source for both L2 and L3 facts.
-        // Do not hide physical access ports or VLANIF/SVI rows merely because
-        // they do not carry an IP address.
-        const params = new URLSearchParams();
+        // Keep the CMDB interface view aligned with its historical L3/IP
+        // inventory contract.  Topology maintains physical endpoint rows
+        // independently when it needs them for link identity.
+        const params = new URLSearchParams({ has_ip: 'true' });
         if (search.trim()) params.set('search', search.trim());
         if (interfaceDeviceFilter) params.set('device_id', interfaceDeviceFilter);
         params.set('page', String(interfacePage));

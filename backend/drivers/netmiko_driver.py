@@ -148,6 +148,34 @@ def _sanitize_command(cmd: str) -> str:
     return cmd
 
 
+def _redact_sensitive_text(value: Any, secrets: List[Any] | None = None) -> str:
+    """Redact credential values before an error is written to logs or returned."""
+    text = str(value or '')
+    candidates = {
+        str(secret)
+        for secret in (secrets or [])
+        if secret is not None and str(secret)
+    }
+    for secret in sorted(candidates, key=len, reverse=True):
+        text = text.replace(secret, '********')
+    return text
+
+
+def _auth_exchange_metadata(output: Any) -> str:
+    """Return safe diagnostics for an interactive auth exchange.
+
+    The terminal buffer may contain the echoed login/enable password.  Only
+    aggregate metadata is allowed in logs; never serialize the buffer itself.
+    """
+    text = str(output or '')
+    lowered = text.lower()
+    return (
+        f"chars={len(text)} lines={text.count(chr(10)) + (1 if text else 0)} "
+        f"password_prompt={'assword' in lowered} "
+        f"auth_error={'error in authentication' in lowered or 'access denied' in lowered}"
+    )
+
+
 class NetmikoDriver(BaseDriver):
     """基于 Netmiko 的驱动实现"""
 
@@ -265,6 +293,11 @@ class NetmikoDriver(BaseDriver):
         if secret:
             device_params['secret'] = secret
         logger.info(f"Secret set for {self.host}: len={len(secret)}")
+        auth_secrets = [
+            self.password,
+            secret,
+            self.device_info.get('admin_password'),
+        ]
 
         try:
             logger.debug(f"Connecting to {self.host}:{self.port} type={self.device_type} fast_cli={device_params['fast_cli']}")
@@ -276,49 +309,63 @@ class NetmikoDriver(BaseDriver):
                     prompt = self.conn.find_prompt()
                     logger.info(f"Prompt after login on {self.host}: {prompt!r}")
                     if prompt.strip().endswith('>'):
-                        logger.info(f"User exec mode on {self.host}, sending enable")
-                        self.conn.write_channel('enable\n')
-                        import time as _time
-                        _time.sleep(1)
-                        out = self.conn.read_channel()
-                        logger.info(f"enable response on {self.host}: {out!r}")
-
-                        if 'assword' in out:
-                            # Device prompted for password
-                            pwd_to_send = secret or self.password or ''
-                            self.conn.write_channel(pwd_to_send + '\n')
-                            _time.sleep(1)
-                            out2 = self.conn.read_channel()
-                            logger.info(f"after password on {self.host}: {out2!r}")
-                        elif 'Error in authentication' in out or 'Access denied' in out:
-                            # Device has enable password but we didn't get prompted —
-                            # try sending admin password directly
-                            logger.info(f"Auth error on enable, retrying with admin password")
+                        if not secret:
+                            logger.info(
+                                "No explicit enable secret for %s; keeping user exec mode",
+                                self.host,
+                            )
+                        else:
+                            logger.info(f"User exec mode on {self.host}, sending enable")
                             self.conn.write_channel('enable\n')
-                            _time.sleep(0.5)
-                            out3 = self.conn.read_channel()
-                            if 'assword' in out3:
-                                pwd_to_send = secret or self.password or ''
-                                self.conn.write_channel(pwd_to_send + '\n')
-                                _time.sleep(1)
-                                self.conn.read_channel()
+                            import time as _time
+                            _time.sleep(1)
+                            out = self.conn.read_channel()
+                            logger.info(
+                                "Enable interaction response on %s: %s",
+                                self.host,
+                                _auth_exchange_metadata(out),
+                            )
 
-                        # Update Netmiko's internal prompt state
-                        self.conn.set_base_prompt()
-                        prompt2 = self.conn.find_prompt()
-                        logger.info(f"Prompt after enable on {self.host}: {prompt2!r}")
+                            if 'assword' in out:
+                                # Device prompted for the explicitly configured Enable secret.
+                                self.conn.write_channel(secret + '\n')
+                                _time.sleep(1)
+                                out2 = self.conn.read_channel()
+                                logger.info(
+                                    "Privilege response on %s: %s",
+                                    self.host,
+                                    _auth_exchange_metadata(out2),
+                                )
+                            elif 'Error in authentication' in out or 'Access denied' in out:
+                                # Device has an Enable secret but did not prompt normally.
+                                logger.info("Auth error on enable, retrying with explicit secret")
+                                self.conn.write_channel('enable\n')
+                                _time.sleep(0.5)
+                                out3 = self.conn.read_channel()
+                                if 'assword' in out3:
+                                    self.conn.write_channel(secret + '\n')
+                                    _time.sleep(1)
+                                    self.conn.read_channel()
+
+                            # Update Netmiko's internal prompt state
+                            self.conn.set_base_prompt()
+                            prompt2 = self.conn.find_prompt()
+                            logger.info(f"Prompt after enable on {self.host}: {prompt2!r}")
                     else:
                         logger.info(f"Already privilege exec on {self.host}")
                 except Exception as en_err:
-                    logger.warning(f"Privilege elevation failed on {self.host}: {en_err}")
+                    safe_error = _redact_sensitive_text(en_err, auth_secrets)
+                    logger.warning(f"Privilege elevation failed on {self.host}: {safe_error}")
 
             logger.info(f"Connected to {self.host} (type={self.device_type})")
         except (NetmikoTimeoutException, NetmikoAuthenticationException) as e:
-            logger.error(f"Netmiko connection failed to {self.host}: {e}", exc_info=True)
-            raise Exception(f"Netmiko connection failed: {e}")
+            safe_error = _redact_sensitive_text(e, auth_secrets)
+            logger.error(f"Netmiko connection failed to {self.host}: {safe_error}")
+            raise Exception(f"Netmiko connection failed: {safe_error}")
         except Exception as e:
-            logger.error(f"Unexpected error connecting to {self.host}: {e}", exc_info=True)
-            raise Exception(f"Connection failed: {e}")
+            safe_error = _redact_sensitive_text(e, auth_secrets)
+            logger.error(f"Unexpected error connecting to {self.host}: {safe_error}")
+            raise Exception(f"Connection failed: {safe_error}")
 
 
     def disconnect(self):

@@ -11,6 +11,7 @@ type UserFormState = {
   username: string;
   password: string;
   role: string;
+  role_profile: string;
   group_name: string;
   change_groups: string[];
   display_name: string;
@@ -23,6 +24,18 @@ const CHANGE_GROUP_OPTIONS = [
   { key: 'initial_reviewer', zh: '初审组', en: 'Initial Review' },
   { key: 'final_approver', zh: '终审组', en: 'Final Approval' },
   { key: 'implementer', zh: '实施组', en: 'Implementer' },
+] as const;
+
+const ROLE_PROFILE_OPTIONS = [
+  { key: '', zh: '沿用基础角色', en: 'Use base role' },
+  { key: 'Platform Viewer', zh: '平台查看者', en: 'Platform Viewer' },
+  { key: 'Template Developer', zh: '模板开发者', en: 'Template Developer' },
+  { key: 'Platform Maintainer', zh: '平台维护者', en: 'Platform Maintainer' },
+  { key: 'Playbook Author', zh: 'Playbook 作者', en: 'Playbook Author' },
+  { key: 'Release Manager', zh: '审核发布者', en: 'Release Manager' },
+  { key: 'Automation Operator', zh: '自动化操作员', en: 'Automation Operator' },
+  { key: 'Scheduler Administrator', zh: '调度管理员', en: 'Scheduler Administrator' },
+  { key: 'System Administrator', zh: '系统管理员', en: 'System Administrator' },
 ] as const;
 
 interface UsersTabProps {
@@ -99,6 +112,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('username')}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '真实姓名' : 'Display Name'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('role')}</th>
+              <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '资源角色' : 'Resource Role'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '所属分组' : 'Group'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{isZh ? '职责组' : 'Responsibilities'}</th>
               <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-black/40">{t('status')}</th>
@@ -128,6 +142,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
                   </div>
                 </td>
                 <td className="px-6 py-4 text-xs">{user.role}</td>
+                <td className="px-6 py-4 text-xs text-black/60">{user.role_profile || (isZh ? '沿用基础角色' : 'Base role')}</td>
                 <td className="px-6 py-4 text-xs text-black/60">{user.group_name || (isZh ? '未分组' : 'Ungrouped')}</td>
                 <td className="px-6 py-4">
                   <div className="flex flex-wrap gap-1.5">
@@ -156,6 +171,7 @@ const UsersTab: React.FC<UsersTabProps> = ({
                         username: user.username,
                         password: '',
                         role: user.role,
+                        role_profile: user.role_profile || '',
                         group_name: user.group_name || '',
                         change_groups: [...(user.change_groups || [])],
                         display_name: user.display_name || '',
@@ -225,6 +241,13 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     <option value="Operator">Operator</option>
                     <option value="Viewer">Viewer</option>
                   </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '资源角色' : 'Resource Role'}</label>
+                  <select title={isZh ? '资源角色' : 'Resource Role'} value={newUserForm.role_profile} onChange={(e) => setNewUserForm({ ...newUserForm, role_profile: e.target.value })} className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all bg-white">
+                    {ROLE_PROFILE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{isZh ? option.zh : option.en}</option>)}
+                  </select>
+                  <p className="text-[10px] text-black/35">{isZh ? '资源角色会收窄基础角色的动作权限，并保留 Site/设备组范围限制。' : 'A resource role narrows action permissions and keeps Site/device-group scope limits.'}</p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '所属分组' : 'User Group'}</label>
@@ -362,6 +385,12 @@ const UsersTab: React.FC<UsersTabProps> = ({
                     <option value="Administrator">Administrator</option>
                     <option value="Operator">Operator</option>
                     <option value="Viewer">Viewer</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-black/40 ml-1">{isZh ? '资源角色' : 'Resource Role'}</label>
+                  <select title={isZh ? '资源角色' : 'Resource Role'} value={editUserForm.role_profile} onChange={(e) => setEditUserForm({ ...editUserForm, role_profile: e.target.value })} className="w-full px-4 py-3 rounded-xl border border-black/10 focus:border-black focus:ring-4 focus:ring-black/5 outline-none transition-all bg-white">
+                    {ROLE_PROFILE_OPTIONS.map((option) => <option key={option.key} value={option.key}>{isZh ? option.zh : option.en}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">

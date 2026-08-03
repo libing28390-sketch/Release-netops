@@ -173,7 +173,7 @@ def test_operational_catalog_uses_published_registry_commands(isolated_db):
         "neighbors": ["display lldp neighbor-information list"],
     }
     assert _resolve_commands("cisco_ios", ["neighbors"]) == {"neighbors": ["show lldp neighbors"]}
-    assert _resolve_commands("huawei_vrp", ["eth_trunk"]) == {"eth_trunk": ["dis eth-trunk"]}
+    assert _resolve_commands("huawei_vrp", ["eth_trunk"]) == {"eth_trunk": ["display eth-trunk"]}
 
 
 def test_release_flow_rejects_self_approval_and_publishes_atomically(isolated_db):
@@ -297,6 +297,77 @@ def test_execute_uses_published_release_and_returns_traceability(isolated_db):
             driver_factory=FakeFactory,
         )
     assert error.value.code == "UNSUPPORTED_ACTION"
+
+
+def test_execute_applies_resolved_collector_credentials_before_driver(isolated_db, monkeypatch):
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.execute(
+            """INSERT INTO devices
+               (id, hostname, ip_address, platform, status, username, password,
+                connection_method, platform_profile_id, tenant_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "credential-device-1",
+                "credential-edge-1",
+                "192.0.2.30",
+                "cisco_ios",
+                "active",
+                "stale-user",
+                "stale-password",
+                "mock",
+                "system-profile-cisco_ios",
+                "tenant-1",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        "services.vault_service.resolve_collector_credentials",
+        lambda _device, ssh_role="normal": {
+            "ssh": {
+                "username": "center-user",
+                "password": "center-password",
+                "enable_password": "",
+                "role": ssh_role,
+            }
+        },
+    )
+
+    captured = {}
+
+    class CredentialCaptureDriver:
+        def __init__(self, device_info):
+            captured.update({
+                "username": device_info.get("username"),
+                "password": device_info.get("password"),
+            })
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send_command(self, _command):
+            return SimpleNamespace(success=True, output="", error=None)
+
+    class CredentialCaptureFactory:
+        @classmethod
+        def get_driver(cls, *_args, **_kwargs):
+            return CredentialCaptureDriver(_args[1])
+
+    result = execute_platform_action(
+        "credential-device-1",
+        "get_clock",
+        user={"id": "operator-1", "username": "operator", "role": "Operator", "tenant_id": "tenant-1"},
+        driver_factory=CredentialCaptureFactory,
+    )
+
+    assert result["success"] is True
+    assert captured == {"username": "center-user", "password": "center-password"}
 
 
 def test_parameterized_action_preview_is_rendered_and_restricted(isolated_db):

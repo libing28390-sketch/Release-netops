@@ -11,7 +11,7 @@ interface UseUserManagementProps {
 }
 
 const createEmptyUserForm = () => ({
-  username: '', password: '', role: 'Operator', group_name: '', change_groups: [] as string[],
+  username: '', password: '', role: 'Operator', role_profile: '', group_name: '', change_groups: [] as string[],
   display_name: '\u5f20\u4e09', phone: '', email: '',
 });
 
@@ -83,6 +83,7 @@ export const useUserManagement = ({ currentUser, setCurrentUser, language, showT
           username: editUserForm.username.trim(),
           password: editUserForm.password,
           role: editUserForm.role,
+          role_profile: editUserForm.role_profile,
           group_name: editUserForm.group_name,
           change_groups: editUserForm.change_groups,
           display_name: editUserForm.display_name,

@@ -305,6 +305,7 @@ export interface User {
   id: string;
   username: string;
   role: string;
+  role_profile?: string;
   lastLogin?: string;
   status?: string;
   avatar_url?: string;
@@ -324,6 +325,7 @@ export interface SessionUser {
   id?: string;
   username: string;
   role?: string;
+  role_profile?: string;
   avatar_url?: string;
   group_name?: string;
   change_groups?: string[];

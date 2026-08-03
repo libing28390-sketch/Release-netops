@@ -51,9 +51,25 @@ def _load_device(conn, device_id: str, user: dict[str, Any], *, lock: bool = Fal
     import database as database_module
 
     suffix = " FOR UPDATE" if lock and database_module._USE_PG else ""
+    # Older upgrade fixtures and some installations do not yet carry the
+    # optional vendor/device_type columns. Resolve the projection from the
+    # actual table so binding remains compatible while still using those
+    # fields when they exist.
+    if database_module._USE_PG:
+        column_rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'devices'",
+        ).fetchall()
+        available_columns = {str(row[0]) for row in column_rows}
+    else:
+        column_rows = conn.execute("PRAGMA table_info(devices)").fetchall()
+        available_columns = {str(row[1]) for row in column_rows}
+    preferred_columns = [
+        "id", "hostname", "tenant_id", "site_id", "site", "device_group_id",
+        "vendor", "device_type", "platform", "platform_profile_id", "platform_source", "platform_locked",
+    ]
+    projection = ", ".join(column for column in preferred_columns if column in available_columns)
     row = _row_dict(conn.execute(
-        f"SELECT id, tenant_id, site_id, site, device_group_id, platform, platform_profile_id, "
-        f"platform_source, platform_locked FROM devices WHERE id = ?{suffix}",
+        f"SELECT {projection} FROM devices WHERE id = ?{suffix}",
         (device_id,),
     ).fetchone())
     if not row:
@@ -95,6 +111,30 @@ def _assert_device_view(conn, device_id: str, user: dict[str, Any]) -> dict[str,
     ):
         raise _scope_denied()
     return row
+
+
+def _binding_compatibility(device: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
+    """Return a safe compatibility result before a binding is persisted."""
+    warnings: list[dict[str, str]] = []
+    device_vendor = str(device.get("vendor") or "").strip().lower()
+    profile_vendor = str(profile.get("vendor") or "").strip().lower()
+    if device_vendor and profile_vendor and device_vendor != profile_vendor:
+        warnings.append({
+            "code": "VENDOR_PLATFORM_MISMATCH",
+            "message": "Device vendor and target platform vendor differ",
+        })
+    adaptation_status = str(profile.get("adaptation_status") or "").upper()
+    sample_status = str(profile.get("sample_status") or "").upper()
+    if adaptation_status in {"UNVERIFIED", "MISSING"} or sample_status == "MISSING":
+        warnings.append({
+            "code": "PLATFORM_ADAPTATION_UNVERIFIED",
+            "message": "Target platform has no production-confirmed sample yet",
+        })
+    return {
+        "status": "WARNING" if warnings else "PASSED",
+        "warnings": warnings,
+        "high_risk_execution_blocked": bool(warnings),
+    }
 
 
 def _match(rule: dict[str, Any], output: str) -> bool:
@@ -441,6 +481,7 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
         )
         conn.commit()
         result = _load_device(conn, device_id, user)
+        result["compatibility"] = _binding_compatibility(device, profile)
         result["platform_profile"] = {
             "id": profile["id"],
             "platform_code": profile["platform_code"],
@@ -453,5 +494,85 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
     except Exception as exc:
         conn.rollback()
         raise PlatformRegistryError("PLATFORM_BIND_FAILED", "Device platform binding failed") from exc
+    finally:
+        conn.close()
+
+
+def bind_devices_batch(
+    device_ids: list[str],
+    platform_profile_id: str,
+    user: dict[str, Any],
+    *,
+    lock: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Atomically bind a bounded device batch and return old/new scope details."""
+    normalized_ids = [str(item or "").strip() for item in device_ids or []]
+    if not normalized_ids or len(normalized_ids) > 200 or any(not item for item in normalized_ids):
+        raise PlatformRegistryError("INVALID_DEVICE_BATCH", "device_ids must contain 1-200 non-empty values")
+    if len(set(normalized_ids)) != len(normalized_ids):
+        raise PlatformRegistryError("DUPLICATE_DEVICE_BATCH", "device_ids must not contain duplicates")
+    if force and user.get("role") != "Administrator":
+        raise _scope_denied("PLATFORM_BIND_FORCE_FORBIDDEN")
+
+    conn = get_db_connection()
+    try:
+        profile = _assert_profile_access(conn, platform_profile_id, user)
+        old_and_new: list[dict[str, Any]] = []
+        for device_id in normalized_ids:
+            device = _load_device(conn, device_id, user, lock=True)
+            if device.get("platform_locked") and not force:
+                raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", f"Device {device_id} platform binding is locked", status_code=409)
+            old_and_new.append({
+                "device": device,
+                "compatibility": _binding_compatibility(device, profile),
+            })
+
+        for item in old_and_new:
+            device = item["device"]
+            conn.execute(
+                """UPDATE devices SET platform_profile_id = ?, platform = ?, platform_source = ?,
+                          platform_locked = ? WHERE id = ?""",
+                (platform_profile_id, profile["platform_code"], "MANUAL", 1 if lock else 0, device["id"]),
+            )
+            conn.execute(
+                """UPDATE platform_identification_conflicts
+                   SET status = 'RESOLVED', resolved_profile_id = ?, resolved_by = ?,
+                       resolution_reason = 'MANUAL_BATCH_BINDING', resolved_at = ?, updated_at = ?
+                   WHERE device_id = ? AND status = 'OPEN'""",
+                (
+                    platform_profile_id,
+                    str(user.get("id") or user.get("username") or ""),
+                    _now(),
+                    _now(),
+                    device["id"],
+                ),
+            )
+        conn.commit()
+        return {
+            "success": True,
+            "atomic": True,
+            "device_count": len(old_and_new),
+            "platform_profile_id": platform_profile_id,
+            "platform_code": profile.get("platform_code"),
+            "locked": bool(lock),
+            "items": [
+                {
+                    "device_id": item["device"]["id"],
+                    "hostname": item["device"].get("hostname") or "",
+                    "old_platform": item["device"].get("platform") or "",
+                    "new_platform": profile.get("platform_code") or "",
+                    "old_platform_profile_id": item["device"].get("platform_profile_id"),
+                    "compatibility": item["compatibility"],
+                }
+                for item in old_and_new
+            ],
+        }
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise PlatformRegistryError("PLATFORM_BATCH_BIND_FAILED", "Batch platform binding failed") from exc
     finally:
         conn.close()

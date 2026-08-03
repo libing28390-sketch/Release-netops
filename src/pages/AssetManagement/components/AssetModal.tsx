@@ -6,6 +6,7 @@ import { Asset } from '../types';
 import type { TagDefinition } from '../../../types';
 import { VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, getPlatformsForVendor, STATUSES, LIFECYCLE_STATUSES } from '../constants';
 import { AssetTagPicker } from './AssetTagPicker';
+import { isReservedSystemSite } from '../../../utils/siteIdentity';
 
 const TOPOLOGY_ROLE_OPTIONS = [
   { value: 'core', label: { zh: '核心层', en: 'Core' } },
@@ -108,6 +109,11 @@ export const AssetModal: React.FC<AssetModalProps> = ({
       .filter(Boolean)
       .sort();
   }, [racks, form.site_id]);
+
+  const businessSites = React.useMemo(
+    () => sites.filter(site => !isReservedSystemSite(site)),
+    [sites],
+  );
 
   const normalCredentials = React.useMemo(
     () => credentials.filter(c => c.id === form.credential_id || (!String(c.credential_type || '').toLowerCase().startsWith('snmp') && ['normal', 'shared', 'mixed', 'login'].includes(String(c.account_role || '').toLowerCase()))),
@@ -645,7 +651,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                           Enable Secret
                         </span>
                         <span className="text-[8px] text-amber-400/80">
-                          {zh ? '（可选，不填则与特权账户密码相同）' : '(optional — defaults to admin password if blank)'}
+                          {zh ? '（可选，无特权密码时请关闭或留空）' : '(optional — leave blank when the device has no enable secret)'}
                         </span>
                       </div>
                       <div className={`relative inline-flex h-3.5 w-7 items-center rounded-full transition-colors ${showEnableSecret ? 'bg-amber-400' : 'bg-slate-200'}`}>
@@ -731,7 +737,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   title={zh ? '站点' : 'Site'}
                 >
                   <option value="">{zh ? '未分配站点' : 'Unassigned site'}</option>
-                  {sites.map(site => (
+                  {businessSites.map(site => (
                     <option key={site.id} value={site.id}>
                       {site.site_name} ({site.site_code})
                     </option>

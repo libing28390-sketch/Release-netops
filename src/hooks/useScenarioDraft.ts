@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 import { useAutomationStore } from '../store/automationStore';
 import { useUiStore } from '../store/uiStore';
+import { authHeaders } from '../api/http';
 
 interface UseScenarioDraftArgs {
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
@@ -100,7 +101,7 @@ export const useScenarioDraft = ({
     try {
       const resp = await fetch('/api/playbooks/scenarios', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify(payload),
       });
       const data = await resp.json().catch(() => ({}));

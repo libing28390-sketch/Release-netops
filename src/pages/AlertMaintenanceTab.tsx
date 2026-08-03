@@ -15,6 +15,7 @@ import type {
   User,
 } from '../types';
 import Pagination from '../components/Pagination';
+import { authHeaders } from '../api/http';
 import {
   alertAccentButtonClass,
   alertDangerButtonClass,
@@ -238,7 +239,7 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
 
   const loadUsers = async () => {
     try {
-      const resp = await fetch('/api/users');
+      const resp = await fetch('/api/users', { headers: authHeaders() });
       if (!resp.ok) throw new Error('Failed to load users');
       setUsers(await resp.json());
     } catch (error) {

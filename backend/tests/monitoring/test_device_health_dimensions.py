@@ -1,5 +1,13 @@
 from services.device_health_service import _build_collection_stats, build_health_overview, evaluate_device_health, fetch_device_health_history
 from database.migrations.m0060_monitoring_health_dimensions import upgrade
+from services.site_identity_service import canonical_site_name, is_reserved_system_site
+
+
+def test_site_display_never_falls_back_to_generated_internal_id() -> None:
+    assert canonical_site_name({'site': 'site-1f5056da0738'}) == 'Unassigned'
+    assert canonical_site_name({'site': 'site-1f5056da0738', 'site_name': 'WH-DC-01'}) == 'WH-DC-01'
+    assert is_reserved_system_site('site-default') is True
+    assert is_reserved_system_site('site-1f5056da0738') is False
 
 
 def test_missing_telemetry_is_not_rendered_as_a_zero_health_score() -> None:

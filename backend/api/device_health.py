@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from database import get_db_connection
 from services.device_health_service import annotate_devices_with_health, build_health_overview, fetch_device_health_history, fetch_device_health_trend, load_devices_for_health, record_device_health_snapshot
+from services.site_identity_service import canonical_site_name
 
 
 router = APIRouter()
@@ -37,13 +38,22 @@ def device_health_detail(device_id: str):
     conn = get_db_connection()
     try:
         row = conn.execute(
-            f'SELECT * FROM devices WHERE id = ?',
+            """SELECT d.*, s.id AS resolved_site_id,
+                      s.site_name AS site_name, s.site_code AS site_code
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               LEFT JOIN sites s ON s.id = COALESCE(NULLIF(pa.site_id, ''), NULLIF(d.site_id, ''))
+               WHERE d.id = ?""",
             (device_id,),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Device not found')
 
-        device = annotate_devices_with_health(conn, [dict(row)])[0]
+        raw_device = dict(row)
+        raw_device['site_id'] = str(raw_device.get('site_id') or raw_device.get('resolved_site_id') or '').strip()
+        raw_device['site'] = canonical_site_name(raw_device)
+        raw_device.pop('resolved_site_id', None)
+        device = annotate_devices_with_health(conn, [raw_device])[0]
         recent_alerts = conn.execute(
             '''
             SELECT id, severity, title, message, interface_name, created_at

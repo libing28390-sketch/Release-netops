@@ -8,6 +8,7 @@ const QUICK_QUERY_TIMEOUT_MS = 45_000;
 
 interface UseAutomationProps {
   currentUser: SessionUser;
+  isAuthenticated: boolean;
   language: string;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   navigate: (path: string) => void;
@@ -19,7 +20,7 @@ interface UseAutomationProps {
 }
 
 export const useAutomation = ({ 
-  currentUser, language, showToast, navigate, 
+  currentUser, isAuthenticated, language, showToast, navigate,
   setSelectedDevice,
   devices, selectedDevice,
   activeTab, automationPage
@@ -408,8 +409,9 @@ export const useAutomation = ({
    * without any refactor.
    */
   const loadJobs = useCallback(async () => {
+    if (!isAuthenticated || !localStorage.getItem('netops_token')) return;
     try {
-      const resp = await fetch('/api/playbooks?page=1&page_size=50&status=all');
+      const resp = await fetch('/api/playbooks?page=1&page_size=50&status=all', { headers: authHeaders() });
       if (!resp.ok) return;
       const payload = await resp.json();
       const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
@@ -429,7 +431,7 @@ export const useAutomation = ({
     } catch (error) {
       console.error('Failed to load automation jobs:', error);
     }
-  }, [language]);
+  }, [isAuthenticated, language]);
 
   /**
    * Load upcoming scheduled task instances within the next 24h.
@@ -501,7 +503,7 @@ export const useAutomation = ({
     try {
       const resp = await fetch('/api/playbooks/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           scenario_id: params.scenarioId,
           platform: params.platform,
@@ -597,7 +599,7 @@ export const useAutomation = ({
     try {
       const resp = await fetch('/api/playbooks/preview', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ scenario_id: scenario.id, platform, variables }),
       });
       if (!resp.ok) {
@@ -626,7 +628,7 @@ export const useAutomation = ({
     try {
       const resp = await fetch('/api/playbooks/preview', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({ scenario_id: scenario.id, platform, variables }),
       });
       if (resp.ok) {
@@ -717,7 +719,7 @@ export const useAutomation = ({
     try {
       const resp = await fetch('/api/playbooks/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(true),
         body: JSON.stringify({
           scenario_id: selectedScenario.id,
           platform: playbookPlatform,
@@ -1201,7 +1203,7 @@ export const useAutomation = ({
   const handleRerun = useCallback(async (execution: any) => {
     try {
       const resp = await fetch(`/api/playbooks/${execution.id}/full`, { 
-        headers: { Authorization: `Bearer ${localStorage.getItem('netops_token')}` } 
+        headers: authHeaders(),
       });
       if (!resp.ok) throw new Error('Fetch failed');
       

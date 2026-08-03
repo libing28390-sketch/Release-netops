@@ -44,15 +44,15 @@ ADMIN_ONLY_PATHS = {
 RESOURCE_ACTION_CATALOG = {
     'platform': {'view', 'create', 'edit_draft', 'submit', 'approve', 'publish', 'rollback', 'bind_device'},
     'command': {'view', 'edit_draft', 'test', 'execute'},
-    'textfsm': {'view', 'create', 'edit_draft', 'test', 'submit', 'approve', 'publish', 'rollback'},
+    'textfsm': {'view', 'create', 'edit_draft', 'test', 'submit', 'approve', 'publish', 'rollback', 'deprecate'},
     'sample_output': {'upload', 'view', 'delete'},
     'playbook': {'view', 'create', 'edit_draft', 'test', 'submit', 'approve', 'publish', 'execute', 'schedule', 'rollback'},
 }
 
-# Recommended role profiles are declarative metadata until the user/role
-# tables gain named tenant roles.  Route dependencies still use the existing
-# Administrator/Operator/Viewer identities, but the catalog prevents a new
-# endpoint from silently inventing an unreviewed permission vocabulary.
+# Named role profiles are persisted on users by migration m0093. The legacy
+# Administrator/Operator/Viewer role remains as the coarse HTTP role so old
+# sessions and installations continue to work while resource actions use the
+# narrower profile when one is assigned.
 RECOMMENDED_ROLE_PROFILES = {
     'Platform Viewer': {
         'platform': {'view'}, 'command': {'view'}, 'textfsm': {'view'},
@@ -75,13 +75,17 @@ RECOMMENDED_ROLE_PROFILES = {
     },
     'Release Manager': {
         'platform': {'view', 'approve', 'publish', 'rollback'},
-        'command': {'view'}, 'textfsm': {'view', 'approve', 'publish', 'rollback'},
+        'command': {'view'}, 'textfsm': {'view', 'approve', 'publish', 'rollback', 'deprecate'},
         'sample_output': {'view'},
         'playbook': {'view', 'approve', 'publish', 'rollback'},
     },
+    'Scheduler Administrator': {
+        'platform': {'view'}, 'command': {'view'}, 'textfsm': {'view'},
+        'sample_output': {'view'}, 'playbook': {'view', 'schedule'},
+    },
     'Automation Operator': {
         'platform': {'view'}, 'command': {'view', 'execute'}, 'textfsm': {'view'},
-        'sample_output': {'view'}, 'playbook': {'view', 'execute', 'schedule'},
+        'sample_output': {'view'}, 'playbook': {'view', 'execute'},
     },
     'System Administrator': {'*': {'*'}},
 }
@@ -95,7 +99,7 @@ RESOURCE_ACTIONS = {
     # duties even when individual routes use resource permissions.
     'Operator': {
         'read', 'view', 'create', 'update', 'edit_draft', 'submit',
-        'bind_device', 'test', 'execute', 'schedule', 'upload', 'delete',
+        'bind_device', 'test', 'execute', 'upload', 'delete',
         'reserve', 'allocate', 'release', 'export',
     },
     'Viewer': {'read', 'view'},
@@ -139,8 +143,34 @@ def require_role(minimum_role: str):
     return Depends(dependency)
 
 
-def _action_allowed(role: str, action: str) -> bool:
-    allowed = RESOURCE_ACTIONS.get(role, set())
+def _profile_for_user(user: dict) -> str:
+    profile = str(user.get('role_profile') or '').strip()
+    if profile in RECOMMENDED_ROLE_PROFILES:
+        return profile
+    user_id = str(user.get('id') or user.get('user_id') or '').strip()
+    if not user_id:
+        return ''
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute('SELECT role_profile FROM users WHERE id = ?', (user_id,)).fetchone()
+        finally:
+            conn.close()
+        profile = str(row[0] or '').strip() if row else ''
+        return profile if profile in RECOMMENDED_ROLE_PROFILES else ''
+    except Exception:
+        logger.debug('Role profile lookup unavailable', exc_info=True)
+        return ''
+
+
+def _action_allowed(user: dict, resource_type: str, action: str) -> bool:
+    profile = _profile_for_user(user)
+    if profile:
+        permissions = RECOMMENDED_ROLE_PROFILES[profile]
+        allowed = permissions.get(resource_type, set()) | permissions.get('*', set())
+        return '*' in allowed or action in allowed
+    allowed = RESOURCE_ACTIONS.get(user.get('role', ''), set())
     return '*' in allowed or action in allowed
 
 
@@ -160,7 +190,7 @@ def authorize_resource(
     ``tenant_id`` can never cross into another tenant.
     """
     role = user.get('role', '')
-    if not _action_allowed(role, action):
+    if not _action_allowed(user, resource_type, action):
         return False
     if role == 'Administrator':
         return True

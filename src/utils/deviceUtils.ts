@@ -1,5 +1,13 @@
 import type { Device } from '../types';
 
+export const displaySiteLabel = (raw: any): string => {
+  for (const value of [raw?.site_name, raw?.site_code, raw?.site]) {
+    const label = typeof value === 'string' ? value.trim() : '';
+    if (label && !/^site-[a-z0-9]+$/i.test(label)) return label;
+  }
+  return '';
+};
+
 export const safeJsonArray = (value: any) => {
   if (Array.isArray(value)) return value;
   if (typeof value === 'string') {
@@ -27,7 +35,7 @@ export const normalizeDeviceRecord = (raw: any): Device => {
     status: (raw?.status === 'online' || raw?.status === 'offline' || raw?.status === 'pending') ? raw.status : 'offline',
     compliance: (raw?.compliance === 'compliant' || raw?.compliance === 'non-compliant' || raw?.compliance === 'unknown') ? raw.compliance : 'unknown',
     role: typeof raw?.role === 'string' ? raw.role : '',
-    site: typeof raw?.site === 'string' ? raw.site : '',
+    site: displaySiteLabel(raw),
     model: typeof raw?.model === 'string' ? raw.model : '',
     version: typeof raw?.version === 'string' ? raw.version : '',
     sn: typeof raw?.sn === 'string' ? raw.sn : '',

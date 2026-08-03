@@ -786,6 +786,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('users', 'change_groups_json', "TEXT DEFAULT '[]'")
     ensure_column('users', 'notification_channels', "TEXT DEFAULT '{}'")
     ensure_column('users', 'preferred_language', "TEXT DEFAULT 'zh'")
+    ensure_column('users', 'role_profile', "TEXT DEFAULT ''")
     ensure_column('users', 'fixed_pin', "TEXT DEFAULT ''")
     ensure_column('users', 'display_name', "TEXT DEFAULT ''")
     ensure_column('users', 'phone', "TEXT DEFAULT ''")

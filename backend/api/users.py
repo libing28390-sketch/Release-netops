@@ -16,6 +16,7 @@ from database import get_db_connection
 from services.audit_service import log_audit_event
 from services import notification_service
 from core.config import settings
+from core.rbac import RECOMMENDED_ROLE_PROFILES
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -92,6 +93,13 @@ def _validate_new_user_fields(username: str, password: str, display_name: str, p
     if len(group_name) > 100:
         return 'Group name must be 100 characters or fewer'
     return None
+
+
+def _validate_role_profile(value: object) -> str | None:
+    profile = str(value or '').strip()
+    if profile and profile not in RECOMMENDED_ROLE_PROFILES:
+        return None
+    return profile or None
 
 
 def _normalize_change_groups(raw_groups) -> list[str]:
@@ -335,7 +343,11 @@ def _get_session(token: str) -> dict | None:
     """Retrieve a session from DB. Returns None if not found or expired."""
     conn = get_db_connection()
     try:
-        row = conn.execute('SELECT * FROM sessions WHERE token = ?', (token,)).fetchone()
+        row = conn.execute(
+            "SELECT s.*, COALESCE(u.role_profile, '') AS role_profile "
+            "FROM sessions s LEFT JOIN users u ON u.id = s.user_id WHERE s.token = ?",
+            (token,),
+        ).fetchone()
         if not row:
             logger.debug("[Auth Session] Token '%s...' not found in sessions table", token[:10])
             return None
@@ -374,12 +386,24 @@ def validate_session_token(token: str) -> dict | None:
         return None
     return _get_session(token)
 
+def _require_user_administrator(request: Request) -> dict:
+    """Protect user-management reads/writes, including role-profile assignment."""
+    auth_header = request.headers.get('Authorization', '') if request else ''
+    token = auth_header.replace('Bearer ', '', 1) if auth_header.startswith('Bearer ') else ''
+    session = validate_session_token(token)
+    if not session:
+        raise HTTPException(status_code=401, detail='Not authenticated')
+    if session.get('role') != 'Administrator' and session.get('role_profile') != 'System Administrator':
+        raise HTTPException(status_code=403, detail='Administrator permission required')
+    return session
+
 @router.get("/users")
-def read_users():
+def read_users(request: Request):
+    _require_user_administrator(request)
     conn = get_db_connection()
     try:
         users = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users'
+            'SELECT id, username, role, role_profile, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users'
         ).fetchall()
         # Fetch the (small) shared notification-channel templates once and
         # reuse for every row — was previously per-row (N+1 query and
@@ -394,6 +418,7 @@ def read_users():
 
 @router.post("/users")
 async def create_user(request: Request, user: dict = Body(...)):
+    actor = _require_user_administrator(request)
     user_id = user.get('id') or str(uuid.uuid4())
     raw_password = str(user.get('password') or '')
     username = str(user.get('username') or '').strip()
@@ -403,6 +428,9 @@ async def create_user(request: Request, user: dict = Body(...)):
     phone = str(user.get('phone') or '').strip()
     email = str(user.get('email') or '').strip()
     role = str(user.get('role') or '').strip()
+    role_profile = _validate_role_profile(user.get('role_profile'))
+    if role_profile is None and str(user.get('role_profile') or '').strip():
+        raise HTTPException(status_code=400, detail='Invalid resource role profile')
     validation_error = _validate_new_user_fields(username, raw_password, display_name, phone, email, role, group_name)
     if validation_error:
         raise HTTPException(status_code=400, detail=validation_error)
@@ -413,13 +441,14 @@ async def create_user(request: Request, user: dict = Body(...)):
         if duplicate:
             raise HTTPException(status_code=409, detail='Username already exists')
         conn.execute(
-            'INSERT INTO users (id, username, password, role, status, last_login, avatar_url, group_name, change_groups_json, display_name, phone, email) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO users (id, username, password, role, role_profile, status, last_login, avatar_url, group_name, change_groups_json, display_name, phone, email) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (
                 user_id,
                 username,
                 hashed,
                 role,
+                role_profile or '',
                 'active',
                 'Never',
                 user.get('avatar_url'),
@@ -437,8 +466,8 @@ async def create_user(request: Request, user: dict = Body(...)):
             severity='medium',
             status='success',
             summary=f"Created user {username}",
-            actor_username=user.get('actor_username') or 'admin',
-            actor_role=user.get('actor_role') or 'Administrator',
+            actor_username=actor.get('username') or user.get('actor_username') or 'admin',
+            actor_role=actor.get('role') or user.get('actor_role') or 'Administrator',
             source_ip=request.client.host if request and request.client else None,
             target_type='user',
             target_id=user_id,
@@ -446,7 +475,7 @@ async def create_user(request: Request, user: dict = Body(...)):
             details={'role': user.get('role'), 'group_name': group_name, 'change_groups': change_groups},
         )
         row = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users WHERE id = ?',
+            'SELECT id, username, role, role_profile, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email FROM users WHERE id = ?',
             (user_id,),
         ).fetchone()
         return _hydrate_user_row(row)
@@ -484,7 +513,7 @@ def switch_user(request: Request, payload: dict = Body(...)):
         
         # Hydrate user data for frontend
         profile_row = conn.execute(
-            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
+            'SELECT id, username, role, role_profile, avatar_url, group_name, change_groups_json, notification_channels, preferred_language FROM users WHERE id = ?',
             (user_dict['id'],),
         ).fetchone()
         profile = _hydrate_user_row(profile_row)
@@ -597,7 +626,7 @@ async def login(request: Request, payload: dict = Body(...)):
             token = _create_token()
             _store_session(token, user_dict)
             profile_row = conn.execute(
-                'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, mfa_enabled FROM users WHERE id = ?',
+                'SELECT id, username, role, role_profile, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, mfa_enabled FROM users WHERE id = ?',
                 (user_dict['id'],),
             ).fetchone()
             profile = _hydrate_user_row(profile_row)
@@ -895,7 +924,7 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
     session = validate_session_token(session_token)
     if not session:
         raise HTTPException(status_code=401, detail='Not authenticated')
-    if str(session.get('user_id')) != str(user_id) and session.get('role') != 'Administrator':
+    if str(session.get('user_id')) != str(user_id) and session.get('role') != 'Administrator' and session.get('role_profile') != 'System Administrator':
         raise HTTPException(status_code=403, detail='You may only update your own profile')
 
     conn = get_db_connection()
@@ -904,7 +933,12 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
         if not existing:
             raise HTTPException(status_code=404, detail="User not found")
         username = user.get('username', existing['username'])
-        role = user.get('role', existing['role'])
+        is_admin = session.get('role') == 'Administrator' or session.get('role_profile') == 'System Administrator'
+        role = user.get('role', existing['role']) if is_admin else existing['role']
+        requested_profile = user.get('role_profile', existing['role_profile'] if 'role_profile' in existing.keys() else '')
+        role_profile = _validate_role_profile(requested_profile) if is_admin else str(existing['role_profile'] or '')
+        if is_admin and str(requested_profile or '').strip() and role_profile is None:
+            raise HTTPException(status_code=400, detail='Invalid resource role profile')
         avatar_url = user.get('avatar_url', existing['avatar_url'])
         group_name = str(user.get('group_name', existing['group_name'] if 'group_name' in existing.keys() else '') or '').strip()
         try:
@@ -995,17 +1029,17 @@ async def update_user(user_id: str, request: Request, user: dict = Body(...)):
                 raise HTTPException(status_code=400, detail=strength_err)
             hashed = await _hash_password(password)
             conn.execute(
-                'UPDATE users SET username = ?, role = ?, password = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ?, display_name = ?, phone = ?, email = ? WHERE id = ?',
-                (username, role, hashed, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, display_name, phone, email, user_id)
+                'UPDATE users SET username = ?, role = ?, role_profile = ?, password = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ?, display_name = ?, phone = ?, email = ? WHERE id = ?',
+                (username, role, role_profile or '', hashed, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, display_name, phone, email, user_id)
             )
         else:
             conn.execute(
-                'UPDATE users SET username = ?, role = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ?, display_name = ?, phone = ?, email = ? WHERE id = ?',
-                (username, role, avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, display_name, phone, email, user_id)
+                'UPDATE users SET username = ?, role = ?, role_profile = ?, avatar_url = ?, group_name = ?, change_groups_json = ?, notification_channels = ?, preferred_language = ?, fixed_pin = ?, display_name = ?, phone = ?, email = ? WHERE id = ?',
+                (username, role, role_profile or '', avatar_url, group_name, change_groups_str, notification_channels_str, preferred_language, hashed_pin, display_name, phone, email, user_id)
             )
         conn.commit()
         result = conn.execute(
-            'SELECT id, username, role, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE id = ?',
+            'SELECT id, username, role, role_profile, status, last_login as lastLogin, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE id = ?',
             (user_id,)
         ).fetchone()
         log_audit_event(
@@ -1041,7 +1075,7 @@ def check_session(request: Request):
     conn = get_db_connection()
     try:
         user = conn.execute(
-            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE id = ?',
+            'SELECT id, username, role, role_profile, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, display_name, phone, email, mfa_enabled FROM users WHERE id = ?',
             (sess['user_id'],)
         ).fetchone()
         if not user:
@@ -1268,7 +1302,7 @@ async def mfa_verify(request: Request, payload: dict = Body(...)):
         token = _create_token()
         _store_session(token, user_dict)
         profile_row = conn.execute(
-            'SELECT id, username, role, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, mfa_enabled FROM users WHERE id = ?',
+            'SELECT id, username, role, role_profile, avatar_url, group_name, change_groups_json, notification_channels, preferred_language, mfa_enabled FROM users WHERE id = ?',
             (user_dict['id'],),
         ).fetchone()
         profile = _hydrate_user_row(profile_row)

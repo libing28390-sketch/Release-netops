@@ -7,7 +7,9 @@ import {
   Layers3,
   Loader2,
   LockKeyhole,
+  Plus,
   RefreshCw,
+  Save,
   Search,
   Server,
   ShieldAlert,
@@ -68,6 +70,33 @@ interface PlatformProfile {
 
 interface PlatformProfileDetail extends PlatformProfile {
   releases?: PlatformRelease[];
+  identification_rules?: Array<{
+    id: string;
+    command?: string;
+    match_type?: string;
+    pattern?: string;
+    logic_group?: string;
+    rule_order?: number;
+    confidence?: number;
+    negate?: number | boolean;
+    enabled?: number | boolean;
+  }>;
+  parser_templates?: Array<{
+    id: string;
+    platform_code?: string;
+    template_code?: string;
+    name?: string;
+    source?: string;
+    status?: string;
+    version_count?: number;
+  }>;
+}
+
+interface RegistryCapabilities {
+  write_enabled: boolean;
+  allowed_connection_drivers: string[];
+  legacy_textfsm_fallback_enabled: boolean;
+  legacy_command_catalog_enabled: boolean;
 }
 
 interface PlatformHealth {
@@ -124,12 +153,33 @@ interface ActionDefinition {
   field_contract_json?: string;
 }
 
-type DetailTab = 'overview' | 'mappings' | 'releases';
+type DetailTab = 'overview' | 'mappings' | 'releases' | 'parser' | 'identification';
 type ReadinessFilter = 'all' | 'ready' | 'degraded';
 
 interface Props {
   language: string;
+  currentUser?: { role?: string; role_profile?: string } | null;
 }
+
+interface CreateProfileForm {
+  platform_code: string;
+  name_zh: string;
+  name_en: string;
+  vendor: string;
+  connection_driver: string;
+  parser_platform: string;
+  description: string;
+}
+
+const EMPTY_CREATE_PROFILE: CreateProfileForm = {
+  platform_code: '',
+  name_zh: '',
+  name_en: '',
+  vendor: '',
+  connection_driver: '',
+  parser_platform: '',
+  description: '',
+};
 
 const panelClass = 'rounded-2xl border border-black/5 bg-white shadow-sm';
 
@@ -200,11 +250,13 @@ const statusLabel = (value: string | undefined, zh: boolean): string => {
   return labels[normalized] || normalized;
 };
 
-const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
+const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const zh = language === 'zh';
   const navigate = useNavigate();
   const requestIdRef = useRef(0);
   const [profiles, setProfiles] = useState<PlatformProfile[]>([]);
+  const [capabilities, setCapabilities] = useState<RegistryCapabilities | null>(null);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
@@ -225,6 +277,39 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
   const [sampleRunId, setSampleRunId] = useState('');
   const [identificationConflicts, setIdentificationConflicts] = useState<IdentificationConflict[]>([]);
   const [conflictsLoading, setConflictsLoading] = useState(false);
+  const [actionReleaseId, setActionReleaseId] = useState('');
+  const [editingActionCode, setEditingActionCode] = useState('');
+  const [editingCommand, setEditingCommand] = useState('');
+  const [actionSaving, setActionSaving] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [createForm, setCreateForm] = useState<CreateProfileForm>(EMPTY_CREATE_PROFILE);
+  const [wizardSaving, setWizardSaving] = useState(false);
+  const [wizardError, setWizardError] = useState('');
+
+  const role = String(currentUser?.role || '');
+  const roleProfile = String(currentUser?.role_profile || '');
+  const canWrite = Boolean(capabilities?.write_enabled) && (
+    role === 'Administrator'
+    || (!roleProfile && role === 'Operator')
+    || ['Platform Maintainer', 'System Administrator'].includes(roleProfile)
+  );
+  const canReview = Boolean(capabilities?.write_enabled) && (
+    role === 'Administrator'
+    || ['Release Manager', 'System Administrator'].includes(roleProfile)
+  );
+
+  const loadCapabilities = useCallback(async () => {
+    setCapabilitiesLoading(true);
+    try {
+      const response = await apiRequest<ApiEnvelope<RegistryCapabilities>>('/api/platform-registry/capabilities');
+      setCapabilities(response.data || null);
+    } catch {
+      setCapabilities(null);
+    } finally {
+      setCapabilitiesLoading(false);
+    }
+  }, []);
 
   const refreshProfiles = useCallback(async () => {
     setLoading(true);
@@ -246,13 +331,10 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
   const loadProfile = useCallback(async (profileId: string) => {
     if (!profileId) {
       setSelectedProfile(null);
-      setActions([]);
       return;
     }
     const requestId = ++requestIdRef.current;
     setDetailLoading(true);
-    setActionsLoading(true);
-    setActionsError('');
     try {
       const response = await apiRequest<ApiEnvelope<PlatformProfileDetail>>(
         `/api/platform-registry/profiles/${encodeURIComponent(profileId)}`,
@@ -267,9 +349,20 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
     } finally {
       if (requestId === requestIdRef.current) setDetailLoading(false);
     }
+  }, [zh]);
+
+  const loadActions = useCallback(async (profileId: string, releaseId = '') => {
+    if (!profileId) {
+      setActions([]);
+      return;
+    }
+    const requestId = requestIdRef.current;
+    setActionsLoading(true);
+    setActionsError('');
     try {
+      const query = releaseId ? `?release_id=${encodeURIComponent(releaseId)}` : '';
       const response = await apiRequest<ApiEnvelope<ActionDefinition[]>>(
-        `/api/platform-registry/profiles/${encodeURIComponent(profileId)}/actions`,
+        `/api/platform-registry/profiles/${encodeURIComponent(profileId)}/actions${query}`,
       );
       if (requestId === requestIdRef.current) setActions(response.data || []);
     } catch (cause) {
@@ -317,6 +410,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
   }, []);
 
   useEffect(() => { void refreshProfiles(); }, [refreshProfiles]);
+  useEffect(() => { void loadCapabilities(); }, [loadCapabilities]);
   useEffect(() => { void loadProfile(selectedProfileId); }, [loadProfile, selectedProfileId]);
   useEffect(() => { void loadHealth(selectedProfileId); }, [loadHealth, selectedProfileId]);
   useEffect(() => { void loadIdentificationConflicts(); }, [loadIdentificationConflicts]);
@@ -361,14 +455,124 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
     || (selectedListProfile ? { ...selectedListProfile, releases: [] } : null);
   const currentRelease = currentProfile?.releases?.find((release) => release.id === currentProfile.current_release_id)
     || currentProfile?.releases?.[0];
+  const activeRelease = currentProfile?.releases?.find((release) => release.id === actionReleaseId) || currentRelease;
   const readyCount = profiles.filter(isReady).length;
   const boundDeviceCount = profiles.reduce((total, profile) => total + Number(profile.bound_device_count || 0), 0);
   const onlineDeviceCount = profiles.reduce((total, profile) => total + Number(profile.online_device_count || 0), 0);
+
+  useEffect(() => {
+    if (!currentProfile) {
+      setActionReleaseId('');
+      return;
+    }
+    const releaseStillExists = Boolean(actionReleaseId && currentProfile.releases?.some((release) => release.id === actionReleaseId));
+    if (!releaseStillExists) {
+      setActionReleaseId(currentProfile.current_release_id || currentProfile.releases?.[0]?.id || '');
+    }
+  }, [currentProfile, actionReleaseId]);
+
+  useEffect(() => {
+    void loadActions(selectedProfileId, actionReleaseId);
+  }, [actionReleaseId, loadActions, selectedProfileId]);
 
   const selectProfile = (profileId: string) => {
     setSelectedProfileId(profileId);
     setDetailTab('overview');
     setError('');
+  };
+
+  const openCreateWizard = () => {
+    const firstDriver = capabilities?.allowed_connection_drivers?.[0] || '';
+    setCreateForm({ ...EMPTY_CREATE_PROFILE, connection_driver: firstDriver });
+    setWizardStep(1);
+    setWizardError('');
+    setWizardOpen(true);
+  };
+
+  const createPlatformProfile = async () => {
+    if (!createForm.platform_code.trim() || !createForm.name_en.trim() || !createForm.vendor.trim()) {
+      setWizardError(zh ? '请填写平台编码、英文名称和厂商。' : 'Platform code, English name, and vendor are required.');
+      return;
+    }
+    if (!createForm.connection_driver || !createForm.parser_platform.trim()) {
+      setWizardError(zh ? '请选择连接驱动并填写解析平台。' : 'Select a connection driver and enter a parser platform.');
+      return;
+    }
+    setWizardSaving(true);
+    setWizardError('');
+    try {
+      const profileResponse = await apiRequest<ApiEnvelope<PlatformProfile>>('/api/platform-registry/profiles', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...createForm,
+          platform_code: createForm.platform_code.trim().toLowerCase(),
+          parser_platform: createForm.parser_platform.trim().toLowerCase(),
+        }),
+      });
+      const createdProfile = profileResponse.data;
+      const releaseResponse = await apiRequest<ApiEnvelope<PlatformRelease>>(
+        `/api/platform-registry/profiles/${encodeURIComponent(createdProfile.id)}/releases`,
+        { method: 'POST', body: JSON.stringify({ safety_policy: { read_only: true } }) },
+      );
+      await refreshProfiles();
+      setSelectedProfileId(createdProfile.id);
+      setActionReleaseId(releaseResponse.data?.id || '');
+      setDetailTab('mappings');
+      setWizardOpen(false);
+    } catch (cause) {
+      setWizardError(cause instanceof Error ? cause.message : (zh ? '创建平台失败' : 'Failed to create platform'));
+    } finally {
+      setWizardSaving(false);
+    }
+  };
+
+  const createDraftRelease = async () => {
+    if (!currentProfile || !canWrite) return;
+    try {
+      const response = await apiRequest<ApiEnvelope<PlatformRelease>>(
+        `/api/platform-registry/profiles/${encodeURIComponent(currentProfile.id)}/releases`,
+        { method: 'POST', body: JSON.stringify({ safety_policy: { read_only: true } }) },
+      );
+      setActionReleaseId(response.data?.id || '');
+      await Promise.all([refreshProfiles(), loadProfile(currentProfile.id)]);
+      setDetailTab('mappings');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : (zh ? '创建草稿 Release 失败' : 'Failed to create draft release'));
+    }
+  };
+
+  const saveActionMapping = async (action: ActionDefinition) => {
+    if (!activeRelease?.id || !canWrite || activeRelease.status !== 'DRAFT') return;
+    setActionSaving(true);
+    setActionsError('');
+    try {
+      await apiRequest(`/api/platform-registry/releases/${encodeURIComponent(activeRelease.id)}/actions/${encodeURIComponent(action.action_code)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          command: editingCommand.trim(),
+          parser_template_version_id: action.parser_template_version_id || null,
+          field_contract: parseJsonObject(action.field_contract_json),
+        }),
+      });
+      setEditingActionCode('');
+      await loadActions(selectedProfileId, activeRelease.id);
+    } catch (cause) {
+      setActionsError(cause instanceof Error ? cause.message : (zh ? '保存动作映射失败' : 'Failed to save action mapping'));
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const transitionRelease = async (releaseId: string, event: 'validate' | 'submit' | 'approve' | 'publish') => {
+    try {
+      await apiRequest(event === 'validate'
+        ? `/api/platform-registry/releases/${encodeURIComponent(releaseId)}/validate`
+        : `/api/platform-registry/releases/${encodeURIComponent(releaseId)}/${event}`, { method: 'POST' });
+      setActionReleaseId(releaseId);
+      await Promise.all([refreshProfiles(), loadProfile(selectedProfileId)]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : (zh ? 'Release 操作失败' : 'Release operation failed'));
+    }
   };
 
   return (
@@ -380,27 +584,107 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
         eyebrow={zh ? '自动化平台管理' : 'AUTOMATION PLATFORM MANAGEMENT'}
         accent="#0891b2"
         actions={(
-          <button
-            type="button"
-            onClick={() => void refreshProfiles()}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            {zh ? '刷新' : 'Refresh'}
-          </button>
+          <div className="flex items-center gap-2">
+            {canWrite && (
+              <button
+                type="button"
+                onClick={openCreateWizard}
+                className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-700"
+              >
+                <Plus size={14} />
+                {zh ? '新建平台' : 'Create platform'}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void refreshProfiles()}
+              disabled={loading || capabilitiesLoading}
+              className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              {zh ? '刷新' : 'Refresh'}
+            </button>
+          </div>
         )}
       />
+
+      {wizardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-800">{zh ? '新建自定义平台' : 'Create custom platform'}</h2>
+                <p className="mt-1 text-[11px] text-slate-500">{zh ? '创建平台档案并自动生成一个只读 Draft Release。' : 'Create the profile and automatically seed a read-only draft release.'}</p>
+              </div>
+              <button type="button" onClick={() => setWizardOpen(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X size={16} /></button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 px-5 pt-4 text-[10px] font-semibold">
+              {[zh ? '平台身份' : 'Identity', zh ? '连接与解析' : 'Connection & parser', zh ? '确认' : 'Review'].map((label, index) => (
+                <div key={label} className={`rounded-lg px-2 py-2 text-center ${wizardStep === index + 1 ? 'bg-cyan-50 text-cyan-700' : 'bg-slate-50 text-slate-400'}`}>{index + 1}. {label}</div>
+              ))}
+            </div>
+            <div className="space-y-4 px-5 py-5">
+              {wizardError && <div className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{wizardError}</div>}
+              {wizardStep === 1 && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '平台编码' : 'Platform code'}<input value={createForm.platform_code} onChange={(event) => setCreateForm((current) => ({ ...current, platform_code: event.target.value }))} placeholder="acme_router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '厂商' : 'Vendor'}<input value={createForm.vendor} onChange={(event) => setCreateForm((current) => ({ ...current, vendor: event.target.value }))} placeholder="Acme" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '中文名称' : 'Chinese name'}<input value={createForm.name_zh} onChange={(event) => setCreateForm((current) => ({ ...current, name_zh: event.target.value }))} placeholder={zh ? '可选' : 'Optional'} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '英文名称' : 'English name'}<input value={createForm.name_en} onChange={(event) => setCreateForm((current) => ({ ...current, name_en: event.target.value }))} placeholder="Acme Router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
+                  <label className="text-xs font-semibold text-slate-600 sm:col-span-2">{zh ? '平台说明' : 'Description'}<textarea value={createForm.description} onChange={(event) => setCreateForm((current) => ({ ...current, description: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
+                </div>
+              )}
+              {wizardStep === 2 && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '连接驱动' : 'Connection driver'}<select value={createForm.connection_driver} onChange={(event) => setCreateForm((current) => ({ ...current, connection_driver: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"><option value="">{zh ? '请选择' : 'Select driver'}</option>{(capabilities?.allowed_connection_drivers || []).map((driver) => <option key={driver} value={driver}>{driver}</option>)}</select></label>
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '解析平台' : 'Parser platform'}<input value={createForm.parser_platform} onChange={(event) => setCreateForm((current) => ({ ...current, parser_platform: event.target.value }))} placeholder="acme_router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
+                  <div className="rounded-xl border border-cyan-100 bg-cyan-50/60 px-3 py-3 text-[11px] leading-5 text-cyan-800 sm:col-span-2">
+                    {zh ? '驱动必须来自后端 allowlist；解析模板需要后续在 TextFSM 页面创建、测试并发布后再绑定到动作。' : 'The driver must come from the backend allowlist. Create, test, and publish parser templates before binding them to actions.'}
+                  </div>
+                </div>
+              )}
+              {wizardStep === 3 && (
+                <div className="space-y-3">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {[
+                      [zh ? '平台编码' : 'Platform code', createForm.platform_code.toLowerCase()],
+                      [zh ? '厂商' : 'Vendor', createForm.vendor],
+                      [zh ? '英文名称' : 'English name', createForm.name_en],
+                      [zh ? '连接驱动' : 'Driver', createForm.connection_driver],
+                      [zh ? '解析平台' : 'Parser platform', createForm.parser_platform.toLowerCase()],
+                      [zh ? '初始状态' : 'Initial state', 'CUSTOM / ACTIVE / DRAFT release'],
+                    ].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-50 px-3 py-2"><div className="text-[10px] text-slate-400">{label}</div><div className="mt-1 break-all text-xs font-semibold text-slate-700">{value || '-'}</div></div>)}
+                  </div>
+                  <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3 text-[11px] leading-5 text-amber-800">{zh ? '创建不会自动发布或绑定设备；需要完成动作映射、TextFSM 回归和审批流后才可发布。' : 'Creation does not publish the profile or bind devices. Complete action mappings, TextFSM regression, and approval before publishing.'}</div>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4">
+              <button type="button" onClick={() => setWizardOpen(false)} className="rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100">{zh ? '取消' : 'Cancel'}</button>
+              <div className="flex items-center gap-2">
+                {wizardStep > 1 && <button type="button" onClick={() => { setWizardError(''); setWizardStep((step) => (step - 1) as 1 | 2 | 3); }} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">{zh ? '上一步' : 'Back'}</button>}
+                {wizardStep < 3 ? (
+                  <button type="button" onClick={() => { setWizardError(''); setWizardStep((step) => (step + 1) as 1 | 2 | 3); }} className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700">{zh ? '下一步' : 'Next'}</button>
+                ) : (
+                  <button type="button" onClick={() => void createPlatformProfile()} disabled={wizardSaving} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50">{wizardSaving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}{zh ? '创建平台' : 'Create platform'}</button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-5 p-6">
         <div className="flex items-start gap-3 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs text-cyan-800">
           <LockKeyhole size={16} className="mt-0.5 shrink-0" />
           <div>
-            <div className="font-semibold">{zh ? '当前阶段为只读审查模式' : 'Read-only review mode'}</div>
+            <div className="font-semibold">{canWrite ? (zh ? '受控写入模式' : 'Controlled write mode') : (zh ? '当前阶段为只读审查模式' : 'Read-only review mode')}</div>
             <div className="mt-0.5 text-cyan-700/80">
-              {zh
-                ? '本页面不提供创建、编辑、审批、发布和回滚按钮；写入与执行仍由 PLATFORM_REGISTRY_ENABLED 及后端权限共同控制。'
-                : 'Create, edit, approval, publish, rollback, and execute controls are intentionally not exposed in this stage.'}
+              {canWrite
+                ? (zh ? '写入操作受 PLATFORM_REGISTRY_ENABLED、角色档案和后端权限共同控制；发布仍需独立审批。' : 'Writes are gated by PLATFORM_REGISTRY_ENABLED, role profile, and backend authorization; publication still requires independent approval.')
+                : (zh
+                  ? '本页面默认只读；创建、编辑、审批和发布由 PLATFORM_REGISTRY_ENABLED 及后端权限共同控制。'
+                  : 'This page is read-only by default; create, edit, approval, and publish controls are gated by PLATFORM_REGISTRY_ENABLED and backend authorization.')}
             </div>
           </div>
         </div>
@@ -505,7 +789,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
                 <h2 className="text-sm font-semibold text-slate-800">{zh ? '平台列表' : 'Platform list'}</h2>
                 <p className="mt-0.5 text-[11px] text-slate-400">{zh ? `显示 ${filteredProfiles.length} / ${profiles.length}` : `${filteredProfiles.length} of ${profiles.length} shown`}</p>
               </div>
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">{zh ? '只读' : 'READ ONLY'}</span>
+              <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${canWrite ? 'bg-cyan-50 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>{canWrite ? (zh ? '受控写入' : 'CONTROLLED WRITE') : (zh ? '只读' : 'READ ONLY')}</span>
             </div>
             <div className="max-h-[660px] overflow-y-auto p-2">
               {loading && profiles.length === 0 ? (
@@ -567,6 +851,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
                       ['overview', zh ? '基本信息' : 'Overview'],
                       ['mappings', zh ? '命令映射' : 'Command mappings'],
                       ['releases', zh ? '发布记录' : 'Release history'],
+                      ['parser', zh ? '解析模板' : 'Parser templates'],
+                      ['identification', zh ? '识别规则' : 'Identification rules'],
                     ] as Array<[DetailTab, string]>).map(([tab, label]) => (
                       <button key={tab} type="button" onClick={() => setDetailTab(tab)} className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold transition ${detailTab === tab ? 'bg-cyan-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
                         {label}
@@ -651,8 +937,44 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
                       </div>
                     )}
 
+                    {detailTab === 'parser' && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs font-semibold text-slate-700">{zh ? '已绑定解析模板' : 'Bound parser templates'}</div>
+                          <button type="button" onClick={() => navigate('/automation/textfsm')} className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-700 hover:text-cyan-900">{zh ? '打开 TextFSM' : 'Open TextFSM'}<ChevronRight size={13} /></button>
+                        </div>
+                        {(currentProfile.parser_templates || []).length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-slate-200 px-4 py-12 text-center text-xs text-slate-400">{zh ? '暂无平台级解析模板' : 'No platform-scoped parser templates'}</div>
+                        ) : (currentProfile.parser_templates || []).map((template) => (
+                          <div key={template.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-3">
+                            <div><div className="font-mono text-xs font-semibold text-slate-800">{template.template_code || template.id}</div><div className="mt-1 text-[11px] text-slate-500">{template.name || template.platform_code || '-'}</div></div>
+                            <div className="flex items-center gap-2 text-[10px] text-slate-500"><span className={`rounded-full px-2 py-1 font-semibold ring-1 ${statusClass(template.status)}`}>{statusLabel(template.status, zh)}</span><span>{template.version_count || 0} {zh ? '个版本' : 'versions'}</span></div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {detailTab === 'identification' && (
+                      <div className="space-y-3">
+                        <div className="text-xs font-semibold text-slate-700">{zh ? '平台识别规则' : 'Platform identification rules'}</div>
+                        {(currentProfile.identification_rules || []).length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-slate-200 px-4 py-12 text-center text-xs text-slate-400">{zh ? '暂无识别规则；平台将保持未验证状态。' : 'No identification rules; the platform remains unverified.'}</div>
+                        ) : (currentProfile.identification_rules || []).map((rule) => (
+                          <div key={rule.id} className="rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-mono text-xs font-semibold text-slate-800">#{rule.rule_order ?? '-' } {rule.command || '-'}</span><span className="text-[10px] text-slate-500">{rule.match_type || 'regex'} · {Number(rule.confidence || 0).toFixed(2)}</span></div>
+                            <div className="mt-2 break-all rounded-lg bg-white px-2.5 py-2 font-mono text-[10px] text-slate-600">{rule.negate ? 'NOT ' : ''}{rule.pattern || '-'}</div>
+                            <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-slate-400"><span>{rule.logic_group || 'default'}</span><span>{rule.enabled === false || rule.enabled === 0 ? (zh ? '已停用' : 'Disabled') : (zh ? '已启用' : 'Enabled')}</span></div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {detailTab === 'mappings' && (
                       <div>
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-100 bg-cyan-50/50 px-3 py-2">
+                          <div className="flex items-center gap-2 text-[11px] font-semibold text-cyan-900"><span>{zh ? '编辑 Release' : 'Editing release'}</span><select value={actionReleaseId} onChange={(event) => setActionReleaseId(event.target.value)} className="rounded-lg border border-cyan-200 bg-white px-2 py-1 text-[10px] font-normal text-slate-700 outline-none">{(currentProfile.releases || []).map((release) => <option key={release.id} value={release.id}>v{release.release_number} · {release.status}</option>)}</select></div>
+                          {canWrite && <button type="button" onClick={() => void createDraftRelease()} className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200 hover:bg-cyan-50"><Plus size={12} />{zh ? '新建 Draft' : 'New draft'}</button>}
+                        </div>
                         {actionsError && <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">{actionsError}</div>}
                         {actionsLoading ? (
                           <div className="flex min-h-[260px] items-center justify-center text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
@@ -688,6 +1010,15 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
                                       {Object.keys(contract).length > 0 && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[9px] text-violet-700">{zh ? '字段契约已配置' : 'Field contract configured'}</span>}
                                     </div>
                                   )}
+                                  {editingActionCode === action.action_code ? (
+                                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                                      <input value={editingCommand} onChange={(event) => setEditingCommand(event.target.value)} className="min-w-[240px] flex-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 font-mono text-[10px] outline-none focus:ring-2 focus:ring-cyan-100" aria-label={zh ? '动作命令' : 'Action command'} />
+                                      <button type="button" onClick={() => void saveActionMapping(action)} disabled={actionSaving} className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-2 text-[10px] font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"><Save size={12} />{actionSaving ? (zh ? '保存中' : 'Saving') : (zh ? '保存' : 'Save')}</button>
+                                      <button type="button" onClick={() => setEditingActionCode('')} className="rounded-lg px-2.5 py-2 text-[10px] font-semibold text-slate-500 hover:bg-slate-100">{zh ? '取消' : 'Cancel'}</button>
+                                    </div>
+                                  ) : canWrite && activeRelease?.status === 'DRAFT' ? (
+                                    <button type="button" onClick={() => { setEditingActionCode(action.action_code); setEditingCommand(action.command || ''); }} className="mt-3 inline-flex items-center gap-1 text-[10px] font-semibold text-cyan-700 hover:text-cyan-900"><Save size={12} />{zh ? '编辑命令' : 'Edit command'}</button>
+                                  ) : null}
                                 </div>
                               );
                             })}
@@ -712,6 +1043,13 @@ const PlatformRegistryTab: React.FC<Props> = ({ language }) => {
                               <span>{zh ? '验证' : 'Validation'}：{statusLabel(release.validation_status, zh)}</span>
                             </div>
                             {release.checksum && <div className="mt-2 break-all font-mono text-[9px] text-slate-400">checksum: {release.checksum}</div>}
+                            {(canWrite || canReview) && (
+                              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                                {canWrite && release.status === 'DRAFT' && <><button type="button" onClick={() => void transitionRelease(release.id, 'validate')} className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200 hover:bg-cyan-50">{zh ? '验证' : 'Validate'}</button><button type="button" onClick={() => void transitionRelease(release.id, 'submit')} className="rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-cyan-700">{zh ? '提交审批' : 'Submit'}</button></>}
+                                {canReview && release.status === 'IN_REVIEW' && <button type="button" onClick={() => void transitionRelease(release.id, 'approve')} className="rounded-lg bg-amber-500 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-amber-600">{zh ? '批准' : 'Approve'}</button>}
+                                {canReview && release.status === 'APPROVED' && <button type="button" onClick={() => void transitionRelease(release.id, 'publish')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-emerald-700">{zh ? '发布' : 'Publish'}</button>}
+                              </div>
+                            )}
                           </div>
                         ))}
                         {currentRelease?.safety_policy_json && (

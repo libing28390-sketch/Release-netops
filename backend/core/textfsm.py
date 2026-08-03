@@ -193,11 +193,18 @@ def _legacy_template_filename(platform: str, command: str) -> str:
     return f"{platform}_{cmd_part}.textfsm"
 
 
+def _legacy_file_fallback_enabled() -> bool:
+    """Keep legacy filename lookup explicit during the migration window."""
+    return os.environ.get("LEGACY_TEXTFSM_FILE_FALLBACK_ENABLED", "1").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def _template_filename_variants(platform: str, command: str) -> list[str]:
     """Return current custom naming first, then legacy NTC naming."""
     names = [_template_filename(platform, command)]
     legacy = _legacy_template_filename(platform, command)
-    if legacy not in names:
+    if _legacy_file_fallback_enabled() and legacy not in names:
         names.append(legacy)
     return names
 

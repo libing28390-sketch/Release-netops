@@ -30,6 +30,10 @@ from database.migrations.m0088_seed_domestic_platform_identification_rules impor
 from database.migrations.m0089_playbook_execution_approvals import upgrade as approval_upgrade
 from database.migrations.m0090_platform_registry_health_telemetry import upgrade as health_telemetry_upgrade
 from database.migrations.m0091_platform_identification_conflicts import upgrade as identification_conflicts_upgrade
+from database.migrations.m0092_action_output_retention import upgrade as action_output_retention_upgrade
+from database.migrations.m0094_repair_huawei_eth_trunk_command import upgrade as huawei_eth_trunk_upgrade
+from database.migrations.m0095_seed_core_platform_identification_rules import upgrade as core_identification_rules_upgrade
+from database.migrations.m0096_parser_registry_lifecycle import upgrade as parser_registry_lifecycle_upgrade
 
 
 @pytest.fixture
@@ -108,6 +112,10 @@ def isolated_db():
         approval_upgrade(cursor, True)
         health_telemetry_upgrade(cursor, True)
         identification_conflicts_upgrade(cursor, True)
+        action_output_retention_upgrade(cursor, True)
+        huawei_eth_trunk_upgrade(cursor, True)
+        core_identification_rules_upgrade(cursor, True)
+        parser_registry_lifecycle_upgrade(cursor, True)
         migration_conn.commit()
     finally:
         migration_conn.close()

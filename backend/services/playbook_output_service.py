@@ -19,28 +19,38 @@ class PlaybookOutputError(RuntimeError):
     """Raised when encrypted Playbook output cannot be decrypted or decoded."""
 
 
+def _bounded_retention_days(value: Any, default: int = 30) -> int:
+    try:
+        return max(1, min(3650, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _retention_days() -> int:
     configured = os.environ.get("PLAYBOOK_RAW_OUTPUT_RETENTION_DAYS")
     if configured is None:
         configured = getattr(settings, "PLAYBOOK_RAW_OUTPUT_RETENTION_DAYS", 30)
-    try:
-        return max(1, min(3650, int(configured)))
-    except (TypeError, ValueError):
-        return 30
+    return _bounded_retention_days(configured)
 
 
-def raw_output_expiry(now: datetime | None = None) -> str:
+def raw_output_expiry(now: datetime | None = None, *, retention_days: int | None = None) -> str:
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
-    return (current + timedelta(days=_retention_days())).replace(microsecond=0).isoformat()
+    days = _retention_days() if retention_days is None else _bounded_retention_days(retention_days)
+    return (current + timedelta(days=days)).replace(microsecond=0).isoformat()
 
 
 def _serialize(value: Any) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
-def protect_output(value: Any, *, now: datetime | None = None) -> tuple[str | None, str, str | None, bool]:
+def protect_output(
+    value: Any,
+    *,
+    now: datetime | None = None,
+    retention_days: int | None = None,
+) -> tuple[str | None, str, str | None, bool]:
     """Return ciphertext, safe legacy placeholder, expiry and encryption status.
 
     New rows never store the raw JSON in the legacy column. If the application
@@ -53,7 +63,7 @@ def protect_output(value: Any, *, now: datetime | None = None) -> tuple[str | No
     except Exception:
         logger.error("Playbook output encryption is unavailable; raw payload was discarded", exc_info=True)
         return None, "{}", None, False
-    return ciphertext, "{}", raw_output_expiry(now), True
+    return ciphertext, "{}", raw_output_expiry(now, retention_days=retention_days), True
 
 
 def load_output(ciphertext: str | None, legacy_json: str | None) -> Any:

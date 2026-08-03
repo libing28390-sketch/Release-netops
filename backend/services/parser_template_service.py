@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -34,6 +35,64 @@ def _checksum(value: str) -> str:
 
 def _actor_key(user: dict[str, Any]) -> str:
     return str(user.get("id") or user.get("username") or "")
+
+
+def _audit_parser_event(
+    conn,
+    template_id: str,
+    version_id: str | None,
+    event_type: str,
+    user: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Write a small, non-sensitive lifecycle event inside the caller's transaction."""
+    conn.execute(
+        """INSERT INTO parser_template_audit_logs
+           (id, template_id, version_id, event_type, actor_id, actor_username, metadata_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            str(uuid.uuid4()), template_id, version_id or None, event_type,
+            _actor_key(user), str(user.get("username") or ""),
+            json.dumps(metadata or {}, ensure_ascii=False), _now(),
+        ),
+    )
+
+
+def _summary_for_records(records: list[dict[str, Any]], contract: dict[str, Any], duration_ms: int) -> dict[str, Any]:
+    fields = sorted({str(key) for record in records for key in record})
+    contract_fields = sorted(
+        set(contract.get("required") or [])
+        | set(contract.get("optional") or [])
+        | set((contract.get("types") or {}).keys())
+    )
+    coverage = {
+        field: round(
+            sum(1 for record in records if record.get(field) not in (None, "")) / len(records),
+            4,
+        ) if records else 0
+        for field in contract_fields
+    }
+    return {
+        "passed": True,
+        "record_count": len(records),
+        "fields": fields,
+        "field_coverage": coverage,
+        "field_contract": contract,
+        "duration_ms": max(0, int(duration_ms)),
+        "tested_at": _now(),
+    }
+
+
+def _release_manager_or_administrator(user: dict[str, Any]) -> None:
+    role = str(user.get("role") or "")
+    profile = str(user.get("role_profile") or "")
+    if role == "Administrator" or profile in {"Release Manager", "System Administrator"}:
+        return
+    raise PlatformRegistryError(
+        "PARSER_RELEASE_PERMISSION_REQUIRED",
+        "Only a release manager or Administrator can change a published parser version",
+        status_code=403,
+    )
 
 
 def _assert_template_access(conn, template_id: str, user: dict[str, Any]) -> dict[str, Any]:
@@ -88,10 +147,24 @@ def _validated_contract(value: Any) -> dict[str, Any]:
 
 
 def list_templates(user: dict[str, Any], *, platform_code: str = "") -> list[dict[str, Any]]:
+    return list_templates_page(user, platform_code=platform_code)["items"]
+
+
+def list_templates_page(
+    user: dict[str, Any],
+    *,
+    platform_code: str = "",
+    search: str = "",
+    source: str = "",
+    status: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, Any]:
+    """Return a bounded, tenant-scoped page for the registry UI."""
     conn = get_db_connection()
     try:
         tenant_id = str(user.get("tenant_id") or "")
-        clauses = ["status <> 'ARCHIVED'"]
+        clauses = [] if status.strip().upper() == "ARCHIVED" else ["status <> 'ARCHIVED'"]
         params: list[Any] = []
         if user.get("role") != "Administrator" or tenant_id:
             clauses.insert(0, "(tenant_id IS NULL OR tenant_id = ?)")
@@ -99,11 +172,34 @@ def list_templates(user: dict[str, Any], *, platform_code: str = "") -> list[dic
         if platform_code:
             clauses.append("platform_code = ?")
             params.append(normalize_platform_code(platform_code))
+        if search.strip():
+            needle = f"%{search.strip()}%"
+            clauses.append("(template_code LIKE ? OR name LIKE ? OR platform_code LIKE ?)")
+            params.extend([needle, needle, needle])
+        if source.strip():
+            clauses.append("source = ?")
+            params.append(source.strip().upper())
+        if status.strip():
+            clauses.append("status = ?")
+            params.append(status.strip().upper())
+        where = " AND ".join(clauses) or "1 = 1"
+        total_row = conn.execute(f"SELECT COUNT(*) AS total FROM parser_templates WHERE {where}", params).fetchone()
+        total = int((total_row["total"] if total_row else 0) or 0)
+        safe_page = max(1, int(page or 1))
+        safe_size = min(100, max(1, int(page_size or 50)))
+        offset = (safe_page - 1) * safe_size
         rows = conn.execute(
-            "SELECT * FROM parser_templates WHERE " + " AND ".join(clauses) + " ORDER BY source, platform_code, template_code",
-            params,
+            "SELECT * FROM parser_templates WHERE " + where
+            + " ORDER BY source, platform_code, template_code LIMIT ? OFFSET ?",
+            [*params, safe_size, offset],
         ).fetchall()
-        return [_row_dict(row) or {} for row in rows]
+        return {
+            "items": [_row_dict(row) or {} for row in rows],
+            "total": total,
+            "page": safe_page,
+            "page_size": safe_size,
+            "pages": (total + safe_size - 1) // safe_size if total else 0,
+        }
     finally:
         conn.close()
 
@@ -139,6 +235,7 @@ def create_template(payload: dict[str, Any], user: dict[str, Any], *, _source: s
                 source, user.get("id") or user.get("username") or "", now, now,
             ),
         )
+        _audit_parser_event(conn, template_id, None, "TEMPLATE_CREATED", user, {"source": source})
         conn.commit()
         return _row_dict(conn.execute("SELECT * FROM parser_templates WHERE id = ?", (template_id,)).fetchone()) or {}
     except PlatformRegistryError:
@@ -221,6 +318,7 @@ def create_version(template_id: str, payload: dict[str, Any], user: dict[str, An
                 "{}", user.get("id") or user.get("username") or "", now, now,
             ),
         )
+        _audit_parser_event(conn, template_id, version_id, "VERSION_CREATED", user, {"version_number": int(next_number)})
         conn.commit()
         return _row_dict(conn.execute("SELECT * FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()) or {}
     except PlatformRegistryError:
@@ -229,6 +327,58 @@ def create_version(template_id: str, payload: dict[str, Any], user: dict[str, An
     except Exception as exc:
         conn.rollback()
         raise PlatformRegistryError("PARSER_VERSION_CREATE_FAILED", "Parser template version could not be created") from exc
+    finally:
+        conn.close()
+
+
+def update_version(version_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    """Update one mutable draft in place, with optimistic lock protection."""
+    content = str(payload.get("content") or "")
+    if not content.strip():
+        raise PlatformRegistryError("PARSER_CONTENT_REQUIRED", "Template content is required")
+    field_contract = _validated_contract(payload.get("field_contract") or {})
+    expected_lock = payload.get("lock_version")
+    conn = get_db_connection()
+    try:
+        row = _load_version(conn, version_id, user)
+        if row.get("status") != "DRAFT":
+            raise PlatformRegistryError(
+                "PARSER_VERSION_IMMUTABLE",
+                "Only DRAFT parser versions can be edited in place",
+                status_code=409,
+            )
+        if row.get("template_source") == "SYSTEM":
+            raise PlatformRegistryError("SYSTEM_TEMPLATE_IMMUTABLE", "SYSTEM templates cannot be edited", status_code=403)
+        current_lock = int(row.get("lock_version") or 1)
+        if expected_lock is not None and int(expected_lock) != current_lock:
+            raise PlatformRegistryError(
+                "PARSER_VERSION_CONFLICT",
+                "The draft changed since it was loaded; refresh before saving",
+                status_code=409,
+            )
+        now = _now()
+        next_lock = current_lock + 1
+        updated = conn.execute(
+            """UPDATE parser_template_versions
+               SET content = ?, checksum = ?, field_contract_json = ?, test_summary_json = '{}',
+                   lock_version = ?, updated_at = ?
+               WHERE id = ? AND status = 'DRAFT' AND lock_version = ?""",
+            (
+                content, _checksum(content), json.dumps(field_contract, ensure_ascii=False),
+                next_lock, now, version_id, current_lock,
+            ),
+        )
+        if getattr(updated, "rowcount", 1) == 0:
+            raise PlatformRegistryError("PARSER_VERSION_CONFLICT", "The draft changed since it was loaded", status_code=409)
+        _audit_parser_event(conn, str(row["template_id"]), version_id, "VERSION_UPDATED", user, {"lock_version": next_lock})
+        conn.commit()
+        return _row_dict(conn.execute("SELECT * FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()) or {}
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise PlatformRegistryError("PARSER_VERSION_UPDATE_FAILED", "Parser draft could not be updated") from exc
     finally:
         conn.close()
 
@@ -263,6 +413,76 @@ def _parse_and_validate(content: str, sample_output: str, contract_value: Any) -
         raise PlatformRegistryError("FIELD_CONTRACT_VIOLATION", "The sample produced no records for a required field contract")
     _validate_field_contract(normalized, contract)
     return normalized, contract
+
+
+def sandbox_test(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    """Parse editor content without requiring a persisted mutable version.
+
+    ``persist`` only updates a DRAFT owned by the caller.  A SYSTEM/PUBLISHED
+    version can therefore be tested safely with new sample text while its
+    immutable record remains unchanged.
+    """
+    version_id = str(payload.get("version_id") or "")
+    content = str(payload.get("content") or "")
+    contract_value: Any = payload.get("field_contract") or {}
+    conn = get_db_connection()
+    try:
+        row: dict[str, Any] | None = None
+        if version_id:
+            row = _load_version(conn, version_id, user)
+            if not content:
+                content = str(row.get("content") or "")
+            if not contract_value:
+                contract_value = row.get("field_contract_json") or "{}"
+        if not content.strip():
+            raise PlatformRegistryError("PARSER_CONTENT_REQUIRED", "Template content is required")
+        sample_output = str(payload.get("sample_output") or "")
+        if not sample_output:
+            raise PlatformRegistryError("SAMPLE_OUTPUT_REQUIRED", "sample_output is required")
+        started = time.perf_counter()
+        records, contract = _parse_and_validate(content, sample_output, contract_value)
+        summary = _summary_for_records(records, contract, round((time.perf_counter() - started) * 1000))
+        persist = bool(payload.get("persist"))
+        if persist:
+            if not row:
+                raise PlatformRegistryError("PARSER_VERSION_REQUIRED", "A draft version is required to persist a sandbox test", status_code=409)
+            if row.get("status") != "DRAFT" or row.get("template_source") == "SYSTEM":
+                raise PlatformRegistryError("PARSER_VERSION_IMMUTABLE", "Only tenant DRAFT versions can persist sandbox changes", status_code=409)
+            expected_lock = payload.get("lock_version")
+            current_lock = int(row.get("lock_version") or 1)
+            if expected_lock is not None and int(expected_lock) != current_lock:
+                raise PlatformRegistryError("PARSER_VERSION_CONFLICT", "The draft changed since it was loaded", status_code=409)
+            next_lock = current_lock + 1
+            updated = conn.execute(
+                """UPDATE parser_template_versions
+                   SET content = ?, checksum = ?, field_contract_json = ?, test_summary_json = ?,
+                       lock_version = ?, updated_at = ?
+                   WHERE id = ? AND status = 'DRAFT' AND lock_version = ?""",
+                (
+                    content, _checksum(content), json.dumps(contract, ensure_ascii=False),
+                    json.dumps(summary, ensure_ascii=False), next_lock, _now(), version_id, current_lock,
+                ),
+            )
+            if getattr(updated, "rowcount", 1) == 0:
+                raise PlatformRegistryError("PARSER_VERSION_CONFLICT", "The draft changed since it was loaded", status_code=409)
+            _audit_parser_event(conn, str(row["template_id"]), version_id, "SANDBOX_PERSISTED", user, {"record_count": len(records), "lock_version": next_lock})
+        conn.commit()
+        return {
+            "version_id": version_id or None,
+            "success": True,
+            "records": records,
+            "count": len(records),
+            "fields": summary["fields"],
+            "summary": summary,
+        }
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise PlatformRegistryError("PARSER_TEST_FAILED", "Parser template test failed") from exc
+    finally:
+        conn.close()
 
 
 def _run_sample_regression(conn, row: dict[str, Any]) -> int:
@@ -320,23 +540,16 @@ def test_version(version_id: str, payload: dict[str, Any], user: dict[str, Any])
         _assert_template_access(conn, str(row["template_id"]), user)
         if row.get("status") in {"PUBLISHED", "DEPRECATED"}:
             raise PlatformRegistryError("PARSER_VERSION_IMMUTABLE", "Published parser versions cannot be retested in place", status_code=409)
+        started = time.perf_counter()
         records, contract = _parse_and_validate(row["content"], sample_output, row.get("field_contract_json"))
-        fields = sorted({str(key) for record in records for key in record})
-        coverage = {
-            field: sum(1 for record in records if record.get(field) not in (None, "")) / len(records)
-            if records else 0
-            for field in sorted(set(contract.get("required") or []) | set(contract.get("optional") or []) | set((contract.get("types") or {}).keys()))
-        }
-        summary = {
-            "passed": True, "record_count": len(records), "fields": fields,
-            "field_coverage": coverage, "field_contract": contract, "tested_at": _now(),
-        }
+        summary = _summary_for_records(records, contract, round((time.perf_counter() - started) * 1000))
         conn.execute(
             "UPDATE parser_template_versions SET test_summary_json = ?, updated_at = ? WHERE id = ?",
             (json.dumps(summary, ensure_ascii=False), _now(), version_id),
         )
+        _audit_parser_event(conn, str(row["template_id"]), version_id, "SANDBOX_TESTED", user, {"record_count": len(records)})
         conn.commit()
-        return {"version_id": version_id, "success": True, "records": records, "count": len(records), "fields": fields, "summary": summary}
+        return {"version_id": version_id, "success": True, "records": records, "count": len(records), "fields": summary["fields"], "summary": summary}
     except PlatformRegistryError:
         conn.rollback()
         raise
@@ -397,6 +610,7 @@ def _transition_version(version_id: str, event: str, user: dict[str, Any]) -> di
                    WHERE template_id = ? AND status = 'PUBLISHED' AND id <> ?""",
                 (_now(), row["template_id"], version_id),
             )
+            _audit_parser_event(conn, str(row["template_id"]), version_id, "VERSION_PUBLISHED_PREPARE", user, {"regression_count": regression_count})
         now = _now()
         audit_column = {
             "submit": "submitted_by",
@@ -408,6 +622,7 @@ def _transition_version(version_id: str, event: str, user: dict[str, Any]) -> di
             "lock_version = COALESCE(lock_version, 1) + 1, updated_at = ? WHERE id = ?",
             (target, _actor_key(user), now, version_id),
         )
+        _audit_parser_event(conn, str(row["template_id"]), version_id, f"VERSION_{event.upper()}", user, {"from": expected, "to": target})
         conn.commit()
         return _row_dict(conn.execute("SELECT * FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()) or {}
     except PlatformRegistryError:
@@ -430,6 +645,71 @@ def approve_version(version_id: str, user: dict[str, Any]) -> dict[str, Any]:
 
 def publish_version(version_id: str, user: dict[str, Any]) -> dict[str, Any]:
     return _transition_version(version_id, "publish", user)
+
+
+def rollback_version(version_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Promote a previously deprecated tenant version back to PUBLISHED."""
+    _release_manager_or_administrator(user)
+    conn = get_db_connection()
+    try:
+        target = _load_version(conn, version_id, user)
+        if target.get("template_source") == "SYSTEM":
+            raise PlatformRegistryError("SYSTEM_TEMPLATE_IMMUTABLE", "SYSTEM parser versions cannot be rolled back", status_code=403)
+        if target.get("status") != "DEPRECATED":
+            raise PlatformRegistryError("INVALID_ROLLBACK_TARGET", "Only a DEPRECATED parser version can be rolled back", status_code=409)
+        current = _row_dict(conn.execute(
+            "SELECT * FROM parser_template_versions WHERE template_id = ? AND status = 'PUBLISHED' ORDER BY version_number DESC LIMIT 1",
+            (target["template_id"],),
+        ).fetchone())
+        now = _now()
+        if current:
+            conn.execute(
+                "UPDATE parser_template_versions SET status = 'DEPRECATED', updated_at = ?, lock_version = COALESCE(lock_version, 1) + 1 WHERE id = ?",
+                (now, current["id"]),
+            )
+            _audit_parser_event(conn, str(target["template_id"]), str(current["id"]), "VERSION_DEPRECATED", user, {"reason": "rollback"})
+        conn.execute(
+            "UPDATE parser_template_versions SET status = 'PUBLISHED', published_by = ?, updated_at = ?, lock_version = COALESCE(lock_version, 1) + 1 WHERE id = ?",
+            (_actor_key(user), now, version_id),
+        )
+        _audit_parser_event(conn, str(target["template_id"]), version_id, "VERSION_ROLLED_BACK", user, {"previous_version_id": current["id"] if current else None})
+        conn.commit()
+        return _row_dict(conn.execute("SELECT * FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()) or {}
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise PlatformRegistryError("PARSER_ROLLBACK_FAILED", "Parser version rollback failed") from exc
+    finally:
+        conn.close()
+
+
+def deprecate_version(version_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    _release_manager_or_administrator(user)
+    conn = get_db_connection()
+    try:
+        row = _load_version(conn, version_id, user)
+        if row.get("template_source") == "SYSTEM":
+            raise PlatformRegistryError("SYSTEM_TEMPLATE_IMMUTABLE", "SYSTEM parser versions cannot be deprecated", status_code=403)
+        if row.get("status") != "PUBLISHED":
+            raise PlatformRegistryError("INVALID_PARSER_STATE", "Only a PUBLISHED parser version can be deprecated", status_code=409)
+        now = _now()
+        conn.execute(
+            "UPDATE parser_template_versions SET status = 'DEPRECATED', updated_at = ?, lock_version = COALESCE(lock_version, 1) + 1 WHERE id = ?",
+            (now, version_id),
+        )
+        _audit_parser_event(conn, str(row["template_id"]), version_id, "VERSION_DEPRECATED", user, {})
+        conn.commit()
+        return _row_dict(conn.execute("SELECT * FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()) or {}
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise PlatformRegistryError("PARSER_DEPRECATE_FAILED", "Parser version deprecation failed") from exc
+    finally:
+        conn.close()
 
 
 def create_sample(version_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
@@ -466,6 +746,7 @@ def create_sample(version_id: str, payload: dict[str, Any], user: dict[str, Any]
                 _actor_key(user), now,
             ),
         )
+        _audit_parser_event(conn, str(version["template_id"]), version_id, "SAMPLE_CREATED", user, {"sample_id": sample_id, "sample_name": str(payload.get("sample_name") or "")})
         conn.commit()
         return {
             "id": sample_id,
@@ -485,6 +766,36 @@ def create_sample(version_id: str, payload: dict[str, Any], user: dict[str, Any]
         conn.close()
 
 
+def delete_sample(sample_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    conn = get_db_connection()
+    try:
+        row = _row_dict(conn.execute(
+            """SELECT s.*, v.template_id, v.status AS version_status, t.source AS template_source
+               FROM parser_test_samples s
+               JOIN parser_template_versions v ON v.id = s.template_version_id
+               JOIN parser_templates t ON t.id = v.template_id
+               WHERE s.id = ?""",
+            (sample_id,),
+        ).fetchone())
+        if not row:
+            raise PlatformRegistryError("PARSER_SAMPLE_NOT_FOUND", "Parser test sample not found", status_code=404)
+        _assert_template_access(conn, str(row["template_id"]), user)
+        if row.get("version_status") in {"PUBLISHED", "DEPRECATED"} or row.get("template_source") == "SYSTEM":
+            raise PlatformRegistryError("PARSER_VERSION_IMMUTABLE", "Published parser samples cannot be deleted", status_code=409)
+        conn.execute("DELETE FROM parser_test_samples WHERE id = ?", (sample_id,))
+        _audit_parser_event(conn, str(row["template_id"]), str(row["template_version_id"]), "SAMPLE_DELETED", user, {"sample_id": sample_id})
+        conn.commit()
+        return {"id": sample_id, "deleted": True}
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise PlatformRegistryError("PARSER_SAMPLE_DELETE_FAILED", "Parser test sample could not be deleted") from exc
+    finally:
+        conn.close()
+
+
 def list_samples(version_id: str, user: dict[str, Any]) -> list[dict[str, Any]]:
     conn = get_db_connection()
     try:
@@ -497,6 +808,79 @@ def list_samples(version_id: str, user: dict[str, Any]) -> list[dict[str, Any]]:
             (version_id,),
         ).fetchall()
         return [_row_dict(row) or {} for row in rows]
+    finally:
+        conn.close()
+
+
+def list_audit_logs(template_id: str, user: dict[str, Any], *, limit: int = 100) -> list[dict[str, Any]]:
+    conn = get_db_connection()
+    try:
+        _assert_template_access(conn, template_id, user)
+        safe_limit = min(200, max(1, int(limit or 100)))
+        rows = conn.execute(
+            """SELECT id, template_id, version_id, event_type, actor_id, actor_username, metadata_json, created_at
+               FROM parser_template_audit_logs
+               WHERE template_id = ? ORDER BY created_at DESC LIMIT ?""",
+            (template_id, safe_limit),
+        ).fetchall()
+        return [_row_dict(row) or {} for row in rows]
+    finally:
+        conn.close()
+
+
+def template_impact(template_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Summarize downstream release/device references before lifecycle changes."""
+    conn = get_db_connection()
+    try:
+        template = _assert_template_access(conn, template_id, user)
+        version_ids = [str(row[0]) for row in conn.execute(
+            "SELECT id FROM parser_template_versions WHERE template_id = ?", (template_id,)
+        ).fetchall()]
+        if not version_ids:
+            return {
+                "template_id": template_id, "template_code": template.get("template_code"),
+                "version_count": 0, "action_count": 0, "release_count": 0,
+                "profile_count": 0, "device_count": 0, "playbook_count": 0,
+            }
+        placeholders = ",".join("?" for _ in version_ids)
+        action_row = conn.execute(
+            f"""SELECT COUNT(*) AS action_count,
+                       COUNT(DISTINCT a.release_id) AS release_count,
+                       COUNT(DISTINCT r.profile_id) AS profile_count
+                FROM platform_release_actions a
+                JOIN platform_releases r ON r.id = a.release_id
+                WHERE a.parser_template_version_id IN ({placeholders})""",
+            version_ids,
+        ).fetchone()
+        device_count = 0
+        try:
+            device_row = conn.execute(
+                f"SELECT COUNT(DISTINCT d.id) AS device_count FROM devices d WHERE d.platform_release_id IN (SELECT release_id FROM platform_release_actions WHERE parser_template_version_id IN ({placeholders}))",
+                version_ids,
+            ).fetchone()
+            device_count = int((device_row["device_count"] if device_row else 0) or 0)
+        except Exception:
+            # Older installations do not have a release binding column on devices.
+            device_count = 0
+        playbook_count = 0
+        try:
+            playbook_row = conn.execute(
+                f"SELECT COUNT(DISTINCT platform_release_id) AS playbook_count FROM playbook_versions WHERE platform_release_id IN (SELECT release_id FROM platform_release_actions WHERE parser_template_version_id IN ({placeholders}))",
+                version_ids,
+            ).fetchone()
+            playbook_count = int((playbook_row["playbook_count"] if playbook_row else 0) or 0)
+        except Exception:
+            playbook_count = 0
+        return {
+            "template_id": template_id,
+            "template_code": template.get("template_code"),
+            "version_count": len(version_ids),
+            "action_count": int((action_row["action_count"] if action_row else 0) or 0),
+            "release_count": int((action_row["release_count"] if action_row else 0) or 0),
+            "profile_count": int((action_row["profile_count"] if action_row else 0) or 0),
+            "device_count": device_count,
+            "playbook_count": playbook_count,
+        }
     finally:
         conn.close()
 

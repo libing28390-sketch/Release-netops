@@ -445,7 +445,7 @@ async def _run_playbook(
         creds = resolve_device_credentials(dd)
         dd['username'] = creds.get('normal_username') or creds.get('username') or ''
         dd['password'] = creds.get('normal_password') or creds.get('password') or ''
-        dd['enable_password'] = creds.get('enable_password') or creds.get('admin_password') or ''
+        dd['enable_password'] = creds.get('enable_password') or ''
         devices[d['id']] = dd
     conn.close()
 

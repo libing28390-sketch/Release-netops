@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import type { Device } from '../types';
+import { displaySiteLabel } from '../utils/deviceUtils';
 
 export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
   const [devices, setDevices] = useState<Device[]>([]);
@@ -33,7 +34,7 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
       status: (raw?.status === 'online' || raw?.status === 'offline' || raw?.status === 'pending') ? raw.status : 'offline',
       compliance: (raw?.compliance === 'compliant' || raw?.compliance === 'non-compliant' || raw?.compliance === 'unknown') ? raw.compliance : 'unknown',
       role: typeof raw?.role === 'string' ? raw.role : '',
-      site: typeof raw?.site === 'string' ? raw.site : '',
+      site: displaySiteLabel(raw),
       model: typeof raw?.model === 'string' ? raw.model : '',
       version: typeof raw?.version === 'string' ? raw.version : '',
       sn: typeof raw?.sn === 'string' ? raw.sn : '',

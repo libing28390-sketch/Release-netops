@@ -25,6 +25,7 @@ interface PlaybookVersion {
 interface Props {
   language: string;
   scenarios: ScenarioOption[];
+  currentUser?: { role?: string; role_profile?: string };
 }
 
 const emptyDefinition = {
@@ -40,7 +41,7 @@ const formatError = (cause: unknown, fallback: string): string => (
   cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : fallback
 );
 
-const PlaybookVersionEditor: React.FC<Props> = ({ language, scenarios }) => {
+const PlaybookVersionEditor: React.FC<Props> = ({ language, scenarios, currentUser }) => {
   const zh = language === 'zh';
   const [playbookId, setPlaybookId] = useState('');
   const [versions, setVersions] = useState<PlaybookVersion[]>([]);
@@ -51,12 +52,38 @@ const PlaybookVersionEditor: React.FC<Props> = ({ language, scenarios }) => {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [stepPhase, setStepPhase] = useState<'pre_check' | 'execute' | 'post_check' | 'rollback'>('execute');
 
   const selectedVersion = useMemo(
     () => versions.find((version) => version.id === selectedVersionId) || null,
     [selectedVersionId, versions],
   );
-  const canEdit = !selectedVersion || selectedVersion.status === 'DRAFT';
+  const role = currentUser?.role || 'Viewer';
+  const roleProfile = currentUser?.role_profile || '';
+  const canEditByRole = role === 'Administrator' || (role === 'Operator' && !roleProfile) || ['Template Developer', 'Platform Maintainer', 'Playbook Author', 'System Administrator'].includes(roleProfile);
+  const canReview = role === 'Administrator' || ['Release Manager', 'System Administrator'].includes(roleProfile);
+  const canEdit = canEditByRole && (!selectedVersion || selectedVersion.status === 'DRAFT');
+
+  const addStep = (type: 'action' | 'branch' | 'notification' | 'approval') => {
+    if (!canEdit) return;
+    try {
+      const parsed = JSON.parse(definitionText) as { phases?: Record<string, unknown> };
+      const phases = parsed.phases && typeof parsed.phases === 'object' ? parsed.phases as Record<string, unknown> : {};
+      const phase = Array.isArray(phases[stepPhase]) ? [...(phases[stepPhase] as unknown[])] : [];
+      const defaults: Record<typeof type, Record<string, unknown>> = {
+        action: { type: 'action', action_code: 'get_version', parameters: {} },
+        branch: { type: 'branch', condition: { source: 'variables', key: '', operator: 'exists', value: '' }, then: [], else: [] },
+        notification: { type: 'notification', title: '', message: '', level: 'info' },
+        approval: { type: 'approval', title: '', message: '', roles: ['Administrator'], fields: [] },
+      };
+      phase.push(defaults[type]);
+      const next = { ...parsed, phases: { ...phases, [stepPhase]: phase } };
+      setDefinitionText(JSON.stringify(next, null, 2));
+      setMessage(zh ? `已加入 ${stepPhase} 的 ${type} 步骤模板，请补齐参数后保存` : `Added a ${type} template to ${stepPhase}; complete its parameters before saving`);
+    } catch {
+      setError(zh ? '请先修正 JSON，再添加步骤模板' : 'Fix the JSON before adding a step template');
+    }
+  };
 
   useEffect(() => {
     if (!playbookId && scenarios[0]?.id) setPlaybookId(scenarios[0].id);
@@ -189,12 +216,22 @@ const PlaybookVersionEditor: React.FC<Props> = ({ language, scenarios }) => {
             <div className="flex flex-col gap-3 rounded-xl border border-black/5 bg-slate-50 p-3">
               <label className="text-[11px] font-semibold text-slate-600">{zh ? '版本名称' : 'Version name'}<input value={draftName} readOnly={!canEdit} onChange={(event) => setDraftName(event.target.value)} className="mt-1 w-full rounded-lg border border-black/10 bg-white px-2 py-2 text-xs read-only:cursor-not-allowed read-only:bg-slate-100" placeholder={zh ? '例如：接口巡检 v2' : 'e.g. Interface audit v2'} /></label>
               <div className="text-[10px] leading-5 text-slate-500">{zh ? '步骤类型：action、branch、notification、approval。approval 只能在 pre_check/execute 阶段顶层定义，审批通过前会暂停执行；action 必须引用已发布动作，通知只能使用系统已配置渠道。' : 'Step types: action, branch, notification, approval. Approval gates are top-level pre_check/execute steps and pause execution until approved; actions reference published actions and notifications use configured system channels.'}</div>
+              {canEdit && <div className="rounded-lg border border-cyan-100 bg-cyan-50/60 p-2">
+                <div className="mb-1 text-[10px] font-semibold text-cyan-800">{zh ? '受控步骤模板' : 'Controlled step templates'}</div>
+                <div className="mb-1.5 flex flex-wrap gap-1.5">
+                  <select value={stepPhase} onChange={(event) => setStepPhase(event.target.value as typeof stepPhase)} className="rounded-md border border-cyan-200 bg-white px-1.5 py-1 text-[10px] text-cyan-800">
+                    <option value="pre_check">pre_check</option><option value="execute">execute</option><option value="post_check">post_check</option><option value="rollback">rollback</option>
+                  </select>
+                  {(['action', 'branch', 'notification', 'approval'] as const).map((type) => <button key={type} type="button" onClick={() => addStep(type)} className="rounded-md border border-cyan-200 bg-white px-1.5 py-1 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-100">+ {type}</button>)}
+                </div>
+                <div className="text-[10px] text-cyan-800/70">{zh ? '只插入声明式模板；保存和校验仍由后端限制动作白名单、参数、分支深度、审批范围和总步骤数。' : 'Templates are declarative only; backend validation still enforces action allowlists, parameters, branch depth, approval scope and total steps.'}</div>
+              </div>}
               <div className="mt-auto flex flex-wrap gap-1.5">
-                {(!selectedVersion || selectedVersion.status === 'DRAFT') && <button type="button" onClick={() => void saveDraft()} disabled={working || !playbookId} className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">{working ? <Loader2 size={12} className="animate-spin" /> : <FileJson size={12} />}{zh ? (selectedVersion ? '保存草稿' : '创建草稿') : (selectedVersion ? 'Save draft' : 'Create draft')}</button>}
-                {selectedVersion?.status === 'DRAFT' && <button type="button" onClick={() => void runLifecycleAction('validate')} disabled={working} className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-700 disabled:opacity-50"><CheckCircle2 size={12} />{zh ? '校验' : 'Validate'}</button>}
-                {selectedVersion?.status === 'DRAFT' && <button type="button" onClick={() => void runLifecycleAction('submit')} disabled={working} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"><Send size={12} />{zh ? '提交审核' : 'Submit'}</button>}
-                {selectedVersion?.status === 'IN_REVIEW' && <button type="button" onClick={() => void runLifecycleAction('approve')} disabled={working} className="inline-flex items-center gap-1 rounded-lg bg-indigo-500 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"><ShieldCheck size={12} />{zh ? '审批' : 'Approve'}</button>}
-                {selectedVersion?.status === 'APPROVED' && <button type="button" onClick={() => void runLifecycleAction('publish')} disabled={working} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"><CheckCircle2 size={12} />{zh ? '发布' : 'Publish'}</button>}
+                {canEdit && (!selectedVersion || selectedVersion.status === 'DRAFT') && <button type="button" onClick={() => void saveDraft()} disabled={working || !playbookId} className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">{working ? <Loader2 size={12} className="animate-spin" /> : <FileJson size={12} />}{zh ? (selectedVersion ? '保存草稿' : '创建草稿') : (selectedVersion ? 'Save draft' : 'Create draft')}</button>}
+                {canEdit && selectedVersion?.status === 'DRAFT' && <button type="button" onClick={() => void runLifecycleAction('validate')} disabled={working} className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-700 disabled:opacity-50"><CheckCircle2 size={12} />{zh ? '校验' : 'Validate'}</button>}
+                {canEdit && selectedVersion?.status === 'DRAFT' && <button type="button" onClick={() => void runLifecycleAction('submit')} disabled={working} className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"><Send size={12} />{zh ? '提交审核' : 'Submit'}</button>}
+                {selectedVersion?.status === 'IN_REVIEW' && canReview && <button type="button" onClick={() => void runLifecycleAction('approve')} disabled={working} className="inline-flex items-center gap-1 rounded-lg bg-indigo-500 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"><ShieldCheck size={12} />{zh ? '审批' : 'Approve'}</button>}
+                {selectedVersion?.status === 'APPROVED' && canReview && <button type="button" onClick={() => void runLifecycleAction('publish')} disabled={working} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50"><CheckCircle2 size={12} />{zh ? '发布' : 'Publish'}</button>}
               </div>
               {selectedVersion?.validation_result?.errors?.length ? <div className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-[10px] text-rose-700">{selectedVersion.validation_result.errors.map((item, index) => <div key={`${item.code || 'error'}-${index}`}>{item.code || 'INVALID'}：{item.message || (zh ? '校验失败' : 'Validation failed')}</div>)}</div> : null}
             </div>

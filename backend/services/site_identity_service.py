@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+
+_INTERNAL_SITE_ID_RE = re.compile(r'^site-[a-z0-9]+$', re.IGNORECASE)
+_RESERVED_SYSTEM_SITE_VALUES = {'site-default', 'default_site'}
+
+
+def is_reserved_system_site(value: Any) -> bool:
+    """Return whether a site value is the legacy system fallback site."""
+    return str(value or '').strip().lower() in _RESERVED_SYSTEM_SITE_VALUES
 
 
 def resolve_canonical_site_id(conn: Any, value: str | None) -> str:
@@ -34,7 +44,10 @@ def resolve_canonical_site_id(conn: Any, value: str | None) -> str:
         ).fetchone()
     if not row:
         raise ValueError(f'Unknown CMDB site: {requested}')
-    return str(row['id']).strip()
+    canonical_id = str(row['id']).strip()
+    if is_reserved_system_site(canonical_id):
+        raise ValueError('System default site cannot be assigned to a business asset')
+    return canonical_id
 
 
 def canonical_site_id(record: Any) -> str:
@@ -49,13 +62,10 @@ def canonical_site_name(record: Any) -> str:
     if record is None:
         return 'Unassigned'
     if hasattr(record, 'get'):
-        return str(
-            record.get('site_name')
-            or record.get('site_code')
-            or record.get('site')
-            or record.get('site_id')
-            or 'Unassigned'
-        ).strip()
+        for key in ('site_name', 'site_code', 'site'):
+            value = str(record.get(key) or '').strip()
+            if value and not _INTERNAL_SITE_ID_RE.fullmatch(value):
+                return value
     return 'Unassigned'
 
 
