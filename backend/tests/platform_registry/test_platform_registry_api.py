@@ -12,6 +12,7 @@ from api.platform_registry import (
     PlatformReleaseCreateRequest,
     PlatformRollbackRequest,
     _require_registry_enabled,
+    api_list_compatible_parser_versions,
 )
 from core.rbac import authorize_resource, permission_catalog, RECOMMENDED_ROLE_PROFILES
 from services.platform_registry_service import preview_platform_migration
@@ -28,6 +29,16 @@ def test_registry_write_and_execution_gate_is_closed_by_default(monkeypatch):
 def test_registry_write_and_execution_gate_can_be_enabled(monkeypatch):
     monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     _require_registry_enabled()
+
+
+def test_parser_version_options_route_returns_profile_compatible_published_versions(isolated_db):
+    result = api_list_compatible_parser_versions(
+        "system-profile-cisco_ios",
+        {"id": "admin-1", "username": "admin", "role": "Administrator", "tenant_id": "tenant-1"},
+    )
+    assert result["success"] is True
+    assert result["data"]
+    assert all(item["status"] == "PUBLISHED" and item["platform_code"] == "cisco_ios" for item in result["data"])
 
 
 def test_platform_write_request_models_reject_unknown_fields_and_bound_values():
@@ -78,6 +89,7 @@ def test_operator_cannot_approve_publish_or_rollback_resources():
 def test_permission_catalog_exposes_reviewed_resource_actions_and_roles():
     catalog = permission_catalog()
     assert catalog["platform"] == ["approve", "bind_device", "create", "edit_draft", "publish", "rollback", "submit", "view"]
+    assert "delete" in catalog["textfsm"]
     assert catalog["sample_output"] == ["delete", "upload", "view"]
     assert "Template Developer" in RECOMMENDED_ROLE_PROFILES
     assert "Release Manager" in RECOMMENDED_ROLE_PROFILES

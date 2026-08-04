@@ -39,7 +39,7 @@ const ResultStatusModal: React.FC<ResultStatusModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4" onClick={handleBackdropClick}>
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" onClick={handleBackdropClick}>
       <motion.div
         initial={{ scale: 0.94, opacity: 0, y: 14 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}

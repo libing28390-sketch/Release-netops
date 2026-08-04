@@ -229,7 +229,7 @@ ge0/0/2 105 ge0/0/3 lsw4
 def test_vrp5_command_catalog_uses_device_compatible_spellings():
     commands = _resolve_commands("huawei_vrp", ["fan", "eth_trunk", "neighbors"])
     assert commands["fan"] == ["dis fan"]
-    assert commands["eth_trunk"] == ["dis eth-trunk"]
+    assert commands["eth_trunk"] == ["display eth-trunk"]
     assert commands["neighbors"] == ["display lldp neighbor brief"]
 
 

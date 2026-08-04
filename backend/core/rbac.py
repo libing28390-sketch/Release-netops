@@ -44,7 +44,7 @@ ADMIN_ONLY_PATHS = {
 RESOURCE_ACTION_CATALOG = {
     'platform': {'view', 'create', 'edit_draft', 'submit', 'approve', 'publish', 'rollback', 'bind_device'},
     'command': {'view', 'edit_draft', 'test', 'execute'},
-    'textfsm': {'view', 'create', 'edit_draft', 'test', 'submit', 'approve', 'publish', 'rollback', 'deprecate'},
+    'textfsm': {'view', 'create', 'edit_draft', 'delete', 'test', 'submit', 'approve', 'publish', 'rollback', 'deprecate'},
     'sample_output': {'upload', 'view', 'delete'},
     'playbook': {'view', 'create', 'edit_draft', 'test', 'submit', 'approve', 'publish', 'execute', 'schedule', 'rollback'},
 }
@@ -60,7 +60,7 @@ RECOMMENDED_ROLE_PROFILES = {
     },
     'Template Developer': {
         'platform': {'view'}, 'command': {'view', 'test'},
-        'textfsm': {'view', 'create', 'edit_draft', 'test', 'submit'},
+        'textfsm': {'view', 'create', 'edit_draft', 'delete', 'test', 'submit'},
         'sample_output': {'upload', 'view', 'delete'}, 'playbook': {'view'},
     },
     'Platform Maintainer': {

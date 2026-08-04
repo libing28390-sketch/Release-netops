@@ -306,15 +306,15 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'bgp_routes': ['display bgp routing-table'],
         'ntp': ['display ntp-service status'],
         'environment': ['display environment'],
-        # VRP5 S-series accepts the abbreviated command while some releases
-        # reject the fully expanded spelling with ``Unrecognized command``.
+        # The published platform registry uses the full spelling as the
+        # canonical command.  The parser still accepts historical ``dis``
+        # output in fixtures, but new fallback sends must match the release
+        # contract so legacy and registry paths cannot drift.
         'fan': ['dis fan'],
         'power': ['display power'],
         'stack': ['display stack'],
         'transceiver': ['display transceiver interface'],
-        # Keep the VRP5-compatible spelling; VRP8 keeps the full command in
-        # its separate catalog below.
-        'eth_trunk': ['dis eth-trunk'],
+        'eth_trunk': ['display eth-trunk'],
         'version': ['display version'],
         'logs': ['display logbuffer last 30'],
         'interface_description': ['display interface description'],

@@ -44,10 +44,23 @@ def upgrade(cursor, use_pg: bool) -> None:
 
     # 2. Ensure UNIQUE constraints / Indexes on rack_code
     if use_pg:
-        try:
-            cursor.execute("ALTER TABLE racks ADD CONSTRAINT racks_rack_code_key UNIQUE (rack_code)")
-        except Exception:
-            pass
+        cursor.execute(
+            "SELECT 1 FROM pg_constraint "
+            "WHERE conrelid = 'racks'::regclass "
+            "AND conname = 'racks_rack_code_key'"
+        )
+        if cursor.fetchone() is None:
+            # A legacy database may have duplicate rack codes.  Keep the
+            # migration retryable if the constraint cannot be introduced;
+            # PostgreSQL otherwise aborts the surrounding transaction even
+            # when the caller only wants to defer this integrity check.
+            cursor.execute("SAVEPOINT m0005_rack_code_unique")
+            try:
+                cursor.execute("ALTER TABLE racks ADD CONSTRAINT racks_rack_code_key UNIQUE (rack_code)")
+            except Exception:
+                cursor.execute("ROLLBACK TO SAVEPOINT m0005_rack_code_unique")
+            finally:
+                cursor.execute("RELEASE SAVEPOINT m0005_rack_code_unique")
     else:
         try:
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_racks_rack_code ON racks(rack_code)")

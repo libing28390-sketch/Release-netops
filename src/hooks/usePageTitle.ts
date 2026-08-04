@@ -42,6 +42,7 @@ export const usePageTitle = ({
         metrics: language === 'zh' ? '巡检指标' : 'Inspection Metrics',
         scripts: language === 'zh' ? '脚本管理' : 'Script Management',
         'textfsm-templates': language === 'zh' ? 'TextFSM 解析模板' : 'TextFSM Parse Templates',
+        'textfsm-registry': language === 'zh' ? 'TextFSM 注册表' : 'TextFSM Registry',
       };
       return map[automationPage] || automationPage;
     }

@@ -19,6 +19,8 @@ import {
   ClipboardList,
   Clock,
   FileText,
+  FileCode2,
+  GitBranch,
   Globe,
   Home,
   Key,
@@ -46,7 +48,7 @@ import { useSystem } from '../../hooks/useSystem';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, BarChart2, Bell, ClipboardList, Clock, FileText, Globe, Key, Lock, Monitor, Server, Settings, Shield, ShieldAlert, Terminal, User, Zap,
+  Activity, BarChart2, Bell, ClipboardList, Clock, FileCode2, FileText, GitBranch, Globe, Key, Lock, Monitor, Server, Settings, Shield, ShieldAlert, Terminal, User, Zap,
 };
 
 /** RBAC role hierarchy levels */

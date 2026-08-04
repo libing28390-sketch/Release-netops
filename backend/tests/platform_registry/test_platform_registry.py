@@ -13,6 +13,7 @@ from services.platform_registry_service import (
     create_release,
     execute_platform_action,
     is_safe_read_command,
+    list_compatible_parser_versions,
     list_profiles,
     list_release_actions,
     preview_platform_action,
@@ -217,6 +218,90 @@ def test_release_action_rejects_cross_profile_parser_version(isolated_db):
             author,
         )
     assert error.value.code == "PARSER_SCOPE_DENIED"
+
+
+def test_compatible_parser_versions_use_profile_parser_and_scope_rules(isolated_db):
+    owner = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
+    profile = create_profile(
+        {"platform_code": "acme_parser_lab", "name_zh": "测试平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        owner,
+    )
+    other_profile = create_profile(
+        {"platform_code": "other_parser_lab", "name_zh": "其他平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        owner,
+    )
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        _insert_published_parser(conn, version_id="compatible_version", tenant_id="tenant-1", profile_id=profile["id"])
+        _insert_published_parser(conn, version_id="other_profile_version", tenant_id="tenant-1", profile_id=other_profile["id"])
+        _insert_published_parser(conn, version_id="wrong_platform_version", tenant_id="tenant-1", profile_id=profile["id"], platform_code="hp_comware")
+        conn.execute(
+            """INSERT INTO parser_templates
+               (id, tenant_id, platform_profile_id, platform_code, template_code, source_filename,
+                name, source, status, created_by, created_at, updated_at, lock_version)
+               VALUES ('system-compatible-template', NULL, NULL, 'cisco_ios', 'SYSTEM_COMPATIBLE', '', 'system', 'SYSTEM', 'ACTIVE', 'system', 'now', 'now', 1)""",
+        )
+        conn.execute(
+            """INSERT INTO parser_template_versions
+               (id, template_id, version_number, status, content, checksum, field_contract_json,
+                test_summary_json, created_by, created_at, updated_at)
+               VALUES ('system-compatible-version', 'system-compatible-template', 1, 'PUBLISHED',
+                       'Value FIELD (.*)\\nStart\\n  ^${FIELD} -> Record', 'checksum', '{}', '{}', 'system', 'now', 'now')""",
+        )
+        conn.execute(
+            """INSERT INTO parser_templates
+               (id, tenant_id, platform_profile_id, platform_code, template_code, source_filename,
+                name, source, status, created_by, created_at, updated_at, lock_version)
+               VALUES ('draft-compatible-template', 'tenant-1', ?, 'cisco_ios', 'DRAFT_COMPATIBLE', '', 'draft', 'CUSTOM', 'ACTIVE', 'author', 'now', 'now', 1)""",
+            (profile["id"],),
+        )
+        conn.execute(
+            """INSERT INTO parser_template_versions
+               (id, template_id, version_number, status, content, checksum, field_contract_json,
+                test_summary_json, created_by, created_at, updated_at)
+               VALUES ('draft-compatible-version', 'draft-compatible-template', 1, 'DRAFT',
+                       'Value FIELD (.*)\\nStart\\n  ^${FIELD} -> Record', 'checksum', '{}', '{}', 'author', 'now', 'now')""",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    versions = list_compatible_parser_versions(profile["id"], owner)
+    version_ids = {item["id"] for item in versions}
+    assert {"compatible_version", "system-compatible-version"} <= version_ids
+    assert {"other_profile_version", "wrong_platform_version", "draft-compatible-version"}.isdisjoint(version_ids)
+    assert all(item["status"] == "PUBLISHED" and item["platform_code"] == "cisco_ios" for item in versions)
+
+
+def test_release_action_can_replace_parser_version_within_same_profile(isolated_db):
+    owner = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
+    profile = create_profile(
+        {"platform_code": "replace_parser_lab", "name_zh": "替换平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        owner,
+    )
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        _insert_published_parser(conn, version_id="replace_version_a", tenant_id="tenant-1", profile_id=profile["id"])
+        _insert_published_parser(conn, version_id="replace_version_b", tenant_id="tenant-1", profile_id=profile["id"])
+    finally:
+        conn.close()
+    release = create_release(profile["id"], {}, owner)
+    first = update_release_action(
+        release["id"],
+        "get_clock",
+        {"command": "show clock", "parser_template_version_id": "replace_version_a"},
+        owner,
+    )
+    assert first["parser_template_version_id"] == "replace_version_a"
+    second = update_release_action(
+        release["id"],
+        "get_clock",
+        {"command": "show clock", "parser_template_version_id": "replace_version_b"},
+        owner,
+    )
+    assert second["parser_template_version_id"] == "replace_version_b"
+    mapped = next(item for item in list_release_actions(profile["id"], owner, release["id"]) if item["action_code"] == "get_clock")
+    assert mapped["parser_template_version_id"] == "replace_version_b"
 
 
 def test_execute_uses_published_release_and_returns_traceability(isolated_db):

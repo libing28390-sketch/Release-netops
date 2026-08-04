@@ -23,6 +23,7 @@ from services.platform_registry_service import (
     create_release,
     execute_platform_action,
     get_profile,
+    list_compatible_parser_versions,
     list_profiles,
     list_release_actions,
     preview_platform_migration,
@@ -225,6 +226,19 @@ def api_create_profile(payload: PlatformProfileCreateRequest, user=require_permi
 @router.get("/profiles/{profile_id}")
 def api_get_profile(profile_id: str = Path(..., min_length=1), user=require_permission("platform", "read")):
     return {"success": True, "data": _call(get_profile, profile_id, user), "message": ""}
+
+
+@router.get("/profiles/{profile_id}/parser-versions")
+def api_list_compatible_parser_versions(
+    profile_id: str = Path(..., min_length=1),
+    user=require_permission("command", "view"),
+):
+    """Return only published parser versions accepted by this profile."""
+    return {
+        "success": True,
+        "data": _call(list_compatible_parser_versions, profile_id, user),
+        "message": "",
+    }
 
 
 @router.post("/profiles/{profile_id}/releases")

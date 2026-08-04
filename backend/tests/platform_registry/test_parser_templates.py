@@ -5,13 +5,14 @@ from fastapi import HTTPException
 
 from core import crypto
 from core.config import settings
-from api.parser_templates import _enabled
+from api.parser_templates import _enabled, api_parser_capabilities
 from database import get_db_connection
 from services.parser_template_service import (
     approve_version,
     create_sample,
     create_template,
     create_version,
+    delete_template,
     delete_sample,
     deprecate_version,
     fork_template,
@@ -28,6 +29,7 @@ from services.parser_template_service import (
     template_impact,
     test_version as run_version_test,
     update_version,
+    update_template,
 )
 from services.platform_registry_service import PlatformRegistryError
 
@@ -43,6 +45,31 @@ def test_parser_template_write_gate_is_closed_by_default(monkeypatch):
     with pytest.raises(HTTPException) as error:
         _enabled()
     assert error.value.status_code == 503
+
+
+def test_profile_scoped_template_uses_canonical_parser_platform(isolated_db):
+    owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
+    template = create_template(
+        {
+            "platform_code": "hp_comware",
+            "platform_profile_id": "system-profile-h3c_comware",
+            "template_code": "H3C_PROFILE_SCOPED",
+            "name": "H3C profile scoped",
+        },
+        owner,
+    )
+    assert template["platform_profile_id"] == "system-profile-h3c_comware"
+    assert template["platform_code"] == "hp_comware"
+
+
+def test_parser_capabilities_report_closed_write_gate_and_read_only_sandbox(monkeypatch):
+    monkeypatch.delenv("PLATFORM_REGISTRY_ENABLED", raising=False)
+    closed = api_parser_capabilities({"role": "Viewer", "tenant_id": "tenant-1"})
+    assert closed["data"] == {"write_enabled": False, "read_only_sandbox_enabled": True}
+
+    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
+    opened = api_parser_capabilities({"role": "Viewer", "tenant_id": "tenant-1"})
+    assert opened["data"] == {"write_enabled": True, "read_only_sandbox_enabled": True}
 
 
 def test_parser_template_version_test_is_tenant_scoped_and_sandboxed(isolated_db, monkeypatch):
@@ -179,6 +206,67 @@ def test_parser_draft_update_sandbox_persists_summary_and_audit(isolated_db):
     page = list_templates_page(owner, search="DRAFT_UPDATE", page=1, page_size=10)
     assert page["total"] == 1
     assert page["items"][0]["template_code"] == "DRAFT_UPDATE"
+
+
+def test_parser_draft_template_can_update_identity_and_delete_when_unused(isolated_db):
+    owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
+    template = create_template({"platform_code": "cisco_ios", "template_code": "DRAFT_IDENTITY", "name": "Before"}, owner)
+    version = create_version(template["id"], {"content": VALID_TEMPLATE}, owner)
+
+    updated = update_template(
+        template["id"],
+        {
+            "platform_code": "cisco_ios",
+            "template_code": "DRAFT_IDENTITY_RENAMED",
+            "name": "After",
+            "platform_profile_id": None,
+            "lock_version": template.get("lock_version"),
+        },
+        owner,
+    )
+    assert updated["template_code"] == "DRAFT_IDENTITY_RENAMED"
+    assert updated["name"] == "After"
+    assert updated["lock_version"] == int(template.get("lock_version") or 1) + 1
+
+    deleted = delete_template(updated["id"], owner)
+    assert deleted == {"id": updated["id"], "deleted": True}
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        assert conn.execute("SELECT id FROM parser_templates WHERE id = ?", (updated["id"],)).fetchone() is None
+        assert conn.execute("SELECT id FROM parser_template_versions WHERE id = ?", (version["id"],)).fetchone() is None
+    finally:
+        conn.close()
+
+
+def test_parser_template_delete_rejects_system_and_mapped_versions(isolated_db):
+    owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        system = conn.execute("SELECT id FROM parser_templates WHERE source = 'SYSTEM' LIMIT 1").fetchone()
+    finally:
+        conn.close()
+    assert system
+    with pytest.raises(PlatformRegistryError) as system_error:
+        delete_template(system["id"], owner)
+    assert system_error.value.code == "SYSTEM_TEMPLATE_IMMUTABLE"
+
+    template = create_template({"platform_code": "cisco_ios", "template_code": "DRAFT_MAPPED"}, owner)
+    version = create_version(template["id"], {"content": VALID_TEMPLATE}, owner)
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        release = conn.execute("SELECT id FROM platform_releases LIMIT 1").fetchone()
+        assert release
+        conn.execute(
+            """UPDATE platform_release_actions SET parser_template_version_id = ?
+               WHERE id = (SELECT id FROM platform_release_actions WHERE release_id = ? LIMIT 1)""",
+            (version["id"], release["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    with pytest.raises(PlatformRegistryError) as mapped_error:
+        delete_template(template["id"], owner)
+    assert mapped_error.value.code == "PARSER_TEMPLATE_IN_USE"
 
 
 def test_system_version_can_be_sandboxed_without_mutation(isolated_db):

@@ -632,6 +632,48 @@ def list_release_actions(profile_id: str, user: dict[str, Any], release_id: str 
         conn.close()
 
 
+def list_compatible_parser_versions(profile_id: str, user: dict[str, Any]) -> list[dict[str, Any]]:
+    """List published TextFSM versions that may be bound to a platform profile.
+
+    The filter intentionally mirrors the checks in ``update_release_action``:
+    parser platform must match the profile's canonical parser platform, SYSTEM
+    versions may be global (or explicitly scoped to this profile), and tenant
+    versions must belong to both the current tenant and this exact profile.
+    Keeping this rule in the service means the UI can only offer choices that
+    the write API will accept; the write path still re-validates everything.
+    """
+    conn = get_db_connection()
+    try:
+        profile = _assert_profile_access(conn, profile_id, user)
+        rows = conn.execute(
+            """SELECT v.id, v.template_id, v.version_number, v.status, v.checksum,
+                      v.field_contract_json, t.platform_code, t.template_code, t.name,
+                      t.source, t.tenant_id, t.platform_profile_id
+               FROM parser_template_versions v
+               JOIN parser_templates t ON t.id = v.template_id
+               WHERE v.status = 'PUBLISHED' AND t.platform_code = ?
+               ORDER BY t.template_code, v.version_number DESC, v.id""",
+            (profile.get("parser_platform"),),
+        ).fetchall()
+        compatible: list[dict[str, Any]] = []
+        profile_tenant = str(profile.get("tenant_id") or "")
+        profile_id_value = str(profile.get("id") or profile_id)
+        for row in rows:
+            item = _row_dict(row) or {}
+            source = str(item.get("source") or "").upper()
+            template_tenant = str(item.get("tenant_id") or "")
+            template_profile = str(item.get("platform_profile_id") or "")
+            if source == "SYSTEM":
+                if template_tenant or (template_profile and template_profile != profile_id_value):
+                    continue
+            elif template_tenant != profile_tenant or template_profile != profile_id_value:
+                continue
+            compatible.append(item)
+        return compatible
+    finally:
+        conn.close()
+
+
 @lru_cache(maxsize=1024)
 def _resolve_action_mapping_cached(canonical: str, action_code: str) -> dict[str, Any]:
     conn = get_db_connection()

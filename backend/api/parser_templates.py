@@ -15,6 +15,7 @@ from services.parser_template_service import (
     create_version,
     approve_version,
     create_sample,
+    delete_template,
     delete_sample,
     deprecate_version,
     list_templates,
@@ -30,6 +31,7 @@ from services.parser_template_service import (
     submit_version,
     template_impact,
     test_version,
+    update_template,
     update_version,
 )
 from services.platform_registry_service import PlatformRegistryError
@@ -45,6 +47,14 @@ class ParserTemplateCreateRequest(BaseModel):
     name: str = Field(default="", max_length=128)
     source_filename: str = Field(default="", max_length=255)
     platform_profile_id: str | None = Field(default=None, max_length=128)
+
+
+class ParserTemplateUpdateRequest(BaseModel):
+    platform_code: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]{2,63}$")
+    template_code: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+    name: str = Field(default="", max_length=128)
+    platform_profile_id: str | None = Field(default=None, max_length=128)
+    lock_version: int | None = Field(default=None, ge=1)
 
 
 class ParserTemplateForkRequest(BaseModel):
@@ -89,7 +99,7 @@ class ParserRegressionTestRequest(BaseModel):
 
 
 def _enabled() -> None:
-    if os.environ.get("PLATFORM_REGISTRY_ENABLED", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+    if not _is_enabled():
         raise HTTPException(
             status_code=503,
             detail={
@@ -97,6 +107,10 @@ def _enabled() -> None:
                 "message": "Parser template development APIs are disabled",
             },
         )
+
+
+def _is_enabled() -> bool:
+    return os.environ.get("PLATFORM_REGISTRY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _call(fn, *args, **kwargs):
@@ -137,6 +151,19 @@ def api_list_templates(
     }
 
 
+@router.get("/capabilities")
+def api_parser_capabilities(user=require_permission("textfsm", "view")):
+    """Expose the parser registry gate without exposing any write capability."""
+    return {
+        "success": True,
+        "data": {
+            "write_enabled": _is_enabled(),
+            "read_only_sandbox_enabled": True,
+        },
+        "message": "",
+    }
+
+
 @router.post("", status_code=201)
 def api_create_template(payload: ParserTemplateCreateRequest, user=require_permission("textfsm", "create")):
     _enabled()
@@ -152,6 +179,18 @@ def api_list_versions(template_id: str, user=require_permission("textfsm", "view
 def api_fork_template(template_id: str, payload: ParserTemplateForkRequest, user=require_permission("textfsm", "create")):
     _enabled()
     return {"success": True, "data": _call(fork_template, template_id, payload.model_dump(), user), "message": "SYSTEM parser template forked"}
+
+
+@router.put("/{template_id}")
+def api_update_template(template_id: str, payload: ParserTemplateUpdateRequest, user=require_permission("textfsm", "edit_draft")):
+    _enabled()
+    return {"success": True, "data": _call(update_template, template_id, payload.model_dump(), user), "message": "Parser template updated"}
+
+
+@router.delete("/{template_id}")
+def api_delete_template(template_id: str, user=require_permission("textfsm", "delete")):
+    _enabled()
+    return {"success": True, "data": _call(delete_template, template_id, user), "message": "Parser template deleted"}
 
 
 @router.post("/{template_id}/versions", status_code=201)

@@ -25,6 +25,7 @@ import {
   FileEdit,
   FileSearch,
   FileText,
+  GitBranch,
   GitCompare,
   Globe,
   History,
@@ -71,7 +72,7 @@ const LS_KEY = 'nexora_module_nav';
 const iconMap: Record<string, React.ElementType> = {
   Activity, Archive, BarChart2, BarChart3, Bell, Building2, CalendarClock,
   ClipboardCheck, ClipboardList, Clock, Code2, Columns3, Database,
-  FileCode2, FileEdit, FileSearch, FileText, GitCompare, Globe,
+  FileCode2, FileEdit, FileSearch, FileText, GitBranch, GitCompare, Globe,
   History, Inbox, Key, Layers, LayoutDashboard, MapPin, Network, Package,
   PlusCircle, Router, Search, Server, Shield, ShieldAlert, ShieldCheck,
   SlidersHorizontal, Star, Tag, Terminal, Timer, TrendingUp,

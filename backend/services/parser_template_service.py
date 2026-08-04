@@ -216,11 +216,11 @@ def create_template(payload: dict[str, Any], user: dict[str, Any], *, _source: s
     try:
         profile_id = payload.get("platform_profile_id") or None
         if profile_id:
-            profile = _row_dict(conn.execute("SELECT id, tenant_id, platform_code FROM platform_profiles WHERE id = ?", (profile_id,)).fetchone())
+            profile = _row_dict(conn.execute("SELECT id, tenant_id, platform_code, parser_platform FROM platform_profiles WHERE id = ?", (profile_id,)).fetchone())
             if not profile:
                 raise PlatformRegistryError("PLATFORM_NOT_FOUND", "Platform profile not found", status_code=404)
-            if profile.get("platform_code") != platform_code:
-                raise PlatformRegistryError("PARSER_PLATFORM_MISMATCH", "Template platform does not match the selected profile")
+            if profile.get("parser_platform") != platform_code:
+                raise PlatformRegistryError("PARSER_PLATFORM_MISMATCH", "Template parser platform does not match the selected profile")
             if profile.get("tenant_id") and profile.get("tenant_id") != tenant_id and user.get("role") != "Administrator":
                 raise PlatformRegistryError("PARSER_SCOPE_DENIED", "Platform profile is outside the current tenant scope", status_code=403)
         source = _source if _source in {"CUSTOM", "FORKED"} else "CUSTOM"
@@ -244,6 +244,128 @@ def create_template(payload: dict[str, Any], user: dict[str, Any], *, _source: s
     except Exception as exc:
         conn.rollback()
         raise PlatformRegistryError("PARSER_TEMPLATE_CREATE_FAILED", "Parser template could not be created") from exc
+    finally:
+        conn.close()
+
+
+def update_template(template_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    """Update the identity/scope of a tenant-owned draft template."""
+    platform_code = validate_platform_code(payload.get("platform_code"))
+    template_code = validate_template_code(payload.get("template_code"))
+    name = str(payload.get("name") or template_code).strip() or template_code
+    profile_id = payload.get("platform_profile_id") or None
+    expected_lock = payload.get("lock_version")
+    conn = get_db_connection()
+    try:
+        template = _assert_template_access(conn, template_id, user)
+        if template.get("source") == "SYSTEM":
+            raise PlatformRegistryError(
+                "SYSTEM_TEMPLATE_IMMUTABLE",
+                "SYSTEM templates cannot be edited; create a tenant template instead",
+                status_code=403,
+            )
+        lifecycle = conn.execute(
+            "SELECT status FROM parser_template_versions WHERE template_id = ? AND status NOT IN ('DRAFT', 'DEPRECATED') LIMIT 1",
+            (template_id,),
+        ).fetchone()
+        if lifecycle:
+            raise PlatformRegistryError(
+                "PARSER_TEMPLATE_IMMUTABLE",
+                "Only templates with draft or deprecated versions can be edited",
+                status_code=409,
+            )
+        tenant_id = template.get("tenant_id")
+        if profile_id:
+            profile = _row_dict(conn.execute(
+                "SELECT id, tenant_id, parser_platform FROM platform_profiles WHERE id = ?",
+                (profile_id,),
+            ).fetchone())
+            if not profile:
+                raise PlatformRegistryError("PLATFORM_NOT_FOUND", "Platform profile not found", status_code=404)
+            if profile.get("parser_platform") != platform_code:
+                raise PlatformRegistryError("PARSER_PLATFORM_MISMATCH", "Template parser platform does not match the selected profile")
+            if profile.get("tenant_id") and profile.get("tenant_id") != tenant_id and user.get("role") != "Administrator":
+                raise PlatformRegistryError("PARSER_SCOPE_DENIED", "Platform profile is outside the current tenant scope", status_code=403)
+        duplicate = conn.execute(
+            """SELECT id FROM parser_templates
+               WHERE id <> ? AND (tenant_id = ? OR (tenant_id IS NULL AND ? IS NULL))
+                 AND platform_code = ? AND template_code = ? LIMIT 1""",
+            (template_id, tenant_id, tenant_id, platform_code, template_code),
+        ).fetchone()
+        if duplicate:
+            raise PlatformRegistryError("PARSER_TEMPLATE_EXISTS", "A template with this code already exists", status_code=409)
+        current_lock = int(template.get("lock_version") or 1)
+        if expected_lock is not None and int(expected_lock) != current_lock:
+            raise PlatformRegistryError("PARSER_TEMPLATE_CONFLICT", "The template changed since it was loaded; refresh before saving", status_code=409)
+        next_lock = current_lock + 1
+        now = _now()
+        updated = conn.execute(
+            """UPDATE parser_templates
+               SET platform_profile_id = ?, platform_code = ?, template_code = ?, name = ?,
+                   lock_version = ?, updated_at = ?
+               WHERE id = ? AND lock_version = ?""",
+            (profile_id, platform_code, template_code, name, next_lock, now, template_id, current_lock),
+        )
+        if getattr(updated, "rowcount", 1) == 0:
+            raise PlatformRegistryError("PARSER_TEMPLATE_CONFLICT", "The template changed since it was loaded; refresh before saving", status_code=409)
+        _audit_parser_event(conn, template_id, None, "TEMPLATE_UPDATED", user, {"lock_version": next_lock})
+        conn.commit()
+        return _row_dict(conn.execute("SELECT * FROM parser_templates WHERE id = ?", (template_id,)).fetchone()) or {}
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise PlatformRegistryError("PARSER_TEMPLATE_UPDATE_FAILED", "Parser template could not be updated") from exc
+    finally:
+        conn.close()
+
+
+def delete_template(template_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Delete an unused tenant template and its draft-only lifecycle data."""
+    conn = get_db_connection()
+    try:
+        template = _assert_template_access(conn, template_id, user)
+        if template.get("source") == "SYSTEM" or not template.get("tenant_id"):
+            raise PlatformRegistryError(
+                "SYSTEM_TEMPLATE_IMMUTABLE",
+                "SYSTEM templates cannot be deleted; create a tenant template instead",
+                status_code=403,
+            )
+        mapped = conn.execute(
+            """SELECT COUNT(*) AS count
+               FROM platform_release_actions a
+               JOIN parser_template_versions v ON v.id = a.parser_template_version_id
+               WHERE v.template_id = ?""",
+            (template_id,),
+        ).fetchone()
+        if int((mapped["count"] if mapped else 0) or 0) > 0:
+            raise PlatformRegistryError(
+                "PARSER_TEMPLATE_IN_USE",
+                "This template is referenced by a platform Release; replace the mapping before deleting it",
+                status_code=409,
+            )
+        lifecycle = conn.execute(
+            "SELECT status FROM parser_template_versions WHERE template_id = ? AND status NOT IN ('DRAFT', 'DEPRECATED') LIMIT 1",
+            (template_id,),
+        ).fetchone()
+        if lifecycle:
+            raise PlatformRegistryError(
+                "PARSER_TEMPLATE_DELETE_BLOCKED",
+                "Only templates without approved, published, or in-review versions can be deleted",
+                status_code=409,
+            )
+        deleted = conn.execute("DELETE FROM parser_templates WHERE id = ?", (template_id,))
+        if getattr(deleted, "rowcount", 1) == 0:
+            raise PlatformRegistryError("PARSER_TEMPLATE_NOT_FOUND", "Parser template not found", status_code=404)
+        conn.commit()
+        return {"id": template_id, "deleted": True}
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise PlatformRegistryError("PARSER_TEMPLATE_DELETE_FAILED", "Parser template could not be deleted") from exc
     finally:
         conn.close()
 

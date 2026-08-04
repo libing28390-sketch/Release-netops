@@ -2749,6 +2749,11 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         ]:
             ensure_column(table_name, col, dtype)
 
+    # Fresh PostgreSQL baselines must add the device-to-asset relation before
+    # creating its partial unique index.  Older installations already have
+    # the column, while a new baseline otherwise leaves the transaction
+    # aborted after PostgreSQL reports an undefined column.
+    ensure_column('devices', 'asset_id', "TEXT")
     try:
         cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_asset_id ON devices(asset_id) WHERE asset_id IS NOT NULL AND asset_id <> ''")
     except Exception as _asset_unique_exc:
