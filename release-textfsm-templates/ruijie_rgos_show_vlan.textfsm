@@ -1,0 +1,10 @@
+Value Required VLAN_ID (\d+)
+Value VLAN_NAME (\S+)
+Value STATUS (\S+)
+Value PORTS (.*)
+
+Start
+  ^VLAN\s+Name\s+Status\s+Ports
+  ^-+
+  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s+${STATUS}\s+${PORTS}\s*$$ -> Record
+  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s+${STATUS}\s*$$ -> Record

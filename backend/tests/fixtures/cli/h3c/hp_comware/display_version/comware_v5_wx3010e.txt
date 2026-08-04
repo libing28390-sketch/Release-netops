@@ -1,0 +1,9 @@
+<H3C> display version
+H3C Comware Platform Software
+Comware Software, Version 5.20, Alpha 3501
+Copyright(c) 2004-2012 Hangzhou H3C Tech. Co., Ltd. All rights reserved.
+H3C WX3010E uptime is 0 week, 0 day, 0 hour, 29 minutes
+H3C WX3010E with 1 RMI XLS 208 750MHz Processor
+512M bytes DDR2
+16M bytes Flash Memory
+

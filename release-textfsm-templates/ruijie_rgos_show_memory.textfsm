@@ -1,0 +1,8 @@
+Value TOTAL_MEMORY (\d+)
+Value USED_MEMORY (\d+)
+Value FREE_MEMORY (\d+)
+Value AVAILABLE_MEMORY (\d+)
+Value USED_PCT (\d+(?:\.\d+)?)
+
+Start
+  ^System Memory:\s+${TOTAL_MEMORY}KB total,\s+${USED_MEMORY}KB used,\s+${FREE_MEMORY}KB free,\s+${AVAILABLE_MEMORY}KB available,\s+${USED_PCT}% used rate -> Record

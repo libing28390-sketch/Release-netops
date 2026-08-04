@@ -1,0 +1,29 @@
+Value Required INTERFACE ([\w.-]+(?:\s+\d+(?:/\d+)*(?:\.\d+)?)?|\S+)
+Value TRANSCEIVER_TYPE (.*)
+Value CONNECTOR_TYPE (.*)
+Value WAVELENGTH (\S+)
+Value SERIAL_NUMBER (\S+)
+Value TEMPERATURE (-?\d+(?:\.\d+)?(?:\([^\)]+\))?)
+Value VOLTAGE (-?\d+(?:\.\d+)?(?:\([^\)]+\))?)
+Value BIAS_CURRENT (-?\d+(?:\.\d+)?(?:\([^\)]+\))?)
+Value RX_POWER (-?\d+(?:\.\d+)?(?:\([^\)]+\)?(?:\[[^\)]+\])?)?)
+Value TX_POWER (-?\d+(?:\.\d+)?(?:\([^\)]+\))?)
+Value List ALARM (.*)
+
+Start
+  ^========Interface\s+${INTERFACE}======== -> InterfaceBlock
+
+InterfaceBlock
+  ^Transceiver Type\s+:\s+${TRANSCEIVER_TYPE}\s*$$
+  ^Connector Type\s+:\s+${CONNECTOR_TYPE}\s*$$
+  ^Wavelength\(nm\)\s+:\s+${WAVELENGTH}\s*$$
+  ^Vendor Serial Number\s+:\s+${SERIAL_NUMBER}\s*$$
+  ^${TEMPERATURE}\s+${VOLTAGE}\s+${BIAS_CURRENT}\s+${RX_POWER}\s+${TX_POWER}\s*$$
+  ^Transceiver current alarm information: -> AlarmBlock
+  ^========Interface\s+ -> Record Start
+
+AlarmBlock
+  ^Interface\s+.*alarm detect\. -> Record Start
+  ^========Interface\s+ -> Record Start
+  ^None\s*$$
+  ^${ALARM}\s*$$

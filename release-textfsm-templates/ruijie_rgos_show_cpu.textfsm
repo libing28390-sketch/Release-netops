@@ -1,0 +1,8 @@
+Value CPU_5SEC (\d+(?:\.\d+)?)
+Value CPU_1MIN (\d+(?:\.\d+)?)
+Value CPU_5MIN (\d+(?:\.\d+)?)
+
+Start
+  ^CPU utilization in five seconds:\s+${CPU_5SEC}%
+  ^CPU utilization in one minute:\s+${CPU_1MIN}%
+  ^CPU utilization in five minutes:\s+${CPU_5MIN}% -> Record

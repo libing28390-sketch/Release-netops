@@ -1,0 +1,12 @@
+Value Required MODULE (\S+)
+Value DIVISION (\d+)
+Value NAME (\S+)
+Value VENDOR (.*?)
+Value PHY_STATUS (\S+)
+Value POWER_STATUS (\S+)
+Value COM_STATUS (\S+)
+Value RUN_STATUS (\S+)
+Value INPUT_TYPE (\S+)
+
+Start
+  ^${DIVISION}\s+${MODULE}\s+${NAME}\s+${VENDOR}\s+${PHY_STATUS}\s+${POWER_STATUS}\s+${COM_STATUS}\s+${RUN_STATUS}\s+${INPUT_TYPE}\s*$$ -> Record

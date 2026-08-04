@@ -1,0 +1,5 @@
+Ruijie#show ip interface brief
+
+Interface                        IP-Address(Pri)      IP-Address(Sec)      Status       Protocol
+
+Async 1                          10.10.0.2             no address           up           up
