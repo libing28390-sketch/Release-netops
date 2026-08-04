@@ -582,7 +582,6 @@ def create_profile(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, A
 
 def create_release(profile_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     profile = get_profile(profile_id, user)
-    release_id = str(uuid.uuid4())
     now = _now()
     conn = get_db_connection()
     try:
@@ -593,12 +592,127 @@ def create_release(profile_id: str, payload: dict[str, Any], user: dict[str, Any
         else:
             # SQLite's writer lock closes the MAX()+1 race for local installs.
             conn.execute("BEGIN IMMEDIATE")
+
+        # A profile can have at most one working draft from the operator's
+        # point of view.  Reusing it makes the button idempotent and avoids a
+        # pile of indistinguishable empty releases when the user only wants to
+        # change one action mapping.
+        existing = conn.execute(
+            "SELECT * FROM platform_releases WHERE profile_id = ? AND status = 'DRAFT' ORDER BY release_number DESC LIMIT 1",
+            (profile_id,),
+        ).fetchone()
+        if existing:
+            existing_dict = _row_dict(existing) or {}
+            action_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM platform_release_actions WHERE release_id = ?",
+                (existing_dict.get("id"),),
+            ).fetchone()["count"]
+            if not action_count:
+                # Repair drafts created by older builds: copy the currently
+                # published snapshot so editing one action cannot accidentally
+                # publish a release with all other mappings missing.
+                published = None
+                current_release_id = str(profile.get("current_release_id") or "").strip()
+                if current_release_id:
+                    published = conn.execute(
+                        "SELECT id FROM platform_releases WHERE id = ? AND profile_id = ? AND status = 'PUBLISHED'",
+                        (current_release_id, profile_id),
+                    ).fetchone()
+                if not published:
+                    published = conn.execute(
+                        "SELECT id FROM platform_releases WHERE profile_id = ? AND status = 'PUBLISHED' ORDER BY release_number DESC LIMIT 1",
+                        (profile_id,),
+                    ).fetchone()
+                if published:
+                    source_actions = conn.execute(
+                        """SELECT action_code, command, parser_template_version_id,
+                                  field_contract_json, command_checksum
+                           FROM platform_release_actions
+                           WHERE release_id = ? ORDER BY action_code""",
+                        (published["id"],),
+                    ).fetchall()
+                    for action in source_actions:
+                        conn.execute(
+                            """INSERT INTO platform_release_actions
+                               (id, release_id, action_code, command,
+                                parser_template_version_id, field_contract_json,
+                                command_checksum, created_at, updated_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                str(uuid.uuid4()), existing_dict["id"], action["action_code"], action["command"],
+                                action["parser_template_version_id"], action["field_contract_json"],
+                                action["command_checksum"], now, now,
+                            ),
+                        )
+                    copied_actions = [
+                        dict(row) for row in conn.execute(
+                            """SELECT action_code, command, parser_template_version_id,
+                                      field_contract_json
+                               FROM platform_release_actions WHERE release_id = ?
+                               ORDER BY action_code""",
+                            (existing_dict["id"],),
+                        ).fetchall()
+                    ]
+                    conn.execute(
+                        "UPDATE platform_releases SET checksum = ?, updated_at = ?, lock_version = lock_version + 1 WHERE id = ?",
+                        (_checksum(copied_actions), now, existing_dict["id"]),
+                    )
+            conn.commit()
+            return _row_dict(conn.execute("SELECT * FROM platform_releases WHERE id = ?", (existing_dict["id"],)).fetchone()) or {}
+
+        release_id = str(uuid.uuid4())
         next_number = conn.execute("SELECT COALESCE(MAX(release_number), 0) + 1 AS next_number FROM platform_releases WHERE profile_id = ?", (profile_id,)).fetchone()["next_number"]
+        # A new draft starts as a copy of the currently published release.  A
+        # later PUT then changes only the selected action_code while preserving
+        # every other command/parser binding.
+        published = None
+        current_release_id = str(profile.get("current_release_id") or "").strip()
+        if current_release_id:
+            published = conn.execute(
+                "SELECT id, safety_policy_json FROM platform_releases WHERE id = ? AND profile_id = ? AND status = 'PUBLISHED'",
+                (current_release_id, profile_id),
+            ).fetchone()
+        if not published:
+            published = conn.execute(
+                "SELECT id, safety_policy_json FROM platform_releases WHERE profile_id = ? AND status = 'PUBLISHED' ORDER BY release_number DESC LIMIT 1",
+                (profile_id,),
+            ).fetchone()
+        source_actions = []
+        if published:
+            source_actions = conn.execute(
+                """SELECT action_code, command, parser_template_version_id,
+                          field_contract_json, command_checksum
+                   FROM platform_release_actions WHERE release_id = ?
+                   ORDER BY action_code""",
+                (published["id"],),
+            ).fetchall()
+        copied_actions = [
+            dict(row) for row in source_actions
+        ]
+        safety_policy = payload.get("safety_policy") or (published["safety_policy_json"] if published else None)
+        if isinstance(safety_policy, str):
+            try:
+                safety_policy = json.loads(safety_policy)
+            except (TypeError, ValueError):
+                safety_policy = {"read_only": True}
+        safety_policy = safety_policy or {"read_only": True}
         conn.execute(
             """INSERT INTO platform_releases (id, profile_id, release_number, status, connection_driver, parser_platform, safety_policy_json, checksum, created_by, created_at, updated_at, lock_version)
                VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, 1)""",
-            (release_id, profile_id, next_number, profile["connection_driver"], profile["parser_platform"], _json(payload.get("safety_policy") or {"read_only": True}), _checksum({"profile_id": profile_id, "release_number": next_number, "actions": []}), user.get("id") or user.get("username") or "", now, now),
+            (release_id, profile_id, next_number, profile["connection_driver"], profile["parser_platform"], _json(safety_policy), _checksum(copied_actions), user.get("id") or user.get("username") or "", now, now),
         )
+        for action in source_actions:
+            conn.execute(
+                """INSERT INTO platform_release_actions
+                   (id, release_id, action_code, command, parser_template_version_id,
+                    field_contract_json, command_checksum, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    str(uuid.uuid4()), release_id, action["action_code"], action["command"],
+                    action["parser_template_version_id"], action["field_contract_json"],
+                    action["command_checksum"], now, now,
+                ),
+            )
         conn.commit()
         return _row_dict(conn.execute("SELECT * FROM platform_releases WHERE id = ?", (release_id,)).fetchone()) or {}
     except Exception:
@@ -638,7 +752,9 @@ def list_compatible_parser_versions(profile_id: str, user: dict[str, Any]) -> li
     The filter intentionally mirrors the checks in ``update_release_action``:
     parser platform must match the profile's canonical parser platform, SYSTEM
     versions may be global (or explicitly scoped to this profile), and tenant
-    versions must belong to both the current tenant and this exact profile.
+    versions must belong to the current tenant and explicitly target this
+    profile.  A tenant fork may target a SYSTEM profile; that is the supported
+    way to replace one parser without changing the system template itself.
     Keeping this rule in the service means the UI can only offer choices that
     the write API will accept; the write path still re-validates everything.
     """
@@ -666,7 +782,7 @@ def list_compatible_parser_versions(profile_id: str, user: dict[str, Any]) -> li
             if source == "SYSTEM":
                 if template_tenant or (template_profile and template_profile != profile_id_value):
                     continue
-            elif template_tenant != profile_tenant or template_profile != profile_id_value:
+            elif template_tenant != str(user.get("tenant_id") or profile_tenant) or template_profile != profile_id_value:
                 continue
             compatible.append(item)
         return compatible
@@ -983,7 +1099,10 @@ def update_release_action(release_id: str, action_code: str, payload: dict[str, 
             if parser_version["source"] == "SYSTEM":
                 if parser_version["tenant_id"] or parser_version["platform_profile_id"] not in {None, profile["id"]}:
                     raise PlatformRegistryError("PARSER_SCOPE_DENIED", "System parser version is outside the release scope", status_code=403)
-            elif parser_version["tenant_id"] != profile["tenant_id"] or parser_version["platform_profile_id"] != profile["id"]:
+            elif (
+                parser_version["tenant_id"] != (user.get("tenant_id") or profile["tenant_id"])
+                or parser_version["platform_profile_id"] != profile["id"]
+            ):
                 raise PlatformRegistryError("PARSER_SCOPE_DENIED", "Parser version is outside the release scope", status_code=403)
         contract = payload.get("field_contract") or {"required": json.loads(definition["required_fields_json"] or "[]"), "optional": json.loads(definition["optional_fields_json"] or "[]")}
         now = _now()
@@ -1035,8 +1154,14 @@ def validate_release(release_id: str, user: dict[str, Any]) -> dict[str, Any]:
         conn.close()
 
 
-def transition_release(release_id: str, event: str, user: dict[str, Any]) -> dict[str, Any]:
-    target = {"submit": ("DRAFT", "IN_REVIEW"), "approve": ("IN_REVIEW", "APPROVED"), "publish": ("APPROVED", "PUBLISHED")}.get(event)
+def transition_release(release_id: str, event: str, user: dict[str, Any], *, reason: str = "") -> dict[str, Any]:
+    target = {
+        "submit": ("DRAFT", "IN_REVIEW"),
+        "withdraw": ("IN_REVIEW", "DRAFT"),
+        "approve": ("IN_REVIEW", "APPROVED"),
+        "reject": ("IN_REVIEW", "DRAFT"),
+        "publish": ("APPROVED", "PUBLISHED"),
+    }.get(event)
     if not target:
         raise PlatformRegistryError("INVALID_RELEASE_EVENT", "Unsupported release transition")
     conn = get_db_connection()
@@ -1050,13 +1175,86 @@ def transition_release(release_id: str, event: str, user: dict[str, Any]) -> dic
             conn.execute("SELECT id FROM platform_profiles WHERE id = ? FOR UPDATE", (release["profile_id"],)).fetchone()
         if release["status"] != target[0]:
             raise PlatformRegistryError("INVALID_RELEASE_STATE", f"Release must be {target[0]} before {event}")
-        if event == "approve" and release.get("created_by") == (user.get("id") or user.get("username")):
-            raise PlatformRegistryError("SELF_APPROVAL_FORBIDDEN", "The creator cannot approve their own release", status_code=403)
-        if event in {"approve", "publish"}:
+        if event == "withdraw":
+            actor = str(user.get("id") or user.get("username") or "")
+            authors = {
+                str(release.get("submitted_by") or ""),
+                str(release.get("created_by") or ""),
+            } - {""}
+            if actor not in authors:
+                raise PlatformRegistryError(
+                    "RELEASE_WITHDRAW_FORBIDDEN",
+                    "Only the release submitter can withdraw an in-review release",
+                    status_code=403,
+                )
             from core.rbac import authorize_resource
-            if not authorize_resource(user, "platform", event, tenant_id=profile.get("tenant_id")):
-                raise PlatformRegistryError("RELEASE_ROLE_FORBIDDEN", f"Platform permission is required to {event} a release", status_code=403)
+            if not authorize_resource(user, "platform", "submit", tenant_id=profile.get("tenant_id")):
+                raise PlatformRegistryError(
+                    "RELEASE_ROLE_FORBIDDEN",
+                    "Platform submit permission is required to withdraw a release",
+                    status_code=403,
+                )
+        if event in {"approve", "reject"} and release.get("created_by") == (user.get("id") or user.get("username")):
+            if event == "approve":
+                raise PlatformRegistryError("SELF_APPROVAL_FORBIDDEN", "The creator cannot approve their own release", status_code=403)
+            raise PlatformRegistryError("SELF_REVIEW_FORBIDDEN", "The creator cannot reject their own release", status_code=403)
+        if event in {"approve", "reject", "publish"}:
+            from core.rbac import authorize_resource
+            permission = "approve" if event == "reject" else event
+            if not authorize_resource(user, "platform", permission, tenant_id=profile.get("tenant_id")):
+                raise PlatformRegistryError("RELEASE_ROLE_FORBIDDEN", f"Platform permission is required to {permission} a release", status_code=403)
         now = _now()
+
+        if event == "reject":
+            # Rejection is a review decision, not a validation run.  Return
+            # the release to the editable draft state and let the author fix
+            # the selected action before submitting it again.
+            conn.execute(
+                """UPDATE platform_releases
+                   SET status = 'DRAFT', validation_status = 'PENDING',
+                       validation_result_json = '{}', approved_by = '',
+                       updated_at = ?, lock_version = lock_version + 1
+                   WHERE id = ?""",
+                (now, release_id),
+            )
+            metadata = {"from": target[0], "to": target[1]}
+            if str(reason or "").strip():
+                metadata["reason"] = str(reason).strip()[:2000]
+            conn.execute(
+                """INSERT INTO platform_release_audit_logs
+                   (id, release_id, event_type, actor_id, actor_username,
+                    metadata_json, created_at)
+                   VALUES (?, ?, 'REJECT', ?, ?, ?, ?)""",
+                (str(uuid.uuid4()), release_id, user.get("id"), user.get("username"), _json(metadata), now),
+            )
+            conn.commit()
+            invalidate_platform_registry_cache()
+            return _release_for_id(conn, release_id)
+
+        if event == "withdraw":
+            now = _now()
+            conn.execute(
+                """UPDATE platform_releases
+                   SET status = 'DRAFT', validation_status = 'PENDING',
+                       validation_result_json = '{}', approved_by = '',
+                       updated_at = ?, lock_version = lock_version + 1
+                   WHERE id = ?""",
+                (now, release_id),
+            )
+            conn.execute(
+                """INSERT INTO platform_release_audit_logs
+                   (id, release_id, event_type, actor_id, actor_username,
+                    metadata_json, created_at)
+                   VALUES (?, ?, 'WITHDRAW', ?, ?, ?, ?)""",
+                (
+                    str(uuid.uuid4()), release_id, user.get("id"),
+                    user.get("username"), _json({"from": target[0], "to": target[1]}), now,
+                ),
+            )
+            conn.commit()
+            invalidate_platform_registry_cache()
+            return _release_for_id(conn, release_id)
+
         # Validate the exact action rows held by the same transaction that
         # changes status.  This removes the old validate-then-publish race.
         actions = conn.execute(
@@ -1085,8 +1283,25 @@ def transition_release(release_id: str, event: str, user: dict[str, Any]) -> dic
         if errors:
             conn.commit()
             raise PlatformRegistryError("RELEASE_VALIDATION_FAILED", "Release validation failed")
-        conn.execute("UPDATE platform_releases SET status = ?, updated_at = ?, lock_version = lock_version + 1, approved_by = CASE WHEN ? = 'APPROVED' THEN ? ELSE approved_by END, published_by = CASE WHEN ? = 'PUBLISHED' THEN ? ELSE published_by END WHERE id = ?", (target[1], now, target[1], user.get("id") or user.get("username") or "", target[1], user.get("id") or user.get("username") or "", release_id))
-        conn.execute("INSERT INTO platform_release_audit_logs (id, release_id, event_type, actor_id, actor_username, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), release_id, event.upper(), user.get("id"), user.get("username"), _json({"from": target[0], "to": target[1]}), now))
+        if event == "submit":
+            conn.execute(
+                "UPDATE platform_releases SET status = ?, submitted_by = ?, updated_at = ?, lock_version = lock_version + 1 WHERE id = ?",
+                (target[1], user.get("id") or user.get("username") or "", now, release_id),
+            )
+        elif event == "approve":
+            conn.execute(
+                "UPDATE platform_releases SET status = ?, approved_by = ?, updated_at = ?, lock_version = lock_version + 1 WHERE id = ?",
+                (target[1], user.get("id") or user.get("username") or "", now, release_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE platform_releases SET status = ?, published_by = ?, updated_at = ?, lock_version = lock_version + 1 WHERE id = ?",
+                (target[1], user.get("id") or user.get("username") or "", now, release_id),
+            )
+        metadata = {"from": target[0], "to": target[1]}
+        if str(reason or "").strip():
+            metadata["reason"] = str(reason).strip()[:2000]
+        conn.execute("INSERT INTO platform_release_audit_logs (id, release_id, event_type, actor_id, actor_username, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), release_id, event.upper(), user.get("id"), user.get("username"), _json(metadata), now))
         if event == "publish":
             conn.execute("UPDATE platform_releases SET status = 'DEPRECATED', updated_at = ? WHERE profile_id = ? AND status = 'PUBLISHED' AND id <> ?", (now, release["profile_id"], release_id))
             conn.execute("UPDATE platform_profiles SET current_release_id = ?, updated_at = ?, lock_version = lock_version + 1 WHERE id = ?", (release_id, now, release["profile_id"]))
@@ -1227,6 +1442,24 @@ def _validate_field_contract(records: list[dict[str, Any]], contract: dict[str, 
                 raise PlatformRegistryError("FIELD_CONTRACT_VIOLATION", f"Record {index} field {field} has invalid type")
 
 
+def _parser_label(template: Any) -> str:
+    """Return an explicit parser provenance label for operational consumers."""
+    if not template:
+        return "platform-parser"
+    try:
+        code_value = template["template_code"]
+    except (KeyError, IndexError, TypeError):
+        code_value = getattr(template, "template_code", "")
+    try:
+        version = template["version_number"]
+    except (KeyError, IndexError, TypeError):
+        version = getattr(template, "version_number", None)
+    code = str(code_value or "").strip()
+    if code and version:
+        return f"textfsm-registry:{code}:v{version}"
+    return "textfsm-registry"
+
+
 def execute_platform_action(
     device_id: str,
     action_code: str,
@@ -1306,8 +1539,8 @@ def execute_platform_action(
         template = None
         if device.get("parser_template_version_id"):
             template = conn.execute(
-                """SELECT v.content, v.status, v.checksum, v.field_contract_json, t.tenant_id, t.platform_profile_id,
-                          t.platform_code, t.source
+                """SELECT v.content, v.status, v.checksum, v.field_contract_json, v.version_number,
+                          t.tenant_id, t.platform_profile_id, t.platform_code, t.source, t.template_code
                    FROM parser_template_versions v
                    JOIN parser_templates t ON t.id = v.template_id
                    WHERE v.id = ?""",
@@ -1354,12 +1587,12 @@ def execute_platform_action(
                 result = driver.send_command(resolved_command)
         output = str(getattr(result, "output", "") or "")
         if not getattr(result, "success", False):
-            response = {"success": False, "error_code": "CONNECTION_OR_COMMAND_FAILED", "error": getattr(result, "error", "Command execution failed"), "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "command": resolved_command, "resolved_command_checksum": _checksum(resolved_command)}
+            response = {"success": False, "error_code": "CONNECTION_OR_COMMAND_FAILED", "error": getattr(result, "error", "Command execution failed"), "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "command": resolved_command, "resolved_command_checksum": _checksum(resolved_command), "parser": _parser_label(template)}
             _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "connection", "error_code": response["error_code"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None})
             return response
         max_bytes = int(device.get("max_output_bytes") or 2_000_000)
         if len(output.encode("utf-8", errors="ignore")) > max_bytes:
-            response = {"success": False, "error_code": "OUTPUT_LIMIT_EXCEEDED", "error": "Command output exceeds the action limit", "action_code": action_code, "platform_release_id": device["current_release_id"]}
+            response = {"success": False, "error_code": "OUTPUT_LIMIT_EXCEEDED", "error": "Command output exceeds the action limit", "action_code": action_code, "platform_release_id": device["current_release_id"], "parser": _parser_label(template)}
             _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "output_limit", "error_code": response["error_code"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
             return response
         try:
@@ -1394,23 +1627,23 @@ def execute_platform_action(
             _coerce_field_types(normalized_records, contract)
             _validate_field_contract(normalized_records, contract)
         except PlatformRegistryError as contract_exc:
-            response = {"success": False, "error_code": contract_exc.code, "error": contract_exc.message, "action_code": action_code, "platform_release_id": device["current_release_id"]}
+            response = {"success": False, "error_code": contract_exc.code, "error": contract_exc.message, "action_code": action_code, "platform_release_id": device["current_release_id"], "parser": _parser_label(template)}
             _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "parse_contract", "error_code": contract_exc.code, "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
             return response
         except TextFSMSandboxError as sandbox_exc:
-            response = {"success": False, "error_code": sandbox_exc.code, "error": sandbox_exc.message, "action_code": action_code, "platform_release_id": device["current_release_id"], "raw_output": redact_raw_output(output) if include_raw_output else None}
+            response = {"success": False, "error_code": sandbox_exc.code, "error": sandbox_exc.message, "action_code": action_code, "platform_release_id": device["current_release_id"], "parser": _parser_label(template), "raw_output": redact_raw_output(output) if include_raw_output else None}
             _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "parser", "error_code": sandbox_exc.code, "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
             return response
         except Exception as parse_exc:
             logger.warning("Platform action parse failed action=%s device=%s: %s", action_code, device_id, parse_exc)
-            response = {"success": False, "error_code": "TEMPLATE_NOT_MATCHED", "error": "Parser template failed", "action_code": action_code, "platform_release_id": device["current_release_id"], "raw_output": redact_raw_output(output) if include_raw_output else None}
+            response = {"success": False, "error_code": "TEMPLATE_NOT_MATCHED", "error": "Parser template failed", "action_code": action_code, "platform_release_id": device["current_release_id"], "parser": _parser_label(template), "raw_output": redact_raw_output(output) if include_raw_output else None}
             _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "parser", "error_code": response["error_code"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
             return response
         if not records and action_code not in {"get_running_config", "get_clock"}:
-            response = {"success": False, "error_code": "TEMPLATE_NOT_MATCHED", "error": "Parser returned no records", "action_code": action_code, "platform_release_id": device["current_release_id"], "raw_output": redact_raw_output(output) if include_raw_output else None}
+            response = {"success": False, "error_code": "TEMPLATE_NOT_MATCHED", "error": "Parser returned no records", "action_code": action_code, "platform_release_id": device["current_release_id"], "parser": _parser_label(template), "raw_output": redact_raw_output(output) if include_raw_output else None}
             _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": False, "failure_stage": "parser", "error_code": response["error_code"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
             return response
-        response = {"success": True, "error_code": None, "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "release_checksum": device["release_checksum"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None, "records": normalized_records, "raw_output": redact_raw_output(output) if include_raw_output else None}
+        response = {"success": True, "error_code": None, "action_code": action_code, "platform_release_id": device["current_release_id"], "release_number": device["release_number"], "release_checksum": device["release_checksum"], "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser": _parser_label(template), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None, "records": normalized_records, "raw_output": redact_raw_output(output) if include_raw_output else None}
         _audit("ACTION_EXECUTED", {"platform_release_id": device["current_release_id"], "device_id": device_id, "action_code": action_code, "success": True, "record_count": len(normalized_records), "command": resolved_command, "command_checksum": device.get("command_checksum"), "resolved_command_checksum": _checksum(resolved_command), "parser_template_version_id": device.get("parser_template_version_id"), "parser_template_checksum": template["checksum"] if template else None}, output)
         return response
     finally:

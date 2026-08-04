@@ -22,9 +22,11 @@ from services.parser_template_service import (
     list_templates_page,
     list_audit_logs,
     list_samples,
+    list_version_mappings,
     list_versions,
     fork_template,
     publish_version,
+    reject_version,
     rollback_version,
     regression_test_template,
     sandbox_test,
@@ -33,6 +35,7 @@ from services.parser_template_service import (
     test_version,
     update_template,
     update_version,
+    withdraw_version,
 )
 from services.platform_registry_service import PlatformRegistryError
 
@@ -77,6 +80,10 @@ class ParserVersionUpdateRequest(BaseModel):
 
 class ParserVersionTestRequest(BaseModel):
     sample_output: str = Field(..., min_length=1, max_length=2_000_000)
+
+
+class ParserVersionReviewRequest(BaseModel):
+    reason: str = Field(default="", max_length=2_000)
 
 
 class ParserSandboxRequest(BaseModel):
@@ -126,6 +133,7 @@ def _call(fn, *args, **kwargs):
 @router.get("")
 def api_list_templates(
     platform_code: str = Query("", max_length=64),
+    driver_platform: str = Query("", max_length=64),
     search: str = Query("", max_length=128),
     source: str = Query("", max_length=16),
     status: str = Query("", max_length=32),
@@ -137,6 +145,7 @@ def api_list_templates(
         list_templates_page,
         user,
         platform_code=platform_code,
+        driver_platform=driver_platform,
         search=search,
         source=source,
         status=status,
@@ -230,6 +239,22 @@ def api_approve_version(version_id: str, user=require_permission("textfsm", "app
     return {"success": True, "data": _call(approve_version, version_id, user), "message": "Parser template approved"}
 
 
+@router.post("/versions/{version_id}/withdraw")
+def api_withdraw_version(version_id: str, user=require_permission("textfsm", "submit")):
+    _enabled()
+    return {"success": True, "data": _call(withdraw_version, version_id, user), "message": "Parser template withdrawn to draft"}
+
+
+@router.post("/versions/{version_id}/reject")
+def api_reject_version(version_id: str, payload: ParserVersionReviewRequest | None = None, user=require_permission("textfsm", "approve")):
+    _enabled()
+    return {
+        "success": True,
+        "data": _call(reject_version, version_id, user, reason=(payload.reason if payload else "")),
+        "message": "Parser template rejected",
+    }
+
+
 @router.post("/versions/{version_id}/publish")
 def api_publish_version(version_id: str, user=require_permission("textfsm", "publish")):
     _enabled()
@@ -257,6 +282,11 @@ def api_create_sample(version_id: str, payload: ParserSampleCreateRequest, user=
 @router.get("/versions/{version_id}/samples")
 def api_list_samples(version_id: str, user=require_permission("sample_output", "view")):
     return {"success": True, "data": _call(list_samples, version_id, user), "message": ""}
+
+
+@router.get("/versions/{version_id}/mappings")
+def api_list_version_mappings(version_id: str, user=require_permission("textfsm", "view")):
+    return {"success": True, "data": _call(list_version_mappings, version_id, user), "message": ""}
 
 
 @router.delete("/samples/{sample_id}")

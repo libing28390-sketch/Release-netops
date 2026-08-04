@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 @router.get('/textfsm/templates')
 def api_list_templates(
     platform: str = Query('', description='按平台过滤'),
+    exact_platform: bool = Query(False, description='是否仅匹配该平台值，不合并兼容别名'),
     search: str = Query('', description='关键字搜索'),
     source: str = Query('', description='按来源过滤：builtin|custom'),
     page: int = Query(1, ge=1),
@@ -38,7 +39,7 @@ def api_list_templates(
     _user=require_permission('textfsm', 'view'),
 ):
     """列出所有模板（内置 + 自定义），自定义模板同名时覆盖内置。"""
-    items = list_templates(platform_filter=platform, search=search)
+    items = list_templates(platform_filter=platform, search=search, exact_platform=exact_platform)
     if source:
         items = [t for t in items if t.get('source') == source]
     

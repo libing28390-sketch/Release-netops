@@ -766,6 +766,16 @@ def _targeted_mac_query(device_info: dict, target_mac: str) -> list[dict]:
     向设备发送精确 MAC 地址表查询命令。
     target_mac 为 12 位 hex（无分隔符），函数内部转为设备所需格式。
     """
+    # A router may be the ARP source for an endpoint but still have no L2
+    # forwarding table.  Respect the device collection plan before falling
+    # through to a registry action; an explicit per-device override remains
+    # available for platforms that do expose a bridge table.
+    if not should_collect(device_info, "mac_table"):
+        logger.debug(
+            "[IPLocator] Skip MAC lookup for %s: mac_table is disabled by the device collection plan",
+            device_info.get("hostname") or device_info.get("id"),
+        )
+        return []
     if device_info.get('platform_profile_id'):
         try:
             from services.platform_registry_service import execute_platform_action

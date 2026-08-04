@@ -7,21 +7,27 @@ def _device(role: str, **extra):
     return {"id": role, "hostname": role, "platform": "cisco_ios", "role": role, **extra}
 
 
-def test_router_skips_l2_collectors_by_default():
+def test_network_device_collects_basic_inventory_only_by_default():
     device = _device("router")
-    assert should_collect(device, "arp") is True
-    assert should_collect(device, "lldp") is True
-    assert should_collect(device, "routes") is True
+    assert should_collect(device, "reachability") is True
+    assert should_collect(device, "health_metrics") is True
+    assert should_collect(device, "interface_status") is True
+    assert should_collect(device, "interface_ip") is True
+    assert should_collect(device, "arp") is False
+    assert should_collect(device, "lldp") is False
+    assert should_collect(device, "routes") is False
     assert should_collect(device, "mac_table") is False
     assert should_collect(device, "vlan") is False
     assert should_collect(device, "endpoint_location") is False
 
 
-def test_access_switch_uses_mac_by_default_and_arp_is_capability_gated():
+def test_access_switch_also_uses_basic_inventory_only_by_default():
     device = _device("access")
-    assert should_collect(device, "mac_table") is True
-    assert should_collect(device, "vlan") is True
-    assert should_collect(device, "lldp") is True
+    assert should_collect(device, "interface_status") is True
+    assert should_collect(device, "interface_ip") is True
+    assert should_collect(device, "mac_table") is False
+    assert should_collect(device, "vlan") is False
+    assert should_collect(device, "lldp") is False
     assert should_collect(device, "arp") is False
     assert should_collect(device, "routes") is False
     assert should_collect(device, "bgp") is False

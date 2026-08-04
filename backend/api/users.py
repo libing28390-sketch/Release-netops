@@ -344,7 +344,8 @@ def _get_session(token: str) -> dict | None:
     conn = get_db_connection()
     try:
         row = conn.execute(
-            "SELECT s.*, COALESCE(u.role_profile, '') AS role_profile "
+            "SELECT s.*, COALESCE(u.role_profile, '') AS role_profile, "
+            "COALESCE(u.tenant_id, '') AS tenant_id "
             "FROM sessions s LEFT JOIN users u ON u.id = s.user_id WHERE s.token = ?",
             (token,),
         ).fetchone()

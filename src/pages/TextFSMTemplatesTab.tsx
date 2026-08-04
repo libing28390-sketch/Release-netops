@@ -102,7 +102,12 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (platformFilter) params.set('platform', platformFilter);
+      if (platformFilter) {
+        params.set('platform', platformFilter);
+        // Keep the old file registry understandable: selecting a Netmiko
+        // driver shows its own templates instead of every compatible alias.
+        params.set('exact_platform', 'true');
+      }
       if (search) params.set('search', search);
       if (sourceFilter) params.set('source', sourceFilter);
       params.set('page', String(page));

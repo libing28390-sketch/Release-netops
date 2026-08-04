@@ -120,13 +120,18 @@ def _profile_health(conn, profile: dict[str, Any], user: dict[str, Any], range_h
 
     current_time = _now()
     since = current_time - timedelta(hours=range_hours)
-    tenant_sql, tenant_params = _tenant_filter(user, "tenant_id")
+    tenant_sql, tenant_params = _tenant_filter(user, "r.tenant_id")
     run_rows = conn.execute(
-        "SELECT id, tenant_id, device_id, platform_release_id, action_code, parser_template_version_id, "
-        "status, failure_stage, error_code, record_count, duration_ms, output_bytes, "
-        "raw_output_encrypted, raw_output_expires_at, created_at "
-        "FROM platform_action_runs WHERE platform_profile_id = ? AND created_at >= ?"
-        + tenant_sql + " ORDER BY created_at DESC",
+        "SELECT r.id, r.tenant_id, r.device_id, r.platform_release_id, r.action_code, r.parser_template_version_id, "
+        "r.status, r.failure_stage, r.error_code, r.record_count, r.duration_ms, r.output_bytes, "
+        "r.raw_output_encrypted, r.raw_output_expires_at, r.created_at, "
+        "a.command AS action_command, "
+        "d.hostname AS device_hostname, d.role AS device_role "
+        "FROM platform_action_runs r "
+        "LEFT JOIN platform_release_actions a ON a.release_id = r.platform_release_id AND a.action_code = r.action_code "
+        "LEFT JOIN devices d ON d.id = r.device_id "
+        "WHERE r.platform_profile_id = ? AND r.created_at >= ?"
+        + tenant_sql + " ORDER BY r.created_at DESC",
         [profile_id, _iso(since), *tenant_params],
     ).fetchall()
     run_count = len(run_rows)
@@ -164,6 +169,9 @@ def _profile_health(conn, profile: dict[str, Any], user: dict[str, Any], range_h
         failure_queue.append({
             "id": row["id"],
             "device_id": row["device_id"],
+            "device_hostname": row["device_hostname"],
+            "device_role": row["device_role"],
+            "command": row["action_command"],
             "action_code": row["action_code"],
             "error_code": row["error_code"],
             "failure_stage": row["failure_stage"],

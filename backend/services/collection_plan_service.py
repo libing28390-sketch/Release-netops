@@ -90,7 +90,13 @@ def _is_server(device: dict[str, Any]) -> bool:
 
 
 def _default_plan(device: dict[str, Any]) -> dict[str, bool]:
-    """Return safe defaults with dynamic routing protocols opt-in."""
+    """Return the lightweight default plan used for ordinary device inventory.
+
+    The default scheduler run is intentionally limited to reachability,
+    health, interface state, and interface IPs.  Topology, L2 tables, route
+    tables, and routing protocols are opt-in per device through
+    ``collection_policy_json``.
+    """
     if _is_server(device):
         return {
             "reachability": True,
@@ -112,34 +118,10 @@ def _default_plan(device: dict[str, Any]) -> dict[str, bool]:
             "prefix_projection": False,
         }
 
-    role = _role(device)
-    plan = {collector: True for collector in COLLECTORS}
-    # Dynamic routing protocols are opt-in. This avoids repeatedly issuing
-    # BGP/OSPF/BFD commands to otherwise ordinary L3 devices that do not run
-    # those protocols. Enable them per device when required.
-    plan.update({"bgp": False, "ospf": False, "eigrp": False, "isis": False, "rip": False, "bfd": False})
-
-    # Routers and firewalls do not have a useful L2 switching table by
-    # default.  They still collect ARP, routes, interfaces and LLDP.
-    if role in {"router", "gateway", "firewall", "load-balancer"}:
-        plan.update({"mac_table": False, "vlan": False, "endpoint_location": False})
-
-    # Access switches are an L2 source for MAC/VLAN/endpoint data. ARP is not
-    # enabled by default here because a large access layer is usually pure L2;
-    # the ARP scheduler promotes an access switch only when interface evidence
-    # proves it has an SVI/Vlanif, or when the operator explicitly overrides
-    # ``arp`` for that device. This prevents a high-frequency ARP sweep from
-    # opening SSH sessions to thousands of devices that cannot own ARP state.
-    if role == "access":
-        plan.update({
-            "routes": False, "bgp": False, "ospf": False,
-            "eigrp": False, "isis": False, "rip": False, "bfd": False,
-            "arp": False,
-        })
-
-    # A generic switch keeps the legacy L2+L3 behavior for compatibility;
-    # operators can narrow it with the per-device policy below.
-    return plan
+    return {
+        collector: collector in {"reachability", "health_metrics", "interface_status", "interface_ip"}
+        for collector in COLLECTORS
+    }
 
 
 def resolve_collection_plan(device: dict[str, Any]) -> dict[str, Any]:

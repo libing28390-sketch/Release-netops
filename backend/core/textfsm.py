@@ -853,7 +853,12 @@ def parse_with_template_content(template_content: str, output: str) -> list[dict
 
 # ── 模板管理 CRUD ─────────────────────────────────────────────────────
 
-def list_templates(platform_filter: str = '', search: str = '') -> list[dict[str, Any]]:
+def list_templates(
+    platform_filter: str = '',
+    search: str = '',
+    *,
+    exact_platform: bool = False,
+) -> list[dict[str, Any]]:
     """
     列出所有可用模板（内置 + 自定义），标注来源。
     自定义模板同名时覆盖内置模板（source='custom'）。
@@ -890,11 +895,19 @@ def list_templates(platform_filter: str = '', search: str = '') -> list[dict[str
 
     # 过滤
     if platform_filter:
-        requested_platform = resolve_textfsm_platform(platform_filter) or platform_filter.lower()
-        result = [
-            t for t in result
-            if (resolve_textfsm_platform(t.get('platform', '')) or t.get('platform', '').lower()) == requested_platform
-        ]
+        requested_raw = platform_filter.strip().lower()
+        if exact_platform:
+            # The registry page exposes driver/platform variants separately.
+            # Do not collapse aliases here: ``h3c_comware9`` and
+            # ``hp_comware`` are different template namespaces even though
+            # the parser can use the same compatibility grammar at runtime.
+            result = [t for t in result if str(t.get('platform', '')).strip().lower() == requested_raw]
+        else:
+            requested_platform = resolve_textfsm_platform(platform_filter) or requested_raw
+            result = [
+                t for t in result
+                if (resolve_textfsm_platform(t.get('platform', '')) or t.get('platform', '').lower()) == requested_platform
+            ]
     if search:
         s = search.lower()
         result = [t for t in result if s in t.get('filename', '').lower() or s in t.get('command', '').lower()]

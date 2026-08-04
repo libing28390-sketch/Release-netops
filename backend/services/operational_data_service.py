@@ -641,6 +641,7 @@ def _collect_registry_categories(
             if platform_action_session is not None:
                 action_kwargs['_session'] = platform_action_session
             result = execute_platform_action(str(device_info['id']), action_code, **action_kwargs)
+            category_result['parser'] = result.get('parser') or category_result['parser']
             command = result.get('command')
             if command:
                 category_result['commands'] = [command]

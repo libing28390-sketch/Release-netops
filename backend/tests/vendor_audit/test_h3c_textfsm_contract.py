@@ -2,6 +2,7 @@ from pathlib import Path
 
 from core.textfsm import (
     _find_template,
+    list_templates,
     resolve_textfsm_platform,
     smart_parse_cli,
 )
@@ -40,3 +41,13 @@ def test_h3c_comware9_fixture_uses_hp_parser_namespace_without_losing_records():
         "REG0",
         "GE1/0/1",
     }
+
+
+def test_textfsm_catalog_can_filter_one_netmiko_platform_without_alias_duplicates():
+    v5 = list_templates(platform_filter="hp_comware", search="bgp", exact_platform=True)
+    v7 = list_templates(platform_filter="h3c_comware", search="bgp", exact_platform=True)
+    v9 = list_templates(platform_filter="h3c_comware9", search="bgp", exact_platform=True)
+
+    assert v5 and all(item["platform"] == "hp_comware" for item in v5)
+    assert v7 and all(item["platform"] == "h3c_comware" for item in v7)
+    assert v9 and all(item["platform"] == "h3c_comware9" for item in v9)

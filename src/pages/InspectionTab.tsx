@@ -439,7 +439,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
             <p className="text-sm font-bold text-[#0b2340]">{isZh ? '设备采集计划' : 'Device Collection Plan'}</p>
-            <p className="text-[11px] text-black/40 mt-1">{isZh ? '按角色默认值执行，设备级开关可覆盖默认策略；Cisco 邻居统一使用 LLDP。' : 'Role defaults apply first; device-level switches override them. Cisco neighbors use LLDP only.'}</p>
+            <p className="text-[11px] text-black/40 mt-1">{isZh ? '默认只采集设备基本信息（可达性、健康指标、接口状态和接口 IP）；路由、拓扑和表项需按设备单独开启。' : 'The default plan collects device basics only (reachability, health, interface state, and interface IP). Routes, topology, and tables are opt-in per device.'}</p>
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -458,8 +458,8 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
         {(() => {
           const selected = collectionPlans.find((row) => row.device?.id === selectedPlanDeviceId);
           const effective = selected?.plan?.effective || {};
-          const keys = ['arp', 'mac_table', 'vlan', 'lldp', 'routes', 'bgp', 'ospf', 'eigrp', 'isis', 'rip', 'endpoint_location'];
-          const labels: Record<string, string> = { arp: 'ARP', mac_table: 'MAC', vlan: 'VLAN', lldp: 'LLDP', routes: '路由', bgp: 'BGP', ospf: 'OSPF', eigrp: 'EIGRP', isis: 'IS-IS', rip: 'RIP', endpoint_location: '终端定位' };
+          const keys = ['reachability', 'health_metrics', 'interface_status', 'interface_ip', 'lldp', 'arp', 'mac_table', 'vlan', 'routes', 'bgp', 'ospf', 'eigrp', 'isis', 'rip', 'bfd', 'endpoint_location', 'prefix_projection'];
+          const labels: Record<string, string> = { reachability: '可达性', health_metrics: '健康指标', interface_status: '接口状态', interface_ip: '接口 IP', arp: 'ARP', mac_table: 'MAC', vlan: 'VLAN', lldp: 'LLDP', routes: '路由', bgp: 'BGP', ospf: 'OSPF', eigrp: 'EIGRP', isis: 'IS-IS', rip: 'RIP', bfd: 'BFD', endpoint_location: '终端定位', prefix_projection: 'Prefix 投影' };
           return selected ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[10px] font-bold text-black/35 mr-1">{selected.plan?.profile || selected.device?.role || 'default'}</span>

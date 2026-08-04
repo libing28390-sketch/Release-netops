@@ -26,6 +26,25 @@ interface QuickQueryResultOverlayProps {
   onQuickQueryViewChange?: (view: 'terminal' | 'table') => void;
 }
 
+const formatParserLabel = (value: unknown, isZh: boolean): string => {
+  const raw = String(value || '').trim();
+  if (!raw) return isZh ? '未声明解析器' : 'Parser not reported';
+
+  const registryMatch = raw.match(/^textfsm-registry:([^:]+):v?(\d+)$/i);
+  if (registryMatch) {
+    return isZh
+      ? `TextFSM 注册表 · ${registryMatch[1]} · v${registryMatch[2]}`
+      : `TextFSM registry · ${registryMatch[1]} · v${registryMatch[2]}`;
+  }
+  if (raw === 'platform-parser' || raw === 'platform-registry') {
+    return isZh ? '平台注册解析（兼容别名）' : 'Platform parser (alias compatible)';
+  }
+  if (raw === 'ntc-templates') {
+    return isZh ? 'NTC Templates（旧目录）' : 'NTC Templates (legacy catalog)';
+  }
+  return raw;
+};
+
 export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = ({
   isZh,
   quickQueryRunning,
@@ -189,7 +208,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                   <div className="min-w-0">
                     <p className="text-[12px] font-bold text-white/90 truncate">{quickQueryLabel}</p>
                     <p className="mt-1 text-[10px] text-white/35">
-                      {quickQueryTable.category?.parser || 'ntc-templates'} · {isZh ? '记录数' : 'Records'} {filteredQuickQueryRecords.length} /{' '}
+                      {formatParserLabel(quickQueryTable.category?.parser, isZh)} · {isZh ? '记录数' : 'Records'} {filteredQuickQueryRecords.length} /{' '}
                       {Number(quickQueryTable.category?.count || 0)}
                     </p>
                   </div>

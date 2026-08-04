@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import PageHero from '../components/PageHero';
+import ResultStatusModal from '../components/ResultStatusModal';
 import { apiRequest } from '../api/http';
 
 interface ApiEnvelope<T> {
@@ -38,6 +39,7 @@ interface PlatformRelease {
   checksum?: string;
   validation_status?: string;
   validation_result_json?: string;
+  created_by?: string;
   created_at?: string;
   updated_at?: string;
   submitted_by?: string;
@@ -119,6 +121,10 @@ interface PlatformHealth {
     action_code?: string;
     error_code?: string;
     failure_stage?: string;
+    device_id?: string;
+    device_hostname?: string | null;
+    device_role?: string | null;
+    command?: string | null;
     created_at?: string;
     raw_output_available?: boolean;
     parser_template_version_id?: string | null;
@@ -154,6 +160,16 @@ interface ActionDefinition {
   field_contract_json?: string;
 }
 
+const healthErrorLabel = (code: string | undefined, zh: boolean): string => {
+  if (!code) return zh ? '执行失败' : 'Failed';
+  const labels: Record<string, [string, string]> = {
+    CONNECTION_OR_COMMAND_FAILED: ['连接/命令执行失败', 'Connection/command failed'],
+    TEMPLATE_NOT_MATCHED: ['解析未匹配', 'Parser did not match'],
+    FIELD_CONTRACT_VIOLATION: ['字段契约不满足', 'Field contract violation'],
+  };
+  return labels[code] ? `${labels[code][zh ? 0 : 1]} (${code})` : code;
+};
+
 interface ParserVersionOption {
   id: string;
   template_id?: string;
@@ -172,7 +188,7 @@ type ReadinessFilter = 'all' | 'ready' | 'degraded';
 
 interface Props {
   language: string;
-  currentUser?: { role?: string; role_profile?: string } | null;
+  currentUser?: { id?: string; username?: string; role?: string; role_profile?: string } | null;
 }
 
 interface CreateProfileForm {
@@ -243,7 +259,10 @@ const statusClass = (value?: string): string => {
     case 'DRAFT':
     case 'PENDING':
     case 'SUBMITTED':
+    case 'IN_REVIEW':
       return 'bg-amber-50 text-amber-700 ring-amber-100';
+    case 'APPROVED':
+      return 'bg-cyan-50 text-cyan-700 ring-cyan-100';
     case 'FAILED':
     case 'ARCHIVED':
     case 'DEPRECATED':
@@ -259,7 +278,7 @@ const statusLabel = (value: string | undefined, zh: boolean): string => {
   if (!zh) return normalized;
   const labels: Record<string, string> = {
     ACTIVE: '启用', PUBLISHED: '已发布', PASSED: '通过', DRAFT: '草稿',
-    PENDING: '待验证', SUBMITTED: '待审批', FAILED: '失败', ARCHIVED: '已归档', DEPRECATED: '已废弃',
+    PENDING: '待验证', SUBMITTED: '待审批', IN_REVIEW: '审核中', APPROVED: '已批准', FAILED: '失败', ARCHIVED: '已归档', DEPRECATED: '已废弃',
   };
   return labels[normalized] || normalized;
 };
@@ -274,6 +293,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const zh = language === 'zh';
   const navigate = useNavigate();
   const requestIdRef = useRef(0);
+  const deepLinkAppliedRef = useRef(false);
   const [profiles, setProfiles] = useState<PlatformProfile[]>([]);
   const [capabilities, setCapabilities] = useState<RegistryCapabilities | null>(null);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(true);
@@ -300,15 +320,27 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const [identificationConflicts, setIdentificationConflicts] = useState<IdentificationConflict[]>([]);
   const [conflictsLoading, setConflictsLoading] = useState(false);
   const [actionReleaseId, setActionReleaseId] = useState('');
+  const [actionSearch, setActionSearch] = useState('');
   const [editingActionCode, setEditingActionCode] = useState('');
   const [editingCommand, setEditingCommand] = useState('');
   const [editingParserVersionId, setEditingParserVersionId] = useState('');
   const [actionSaving, setActionSaving] = useState(false);
+  const [rejectReleaseId, setRejectReleaseId] = useState('');
+  const [rejectReleaseReason, setRejectReleaseReason] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [createForm, setCreateForm] = useState<CreateProfileForm>(EMPTY_CREATE_PROFILE);
   const [wizardSaving, setWizardSaving] = useState(false);
   const [wizardError, setWizardError] = useState('');
+  const deepLink = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedDetail = params.get('detail');
+    return {
+      profileId: params.get('profile_id') || '',
+      releaseId: params.get('release_id') || '',
+      detailTab: requestedDetail === 'mappings' ? 'mappings' as DetailTab : null,
+    };
+  }, []);
 
   const role = String(currentUser?.role || '');
   const roleProfile = String(currentUser?.role_profile || '');
@@ -320,6 +352,18 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const canReview = Boolean(capabilities?.write_enabled) && (
     role === 'Administrator'
     || ['Release Manager', 'System Administrator'].includes(roleProfile)
+  );
+  const currentUserKeys = useMemo(
+    () => [currentUser?.id, currentUser?.username].filter(Boolean).map(String),
+    [currentUser?.id, currentUser?.username],
+  );
+  const releaseSelfReviewBlocked = (release: PlatformRelease) => Boolean(
+    release.created_by && currentUserKeys.includes(String(release.created_by)),
+  );
+  const releaseWithdrawAllowed = (release: PlatformRelease) => Boolean(
+    canWrite
+      && release.status === 'IN_REVIEW'
+      && currentUserKeys.some((actor) => [release.submitted_by, release.created_by].filter(Boolean).map(String).includes(actor)),
   );
 
   const loadCapabilities = useCallback(async () => {
@@ -342,14 +386,16 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
       const nextProfiles = response.data || [];
       setProfiles(nextProfiles);
       setSelectedProfileId((current) => (
-        current && nextProfiles.some((item) => item.id === current) ? current : (nextProfiles[0]?.id || '')
+        current && nextProfiles.some((item) => item.id === current)
+          ? current
+          : (nextProfiles.some((item) => item.id === deepLink.profileId) ? deepLink.profileId : (nextProfiles[0]?.id || ''))
       ));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : (zh ? '平台注册表加载失败' : 'Failed to load platform registry'));
     } finally {
       setLoading(false);
     }
-  }, [zh]);
+  }, [deepLink.profileId, zh]);
 
   const loadProfile = useCallback(async (profileId: string) => {
     if (!profileId) {
@@ -502,6 +548,12 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const currentRelease = currentProfile?.releases?.find((release) => release.id === currentProfile.current_release_id)
     || currentProfile?.releases?.[0];
   const activeRelease = currentProfile?.releases?.find((release) => release.id === actionReleaseId) || currentRelease;
+  const visibleActions = useMemo(() => {
+    const query = actionSearch.trim().toLowerCase();
+    if (!query) return actions;
+    return actions.filter((action) => [action.action_code, action.name_zh, action.name_en, action.command]
+      .some((value) => String(value || '').toLowerCase().includes(query)));
+  }, [actionSearch, actions]);
   const readyCount = profiles.filter(isReady).length;
   const boundDeviceCount = profiles.reduce((total, profile) => total + Number(profile.bound_device_count || 0), 0);
   const onlineDeviceCount = profiles.reduce((total, profile) => total + Number(profile.online_device_count || 0), 0);
@@ -512,10 +564,17 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
       return;
     }
     const releaseStillExists = Boolean(actionReleaseId && currentProfile.releases?.some((release) => release.id === actionReleaseId));
-    if (!releaseStillExists) {
-      setActionReleaseId(currentProfile.current_release_id || currentProfile.releases?.[0]?.id || '');
+    const deepLinkedRelease = deepLink.releaseId && currentProfile.releases?.some((release) => release.id === deepLink.releaseId)
+      ? deepLink.releaseId
+      : '';
+    if (deepLinkedRelease && !deepLinkAppliedRef.current) {
+      deepLinkAppliedRef.current = true;
+      setActionReleaseId(deepLinkedRelease);
+    } else if (!releaseStillExists) {
+      setActionReleaseId(deepLinkedRelease || currentProfile.current_release_id || currentProfile.releases?.[0]?.id || '');
     }
-  }, [currentProfile, actionReleaseId]);
+    if (deepLink.detailTab) setDetailTab(deepLink.detailTab);
+  }, [currentProfile, actionReleaseId, deepLink]);
 
   useEffect(() => {
     void loadActions(selectedProfileId, actionReleaseId);
@@ -613,11 +672,16 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
     }
   };
 
-  const transitionRelease = async (releaseId: string, event: 'validate' | 'submit' | 'approve' | 'publish') => {
+  const transitionRelease = async (releaseId: string, event: 'validate' | 'submit' | 'withdraw' | 'approve' | 'reject' | 'publish', reason = '') => {
     try {
       await apiRequest(event === 'validate'
         ? `/api/platform-registry/releases/${encodeURIComponent(releaseId)}/validate`
-        : `/api/platform-registry/releases/${encodeURIComponent(releaseId)}/${event}`, { method: 'POST' });
+        : `/api/platform-registry/releases/${encodeURIComponent(releaseId)}/${event}`, {
+          method: 'POST',
+          ...(event === 'reject' ? { body: JSON.stringify({ reason }) } : {}),
+        });
+      setRejectReleaseId('');
+      setRejectReleaseReason('');
       setActionReleaseId(releaseId);
       await Promise.all([refreshProfiles(), loadProfile(selectedProfileId)]);
     } catch (cause) {
@@ -626,13 +690,14 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   };
 
   return (
-    <div className="min-h-full" style={{ background: 'var(--main-bg)' }}>
+    <div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--main-bg)' }}>
       <PageHero
         icon={Layers3}
         title={zh ? '平台注册表' : 'Platform Registry'}
         subtitle={zh ? '查看平台来源、Release、动作映射和设备绑定状态' : 'Review platform source, releases, action mappings, and device bindings'}
         eyebrow={zh ? '自动化平台管理' : 'AUTOMATION PLATFORM MANAGEMENT'}
         accent="#0891b2"
+        className="!px-4 !pt-3 !pb-3"
         actions={(
           <div className="flex items-center gap-2">
             {canWrite && (
@@ -724,8 +789,9 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
         </div>
       )}
 
-      <div className="space-y-5 p-6">
-        <div className="flex items-start gap-3 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-xs text-cyan-800">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="space-y-4 p-4 md:p-5">
+        <div className="flex items-start gap-3 rounded-2xl border border-cyan-100 bg-cyan-50 px-3 py-2.5 text-xs text-cyan-800">
           <LockKeyhole size={16} className="mt-0.5 shrink-0" />
           <div>
             <div className="font-semibold">{canWrite ? (zh ? '受控写入模式' : 'Controlled write mode') : (zh ? '当前阶段为只读审查模式' : 'Read-only review mode')}</div>
@@ -739,7 +805,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
           </div>
         </div>
 
-        <div className={`${panelClass} border-amber-100 bg-amber-50/40 px-4 py-3`}>
+        <div className={`${panelClass} border-amber-100 bg-amber-50/40 px-3 py-2.5`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs font-semibold text-amber-900">
               <ShieldAlert size={15} />
@@ -781,7 +847,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
             { label: zh ? '绑定设备' : 'Bound devices', value: boundDeviceCount, icon: Server, tone: 'text-indigo-700 bg-indigo-50' },
             { label: zh ? '在线设备' : 'Online devices', value: onlineDeviceCount, icon: CheckCircle2, tone: 'text-violet-700 bg-violet-50' },
           ].map(({ label, value, icon: Icon, tone }) => (
-            <div key={label} className={`${panelClass} flex items-center gap-3 px-4 py-3`}>
+            <div key={label} className={`${panelClass} flex items-center gap-3 px-3 py-2.5`}>
               <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${tone}`}><Icon size={17} /></div>
               <div>
                 <div className="text-[11px] text-slate-500">{label}</div>
@@ -791,7 +857,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
           ))}
         </div>
 
-        <div className={`${panelClass} flex flex-wrap items-center gap-2 p-3`}>
+        <div className={`${panelClass} flex flex-wrap items-center gap-2 p-2.5`}>
           <div className="relative min-w-[220px] flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -826,14 +892,14 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
         </div>
 
         {error && (
-          <div className="flex items-center justify-between gap-3 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-xs text-rose-700">
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2.5 text-xs text-rose-700">
             <span>{error}</span>
             <button type="button" onClick={() => void refreshProfiles()} className="font-semibold underline">{zh ? '重试' : 'Retry'}</button>
           </div>
         )}
 
-        <div className="grid min-h-[560px] gap-5 xl:grid-cols-[minmax(360px,0.9fr)_minmax(520px,1.5fr)]">
-          <section className={`${panelClass} overflow-hidden`}>
+        <div className="grid min-h-[440px] gap-4 xl:grid-cols-[minmax(300px,0.65fr)_minmax(0,2fr)]">
+          <section className={`${panelClass} flex min-h-0 flex-col overflow-hidden`}>
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
               <div>
                 <h2 className="text-sm font-semibold text-slate-800">{zh ? '平台列表' : 'Platform list'}</h2>
@@ -841,7 +907,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
               </div>
               <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${canWrite ? 'bg-cyan-50 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>{canWrite ? (zh ? '受控写入' : 'CONTROLLED WRITE') : (zh ? '只读' : 'READ ONLY')}</span>
             </div>
-            <div className="max-h-[660px] overflow-y-auto p-2">
+            <div className="min-h-0 flex-1 overflow-y-auto p-2">
               {loading && profiles.length === 0 ? (
                 <div className="flex min-h-[220px] items-center justify-center text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
               ) : filteredProfiles.length === 0 ? (
@@ -877,12 +943,12 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
             </div>
           </section>
 
-          <section className={`${panelClass} min-w-0 overflow-hidden`}>
+          <section className={`${panelClass} flex min-h-0 min-w-0 flex-col overflow-hidden`}>
             {!currentProfile ? (
               <div className="flex min-h-[500px] items-center justify-center px-5 text-center text-xs text-slate-400">{zh ? '选择一个平台查看详情' : 'Select a platform to view details'}</div>
             ) : (
               <>
-                <div className="border-b border-slate-100 px-5 py-4">
+                <div className="shrink-0 border-b border-slate-100 px-4 py-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -896,7 +962,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                       {isReady(currentProfile) ? (zh ? '注册表就绪' : 'Registry ready') : (zh ? '需要关注' : 'Needs attention')}
                     </div>
                   </div>
-                  <div className="mt-4 flex gap-1 overflow-x-auto">
+                  <div className="mt-3 flex gap-1 overflow-x-auto">
                     {([
                       ['overview', zh ? '基本信息' : 'Overview'],
                       ['mappings', zh ? '命令映射' : 'Command mappings'],
@@ -914,7 +980,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                 {detailLoading ? (
                   <div className="flex min-h-[420px] items-center justify-center text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
                 ) : (
-                  <div className="max-h-[660px] overflow-y-auto p-5">
+                  <div className="min-h-0 flex-1 overflow-y-auto p-4">
                     {detailTab === 'overview' && (
                       <div className="space-y-5">
                         <div className="grid gap-3 sm:grid-cols-2">
@@ -931,6 +997,10 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                               <div className="mt-1 break-all text-xs font-medium text-slate-700">{value}</div>
                             </div>
                           ))}
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5 text-[10px] leading-4 text-amber-900">
+                          <span>{zh ? '设备绑定与动作解析绑定是两条独立链路：这里的“绑定设备”只表示设备归属本 Profile；命令映射中的“未绑定”表示该 action_code 尚未绑定 TextFSM 版本，会使用平台内置解析。' : 'Device binding and action parser binding are independent: “Bound devices” means devices belong to this profile; “Not bound” in Command mappings means that action_code has no TextFSM version and uses the platform parser.'}</span>
+                          <button type="button" onClick={() => setDetailTab('mappings')} className="shrink-0 font-semibold text-amber-800 underline underline-offset-2 hover:text-amber-950">{zh ? '查看命令映射' : 'View command mappings'}</button>
                         </div>
                         <div className="rounded-xl border border-slate-100 px-4 py-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -955,13 +1025,29 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                           <div className="mt-2 text-[10px] text-slate-400">
                             {zh ? '平均/ P95 延迟' : 'Avg / P95 latency'}：{health?.avg_duration_ms == null ? '—' : `${health.avg_duration_ms}ms / ${health.p95_duration_ms || 0}ms`} · {zh ? '受影响 Playbook' : 'Affected Playbooks'}：{health?.affected_playbook_count ?? '—'}
                           </div>
+                          <div className="mt-1 text-[9px] text-slate-400">{zh ? '“解析失败”只统计解析阶段错误；连接/命令失败会在下方失败队列单列。' : 'Parse failures count parser-stage errors only; connection/command failures are listed separately below.'}</div>
+                          <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50/60 px-2.5 py-2 text-[10px] leading-4 text-sky-800">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span>{zh ? '提示：默认设备采集计划只执行基本信息，路由、ARP、MAC/VLAN、LLDP 和动态协议均默认关闭；如果失败来自手动 Playbook、诊断或自定义动作，需在对应任务/设备采集计划中停用该 action。这里的历史失败记录会按保留周期逐步消失。' : 'Note: the default collection plan only gathers device basics; routes, ARP, MAC/VLAN, LLDP, and dynamic protocols are disabled. If a failure came from a manual Playbook, diagnosis, or custom action, disable that action in the task or device collection plan; historical failures age out according to retention.'}</span>
+                              <button type="button" onClick={() => navigate('/automation/inspections')} className="shrink-0 font-semibold text-sky-800 underline underline-offset-2 hover:text-sky-950">{zh ? '打开设备采集计划' : 'Open collection plans'}</button>
+                            </div>
+                          </div>
                           {(health?.failure_queue || []).length > 0 && (
                             <div className="mt-3 border-t border-slate-100 pt-3">
                               <div className="mb-2 text-[10px] font-semibold text-slate-600">{zh ? '失败与未知输出待办' : 'Failure and unknown-output queue'}</div>
+                              <div className="mb-2 text-[9px] leading-4 text-slate-400">{zh ? '这里展示近 7 天动作遥测；原始回显不会直接暴露，只有保留回显且已绑定 TextFSM 版本时，才能转为脱敏样例。' : 'This queue shows action telemetry from the last 7 days. Raw output is not exposed directly; a retained output can become a redacted sample only when a TextFSM version is bound.'}</div>
                               <div className="space-y-1.5">
                                 {(health?.failure_queue || []).slice(0, 5).map((failure) => (
                                   <div key={failure.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-rose-50/60 px-2.5 py-2 text-[10px] text-rose-700">
-                                    <span className="font-mono">{failure.action_code || '—'} · {failure.error_code || 'FAILED'}</span>
+                                    <div className="min-w-0">
+                                      <div className="font-mono">{failure.action_code || '—'} · {healthErrorLabel(failure.error_code, zh)}</div>
+                                      <div className="mt-1 truncate text-[9px] text-rose-500">
+                                        {(failure.device_hostname || failure.device_id || (zh ? '未知设备' : 'Unknown device'))}
+                                        {failure.device_role ? ` · ${failure.device_role}` : ''}
+                                        {failure.failure_stage ? ` · ${failure.failure_stage}` : ''}
+                                      </div>
+                                      {failure.command && <code className="mt-1 block truncate text-[9px] text-rose-500/80">{failure.command}</code>}
+                                    </div>
                                     {failure.raw_output_available && failure.parser_template_version_id && (
                                       <button type="button" onClick={() => void createFailureSample(failure.id)} disabled={sampleRunId === failure.id} className="font-semibold underline disabled:opacity-50">
                                         {sampleRunId === failure.id ? (zh ? '保存中' : 'Saving') : (zh ? '转为脱敏样例' : 'Save redacted sample')}
@@ -1022,17 +1108,32 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                     {detailTab === 'mappings' && (
                       <div>
                         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-100 bg-cyan-50/50 px-3 py-2">
-                          <div className="flex items-center gap-2 text-[11px] font-semibold text-cyan-900"><span>{zh ? '编辑 Release' : 'Editing release'}</span><select value={actionReleaseId} onChange={(event) => setActionReleaseId(event.target.value)} className="rounded-lg border border-cyan-200 bg-white px-2 py-1 text-[10px] font-normal text-slate-700 outline-none">{(currentProfile.releases || []).map((release) => <option key={release.id} value={release.id}>v{release.release_number} · {release.status}</option>)}</select></div>
-                          {canWrite && <button type="button" onClick={() => void createDraftRelease()} className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200 hover:bg-cyan-50"><Plus size={12} />{zh ? '新建 Draft' : 'New draft'}</button>}
+                          <div className="flex items-center gap-2 text-[11px] font-semibold text-cyan-900"><span>{zh ? '编辑 Release' : 'Editing release'}</span><select value={actionReleaseId} onChange={(event) => setActionReleaseId(event.target.value)} className="rounded-lg border border-cyan-200 bg-white px-2 py-1 text-[10px] font-normal text-slate-700 outline-none">{(currentProfile.releases || []).map((release) => <option key={release.id} value={release.id}>v{release.release_number} · {statusLabel(release.status, zh)}</option>)}</select></div>
+                          {canWrite && <button type="button" onClick={() => void createDraftRelease()} className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200 hover:bg-cyan-50"><Plus size={12} />{zh ? '新建草稿' : 'New change draft'}</button>}
                         </div>
                         {actionsError && <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">{actionsError}</div>}
+                        <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2 text-[10px] leading-4 text-amber-900">
+                          {zh ? '此处的“解析版本未绑定”只表示 action_code 未绑定 TextFSM；设备是否归属该 Profile 请看“基本信息 → 绑定设备”。未绑定时仍会使用平台内置解析。' : 'Here “no parser version” only means this action_code has no TextFSM binding; device ownership is shown in Overview → Bound devices. Unbound actions still use the platform parser.'}
+                        </div>
+                        <div className="mb-3 rounded-xl border border-cyan-100 bg-cyan-50/60 px-3 py-2 text-[10px] leading-4 text-cyan-800">
+                          {zh
+                            ? 'Playbook 只保存 action_code；在这里替换解析版本后，需要完成当前 Release 的验证、审批和发布，后续执行才会使用新 TextFSM。'
+                            : 'Playbooks store only the action_code. After replacing the parser here, validate, approve, and publish this Release before future executions use the new TextFSM.'}
+                        </div>
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2 text-[10px] leading-5 text-amber-800">
+                          <span>{zh ? 'Release 是整个平台版本快照；只替换一条命令时，搜索并编辑目标 action_code，其余映射会沿用当前已发布版本。' : 'A Release is a platform snapshot. To replace one command, search for its action_code; all other mappings are carried forward.'}</span>
+                          <label className="relative min-w-[220px] flex-1 sm:max-w-xs">
+                            <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input value={actionSearch} onChange={(event) => setActionSearch(event.target.value)} placeholder={zh ? '筛选 action_code / 命令' : 'Filter action_code / command'} className="w-full rounded-lg border border-amber-200 bg-white px-7 py-1.5 text-[10px] text-slate-700 outline-none focus:ring-2 focus:ring-amber-100" />
+                          </label>
+                        </div>
                         {actionsLoading ? (
                           <div className="flex min-h-[260px] items-center justify-center text-slate-400"><Loader2 size={20} className="animate-spin" /></div>
-                        ) : actions.length === 0 ? (
+                        ) : visibleActions.length === 0 ? (
                           <div className="rounded-xl border border-dashed border-slate-200 px-4 py-12 text-center text-xs text-slate-400">{zh ? '暂无可见动作映射，或当前用户没有 command/view 权限。' : 'No visible mappings, or command/view permission is missing.'}</div>
                         ) : (
                           <div className="space-y-2">
-                            {actions.map((action) => {
+                            {visibleActions.map((action) => {
                               const requiredFields = parseJsonList(action.required_fields_json);
                               const consumers = parseJsonList(action.consumers_json);
                               const contract = parseJsonObject(action.field_contract_json);
@@ -1056,7 +1157,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                                   </div>
                                   <div className="mt-3 grid gap-2 text-[10px] sm:grid-cols-2">
                                     <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><span className="text-slate-400">{zh ? '实际命令' : 'Resolved command'}：</span><code className="break-all text-slate-700">{action.command || (zh ? '未映射' : 'Unmapped')}</code></div>
-                                    <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><span className="text-slate-400">{zh ? '解析版本' : 'Parser version'}：</span><span className="break-all text-slate-700">{boundParserVersion?.template_code ? `${boundParserVersion.template_code} · v${boundParserVersion.version_number}` : (action.parser_template_version_id || (zh ? '未绑定' : 'Not bound'))}</span>{boundParserVersion?.template_id && <button type="button" onClick={() => openParserVersion(boundParserVersion)} className="ml-2 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50" title={zh ? '打开解析版本' : 'Open parser version'}><ExternalLink size={11} />{zh ? '打开模板' : 'Open template'}</button>}</div>
+                                     <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><span className="text-slate-400">{zh ? '解析版本' : 'Parser version'}：</span><span className={`break-all ${action.parser_template_version_id ? 'text-slate-700' : 'font-medium text-amber-700'}`}>{boundParserVersion?.template_code ? `${boundParserVersion.template_code} · v${boundParserVersion.version_number}` : (action.parser_template_version_id || (zh ? '平台内置解析（未绑定 TextFSM）' : 'Platform parser (no TextFSM binding)'))}</span>{boundParserVersion?.template_id && <button type="button" onClick={() => openParserVersion(boundParserVersion)} className="ml-2 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50" title={zh ? '打开解析版本' : 'Open parser version'}><ExternalLink size={11} />{zh ? '打开模板' : 'Open template'}</button>}{!action.parser_template_version_id && action.action_code === 'get_bgp_neighbors' && /unicast/i.test(action.command || '') && <div className="mt-1 text-[10px] leading-4 text-amber-700">{zh ? '当前未绑定 TextFSM；平台解析会将 ipv4 unicast 兼容匹配到无 unicast 后缀的模板。若要固定使用注册版本，请编辑此动作并选择已发布版本。' : 'No TextFSM version is bound. The platform parser normalizes ipv4 unicast to the compatible template without the suffix. Bind a published version to make the registry template explicit.'}</div>}</div>
                                   </div>
                                   {(requiredFields.length > 0 || consumers.length > 0 || Object.keys(contract).length > 0) && (
                                     <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1065,11 +1166,6 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                                       {Object.keys(contract).length > 0 && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[9px] text-violet-700">{zh ? '字段契约已配置' : 'Field contract configured'}</span>}
                                     </div>
                                   )}
-                                  <div className="mt-2 rounded-lg border border-cyan-100 bg-cyan-50/60 px-2.5 py-2 text-[10px] leading-4 text-cyan-800">
-                                    {zh
-                                      ? 'Playbook 只保存 action_code；在这里替换解析版本后，需要完成当前 Release 的验证、审批和发布，后续执行才会使用新 TextFSM。'
-                                      : 'Playbooks store only the action_code. After replacing the parser here, validate, approve, and publish this Release before future executions use the new TextFSM.'}
-                                  </div>
                                   {editingActionCode === action.action_code ? (
                                     <div className="mt-3 flex flex-wrap items-center gap-2">
                                       <input value={editingCommand} onChange={(event) => setEditingCommand(event.target.value)} className="min-w-[240px] flex-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 font-mono text-[10px] outline-none focus:ring-2 focus:ring-cyan-100" aria-label={zh ? '动作命令' : 'Action command'} />
@@ -1083,7 +1179,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                                       <button type="button" onClick={() => setEditingActionCode('')} className="rounded-lg px-2.5 py-2 text-[10px] font-semibold text-slate-500 hover:bg-slate-100">{zh ? '取消' : 'Cancel'}</button>
                                     </div>
                                   ) : canWrite && activeRelease?.status === 'DRAFT' ? (
-                                    <button type="button" onClick={() => { setEditingActionCode(action.action_code); setEditingCommand(action.command || ''); setEditingParserVersionId(action.parser_template_version_id || ''); }} className="mt-3 inline-flex items-center gap-1 text-[10px] font-semibold text-cyan-700 hover:text-cyan-900"><Save size={12} />{zh ? '编辑命令/解析版本' : 'Edit command/parser'}</button>
+                                    <button type="button" aria-label={zh ? '编辑命令/解析版本' : 'Edit command/parser'} onClick={() => { setEditingActionCode(action.action_code); setEditingCommand(action.command || ''); setEditingParserVersionId(action.parser_template_version_id || ''); }} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[10px] font-semibold text-cyan-700 transition hover:border-cyan-400 hover:bg-cyan-50"><Save size={12} />{zh ? '编辑此动作的命令和解析版本' : 'Edit this action command and parser'}</button>
                                   ) : null}
                                 </div>
                               );
@@ -1112,7 +1208,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                             {(canWrite || canReview) && (
                               <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
                                 {canWrite && release.status === 'DRAFT' && <><button type="button" onClick={() => void transitionRelease(release.id, 'validate')} className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200 hover:bg-cyan-50">{zh ? '验证' : 'Validate'}</button><button type="button" onClick={() => void transitionRelease(release.id, 'submit')} className="rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-cyan-700">{zh ? '提交审批' : 'Submit'}</button></>}
-                                {canReview && release.status === 'IN_REVIEW' && <button type="button" onClick={() => void transitionRelease(release.id, 'approve')} className="rounded-lg bg-amber-500 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-amber-600">{zh ? '批准' : 'Approve'}</button>}
+                                {releaseWithdrawAllowed(release) && <button type="button" onClick={() => void transitionRelease(release.id, 'withdraw')} className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-200 hover:bg-amber-50">{zh ? '撤回到草稿' : 'Withdraw'}</button>}
+                                {canReview && release.status === 'IN_REVIEW' && <><button type="button" onClick={() => { setRejectReleaseReason(''); setRejectReleaseId(release.id); }} disabled={releaseSelfReviewBlocked(release)} title={releaseSelfReviewBlocked(release) ? (zh ? '创建人不能审核自己的 Release，请由另一位具备审批权限的管理员处理。' : 'The creator cannot review their own Release; ask another authorized reviewer.') : undefined} className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">{zh ? '驳回' : 'Reject'}</button><button type="button" onClick={() => void transitionRelease(release.id, 'approve')} disabled={releaseSelfReviewBlocked(release)} title={releaseSelfReviewBlocked(release) ? (zh ? '创建人不能审核自己的 Release，请由另一位具备审批权限的管理员处理。' : 'The creator cannot review their own Release; ask another authorized reviewer.') : undefined} className="rounded-lg bg-amber-500 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50">{zh ? '批准' : 'Approve'}</button>{releaseSelfReviewBlocked(release) && <span className="self-center text-[10px] text-rose-600">{zh ? '创建人不能自审批' : 'Creator cannot self-review'}</span>}</>}
                                 {canReview && release.status === 'APPROVED' && <button type="button" onClick={() => void transitionRelease(release.id, 'publish')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-emerald-700">{zh ? '发布' : 'Publish'}</button>}
                               </div>
                             )}
@@ -1129,7 +1226,31 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
             )}
           </section>
         </div>
+        </div>
       </div>
+      <ResultStatusModal
+        open={Boolean(rejectReleaseId)}
+        onClose={() => setRejectReleaseId('')}
+        title={zh ? '驳回 Release' : 'Reject release'}
+        closeTitle={zh ? '关闭驳回窗口' : 'Close rejection dialog'}
+        icon={ShieldAlert}
+        iconClassName="bg-rose-100 text-rose-700"
+        headerClassName="border-b border-rose-100 bg-rose-50/70"
+        panelClassName="w-full max-w-lg rounded-2xl border border-rose-100 bg-white shadow-2xl"
+        bodyClassName="p-5"
+      >
+        <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); if (rejectReleaseId) void transitionRelease(rejectReleaseId, 'reject', rejectReleaseReason.trim()); }}>
+          <p className="text-xs leading-5 text-slate-600">{zh ? '驳回后 Release 会退回草稿，提交人可以修改动作映射后再次提交。原因会记录在审计日志中。' : 'The release returns to DRAFT so its submitter can correct the mappings. The reason is stored in the audit log.'}</p>
+          <label className="block text-xs font-semibold text-slate-700">
+            {zh ? '驳回原因（可选）' : 'Rejection reason (optional)'}
+            <textarea value={rejectReleaseReason} onChange={(event) => setRejectReleaseReason(event.target.value)} maxLength={2000} autoFocus className="mt-1 min-h-28 w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none transition focus:border-rose-400 focus:ring-2 focus:ring-rose-100" />
+          </label>
+          <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-4">
+            <button type="button" onClick={() => setRejectReleaseId('')} className="rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100">{zh ? '取消' : 'Cancel'}</button>
+            <button type="submit" className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700">{zh ? '确认驳回' : 'Confirm rejection'}</button>
+          </div>
+        </form>
+      </ResultStatusModal>
     </div>
   );
 };

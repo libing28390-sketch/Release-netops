@@ -146,14 +146,20 @@ def _validated_contract(value: Any) -> dict[str, Any]:
     return contract
 
 
-def list_templates(user: dict[str, Any], *, platform_code: str = "") -> list[dict[str, Any]]:
-    return list_templates_page(user, platform_code=platform_code)["items"]
+def list_templates(
+    user: dict[str, Any],
+    *,
+    platform_code: str = "",
+    driver_platform: str = "",
+) -> list[dict[str, Any]]:
+    return list_templates_page(user, platform_code=platform_code, driver_platform=driver_platform)["items"]
 
 
 def list_templates_page(
     user: dict[str, Any],
     *,
     platform_code: str = "",
+    driver_platform: str = "",
     search: str = "",
     source: str = "",
     status: str = "",
@@ -172,6 +178,18 @@ def list_templates_page(
         if platform_code:
             clauses.append("platform_code = ?")
             params.append(normalize_platform_code(platform_code))
+        if driver_platform.strip():
+            # TextFSM stores the canonical parser platform, while the
+            # platform registry stores the Netmiko-facing connection driver.
+            # Resolve the driver to its parser key through the registry so the
+            # UI can filter by the same driver taxonomy used by devices.
+            clauses.append(
+                "platform_code IN ("
+                "SELECT DISTINCT pp.parser_platform FROM platform_profiles pp "
+                "WHERE LOWER(COALESCE(pp.connection_driver, pp.parser_platform)) = ?"
+                ")"
+            )
+            params.append(driver_platform.strip().lower())
         if search.strip():
             needle = f"%{search.strip()}%"
             clauses.append("(template_code LIKE ? OR name LIKE ? OR platform_code LIKE ?)")
@@ -208,6 +226,12 @@ def create_template(payload: dict[str, Any], user: dict[str, Any], *, _source: s
     platform_code = validate_platform_code(payload.get("platform_code"))
     template_code = validate_template_code(payload.get("template_code"))
     tenant_id = str(user.get("tenant_id") or "")
+    if _source == "FORKED" and not tenant_id:
+        raise PlatformRegistryError(
+            "TENANT_REQUIRED",
+            "Forked parser templates must be created inside a tenant scope",
+            status_code=400,
+        )
     if not tenant_id and user.get("role") != "Administrator":
         raise PlatformRegistryError("TENANT_REQUIRED", "Tenant users must create tenant-scoped templates")
     template_id = str(uuid.uuid4())
@@ -322,14 +346,24 @@ def update_template(template_id: str, payload: dict[str, Any], user: dict[str, A
 
 
 def delete_template(template_id: str, user: dict[str, Any]) -> dict[str, Any]:
-    """Delete an unused tenant template and its draft-only lifecycle data."""
+    """Delete an unused tenant template unless it has a published version."""
     conn = get_db_connection()
     try:
         template = _assert_template_access(conn, template_id, user)
-        if template.get("source") == "SYSTEM" or not template.get("tenant_id"):
+        # SYSTEM is identified by its source marker, not by a nullable
+        # tenant_id.  Older administrator sessions did not carry tenant
+        # context when a fork was created, so valid FORKED/CUSTOM rows can
+        # still have a NULL tenant_id and must remain deletable by an admin.
+        if template.get("source") == "SYSTEM":
             raise PlatformRegistryError(
                 "SYSTEM_TEMPLATE_IMMUTABLE",
                 "SYSTEM templates cannot be deleted; create a tenant template instead",
+                status_code=403,
+            )
+        if not template.get("tenant_id") and user.get("role") != "Administrator":
+            raise PlatformRegistryError(
+                "PARSER_SCOPE_DENIED",
+                "A tenant-scoped parser template is required for this operation",
                 status_code=403,
             )
         mapped = conn.execute(
@@ -346,13 +380,13 @@ def delete_template(template_id: str, user: dict[str, Any]) -> dict[str, Any]:
                 status_code=409,
             )
         lifecycle = conn.execute(
-            "SELECT status FROM parser_template_versions WHERE template_id = ? AND status NOT IN ('DRAFT', 'DEPRECATED') LIMIT 1",
+            "SELECT status FROM parser_template_versions WHERE template_id = ? AND status = 'PUBLISHED' LIMIT 1",
             (template_id,),
         ).fetchone()
         if lifecycle:
             raise PlatformRegistryError(
                 "PARSER_TEMPLATE_DELETE_BLOCKED",
-                "Only templates without approved, published, or in-review versions can be deleted",
+                "Templates with published parser versions cannot be deleted",
                 status_code=409,
             )
         deleted = conn.execute("DELETE FROM parser_templates WHERE id = ?", (template_id,))
@@ -682,13 +716,15 @@ def test_version(version_id: str, payload: dict[str, Any], user: dict[str, Any])
         conn.close()
 
 
-def _transition_version(version_id: str, event: str, user: dict[str, Any]) -> dict[str, Any]:
+def _transition_version(version_id: str, event: str, user: dict[str, Any], *, reason: str = "") -> dict[str, Any]:
     conn = get_db_connection()
     try:
         row = _load_version(conn, version_id, user)
         transitions = {
             "submit": ("DRAFT", "IN_REVIEW"),
+            "withdraw": ("IN_REVIEW", "DRAFT"),
             "approve": ("IN_REVIEW", "APPROVED"),
+            "reject": ("IN_REVIEW", "DRAFT"),
             "publish": ("APPROVED", "PUBLISHED"),
         }
         expected, target = transitions.get(event, ("", ""))
@@ -700,14 +736,66 @@ def _transition_version(version_id: str, event: str, user: dict[str, Any]) -> di
                 f"Parser version must be {expected} before {event}",
                 status_code=409,
             )
-        if event in {"approve", "publish"}:
+        if event == "withdraw":
+            actor = _actor_key(user)
+            authors = {
+                str(row.get("submitted_by") or ""),
+                str(row.get("created_by") or ""),
+            } - {""}
+            if actor not in authors:
+                raise PlatformRegistryError(
+                    "PARSER_WITHDRAW_FORBIDDEN",
+                    "Only the submitter can withdraw an in-review parser version",
+                    status_code=403,
+                )
+        if event in {"approve", "reject", "publish"}:
             _require_administrator(user)
-        if event == "approve" and row.get("created_by") == _actor_key(user):
+        if event in {"approve", "reject"} and row.get("created_by") == _actor_key(user):
+            if event == "approve":
+                raise PlatformRegistryError(
+                    "SELF_APPROVAL_FORBIDDEN",
+                    "The creator cannot approve their own parser version",
+                    status_code=403,
+                )
             raise PlatformRegistryError(
-                "SELF_APPROVAL_FORBIDDEN",
-                "The creator cannot approve their own parser version",
+                "SELF_REVIEW_FORBIDDEN",
+                "The creator cannot reject their own parser version",
                 status_code=403,
             )
+        if event == "reject":
+            now = _now()
+            conn.execute(
+                """UPDATE parser_template_versions
+                   SET status = 'DRAFT', approved_by = '',
+                       lock_version = COALESCE(lock_version, 1) + 1,
+                       updated_at = ? WHERE id = ?""",
+                (now, version_id),
+            )
+            metadata = {"from": expected, "to": target}
+            if str(reason or "").strip():
+                metadata["reason"] = str(reason).strip()[:2000]
+            _audit_parser_event(conn, str(row["template_id"]), version_id, "VERSION_REJECTED", user, metadata)
+            conn.commit()
+            return _row_dict(conn.execute("SELECT * FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()) or {}
+        if event == "withdraw":
+            now = _now()
+            conn.execute(
+                """UPDATE parser_template_versions
+                   SET status = 'DRAFT', approved_by = '',
+                       lock_version = COALESCE(lock_version, 1) + 1,
+                       updated_at = ? WHERE id = ?""",
+                (now, version_id),
+            )
+            _audit_parser_event(
+                conn,
+                str(row["template_id"]),
+                version_id,
+                "VERSION_WITHDRAWN",
+                user,
+                {"from": expected, "to": target},
+            )
+            conn.commit()
+            return _row_dict(conn.execute("SELECT * FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()) or {}
         if event == "publish":
             try:
                 summary = json.loads(row.get("test_summary_json") or "{}")
@@ -744,7 +832,10 @@ def _transition_version(version_id: str, event: str, user: dict[str, Any]) -> di
             "lock_version = COALESCE(lock_version, 1) + 1, updated_at = ? WHERE id = ?",
             (target, _actor_key(user), now, version_id),
         )
-        _audit_parser_event(conn, str(row["template_id"]), version_id, f"VERSION_{event.upper()}", user, {"from": expected, "to": target})
+        metadata = {"from": expected, "to": target}
+        if str(reason or "").strip():
+            metadata["reason"] = str(reason).strip()[:2000]
+        _audit_parser_event(conn, str(row["template_id"]), version_id, f"VERSION_{event.upper()}", user, metadata)
         conn.commit()
         return _row_dict(conn.execute("SELECT * FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()) or {}
     except PlatformRegistryError:
@@ -761,8 +852,16 @@ def submit_version(version_id: str, user: dict[str, Any]) -> dict[str, Any]:
     return _transition_version(version_id, "submit", user)
 
 
+def withdraw_version(version_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    return _transition_version(version_id, "withdraw", user)
+
+
 def approve_version(version_id: str, user: dict[str, Any]) -> dict[str, Any]:
     return _transition_version(version_id, "approve", user)
+
+
+def reject_version(version_id: str, user: dict[str, Any], *, reason: str = "") -> dict[str, Any]:
+    return _transition_version(version_id, "reject", user, reason=reason)
 
 
 def publish_version(version_id: str, user: dict[str, Any]) -> dict[str, Any]:
@@ -944,6 +1043,49 @@ def list_audit_logs(template_id: str, user: dict[str, Any], *, limit: int = 100)
                FROM parser_template_audit_logs
                WHERE template_id = ? ORDER BY created_at DESC LIMIT ?""",
             (template_id, safe_limit),
+        ).fetchall()
+        return [_row_dict(row) or {} for row in rows]
+    finally:
+        conn.close()
+
+
+def list_version_mappings(version_id: str, user: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the release actions that currently reference one parser version.
+
+    The parser registry owns the version, while the platform registry owns the
+    command binding.  Keeping this read model here lets the TextFSM page show
+    the complete relationship without exposing mappings from another tenant.
+    SYSTEM profile mappings remain visible because they are global read-only
+    definitions, matching the platform registry's normal read scope.
+    """
+    conn = get_db_connection()
+    try:
+        _load_version(conn, version_id, user)
+        tenant_id = str(user.get("tenant_id") or "")
+        scope_clause = ""
+        scope_params: list[Any] = []
+        if tenant_id:
+            scope_clause = "AND (p.tenant_id IS NULL OR p.tenant_id = ?)"
+            scope_params.append(tenant_id)
+        rows = conn.execute(
+            f"""SELECT a.id, a.action_code, a.command, a.parser_template_version_id,
+                       a.field_contract_json, a.command_checksum,
+                       r.id AS release_id, r.release_number, r.status AS release_status,
+                       r.validation_status AS release_validation_status,
+                       p.id AS profile_id, p.platform_code, p.parser_platform,
+                       p.name_zh AS profile_name_zh, p.name_en AS profile_name_en,
+                       p.vendor AS profile_vendor, p.source AS profile_source,
+                       p.tenant_id AS profile_tenant_id
+                FROM platform_release_actions a
+                JOIN platform_releases r ON r.id = a.release_id
+                JOIN platform_profiles p ON p.id = r.profile_id
+                WHERE a.parser_template_version_id = ?
+                  AND p.status <> 'ARCHIVED'
+                  {scope_clause}
+                ORDER BY CASE r.status WHEN 'PUBLISHED' THEN 0 WHEN 'APPROVED' THEN 1
+                                      WHEN 'IN_REVIEW' THEN 2 WHEN 'DRAFT' THEN 3 ELSE 4 END,
+                         p.platform_code, r.release_number DESC, a.action_code""",
+            [version_id, *scope_params],
         ).fetchall()
         return [_row_dict(row) or {} for row in rows]
     finally:

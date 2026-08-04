@@ -1128,6 +1128,7 @@ export const useAutomation = ({
       let combinedOutput = '';
       let backendCmds: string[] = [];
       let backendParseStatus = 'unmatched';
+      let backendParser = '';
 
       results.forEach((res) => {
         if (!res.ok) {
@@ -1136,6 +1137,9 @@ export const useAutomation = ({
         }
         const firstCat = Array.isArray(res.data?.categories) ? res.data.categories[0] : null;
         if (firstCat) {
+          if (firstCat.parser) {
+            backendParser = String(firstCat.parser);
+          }
           if (firstCat.parse_status) {
             backendParseStatus = firstCat.parse_status;
           }
@@ -1169,7 +1173,7 @@ export const useAutomation = ({
         categories: [
           {
             name: categoryKey,
-            parser: 'ntc-templates',
+            parser: backendParser || (operationalCategory ? 'platform-registry' : 'ntc-templates'),
             count: combinedRecords.length,
             records: combinedRecords,
             parse_status: backendParseStatus,

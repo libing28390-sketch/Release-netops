@@ -193,6 +193,68 @@ def test_release_flow_rejects_self_approval_and_publishes_atomically(isolated_db
     assert any(item["action_code"] == "get_clock" and item["command"] == "show clock" for item in actions)
 
 
+def test_new_release_reuses_draft_and_copies_published_action_snapshot(isolated_db):
+    author = {"id": "author-copy", "username": "author-copy", "role": "Operator", "tenant_id": "tenant-1"}
+    reviewer = {"id": "reviewer-copy", "username": "reviewer-copy", "role": "Administrator", "tenant_id": "tenant-1"}
+    profile = create_profile(
+        {"platform_code": "copy_release_lab", "name_zh": "复制测试", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        author,
+    )
+    first = create_release(profile["id"], {}, author)
+    update_release_action(first["id"], "get_clock", {"command": "show clock"}, author)
+    transition_release(first["id"], "submit", author)
+    transition_release(first["id"], "approve", reviewer)
+    transition_release(first["id"], "publish", reviewer)
+
+    draft = create_release(profile["id"], {}, author)
+    same_draft = create_release(profile["id"], {}, author)
+    assert same_draft["id"] == draft["id"]
+    mapping = next(item for item in list_release_actions(profile["id"], author, draft["id"]) if item["action_code"] == "get_clock")
+    assert mapping["command"] == "show clock"
+
+
+def test_release_rejection_returns_to_draft_with_reason(isolated_db):
+    author = {"id": "author-reject", "username": "author-reject", "role": "Operator", "tenant_id": "tenant-1"}
+    reviewer = {"id": "reviewer-reject", "username": "reviewer-reject", "role": "Administrator", "tenant_id": "tenant-1"}
+    profile = create_profile(
+        {"platform_code": "reject_release_lab", "name_zh": "驳回测试", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        author,
+    )
+    release = create_release(profile["id"], {}, author)
+    update_release_action(release["id"], "get_clock", {"command": "show clock"}, author)
+    transition_release(release["id"], "submit", author)
+    rejected = transition_release(release["id"], "reject", reviewer, reason="请补充目标解析版本")
+    assert rejected["status"] == "DRAFT"
+    assert rejected["validation_status"] == "PENDING"
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        audit = conn.execute(
+            "SELECT event_type, metadata_json FROM platform_release_audit_logs WHERE release_id = ? ORDER BY created_at DESC LIMIT 1",
+            (release["id"],),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert audit["event_type"] == "REJECT"
+    assert "请补充目标解析版本" in audit["metadata_json"]
+
+
+def test_release_submitter_can_withdraw_in_review_release(isolated_db):
+    author = {"id": "author-withdraw", "username": "author-withdraw", "role": "Operator", "tenant_id": "tenant-1"}
+    other = {"id": "other-withdraw", "username": "other-withdraw", "role": "Operator", "tenant_id": "tenant-1"}
+    profile = create_profile(
+        {"platform_code": "withdraw_release_lab", "name_zh": "撤回测试", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        author,
+    )
+    release = create_release(profile["id"], {}, author)
+    update_release_action(release["id"], "get_clock", {"command": "show clock"}, author)
+    transition_release(release["id"], "submit", author)
+    with pytest.raises(PlatformRegistryError) as forbidden:
+        transition_release(release["id"], "withdraw", other)
+    assert forbidden.value.code == "RELEASE_WITHDRAW_FORBIDDEN"
+    withdrawn = transition_release(release["id"], "withdraw", author)
+    assert withdrawn["status"] == "DRAFT"
+
+
 def test_release_action_rejects_cross_profile_parser_version(isolated_db):
     author = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
     profile = create_profile(

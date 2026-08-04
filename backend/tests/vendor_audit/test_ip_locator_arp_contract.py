@@ -123,6 +123,40 @@ def test_targeted_mac_query_uses_published_registry_action_for_bound_device(monk
     }]
 
 
+def test_targeted_mac_query_skips_router_without_overriding_collection_plan(monkeypatch):
+    device = {
+        **DEVICE,
+        "role": "router",
+        "platform_profile_id": "system-profile-cisco_ios",
+        "tenant_id": "tenant-1",
+    }
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("router MAC lookup must be skipped")
+
+    monkeypatch.setattr("services.platform_registry_service.execute_platform_action", fail_if_called)
+
+    assert ip_locator_service._targeted_mac_query(device, "02e0f1020023") == []
+
+
+def test_targeted_mac_query_allows_explicit_router_collection_override(monkeypatch):
+    device = {
+        **DEVICE,
+        "role": "router",
+        "collection_policy_json": '{"collectors":{"mac_table":true}}',
+        "platform_profile_id": "system-profile-cisco_ios",
+        "tenant_id": "tenant-1",
+    }
+    monkeypatch.setattr(
+        "services.platform_registry_service.execute_platform_action",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "records": [{"MAC_ADDRESS": "02e0-f102-0023", "VLAN_ID": "12", "DESTINATION_PORT": "Gi1/0/1"}],
+        },
+    )
+
+    assert ip_locator_service._targeted_mac_query(device, "02e0f1020023")[0]["vlan"] == "12"
+
+
 def test_format_mac_uses_platform_hyphen_style():
     assert ip_locator_service._format_mac("548998106981") == "5489-9810-6981"
 

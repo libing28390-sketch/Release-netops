@@ -1511,10 +1511,9 @@ def sync_routing_neighbors_job():
     """Collect dynamic routing neighbors using policy plus route evidence.
 
     Route collection runs immediately before this job in the unified refresh.
-    When a device has a dynamic-protocol route, that is sufficient evidence to
-    inspect the matching neighbor table unless the operator explicitly
-    disabled that protocol. This preserves custom inspection plans while
-    avoiding a second manual enablement step for protocol discovery.
+    Routing is disabled in the lightweight default collection plan, so route
+    evidence can only promote protocol discovery when the operator explicitly
+    enables the ``routes`` collector for that device.
     """
     logger.info("[Scheduler Job] Starting sync_routing_neighbors_job...")
     conn = get_db_connection()
@@ -1565,6 +1564,8 @@ def sync_routing_neighbors_job():
             enabled = should_collect(device, protocol)
             explicit = explicit_collector_override(device, protocol)
             auto_enabled = (
+                should_collect(device, 'routes')
+                and
                 not enabled
                 and explicit is not False
                 and protocol in route_protocols_by_device.get(device_id, set())

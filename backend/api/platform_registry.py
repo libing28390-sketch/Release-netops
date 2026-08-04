@@ -78,6 +78,10 @@ class PlatformReleaseCreateRequest(_PlatformRequestModel):
     safety_policy: dict[str, Any] = Field(default_factory=lambda: {"read_only": True})
 
 
+class PlatformReleaseReviewRequest(_PlatformRequestModel):
+    reason: str = Field(default="", max_length=2_000)
+
+
 class PlatformActionUpdateRequest(_PlatformRequestModel):
     command: str = Field(..., min_length=1, max_length=512)
     parser_template_version_id: str | None = Field(default=None, max_length=128)
@@ -274,10 +278,37 @@ def api_submit_release(release_id: str, user=require_permission("platform", "sub
     return {"success": True, "data": _call(transition_release, release_id, "submit", user), "message": "Release submitted"}
 
 
+@router.post("/releases/{release_id}/withdraw")
+def api_withdraw_release(release_id: str, user=require_permission("platform", "submit")):
+    """Let the original submitter return an in-review release to draft."""
+    _require_registry_enabled()
+    return {"success": True, "data": _call(transition_release, release_id, "withdraw", user), "message": "Release withdrawn"}
+
+
 @router.post("/releases/{release_id}/approve")
 def api_approve_release(release_id: str, user=require_permission("platform", "approve")):
     _require_registry_enabled()
     return {"success": True, "data": _call(transition_release, release_id, "approve", user), "message": "Release approved"}
+
+
+@router.post("/releases/{release_id}/reject")
+def api_reject_release(
+    release_id: str,
+    payload: PlatformReleaseReviewRequest | None = None,
+    user=require_permission("platform", "approve"),
+):
+    _require_registry_enabled()
+    return {
+        "success": True,
+        "data": _call(
+            transition_release,
+            release_id,
+            "reject",
+            user,
+            reason=(payload.reason if payload else ""),
+        ),
+        "message": "Release rejected",
+    }
 
 
 @router.post("/releases/{release_id}/publish")

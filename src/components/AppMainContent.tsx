@@ -413,6 +413,7 @@ const AppMainContent: React.FC = () => {
     activeTab === 'alert-rules' || 
     activeTab === 'alert-history' || 
     activeTab === 'maintenance' || 
+    activeTab === 'platform-registry' ||
     (activeTab === 'automation' && automationPage === 'metrics');
 
   const getDeviceFetchMode = () => {
@@ -953,7 +954,7 @@ const AppMainContent: React.FC = () => {
 
       {activeTab === 'automation' && automationPage === 'textfsm-registry' && (
         <Suspense fallback={lazyPanelFallback}>
-          <ParserRegistryTab language={language} currentUser={currentUser} />
+          <ParserRegistryTab language={language} currentUser={currentUser} showToast={showToast} />
         </Suspense>
       )}
 

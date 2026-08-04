@@ -20,12 +20,14 @@ from services.parser_template_service import (
     list_samples,
     list_templates_page,
     list_templates,
+    list_version_mappings,
     publish_version,
     regression_test_template,
     run_published_version_regression,
     rollback_version,
     sandbox_test,
     submit_version,
+    withdraw_version,
     template_impact,
     test_version as run_version_test,
     update_version,
@@ -60,6 +62,25 @@ def test_profile_scoped_template_uses_canonical_parser_platform(isolated_db):
     )
     assert template["platform_profile_id"] == "system-profile-h3c_comware"
     assert template["platform_code"] == "hp_comware"
+
+
+def test_parser_template_list_can_filter_by_netmiko_driver_platform(isolated_db):
+    owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
+    cisco = create_template(
+        {"platform_code": "cisco_ios", "template_code": "DRIVER_CISCO", "name": "Cisco driver template"},
+        owner,
+    )
+    h3c = create_template(
+        {"platform_code": "hp_comware", "template_code": "DRIVER_H3C", "name": "H3C driver template"},
+        owner,
+    )
+
+    cisco_page = list_templates_page(owner, driver_platform="cisco_ios", page=1, page_size=100)
+    h3c_page = list_templates_page(owner, driver_platform="hp_comware", page=1, page_size=100)
+
+    assert cisco["id"] in {item["id"] for item in cisco_page["items"]}
+    assert h3c["id"] not in {item["id"] for item in cisco_page["items"]}
+    assert h3c["id"] in {item["id"] for item in h3c_page["items"]}
 
 
 def test_parser_capabilities_report_closed_write_gate_and_read_only_sandbox(monkeypatch):
@@ -132,6 +153,23 @@ def test_parser_template_lifecycle_requires_separation_and_passed_test(isolated_
     assert release_regression == {"version_id": version["id"], "sample_count": 1, "passed": True}
 
 
+def test_parser_submitter_can_withdraw_in_review_version(isolated_db):
+    owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
+    other = {"id": "other-1", "username": "other", "role": "Operator", "tenant_id": "tenant-1"}
+    template = create_template({"platform_code": "cisco_ios", "template_code": "WITHDRAW_TEST"}, owner)
+    version = create_version(template["id"], {"content": VALID_TEMPLATE}, owner)
+    submitted = submit_version(version["id"], owner)
+    assert submitted["status"] == "IN_REVIEW"
+
+    with pytest.raises(PlatformRegistryError) as forbidden:
+        withdraw_version(version["id"], other)
+    assert forbidden.value.code == "PARSER_WITHDRAW_FORBIDDEN"
+
+    withdrawn = withdraw_version(version["id"], owner)
+    assert withdrawn["status"] == "DRAFT"
+    assert {row["event_type"] for row in list_audit_logs(template["id"], owner)} >= {"VERSION_WITHDRAWN"}
+
+
 def test_parser_samples_are_encrypted_and_never_listed_as_plaintext(isolated_db, monkeypatch):
     monkeypatch.setattr(settings, "CREDENTIAL_ENCRYPTION_KEY", "test-parser-sample-key")
     monkeypatch.setattr(crypto, "_aes_key", None)
@@ -188,6 +226,25 @@ def test_parser_template_fork_creates_tenant_owned_draft(isolated_db):
     assert forked["tenant_id"] == "tenant-1"
     assert forked["forked_from_template_id"] == system["id"]
     assert forked["initial_version"]["status"] == "DRAFT"
+
+
+def test_legacy_fork_without_tenant_is_not_treated_as_system_for_admin_delete(isolated_db):
+    """Administrator-created forks from older sessions may have NULL tenant_id."""
+    admin = {"id": "admin-1", "username": "admin", "role": "Administrator"}
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        template_id = "legacy-fork-without-tenant"
+        conn.execute(
+            """INSERT INTO parser_templates
+               (id, tenant_id, platform_code, template_code, source, status, created_by, created_at, updated_at)
+               VALUES (?, NULL, 'zte_zxros', 'ZTE_ZXROS_SHOW_VLAN_FORK', 'FORKED', 'ACTIVE', 'admin', 'now', 'now')""",
+            (template_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert delete_template(template_id, admin) == {"id": template_id, "deleted": True}
 
 
 def test_parser_draft_update_sandbox_persists_summary_and_audit(isolated_db):
@@ -296,6 +353,74 @@ def test_system_version_can_be_sandboxed_without_mutation(isolated_db):
     finally:
         conn.close()
     assert stored == "{}"
+
+
+def test_parser_version_mapping_read_model_returns_action_and_release_context(isolated_db):
+    user = {"id": "viewer-1", "username": "viewer", "role": "Operator", "tenant_id": "tenant-1"}
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        version = conn.execute(
+            """SELECT v.id FROM parser_template_versions v
+               JOIN parser_templates t ON t.id = v.template_id
+               WHERE t.source = 'SYSTEM' AND v.status = 'PUBLISHED'
+               ORDER BY t.template_code LIMIT 1""",
+        ).fetchone()
+        action = conn.execute(
+            """SELECT a.id FROM platform_release_actions a
+               JOIN platform_releases r ON r.id = a.release_id
+               WHERE r.status = 'PUBLISHED' ORDER BY a.action_code LIMIT 1""",
+        ).fetchone()
+        assert version and action
+        conn.execute(
+            "UPDATE platform_release_actions SET parser_template_version_id = ? WHERE id = ?",
+            (version["id"], action["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+    mappings = list_version_mappings(version["id"], user)
+    assert mappings
+    assert mappings[0]["parser_template_version_id"] == version["id"]
+    assert mappings[0]["action_code"]
+    assert mappings[0]["command"]
+    assert mappings[0]["release_status"] == "PUBLISHED"
+    assert mappings[0]["profile_id"]
+
+
+def test_parser_template_delete_allows_unreleased_review_lifecycle(isolated_db):
+    owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
+    reviewer = {"id": "reviewer-1", "username": "reviewer", "role": "Administrator", "tenant_id": "tenant-1"}
+
+    in_review = create_template({"platform_code": "cisco_ios", "template_code": "DELETE_IN_REVIEW"}, owner)
+    in_review_version = create_version(in_review["id"], {"content": VALID_TEMPLATE}, owner)
+    submitted = submit_version(in_review_version["id"], owner)
+    assert submitted["status"] == "IN_REVIEW"
+    assert delete_template(in_review["id"], owner) == {"id": in_review["id"], "deleted": True}
+
+    approved = create_template({"platform_code": "cisco_ios", "template_code": "DELETE_APPROVED"}, owner)
+    approved_version = create_version(approved["id"], {"content": VALID_TEMPLATE}, owner)
+    submitted_approved = submit_version(approved_version["id"], owner)
+    approved_version = approve_version(submitted_approved["id"], reviewer)
+    assert approved_version["status"] == "APPROVED"
+    assert delete_template(approved["id"], owner) == {"id": approved["id"], "deleted": True}
+
+
+def test_parser_template_delete_rejects_published_version(isolated_db):
+    owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
+    reviewer = {"id": "reviewer-1", "username": "reviewer", "role": "Administrator", "tenant_id": "tenant-1"}
+    template = create_template({"platform_code": "cisco_ios", "template_code": "DELETE_PUBLISHED"}, owner)
+    version = create_version(template["id"], {"content": VALID_TEMPLATE}, owner)
+    run_version_test(version["id"], {"sample_output": "hello\n"}, owner)
+    submitted = submit_version(version["id"], owner)
+    approved = approve_version(submitted["id"], reviewer)
+    published = publish_version(approved["id"], reviewer)
+    assert published["status"] == "PUBLISHED"
+
+    with pytest.raises(PlatformRegistryError) as error:
+        delete_template(template["id"], owner)
+    assert error.value.code == "PARSER_TEMPLATE_DELETE_BLOCKED"
 
 
 def test_published_version_can_be_deprecated_and_rolled_back(isolated_db, monkeypatch):

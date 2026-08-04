@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ParserRegistryTab from './ParserRegistryTab';
@@ -33,10 +33,12 @@ const jsonResponse = (body: unknown, status = 200) => ({
 interface FetchOptions {
   writeEnabled?: boolean;
   sandboxStatus?: number;
+  sandboxRecords?: Array<Record<string, unknown>>;
   templates?: unknown[];
   versions?: unknown[];
   samples?: unknown[];
   impact?: unknown;
+  mappings?: unknown[];
   failVersionsFor?: string;
   profiles?: unknown[];
 }
@@ -44,10 +46,12 @@ interface FetchOptions {
 const installFetchMock = ({
   writeEnabled = true,
   sandboxStatus = 200,
+  sandboxRecords = [{ FIELD: 'connected' }],
   templates = [template],
   versions = [version],
   samples = [],
   impact = {},
+  mappings = [],
   failVersionsFor = '',
   profiles = [],
 }: FetchOptions = {}) => {
@@ -83,15 +87,19 @@ const installFetchMock = ({
     if (url.includes('/impact') || url.includes('/audit')) {
       return jsonResponse({ success: true, data: url.includes('/impact') ? impact : [] });
     }
+    if (url.includes('/mappings')) {
+      return jsonResponse({ success: true, data: mappings });
+    }
     if (url.includes('/sandbox-test')) {
+      const sandboxFields = Array.from(new Set(sandboxRecords.flatMap((record) => Object.keys(record))));
       return sandboxStatus === 200
         ? jsonResponse({
             success: true,
             data: {
               version_id: version.id,
-              records: [{ FIELD: 'connected' }],
-              fields: ['FIELD'],
-              count: 1,
+              records: sandboxRecords,
+              fields: sandboxFields,
+              count: sandboxRecords.length,
               summary: { fields: ['FIELD'], duration_ms: 4 },
             },
           })
@@ -126,6 +134,10 @@ describe('ParserRegistryTab', () => {
     render(<ParserRegistryTab language="zh" currentUser={{ role: 'Administrator' }} />);
 
     expect(await screen.findByTestId('parser-template-CISCO_IOS_SHOW_INTERFACES_STATUS')).toBeTruthy();
+    const editor = screen.getByRole('textbox', { name: 'TextFSM 模板内容' }) as HTMLTextAreaElement;
+    await waitFor(() => expect(editor.value).toContain('Value FIELD'));
+    await user.click(screen.getByTestId('parser-template-CISCO_IOS_SHOW_INTERFACES_STATUS'));
+    await waitFor(() => expect(editor.value).toContain('Value FIELD'));
     expect(screen.getByText('Cisco status')).toBeTruthy();
     expect(screen.getAllByText('CISCO_IOS_SHOW_INTERFACES_STATUS').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole('option', { name: '系统' })).toBeTruthy();
@@ -135,7 +147,7 @@ describe('ParserRegistryTab', () => {
     expect(screen.getByTestId('parser-sandbox-hint').textContent).toContain('请先填写测试回显');
     expect((screen.getByPlaceholderText('parser_platform') as HTMLInputElement).readOnly).toBe(true);
     expect((screen.getByPlaceholderText('parser_platform') as HTMLInputElement).className).toContain('bg-slate-100');
-    await waitFor(() => expect(screen.getByRole('option', { name: /Cisco IOS/ })).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('parser-driver-filter').querySelector('option[value="cisco_ios"]')).toBeTruthy());
     expect(screen.getByTestId('parser-copy-help')).toBeTruthy();
     expect(screen.getByTestId('parser-command-help')).toBeTruthy();
     expect(screen.getByTestId('parser-field-guide')).toBeTruthy();
@@ -157,7 +169,116 @@ describe('ParserRegistryTab', () => {
 
     expect(await screen.findByText('解析结果 · 1 条记录')).toBeTruthy();
     expect(screen.getByText('Sandbox 解析通过，共 1 条记录')).toBeTruthy();
-    expect(screen.getByText('字段: FIELD · 耗时: 4 ms')).toBeTruthy();
+    expect(screen.getByText('已选字段: FIELD · 耗时: 4 ms')).toBeTruthy();
+    expect(screen.getByTestId('parser-result-table')).toBeTruthy();
+    await user.click(screen.getByTestId('parser-result-format-json'));
+    expect(screen.getByTestId('parser-result-json').textContent).toContain('connected');
+    await user.click(screen.getByTestId('parser-result-format-csv'));
+    expect(screen.getByTestId('parser-result-csv').textContent).toContain('FIELD');
+    await user.click(screen.getByTestId('parser-result-open'));
+    expect(await screen.findByTestId('parser-result-modal')).toBeTruthy();
+    expect(screen.getByTestId('parser-result-modal-csv').textContent).toContain('connected');
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: vi.fn(() => true) });
+    await user.click(screen.getByTestId('parser-result-modal-copy'));
+    expect((await screen.findByTestId('parser-result-feedback-modal')).textContent).toContain('已复制 CSV 结果');
+  });
+
+  it('paginates large Sandbox results in the shared result viewer', async () => {
+    vi.unstubAllGlobals();
+    const records = Array.from({ length: 25 }, (_, index) => ({ FIELD: `record-${index + 1}` }));
+    installFetchMock({ sandboxRecords: records });
+    const user = userEvent.setup();
+    render(<ParserRegistryTab language="zh" currentUser={{ role: 'Administrator' }} />);
+
+    await screen.findByTestId('parser-template-CISCO_IOS_SHOW_INTERFACES_STATUS');
+    await user.type(screen.getByRole('textbox', { name: /测试回显（Sandbox\/加密样例）/ }), 'many records');
+    await user.click(screen.getByTestId('parser-sandbox-test'));
+    await screen.findByText('解析结果 · 25 条记录');
+    await user.click(screen.getByTestId('parser-result-open'));
+
+    const modalTable = await screen.findByTestId('parser-result-modal-table');
+    expect(screen.getByTestId('parser-result-modal-pagination')).toBeTruthy();
+    expect(modalTable.textContent).toContain('record-1');
+    expect(modalTable.textContent).toContain('record-20');
+    expect(modalTable.textContent).not.toContain('record-21');
+
+    await user.click(within(screen.getByTestId('parser-result-modal-pagination')).getByTitle('下一页'));
+    expect(modalTable.textContent).toContain('record-21');
+    expect(modalTable.textContent).not.toContain('record-1');
+  });
+
+  it('exports only the fields selected in the result viewer', async () => {
+    vi.unstubAllGlobals();
+    installFetchMock({ sandboxRecords: [{ FIELD: 'connected', STATUS: 'up' }] });
+    const user = userEvent.setup();
+    render(<ParserRegistryTab language="zh" currentUser={{ role: 'Administrator' }} />);
+
+    await screen.findByTestId('parser-template-CISCO_IOS_SHOW_INTERFACES_STATUS');
+    await user.type(screen.getByRole('textbox', { name: /测试回显（Sandbox\/加密样例）/ }), 'connected up');
+    await user.click(screen.getByTestId('parser-sandbox-test'));
+    await screen.findByText('解析结果 · 1 条记录');
+    await user.click(screen.getByTestId('parser-result-open'));
+
+    const selector = within(screen.getByTestId('parser-result-field-selector-modal'));
+    expect((selector.getByRole('checkbox', { name: '选择字段 FIELD' }) as HTMLInputElement).checked).toBe(true);
+    expect((selector.getByRole('checkbox', { name: '选择字段 STATUS' }) as HTMLInputElement).checked).toBe(true);
+    await user.click(selector.getByRole('checkbox', { name: '选择字段 STATUS' }));
+    await user.click(screen.getByTestId('parser-result-modal-format-csv'));
+
+    const csv = screen.getByTestId('parser-result-modal-csv').textContent || '';
+    expect(csv).toContain('FIELD');
+    expect(csv).not.toContain('STATUS');
+    expect(csv).toContain('connected');
+  });
+
+  it('shows read-only Release bindings and links to the Platform Registry editor', async () => {
+    vi.unstubAllGlobals();
+    installFetchMock({
+      mappings: [{
+        id: 'mapping-1',
+        action_code: 'get_interface_brief',
+        command: 'show interfaces brief',
+        parser_template_version_id: version.id,
+        release_id: 'release-cisco-1',
+        release_number: 3,
+        release_status: 'PUBLISHED',
+        profile_id: 'profile-cisco-1',
+        platform_code: 'cisco_ios',
+        profile_name_en: 'Cisco IOS',
+      }],
+    });
+    render(<ParserRegistryTab language="en" currentUser={{ role: 'Administrator' }} />);
+
+    expect(await screen.findByTestId('parser-template-CISCO_IOS_SHOW_INTERFACES_STATUS')).toBeTruthy();
+    expect(await screen.findByText('get_interface_brief')).toBeTruthy();
+    expect(screen.getByText('show interfaces brief')).toBeTruthy();
+    expect(screen.getByText(/Cisco IOS · v3 PUBLISHED/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Edit in Platform Registry/ }).getAttribute('href')).toBe(
+      '/management/platforms?detail=mappings&profile_id=profile-cisco-1&release_id=release-cisco-1',
+    );
+  });
+
+  it('filters templates by the Netmiko connection driver platform', async () => {
+    vi.unstubAllGlobals();
+    const fetchMock = installFetchMock({
+      templates: [{ ...template, platform_code: 'hp_comware', template_code: 'H3C_DISPLAY_INTERFACE_BRIEF' }],
+      profiles: [{
+        id: 'profile-h3c',
+        platform_code: 'h3c_comware',
+        parser_platform: 'hp_comware',
+        connection_driver: 'hp_comware',
+        name_zh: 'H3C Comware',
+        name_en: 'H3C Comware',
+      }],
+    });
+    const user = userEvent.setup();
+    render(<ParserRegistryTab language="zh" currentUser={{ role: 'Administrator' }} />);
+
+    await screen.findByTestId('parser-template-H3C_DISPLAY_INTERFACE_BRIEF');
+    expect(screen.getByTestId('parser-driver-filter').querySelector('option[value="hp_comware"]')).toBeTruthy();
+    await user.selectOptions(screen.getByTestId('parser-driver-filter'), 'hp_comware');
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes('driver_platform=hp_comware'))).toBe(true));
   });
 
   it('shows a safe failure banner when Sandbox parsing rejects the sample', async () => {
@@ -171,7 +292,7 @@ describe('ParserRegistryTab', () => {
     await user.click(screen.getByTestId('parser-sandbox-test'));
 
     expect(await screen.findByText(/Parser template failed/)).toBeTruthy();
-    expect(screen.queryByText(/解析结果/)).toBeNull();
+    expect(screen.queryByTestId('parser-result-panel')).toBeNull();
   });
 
   it('does not leave the previous template content visible when the next version request fails', async () => {
@@ -190,9 +311,13 @@ describe('ParserRegistryTab', () => {
     expect(await screen.findByTestId('parser-template-CISCO_IOS_SHOW_INTERFACES_STATUS')).toBeTruthy();
     const editor = screen.getByRole('textbox', { name: 'TextFSM 模板内容' }) as HTMLTextAreaElement;
     await waitFor(() => expect(editor.value).toContain('Value FIELD'));
+    const sample = screen.getByRole('textbox', { name: /测试回显（Sandbox\/加密样例）/ }) as HTMLTextAreaElement;
+    await user.type(sample, 'output from Cisco');
+    expect(sample.value).toContain('output from Cisco');
     await user.click(screen.getByTestId('parser-template-HUAWEI_ETH_TRUNK'));
 
     await waitFor(() => expect(editor.value).toBe(''));
+    expect(sample.value).toBe('');
     expect(await screen.findByText('Version unavailable')).toBeTruthy();
   });
 
@@ -217,7 +342,7 @@ describe('ParserRegistryTab', () => {
     const user = userEvent.setup();
     render(<ParserRegistryTab language="zh" currentUser={{ role: 'Administrator' }} />);
 
-    await waitFor(() => expect(screen.getByRole('option', { name: /测试平台/ })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '目标平台 Profile' }).querySelector('option[value="profile-1"]')).toBeTruthy());
     await user.click(await screen.findByTestId('parser-new-template'));
     await user.clear(screen.getByPlaceholderText('TEMPLATE_CODE'));
     await user.type(screen.getByPlaceholderText('TEMPLATE_CODE'), 'CUSTOM_CLOCK');
@@ -247,6 +372,16 @@ describe('ParserRegistryTab', () => {
     } else {
       expect(screen.queryByRole('button', { name: '废弃' })).toBeNull();
     }
+  });
+
+  it('prevents an administrator from approving a version they created', async () => {
+    vi.unstubAllGlobals();
+    installFetchMock({ versions: [{ ...version, status: 'IN_REVIEW', created_by: 'admin-1' }] });
+    render(<ParserRegistryTab language="zh" currentUser={{ id: 'admin-1', username: 'admin', role: 'Administrator' }} />);
+
+    const approve = await screen.findByRole('button', { name: '审批' }) as HTMLButtonElement;
+    expect(approve.disabled).toBe(true);
+    expect(screen.getByText('创建人不能自审批')).toBeTruthy();
   });
 
   it('covers tenant draft metadata, persistent Sandbox, samples and lifecycle affordances', async () => {
@@ -293,6 +428,10 @@ describe('ParserRegistryTab', () => {
     await user.type(screen.getByRole('textbox', { name: /测试回显（Sandbox\/加密样例）/ }), 'Port connected');
     await user.click(screen.getByTestId('parser-sandbox-test'));
     expect(await screen.findByText('Sandbox 解析通过，共 1 条记录')).toBeTruthy();
+    expect(await screen.findByTestId('parser-result-panel')).toBeTruthy();
+    await user.click(screen.getByTestId('parser-result-open'));
+    expect(await screen.findByTestId('parser-result-modal-table')).toBeTruthy();
+    await user.click(screen.getByTitle('关闭解析结果'));
 
     await user.click(screen.getByRole('button', { name: '上传加密样例' }));
     expect(await screen.findByText('样例已加密保存')).toBeTruthy();
