@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { ChevronDown, ChevronRight, Edit2, Eye, EyeOff, Plus, Search, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
+import { apiRequest } from '../api/http';
 
 type DeviceFormMode = 'add' | 'edit';
 
@@ -15,6 +16,14 @@ interface DeviceFormModalProps {
   onTogglePasswordVisibility: () => void;
   onClose: () => void;
   onSubmit: () => void;
+}
+
+interface RegistryPlatformOption {
+  platform_code: string;
+  name_zh?: string;
+  name_en?: string;
+  vendor?: string;
+  source?: string;
 }
 
 const PLATFORM_OPTIONS = [
@@ -72,6 +81,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
 
   /* ── Tag Selection State ── */
   const [allTags, setAllTags] = useState<TagDefinition[]>([]);
+  const [registryPlatforms, setRegistryPlatforms] = useState<RegistryPlatformOption[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>(form.tag_ids || []);
   const [tagSearch, setTagSearch] = useState('');
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
@@ -84,6 +94,18 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
         if (json?.success) setAllTags(json.data || []);
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void apiRequest<{ data: RegistryPlatformOption[] }>('/api/platform-registry/profiles')
+      .then((response) => {
+        if (active) setRegistryPlatforms(response.data || []);
+      })
+      .catch(() => {
+        if (active) setRegistryPlatforms([]);
+      });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -105,6 +127,16 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
     const q = tagSearch.toLowerCase();
     return tag.label.toLowerCase().includes(q) || tag.label_zh.toLowerCase().includes(q) || tag.code.toLowerCase().includes(q);
   });
+
+  const platformOptions = [
+    ...PLATFORM_OPTIONS,
+    ...registryPlatforms
+      .filter((profile) => !PLATFORM_OPTIONS.some((option) => option.value === profile.platform_code))
+      .map((profile) => ({
+        value: profile.platform_code,
+        label: `${profile.name_en || profile.platform_code}${profile.vendor ? ` (${profile.vendor})` : ''}`,
+      })),
+  ];
 
   const handleFieldChange = <K extends keyof Device>(key: K, value: Device[K] | string | number | undefined) => {
     onFormChange({ ...form, [key]: value });
@@ -175,7 +207,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                 onChange={(event) => handleFieldChange('platform', event.target.value)}
                 className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
               >
-                {PLATFORM_OPTIONS.map((option) => (
+                {platformOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>

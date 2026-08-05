@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   ExternalLink,
   FileCode2,
@@ -15,6 +16,7 @@ import {
   Server,
   ShieldAlert,
   ShieldCheck,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -181,10 +183,20 @@ interface ParserVersionOption {
   template_code?: string;
   name?: string;
   source?: string;
+  command?: string | null;
+  source_filename?: string | null;
 }
 
 type DetailTab = 'overview' | 'mappings' | 'releases' | 'parser' | 'identification';
 type ReadinessFilter = 'all' | 'ready' | 'degraded';
+
+const normalizeBindingCommand = (value?: string | null): string => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+const parserVersionMatchesCommand = (version: ParserVersionOption, command?: string | null): boolean => {
+  const templateCommand = normalizeBindingCommand(version.command);
+  const releaseCommand = normalizeBindingCommand(command);
+  return Boolean(templateCommand && releaseCommand && templateCommand === releaseCommand);
+};
 
 interface Props {
   language: string;
@@ -289,11 +301,100 @@ const sourceLabel = (value: string | undefined, zh: boolean): string => {
   return ({ SYSTEM: '系统', CUSTOM: '自定义', FORKED: '租户副本' } as Record<string, string>)[normalized] || normalized;
 };
 
+interface ParserVersionPickerProps {
+  zh: boolean;
+  ariaLabel: string;
+  versions: ParserVersionOption[];
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}
+
+const ParserVersionPicker: React.FC<ParserVersionPickerProps> = ({ zh, ariaLabel, versions, value, disabled, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = versions.find((version) => version.id === value);
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredVersions = versions.filter((version) => (
+    !normalizedSearch
+      || [version.template_code, version.name, version.source_filename, version.command]
+        .some((field) => String(field || '').toLowerCase().includes(normalizedSearch))
+  ));
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [open]);
+
+  const choose = (nextValue: string) => {
+    onChange(nextValue);
+    setOpen(false);
+    setSearch('');
+  };
+
+  return (
+    <div ref={rootRef} className="relative min-w-[220px] flex-1">
+      <button
+        type="button"
+        role="combobox"
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between gap-2 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-left text-[10px] text-slate-700 outline-none transition hover:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span className="min-w-0 truncate">
+          {selected
+            ? `${selected.template_code || selected.id} · v${selected.version_number} · ${sourceLabel(selected.source, zh)}`
+            : (value ? (zh ? '当前版本与命令不匹配，请替换' : 'Current version does not match the command') : (zh ? '未绑定（无严格匹配的注册版）' : 'Not bound (no strict registry binding)'))}
+        </span>
+        <ChevronDown size={13} className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+          <div className="relative border-b border-slate-100 p-1.5">
+            <Search size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={zh ? '搜索模板编码、名称或文件名' : 'Search code, name, or filename'}
+              aria-label={zh ? '搜索解析模板' : 'Search parser templates'}
+              className="w-full rounded-lg bg-slate-50 py-1.5 pl-7 pr-2 text-[10px] text-slate-700 outline-none focus:bg-cyan-50/50"
+            />
+          </div>
+          <div role="listbox" aria-label={ariaLabel} className="max-h-60 overflow-y-auto p-1">
+            <button type="button" role="option" aria-selected={!value} onClick={() => choose('')} className={`flex w-full items-center rounded-lg px-2 py-2 text-left text-[10px] ${!value ? 'bg-cyan-50 text-cyan-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+              <span className="min-w-0 flex-1 truncate">{zh ? '未绑定（无严格匹配的注册版）' : 'Not bound (no strict registry binding)'}</span>
+            </button>
+            {filteredVersions.map((version) => (
+              <button key={version.id} type="button" role="option" aria-selected={version.id === value} onClick={() => choose(version.id)} className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-[10px] ${version.id === value ? 'bg-cyan-50 text-cyan-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{version.template_code || version.id} · v{version.version_number}</span>
+                  <span className="mt-0.5 block truncate text-[9px] text-slate-400">{version.name || version.source_filename || version.command || version.id} · {sourceLabel(version.source, zh)}</span>
+                </span>
+              </button>
+            ))}
+            {!filteredVersions.length && <div className="px-2 py-4 text-center text-[10px] text-slate-400">{zh ? '没有找到匹配的解析模板' : 'No matching parser template'}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const zh = language === 'zh';
   const navigate = useNavigate();
   const requestIdRef = useRef(0);
   const deepLinkAppliedRef = useRef(false);
+  const pendingReleaseSelectionRef = useRef('');
   const [profiles, setProfiles] = useState<PlatformProfile[]>([]);
   const [capabilities, setCapabilities] = useState<RegistryCapabilities | null>(null);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(true);
@@ -325,6 +426,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const [editingCommand, setEditingCommand] = useState('');
   const [editingParserVersionId, setEditingParserVersionId] = useState('');
   const [actionSaving, setActionSaving] = useState(false);
+  const [releaseDeleting, setReleaseDeleting] = useState(false);
   const [rejectReleaseId, setRejectReleaseId] = useState('');
   const [rejectReleaseReason, setRejectReleaseReason] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -385,11 +487,17 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
       const response = await apiRequest<ApiEnvelope<PlatformProfile[]>>('/api/platform-registry/profiles');
       const nextProfiles = response.data || [];
       setProfiles(nextProfiles);
+      const requestedProfile = deepLink.profileId
+        ? nextProfiles.find((item) => item.id === deepLink.profileId)
+        : null;
       setSelectedProfileId((current) => (
-        current && nextProfiles.some((item) => item.id === current)
-          ? current
-          : (nextProfiles.some((item) => item.id === deepLink.profileId) ? deepLink.profileId : (nextProfiles[0]?.id || ''))
+        deepLink.profileId
+          ? (requestedProfile?.id || '')
+          : (current && nextProfiles.some((item) => item.id === current) ? current : (nextProfiles[0]?.id || ''))
       ));
+      if (deepLink.profileId && !requestedProfile) {
+        setError(zh ? `未找到指定的平台 Profile：${deepLink.profileId}` : `Requested platform Profile was not found: ${deepLink.profileId}`);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : (zh ? '平台注册表加载失败' : 'Failed to load platform registry'));
     } finally {
@@ -564,10 +672,15 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
       return;
     }
     const releaseStillExists = Boolean(actionReleaseId && currentProfile.releases?.some((release) => release.id === actionReleaseId));
+    const pendingReleaseId = pendingReleaseSelectionRef.current;
+    const pendingReleaseExists = Boolean(pendingReleaseId && currentProfile.releases?.some((release) => release.id === pendingReleaseId));
     const deepLinkedRelease = deepLink.releaseId && currentProfile.releases?.some((release) => release.id === deepLink.releaseId)
       ? deepLink.releaseId
       : '';
-    if (deepLinkedRelease && !deepLinkAppliedRef.current) {
+    if (pendingReleaseExists) {
+      pendingReleaseSelectionRef.current = '';
+      if (actionReleaseId !== pendingReleaseId) setActionReleaseId(pendingReleaseId);
+    } else if (deepLinkedRelease && !deepLinkAppliedRef.current) {
       deepLinkAppliedRef.current = true;
       setActionReleaseId(deepLinkedRelease);
     } else if (!releaseStillExists) {
@@ -638,8 +751,12 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
         `/api/platform-registry/profiles/${encodeURIComponent(currentProfile.id)}/releases`,
         { method: 'POST', body: JSON.stringify({ safety_policy: { read_only: true } }) },
       );
-      setActionReleaseId(response.data?.id || '');
+      const draftReleaseId = response.data?.id || '';
+      pendingReleaseSelectionRef.current = draftReleaseId;
+      setEditingActionCode('');
+      setActionsError('');
       await Promise.all([refreshProfiles(), loadProfile(currentProfile.id)]);
+      if (draftReleaseId) setActionReleaseId(draftReleaseId);
       setDetailTab('mappings');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : (zh ? '创建草稿 Release 失败' : 'Failed to create draft release'));
@@ -664,11 +781,38 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
       });
       setEditingActionCode('');
       setEditingParserVersionId('');
-      await loadActions(selectedProfileId, activeRelease.id);
+      await Promise.all([
+        loadActions(selectedProfileId, activeRelease.id),
+        loadProfile(selectedProfileId),
+        refreshProfiles(),
+      ]);
     } catch (cause) {
       setActionsError(cause instanceof Error ? cause.message : (zh ? '保存动作映射失败' : 'Failed to save action mapping'));
     } finally {
       setActionSaving(false);
+    }
+  };
+
+  const deleteDraftRelease = async () => {
+    if (!activeRelease?.id || !currentProfile || !canWrite || activeRelease.status !== 'DRAFT' || releaseDeleting) return;
+    const confirmed = window.confirm(
+      zh
+        ? `确定删除 v${activeRelease.release_number} 草稿吗？草稿中的单条命令修改也会一起删除。`
+        : `Delete draft v${activeRelease.release_number}? All command changes in this draft will be removed.`,
+    );
+    if (!confirmed) return;
+    setReleaseDeleting(true);
+    setError('');
+    try {
+      await apiRequest(`/api/platform-registry/releases/${encodeURIComponent(activeRelease.id)}`, { method: 'DELETE' });
+      setEditingActionCode('');
+      setEditingParserVersionId('');
+      setActionReleaseId(currentProfile.current_release_id || '');
+      await Promise.all([refreshProfiles(), loadProfile(currentProfile.id)]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : (zh ? '删除草稿 Release 失败' : 'Failed to delete draft release'));
+    } finally {
+      setReleaseDeleting(false);
     }
   };
 
@@ -999,7 +1143,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                           ))}
                         </div>
                         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5 text-[10px] leading-4 text-amber-900">
-                          <span>{zh ? '设备绑定与动作解析绑定是两条独立链路：这里的“绑定设备”只表示设备归属本 Profile；命令映射中的“未绑定”表示该 action_code 尚未绑定 TextFSM 版本，会使用平台内置解析。' : 'Device binding and action parser binding are independent: “Bound devices” means devices belong to this profile; “Not bound” in Command mappings means that action_code has no TextFSM version and uses the platform parser.'}</span>
+                          <span>{zh ? '设备绑定与动作解析绑定是两条独立链路：这里的“绑定设备”只表示设备归属本 Profile；命令映射中的“未绑定”表示该 action_code 尚未绑定 TextFSM 版本，不会改写命令或回退到其他命令模板。' : 'Device binding and action parser binding are independent: “Bound devices” means devices belong to this profile; “Not bound” means that action_code has no TextFSM version and never rewrites the command or falls back to another command template.'}</span>
                           <button type="button" onClick={() => setDetailTab('mappings')} className="shrink-0 font-semibold text-amber-800 underline underline-offset-2 hover:text-amber-950">{zh ? '查看命令映射' : 'View command mappings'}</button>
                         </div>
                         <div className="rounded-xl border border-slate-100 px-4 py-3">
@@ -1107,24 +1251,29 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
 
                     {detailTab === 'mappings' && (
                       <div>
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-100 bg-cyan-50/50 px-3 py-2">
-                          <div className="flex items-center gap-2 text-[11px] font-semibold text-cyan-900"><span>{zh ? '编辑 Release' : 'Editing release'}</span><select value={actionReleaseId} onChange={(event) => setActionReleaseId(event.target.value)} className="rounded-lg border border-cyan-200 bg-white px-2 py-1 text-[10px] font-normal text-slate-700 outline-none">{(currentProfile.releases || []).map((release) => <option key={release.id} value={release.id}>v{release.release_number} · {statusLabel(release.status, zh)}</option>)}</select></div>
-                          {canWrite && <button type="button" onClick={() => void createDraftRelease()} className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200 hover:bg-cyan-50"><Plus size={12} />{zh ? '新建草稿' : 'New change draft'}</button>}
+                        <div className="mb-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <span className="text-[11px] font-semibold text-slate-800">{zh ? '命令映射版本' : 'Command mapping release'}</span>
+                              <select value={actionReleaseId} onChange={(event) => { setEditingActionCode(''); setActionReleaseId(event.target.value); }} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[10px] font-medium text-slate-700 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100">
+                                {(currentProfile.releases || []).map((release) => <option key={release.id} value={release.id}>v{release.release_number} · {statusLabel(release.status, zh)}</option>)}
+                              </select>
+                              {activeRelease && <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ring-1 ${statusClass(activeRelease.status)}`}>{statusLabel(activeRelease.status, zh)}</span>}
+                              <span className="text-[10px] text-slate-400">{zh ? '按单条 action_code 修改并保存' : 'Edit and save one action_code at a time'}</span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {canWrite && <button type="button" onClick={() => void createDraftRelease()} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-cyan-700"><Plus size={12} />{zh ? '新建草稿' : 'New draft'}</button>}
+                              {canWrite && activeRelease?.status === 'DRAFT' && <button type="button" onClick={() => void deleteDraftRelease()} disabled={releaseDeleting} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={12} />{releaseDeleting ? (zh ? '删除中' : 'Deleting') : (zh ? '删除草稿' : 'Delete draft')}</button>}
+                            </div>
+                          </div>
+                          {activeRelease?.status === 'DRAFT' && <div className="mt-2 flex items-center gap-1.5 text-[10px] text-cyan-700"><Save size={12} />{zh ? '修改命令或 TextFSM 后，点击动作行内的“保存命令”；保存只更新当前 action_code。' : 'Edit the command or TextFSM, then use the row “Save command” button; only the current action_code is updated.'}</div>}
                         </div>
                         {actionsError && <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">{actionsError}</div>}
-                        <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2 text-[10px] leading-4 text-amber-900">
-                          {zh ? '此处的“解析版本未绑定”只表示 action_code 未绑定 TextFSM；设备是否归属该 Profile 请看“基本信息 → 绑定设备”。未绑定时仍会使用平台内置解析。' : 'Here “no parser version” only means this action_code has no TextFSM binding; device ownership is shown in Overview → Bound devices. Unbound actions still use the platform parser.'}
-                        </div>
-                        <div className="mb-3 rounded-xl border border-cyan-100 bg-cyan-50/60 px-3 py-2 text-[10px] leading-4 text-cyan-800">
-                          {zh
-                            ? 'Playbook 只保存 action_code；在这里替换解析版本后，需要完成当前 Release 的验证、审批和发布，后续执行才会使用新 TextFSM。'
-                            : 'Playbooks store only the action_code. After replacing the parser here, validate, approve, and publish this Release before future executions use the new TextFSM.'}
-                        </div>
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2 text-[10px] leading-5 text-amber-800">
-                          <span>{zh ? 'Release 是整个平台版本快照；只替换一条命令时，搜索并编辑目标 action_code，其余映射会沿用当前已发布版本。' : 'A Release is a platform snapshot. To replace one command, search for its action_code; all other mappings are carried forward.'}</span>
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-[10px] leading-4 text-slate-600">
+                          <span>{zh ? 'Playbook 只保存 action_code；Release 发布的是平台映射快照，未修改的命令会从已发布版本带入。未绑定时不会改写命令或回退到其他模板。' : 'Playbooks store only action_code. A release publishes the platform mapping snapshot; unchanged commands are carried forward. Unbound actions never rewrite commands or fall back to another template.'}</span>
                           <label className="relative min-w-[220px] flex-1 sm:max-w-xs">
                             <Search size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input value={actionSearch} onChange={(event) => setActionSearch(event.target.value)} placeholder={zh ? '筛选 action_code / 命令' : 'Filter action_code / command'} className="w-full rounded-lg border border-amber-200 bg-white px-7 py-1.5 text-[10px] text-slate-700 outline-none focus:ring-2 focus:ring-amber-100" />
+                            <input value={actionSearch} onChange={(event) => setActionSearch(event.target.value)} placeholder={zh ? '筛选 action_code / 命令' : 'Filter action_code / command'} className="w-full rounded-lg border border-slate-200 bg-white px-7 py-1.5 text-[10px] text-slate-700 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" />
                           </label>
                         </div>
                         {actionsLoading ? (
@@ -1138,9 +1287,22 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                               const consumers = parseJsonList(action.consumers_json);
                               const contract = parseJsonObject(action.field_contract_json);
                               const boundParserVersion = parserVersions.find((version) => version.id === action.parser_template_version_id);
+                              const editingThisAction = editingActionCode === action.action_code;
+                              const commandForParserPicker = editingThisAction ? editingCommand : action.command;
+                              const compatibleParserVersions = parserVersions.filter((version) => parserVersionMatchesCommand(version, commandForParserPicker));
+                              const parserBindingMismatch = Boolean(
+                                action.parser_template_version_id
+                                  && boundParserVersion
+                                  && !parserVersionMatchesCommand(boundParserVersion, action.command),
+                              );
                               const openParserVersion = (version: ParserVersionOption | undefined) => {
                                 if (!version?.template_id) return;
-                                navigate(`/automation/textfsm-registry?template_id=${encodeURIComponent(version.template_id)}&version_id=${encodeURIComponent(version.id)}`);
+                                const params = new URLSearchParams({
+                                  template_id: version.template_id,
+                                  version_id: version.id,
+                                });
+                                if (version.template_code) params.set('template_code', version.template_code);
+                                navigate(`/automation/textfsm-registry?${params.toString()}`);
                               };
                               return (
                                 <div key={action.action_code} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
@@ -1157,7 +1319,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                                   </div>
                                   <div className="mt-3 grid gap-2 text-[10px] sm:grid-cols-2">
                                     <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><span className="text-slate-400">{zh ? '实际命令' : 'Resolved command'}：</span><code className="break-all text-slate-700">{action.command || (zh ? '未映射' : 'Unmapped')}</code></div>
-                                     <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><span className="text-slate-400">{zh ? '解析版本' : 'Parser version'}：</span><span className={`break-all ${action.parser_template_version_id ? 'text-slate-700' : 'font-medium text-amber-700'}`}>{boundParserVersion?.template_code ? `${boundParserVersion.template_code} · v${boundParserVersion.version_number}` : (action.parser_template_version_id || (zh ? '平台内置解析（未绑定 TextFSM）' : 'Platform parser (no TextFSM binding)'))}</span>{boundParserVersion?.template_id && <button type="button" onClick={() => openParserVersion(boundParserVersion)} className="ml-2 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50" title={zh ? '打开解析版本' : 'Open parser version'}><ExternalLink size={11} />{zh ? '打开模板' : 'Open template'}</button>}{!action.parser_template_version_id && action.action_code === 'get_bgp_neighbors' && /unicast/i.test(action.command || '') && <div className="mt-1 text-[10px] leading-4 text-amber-700">{zh ? '当前未绑定 TextFSM；平台解析会将 ipv4 unicast 兼容匹配到无 unicast 后缀的模板。若要固定使用注册版本，请编辑此动作并选择已发布版本。' : 'No TextFSM version is bound. The platform parser normalizes ipv4 unicast to the compatible template without the suffix. Bind a published version to make the registry template explicit.'}</div>}</div>
+                                     <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><span className="text-slate-400">{zh ? '解析版本' : 'Parser version'}：</span><span className={`break-all ${action.parser_template_version_id && !parserBindingMismatch ? 'text-slate-700' : 'font-medium text-amber-700'}`}>{boundParserVersion?.template_code ? `${boundParserVersion.template_code} · v${boundParserVersion.version_number}` : (action.parser_template_version_id || (zh ? '未绑定严格匹配的 TextFSM' : 'No strictly matching TextFSM binding'))}</span>{boundParserVersion?.template_id && <button type="button" onClick={() => openParserVersion(boundParserVersion)} className="ml-2 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50" title={zh ? '打开解析版本' : 'Open parser version'}><ExternalLink size={11} />{zh ? '打开模板' : 'Open template'}</button>}{parserBindingMismatch && <div className="mt-1 text-[10px] leading-4 text-rose-700">{zh ? '当前模板与实际命令不一致，不能继续使用；请替换为命令完全匹配的 PUBLISHED TextFSM。' : 'The bound template does not match the action command; replace it with a strictly matching PUBLISHED TextFSM.'}</div>}{!action.parser_template_version_id && action.command && <div className="mt-1 text-[10px] leading-4 text-amber-700">{zh ? '当前未绑定注册版 TextFSM；执行时只按原命令查找严格匹配模板，不会改写命令或回退到其他命令模板。' : 'No registry TextFSM version is bound; execution only looks up a template for the exact command and does not rewrite or fall back to another command template.'}</div>}{action.parser_template_version_id && !compatibleParserVersions.length && <div className="mt-1 text-[10px] leading-4 text-rose-700">{zh ? '没有与当前命令严格一致的已发布解析版本。' : 'No published parser version strictly matches the current command.'}</div>}</div>
                                   </div>
                                   {(requiredFields.length > 0 || consumers.length > 0 || Object.keys(contract).length > 0) && (
                                     <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1168,18 +1330,14 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                                   )}
                                   {editingActionCode === action.action_code ? (
                                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                                      <input value={editingCommand} onChange={(event) => setEditingCommand(event.target.value)} className="min-w-[240px] flex-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 font-mono text-[10px] outline-none focus:ring-2 focus:ring-cyan-100" aria-label={zh ? '动作命令' : 'Action command'} />
-                                      <select value={editingParserVersionId} onChange={(event) => setEditingParserVersionId(event.target.value)} disabled={parserVersionsLoading} className="min-w-[190px] rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-[10px] text-slate-700 outline-none focus:ring-2 focus:ring-cyan-100" aria-label={zh ? `动作 ${action.action_code} 的解析版本` : `Parser version for ${action.action_code}`}>
-                                        <option value="">{zh ? '未绑定（使用平台内置解析）' : 'Not bound (use platform parser)'}</option>
-                                        {action.parser_template_version_id && !parserVersions.some((version) => version.id === action.parser_template_version_id) && <option value={action.parser_template_version_id} disabled>{zh ? '当前版本不兼容，请替换' : 'Current version is incompatible; replace it'}</option>}
-                                        {parserVersions.map((version) => <option key={version.id} value={version.id}>{version.template_code || version.id} · v{version.version_number} · {sourceLabel(version.source, zh)}</option>)}
-                                      </select>
+                                      <input value={editingCommand} onChange={(event) => { const nextCommand = event.target.value; setEditingCommand(nextCommand); const selectedVersion = parserVersions.find((version) => version.id === editingParserVersionId); if (editingParserVersionId && (!selectedVersion || !parserVersionMatchesCommand(selectedVersion, nextCommand))) setEditingParserVersionId(''); }} className="min-w-[240px] flex-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 font-mono text-[10px] outline-none focus:ring-2 focus:ring-cyan-100" aria-label={zh ? '动作命令' : 'Action command'} />
+                                      <ParserVersionPicker zh={zh} value={editingParserVersionId} versions={compatibleParserVersions} disabled={parserVersionsLoading} onChange={setEditingParserVersionId} ariaLabel={zh ? `动作 ${action.action_code} 的解析版本` : `Parser version for ${action.action_code}`} />
                                       {editingParserVersionId && <button type="button" onClick={() => openParserVersion(parserVersions.find((version) => version.id === editingParserVersionId))} disabled={!parserVersions.some((version) => version.id === editingParserVersionId)} className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-cyan-700 disabled:cursor-not-allowed disabled:opacity-40" title={zh ? '打开所选解析版本' : 'Open selected parser version'}><ExternalLink size={11} />{zh ? '打开模板' : 'Open template'}</button>}
-                                      <button type="button" onClick={() => void saveActionMapping(action)} disabled={actionSaving} className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-2 text-[10px] font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"><Save size={12} />{actionSaving ? (zh ? '保存中' : 'Saving') : (zh ? '保存' : 'Save')}</button>
+                                      <button type="button" onClick={() => void saveActionMapping(action)} disabled={actionSaving} className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-2 text-[10px] font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"><Save size={12} />{actionSaving ? (zh ? '保存中' : 'Saving') : (zh ? '保存命令' : 'Save command')}</button>
                                       <button type="button" onClick={() => setEditingActionCode('')} className="rounded-lg px-2.5 py-2 text-[10px] font-semibold text-slate-500 hover:bg-slate-100">{zh ? '取消' : 'Cancel'}</button>
                                     </div>
                                   ) : canWrite && activeRelease?.status === 'DRAFT' ? (
-                                    <button type="button" aria-label={zh ? '编辑命令/解析版本' : 'Edit command/parser'} onClick={() => { setEditingActionCode(action.action_code); setEditingCommand(action.command || ''); setEditingParserVersionId(action.parser_template_version_id || ''); }} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[10px] font-semibold text-cyan-700 transition hover:border-cyan-400 hover:bg-cyan-50"><Save size={12} />{zh ? '编辑此动作的命令和解析版本' : 'Edit this action command and parser'}</button>
+                                    <button type="button" aria-label={zh ? '编辑命令/解析版本' : 'Edit command/parser'} onClick={() => { const currentVersion = parserVersions.find((version) => version.id === action.parser_template_version_id); setEditingActionCode(action.action_code); setEditingCommand(action.command || ''); setEditingParserVersionId(currentVersion && parserVersionMatchesCommand(currentVersion, action.command) ? currentVersion.id : ''); }} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[10px] font-semibold text-cyan-700 transition hover:border-cyan-400 hover:bg-cyan-50"><Save size={12} />{zh ? '编辑此动作的命令和解析版本' : 'Edit this action command and parser'}</button>
                                   ) : null}
                                 </div>
                               );

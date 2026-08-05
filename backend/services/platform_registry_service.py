@@ -97,7 +97,9 @@ def iter_action_definitions() -> tuple[dict[str, Any], ...]:
 SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
     {"platform_code": "cisco_ios", "name_zh": "Cisco IOS", "name_en": "Cisco IOS", "vendor": "Cisco", "connection_driver": "cisco_ios", "parser_platform": "cisco_ios"},
     {"platform_code": "huawei_vrp", "name_zh": "Huawei VRP", "name_en": "Huawei VRP", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrp"},
-    {"platform_code": "h3c_comware", "name_zh": "H3C Comware", "name_en": "H3C Comware", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "hp_comware"},
+    {"platform_code": "hp_comware", "name_zh": "H3C Comware V5", "name_en": "H3C Comware V5", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "hp_comware"},
+    {"platform_code": "h3c_comware", "name_zh": "H3C Comware V7", "name_en": "H3C Comware V7", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "hp_comware"},
+    {"platform_code": "h3c_comware9", "name_zh": "H3C Comware V9", "name_en": "H3C Comware V9", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "hp_comware"},
     {"platform_code": "juniper_junos", "name_zh": "Juniper Junos", "name_en": "Juniper Junos", "vendor": "Juniper", "connection_driver": "juniper_junos", "parser_platform": "juniper_junos"},
     {"platform_code": "arista_eos", "name_zh": "Arista EOS", "name_en": "Arista EOS", "vendor": "Arista", "connection_driver": "arista_eos", "parser_platform": "arista_eos"},
     {"platform_code": "zte_5900_v6", "name_zh": "中兴 5900 V6", "name_en": "ZTE 5900 V6", "vendor": "ZTE", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},
@@ -111,7 +113,9 @@ SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
 PLATFORM_ALIASES = {
     "cisco": "cisco_ios", "ios": "cisco_ios", "huawei": "huawei_vrp", "vrp": "huawei_vrp",
     "huawei_vrpv8": "huawei_vrp", "h3c": "h3c_comware", "comware": "h3c_comware",
-    "hp_comware": "h3c_comware", "comware9": "h3c_comware", "juniper": "juniper_junos",
+    "comware5": "hp_comware", "comware7": "h3c_comware", "comware9": "h3c_comware9",
+    "hp_comware": "hp_comware", "h3c_comware": "h3c_comware", "h3c_comware9": "h3c_comware9",
+    "juniper": "juniper_junos",
     "junos": "juniper_junos", "arista": "arista_eos", "eos": "arista_eos", "zte": "zte_5900_v6",
     "zte_zxros": "zte_5900_v6", "ruijie": "ruijie_s6k_rgos12", "ruijie_os": "ruijie_s6k_rgos12",
     "ruijie_rgos": "ruijie_s6k_rgos12", "dptech": "dptech_fw_s211", "dptech_ios": "dptech_fw_s211",
@@ -162,6 +166,35 @@ PLATFORM_ACTION_COMMANDS["cisco_ios"].update({"get_bgp_routes": "show ip bgp", "
 PLATFORM_ACTION_COMMANDS["huawei_vrp"].update({"get_bgp_routes": "display bgp routing-table", "get_bgp_routes_vrf": "display bgp vpnv4 vpn-instance {{vrf}} routing-table"})
 PLATFORM_ACTION_COMMANDS["hp_comware"].update({"get_bgp_routes": "display bgp routing-table ipv4 unicast", "get_bgp_routes_vrf": "display bgp vpnv4 vpn-instance {{vrf}} routing-table"})
 PLATFORM_ACTION_COMMANDS["ruijie_rgos"].update({"get_bgp_routes": "show ip bgp", "get_bgp_routes_vrf": "show ip bgp vrf {{vrf}}"})
+
+# A parser platform describes the parser/driver family.  A platform profile
+# is the concrete vendor + product/version identity.  Most profiles can use
+# the family catalog unchanged, but this explicit per-profile override is the
+# extension point for platforms whose command grammar differs inside one
+# family (for example Comware V5 versus V7).
+PROFILE_ACTION_COMMANDS: dict[str, dict[str, str]] = {
+    "hp_comware": {
+        **PLATFORM_ACTION_COMMANDS["hp_comware"],
+        "get_arp_table": "display arp",
+        "get_bgp_neighbors": "display bgp peer ipv4",
+    },
+    "h3c_comware": dict(PLATFORM_ACTION_COMMANDS["hp_comware"]),
+    "h3c_comware9": dict(PLATFORM_ACTION_COMMANDS["hp_comware"]),
+}
+
+
+def get_profile_action_commands(profile: dict[str, Any]) -> dict[str, str]:
+    """Return the command catalog for one concrete profile.
+
+    Profile-specific mappings are intentionally preferred over the parser
+    family mapping.  Custom profiles have no implicit action catalog and must
+    be mapped explicitly in their Draft Release.
+    """
+    platform_code = str(profile.get("platform_code") or "").strip().lower()
+    if platform_code in PROFILE_ACTION_COMMANDS:
+        return dict(PROFILE_ACTION_COMMANDS[platform_code])
+    parser_platform = str(profile.get("parser_platform") or "").strip().lower()
+    return dict(PLATFORM_ACTION_COMMANDS.get(parser_platform, {}))
 
 _SENSITIVE_OUTPUT_PATTERNS = (
     re.compile(r"(\b(?:password|passwd|secret|community|token|api[-_ ]?key|private[-_ ]?key)\s*[:=]?\s*)([^\s,;]+)", re.IGNORECASE),
@@ -276,6 +309,20 @@ def normalize_platform_code(value: str) -> str:
     return PLATFORM_ALIASES.get(code, code)
 
 
+def platform_codes_match(device_platform: Any, profile_platform: Any) -> bool:
+    """Compare a device identity with a concrete platform Profile.
+
+    Exact codes win, while only the explicitly declared legacy aliases are
+    accepted.  This keeps custom platform codes isolated and prevents one
+    versioned profile from silently accepting another version's device.
+    """
+    device_code = str(device_platform or "").strip().lower()
+    profile_code = str(profile_platform or "").strip().lower()
+    if not device_code or not profile_code:
+        return False
+    return device_code == profile_code or normalize_platform_code(device_code) == profile_code
+
+
 def validate_platform_code(value: str) -> str:
     code = str(value or "").strip().lower()
     if not PLATFORM_CODE_RE.fullmatch(code):
@@ -340,6 +387,76 @@ def _row_dict(row: Any) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+def normalize_parser_command(value: Any) -> str:
+    """Normalize only formatting, never command semantics, for binding checks.
+
+    Whitespace and letter case are transport-level differences.  Vendor aliases
+    (for example ``unicast`` -> empty suffix) are deliberately not normalized
+    here: a parser binding must describe the command that is actually stored on
+    the release action.
+    """
+    return re.sub(r"\s+", " ", str(value or "").strip()).lower()
+
+
+def derive_template_command(platform_code: str, source_filename: str) -> str:
+    """Derive a command only for importing known file-backed SYSTEM templates.
+
+    This is a migration/import helper, not a runtime fallback.  Runtime and
+    release binding checks use the explicit ``parser_templates.command`` value.
+    """
+    filename = Path(str(source_filename or "")).name
+    if not filename.lower().endswith(".textfsm"):
+        return ""
+    stem = filename[:-len(".textfsm")]
+    prefix = f"{str(platform_code or '').strip().lower()}_"
+    if not stem.lower().startswith(prefix):
+        return ""
+    raw_command = stem[len(prefix):].replace("_", " ")
+    try:
+        from core.textfsm import _canonical_template_command
+        return str(_canonical_template_command(platform_code, raw_command) or "").strip()
+    except Exception:
+        return raw_command.strip()
+
+
+def _assert_parser_command_match(parser_version: dict[str, Any], command: str) -> None:
+    expected = normalize_parser_command(command)
+    bound = normalize_parser_command(parser_version.get("command"))
+    if not bound:
+        raise PlatformRegistryError(
+            "PARSER_COMMAND_UNDECLARED",
+            "Parser template has no declared command and cannot be bound to a Release",
+            status_code=409,
+        )
+    if expected != bound:
+        raise PlatformRegistryError(
+            "PARSER_COMMAND_MISMATCH",
+            f"Parser template command '{parser_version.get('command')}' does not match release command '{command}'",
+            status_code=409,
+        )
+
+
+def _assert_parser_version_compatible(
+    parser_version: dict[str, Any],
+    profile: dict[str, Any],
+    user: dict[str, Any],
+    command: str,
+) -> None:
+    if parser_version.get("status") != "PUBLISHED":
+        raise PlatformRegistryError("PARSER_VERSION_NOT_PUBLISHED", "Only published parser versions can be bound to a release")
+    if parser_version.get("platform_code") != profile.get("parser_platform"):
+        raise PlatformRegistryError("PARSER_PLATFORM_MISMATCH", "Parser version platform does not match the release platform")
+    if parser_version.get("source") == "SYSTEM":
+        if parser_version.get("tenant_id") or parser_version.get("platform_profile_id") not in {None, profile.get("id")}:
+            raise PlatformRegistryError("PARSER_SCOPE_DENIED", "System parser version is outside the release scope", status_code=403)
+    elif (
+        parser_version.get("tenant_id") != (user.get("tenant_id") or profile.get("tenant_id"))
+        or parser_version.get("platform_profile_id") != profile.get("id")
+    ):
+        raise PlatformRegistryError("PARSER_SCOPE_DENIED", "Parser version is outside the release scope", status_code=403)
+    _assert_parser_command_match(parser_version, command)
+
+
 class PlatformActionSession:
     """Hold one read-only driver context for several registry actions.
 
@@ -362,7 +479,7 @@ class PlatformActionSession:
         conn = get_db_connection()
         try:
             row = conn.execute(
-                """SELECT d.*, p.connection_driver, p.parser_platform,
+                """SELECT d.*, p.platform_code, p.connection_driver, p.parser_platform,
                           p.current_release_id, r.release_number
                    FROM devices d
                    LEFT JOIN platform_profiles p ON p.id = d.platform_profile_id
@@ -390,6 +507,12 @@ class PlatformActionSession:
                 device_group_id=device.get("device_group_id"),
             ):
                 raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+            if not platform_codes_match(device.get("platform"), device.get("platform_code")):
+                raise PlatformRegistryError(
+                    "PLATFORM_PROFILE_MISMATCH",
+                    "Device platform does not match its bound platform Profile",
+                    status_code=409,
+                )
             if not device.get("current_release_id") or not device.get("release_number"):
                 raise PlatformRegistryError("NO_PUBLISHED_RELEASE", "Device has no published platform release")
 
@@ -403,7 +526,11 @@ class PlatformActionSession:
                 device.get("connection_driver"), device.get("connection_driver")
             )
             device["driver_type"] = driver_type
-            device["platform"] = device.get("parser_platform") or device.get("platform")
+            # parser_platform selects TextFSM; connection_driver selects the
+            # actual Netmiko/Scrapli device implementation.  Custom Profiles
+            # may deliberately use a custom parser namespace on top of an
+            # existing connection driver and must not fall back to Cisco.
+            device["platform"] = device.get("connection_driver") or device.get("platform")
             if self.driver_factory is None:
                 from drivers.factory import DriverFactory
                 self.driver_factory = DriverFactory
@@ -764,7 +891,8 @@ def list_compatible_parser_versions(profile_id: str, user: dict[str, Any]) -> li
         rows = conn.execute(
             """SELECT v.id, v.template_id, v.version_number, v.status, v.checksum,
                       v.field_contract_json, t.platform_code, t.template_code, t.name,
-                      t.source, t.tenant_id, t.platform_profile_id
+                      t.source, t.tenant_id, t.platform_profile_id,
+                      t.command, t.source_filename
                FROM parser_template_versions v
                JOIN parser_templates t ON t.id = v.template_id
                WHERE v.status = 'PUBLISHED' AND t.platform_code = ?
@@ -957,7 +1085,7 @@ def preview_platform_action(
     conn = get_db_connection()
     try:
         row = conn.execute(
-            """SELECT d.*, p.id AS profile_id, p.connection_driver, p.parser_platform, p.current_release_id,
+            """SELECT d.*, p.id AS profile_id, p.platform_code, p.connection_driver, p.parser_platform, p.current_release_id,
                       r.release_number, r.checksum AS release_checksum, a.command, a.command_checksum,
                       a.parser_template_version_id, def.sensitive_level
                FROM devices d
@@ -986,6 +1114,12 @@ def preview_platform_action(
             device_group_id=device.get("device_group_id"),
         ):
             raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+        if not platform_codes_match(device.get("platform"), device.get("platform_code")):
+            raise PlatformRegistryError(
+                "PLATFORM_PROFILE_MISMATCH",
+                "Device platform does not match its bound platform Profile",
+                status_code=409,
+            )
         if not device.get("current_release_id") or not device.get("release_number"):
             raise PlatformRegistryError("NO_PUBLISHED_RELEASE", "Device has no published platform release")
         if not device.get("command"):
@@ -994,6 +1128,23 @@ def preview_platform_action(
         resolved_command = _render_action_command(device["command"], parameters)
         if not is_safe_read_command(resolved_command, device.get("connection_driver") or ""):
             raise PlatformRegistryError("UNSAFE_COMMAND", "Release contains an unsafe command")
+        if device.get("parser_template_version_id"):
+            parser_version = _row_dict(conn.execute(
+                """SELECT v.id, v.status, t.tenant_id, t.platform_profile_id,
+                          t.platform_code, t.source, t.command, t.source_filename
+                   FROM parser_template_versions v
+                   JOIN parser_templates t ON t.id = v.template_id
+                   WHERE v.id = ?""",
+                (device["parser_template_version_id"],),
+            ).fetchone())
+            if not parser_version:
+                raise PlatformRegistryError("PARSER_VERSION_NOT_FOUND", "Release parser version not found", status_code=409)
+            _assert_parser_version_compatible(
+                parser_version,
+                {"id": device.get("profile_id"), "parser_platform": device.get("parser_platform"), "tenant_id": device.get("tenant_id")},
+                user,
+                device["command"],
+            )
         if device.get("sensitive_level") == "sensitive" and user.get("role") != "Administrator":
             raise PlatformRegistryError("SENSITIVE_ACTION_FORBIDDEN", "Sensitive action requires Administrator permission", status_code=403)
         return {
@@ -1064,6 +1215,32 @@ def _release_for_id(conn, release_id: str, *, lock: bool = False) -> dict[str, A
     return _row_dict(row) or {}
 
 
+def delete_release(release_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Delete an editable draft release and its action snapshot."""
+    conn = get_db_connection()
+    try:
+        import database as _database
+        if not _database._USE_PG:
+            conn.execute("BEGIN IMMEDIATE")
+        release = _release_for_id(conn, release_id, lock=_database._USE_PG)
+        profile = _assert_profile_access(conn, release["profile_id"], user)
+        if release["status"] != "DRAFT":
+            raise PlatformRegistryError("RELEASE_IMMUTABLE", "Only draft releases can be deleted")
+        if str(profile.get("current_release_id") or "") == str(release_id):
+            raise PlatformRegistryError("RELEASE_DELETE_CURRENT", "The current published release cannot be deleted", status_code=409)
+        conn.execute("DELETE FROM platform_releases WHERE id = ?", (release_id,))
+        conn.commit()
+        invalidate_platform_registry_cache()
+        return {"id": release_id, "profile_id": release["profile_id"], "deleted": True}
+    except PlatformRegistryError:
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def update_release_action(release_id: str, action_code: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     conn = get_db_connection()
     try:
@@ -1084,7 +1261,8 @@ def update_release_action(release_id: str, action_code: str, payload: dict[str, 
         parser_version_id = payload.get("parser_template_version_id") or None
         if parser_version_id:
             parser_version = conn.execute(
-                """SELECT v.id, v.status, t.tenant_id, t.platform_profile_id, t.platform_code, t.source
+                """SELECT v.id, v.status, t.tenant_id, t.platform_profile_id, t.platform_code, t.source,
+                          t.command, t.source_filename
                    FROM parser_template_versions v
                    JOIN parser_templates t ON t.id = v.template_id
                    WHERE v.id = ?""",
@@ -1092,18 +1270,7 @@ def update_release_action(release_id: str, action_code: str, payload: dict[str, 
             ).fetchone()
             if not parser_version:
                 raise PlatformRegistryError("PARSER_VERSION_NOT_FOUND", "Parser template version not found", status_code=404)
-            if parser_version["status"] != "PUBLISHED":
-                raise PlatformRegistryError("PARSER_VERSION_NOT_PUBLISHED", "Only published parser versions can be bound to a release")
-            if parser_version["platform_code"] != profile["parser_platform"]:
-                raise PlatformRegistryError("PARSER_PLATFORM_MISMATCH", "Parser version platform does not match the release platform")
-            if parser_version["source"] == "SYSTEM":
-                if parser_version["tenant_id"] or parser_version["platform_profile_id"] not in {None, profile["id"]}:
-                    raise PlatformRegistryError("PARSER_SCOPE_DENIED", "System parser version is outside the release scope", status_code=403)
-            elif (
-                parser_version["tenant_id"] != (user.get("tenant_id") or profile["tenant_id"])
-                or parser_version["platform_profile_id"] != profile["id"]
-            ):
-                raise PlatformRegistryError("PARSER_SCOPE_DENIED", "Parser version is outside the release scope", status_code=403)
+            _assert_parser_version_compatible(_row_dict(parser_version) or {}, profile, user, command)
         contract = payload.get("field_contract") or {"required": json.loads(definition["required_fields_json"] or "[]"), "optional": json.loads(definition["optional_fields_json"] or "[]")}
         now = _now()
         action_id = str(uuid.uuid4())
@@ -1139,6 +1306,21 @@ def validate_release(release_id: str, user: dict[str, Any]) -> dict[str, Any]:
             if not is_safe_read_command(action["command"], profile.get("connection_driver", "")):
                 errors.append({"code": "UNSAFE_COMMAND", "action_code": action["action_code"]})
             if action["parser_template_version_id"]:
+                parser_version = _row_dict(conn.execute(
+                    """SELECT v.id, v.status, t.tenant_id, t.platform_profile_id,
+                              t.platform_code, t.source, t.command, t.source_filename
+                       FROM parser_template_versions v
+                       JOIN parser_templates t ON t.id = v.template_id
+                       WHERE v.id = ?""",
+                    (action["parser_template_version_id"],),
+                ).fetchone())
+                try:
+                    if not parser_version:
+                        raise PlatformRegistryError("PARSER_VERSION_NOT_FOUND", "Release parser version not found", status_code=409)
+                    _assert_parser_version_compatible(parser_version, profile, user, action["command"])
+                except PlatformRegistryError as exc:
+                    errors.append({"code": exc.code, "action_code": action["action_code"], "detail": exc.message})
+                    continue
                 try:
                     from services.parser_template_service import run_published_version_regression
                     regression.append(run_published_version_regression(conn, action["parser_template_version_id"]))
@@ -1268,6 +1450,21 @@ def transition_release(release_id: str, event: str, user: dict[str, Any], *, rea
                 errors.append({"code": "UNSAFE_COMMAND", "action_code": action["action_code"]})
             action_version_id = action["parser_template_version_id"] if "parser_template_version_id" in action.keys() else None
             if action_version_id:
+                parser_version = _row_dict(conn.execute(
+                    """SELECT v.id, v.status, t.tenant_id, t.platform_profile_id,
+                              t.platform_code, t.source, t.command, t.source_filename
+                       FROM parser_template_versions v
+                       JOIN parser_templates t ON t.id = v.template_id
+                       WHERE v.id = ?""",
+                    (action_version_id,),
+                ).fetchone())
+                try:
+                    if not parser_version:
+                        raise PlatformRegistryError("PARSER_VERSION_NOT_FOUND", "Release parser version not found", status_code=409)
+                    _assert_parser_version_compatible(parser_version, profile, user, action["command"])
+                except PlatformRegistryError as exc:
+                    errors.append({"code": exc.code, "action_code": action["action_code"], "detail": exc.message})
+                    continue
                 try:
                     from services.parser_template_service import run_published_version_regression
                     regression.append(run_published_version_regression(conn, action_version_id))
@@ -1526,6 +1723,12 @@ def execute_platform_action(
             device_group_id=device.get("device_group_id"),
         ):
             raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
+        if not platform_codes_match(device.get("platform"), device.get("platform_code")):
+            raise PlatformRegistryError(
+                "PLATFORM_PROFILE_MISMATCH",
+                "Device platform does not match its bound platform Profile",
+                status_code=409,
+            )
         if not device.get("current_release_id") or not device.get("release_number"):
             raise PlatformRegistryError("NO_PUBLISHED_RELEASE", "Device has no published platform release")
         if not device.get("command"):
@@ -1540,7 +1743,8 @@ def execute_platform_action(
         if device.get("parser_template_version_id"):
             template = conn.execute(
                 """SELECT v.content, v.status, v.checksum, v.field_contract_json, v.version_number,
-                          t.tenant_id, t.platform_profile_id, t.platform_code, t.source, t.template_code
+                          t.tenant_id, t.platform_profile_id, t.platform_code, t.source,
+                          t.template_code, t.command, t.source_filename
                    FROM parser_template_versions v
                    JOIN parser_templates t ON t.id = v.template_id
                    WHERE v.id = ?""",
@@ -1557,6 +1761,7 @@ def execute_platform_action(
                 or template["platform_profile_id"] != device.get("profile_id")
             ):
                 raise PlatformRegistryError("PARSER_SCOPE_DENIED", "Release parser version is outside the device scope", status_code=403)
+            _assert_parser_command_match(_row_dict(template) or {}, device["command"])
         if _session is not None:
             if not _session.matches(device):
                 raise PlatformRegistryError("ACTION_SESSION_STALE", "Platform action session no longer matches the current release")
@@ -1581,7 +1786,7 @@ def execute_platform_action(
             device["enable_password"] = ssh_credentials["enable_password"] or ""
             driver_type = CONNECTION_DRIVER_TO_IMPLEMENTATION.get(device.get("connection_driver"), device.get("connection_driver"))
             device["driver_type"] = driver_type
-            device["platform"] = device.get("parser_platform") or device.get("platform")
+            device["platform"] = device.get("connection_driver") or device.get("platform")
             driver = driver_factory.get_driver(driver_type, device)
             with driver:
                 result = driver.send_command(resolved_command)

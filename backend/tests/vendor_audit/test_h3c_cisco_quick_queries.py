@@ -76,7 +76,7 @@ def test_every_official_h3c_and_cisco_fixture_has_a_working_parser(metadata_path
 
 def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
     assert _resolve_commands("hp_comware", ["bgp", "bgp_routes"]) == {
-        "bgp": ["display bgp peer ipv4 unicast"],
+        "bgp": ["display bgp peer ipv4"],
         "bgp_routes": ["display bgp routing-table ipv4"],
     }
     assert _resolve_commands("hp_comware", ["interface_description"]) == {
@@ -89,7 +89,6 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
     assert _resolve_commands("h3c_comware", ["interface_description"]) == {
         "interface_description": ["display interface brief description"],
     }
-
     assert _resolve_commands("h3c_comware9", ["bgp", "bgp_routes"]) == {
         "bgp": ["display bgp peer ipv4 unicast"],
         "bgp_routes": ["display bgp routing-table ipv4"],
@@ -123,6 +122,20 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
 
     assert NTC_PLATFORM_MAP["cisco_xe"] == "cisco_ios"
     assert NTC_PLATFORM_MAP["h3c_comware9"] == "hp_comware"
+
+
+def test_h3c_bgp_unicast_and_no_suffix_use_distinct_textfsm_templates():
+    output, _ = load_official_fixture(
+        "h3c",
+        "h3c_comware",
+        "display_bgp_peer_ipv4",
+        name="comware_v7_s5560",
+    )
+    unicast = smart_parse_cli(output, "display bgp peer ipv4 unicast", platform="h3c_comware")
+    no_suffix = smart_parse_cli(output, "display bgp peer ipv4", platform="h3c_comware")
+
+    assert unicast["template"] == "hp_comware_display_bgp_peer_ipv4_unicast.textfsm"
+    assert no_suffix["template"] == "hp_comware_display_bgp_peer_ipv4.textfsm"
 
 
 def test_cisco_neighbor_collection_uses_lldp_only():
@@ -190,7 +203,7 @@ def test_cisco_neighbor_collection_uses_lldp_only():
             "h3c_comware",
             ("h3c", "h3c_comware", "display_bgp_peer_ipv4"),
             "comware_v7_s5560",
-            "hp_comware_display_bgp_peer_ipv4.textfsm",
+            "hp_comware_display_bgp_peer_ipv4_unicast.textfsm",
             1,
         ),
         (
@@ -232,7 +245,7 @@ def test_cisco_neighbor_collection_uses_lldp_only():
             "h3c_comware9",
             ("h3c", "h3c_comware9", "display_bgp_peer_ipv4"),
             "comware_v9_cr16000",
-            "hp_comware_display_bgp_peer_ipv4.textfsm",
+            "hp_comware_display_bgp_peer_ipv4_unicast.textfsm",
             1,
         ),
         (
@@ -726,7 +739,7 @@ def test_quick_collection_uses_platform_command_and_parses_official_output(
             "vendor": "H3C" if "comware" in platform else "Cisco",
             "platform": platform,
             "role": "distribution",
-            "collection_policy_json": '{"collectors":{"bgp":true,"ospf":true,"bfd":true}}',
+            "collection_policy_json": '{"collectors":{"interface_status":true,"lldp":true,"arp":true,"mac_table":true,"vlan":true,"routes":true,"bgp":true,"ospf":true,"eigrp":true,"isis":true,"rip":true,"bfd":true}}',
         },
         categories=list(category_fixtures),
     )

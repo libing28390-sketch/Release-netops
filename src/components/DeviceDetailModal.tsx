@@ -145,6 +145,13 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const [platformError, setPlatformError] = useState('');
   const [selectedPlatformProfileId, setSelectedPlatformProfileId] = useState(viewingDevice.platform_profile_id || '');
   const [lockPlatformBinding, setLockPlatformBinding] = useState(Boolean(viewingDevice.platform_locked));
+  const compatiblePlatformProfiles = useMemo(() => {
+    const rawPlatform = String(viewingDevice.platform || '').trim().toLowerCase();
+    if (!rawPlatform || rawPlatform === 'unknown' || rawPlatform === 'generic') return platformProfiles;
+    const exact = platformProfiles.filter((profile) => String(profile.platform_code || '').trim().toLowerCase() === rawPlatform);
+    const selected = platformProfiles.find((profile) => profile.id === selectedPlatformProfileId);
+    return selected && !exact.some((profile) => profile.id === selected.id) ? [...exact, selected] : exact;
+  }, [platformProfiles, selectedPlatformProfileId, viewingDevice.platform]);
 
   useEffect(() => {
     let active = true;
@@ -331,7 +338,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 <div className="space-y-2">
                   <select value={selectedPlatformProfileId} onChange={(event) => setSelectedPlatformProfileId(event.target.value)} disabled={platformProfilesLoading || platformBindingLoading} className="w-full rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-cyan-500">
                     <option value="">{platformProfilesLoading ? (language === 'zh' ? '正在加载平台…' : 'Loading platforms…') : (language === 'zh' ? '选择人工绑定平台' : 'Select platform for manual binding')}</option>
-                    {platformProfiles.map((profile) => <option key={profile.id} value={profile.id}>{language === 'zh' ? (profile.name_zh || profile.platform_code) : (profile.name_en || profile.platform_code)} · {profile.source || 'CUSTOM'}</option>)}
+                    {compatiblePlatformProfiles.map((profile) => <option key={profile.id} value={profile.id}>{language === 'zh' ? (profile.name_zh || profile.platform_code) : (profile.name_en || profile.platform_code)} · {profile.source || 'CUSTOM'}</option>)}
                   </select>
                   <div className="flex items-center justify-between gap-2">
                     <label className="inline-flex items-center gap-2 text-[11px] text-cyan-900"><input type="checkbox" checked={lockPlatformBinding} onChange={(event) => setLockPlatformBinding(event.target.checked)} />{language === 'zh' ? '人工锁定绑定' : 'Lock manual binding'}</label>

@@ -34,6 +34,12 @@ from database.migrations.m0092_action_output_retention import upgrade as action_
 from database.migrations.m0094_repair_huawei_eth_trunk_command import upgrade as huawei_eth_trunk_upgrade
 from database.migrations.m0095_seed_core_platform_identification_rules import upgrade as core_identification_rules_upgrade
 from database.migrations.m0096_parser_registry_lifecycle import upgrade as parser_registry_lifecycle_upgrade
+from database.migrations.m0097_bind_h3c_bgp_textfsm_alias import upgrade as h3c_bgp_template_upgrade
+from database.migrations.m0098_strict_parser_command_binding import upgrade as strict_parser_binding_upgrade
+from database.migrations.m0099_repair_unverified_parser_reviews import upgrade as repair_unverified_parser_reviews_upgrade
+from database.migrations.m0100_register_builtin_textfsm_templates import upgrade as builtin_textfsm_upgrade
+from database.migrations.m0101_split_platform_profiles import upgrade as split_platform_profiles_upgrade
+from database.migrations.m0102_concrete_system_template_scopes import upgrade as concrete_system_template_scopes_upgrade
 
 
 @pytest.fixture
@@ -75,7 +81,7 @@ def isolated_db():
             cursor.execute(
                 """CREATE TABLE devices (
                     id TEXT PRIMARY KEY, hostname TEXT, ip_address TEXT, platform TEXT,
-                    status TEXT, username TEXT, password TEXT, connection_method TEXT
+                    status TEXT, username TEXT, password TEXT, connection_method TEXT, role TEXT
                 )"""
             )
             cursor.execute(
@@ -116,6 +122,12 @@ def isolated_db():
         huawei_eth_trunk_upgrade(cursor, True)
         core_identification_rules_upgrade(cursor, True)
         parser_registry_lifecycle_upgrade(cursor, True)
+        h3c_bgp_template_upgrade(cursor, True)
+        strict_parser_binding_upgrade(cursor, True)
+        repair_unverified_parser_reviews_upgrade(cursor, True)
+        builtin_textfsm_upgrade(cursor, True)
+        split_platform_profiles_upgrade(cursor, True)
+        concrete_system_template_scopes_upgrade(cursor, True)
         migration_conn.commit()
     finally:
         migration_conn.close()

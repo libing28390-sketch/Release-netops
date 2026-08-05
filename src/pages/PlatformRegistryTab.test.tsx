@@ -85,7 +85,7 @@ describe('PlatformRegistryTab', () => {
     const release = { id: 'release-1', profile_id: 'profile-1', release_number: 1, status: 'DRAFT', parser_platform: 'cisco_ios', connection_driver: 'netmiko' };
     const action = { action_code: 'get_clock', name_zh: '获取时钟', name_en: 'Get clock', command: 'show clock', parser_template_version_id: 'version-old', field_contract_json: '{}' };
     const fetchMock = installPlatformFetch(true, [profile], { ...profile, releases: [release], current_release_id: 'release-1' }, [action], [
-      { id: 'version-new', template_id: 'template-new', template_code: 'CUSTOM_CLOCK', version_number: 2, status: 'PUBLISHED', source: 'CUSTOM', platform_code: 'cisco_ios', field_contract_json: '{"required":["clock"]}' },
+      { id: 'version-new', template_id: 'template-new', template_code: 'CUSTOM_CLOCK', version_number: 2, status: 'PUBLISHED', source: 'CUSTOM', platform_code: 'cisco_ios', command: 'show clock', field_contract_json: '{"required":["clock"]}' },
     ]);
     const user = userEvent.setup();
     render(<MemoryRouter><PlatformRegistryTab language="zh" currentUser={{ role: 'Operator' }} /></MemoryRouter>);
@@ -94,11 +94,13 @@ describe('PlatformRegistryTab', () => {
     await user.click(screen.getByRole('button', { name: '命令映射' }));
     expect(await screen.findByText('get_clock')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '编辑命令/解析版本' }));
-    const parserSelect = screen.getByRole('combobox', { name: '动作 get_clock 的解析版本' }) as HTMLSelectElement;
-    expect(parserSelect).toBeTruthy();
-    await user.selectOptions(parserSelect, 'version-new');
+    const parserPicker = screen.getByRole('combobox', { name: '动作 get_clock 的解析版本' });
+    expect(parserPicker).toBeTruthy();
+    await user.click(parserPicker);
+    await user.type(screen.getByRole('textbox', { name: '搜索解析模板' }), 'CUSTOM_CLOCK');
+    await user.click(screen.getByRole('option', { name: /CUSTOM_CLOCK/ }));
     expect(screen.getByRole('button', { name: '打开模板' })).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: '保存' }));
+    await user.click(screen.getByRole('button', { name: '保存命令' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       '/api/platform-registry/releases/release-1/actions/get_clock',
@@ -111,5 +113,91 @@ describe('PlatformRegistryTab', () => {
         }),
       }),
     ));
+  });
+
+  it('lets an operator delete the selected draft release', async () => {
+    vi.unstubAllGlobals();
+    const profile = {
+      id: 'profile-delete',
+      platform_code: 'delete_lab',
+      parser_platform: 'cisco_ios',
+      name_zh: '删除草稿平台',
+      name_en: 'Delete draft platform',
+      vendor: 'Acme',
+      source: 'CUSTOM',
+      status: 'ACTIVE',
+      current_release_id: 'release-published',
+    };
+    const releases = [
+      { id: 'release-draft', profile_id: 'profile-delete', release_number: 2, status: 'DRAFT', parser_platform: 'cisco_ios', connection_driver: 'netmiko' },
+      { id: 'release-published', profile_id: 'profile-delete', release_number: 1, status: 'PUBLISHED', parser_platform: 'cisco_ios', connection_driver: 'netmiko' },
+    ];
+    const fetchMock = installPlatformFetch(true, [profile], { ...profile, releases, current_release_id: 'release-published' }, [{ action_code: 'get_clock', command: 'show clock' }]);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<MemoryRouter><PlatformRegistryTab language="zh" currentUser={{ role: 'Operator' }} /></MemoryRouter>);
+
+    await screen.findByRole('heading', { name: '删除草稿平台' });
+    await user.click(screen.getByRole('button', { name: '命令映射' }));
+    const releasePicker = screen.getAllByRole('combobox').at(-1);
+    expect(releasePicker).toBeTruthy();
+    await user.selectOptions(releasePicker!, 'release-draft');
+    await user.click(screen.getByRole('button', { name: '删除草稿' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/platform-registry/releases/release-draft',
+      expect.objectContaining({ method: 'DELETE' }),
+    ));
+  });
+
+  it('keeps a newly created draft selected and editable in command mappings', async () => {
+    vi.unstubAllGlobals();
+    const profile = {
+      id: 'profile-create-draft',
+      platform_code: 'draft_lab',
+      parser_platform: 'cisco_ios',
+      name_zh: '草稿平台',
+      name_en: 'Draft platform',
+      vendor: 'Acme',
+      source: 'CUSTOM',
+      status: 'ACTIVE',
+      current_release_id: 'release-published',
+    };
+    const publishedRelease = { id: 'release-published', profile_id: profile.id, release_number: 1, status: 'PUBLISHED', parser_platform: 'cisco_ios', connection_driver: 'netmiko' };
+    const draftRelease = { id: 'release-new-draft', profile_id: profile.id, release_number: 2, status: 'DRAFT', parser_platform: 'cisco_ios', connection_driver: 'netmiko' };
+    const action = { action_code: 'get_clock', name_zh: '获取时钟', name_en: 'Get clock', command: 'show clock', field_contract_json: '{}' };
+    let draftCreated = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method || 'GET';
+      if (url.includes('/api/platform-registry/capabilities')) {
+        return jsonResponse({ success: true, data: { write_enabled: true, allowed_connection_drivers: ['netmiko'], legacy_textfsm_fallback_enabled: false, legacy_command_catalog_enabled: false } });
+      }
+      if (url.endsWith('/profiles')) return jsonResponse({ success: true, data: [profile] });
+      if (url.endsWith(`/profiles/${profile.id}/releases`) && method === 'POST') {
+        draftCreated = true;
+        return jsonResponse({ success: true, data: draftRelease }, 201);
+      }
+      if (url.match(new RegExp(`/profiles/${profile.id}$`))) {
+        return jsonResponse({ success: true, data: { ...profile, releases: draftCreated ? [draftRelease, publishedRelease] : [publishedRelease] } });
+      }
+      if (url.includes('/identification-conflicts')) return jsonResponse({ success: true, data: [] });
+      if (url.includes('/actions')) return jsonResponse({ success: true, data: [action] });
+      if (url.includes('/parser-versions')) return jsonResponse({ success: true, data: [] });
+      return jsonResponse({ success: true, data: {} });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<MemoryRouter><PlatformRegistryTab language="zh" currentUser={{ role: 'Operator' }} /></MemoryRouter>);
+
+    await screen.findByRole('heading', { name: '草稿平台' });
+    await user.click(screen.getByRole('button', { name: '命令映射' }));
+    await user.click(screen.getByRole('button', { name: '新建草稿' }));
+
+    const releasePicker = screen.getAllByRole('combobox').at(-1) as HTMLSelectElement;
+    await waitFor(() => expect(releasePicker.value).toBe('release-new-draft'));
+    expect(screen.getByRole('button', { name: '删除草稿' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '编辑命令/解析版本' })).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith(`/profiles/${profile.id}/releases`) && init?.method === 'POST')).toBe(true);
   });
 });

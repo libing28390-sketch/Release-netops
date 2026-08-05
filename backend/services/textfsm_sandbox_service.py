@@ -221,7 +221,7 @@ def parse_template_in_sandbox(
     except json.JSONDecodeError as exc:
         raise TextFSMSandboxError("TEMPLATE_SANDBOX_FAILED", "Parser sandbox returned invalid data") from exc
     if proc.returncode != 0 or not response.get("success"):
-        raise TextFSMSandboxError("TEMPLATE_NOT_MATCHED", "Parser template failed")
+        raise TextFSMSandboxError("TEMPLATE_NOT_MATCHED", "测试回显与当前 TextFSM 模板不匹配")
 
     records = response.get("records") or []
     if not isinstance(records, list) or len(records) > max_records:

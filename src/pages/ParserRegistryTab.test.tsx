@@ -23,10 +23,10 @@ const version = {
   test_summary_json: '{}',
 };
 
-const jsonResponse = (body: unknown, status = 200) => ({
+const jsonResponse = (body: unknown, status = 200, requestId = '') => ({
   ok: status >= 200 && status < 300,
   status,
-  headers: { get: () => null },
+  headers: { get: (name: string) => name.toLowerCase() === 'x-request-id' ? requestId || null : null },
   json: async () => body,
 });
 
@@ -103,7 +103,7 @@ const installFetchMock = ({
               summary: { fields: ['FIELD'], duration_ms: 4 },
             },
           })
-        : jsonResponse({ detail: { code: 'TEMPLATE_NOT_MATCHED', message: 'Parser template failed' } }, sandboxStatus);
+        : jsonResponse({ detail: { code: 'TEMPLATE_NOT_MATCHED', message: 'Parser template failed' } }, sandboxStatus, 'test-request-id');
     }
     if (url === '/api/parser-templates' && method === 'POST') {
       return jsonResponse({ success: true, data: { id: 'created-template', platform_code: 'cisco_ios', platform_profile_id: 'profile-1', template_code: 'CUSTOM_TEMPLATE', name: 'Custom template', source: 'CUSTOM', status: 'ACTIVE' } }, 201);
@@ -238,6 +238,7 @@ describe('ParserRegistryTab', () => {
         id: 'mapping-1',
         action_code: 'get_interface_brief',
         command: 'show interfaces brief',
+        template_command: 'show interfaces brief',
         parser_template_version_id: version.id,
         release_id: 'release-cisco-1',
         release_number: 3,
@@ -251,11 +252,39 @@ describe('ParserRegistryTab', () => {
 
     expect(await screen.findByTestId('parser-template-CISCO_IOS_SHOW_INTERFACES_STATUS')).toBeTruthy();
     expect(await screen.findByText('get_interface_brief')).toBeTruthy();
-    expect(screen.getByText('show interfaces brief')).toBeTruthy();
+    expect(screen.getAllByText('show interfaces brief').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('TextFSM command:')).toBeTruthy();
     expect(screen.getByText(/Cisco IOS · v3 PUBLISHED/)).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Edit in Platform Registry/ }).getAttribute('href')).toBe(
+    const platformRegistryLink = screen.getByRole('link', { name: /Edit in Platform Registry/ });
+    expect(platformRegistryLink.getAttribute('href')).toBe(
       '/management/platforms?detail=mappings&profile_id=profile-cisco-1&release_id=release-cisco-1',
     );
+    expect(platformRegistryLink.getAttribute('target')).toBe('_blank');
+    expect(platformRegistryLink.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it('restores the exact template and version from a Platform Registry deep link', async () => {
+    vi.unstubAllGlobals();
+    const linkedTemplate = {
+      ...template,
+      id: 'template-linked',
+      template_code: 'LINKED_ARP_TEMPLATE',
+      name: 'Linked ARP template',
+    };
+    const linkedVersion = {
+      ...version,
+      id: 'version-linked',
+      content: 'Value LINKED_FIELD (.*)\n\nStart\n  ^${LINKED_FIELD} -> Record\n',
+    };
+    const initialUrl = window.location.href;
+    window.history.pushState({}, '', '/automation/textfsm-registry?template_id=template-linked&template_code=LINKED_ARP_TEMPLATE&version_id=version-linked');
+    installFetchMock({ templates: [template, linkedTemplate], versions: [linkedVersion] });
+    const editor = render(<ParserRegistryTab language="zh" currentUser={{ role: 'Administrator' }} />).getByRole('textbox', { name: 'TextFSM 模板内容' }) as HTMLTextAreaElement;
+
+    await screen.findByTestId('parser-template-LINKED_ARP_TEMPLATE');
+    await waitFor(() => expect(editor.value).toContain('LINKED_FIELD'));
+    expect(screen.getByText('Linked ARP template')).toBeTruthy();
+    window.history.pushState({}, '', initialUrl);
   });
 
   it('filters templates by the Netmiko connection driver platform', async () => {
@@ -291,7 +320,8 @@ describe('ParserRegistryTab', () => {
     await user.type(screen.getByRole('textbox', { name: /测试回显（Sandbox\/加密样例）/ }), 'not matched');
     await user.click(screen.getByTestId('parser-sandbox-test'));
 
-    expect(await screen.findByText(/Parser template failed/)).toBeTruthy();
+    expect(await screen.findByText('测试回显与当前 TextFSM 模板不匹配，请检查回显是否与绑定命令一致。')).toBeTruthy();
+    expect(screen.queryByText(/Parser template failed|Request ID/)).toBeNull();
     expect(screen.queryByTestId('parser-result-panel')).toBeNull();
   });
 
@@ -382,6 +412,33 @@ describe('ParserRegistryTab', () => {
     const approve = await screen.findByRole('button', { name: '审批' }) as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
     expect(screen.getByText('创建人不能自审批')).toBeTruthy();
+  });
+
+  it('blocks an untested draft before it can be submitted for review', async () => {
+    vi.unstubAllGlobals();
+    const tenantTemplate = {
+      ...template,
+      id: 'tenant-submit-gate',
+      source: 'CUSTOM',
+      template_code: 'TENANT_SUBMIT_GATE',
+      name: 'Tenant submit gate',
+    };
+    const draftVersion = {
+      ...version,
+      id: 'tenant-submit-gate-version',
+      status: 'DRAFT',
+      test_summary_json: '{}',
+    };
+    const fetchMock = installFetchMock({ templates: [tenantTemplate], versions: [draftVersion] });
+    const user = userEvent.setup();
+    render(<ParserRegistryTab language="en" currentUser={{ role: 'Operator' }} />);
+
+    const submit = await screen.findByRole('button', { name: 'Submit' });
+    expect(screen.getByTestId('parser-submit-test-gate').textContent).toContain('Run and pass the Sandbox test');
+    await user.click(submit);
+
+    await waitFor(() => expect(screen.getAllByText('Run and pass the Sandbox test before submitting this version for review.').length).toBeGreaterThanOrEqual(2));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/submit'))).toBe(false);
   });
 
   it('covers tenant draft metadata, persistent Sandbox, samples and lifecycle affordances', async () => {

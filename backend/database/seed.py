@@ -122,7 +122,7 @@ def _build_network_inspection_items(now: str) -> list[tuple]:
               '统计 down 的接口数量 (SNMP)', 'h3c_comware', '1.3.6.1.2.1.2.2.1.8', 1, 3, 'count')
     _item('net_h3c_bgp_down', 'H3C Comware BGP Peer Down', 'H3C Comware BGP 邻居 Down 数', 'Network', 'h3c_comware_bgp_down',
           '统计非 Established 的 BGP 邻居', 'display bgp peer ipv4 unicast', 'h3c_comware',
-          1, 2, 'count', 'hp_comware_display_bgp_peer_ipv4', 'STATE',
+          1, 2, 'count', 'hp_comware_display_bgp_peer_ipv4_unicast', 'STATE',
           parse_filter='{"field":"STATE","op":"!=","value":"Established"}')
     _item('net_h3c_route_total', 'H3C Comware Route Total', 'H3C Comware 路由总数', 'Network', 'h3c_comware_route_total',
           '路由总数（与上次对比）', 'display ip routing-table statistics', 'h3c_comware',

@@ -97,7 +97,12 @@ def test_targeted_arp_query_uses_published_registry_action_for_bound_device(monk
 
 
 def test_targeted_mac_query_uses_published_registry_action_for_bound_device(monkeypatch):
-    device = {**DEVICE, "platform_profile_id": "system-profile-cisco_ios", "tenant_id": "tenant-1"}
+    device = {
+        **DEVICE,
+        "platform_profile_id": "system-profile-cisco_ios",
+        "tenant_id": "tenant-1",
+        "collection_policy_json": '{"collectors":{"mac_table":true}}',
+    }
     monkeypatch.setattr(
         "services.platform_registry_service.execute_platform_action",
         lambda *_args, **_kwargs: {

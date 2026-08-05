@@ -10,7 +10,12 @@ from typing import Any
 
 from database import get_db_connection
 from core.rbac import authorize_resource
-from services.platform_registry_service import PlatformRegistryError, _assert_profile_access, _row_dict
+from services.platform_registry_service import (
+    PlatformRegistryError,
+    _assert_profile_access,
+    _row_dict,
+    platform_codes_match,
+)
 
 
 SUPPORTED_MATCH_TYPES = {"contains", "starts_with", "ends_with", "equals", "regex"}
@@ -135,6 +140,24 @@ def _binding_compatibility(device: dict[str, Any], profile: dict[str, Any]) -> d
         "warnings": warnings,
         "high_risk_execution_blocked": bool(warnings),
     }
+
+
+def _assert_device_profile_platform(device: dict[str, Any], profile: dict[str, Any]) -> None:
+    """Require an explicit device platform to match the target Profile.
+
+    Legacy imports may have no platform identity yet; those devices can be
+    manually assigned once.  Any explicit platform value, however, must match
+    the target Profile or one of its declared aliases.
+    """
+    device_platform = str(device.get("platform") or "").strip().lower()
+    if device_platform in {"", "unknown", "generic"}:
+        return
+    if not platform_codes_match(device_platform, profile.get("platform_code")):
+        raise PlatformRegistryError(
+            "PLATFORM_PROFILE_MISMATCH",
+            "设备当前平台与目标平台注册表不一致，请选择同一平台后再绑定",
+            status_code=409,
+        )
 
 
 def _match(rule: dict[str, Any], output: str) -> bool:
@@ -461,6 +484,7 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
         user_tenant = str(user.get("tenant_id") or "")
         if profile_tenant and profile_tenant != user_tenant and user.get("role") != "Administrator":
             raise _scope_denied("PLATFORM_SCOPE_DENIED")
+        _assert_device_profile_platform(device, profile)
         conn.execute(
             """UPDATE devices SET platform_profile_id = ?, platform = ?, platform_source = ?,
                       platform_locked = ? WHERE id = ?""",
@@ -523,6 +547,7 @@ def bind_devices_batch(
             device = _load_device(conn, device_id, user, lock=True)
             if device.get("platform_locked") and not force:
                 raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", f"Device {device_id} platform binding is locked", status_code=409)
+            _assert_device_profile_platform(device, profile)
             old_and_new.append({
                 "device": device,
                 "compatibility": _binding_compatibility(device, profile),

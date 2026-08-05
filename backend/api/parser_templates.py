@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 class ParserTemplateCreateRequest(BaseModel):
     platform_code: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]{2,63}$")
     template_code: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+    command: str = Field(default="", max_length=512)
     name: str = Field(default="", max_length=128)
     source_filename: str = Field(default="", max_length=255)
     platform_profile_id: str | None = Field(default=None, max_length=128)
@@ -55,6 +56,7 @@ class ParserTemplateCreateRequest(BaseModel):
 class ParserTemplateUpdateRequest(BaseModel):
     platform_code: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]{2,63}$")
     template_code: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+    command: str | None = Field(default=None, max_length=512)
     name: str = Field(default="", max_length=128)
     platform_profile_id: str | None = Field(default=None, max_length=128)
     lock_version: int | None = Field(default=None, ge=1)
@@ -62,6 +64,7 @@ class ParserTemplateUpdateRequest(BaseModel):
 
 class ParserTemplateForkRequest(BaseModel):
     template_code: str = Field(..., min_length=1, max_length=64, pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+    command: str = Field(default="", max_length=512)
     name: str = Field(default="", max_length=128)
     source_filename: str = Field(default="", max_length=255)
     platform_profile_id: str | None = Field(default=None, max_length=128)

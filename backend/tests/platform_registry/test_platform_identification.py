@@ -105,6 +105,21 @@ def test_platform_identification_is_declarative_and_binding_is_locked(isolated_d
     assert locked.value.code == "PLATFORM_BINDING_LOCKED"
 
 
+def test_binding_rejects_an_explicit_device_platform_from_another_profile(isolated_db):
+    user = _user("tenant-1")
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        device_id = _insert_device(conn, "tenant-1", device_id="explicit-platform-device")
+        conn.execute("UPDATE devices SET platform = ? WHERE id = ?", ("cisco_ios", device_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(PlatformRegistryError) as error:
+        bind_device(device_id, "system-profile-hp_comware", user)
+    assert error.value.code == "PLATFORM_PROFILE_MISMATCH"
+
+
 def test_platform_identification_returns_conflict_and_rejects_cross_tenant(isolated_db):
     user = _user("tenant-1")
     other = _user("tenant-2")

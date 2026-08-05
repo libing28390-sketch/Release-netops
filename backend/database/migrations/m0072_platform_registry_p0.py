@@ -149,7 +149,7 @@ def _seed_action_definitions(cursor) -> None:
 
 
 def _seed_profiles_and_releases(cursor) -> None:
-    from services.platform_registry_service import PLATFORM_ACTION_COMMANDS, SYSTEM_PROFILES
+    from services.platform_registry_service import SYSTEM_PROFILES, get_profile_action_commands
 
     now = _now()
     for profile in SYSTEM_PROFILES:
@@ -169,7 +169,7 @@ def _seed_profiles_and_releases(cursor) -> None:
             (release_id, profile_id, profile["connection_driver"], profile["parser_platform"], _json({"read_only": True, "allowed_prefixes": ["show", "display"]}), checksum, now, now),
         )
         cursor.execute("UPDATE platform_profiles SET current_release_id = ? WHERE id = ? AND (current_release_id IS NULL OR current_release_id = '')", (release_id, profile_id))
-        for action_code, command in PLATFORM_ACTION_COMMANDS.get(profile["parser_platform"], {}).items():
+        for action_code, command in get_profile_action_commands(profile).items():
             cursor.execute("SELECT id FROM platform_release_actions WHERE release_id = ? AND action_code = ?", (release_id, action_code))
             if cursor.fetchone():
                 continue
@@ -200,13 +200,19 @@ def _import_custom_templates(cursor, use_pg: bool) -> None:
     root = Path(__file__).resolve().parents[3] / "data" / "textfsm_templates"
     if not root.exists():
         return
-    known = {p["parser_platform"] for p in SYSTEM_PROFILES}
+    # Match a filename to the concrete Profile code first.  Several concrete
+    # profiles may intentionally share one parser family (for example H3C
+    # Comware V5/V7 both use the hp_comware driver), so selecting by parser
+    # platform alone would put templates into the wrong Profile.
+    profile_defs = sorted(SYSTEM_PROFILES, key=lambda item: len(str(item["platform_code"])), reverse=True)
     now = _now()
     for path in sorted(root.glob("*.textfsm")):
         stem = path.stem
-        platform = next((candidate for candidate in sorted(known, key=len, reverse=True) if stem.startswith(candidate + "_")), None)
-        if not platform:
+        profile = next((item for item in profile_defs if stem.startswith(str(item["platform_code"]) + "_")), None)
+        if not profile:
             continue
+        profile_code = str(profile["platform_code"])
+        parser_platform = str(profile["parser_platform"])
         template_code = re.sub(r"[^A-Z0-9_]", "_", stem.upper())[:64]
         if not template_code or not re.match(r"^[A-Z]", template_code):
             continue
@@ -214,13 +220,13 @@ def _import_custom_templates(cursor, use_pg: bool) -> None:
         checksum = _sha(content)
         template_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"nexora:system-template:{path.name}"))
         version_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"nexora:system-template-version:{path.name}:1"))
-        profile_row = cursor.execute("SELECT id FROM platform_profiles WHERE parser_platform = ? AND source = 'SYSTEM' ORDER BY id LIMIT 1", (platform,)).fetchone()
+        profile_row = cursor.execute("SELECT id FROM platform_profiles WHERE platform_code = ? AND source = 'SYSTEM' ORDER BY id LIMIT 1", (profile_code,)).fetchone()
         profile_id = profile_row[0] if profile_row else None
         cursor.execute(
             """INSERT INTO parser_templates (id, tenant_id, platform_profile_id, platform_code, template_code, source_filename, name, source, status, created_by, created_at, updated_at, lock_version)
                VALUES (?, NULL, ?, ?, ?, ?, ?, 'SYSTEM', 'ACTIVE', 'system', ?, ?, 1)
                ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at""",
-            (template_id, profile_id, platform, template_code, path.name, path.stem, now, now),
+            (template_id, profile_id, parser_platform, template_code, path.name, path.stem, now, now),
         )
         cursor.execute(
             """INSERT INTO parser_template_versions (id, template_id, version_number, status, content, checksum, field_contract_json, test_summary_json, created_by, created_at, updated_at)
@@ -230,8 +236,8 @@ def _import_custom_templates(cursor, use_pg: bool) -> None:
         )
         # Bind a matching imported template version when the release command
         # uses the same canonical filename.
-        for release_row in cursor.execute("SELECT r.id FROM platform_releases r JOIN platform_profiles p ON p.id = r.profile_id WHERE p.parser_platform = ? AND r.status = 'PUBLISHED'", (platform,)).fetchall():
-            command = path.stem[len(platform) + 1:].replace("_", " ")
+        for release_row in cursor.execute("SELECT r.id FROM platform_releases r JOIN platform_profiles p ON p.id = r.profile_id WHERE p.id = ? AND r.status = 'PUBLISHED'", (profile_id,)).fetchall():
+            command = path.stem[len(profile_code) + 1:].replace("_", " ")
             cursor.execute("UPDATE platform_release_actions SET parser_template_version_id = ? WHERE release_id = ? AND lower(replace(command, '-', ' ')) = ?", (version_id, release_row[0], command.lower()))
 
 

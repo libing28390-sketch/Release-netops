@@ -7,6 +7,7 @@ from core import crypto
 from core.config import settings
 from api.parser_templates import _enabled, api_parser_capabilities
 from database import get_db_connection
+from database.migrations.m0099_repair_unverified_parser_reviews import upgrade as repair_unverified_parser_reviews_upgrade
 from services.parser_template_service import (
     approve_version,
     create_sample,
@@ -126,6 +127,12 @@ def test_parser_template_lifecycle_requires_separation_and_passed_test(isolated_
     assert regression["passed"] is True
     assert regression["sample_count"] == 1
 
+    with pytest.raises(PlatformRegistryError) as submit_required:
+        submit_version(version["id"], author)
+    assert submit_required.value.code == "PARSER_TEST_REQUIRED"
+    assert str(submit_required.value) == "解析版本在提交审核前必须先通过 Sandbox 测试"
+
+    run_version_test(version["id"], {"sample_output": "hello\n"}, author)
     submitted = submit_version(version["id"], author)
     assert submitted["status"] == "IN_REVIEW"
     with pytest.raises(PlatformRegistryError) as self_approval:
@@ -134,11 +141,6 @@ def test_parser_template_lifecycle_requires_separation_and_passed_test(isolated_
 
     approved = approve_version(version["id"], reviewer)
     assert approved["status"] == "APPROVED"
-    with pytest.raises(PlatformRegistryError) as test_required:
-        publish_version(version["id"], reviewer)
-    assert test_required.value.code == "PARSER_TEST_REQUIRED"
-
-    run_version_test(version["id"], {"sample_output": "hello\n"}, author)
     published = publish_version(version["id"], reviewer)
     assert published["status"] == "PUBLISHED"
     assert published["submitted_by"] == "author-1"
@@ -153,11 +155,72 @@ def test_parser_template_lifecycle_requires_separation_and_passed_test(isolated_
     assert release_regression == {"version_id": version["id"], "sample_count": 1, "passed": True}
 
 
+def test_parser_approval_rejects_legacy_unverified_review(isolated_db):
+    owner = {"id": "owner-legacy", "username": "owner-legacy", "role": "Operator", "tenant_id": "tenant-1"}
+    reviewer = {"id": "reviewer-legacy", "username": "reviewer-legacy", "role": "Administrator", "tenant_id": "tenant-1"}
+    template = create_template({"platform_code": "cisco_ios", "template_code": "LEGACY_REVIEW_GATE"}, owner)
+    version = create_version(template["id"], {"content": VALID_TEMPLATE}, owner)
+    run_version_test(version["id"], {"sample_output": "hello\n"}, owner)
+    submit_version(version["id"], owner)
+
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.execute("UPDATE parser_template_versions SET test_summary_json = '{}' WHERE id = ?", (version["id"],))
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(PlatformRegistryError) as approval_required:
+        approve_version(version["id"], reviewer)
+    assert approval_required.value.code == "PARSER_TEST_REQUIRED"
+
+    run_version_test(version["id"], {"sample_output": "hello\n"}, owner)
+    approved = approve_version(version["id"], reviewer)
+    assert approved["status"] == "APPROVED"
+
+
+def test_parser_migration_returns_unverified_review_states_to_draft(isolated_db):
+    owner = {"id": "owner-repair", "username": "owner-repair", "role": "Operator", "tenant_id": "tenant-1"}
+    version_ids = []
+    for index, status in enumerate(("IN_REVIEW", "APPROVED"), start=1):
+        template = create_template({"platform_code": "cisco_ios", "template_code": f"REPAIR_GATE_{index}"}, owner)
+        version = create_version(template["id"], {"content": VALID_TEMPLATE}, owner)
+        version_ids.append(version["id"])
+        conn = isolated_db["module"].get_db_connection()
+        try:
+            conn.execute(
+                "UPDATE parser_template_versions SET status = ?, test_summary_json = '{}' WHERE id = ?",
+                (status, version["id"]),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        repair_unverified_parser_reviews_upgrade(conn.cursor(), True)
+        conn.commit()
+        rows = conn.execute(
+            "SELECT id, status FROM parser_template_versions WHERE id = ANY(?)",
+            (version_ids,),
+        ).fetchall()
+        audit_count = conn.execute(
+            "SELECT COUNT(*) FROM parser_template_audit_logs WHERE event_type = 'VERSION_GATE_REPAIRED' AND version_id = ANY(?)",
+            (version_ids,),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    assert {row["status"] for row in rows} == {"DRAFT"}
+    assert audit_count == 2
+
+
 def test_parser_submitter_can_withdraw_in_review_version(isolated_db):
     owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
     other = {"id": "other-1", "username": "other", "role": "Operator", "tenant_id": "tenant-1"}
     template = create_template({"platform_code": "cisco_ios", "template_code": "WITHDRAW_TEST"}, owner)
     version = create_version(template["id"], {"content": VALID_TEMPLATE}, owner)
+    run_version_test(version["id"], {"sample_output": "hello\n"}, owner)
     submitted = submit_version(version["id"], owner)
     assert submitted["status"] == "IN_REVIEW"
 
@@ -395,12 +458,14 @@ def test_parser_template_delete_allows_unreleased_review_lifecycle(isolated_db):
 
     in_review = create_template({"platform_code": "cisco_ios", "template_code": "DELETE_IN_REVIEW"}, owner)
     in_review_version = create_version(in_review["id"], {"content": VALID_TEMPLATE}, owner)
+    run_version_test(in_review_version["id"], {"sample_output": "hello\n"}, owner)
     submitted = submit_version(in_review_version["id"], owner)
     assert submitted["status"] == "IN_REVIEW"
     assert delete_template(in_review["id"], owner) == {"id": in_review["id"], "deleted": True}
 
     approved = create_template({"platform_code": "cisco_ios", "template_code": "DELETE_APPROVED"}, owner)
     approved_version = create_version(approved["id"], {"content": VALID_TEMPLATE}, owner)
+    run_version_test(approved_version["id"], {"sample_output": "hello\n"}, owner)
     submitted_approved = submit_version(approved_version["id"], owner)
     approved_version = approve_version(submitted_approved["id"], reviewer)
     assert approved_version["status"] == "APPROVED"

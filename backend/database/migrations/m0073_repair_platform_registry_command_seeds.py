@@ -21,8 +21,12 @@ def _checksum(value) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _template_version_id(cursor, parser_platform: str, command: str) -> str | None:
-    expected = f"{parser_platform}_{command.replace(' ', '_')}.textfsm".lower()
+def _template_version_id(cursor, parser_platform: str, command: str, profile_code: str = "") -> str | None:
+    expected_names = {
+        f"{parser_platform}_{command.replace(' ', '_')}.textfsm".lower(),
+    }
+    if profile_code:
+        expected_names.add(f"{profile_code}_{command.replace(' ', '_')}.textfsm".lower())
     rows = cursor.execute(
         """SELECT v.id, t.source_filename
            FROM parser_template_versions v
@@ -32,13 +36,13 @@ def _template_version_id(cursor, parser_platform: str, command: str) -> str | No
         (parser_platform,),
     ).fetchall()
     for row in rows:
-        if str(row[1] or "").lower() == expected:
+        if str(row[1] or "").lower() in expected_names:
             return str(row[0])
     return None
 
 
 def upgrade(cursor, use_pg: bool) -> None:
-    from services.platform_registry_service import PLATFORM_ACTION_COMMANDS, iter_action_definitions
+    from services.platform_registry_service import get_profile_action_commands, iter_action_definitions
 
     now = _now()
     for item in iter_action_definitions():
@@ -65,20 +69,20 @@ def upgrade(cursor, use_pg: bool) -> None:
              dump(item.get("consumers")), now),
         )
     releases = cursor.execute(
-        """SELECT r.id, p.parser_platform
+        """SELECT r.id, p.platform_code, p.parser_platform
            FROM platform_releases r
            JOIN platform_profiles p ON p.id = r.profile_id
            WHERE p.source = 'SYSTEM' AND r.status IN ('PUBLISHED', 'DEPRECATED')"""
     ).fetchall()
 
-    for release_id, parser_platform in releases:
-        commands = PLATFORM_ACTION_COMMANDS.get(str(parser_platform), {})
+    for release_id, profile_code, parser_platform in releases:
+        commands = get_profile_action_commands({"platform_code": profile_code, "parser_platform": parser_platform})
         for action_code, command in commands.items():
             existing = cursor.execute(
                 "SELECT id, parser_template_version_id FROM platform_release_actions WHERE release_id = ? AND action_code = ?",
                 (release_id, action_code),
             ).fetchone()
-            template_version_id = _template_version_id(cursor, str(parser_platform), command)
+            template_version_id = _template_version_id(cursor, str(parser_platform), command, str(profile_code))
             if existing:
                 bound_template_id = template_version_id or existing[1]
                 cursor.execute(

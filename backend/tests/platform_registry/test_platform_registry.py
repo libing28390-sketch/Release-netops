@@ -11,6 +11,7 @@ from services.platform_registry_service import (
     _normalize_records,
     create_profile,
     create_release,
+    delete_release,
     execute_platform_action,
     is_safe_read_command,
     list_compatible_parser_versions,
@@ -23,13 +24,22 @@ from services.platform_registry_service import (
 from services.platform_registry_health_service import get_profile_health
 
 
-def _insert_published_parser(conn, *, version_id, tenant_id, profile_id, platform_code="cisco_ios"):
+def _insert_published_parser(
+    conn,
+    *,
+    version_id,
+    tenant_id,
+    profile_id,
+    platform_code="cisco_ios",
+    command="show clock",
+    source_filename="cisco_ios_show_clock.textfsm",
+):
     conn.execute(
         """INSERT INTO parser_templates
            (id, tenant_id, platform_profile_id, platform_code, template_code, source_filename,
-            name, source, status, created_by, created_at, updated_at, lock_version)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'CUSTOM', 'ACTIVE', 'author', 'now', 'now', 1)""",
-        (f"template-{version_id}", tenant_id, profile_id, platform_code, f"TEMPLATE_{version_id.upper()}", "custom.textfsm", "custom"),
+            command, name, source, status, created_by, created_at, updated_at, lock_version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CUSTOM', 'ACTIVE', 'author', 'now', 'now', 1)""",
+        (f"template-{version_id}", tenant_id, profile_id, platform_code, f"TEMPLATE_{version_id.upper()}", source_filename, command, "custom"),
     )
     conn.execute(
         """INSERT INTO parser_template_versions
@@ -103,13 +113,17 @@ def test_migration_seeds_registry_and_action_catalog(isolated_db):
         ).fetchone()
         assert h3c_actions["count"] > 0
         h3c_version = conn.execute(
-            """SELECT command, parser_template_version_id
+            """SELECT a.command, a.parser_template_version_id, t.source_filename, t.command AS template_command
                FROM platform_release_actions a
                JOIN platform_releases r ON r.id = a.release_id
                JOIN platform_profiles p ON p.id = r.profile_id
-               WHERE p.platform_code = 'h3c_comware' AND a.action_code = 'get_version'"""
+               LEFT JOIN parser_template_versions v ON v.id = a.parser_template_version_id
+               LEFT JOIN parser_templates t ON t.id = v.template_id
+               WHERE p.platform_code = 'h3c_comware' AND a.action_code = 'get_bgp_neighbors'"""
         ).fetchone()
-        assert h3c_version["command"] == "display version"
+        assert h3c_version["command"] == "display bgp peer ipv4 unicast"
+        assert h3c_version["source_filename"] == "h3c_comware__hp_comware_display_bgp_peer_ipv4_unicast.textfsm"
+        assert h3c_version["template_command"] == "display bgp peer ipv4 unicast"
     finally:
         conn.close()
 
@@ -213,6 +227,23 @@ def test_new_release_reuses_draft_and_copies_published_action_snapshot(isolated_
     assert mapping["command"] == "show clock"
 
 
+def test_draft_release_can_be_deleted_before_review(isolated_db):
+    author = {"id": "author-delete", "username": "author-delete", "role": "Operator", "tenant_id": "tenant-1"}
+    profile = create_profile(
+        {"platform_code": "delete_release_lab", "name_zh": "删除草稿测试", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        author,
+    )
+    release = create_release(profile["id"], {}, author)
+    deleted = delete_release(release["id"], author)
+    assert deleted == {"id": release["id"], "profile_id": profile["id"], "deleted": True}
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        assert conn.execute("SELECT 1 FROM platform_releases WHERE id = ?", (release["id"],)).fetchone() is None
+        assert conn.execute("SELECT 1 FROM platform_release_actions WHERE release_id = ?", (release["id"],)).fetchone() is None
+    finally:
+        conn.close()
+
+
 def test_release_rejection_returns_to_draft_with_reason(isolated_db):
     author = {"id": "author-reject", "username": "author-reject", "role": "Operator", "tenant_id": "tenant-1"}
     reviewer = {"id": "reviewer-reject", "username": "reviewer-reject", "role": "Administrator", "tenant_id": "tenant-1"}
@@ -229,7 +260,7 @@ def test_release_rejection_returns_to_draft_with_reason(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
         audit = conn.execute(
-            "SELECT event_type, metadata_json FROM platform_release_audit_logs WHERE release_id = ? ORDER BY created_at DESC LIMIT 1",
+            "SELECT event_type, metadata_json FROM platform_release_audit_logs WHERE release_id = ? AND event_type = 'REJECT' ORDER BY created_at DESC LIMIT 1",
             (release["id"],),
         ).fetchone()
     finally:
@@ -364,6 +395,28 @@ def test_release_action_can_replace_parser_version_within_same_profile(isolated_
     assert second["parser_template_version_id"] == "replace_version_b"
     mapped = next(item for item in list_release_actions(profile["id"], owner, release["id"]) if item["action_code"] == "get_clock")
     assert mapped["parser_template_version_id"] == "replace_version_b"
+
+
+def test_release_action_rejects_parser_command_mismatch(isolated_db):
+    owner = {"id": "author-mismatch", "username": "author-mismatch", "role": "Operator", "tenant_id": "tenant-1"}
+    profile = create_profile(
+        {"platform_code": "strict_parser_lab", "name_zh": "严格解析平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        owner,
+    )
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        _insert_published_parser(conn, version_id="mismatch_version", tenant_id="tenant-1", profile_id=profile["id"], command="show clock")
+    finally:
+        conn.close()
+    release = create_release(profile["id"], {}, owner)
+    with pytest.raises(PlatformRegistryError) as error:
+        update_release_action(
+            release["id"],
+            "get_version",
+            {"command": "show version", "parser_template_version_id": "mismatch_version"},
+            owner,
+        )
+    assert error.value.code == "PARSER_COMMAND_MISMATCH"
 
 
 def test_execute_uses_published_release_and_returns_traceability(isolated_db):
@@ -533,7 +586,7 @@ def test_parameterized_action_preview_is_rendered_and_restricted(isolated_db):
     try:
         conn.execute(
             """INSERT INTO devices (id, hostname, ip_address, platform, status, username, password, connection_method, platform_profile_id, tenant_id)
-               VALUES ('param-device', 'param-edge', '192.0.2.20', 'cisco_ios', 'active', 'u', 'p', 'mock', ?, 'tenant-1')""",
+               VALUES ('param-device', 'param-edge', '192.0.2.20', 'param_lab', 'active', 'u', 'p', 'mock', ?, 'tenant-1')""",
             (profile["id"],),
         )
         conn.commit()

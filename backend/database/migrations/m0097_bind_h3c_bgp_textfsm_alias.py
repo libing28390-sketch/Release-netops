@@ -1,11 +1,4 @@
-"""Bind the canonical Comware BGP parser to the registry action.
-
-The action command historically used the accepted ``ipv4 unicast`` spelling,
-while the imported TextFSM grammar is named without that optional suffix.  The
-runtime parser already normalizes both spellings; this migration makes the
-registry binding explicit so Playbook executions use the published registry
-version instead of falling back to the legacy NTC lookup.
-"""
+"""Bind the exact Comware BGP ``ipv4 unicast`` parser to the registry action."""
 
 from __future__ import annotations
 
@@ -43,7 +36,7 @@ def upgrade(cursor, use_pg: bool) -> None:
            JOIN parser_templates t ON t.id = v.template_id
            WHERE t.source = 'SYSTEM'
              AND t.platform_code = 'hp_comware'
-             AND lower(t.source_filename) = 'hp_comware_display_bgp_peer_ipv4.textfsm'
+             AND lower(t.source_filename) = 'hp_comware_display_bgp_peer_ipv4_unicast.textfsm'
              AND v.status = 'PUBLISHED'
            ORDER BY v.version_number DESC, v.id
            LIMIT 1"""

@@ -545,6 +545,7 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
     canonical_profile = normalize_platform_code(normalized_platform)
     known_system_profile = any(item['platform_code'] == canonical_profile for item in SYSTEM_PROFILES)
     registry_available = False
+    registry_profile_exists = False
     if known_system_profile:
         try:
             from database import get_db_connection
@@ -552,6 +553,10 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
             try:
                 registry_conn.execute("SELECT 1 FROM platform_profiles LIMIT 1").fetchone()
                 registry_available = True
+                registry_profile_exists = bool(registry_conn.execute(
+                    "SELECT 1 FROM platform_profiles WHERE platform_code = ? AND source = 'SYSTEM' LIMIT 1",
+                    (canonical_profile,),
+                ).fetchone())
             finally:
                 registry_conn.close()
         except Exception:
@@ -564,7 +569,7 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
     resolved: dict[str, list[str]] = {}
     for category in categories:
         action_code = action_by_category.get(category)
-        if action_code and known_system_profile and registry_available:
+        if action_code and known_system_profile and registry_available and registry_profile_exists:
             try:
                 resolved[category] = [resolve_action_mapping(canonical_profile, action_code)['command']]
             except Exception:

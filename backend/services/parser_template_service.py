@@ -18,6 +18,7 @@ from services.platform_registry_service import (
     _field_contract,
     _normalize_records,
     _validate_field_contract,
+    normalize_parser_command,
     normalize_platform_code,
     validate_platform_code,
     validate_template_code,
@@ -131,6 +132,33 @@ def _require_administrator(user: dict[str, Any]) -> None:
         )
 
 
+def _require_sandbox_pass(row: dict[str, Any], event: str) -> dict[str, Any]:
+    """Require a successful test for every forward lifecycle transition.
+
+    The summary is cleared whenever a draft is edited, so a ``passed`` flag
+    here represents the currently persisted draft content rather than a
+    stale test result from an earlier revision.
+    """
+    try:
+        summary = json.loads(row.get("test_summary_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        summary = {}
+    if not isinstance(summary, dict):
+        summary = {}
+    if summary.get("passed") is not True:
+        stage = {
+            "submit": "提交审核",
+            "approve": "审批",
+            "publish": "发布",
+        }.get(event, "继续流转")
+        raise PlatformRegistryError(
+            "PARSER_TEST_REQUIRED",
+            f"解析版本在{stage}前必须先通过 Sandbox 测试",
+            status_code=409,
+        )
+    return summary
+
+
 def _validated_contract(value: Any) -> dict[str, Any]:
     contract = _field_contract(value or {})
     allowed_types = {"string", "integer", "number", "boolean"}
@@ -225,6 +253,7 @@ def list_templates_page(
 def create_template(payload: dict[str, Any], user: dict[str, Any], *, _source: str = "CUSTOM") -> dict[str, Any]:
     platform_code = validate_platform_code(payload.get("platform_code"))
     template_code = validate_template_code(payload.get("template_code"))
+    command = normalize_parser_command(payload.get("command"))
     tenant_id = str(user.get("tenant_id") or "")
     if _source == "FORKED" and not tenant_id:
         raise PlatformRegistryError(
@@ -251,11 +280,11 @@ def create_template(payload: dict[str, Any], user: dict[str, Any], *, _source: s
         conn.execute(
             """INSERT INTO parser_templates
                (id, tenant_id, platform_profile_id, platform_code, template_code,
-                source_filename, name, source, status, created_by, created_at, updated_at, lock_version)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, 1)""",
+                source_filename, command, name, source, status, created_by, created_at, updated_at, lock_version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, 1)""",
             (
                 template_id, tenant_id or None, profile_id, platform_code, template_code,
-                str(payload.get("source_filename") or ""), str(payload.get("name") or template_code),
+                str(payload.get("source_filename") or ""), command, str(payload.get("name") or template_code),
                 source, user.get("id") or user.get("username") or "", now, now,
             ),
         )
@@ -288,6 +317,8 @@ def update_template(template_id: str, payload: dict[str, Any], user: dict[str, A
                 "SYSTEM templates cannot be edited; create a tenant template instead",
                 status_code=403,
             )
+        raw_command = payload.get("command")
+        command = normalize_parser_command(template.get("command") if raw_command is None else raw_command)
         lifecycle = conn.execute(
             "SELECT status FROM parser_template_versions WHERE template_id = ? AND status NOT IN ('DRAFT', 'DEPRECATED') LIMIT 1",
             (template_id,),
@@ -326,9 +357,9 @@ def update_template(template_id: str, payload: dict[str, Any], user: dict[str, A
         updated = conn.execute(
             """UPDATE parser_templates
                SET platform_profile_id = ?, platform_code = ?, template_code = ?, name = ?,
-                   lock_version = ?, updated_at = ?
+                   command = ?, lock_version = ?, updated_at = ?
                WHERE id = ? AND lock_version = ?""",
-            (profile_id, platform_code, template_code, name, next_lock, now, template_id, current_lock),
+            (profile_id, platform_code, template_code, name, command, next_lock, now, template_id, current_lock),
         )
         if getattr(updated, "rowcount", 1) == 0:
             raise PlatformRegistryError("PARSER_TEMPLATE_CONFLICT", "The template changed since it was loaded; refresh before saving", status_code=409)
@@ -431,6 +462,7 @@ def fork_template(template_id: str, payload: dict[str, Any], user: dict[str, Any
             "template_code": payload.get("template_code"),
             "name": payload.get("name") or source.get("name") or source["template_code"],
             "source_filename": payload.get("source_filename") or source.get("source_filename") or "",
+            "command": payload.get("command") or source.get("command") or "",
             "platform_profile_id": payload.get("platform_profile_id"),
         },
         user,
@@ -762,6 +794,9 @@ def _transition_version(version_id: str, event: str, user: dict[str, Any], *, re
                 "The creator cannot reject their own parser version",
                 status_code=403,
             )
+        sandbox_summary = None
+        if event in {"submit", "approve", "publish"}:
+            sandbox_summary = _require_sandbox_pass(row, event)
         if event == "reject":
             now = _now()
             conn.execute(
@@ -797,16 +832,7 @@ def _transition_version(version_id: str, event: str, user: dict[str, Any], *, re
             conn.commit()
             return _row_dict(conn.execute("SELECT * FROM parser_template_versions WHERE id = ?", (version_id,)).fetchone()) or {}
         if event == "publish":
-            try:
-                summary = json.loads(row.get("test_summary_json") or "{}")
-            except (TypeError, json.JSONDecodeError):
-                summary = {}
-            if summary.get("passed") is not True:
-                raise PlatformRegistryError(
-                    "PARSER_TEST_REQUIRED",
-                    "Parser version must pass a sandbox test before publication",
-                    status_code=409,
-                )
+            summary = sandbox_summary or _require_sandbox_pass(row, event)
             regression_count = _run_sample_regression(conn, row)
             summary["regression_count"] = regression_count
             summary["regression_passed"] = True
@@ -1070,6 +1096,7 @@ def list_version_mappings(version_id: str, user: dict[str, Any]) -> list[dict[st
         rows = conn.execute(
             f"""SELECT a.id, a.action_code, a.command, a.parser_template_version_id,
                        a.field_contract_json, a.command_checksum,
+                       t.command AS template_command, t.source_filename AS template_source_filename,
                        r.id AS release_id, r.release_number, r.status AS release_status,
                        r.validation_status AS release_validation_status,
                        p.id AS profile_id, p.platform_code, p.parser_platform,
@@ -1079,6 +1106,8 @@ def list_version_mappings(version_id: str, user: dict[str, Any]) -> list[dict[st
                 FROM platform_release_actions a
                 JOIN platform_releases r ON r.id = a.release_id
                 JOIN platform_profiles p ON p.id = r.profile_id
+                JOIN parser_template_versions pv ON pv.id = a.parser_template_version_id
+                JOIN parser_templates t ON t.id = pv.template_id
                 WHERE a.parser_template_version_id = ?
                   AND p.status <> 'ARCHIVED'
                   {scope_clause}

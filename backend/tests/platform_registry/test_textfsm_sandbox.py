@@ -14,6 +14,14 @@ def test_textfsm_runs_in_bounded_child_process():
     assert parse_template_in_sandbox(VALID_TEMPLATE, "hello\n") == [{"FIELD": "hello"}]
 
 
+def test_textfsm_reports_sandbox_failure_in_chinese():
+    unmatched_template = "not a valid TextFSM template"
+
+    with pytest.raises(TextFSMSandboxError, match="测试回显与当前 TextFSM 模板不匹配") as error:
+        parse_template_in_sandbox(unmatched_template, "hello\n")
+    assert error.value.code == "TEMPLATE_NOT_MATCHED"
+
+
 def test_textfsm_rejects_template_and_output_limits():
     with pytest.raises(TextFSMSandboxError, match="template") as template_error:
         parse_template_in_sandbox("x" * 20, "", max_template_bytes=10)

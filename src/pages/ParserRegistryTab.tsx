@@ -37,6 +37,8 @@ interface TemplateRecord {
   platform_profile_id?: string | null;
   platform_code: string;
   template_code: string;
+  command?: string | null;
+  source_filename?: string | null;
   name?: string;
   source?: string;
   status?: string;
@@ -102,6 +104,8 @@ interface MappingRecord {
   id: string;
   action_code: string;
   command?: string | null;
+  template_command?: string | null;
+  template_source_filename?: string | null;
   parser_template_version_id?: string | null;
   release_id: string;
   release_number?: number;
@@ -115,6 +119,8 @@ interface MappingRecord {
   profile_vendor?: string;
   profile_source?: string;
 }
+
+const normalizeBoundCommand = (value?: string | null): string => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 
 interface AuditRecord {
   id: string;
@@ -326,24 +332,43 @@ const sourceLabel = (source: string | undefined, zh: boolean): string => {
   return ({ SYSTEM: '系统', CUSTOM: '自定义', FORKED: '租户副本' } as Record<string, string>)[normalized] || normalized;
 };
 
+const parserErrorMessagesZh: Record<string, string> = {
+  TEMPLATE_NOT_MATCHED: '测试回显与当前 TextFSM 模板不匹配，请检查回显是否与绑定命令一致。',
+  TEMPLATE_TIMEOUT: 'Sandbox 测试超时，请检查模板规则或缩小测试回显后重试。',
+  TEMPLATE_SANDBOX_UNAVAILABLE: 'Sandbox 测试服务暂时不可用，请稍后重试。',
+  TEMPLATE_SANDBOX_FAILED: 'Sandbox 解析服务执行失败，请稍后重试。',
+  TEMPLATE_LIMIT_EXCEEDED: 'TextFSM 模板或解析结果超过限制，请缩小模板后重试。',
+  OUTPUT_LIMIT_EXCEEDED: '测试回显超过限制，请缩小回显后重试。',
+  RECORD_LIMIT_EXCEEDED: '解析结果记录数超过限制，请检查模板匹配范围。',
+  FIELD_LIMIT_EXCEEDED: '解析结果字段超过限制，请检查模板输出。',
+  SAMPLE_OUTPUT_REQUIRED: '请先填写测试回显。',
+  FIELD_CONTRACT_VIOLATION: '测试回显未满足字段契约，请检查模板输出字段。',
+  INVALID_FIELD_CONTRACT: '字段契约 JSON 无效，请检查 required、optional 和 types。',
+  PARSER_CONTENT_REQUIRED: '请先填写 TextFSM 模板内容。',
+  PARSER_TEST_REQUIRED: '解析版本必须先通过 Sandbox 测试后才能继续流转。',
+  PARSER_TEMPLATE_ERROR: '解析模板操作失败，请稍后重试。',
+  PARSER_TEST_FAILED: 'TextFSM 模板测试失败，请检查模板和测试回显。',
+};
+
 const errorMessage = (cause: unknown, fallback: string, zh = false): string => {
   if (cause instanceof ApiError) {
     const detail = cause.detail;
     const code = detail && typeof detail === 'object' && 'code' in detail
       ? String((detail as { code?: unknown }).code || '')
       : '';
+    if (zh && parserErrorMessagesZh[code]) return parserErrorMessagesZh[code];
     if (code === 'SYSTEM_TEMPLATE_IMMUTABLE') {
       const message = zh
         ? '系统解析版本为只读，不能废弃或回滚。请先复制为租户副本。'
         : 'SYSTEM parser versions are read-only and cannot be deprecated or rolled back. Fork a tenant template first.';
-      return cause.requestId ? `${message} (Request ID: ${cause.requestId})` : message;
+      return message;
     }
     if (zh && code === 'PARSER_TEMPLATE_IN_USE') return '模板已被平台 Release 引用，请先替换命令映射再删除。';
     if (zh && code === 'PARSER_TEMPLATE_DELETE_BLOCKED') return '模板存在已发布版本，不能直接删除；请先处理 Release 映射或废弃该版本。';
     if (zh && code === 'PARSER_TEMPLATE_CONFLICT') return '模板已被其他人修改，请刷新后再保存。';
     if (zh && code === 'SELF_APPROVAL_FORBIDDEN') {
       const message = '版本创建人不能审批自己的版本，请由另一位具备审批权限的管理员审批。';
-      return cause.requestId ? `${message} (Request ID: ${cause.requestId})` : message;
+      return message;
     }
     return cause.message;
   }
@@ -408,6 +433,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
   const [platformCode, setPlatformCode] = useState('cisco_ios');
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [templateCode, setTemplateCode] = useState('CUSTOM_TEMPLATE');
+  const [templateCommand, setTemplateCommand] = useState('');
   const [templateName, setTemplateName] = useState('');
   const [content, setContent] = useState(defaultContent);
   const [contract, setContract] = useState('{}');
@@ -445,6 +471,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
     const params = new URLSearchParams(window.location.search);
     return {
       templateId: params.get('template_id') || '',
+      templateCode: params.get('template_code') || '',
       versionId: params.get('version_id') || '',
     };
   }, []);
@@ -469,6 +496,11 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
   const sourceDiff = useMemo(() => buildLineDiff(compareVersion?.content || '', content), [compareVersion?.content, content]);
   const activeResult = resultData || testResult;
   const currentSummary = activeResult?.summary || parseSummary(selectedVersion?.test_summary_json);
+  const selectedVersionSummary = parseSummary(selectedVersion?.test_summary_json);
+  const sandboxPassed = selectedVersionSummary.passed === true;
+  const sandboxGateMessage = zh
+    ? '请先完成 Sandbox 测试并确认通过，该版本才能提交审核。'
+    : 'Run and pass the Sandbox test before submitting this version for review.';
   const resultFields = useMemo(() => {
     if (!activeResult) return [];
     return activeResult.fields.length
@@ -606,7 +638,11 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams({ page: String(page), page_size: String(meta.page_size), search, driver_platform: driverFilter, source: sourceFilter, status: statusFilter });
+      // A Platform Registry deep link may point to a template outside the
+      // first page. Use its stable template code to make the linked record
+      // discoverable before applying the exact template/version ids.
+      const templateSearch = search || deepLink.templateCode;
+      const params = new URLSearchParams({ page: String(page), page_size: String(meta.page_size), search: templateSearch, driver_platform: driverFilter, source: sourceFilter, status: statusFilter });
       const response = await apiRequest<ApiEnvelope<TemplateRecord[]>>(`/api/parser-templates?${params.toString()}`);
       const next = response.data || [];
       setTemplates(next);
@@ -617,16 +653,18 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
         pages: Number(response.meta?.pages || 0),
       });
       if (!newMode) {
+        const linkedTemplate = next.find((item) => item.id === deepLink.templateId)
+          || next.find((item) => item.template_code === deepLink.templateCode);
         setSelectedTemplateId((current) => current && next.some((item) => item.id === current)
           ? current
-          : (next.find((item) => item.id === deepLink.templateId)?.id || next[0]?.id || ''));
+          : (linkedTemplate?.id || next[0]?.id || ''));
       }
     } catch (cause) {
       setError(errorMessage(cause, zh ? '模板列表加载失败' : 'Failed to load parser templates'));
     } finally {
       setLoading(false);
     }
-  }, [deepLink.templateId, driverFilter, meta.page_size, newMode, page, search, sourceFilter, statusFilter, zh]);
+  }, [deepLink.templateCode, deepLink.templateId, driverFilter, meta.page_size, newMode, page, search, sourceFilter, statusFilter, zh]);
 
   const loadVersions = useCallback(async (templateId: string) => {
     if (!templateId) return;
@@ -742,6 +780,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
     if (!template) return;
     setPlatformCode(template.platform_code);
     setTemplateCode(template.template_code);
+    setTemplateCommand(template.command || '');
     setTemplateName(template.name || template.template_code);
     const matchingProfile = platformProfiles.find((profile) => profile.id === template.platform_profile_id)
       || platformProfiles.find((profile) => profile.parser_platform === template.platform_code);
@@ -762,6 +801,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
     setSelectedProfileId(defaultProfile?.id || '');
     setPlatformCode(defaultProfile?.parser_platform || 'cisco_ios');
     setTemplateCode('CUSTOM_TEMPLATE');
+    setTemplateCommand('');
     setTemplateName('');
     setContent(defaultContent);
     setContract('{}');
@@ -790,6 +830,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
     setContent('');
     setContract('{}');
     setPlatformCode(template.platform_code);
+    setTemplateCommand(template.command || '');
     const matchingProfile = platformProfiles.find((profile) => profile.id === template.platform_profile_id)
       || platformProfiles.find((profile) => profile.parser_platform === template.platform_code);
     setSelectedProfileId(matchingProfile?.id || '');
@@ -829,7 +870,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
       if (newMode || !templateId) {
         const templateResponse = await apiRequest<ApiEnvelope<TemplateRecord>>('/api/parser-templates', {
           method: 'POST',
-          body: JSON.stringify({ platform_code: effectivePlatformCode, platform_profile_id: selectedProfileId, template_code: templateCode.trim().toUpperCase(), name: templateName.trim() || templateCode.trim().toUpperCase() }),
+          body: JSON.stringify({ platform_code: effectivePlatformCode, platform_profile_id: selectedProfileId, template_code: templateCode.trim().toUpperCase(), command: templateCommand.trim(), name: templateName.trim() || templateCode.trim().toUpperCase() }),
         });
         templateId = templateResponse.data.id;
         setNewMode(false);
@@ -842,6 +883,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
             platform_code: effectivePlatformCode,
             platform_profile_id: selectedProfileId || selectedTemplate?.platform_profile_id || null,
             template_code: templateCode.trim().toUpperCase(),
+            command: templateCommand.trim(),
             name: templateName.trim() || templateCode.trim().toUpperCase(),
             lock_version: selectedTemplate?.lock_version,
           }),
@@ -1070,7 +1112,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
     } catch (cause) {
       setTestResult(null);
       setResultData(null);
-      setError(errorMessage(cause, zh ? 'Sandbox 测试失败' : 'Sandbox test failed'));
+      setError(errorMessage(cause, zh ? 'Sandbox 测试失败' : 'Sandbox test failed', zh));
     } finally {
       setTesting(false);
     }
@@ -1079,6 +1121,10 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
   const transition = async (action: 'submit' | 'withdraw' | 'approve' | 'reject' | 'publish' | 'rollback' | 'deprecate', reason = '') => {
     const allowed = action === 'submit' || action === 'withdraw' ? canEdit : canReview;
     if (!selectedVersionId || !allowed) return;
+    if ((action === 'submit' || action === 'approve' || action === 'publish') && !sandboxPassed) {
+      setError(sandboxGateMessage);
+      return;
+    }
     if ((action === 'approve' || action === 'reject') && selfApprovalBlocked) {
       const selfApprovalMessage = zh
         ? '版本创建人不能审核自己的版本，请由另一位具备审批权限的管理员处理。'
@@ -1218,7 +1264,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
             <div className="mb-3 rounded-xl border border-cyan-100 bg-cyan-50/50 p-3" data-testid="parser-command-mappings">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="text-xs font-semibold text-cyan-950">{zh ? 'Release 关联（只读）' : 'Release bindings (read-only)'} <span className="font-normal text-cyan-700">({mappings.length})</span></div>
-                <a href={`/management/platforms?detail=mappings${mappingProfileId ? `&profile_id=${encodeURIComponent(mappingProfileId)}` : ''}${firstMapping?.release_id ? `&release_id=${encodeURIComponent(firstMapping.release_id)}` : ''}`} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-100" title={zh ? '前往平台注册表编辑命令映射' : 'Open Platform Registry to edit command mappings'}>
+                <a href={`/management/platforms?detail=mappings${mappingProfileId ? `&profile_id=${encodeURIComponent(mappingProfileId)}` : ''}${firstMapping?.release_id ? `&release_id=${encodeURIComponent(firstMapping.release_id)}` : ''}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-100" title={zh ? '前往平台注册表编辑命令映射' : 'Open Platform Registry to edit command mappings'}>
                   <ExternalLink size={11} />{zh ? '去平台注册表编辑' : 'Edit in Platform Registry'}
                 </a>
               </div>
@@ -1230,11 +1276,24 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
                 <div className="space-y-1.5">
                   {mappings.map((mapping) => (
                     <div key={mapping.id} className="rounded-lg border border-cyan-100 bg-white px-2.5 py-2 text-[10px] text-slate-600">
+                      {(() => {
+                        const commandMismatch = Boolean(
+                          mapping.command
+                            && mapping.template_command
+                            && normalizeBoundCommand(mapping.command) !== normalizeBoundCommand(mapping.template_command),
+                        );
+                        return (
+                          <>
                       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                         <span className="font-mono font-semibold text-slate-800">{mapping.action_code}</span>
                         <span className="text-slate-400">{mapping.profile_name_zh || mapping.profile_name_en || mapping.profile_vendor || mapping.platform_code || mapping.parser_platform || '—'} · v{mapping.release_number ?? '—'} {mapping.release_status || ''}</span>
                       </div>
                       <div className="mt-1 break-all font-mono text-cyan-800">{mapping.command || (zh ? '未映射命令' : 'Command not mapped')}</div>
+                      {mapping.template_command && <div className="mt-1 break-all font-mono text-slate-500"><span className="font-sans text-slate-400">{zh ? 'TextFSM 绑定命令：' : 'TextFSM command: '}</span>{mapping.template_command}</div>}
+                      {commandMismatch && <div className="mt-1 text-rose-700">{zh ? '命令与 TextFSM 绑定命令不一致，不能作为严格匹配使用。' : 'The action command does not match the TextFSM command binding.'}</div>}
+                          </>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -1263,6 +1322,12 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
             </section>}
             <div className="grid min-w-0 grid-cols-2 gap-3">
             <div className="flex min-w-0 flex-col gap-3">
+              {selectedVersion && !isSystemTemplate && selectedVersion.status !== 'PUBLISHED' && selectedVersion.status !== 'DEPRECATED' && (
+                <div data-testid="parser-submit-test-gate" className={`rounded-xl border px-3 py-2 text-[10px] leading-4 ${sandboxPassed ? 'border-emerald-100 bg-emerald-50 text-emerald-800' : 'border-amber-100 bg-amber-50 text-amber-900'}`}>
+                  <span className="font-semibold">{zh ? 'Sandbox 门禁：' : 'Sandbox gate: '}</span>
+                  {sandboxPassed ? (zh ? '已通过，允许提交审核。' : 'Passed; submission is allowed.') : sandboxGateMessage}
+                </div>
+              )}
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4" data-testid="parser-identity-fields">
                 <label className="min-w-0 text-[10px] font-semibold text-slate-600"><span className="mb-1 block">{zh ? '目标平台 Profile' : 'Target platform Profile'}</span><select value={selectedProfileId} onChange={(event) => { const nextId = event.target.value; const nextProfile = platformProfiles.find((profile) => profile.id === nextId); setSelectedProfileId(nextId); if (nextProfile?.parser_platform) setPlatformCode(nextProfile.parser_platform); }} disabled={!canEditMetadata} aria-label={zh ? '目标平台 Profile' : 'Target platform profile'} className="w-full rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs font-normal text-slate-700 outline-none focus:border-cyan-400 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500">
                     <option value="">{zh ? '选择平台 Profile' : 'Select platform profile'}</option>
@@ -1270,6 +1335,7 @@ const ParserRegistryTab: React.FC<Props> = ({ language, currentUser, showToast }
                   </select></label>
                 <label className="min-w-0 text-[10px] font-semibold text-slate-600"><span className="mb-1 block">parser_platform</span><input value={platformCode} readOnly={!canEditMetadata || Boolean(selectedProfileId)} aria-readonly={!canEditMetadata || Boolean(selectedProfileId)} onChange={(event) => setPlatformCode(event.target.value)} placeholder="parser_platform" className={`w-full rounded-lg border border-black/10 px-2.5 py-2 text-xs font-normal outline-none ${!canEditMetadata || Boolean(selectedProfileId) ? 'cursor-not-allowed bg-slate-100 text-slate-500' : 'bg-white focus:border-cyan-400'}`} /></label>
                 <label className="min-w-0 text-[10px] font-semibold text-slate-600"><span className="mb-1 block">template_code</span><input value={templateCode} readOnly={!canEditMetadata} aria-readonly={!canEditMetadata} onChange={(event) => setTemplateCode(event.target.value.toUpperCase())} placeholder="TEMPLATE_CODE" className={`w-full rounded-lg border border-black/10 px-2.5 py-2 text-xs font-normal outline-none ${!canEditMetadata ? 'cursor-not-allowed bg-slate-100 text-slate-500' : 'bg-white focus:border-cyan-400'}`} /></label>
+                <label className="min-w-0 text-[10px] font-semibold text-slate-600"><span className="mb-1 block">{zh ? '绑定命令' : 'Bound command'}</span><input value={templateCommand} readOnly={!canEditMetadata} aria-readonly={!canEditMetadata} onChange={(event) => setTemplateCommand(event.target.value)} placeholder={zh ? '例如：display bgp peer ipv4 unicast' : 'e.g. display bgp peer ipv4 unicast'} className={`w-full rounded-lg border border-amber-200 px-2.5 py-2 font-mono text-[10px] font-normal outline-none ${!canEditMetadata ? 'cursor-not-allowed bg-slate-100 text-slate-500' : 'bg-white focus:border-cyan-400'}`} /></label>
                 <label className="min-w-0 text-[10px] font-semibold text-slate-600"><span className="mb-1 block">{zh ? '模板名称' : 'Template name'}</span><input value={templateName} readOnly={!canEditMetadata} aria-readonly={!canEditMetadata} onChange={(event) => setTemplateName(event.target.value)} placeholder={zh ? '模板名称' : 'Template name'} className={`w-full rounded-lg border border-black/10 px-2.5 py-2 text-xs font-normal outline-none ${!canEditMetadata ? 'cursor-not-allowed bg-slate-100 text-slate-500' : 'bg-white focus:border-cyan-400'}`} /></label>
               </div>
               {newMode && <div className="text-[10px] text-slate-400">{zh ? `平台选择决定 parser_platform：${selectedPlatformProfile?.parser_platform || '尚未选择'}；保存后只能绑定到同一 Profile。` : `The selected profile determines parser_platform: ${selectedPlatformProfile?.parser_platform || 'not selected'}; bindings are restricted to the same profile.`}</div>}

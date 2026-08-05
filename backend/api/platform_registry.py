@@ -21,6 +21,7 @@ from services.platform_registry_service import (
     PlatformRegistryError,
     create_profile,
     create_release,
+    delete_release,
     execute_platform_action,
     get_profile,
     list_compatible_parser_versions,
@@ -258,6 +259,12 @@ def api_list_actions(
     user=require_permission("command", "view"),
 ):
     return {"success": True, "data": _call(list_release_actions, profile_id, user, release_id), "message": ""}
+
+
+@router.delete("/releases/{release_id}")
+def api_delete_release(release_id: str, user=require_permission("platform", "edit_draft")):
+    _require_registry_enabled()
+    return {"success": True, "data": _call(delete_release, release_id, user), "message": "Draft release deleted"}
 
 
 @router.put("/releases/{release_id}/actions/{action_code}")
