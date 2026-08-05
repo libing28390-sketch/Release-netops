@@ -1,0 +1,14 @@
+Value SYNCHRONIZED (synchronized|unsynchronized)
+Value STRATUM (\d+)
+Value REFERENCE (\S+)
+Value NOMINAL_FREQ (\S+)
+Value ACTUAL_FREQ (\S+)
+Value CLOCK_OFFSET (-?\d+(?:\.\d+)?)
+Value ROOT_DELAY (-?\d+(?:\.\d+)?)
+Value ROOT_DISPERSION (-?\d+(?:\.\d+)?)
+
+Start
+  ^Clock is\s+${SYNCHRONIZED},\s+stratum\s+${STRATUM},\s+reference is\s+${REFERENCE}
+  ^nominal freq is\s+${NOMINAL_FREQ}\s+Hz,\s+actual freq is\s+${ACTUAL_FREQ}\s+Hz
+  ^clock offset is\s+${CLOCK_OFFSET}\s+sec,\s+root delay is\s+${ROOT_DELAY}\s+sec
+  ^root dispersion is\s+${ROOT_DISPERSION}\s+msec -> Record

@@ -1,0 +1,12 @@
+<Sysname> display irf
+Switch  Slot   Role    Priority    CPU-Mac         Description
+ *+1     0     Master  1           00e0-fc0a-15e0  F1Num001
+   1     1     Slave   1           00e0-fc0f-8c02  F1Num002
+------------------------------------------------------
+ * indicates the device is the master.
+ + indicates the device through which the user logs in.
+ The Bridge MAC of the IRF is: 000f-e26a-58ed
+ Auto upgrade                  : no
+ Mac persistent               : always
+ Domain ID                     : 30
+ Auto merge                    : No

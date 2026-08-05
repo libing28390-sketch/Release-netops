@@ -1,0 +1,6 @@
+<HUAWEI> display transceiver interface GigabitEthernet 3/0/0 verbose
+GigabitEthernet3/0/0 transceiver information:
+-------------------------------------------------------------
+Common information:
+  Transceiver Type               :GPS_SFP
+  Connector Type                 :SMA Coaxial Connector

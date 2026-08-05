@@ -1,0 +1,15 @@
+Value Filldown PROCESS_ID (\d+)
+Value Filldown NEIGHBOR_COUNT (\d+)
+Value Filldown FULL_COUNT (\d+)
+Value NEIGHBOR_ID (\S+)
+Value PRIORITY (\d+)
+Value STATE (\S+)
+Value DEAD_TIME (\S+)
+Value ADDRESS (\S+)
+Value INTERFACE (.+?)
+
+Start
+  ^OSPF process ${PROCESS_ID}, ${NEIGHBOR_COUNT} Neighbors, ${FULL_COUNT} is Full:\s*$$
+  ^\s*${NEIGHBOR_ID}\s+${PRIORITY}\s+${STATE}\s+${DEAD_TIME}\s+${ADDRESS}\s+${INTERFACE}\s*$$ -> Record
+
+EOF

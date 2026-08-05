@@ -1,0 +1,7 @@
+<HUAWEI> display cpu-usage
+CPU Usage Stat. Cycle: 10 (Second)
+CPU Usage         : 88% Max: 92%
+CPU Usage Stat. Time : 2010-12-18  15:35:56
+CPU utilization for five seconds: 68%: one minute: 60%: five minutes: 55%.
+Max CPU Usage Stat. Time : 2015-01-27 10:08:10
+

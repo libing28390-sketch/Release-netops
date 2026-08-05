@@ -1,0 +1,19 @@
+Value INTERFACE ([\w.-]+(?:\s+\d+(?:/\d+)*(?:\.\d+)?)?|\S+)
+Value IP_ADDRESS ((?:no\s+address|unassigned|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d+)?|\S+))
+Value IP_ADDRESS_PRI ((?:no\s+address|unassigned|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d+)?|\S+))
+Value IP_ADDRESS_SEC ((?:no\s+address|unassigned|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:/\d+)?|\S+))
+Value OK (\S+)
+Value METHOD (\S+)
+Value STATUS (administratively down|up|down|\S+)
+Value PROTOCOL (up|down|\S+)
+
+Start
+  ^Interface\s+IP-Address\(Pri\)\s+IP-Address\(Sec\)\s+Status\s+Protocol
+  ^Interface\s+IP-Address\s+OK\?\s+Method\s+Status\s+Protocol
+  ^Interface\s+IP-Address\s+Status\s+Protocol
+  ^${INTERFACE}\s{2,}${IP_ADDRESS_PRI}\s{2,}${IP_ADDRESS_SEC}\s{2,}${STATUS}\s{2,}${PROTOCOL}\s*$$ -> Record
+  ^${INTERFACE}\s{2,}${IP_ADDRESS}\s{2,}${OK}\s{2,}${METHOD}\s{2,}${STATUS}\s{2,}${PROTOCOL}\s*$$ -> Record
+  ^${INTERFACE}\s{2,}${IP_ADDRESS}\s{2,}${STATUS}\s{2,}${PROTOCOL}\s*$$ -> Record
+  ^${INTERFACE}\s+${IP_ADDRESS_PRI}\s+${IP_ADDRESS_SEC}\s+${STATUS}\s+${PROTOCOL}\s*$$ -> Record
+  ^${INTERFACE}\s+${IP_ADDRESS}\s+${OK}\s+${METHOD}\s+${STATUS}\s+${PROTOCOL}\s*$$ -> Record
+  ^${INTERFACE}\s+${IP_ADDRESS}\s+${STATUS}\s+${PROTOCOL}\s*$$ -> Record
