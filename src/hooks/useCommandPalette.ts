@@ -60,7 +60,7 @@ export const useCommandPalette = ({ language, t }: UseCommandPaletteArgs): UseCo
       { path: '/pam-audit', label: zh ? '受控审计' : 'PAM Audit', group: zh ? '终端接入' : 'Access' },
       { path: '/inventory/devices', label: t('deviceList'), group: zh ? '设备清单' : 'Inventory' },
       { path: '/inventory/servers', label: zh ? '服务器' : 'Servers', group: zh ? '设备清单' : 'Inventory' },
-      { path: '/ipam', label: zh ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt', group: zh ? '设备清单' : 'Inventory' },
+      { path: '/ipam/locate', label: zh ? 'IP/VLAN 管理' : 'IP/VLAN Mgmt', group: zh ? '设备清单' : 'Inventory' },
       { path: '/assets/diagnose', label: zh ? 'NPA 智能路径诊断' : 'NPA Path Diagnostics', group: zh ? '设备清单' : 'Inventory' },
       { path: '/assets/nsot', label: zh ? '网络事实库' : 'Network Facts (NSOT)', group: zh ? '设备清单' : 'Inventory' },
       { path: '/assets/toolbox', label: zh ? 'IP 工具箱' : 'IP Toolbox', group: zh ? '设备清单' : 'Inventory' },

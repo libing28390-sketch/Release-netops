@@ -17,7 +17,7 @@ from core.interface_utils import normalize_interface_name
 
 
 _VLAN_INTERFACE_RE = re.compile(
-    r"(?:^|[-_ ])(?:vlan(?:if|[-_ ]?interface)?|svi|bvi|irb|bridge)[-_ ]*(\d+)(?:\.\d+)?$",
+    r"(?:^|[-_. ])(?:vlan(?:if|[-_ ]?interface)?|svi|bvi|bdi|irb|ve|bridge)[-_. ]*(\d+)(?:\.\d+)?$",
     re.IGNORECASE,
 )
 _VLAN_VALUE_RE = re.compile(r"(?<!\d)(\d{1,4})(?!\d)")
@@ -66,6 +66,18 @@ def parse_vlan_id_from_interface(value: Any) -> int | None:
         return None
     vlan_id = int(match.group(1))
     return vlan_id if 1 <= vlan_id <= 4094 else None
+
+
+def is_svi_interface(value: Any) -> bool:
+    """Return whether an interface name represents a vendor SVI/BDI form.
+
+    Supported names intentionally span common vendor spellings: Cisco/Arista
+    ``Vlan``/``BVI``/``BDI``, Huawei ``Vlanif``, H3C ``Vlan-interface``,
+    Juniper ``irb.<unit>``, and Brocade-style ``Ve`` interfaces.  This is a
+    name-shape check; callers still need usable IP evidence before treating a
+    device as an L3 gateway.
+    """
+    return bool(_VLAN_INTERFACE_RE.search(str(value or "").strip()))
 
 
 def parse_vlan_values(value: Any) -> set[int]:
@@ -302,7 +314,7 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                         for existing in matching:
                             conn.execute(
                                 "UPDATE interfaces SET interface_type = 'svi', switchport_mode = 'l3', is_l3 = ? WHERE id = ?",
-                                (1, existing["id"]),
+                                (True, existing["id"]),
                             )
                     else:
                         svi_id = f"intf-{uuid.uuid4().hex[:12]}"
@@ -311,7 +323,7 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                                (id, device_id, interface_name, description, admin_status, oper_status,
                                 interface_type, switchport_mode, is_l3, ip_enabled, last_seen)
                                VALUES (?, ?, ?, '', 'unknown', 'unknown', 'svi', 'l3', ?, 0, ?)""",
-                            (svi_id, device_id, interface_name, 1, now),
+                            (svi_id, device_id, interface_name, True, now),
                         )
                         interface_rows_by_key.setdefault(interface_key, []).append({
                             "id": svi_id,
@@ -341,7 +353,7 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                                (id, device_id, interface_name, description, admin_status, oper_status,
                                 interface_type, switchport_mode, allowed_vlans, is_l3, ip_enabled, last_seen)
                                VALUES (?, ?, ?, '', 'unknown', 'unknown', 'physical', 'trunk', ?, ?, 0, ?)""",
-                            (interface_id, device_id, interface_name, allowed, 0, now),
+                            (interface_id, device_id, interface_name, allowed, False, now),
                         )
                         interface_rows_by_key.setdefault(interface_key, []).append({
                             "id": interface_id,
@@ -362,7 +374,7 @@ def project_vlan_records(device_id: str, records: list[dict[str, Any]]) -> dict[
                                (id, device_id, interface_name, description, admin_status, oper_status,
                                 interface_type, switchport_mode, access_vlan, is_l3, ip_enabled, last_seen)
                                VALUES (?, ?, ?, '', 'unknown', 'unknown', 'physical', 'access', ?, ?, 0, ?)""",
-                            (interface_id, device_id, interface_name, vlan_id, 0, now),
+                            (interface_id, device_id, interface_name, vlan_id, False, now),
                         )
                         interface_rows_by_key.setdefault(interface_key, []).append({
                             "id": interface_id,
@@ -404,7 +416,7 @@ def sync_observed_vlans() -> dict[str, int]:
                 # an L3 SVI, independent of whichever collector wrote it.
                 conn.execute(
                     "UPDATE interfaces SET interface_type = 'svi', switchport_mode = 'l3', is_l3 = ? WHERE device_id = ? AND interface_name = ?",
-                    (1, row["device_id"], row["interface_name"]),
+                    (True, row["device_id"], row["interface_name"]),
                 )
                 names.add(svi_vlan)
                 source = "interface_svi"

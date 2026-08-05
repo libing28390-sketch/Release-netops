@@ -13,6 +13,7 @@ from typing import Any
 from database import get_db_connection
 from core.interface_utils import normalize_interface_name
 from services.read_only_collection_adapter import collect_read_only_evidence
+from services.vlan_discovery_service import is_svi_interface
 
 
 CLASSIFICATION_RULE_VERSION = "prefix-classification-v1"
@@ -362,6 +363,135 @@ def _upsert_candidate(conn, candidate: dict[str, Any], collection_run_id: str, n
     return prefix_id
 
 
+_GATEWAY_ROLE_PRIORITY = {
+    "gateway": 100,
+    "router": 95,
+    "core": 90,
+    "distribution": 85,
+    "dist": 85,
+    "aggregation": 80,
+    "l3switch": 75,
+    "switch": 50,
+    "access": 20,
+}
+
+
+def _infer_discovered_gateway(conn, candidate: dict[str, Any]) -> tuple[str, str, str] | None:
+    """Find the SVI that owns a discovered prefix.
+
+    A routed prefix can appear in several devices' OSPF tables, but only an
+    SVI with an address inside the prefix is a usable default-gateway fact.
+    Prefer the higher-level network device when the same VLAN is present on
+    more than one switch (for example LSW5 .1 versus an access switch .2).
+    """
+    try:
+        network = ipaddress.ip_network(str(candidate.get("prefix") or ""), strict=False)
+    except ValueError:
+        return None
+
+    device_ids = [str(value) for value in (candidate.get("observed_devices") or []) if str(value or "").strip()]
+    interface_names = {
+        normalize_interface_name(str(value or "")).strip().lower()
+        for value in (candidate.get("observed_interfaces") or [])
+        if str(value or "").strip()
+    }
+    if not device_ids or not interface_names:
+        return None
+
+    placeholders = ",".join("?" for _ in device_ids)
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT i.id, i.device_id, i.interface_name, i.primary_ip, i.ip_address,
+                   i.ip_prefix_length, i.interface_type, i.is_l3,
+                   d.hostname, d.role
+            FROM interfaces i
+            LEFT JOIN devices d ON d.id = i.device_id
+            WHERE i.device_id IN ({placeholders})
+            """,
+            tuple(device_ids),
+        ).fetchall()
+    except Exception:
+        # Older isolated test schemas and partially migrated installations may
+        # not have the complete interface columns yet.  Discovery should not
+        # fail just because the optional gateway enrichment is unavailable.
+        return None
+
+    candidates: list[tuple[tuple[int, int, int], tuple[str, str, str]]] = []
+    for row in rows:
+        interface_name = str(row["interface_name"] or "").strip()
+        if normalize_interface_name(interface_name).strip().lower() not in interface_names:
+            continue
+        if not is_svi_interface(interface_name) and str(row["interface_type"] or "").strip().lower() not in {"svi", "vlanif"}:
+            continue
+
+        raw_ip = str(row["primary_ip"] or row["ip_address"] or "").strip()
+        if not raw_ip:
+            continue
+        try:
+            address = ipaddress.ip_interface(raw_ip).ip if "/" in raw_ip else ipaddress.ip_address(raw_ip)
+            prefix_length = ipaddress.ip_interface(raw_ip).network.prefixlen if "/" in raw_ip else int(row["ip_prefix_length"])
+            interface_network = ipaddress.ip_network(f"{address}/{prefix_length}", strict=False)
+        except (TypeError, ValueError):
+            continue
+        if interface_network != network:
+            continue
+
+        role = str(row["role"] or "").strip().lower()
+        priority = _GATEWAY_ROLE_PRIORITY.get(role, 0)
+        candidates.append((
+            (priority, int(bool(row["is_l3"])), -int(address)),
+            (str(address), str(row["device_id"] or ""), str(row["id"] or "")),
+        ))
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def _bind_discovered_gateway(conn, prefix_id: str, candidate: dict[str, Any], now: str) -> bool:
+    """Fill an empty discovery Prefix gateway from confirmed SVI evidence.
+
+    Manual bindings and already-populated bindings are intentionally left
+    untouched.  This makes the enrichment safe to run on every discovery
+    refresh while still repairing legacy discovery rows whose gateway fields
+    were never populated.
+    """
+    try:
+        current = conn.execute(
+            """
+            SELECT gateway, gateway_device_id, gateway_interface_id,
+                   manual_override, source_type
+            FROM prefixes WHERE id = ?
+            """,
+            (prefix_id,),
+        ).fetchone()
+        if not current:
+            return False
+        if bool(current["manual_override"]) or str(current["source_type"] or "").lower() == "manual":
+            return False
+        if any(str(current[key] or "").strip() for key in ("gateway", "gateway_device_id", "gateway_interface_id")):
+            return False
+
+        binding = _infer_discovered_gateway(conn, candidate)
+        if not binding:
+            return False
+        gateway, device_id, interface_id = binding
+        conn.execute(
+            """
+            UPDATE prefixes
+            SET gateway = ?, gateway_device_id = ?, gateway_interface_id = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (gateway, device_id, interface_id, now, prefix_id),
+        )
+        return True
+    except Exception:
+        # Gateway binding is enrichment; do not make an otherwise valid prefix
+        # discovery fail on a legacy schema without these optional columns.
+        return False
+
+
 def _derive_address_roles(conn, candidate: dict[str, Any]) -> list[dict[str, Any]]:
     """Attach address-level IPAM roles without changing prefix primary usage.
 
@@ -431,6 +561,7 @@ def persist_prefix_candidates(candidates: list[dict[str, Any]], *, collection_ru
                 (candidate["prefix"], candidate["tenant_id"], candidate["site_id"], candidate["vrf_id"]),
             ).fetchone()
             prefix_id = _upsert_candidate(conn, candidate, run_id, now)
+            _bind_discovered_gateway(conn, prefix_id, candidate, now)
             if existing:
                 updated += 1
             else:

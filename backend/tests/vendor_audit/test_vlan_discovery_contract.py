@@ -10,6 +10,7 @@ from services.cmdb_service import (
     update_vlan_business_binding,
 )
 from services.vlan_discovery_service import (
+    is_svi_interface,
     parse_vlan_id_from_interface,
     parse_vlan_values,
     project_vlan_records,
@@ -27,10 +28,24 @@ def test_default_vlan_policy_keeps_business_vlan_inventory_clean():
 
 
 def test_vlanif_and_svi_names_are_normalized_to_vlan_ids():
-    assert parse_vlan_id_from_interface("Vlanif10") == 10
-    assert parse_vlan_id_from_interface("Vlan-interface 20") == 20
-    assert parse_vlan_id_from_interface("SVI-30") == 30
+    vendor_svi_names = {
+        "Vlan7": 7,                 # Cisco / Arista / Ruijie
+        "Vlanif10": 10,             # Huawei
+        "Vlan-interface 20": 20,    # H3C / Comware
+        "SVI-30": 30,
+        "BVI40": 40,                # Cisco bridge virtual interface
+        "BDI50": 50,                # Cisco bridge-domain interface
+        "IRB.60": 60,               # Juniper
+        "Ve70": 70,                 # Brocade-style virtual Ethernet
+        "Bridge80": 80,
+    }
+    for interface_name, vlan_id in vendor_svi_names.items():
+        assert parse_vlan_id_from_interface(interface_name) == vlan_id
+        assert is_svi_interface(interface_name)
+
+    assert is_svi_interface("IRB.0")
     assert parse_vlan_id_from_interface("GigabitEthernet1/0/1") is None
+    assert not is_svi_interface("GigabitEthernet1/0/1")
 
 
 def test_allowed_vlan_ranges_are_bounded_and_normalized():

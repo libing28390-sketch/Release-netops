@@ -453,7 +453,7 @@ const App: React.FC = () => {
       '/platforms': '/management/platforms',
     };
     if (p === '/ipam') {
-      navigate('/ipam/prefixes', { replace: true });
+      navigate('/ipam/locate', { replace: true });
     } else if (p === '/cmdb') {
       navigate('/cmdb/credentials', { replace: true });
     } else if (redirects[p]) {

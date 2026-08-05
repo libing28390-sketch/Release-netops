@@ -50,7 +50,7 @@ from services.collector_sweep_state_service import (
     reserve_collector_sweep_batch,
 )
 from services.collector_task_queue_service import enqueue_tasks
-from services.vlan_discovery_service import parse_vlan_id_from_interface
+from services.vlan_discovery_service import is_svi_interface, parse_vlan_id_from_interface
 
 # 并发 SSH 连接上限，避免瞬间打开过多连接
 # 小规模 (≤10 台) 取 5；中规模动态扩展到 10；大规模上限 15
@@ -65,8 +65,8 @@ def normalize_interface_name(name: str) -> str:
 def _calc_ssh_workers(device_count: int) -> int:
     """根据设备数量动态计算并发 SSH worker 数。"""
     if device_count <= 10:
-        return min(MAX_SSH_WORKERS_MIN, device_count)
-    return min(MAX_SSH_WORKERS_MAX, max(MAX_SSH_WORKERS_MIN, device_count // 3))
+        return max(1, min(MAX_SSH_WORKERS_MIN, device_count))
+    return max(1, min(MAX_SSH_WORKERS_MAX, max(MAX_SSH_WORKERS_MIN, device_count // 3)))
 
 # ARP 缓存：按 target_ip 懒加载，不做全网全量预采集
 # 二级缓存架构：L1 = 进程内 dict（热数据快速命中）, L2 = 配置数据库（持久化跨重启）
@@ -157,6 +157,118 @@ def _normalize_mac(mac: str) -> str:
         return ''
     cleaned = _MAC_NORMALIZE_RE.sub('', mac.strip()).lower()
     return cleaned if len(cleaned) == 12 else ''
+
+
+_MAC_TOKEN_RE = re.compile(
+    r'(?<![0-9a-fA-F])'
+    r'(?:[0-9a-fA-F]{4}(?:[.\-:][0-9a-fA-F]{4}){2}'
+    r'|[0-9a-fA-F]{2}(?:[:\-][0-9a-fA-F]{2}){5}'
+    r'|[0-9a-fA-F]{12})'
+    r'(?![0-9a-fA-F])'
+)
+
+_MAC_TABLE_PORT_PREFIXES = (
+    'gigabitethernet', 'fastethernet', 'tengigabitethernet',
+    'twentyfivegigabitethernet', 'fortygigabitethernet',
+    'hundredgigabitethernet', 'xgigabitethernet',
+    'ethernet', 'ge', 'gi', 'xge', 'te', 'fa', 'eth',
+    'eth-trunk', 'port-channel', 'bridge-aggregation', 'po',
+    'ae', 'bagg', 'trunk', 'vlanif', 've',
+)
+
+_MAC_TABLE_ENTRY_TYPES = frozenset({
+    'dynamic', 'static', 'blackhole', 'black-hole', 'secure',
+    'sticky', 'learned', 'self', 'd', 's', 'l',
+})
+
+
+def _looks_like_mac_table_port(token: str) -> bool:
+    """Return whether a CLI token looks like a switch MAC-table port."""
+    value = str(token or '').strip(' ,;')
+    lower = value.lower()
+    return bool(
+        value
+        and any(lower.startswith(prefix) for prefix in _MAC_TABLE_PORT_PREFIXES)
+        and any(char.isdigit() for char in lower)
+    )
+
+
+def _mac_table_vlan(token: str) -> str:
+    value = str(token or '').strip('[](),;')
+    if value.isdigit() and 0 < int(value) <= 4094:
+        return value
+    return ''
+
+
+def _parse_mac_table_line(line: str) -> dict[str, str] | None:
+    """Parse common Cisco/Huawei/H3C MAC-table row layouts.
+
+    Cisco commonly prints ``VLAN MAC TYPE PORT`` while Huawei VRP prints
+    ``MAC VLAN ... PORT TYPE``.  The old parser only supported the former,
+    which silently discarded valid Huawei rows.
+    """
+    parts = str(line or '').split()
+    if not parts:
+        return None
+
+    mac_index = next(
+        (index for index, token in enumerate(parts) if _MAC_TOKEN_RE.fullmatch(token)),
+        None,
+    )
+    if mac_index is None:
+        return None
+
+    mac = _normalize_mac(parts[mac_index])
+    if not mac:
+        return None
+
+    vlan = ''
+    for index in (mac_index + 1, mac_index - 1):
+        if 0 <= index < len(parts):
+            vlan = _mac_table_vlan(parts[index])
+            if vlan:
+                break
+    if not vlan:
+        for index, token in enumerate(parts):
+            if abs(index - mac_index) <= 3:
+                vlan = _mac_table_vlan(token)
+                if vlan:
+                    break
+
+    port = ''
+    port_index = None
+    for index in range(mac_index + 1, len(parts)):
+        if _looks_like_mac_table_port(parts[index]):
+            port = parts[index].strip(' ,;')
+            port_index = index
+            break
+    if not port:
+        for index in range(mac_index - 1, -1, -1):
+            if _looks_like_mac_table_port(parts[index]):
+                port = parts[index].strip(' ,;')
+                port_index = index
+                break
+    if not port:
+        return None
+
+    entry_type = ''
+    type_indexes = []
+    if port_index is not None:
+        type_indexes.extend(range(port_index + 1, len(parts)))
+    type_indexes.extend(range(mac_index + 1, len(parts)))
+    type_indexes.extend(range(mac_index - 1, -1, -1))
+    for index in type_indexes:
+        token = parts[index].strip(' ,;')
+        if token.lower() in _MAC_TABLE_ENTRY_TYPES:
+            entry_type = token
+            break
+
+    return {
+        'mac': mac,
+        'vlan': vlan,
+        'port': port,
+        'type': entry_type,
+    }
 
 
 def _record_value(record: dict[str, Any], *names: str) -> Any:
@@ -718,7 +830,11 @@ def _targeted_arp_query(device_info: dict, target_ip: str, vrf: str = None) -> d
 def _collect_arp_from_device_for_ip(device_info: dict, target_ip: str) -> dict | None:
     """全表采集 ARP 并搜索目标 IP（回退路径），找到即返回，不继续解析剩余记录。"""
     try:
-        payload = collect_operational_data(device_info, categories=['arp'])
+        payload = collect_operational_data(
+            device_info,
+            categories=['arp'],
+            policy_override_categories={'arp'} if device_info.get('_arp_policy_override') else None,
+        )
     except Exception as exc:
         logger.debug(f"[IPLocator] ARP collect failed on {device_info.get('ip_address')}: {exc}")
         return None
@@ -842,18 +958,15 @@ def _parse_mac_output(output: str, target_mac: str, device_info: dict) -> list[d
     """解析 MAC 表输出，提取匹配目标 MAC 的记录。"""
     records = []
     for line in output.splitlines():
-        m = _MAC_LINE_RE.search(line)
-        if not m:
-            continue
-        mac_norm = _normalize_mac(m.group('mac'))
-        if mac_norm != target_mac:
+        parsed = _parse_mac_table_line(line)
+        if not parsed or parsed['mac'] != target_mac:
             continue
         records.append({
-            'mac': mac_norm,
-            'port': m.group('port').strip(),
-            'vlan': m.group('vlan').strip(),
+            'mac': parsed['mac'],
+            'port': parsed['port'],
+            'vlan': parsed['vlan'],
             'vlan_source': 'mac_table',
-            'type': m.group('type').strip(),
+            'type': parsed['type'],
             'switch_id': device_info.get('id'),
             'switch_name': device_info.get('hostname') or device_info.get('ip_address'),
         })
@@ -896,7 +1009,15 @@ def _collect_mac_from_device_for_mac(device_info: dict, target_mac: str) -> list
 def _collect_lldp_from_device(device_info: dict) -> list[dict]:
     """Collect LLDP neighbor evidence from one device."""
     try:
-        payload = collect_operational_data(device_info, categories=['neighbors'])
+        # IP Locator is an explicit, user-triggered path lookup. It must be
+        # able to validate a live uplink even when the background collection
+        # plan leaves LLDP disabled for an access-role switch. This does not
+        # change the scheduler's collection-plan decision.
+        payload = collect_operational_data(
+            device_info,
+            categories=['neighbors'],
+            policy_override_categories={'neighbors'},
+        )
     except Exception as exc:
         logger.debug(f"[IPLocator] LLDP collect failed on {device_info.get('ip_address')}: {exc}")
         return []
@@ -1021,6 +1142,131 @@ def _get_ip_network_role(target_ip: str) -> dict | None:
         'name': best['name'],
         'network_type': (best['network_type'] or 'server'),
     }
+
+
+def _row_value(row: Any, key: str, default: Any = '') -> Any:
+    """Read a mapping-like database row and a plain dict uniformly."""
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+def _route_is_direct(row: Any) -> bool:
+    protocol = str(_row_value(row, 'protocol') or '').strip().lower()
+    next_hop = str(_row_value(row, 'next_hop') or '').strip().lower()
+    return protocol in {'connected', 'direct', 'local', 'directly connected'} or next_hop in {
+        'direct', 'directly connected', 'connected', 'on-link', 'onlink',
+    }
+
+
+def _select_best_route(
+    route_rows: list[Any],
+    ip_obj: ipaddress._BaseAddress | None,
+    *,
+    gateway_device_id: str = '',
+    access_device_id: str = '',
+) -> Any | None:
+    """Select an evidence-backed route for an endpoint IP.
+
+    Longest prefix remains the primary rule.  When several devices advertise
+    the same prefix, a Prefix-bound gateway wins first, then a directly
+    connected route, then the access device.  This prevents an arbitrary OSPF
+    advertisement from hiding the SVI that owns the endpoint subnet.
+    """
+    if ip_obj is None:
+        return None
+
+    matches: list[tuple[Any, ipaddress._BaseNetwork]] = []
+    for row in route_rows:
+        try:
+            network = ipaddress.ip_network(str(_row_value(row, 'destination') or ''), strict=False)
+        except (ValueError, TypeError):
+            continue
+        if network.version == ip_obj.version and ip_obj in network:
+            matches.append((row, network))
+    if not matches:
+        return None
+
+    longest_prefix = max(network.prefixlen for _, network in matches)
+    candidates = [(row, network) for row, network in matches if network.prefixlen == longest_prefix]
+    gateway_device_id = str(gateway_device_id or '')
+    access_device_id = str(access_device_id or '')
+
+    def score(item: tuple[Any, ipaddress._BaseNetwork]) -> tuple[int, int, int, str]:
+        row = item[0]
+        device_id = str(_row_value(row, 'device_id') or '')
+        return (
+            int(bool(gateway_device_id and device_id == gateway_device_id)),
+            int(_route_is_direct(row)),
+            int(bool(access_device_id and device_id == access_device_id)),
+            str(_row_value(row, 'last_updated') or ''),
+        )
+
+    return max(candidates, key=score)[0]
+
+
+def _interface_status_is_unknown(value: Any) -> bool:
+    return str(value or '').strip().lower() in {'', 'unknown', '-', '--'}
+
+
+def _collect_live_interface_status(device_id: str, port: str) -> tuple[str, str]:
+    """Read one locator access port without changing the IP-only CMDB snapshot.
+
+    The interface inventory collector intentionally persists only interfaces
+    that have an IP address.  An endpoint can still resolve to a physical
+    access port, so the locator may need a one-device, read-only status lookup
+    when that port has no persisted interface row (or only an ``unknown``
+    status).  The existing operational/TextFSM pipeline remains the source of
+    truth for vendor parsing; this helper only returns the matching status.
+    """
+    device_id = str(device_id or '').strip()
+    port_key = normalize_interface_name(str(port or '')).lower()
+    if not device_id or not port_key:
+        return '', ''
+
+    try:
+        device = next(
+            (item for item in _load_eligible_devices() if str(item.get('id') or '') == device_id),
+            None,
+        )
+        if not device:
+            return '', ''
+
+        from services.interface_collection_service import _status_record
+        from services.read_only_collection_adapter import collect_read_only_evidence
+
+        payload = collect_read_only_evidence(
+            device,
+            categories=['interfaces'],
+            auth_role='auto',
+        )
+        category = next(
+            (item for item in payload.get('categories') or [] if item.get('key') == 'interfaces'),
+            {},
+        )
+        if not category.get('success') or category.get('parse_status') != 'matched':
+            return '', ''
+
+        for record in category.get('records') or []:
+            if not isinstance(record, dict):
+                continue
+            interface_name, _ip, admin_status, oper_status = _status_record(record, {})
+            if normalize_interface_name(str(interface_name or '')).lower() == port_key:
+                return admin_status, oper_status
+    except Exception as exc:
+        # A live status enrichment failure must not make an otherwise valid
+        # IP/MAC/L3 location fail.
+        logger.debug(
+            "[IPLocator] live interface status lookup failed for %s/%s: %s",
+            device_id,
+            port,
+            exc,
+        )
+
+    return '', ''
 
 
 def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1174,6 +1420,11 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                     'switch_name': endpoint['switch_name'] or endpoint['switch_id'] or '',
                     'port': endpoint['switch_port'] or '',
                 })
+                # ``network_endpoints`` is an active observation even when
+                # the IPAM address table has no explicit allocation row.
+                # Surface that fact instead of rendering a misleading ``-``.
+                if _interface_status_is_unknown(context['address'].get('status')):
+                    context['address']['status'] = 'active'
                 context['freshness']['endpoint_last_seen'] = endpoint['last_seen'] or ''
                 set_if_empty(context['business'], 'hostname', endpoint['hostname'])
                 set_if_empty(context['business'], 'asset_type', endpoint['asset_type'])
@@ -1319,12 +1570,25 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                 )
                 telemetry_status = str(telemetry['status'] or '').strip().lower() if telemetry else ''
                 if telemetry_status in {'up', 'down', 'testing'}:
-                    if str(l2.get('admin_status') or '').strip().lower() in {'', 'unknown', '-', '--'}:
+                    if _interface_status_is_unknown(l2.get('admin_status')):
                         l2['admin_status'] = telemetry_status
-                    if str(l2.get('oper_status') or '').strip().lower() in {'', 'unknown', '-', '--'}:
+                    if _interface_status_is_unknown(l2.get('oper_status')):
                         l2['oper_status'] = telemetry_status
                     if not context['freshness']['interface_last_seen'] or str(telemetry['ts'] or '') > str(context['freshness']['interface_last_seen']):
                         context['freshness']['interface_last_seen'] = telemetry['ts'] or ''
+
+                # Physical access ports are intentionally not persisted by the
+                # IP-bearing interface collector.  If no telemetry snapshot is
+                # available, enrich this one locator response from the live
+                # device while keeping the CMDB collection contract intact.
+                if _interface_status_is_unknown(l2.get('admin_status')) or _interface_status_is_unknown(l2.get('oper_status')):
+                    live_admin, live_oper = _collect_live_interface_status(switch_id, port)
+                    if not _interface_status_is_unknown(live_admin):
+                        l2['admin_status'] = live_admin
+                    if not _interface_status_is_unknown(live_oper):
+                        l2['oper_status'] = live_oper
+                    if not _interface_status_is_unknown(live_admin) or not _interface_status_is_unknown(live_oper):
+                        context['freshness']['interface_last_seen'] = _beijing_now_iso()
 
             # Resolve the gateway SVI/VLANIF even when the endpoint is not
             # currently present in the access-switch tables.
@@ -1441,24 +1705,19 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                 ]
 
             route_rows = conn.execute(
-                '''SELECT rt.destination, rt.next_hop, rt.protocol, rt.outgoing_interface,
+                '''SELECT rt.device_id, rt.destination, rt.next_hop, rt.protocol, rt.outgoing_interface,
                           rt.vrf_name, rt.last_updated, d.hostname AS device_name
                    FROM route_table rt
                    LEFT JOIN devices d ON d.id = rt.device_id
                    WHERE COALESCE(rt.active, 1) = 1
                    ORDER BY rt.last_updated DESC LIMIT 1000'''
             ).fetchall()
-            best_route = None
-            best_route_len = -1
-            if ip_obj:
-                for row in route_rows:
-                    try:
-                        network = ipaddress.ip_network(row['destination'], strict=False)
-                    except (ValueError, TypeError, KeyError):
-                        continue
-                    if network.version == ip_obj.version and ip_obj in network and network.prefixlen > best_route_len:
-                        best_route = row
-                        best_route_len = network.prefixlen
+            best_route = _select_best_route(
+                route_rows,
+                ip_obj,
+                gateway_device_id=str(best_prefix['gateway_device_id'] or '') if best_prefix else '',
+                access_device_id=str(l2.get('switch_id') or ''),
+            )
             if best_route:
                 context['l3'].update({
                     'next_hop': best_route['next_hop'] or '',
@@ -1491,7 +1750,71 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
 
             access_id = str(l2.get('switch_id') or '')
             gateway_id = str(best_prefix['gateway_device_id'] or '') if best_prefix else ''
-            if access_id and gateway_id and access_id != gateway_id:
+            if access_id and gateway_id and access_id == gateway_id:
+                # A directly routed subnet can have its gateway SVI on the
+                # same switch as the endpoint. In that case there is no
+                # access-to-gateway BFS to run, but the switch can still have
+                # an LLDP uplink to a distribution/core neighbor.
+                link_rows = conn.execute(
+                    '''SELECT source_device_id, source_hostname, source_port,
+                              target_device_id, target_hostname, target_port
+                       FROM topology_links
+                       WHERE COALESCE(status, 'unknown') <> 'stale' '''
+                ).fetchall()
+                upstream_candidates: list[tuple[str, str, str, str]] = []
+                seen_candidates: set[tuple[str, str, str, str]] = set()
+                endpoint_port_key = normalize_interface_name(str(l2.get('port') or '')).lower()
+                for link in link_rows:
+                    source_id = str(link['source_device_id'] or '')
+                    target_id = str(link['target_device_id'] or '')
+                    if source_id == access_id:
+                        candidate = (
+                            target_id,
+                            link['target_hostname'] or target_id,
+                            link['source_port'] or '',
+                            link['target_port'] or '',
+                        )
+                    elif target_id == access_id:
+                        candidate = (
+                            source_id,
+                            link['source_hostname'] or source_id,
+                            link['target_port'] or '',
+                            link['source_port'] or '',
+                        )
+                    else:
+                        continue
+                    neighbor_id, neighbor_name, local_port, neighbor_port = candidate
+                    if not neighbor_id:
+                        continue
+                    if endpoint_port_key and normalize_interface_name(str(local_port or '')).lower() == endpoint_port_key:
+                        continue
+                    candidate_key = (
+                        neighbor_id,
+                        normalize_interface_name(str(local_port or '')).lower(),
+                        normalize_interface_name(str(neighbor_port or '')).lower(),
+                        str(neighbor_name or '').lower(),
+                    )
+                    if candidate_key in seen_candidates:
+                        continue
+                    seen_candidates.add(candidate_key)
+                    upstream_candidates.append(candidate)
+
+                if upstream_candidates:
+                    context['l3']['upstream_devices'] = [
+                        {
+                            'device': neighbor_name or neighbor_id,
+                            'device_id': neighbor_id,
+                            'port': local_port or '',
+                            'peer_port': neighbor_port or '',
+                        }
+                        for neighbor_id, neighbor_name, local_port, neighbor_port in upstream_candidates
+                    ]
+                path.append({
+                    'kind': 'gateway',
+                    'label': context['l3']['gateway_device'] or gateway_id,
+                    'detail': context['l3']['gateway_interface'] or '',
+                })
+            elif access_id and gateway_id and access_id != gateway_id:
                 link_rows = conn.execute(
                     '''SELECT source_device_id, source_hostname, source_port,
                               target_device_id, target_hostname, target_port,
@@ -1567,13 +1890,6 @@ def _get_ip_locator_context(target_ip: str, result: dict[str, Any] | None = None
                                 f"{local_port} ↔ {neighbor_port}" if local_port or neighbor_port else ''
                             ),
                         })
-            elif gateway_id and access_id == gateway_id:
-                path.append({
-                    'kind': 'gateway',
-                    'label': context['l3']['gateway_device'] or gateway_id,
-                    'detail': context['l3']['gateway_interface'] or '',
-                })
-
             if context['address']['prefix']:
                 path.append({
                     'kind': 'network',
@@ -1736,8 +2052,11 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
         result['errors'].append('没有可用的设备用于查询')
         return result
 
-    # ARP 采集不按角色排除——access 路由器同样拥有 ARP 表
-    gateway_devices = filter_devices(all_eligible, "arp")
+    # A user-triggered lookup uses the same role/SVI capability rules as the
+    # background ARP sweep. The ordinary collection plan keeps ARP opt-in,
+    # so filtering only through ``filter_devices`` would incorrectly produce
+    # an empty list for otherwise valid L3 gateways.
+    gateway_devices = _load_realtime_arp_devices(all_eligible)
 
     target_mac: str = ''
     arp_source_info: dict | None = None
@@ -1755,37 +2074,38 @@ def locate_ip(target_ip: str, force_refresh: bool = False) -> dict[str, Any]:
 
     # ── Step 1.5: 未命中缓存则并发 ARP 实时查询（找到即终止） ──
     if not target_mac:
-        workers = _calc_ssh_workers(len(gateway_devices))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_map: dict[Future, dict] = {}
-            for dev in gateway_devices:
-                f = executor.submit(_targeted_arp_query, dev, target_ip)
-                future_map[f] = dev
+        if gateway_devices:
+            workers = _calc_ssh_workers(len(gateway_devices))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_map: dict[Future, dict] = {}
+                for dev in gateway_devices:
+                    f = executor.submit(_targeted_arp_query, dev, target_ip)
+                    future_map[f] = dev
 
-            for future in as_completed(future_map):
-                dev = future_map[future]
-                dev_label = dev.get('hostname') or dev.get('ip_address')
-                result['searched_devices']['arp'].append(dev_label)
+                for future in as_completed(future_map):
+                    dev = future_map[future]
+                    dev_label = dev.get('hostname') or dev.get('ip_address')
+                    result['searched_devices']['arp'].append(dev_label)
 
-                try:
-                    arp_hit = future.result()
-                except Exception as exc:
-                    logger.debug(f"[IPLocator] ARP future error for {dev_label}: {exc}")
-                    continue
+                    try:
+                        arp_hit = future.result()
+                    except Exception as exc:
+                        logger.debug(f"[IPLocator] ARP future error for {dev_label}: {exc}")
+                        continue
 
-                if arp_hit:
-                    target_mac = arp_hit['mac']
-                    arp_source_info = {
-                        'device_id': arp_hit['source_device_id'],
-                        'device': arp_hit['source_device'],
-                        'interface': arp_hit['interface'],
-                        'vlan': arp_hit.get('vlan', ''),
-                    }
-                    # 早期终止：取消尚未开始的任务
-                    for pending_f in future_map:
-                        if not pending_f.done():
-                            pending_f.cancel()
-                    break
+                    if arp_hit:
+                        target_mac = arp_hit['mac']
+                        arp_source_info = {
+                            'device_id': arp_hit['source_device_id'],
+                            'device': arp_hit['source_device'],
+                            'interface': arp_hit['interface'],
+                            'vlan': arp_hit.get('vlan', ''),
+                        }
+                        # 早期终止：取消尚未开始的任务
+                        for pending_f in future_map:
+                            if not pending_f.done():
+                                pending_f.cancel()
+                        break
 
         if target_mac:
             _set_cached_arp(target_ip, target_mac, arp_source_info)
@@ -2024,7 +2344,7 @@ def _load_arp_collection_state() -> dict[str, dict[str, Any]]:
 
 
 def _load_svi_evidence() -> set[str]:
-    """Return device ids whose interface inventory proves an SVI/Vlanif."""
+    """Return device ids whose interface inventory proves a vendor SVI."""
     conn = get_db_connection()
     try:
         rows = conn.execute(
@@ -2044,10 +2364,9 @@ def _load_svi_evidence() -> set[str]:
     evidence: set[str] = set()
     for row in rows:
         row_data = dict(row) if hasattr(row, 'keys') else row
-        name = str(row_data['interface_name'] or '').strip().lower()
+        name = str(row_data['interface_name'] or '').strip()
         ip_value = str(row_data.get('ip_address') or row_data.get('primary_ip') or '').strip()
-        is_svi = name.startswith(('vlan', 'vlanif', 'vlan-interface'))
-        if is_svi and ip_value not in {'', '--', 'unassigned', '0.0.0.0'}:
+        if is_svi_interface(name) and ip_value not in {'', '--', 'unassigned', '0.0.0.0'}:
             evidence.add(str(row_data['device_id']))
     return evidence
 
@@ -2065,6 +2384,51 @@ def _arp_device_is_due(state: dict[str, Any], now: datetime) -> bool:
         return True
 
 
+def _prepare_arp_candidate(device: dict, svi_devices: set[str]) -> dict | None:
+    """Apply the shared ARP capability rules to one eligible device.
+
+    The collection-plan defaults intentionally keep SSH-heavy collectors
+    opt-in.  IP Locator is an explicit, user-triggered lookup, so L3 devices
+    and devices with a discovered SVI/VLANIF are valid ARP candidates unless
+    the operator explicitly disabled ARP for that device.
+    """
+    role = str(device.get('role') or '').strip().lower()
+    explicit = explicit_collector_override(device, 'arp')
+    if explicit is False:
+        return None
+
+    capable_by_role = role in _ARP_L3_ROLES
+    capable_by_svi = (
+        str(device.get('id') or '') in svi_devices
+        and role in _ARP_SVI_ROLES
+    )
+    if explicit is not True and not (capable_by_role or capable_by_svi):
+        return None
+
+    if explicit is None and (capable_by_role or capable_by_svi):
+        candidate = dict(device)
+        candidate['_arp_policy_override'] = True
+        return candidate
+    return device
+
+
+def _load_realtime_arp_devices(all_eligible: list[dict]) -> list[dict]:
+    """Select all ARP-capable devices for an on-demand IP lookup.
+
+    Unlike the bounded background sweep, a user-triggered lookup must be able
+    to query every eligible ARP source and must not reserve or consume the
+    sweep cursor.
+    """
+    svi_devices = _load_svi_evidence()
+    candidates = [
+        candidate
+        for device in all_eligible
+        if (candidate := _prepare_arp_candidate(device, svi_devices)) is not None
+    ]
+    candidates.sort(key=lambda item: str(item.get('id') or item.get('ip_address') or ''))
+    return candidates
+
+
 def _load_arp_sweep_devices(run_id: str = '') -> tuple[list[dict], int, int]:
     """Select ARP-capable devices and skip devices in retry backoff."""
     all_eligible = _load_eligible_devices()
@@ -2075,25 +2439,14 @@ def _load_arp_sweep_devices(run_id: str = '') -> tuple[list[dict], int, int]:
     skipped_backoff = 0
 
     for device in all_eligible:
-        role = str(device.get('role') or '').strip().lower()
-        explicit = explicit_collector_override(device, 'arp')
-        if explicit is False:
+        candidate = _prepare_arp_candidate(device, svi_devices)
+        if candidate is None:
             continue
-        capable_by_role = role in _ARP_L3_ROLES
-        capable_by_svi = (
-            str(device.get('id') or '') in svi_devices
-            and role in _ARP_SVI_ROLES
-        )
-        if explicit is not True and not (capable_by_role or capable_by_svi):
-            continue
-        state = state_by_device.get(str(device.get('id') or ''), {})
+        state = state_by_device.get(str(candidate.get('id') or ''), {})
         if not _arp_device_is_due(state, now):
             skipped_backoff += 1
             continue
-        if capable_by_svi and explicit is None:
-            device = dict(device)
-            device['_arp_policy_override'] = True
-        candidates.append(device)
+        candidates.append(candidate)
 
     candidates.sort(key=lambda item: str(item.get('id') or item.get('ip_address') or ''))
     if not candidates:
@@ -3063,13 +3416,12 @@ def _collect_full_mac_table_from_device(device_info: dict) -> list[dict]:
     dev_name = device_info.get('hostname') or device_info.get('ip_address') or ''
 
     for line in output.splitlines():
-        m = _MAC_LINE_RE.search(line)
-        if not m:
+        parsed = _parse_mac_table_line(line)
+        if not parsed:
             continue
-        vlan = m.group('vlan')
-        mac_raw = m.group('mac')
-        port_field = m.group('port')
-        mac_norm = _normalize_mac(mac_raw)
+        vlan = parsed['vlan']
+        port_field = parsed['port']
+        mac_norm = parsed['mac']
         if not mac_norm or len(mac_norm) != 12:
             continue
 
@@ -3077,11 +3429,56 @@ def _collect_full_mac_table_from_device(device_info: dict) -> list[dict]:
             'mac': mac_norm,
             'vlan': str(vlan).strip(),
             'port': str(port_field).strip(),
-            'type': m.group('type'),
+            'type': parsed['type'],
             'switch_id': dev_id,
             'switch_name': dev_name,
         })
     return records
+
+
+def _persist_mac_table_records(records: list[dict]) -> int:
+    """Persist the latest parsed MAC observations for downstream consumers."""
+    if not records:
+        return 0
+
+    last_updated = _beijing_now_iso()
+    persisted = 0
+    conn = get_db_connection()
+    try:
+        for record in records:
+            device_id = str(record.get('switch_id') or record.get('device_id') or '').strip()
+            mac = _normalize_mac(str(record.get('mac') or record.get('mac_address') or ''))
+            interface_name = str(record.get('port') or record.get('interface') or '').strip()
+            vlan_text = str(record.get('vlan') or record.get('vlan_id') or '').strip()
+            vlan_id = int(vlan_text) if vlan_text.isdigit() else None
+            if not device_id or not mac or not interface_name:
+                continue
+
+            row_id = f'{device_id}_{mac}_{interface_name}_{vlan_text}'
+            conn.execute(
+                '''INSERT INTO mac_table
+                   (id, device_id, mac_address, interface_name, vlan_id, entry_type, last_updated)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                       interface_name = excluded.interface_name,
+                       vlan_id = excluded.vlan_id,
+                       entry_type = excluded.entry_type,
+                       last_updated = excluded.last_updated''',
+                (
+                    row_id,
+                    device_id,
+                    mac,
+                    interface_name,
+                    vlan_id,
+                    str(record.get('type') or record.get('entry_type') or '').strip(),
+                    last_updated,
+                ),
+            )
+            persisted += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return persisted
 
 
 def get_network_endpoints() -> dict[str, Any]:
@@ -3864,6 +4261,12 @@ def run_endpoint_collector(*, refresh_arp: bool = True):
 
     if not all_mac_records:
         logger.warning("[Endpoint Collector] No MAC entries collected from switches. Proceeding with fallback logic.")
+    else:
+        try:
+            persisted_count = _persist_mac_table_records(all_mac_records)
+            logger.info("[Endpoint Collector] Persisted %d MAC observations to mac_table.", persisted_count)
+        except Exception as exc:
+            logger.error("[Endpoint Collector] Error writing MAC observations to mac_table: %s", exc)
 
     # 3. 收集 LLDP 邻居以判定上联口
     conn = get_db_connection()

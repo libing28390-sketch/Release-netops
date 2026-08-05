@@ -12,6 +12,52 @@ def test_read_only_evidence_categories_are_explicit_and_vendor_neutral() -> None
     )
 
 
+def test_empty_discovery_prefix_binds_to_higher_level_svi_gateway() -> None:
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    conn.executescript('''
+        CREATE TABLE prefixes (
+            id TEXT PRIMARY KEY, gateway TEXT, gateway_device_id TEXT,
+            gateway_interface_id TEXT, manual_override INTEGER, source_type TEXT,
+            updated_at TEXT
+        );
+        CREATE TABLE devices (id TEXT PRIMARY KEY, hostname TEXT, role TEXT);
+        CREATE TABLE interfaces (
+            id TEXT PRIMARY KEY, device_id TEXT, interface_name TEXT,
+            primary_ip TEXT, ip_address TEXT, ip_prefix_length INTEGER,
+            interface_type TEXT, is_l3 INTEGER
+        );
+    ''')
+    conn.execute("INSERT INTO prefixes VALUES (?, ?, ?, ?, ?, ?, ?)", ('prefix-1', '', '', '', 0, 'discovery', ''))
+    conn.executemany(
+        "INSERT INTO devices VALUES (?, ?, ?)",
+        [('lsw5', 'LSW5', 'distribution'), ('lsw7', 'LSW7', 'access')],
+    )
+    conn.executemany(
+        "INSERT INTO interfaces VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ('if-lsw5', 'lsw5', 'Vlanif20', '10.253.20.1', '10.253.20.1', 24, 'svi', 1),
+            ('if-lsw7', 'lsw7', 'Vlanif20', '10.253.20.2', '10.253.20.2', 24, 'svi', 1),
+        ],
+    )
+    candidate = {
+        'prefix': '10.253.20.0/24',
+        'observed_devices': ['lsw5', 'lsw7'],
+        'observed_interfaces': ['Vlanif20'],
+    }
+
+    assert prefix_service._bind_discovered_gateway(conn, 'prefix-1', candidate, 'now') is True
+    row = conn.execute(
+        'SELECT gateway, gateway_device_id, gateway_interface_id FROM prefixes WHERE id = ?',
+        ('prefix-1',),
+    ).fetchone()
+    assert dict(row) == {
+        'gateway': '10.253.20.1',
+        'gateway_device_id': 'lsw5',
+        'gateway_interface_id': 'if-lsw5',
+    }
+
+
 def test_prefix_discovery_does_not_default_unproven_networks_to_server() -> None:
     payload = {
         'device': {'id': 'dev-1', 'hostname': 'access-01'},
