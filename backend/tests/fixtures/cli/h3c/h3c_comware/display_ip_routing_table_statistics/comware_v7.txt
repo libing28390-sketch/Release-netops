@@ -1,0 +1,13 @@
+<Sysname> display ip routing-table statistics
+Total prefixes: 11    Active prefixes: 11
+
+Proto      Routes     Active     Added      Deleted
+DIRECT     8          8          8          0
+STATIC     3          3          5          2
+RIP        0          0          0          0
+OSPF       0          0          0          0
+IS-IS      0          0          0          0
+LISP       0          0          0          0
+BGP        0          0          0          0
+Total      11         11         13         2
+

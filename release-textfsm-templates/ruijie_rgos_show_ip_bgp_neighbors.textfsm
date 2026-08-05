@@ -1,0 +1,18 @@
+Value Filldown ROUTER_ID (\S+)
+Value Filldown LOCAL_AS (\d+)
+Value NEIGHBOR (\S+)
+Value VERSION (\d+)
+Value REMOTE_AS (\d+)
+Value MSG_RCVD (\d+)
+Value MSG_SENT (\d+)
+Value TABLE_VERSION (\d+)
+Value IN_QUEUE (\d+)
+Value OUT_QUEUE (\d+)
+Value UP_DOWN (\S+)
+Value STATE_PREFIX (\S+)
+
+Start
+  ^BGP router identifier ${ROUTER_ID}, local AS number ${LOCAL_AS}\s*$$
+  ^\s*${NEIGHBOR}\s+${VERSION}\s+${REMOTE_AS}\s+${MSG_RCVD}\s+${MSG_SENT}\s+${TABLE_VERSION}\s+${IN_QUEUE}\s+${OUT_QUEUE}\s+${UP_DOWN}\s+${STATE_PREFIX}\s*$$ -> Record
+
+EOF

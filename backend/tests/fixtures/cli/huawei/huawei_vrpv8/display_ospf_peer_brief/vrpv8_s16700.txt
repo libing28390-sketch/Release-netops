@@ -1,0 +1,12 @@
+<DeviceA> display ospf peer brief
+(M) Indicates MADJ neighbor
+OSPF Process 1 with Router ID 1.1.1.1
+                 Peer Statistic Informations
+  Total number of peer(s): 3
+  Peer(s) in full state: 3
+-------------------------------------------------------------------------
+ Area Id         Interface      Neighbor id       State
+ 0.0.0.1         Vlanif10       10.1.1.2          Full
+ 0.0.0.2         Vlanif10       10.1.1.2(M)        Full
+ 0.0.0.2         Vlanif10       10.1.2.2          Full
+-------------------------------------------------------------------------

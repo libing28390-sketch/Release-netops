@@ -1,0 +1,13 @@
+{
+  "vendor": "H3C",
+  "platform": "hp_comware",
+  "software_family": "Comware5",
+  "model": "Comware switch example",
+  "command": "display memory",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.h3c.com/en/d_201905/1177250_294551_0.htm",
+  "source_title": "04-Hardware management and maintenance - H3C",
+  "source_section": "Displaying the memory usage of the device",
+  "expected_record_count": 1,
+  "expected_fields": ["TOTAL_BYTES", "USED_BYTES", "USED_RATE"]
+}
