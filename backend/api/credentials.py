@@ -1,9 +1,12 @@
 """Credential vault API with two-phase hardware password synchronization."""
 
+import html
+import io
 import logging
+import zipfile
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from core.rbac import require_role
 from database import get_db_connection
@@ -14,6 +17,110 @@ from services.audit_service import log_audit_event
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+CREDENTIAL_TEMPLATE_VERSION = '2'
+
+
+def _build_credential_import_template() -> bytes:
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    wb = openpyxl.Workbook()
+
+    # Sheet 1: SSH
+    ws_ssh = wb.active
+    ws_ssh.title = 'SSH'
+
+    # Sheet 2: SNMP
+    ws_snmp = wb.create_sheet(title='SNMP')
+
+    header_fill = PatternFill(start_color='FF007D9D', end_color='FF007D9D', fill_type='solid')
+    header_font = Font(name='Calibri', size=11, bold=True, color='FFFFFFFF')
+    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    header_border = Border(
+        left=Side(style='thin', color='FFB7D7E0'),
+        right=Side(style='thin', color='FFB7D7E0'),
+        top=Side(style='thin', color='FFB7D7E0'),
+        bottom=Side(style='thin', color='FFB7D7E0'),
+    )
+
+    ssh_columns = [
+        ('凭据名称', 24), ('类型', 18), ('用户名', 18), ('账号角色', 18),
+        ('密码', 24), ('Enable 密码', 24),
+    ]
+    snmp_columns = [
+        ('凭据名称', 24), ('类型', 18), ('SNMP 团体字', 26), ('SNMP 服务器地址', 28),
+    ]
+
+    # Configure SSH sheet
+    ws_ssh.append([label for label, _width in ssh_columns])
+    ws_ssh.row_dimensions[1].height = 24
+    ws_ssh.freeze_panes = 'A2'
+    ws_ssh.auto_filter.ref = 'A1:F1000'
+    for col_idx, (_label, width) in enumerate(ssh_columns, start=1):
+        col_letter = openpyxl.utils.get_column_letter(col_idx)
+        ws_ssh.column_dimensions[col_letter].width = width
+        cell = ws_ssh.cell(row=1, column=col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+        cell.border = header_border
+
+    dv_ssh_type = DataValidation(type='list', formula1='"ssh_password,ssh_key,api_token"', allow_blank=True)
+    dv_ssh_type.errorTitle = '输入值不合法'
+    dv_ssh_type.error = '请选择下拉选项'
+    dv_ssh_type.promptTitle = '可选值'
+    dv_ssh_type.prompt = '请从下拉列表选择'
+    ws_ssh.add_data_validation(dv_ssh_type)
+    dv_ssh_type.add('B2:B1000')
+
+    dv_ssh_role = DataValidation(type='list', formula1='"普通账号,特权账号,通用账号,未指定"', allow_blank=True)
+    dv_ssh_role.errorTitle = '输入值不合法'
+    dv_ssh_role.error = '请选择下拉选项'
+    dv_ssh_role.promptTitle = '可选值'
+    dv_ssh_role.prompt = '请从下拉列表选择'
+    ws_ssh.add_data_validation(dv_ssh_role)
+    dv_ssh_role.add('D2:D1000')
+
+    # Configure SNMP sheet
+    ws_snmp.append([label for label, _width in snmp_columns])
+    ws_snmp.row_dimensions[1].height = 24
+    ws_snmp.freeze_panes = 'A2'
+    ws_snmp.auto_filter.ref = 'A1:D1000'
+    for col_idx, (_label, width) in enumerate(snmp_columns, start=1):
+        col_letter = openpyxl.utils.get_column_letter(col_idx)
+        ws_snmp.column_dimensions[col_letter].width = width
+        cell = ws_snmp.cell(row=1, column=col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+        cell.border = header_border
+
+    dv_snmp_type = DataValidation(type='list', formula1='"snmpv2,snmpv3"', allow_blank=True)
+    dv_snmp_type.errorTitle = '输入值不合法'
+    dv_snmp_type.error = '请选择下拉选项'
+    dv_snmp_type.promptTitle = '可选值'
+    dv_snmp_type.prompt = '请从下拉列表选择'
+    ws_snmp.add_data_validation(dv_snmp_type)
+    dv_snmp_type.add('B2:B1000')
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+@router.get('/credentials/import-template', response_class=Response)
+def api_download_credential_import_template(_user=require_role('Operator')):
+    return Response(
+        content=_build_credential_import_template(),
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={
+            'Content-Disposition': 'attachment; filename="credential_import_template.xlsx"',
+            'Cache-Control': 'no-store',
+            'X-Credential-Template-Version': CREDENTIAL_TEMPLATE_VERSION,
+        },
+    )
 
 
 _REVEALABLE_SECRET_COLUMNS = {

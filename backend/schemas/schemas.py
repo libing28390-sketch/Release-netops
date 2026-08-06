@@ -853,7 +853,7 @@ class SiteCreate(BaseModel):
     @field_validator('contact_phone')
     @classmethod
     def validate_contact_phone(cls, v: str) -> str:
-        return _contact_phone(v, required=True, international_required=True) or ''
+        return _contact_phone(v, required=True) or ''
 
     @field_validator('contact_email')
     @classmethod
@@ -862,8 +862,8 @@ class SiteCreate(BaseModel):
 
     @model_validator(mode='after')
     def validate_phone_for_country(self):
-        if self.country in _CHINA_COUNTRY_VALUES and not _re.fullmatch(r'\+86[1-9]\d{10}', self.contact_phone):
-            raise ValueError('contact_phone must be +86 followed by an 11-digit Chinese mobile number')
+        if self.country in _CHINA_COUNTRY_VALUES and not _re.fullmatch(r'^(?:\+86|0)?1[3-9]\d{9}$|^0\d{2,3}-?\d{7,8}$|^\+[1-9]\d{6,14}$', self.contact_phone):
+            raise ValueError('contact_phone must be a valid 11-digit Chinese mobile, landline, or international number')
         return self
 
     @field_validator('status')
