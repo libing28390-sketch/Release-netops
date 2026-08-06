@@ -433,7 +433,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const [rejectReleaseReason, setRejectReleaseReason] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardMode, setWizardMode] = useState<'create' | 'edit'>('create');
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [wizardStep, setWizardStep] = useState<1 | 2>(1);
   const [createForm, setCreateForm] = useState<CreateProfileForm>(EMPTY_CREATE_PROFILE);
   const [wizardSaving, setWizardSaving] = useState(false);
   const [wizardError, setWizardError] = useState('');
@@ -954,8 +954,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
               </div>
               <button type="button" onClick={() => setWizardOpen(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X size={16} /></button>
             </div>
-            <div className="grid grid-cols-3 gap-2 px-5 pt-4 text-[10px] font-semibold">
-              {[zh ? '平台身份' : 'Identity', zh ? '连接与解析' : 'Connection & parser', zh ? '确认' : 'Review'].map((label, index) => (
+            <div className="grid grid-cols-2 gap-2 px-5 pt-4 text-[10px] font-semibold">
+              {[zh ? '平台身份' : 'Identity', zh ? '确认' : 'Review'].map((label, index) => (
                 <div key={label} className={`rounded-lg px-2 py-2 text-center ${wizardStep === index + 1 ? 'bg-cyan-50 text-cyan-700' : 'bg-slate-50 text-slate-400'}`}>{index + 1}. {label}</div>
               ))}
             </div>
@@ -967,19 +967,15 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                   <label className="text-xs font-semibold text-slate-600">{zh ? '厂商' : 'Vendor'}<select value={createForm.vendor} onChange={(event) => setCreateForm((current) => ({ ...current, vendor: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"><option value="">{zh ? '请选择厂商' : 'Select vendor'}</option>{vendorOptions.map((vendor) => <option key={vendor} value={vendor}>{vendor}</option>)}</select></label>
                   <label className="text-xs font-semibold text-slate-600">{zh ? '中文名称' : 'Chinese name'}<input value={createForm.name_zh} onChange={(event) => setCreateForm((current) => ({ ...current, name_zh: event.target.value }))} placeholder={zh ? '可选' : 'Optional'} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
                   <label className="text-xs font-semibold text-slate-600">{zh ? '英文名称' : 'English name'}<input value={createForm.name_en} onChange={(event) => setCreateForm((current) => ({ ...current, name_en: event.target.value }))} placeholder="Acme Router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
-                  <label className="text-xs font-semibold text-slate-600 sm:col-span-2">{zh ? '平台说明' : 'Description'}<textarea value={createForm.description} onChange={(event) => setCreateForm((current) => ({ ...current, description: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
-                </div>
-              )}
-              {wizardStep === 2 && (
-                <div className="grid gap-3 sm:grid-cols-2">
                   <label className="text-xs font-semibold text-slate-600">{zh ? '连接驱动' : 'Connection driver'}<select value={createForm.connection_driver} onChange={(event) => setCreateForm((current) => ({ ...current, connection_driver: event.target.value }))} disabled={wizardMode === 'edit' && Number(currentProfile?.bound_device_count || 0) > 0} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:bg-slate-100"><option value="">{zh ? '请选择' : 'Select driver'}</option>{(capabilities?.allowed_connection_drivers || []).map((driver) => <option key={driver} value={driver}>{driver}</option>)}</select></label>
                   <label className="text-xs font-semibold text-slate-600">{zh ? '解析平台' : 'Parser platform'}<input value={createForm.parser_platform} onChange={(event) => setCreateForm((current) => ({ ...current, parser_platform: event.target.value }))} disabled={wizardMode === 'edit' && Number(currentProfile?.bound_device_count || 0) > 0} placeholder="acme_router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:bg-slate-100" /></label>
                   <div className="rounded-xl border border-cyan-100 bg-cyan-50/60 px-3 py-3 text-[11px] leading-5 text-cyan-800 sm:col-span-2">
                     {zh ? '驱动必须来自后端 allowlist；解析模板需要后续在 TextFSM 页面创建、测试并发布后再绑定到动作。' : 'The driver must come from the backend allowlist. Create, test, and publish parser templates before binding them to actions.'}
                   </div>
+                  <label className="text-xs font-semibold text-slate-600 sm:col-span-2">{zh ? '平台说明' : 'Description'}<textarea value={createForm.description} onChange={(event) => setCreateForm((current) => ({ ...current, description: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
                 </div>
               )}
-              {wizardStep === 3 && (
+              {wizardStep === 2 && (
                 <div className="space-y-3">
                   <div className="grid gap-2 sm:grid-cols-2">
                     {[
@@ -998,9 +994,9 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
             <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4">
               <button type="button" onClick={() => setWizardOpen(false)} className="rounded-xl px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100">{zh ? '取消' : 'Cancel'}</button>
               <div className="flex items-center gap-2">
-                {wizardStep > 1 && <button type="button" onClick={() => { setWizardError(''); setWizardStep((step) => (step - 1) as 1 | 2 | 3); }} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">{zh ? '上一步' : 'Back'}</button>}
-                {wizardStep < 3 ? (
-                  <button type="button" onClick={() => { setWizardError(''); setWizardStep((step) => (step + 1) as 1 | 2 | 3); }} className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700">{zh ? '下一步' : 'Next'}</button>
+                {wizardStep > 1 && <button type="button" onClick={() => { setWizardError(''); setWizardStep((step) => (step - 1) as 1 | 2); }} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">{zh ? '上一步' : 'Back'}</button>}
+                {wizardStep < 2 ? (
+                  <button type="button" onClick={() => { setWizardError(''); setWizardStep((step) => (step + 1) as 1 | 2); }} className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700">{zh ? '下一步' : 'Next'}</button>
                 ) : (
                   <button type="button" onClick={() => void createPlatformProfile()} disabled={wizardSaving} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50">{wizardSaving ? <Loader2 size={14} className="animate-spin" /> : wizardMode === 'edit' ? <Save size={14} /> : <Plus size={14} />}{wizardMode === 'edit' ? (zh ? '保存修改' : 'Save changes') : (zh ? '创建平台' : 'Create platform')}</button>
                 )}

@@ -50,7 +50,7 @@ describe('PlatformRegistryTab', () => {
     expect(screen.queryByRole('button', { name: '新建平台' })).toBeNull();
   });
 
-  it('opens and completes the three-step create wizard for Platform Maintainer', async () => {
+  it('opens and completes the two-step create wizard for Platform Maintainer', async () => {
     vi.unstubAllGlobals();
     installPlatformFetch(true, [
       { id: 'system-cisco', platform_code: 'cisco_ios', name_zh: 'Cisco IOS', name_en: 'Cisco IOS', vendor: 'Cisco', source: 'SYSTEM', status: 'ACTIVE' },
@@ -67,8 +67,8 @@ describe('PlatformRegistryTab', () => {
     expect(Array.from((vendorPicker as HTMLSelectElement).options).some((option) => option.value === 'Cisco')).toBe(true);
     await user.selectOptions(vendorPicker, 'Huawei');
     expect((vendorPicker as HTMLSelectElement).value).toBe('Huawei');
-    await user.click(screen.getByRole('button', { name: '下一步' }));
-    expect(screen.getByText(/连接与解析/)).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: '连接驱动' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: '解析平台' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '下一步' }));
     expect(screen.getByText(/确认/)).toBeTruthy();
     expect(screen.getByText('自定义 / 启用 / 草稿 Release')).toBeTruthy();
