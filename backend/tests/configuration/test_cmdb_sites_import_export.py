@@ -53,3 +53,37 @@ def test_site_import_validates_duplicates_and_export_is_unpaginated(isolated_db,
     assert '站点编码' in content
     assert 'North DC' in content
     assert '+12025550123' in content
+
+
+def test_site_import_supports_domestic_chinese_phone_numbers(isolated_db, monkeypatch):
+    monkeypatch.setattr(cmdb_api, '_audit', lambda *args, **kwargs: None)
+
+    mobile_site = SiteCreate(
+        site_name='北京数据中心',
+        country='China',
+        state_province='北京',
+        city='北京',
+        contact_name='张三',
+        contact_phone='13111111111',
+        contact_email='zhangsan@example.com',
+        status='active',
+    )
+    landline_site = SiteCreate(
+        site_name='上海数据中心',
+        country='中国',
+        state_province='上海',
+        city='上海',
+        contact_name='李四',
+        contact_phone='021-88888888',
+        contact_email='lisi@example.com',
+        status='active',
+    )
+
+    imported = cmdb_api.api_import_sites(
+        SiteImportRequest(rows=[mobile_site, landline_site]),
+        user={'username': 'tester', 'role': 'Operator'},
+    )
+    assert imported['success'] is True
+    assert imported['data']['imported'] == 2
+    assert imported['data']['failed'] == 0
+

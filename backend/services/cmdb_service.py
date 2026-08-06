@@ -1094,6 +1094,89 @@ def update_site(conn, site_id: str, **fields) -> dict:
     return get_site(conn, site_id)
 
 
+def _cleanup_empty_site_residue(conn, site_id: str) -> dict | None:
+    """Remove collector-only residue from a site with no live CMDB data.
+
+    VLAN discovery creates vendor/system VLAN rows and topology discovery keeps
+    run history after the devices that produced it have been removed.  Those
+    records are useful while a site exists, but they must not make an otherwise
+    empty site impossible to delete.  Return ``None`` unless the site is safe
+    to clean automatically; the caller keeps the normal replacement-site guard
+    for every real reference.
+    """
+    from services.vlan_discovery_service import is_system_default_vlan
+
+    live_refs = (
+        ('devices', 'site_id'),
+        ('physical_assets', 'site_id'),
+        ('prefixes', 'site_id'),
+        ('topology_links', 'source_site_id'),
+        ('topology_links', 'target_site_id'),
+        ('topology_observations', 'source_site_id'),
+        ('vlan_business_bindings', 'site_id'),
+    )
+    if any(_count_reference(conn, table, column, site_id) for table, column in live_refs):
+        return None
+
+    vlan_rows = conn.execute(
+        "SELECT id, vlan_id, name, discovery_source FROM vlans WHERE site_id = ?",
+        (site_id,),
+    ).fetchall()
+    if any(
+        not is_system_default_vlan(
+            row['vlan_id'],
+            row['name'],
+            # A disconnected site no longer has device platform evidence. The
+            # well-known default names and VLAN 1 are still sufficient evidence;
+            # non-manual discovery rows retain Cisco legacy-default handling.
+            platform='Cisco' if str(row['discovery_source'] or '').strip().lower() not in ('', 'manual') else '',
+            discovery_source=row['discovery_source'],
+        )
+        for row in vlan_rows
+    ):
+        return None
+
+    vlan_ids = [str(row['id']) for row in vlan_rows if row['id']]
+    if vlan_ids:
+        placeholders = ','.join('?' for _ in vlan_ids)
+        prefix_ref = conn.execute(
+            f"SELECT COUNT(*) AS cnt FROM prefixes WHERE vlan_id IN ({placeholders})",
+            vlan_ids,
+        ).fetchone()
+        if int(prefix_ref['cnt'] or 0):
+            return None
+
+    run_rows = conn.execute(
+        "SELECT id FROM topology_discovery_runs WHERE site_id = ?",
+        (site_id,),
+    ).fetchall()
+    run_ids = [str(row['id']) for row in run_rows if row['id']]
+    if run_ids:
+        run_placeholders = ','.join('?' for _ in run_ids)
+        # These tables do not consistently use ON DELETE CASCADE on older
+        # installations, so clear their children explicitly first.
+        conn.execute(
+            f"DELETE FROM topology_discovery_run_devices WHERE run_id IN ({run_placeholders})",
+            run_ids,
+        )
+        conn.execute(
+            f"DELETE FROM topology_observations WHERE discovery_run_id IN ({run_placeholders})",
+            run_ids,
+        )
+        conn.execute(
+            f"DELETE FROM topology_discovery_runs WHERE id IN ({run_placeholders})",
+            run_ids,
+        )
+    if vlan_ids:
+        placeholders = ','.join('?' for _ in vlan_ids)
+        conn.execute(f"DELETE FROM vlans WHERE id IN ({placeholders})", vlan_ids)
+
+    return {
+        'vlans': len(vlan_ids),
+        'topology_discovery_runs': len(run_ids),
+    }
+
+
 def delete_site(conn, site_id: str, replacement_site_id: str = '') -> dict:
     """Delete a site, optionally moving all site-owned records first.
 
@@ -1121,6 +1204,7 @@ def delete_site(conn, site_id: str, replacement_site_id: str = '') -> dict:
         ('topology_links', 'source_site_id'),
         ('topology_links', 'target_site_id'),
         ('topology_observations', 'source_site_id'),
+        ('vlan_business_bindings', 'site_id'),
     ]
     blockers = []
     counts: dict[str, int] = {}
@@ -1156,6 +1240,17 @@ def delete_site(conn, site_id: str, replacement_site_id: str = '') -> dict:
     if legacy_rack_count:
         counts['racks.datacenter'] = legacy_rack_count
         blockers.append(f'racks.datacenter={site.get("site_code") or site_id} ({legacy_rack_count})')
+
+    cleaned_references: dict[str, int] = {}
+    auto_cleanup_keys = {'vlans.site_id', 'topology_discovery_runs.site_id'}
+    if blockers and not replacement_site_id:
+        blocker_keys = set(counts)
+        if blocker_keys and blocker_keys.issubset(auto_cleanup_keys) and not legacy_rack_count:
+            cleaned = _cleanup_empty_site_residue(conn, site_id)
+            if cleaned is not None:
+                cleaned_references = cleaned
+                blockers = []
+                counts = {}
 
     if blockers and not replacement_site_id:
         raise ValueError(
@@ -1199,6 +1294,7 @@ def delete_site(conn, site_id: str, replacement_site_id: str = '') -> dict:
         'deleted_site_id': site_id,
         'replacement_site_id': replacement_site_id or None,
         'migrated_references': counts if replacement_site_id else {},
+        'cleaned_references': cleaned_references,
         'replacement_site_code': replacement.get('site_code') if replacement else None,
     }
 

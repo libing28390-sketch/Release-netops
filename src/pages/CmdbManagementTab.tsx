@@ -243,8 +243,66 @@ const SITE_IMPORT_COLUMNS = [
   { key: 'status', header: '状态', headerEn: 'Status', required: false, sample: 'active' },
 ] as const;
 
+type CredentialTemplateColumn = {
+  key: string;
+  label: string;
+  labelEn: string;
+  required: boolean;
+  sample: string;
+  note: string;
+};
+
+const SSH_CREDENTIAL_COLUMNS = [
+  { key: 'credential_name', label: '凭据名称', labelEn: 'Credential Name', required: true, sample: 'core-ssh-admin', note: '必须唯一；1-100 个字符' },
+  { key: 'credential_type', label: '类型', labelEn: 'Credential Type', required: true, sample: 'ssh_password', note: 'ssh_password / ssh_key / api_token' },
+  { key: 'username', label: '用户名', labelEn: 'Username', required: false, sample: 'admin', note: 'SSH 登录用户名' },
+  { key: 'account_role', label: '账号角色', labelEn: 'Account Role', required: false, sample: 'normal', note: 'normal / admin / shared / unbound' },
+  { key: 'password', label: '密码', labelEn: 'Password', required: false, sample: '', note: '导出时始终为空；导入时按需填写' },
+  { key: 'enable_password', label: 'Enable 密码', labelEn: 'Enable Password', required: false, sample: '', note: '导出时始终为空；导入时按需填写' },
+] as const satisfies readonly CredentialTemplateColumn[];
+
+const SNMP_CREDENTIAL_COLUMNS = [
+  { key: 'credential_name', label: '凭据名称', labelEn: 'Credential Name', required: true, sample: 'core-snmp-monitor', note: '必须唯一；1-100 个字符' },
+  { key: 'credential_type', label: '类型', labelEn: 'Credential Type', required: true, sample: 'snmpv2', note: 'snmpv2 / snmpv3' },
+  { key: 'snmp_community', label: 'SNMP 团体字', labelEn: 'SNMP Community', required: false, sample: '', note: '导出时始终为空；snmpv2 必须填写' },
+  { key: 'snmp_server', label: 'SNMP 服务器地址', labelEn: 'SNMP Server', required: false, sample: '', note: '可选；为空时使用设备管理 IP' },
+] as const satisfies readonly CredentialTemplateColumn[];
+
+type CredentialSheetKey = 'ssh' | 'snmp';
+type CredentialSheetDefinition = {
+  key: CredentialSheetKey;
+  name: string;
+  columns: readonly CredentialTemplateColumn[];
+  defaultType: string;
+  allowedTypes: readonly string[];
+};
+
+const CREDENTIAL_SHEET_DEFS: readonly CredentialSheetDefinition[] = [
+  { key: 'ssh', name: 'SSH', columns: SSH_CREDENTIAL_COLUMNS, defaultType: 'ssh_password', allowedTypes: ['ssh_password', 'ssh_key', 'api_token'] },
+  { key: 'snmp', name: 'SNMP', columns: SNMP_CREDENTIAL_COLUMNS, defaultType: 'snmpv2', allowedTypes: ['snmpv2', 'snmpv3'] },
+];
+
+const CREDENTIAL_SECRET_FIELDS = new Set(['password', 'enable_password', 'snmp_community']);
+
+const CREDENTIAL_ROLE_VALUE_ALIASES: Record<string, string> = {
+  normal: 'normal',
+  admin: 'admin',
+  shared: 'shared',
+  unbound: 'unbound',
+  普通账号: 'normal',
+  特权账号: 'admin',
+  通用账号: 'shared',
+  未指定: 'unbound',
+  'Normal account': 'normal',
+  'Privileged account': 'admin',
+  'Shared account': 'shared',
+  Unassigned: 'unbound',
+};
+
 type SiteImportRow = Record<string, string>;
 type SiteImportError = { row: number; message: string };
+type CredentialImportRow = { sheet: CredentialSheetKey; sheetName: string; row: number; values: Record<string, string> };
+type CredentialImportError = { sheet: string; row: number; message: string };
 
 const SITE_IMPORT_HEADER_ALIASES: Record<string, string> = Object.fromEntries(
   SITE_IMPORT_COLUMNS.flatMap(column => [
@@ -1552,6 +1610,8 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
     site_summary: [] as Array<{ key: string; label: string; count: number }>,
   });
   const [vlanExporting, setVlanExporting] = useState(false);
+  const [credentialExporting, setCredentialExporting] = useState(false);
+  const [credentialTemplateDownloading, setCredentialTemplateDownloading] = useState(false);
   const [vlanDetailRow, setVlanDetailRow] = useState<any | null>(null);
   const [expandedVlans, setExpandedVlans] = useState<Record<string, boolean>>({});
   const [interfaceDeviceFilter, setInterfaceDeviceFilter] = useState<string>('');
@@ -1613,6 +1673,12 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
   const [siteImporting, setSiteImporting] = useState(false);
   const [siteExporting, setSiteExporting] = useState(false);
   const siteImportInputRef = useRef<HTMLInputElement | null>(null);
+  const [credentialImportOpen, setCredentialImportOpen] = useState(false);
+  const [credentialImportFileName, setCredentialImportFileName] = useState('');
+  const [credentialImportRows, setCredentialImportRows] = useState<CredentialImportRow[]>([]);
+  const [credentialImportErrors, setCredentialImportErrors] = useState<CredentialImportError[]>([]);
+  const [credentialImporting, setCredentialImporting] = useState(false);
+  const credentialImportInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const jobId = credentialJobStatus?.job_id;
@@ -2194,6 +2260,202 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       setSiteExporting(false);
     }
   }, [search, siteExporting, zh]);
+
+  const downloadCredentialImportTemplate = useCallback(async () => {
+    if (credentialTemplateDownloading) return;
+    setCredentialTemplateDownloading(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch('/api/credentials/import-template', { headers: authHeaders() });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(formatErrorDetail(payload.detail || payload.message));
+      }
+      // A long-running backend process may still serve the pre-fix template.
+      // Prefer the API once it advertises the current format; otherwise use
+      // the bundled compatibility copy so the download is correct immediately
+      // without requiring a backend restart.
+      let templateResponse = response;
+      if (response.headers.get('X-Credential-Template-Version') !== '2') {
+        templateResponse = await fetch('/templates/credential_import_template.xlsx?v=2', {
+          cache: 'no-store',
+        });
+        if (!templateResponse.ok) {
+          throw new Error(zh ? '无法读取凭据导入模板' : 'Unable to read the credential import template');
+        }
+      }
+      const blob = await templateResponse.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'credential_import_template.xlsx';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e.message || String(e));
+    } finally {
+      setCredentialTemplateDownloading(false);
+    }
+  }, [credentialTemplateDownloading]);
+
+  const exportCredentialInventory = useCallback(() => {
+    if (credentialExporting) return;
+    setCredentialExporting(true);
+    setError('');
+    try {
+      const workbook = XLSX.utils.book_new();
+      CREDENTIAL_SHEET_DEFS.forEach(sheet => {
+        const sheetRows = rows.filter(row => {
+          const type = String(row.credential_type || '').toLowerCase();
+          return sheet.key === 'snmp' ? type.startsWith('snmp') : !type.startsWith('snmp');
+        });
+        const headers = sheet.columns.map(column => column.label);
+        const dataRows = sheetRows.map(row => sheet.columns.map(column => (
+          CREDENTIAL_SECRET_FIELDS.has(column.key) ? '' : (row[column.key] ?? '')
+        )));
+        const worksheet = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+        worksheet['!cols'] = sheet.columns.map(column => ({
+          wch: Math.max(18, column.key.length + 6),
+        }));
+        XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
+      });
+      XLSX.writeFile(workbook, `credentials_export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      setNotice(zh ? '凭据已导出，SSH 和 SNMP 已分为两个 Sheet，所有秘密字段为空' : 'Credentials exported into separate SSH and SNMP sheets with all secret fields blank');
+    } catch (e: any) {
+      setError(e.message || String(e));
+    } finally {
+      setCredentialExporting(false);
+    }
+  }, [credentialExporting, rows, zh]);
+
+  const validateCredentialImportRows = useCallback((sheetInputs: Array<{ name: string; rows: Array<Record<string, unknown>> }>) => {
+    const normalizedRows: CredentialImportRow[] = [];
+    const errors: CredentialImportError[] = [];
+    const existingNames = new Set(rows.map(row => String(row.credential_name || '').trim().toLocaleLowerCase()).filter(Boolean));
+    const seenNames = new Set<string>();
+
+    const normalizeHeader = (value: unknown) => String(value ?? '').replace(/^\uFEFF/, '').trim().toLocaleLowerCase();
+    const definitionForSheet = (name: string, rawRows: Array<Record<string, unknown>>): CredentialSheetDefinition => {
+      if (/snmp/i.test(name)) return CREDENTIAL_SHEET_DEFS[1];
+      if (/ssh/i.test(name)) return CREDENTIAL_SHEET_DEFS[0];
+      const firstRowKeys = Object.keys(rawRows[0] || {}).map(normalizeHeader);
+      return firstRowKeys.some(key => key === 'snmp_community' || key === 'snmp_server' || key === 'snmp community' || key === 'snmp server' || key === 'snmp 团体字' || key === 'snmp 服务器地址')
+        ? CREDENTIAL_SHEET_DEFS[1]
+        : CREDENTIAL_SHEET_DEFS[0];
+    };
+
+    sheetInputs.forEach(sheetInput => {
+      const definition = definitionForSheet(sheetInput.name, sheetInput.rows);
+      const aliases = new Map<string, string>();
+      definition.columns.forEach(column => {
+        [column.key, column.label, column.labelEn].forEach(alias => aliases.set(normalizeHeader(alias), column.key));
+      });
+
+      sheetInput.rows.forEach((raw, index) => {
+        const rowNumber = index + 2;
+        const values: Record<string, string> = {};
+        Object.entries(raw).forEach(([rawKey, value]) => {
+          const key = aliases.get(normalizeHeader(rawKey));
+          if (key) values[key] = String(value ?? '');
+        });
+        if (!Object.values(values).some(value => value.trim())) return;
+
+        values.credential_name = String(values.credential_name || '').trim();
+        values.credential_type = String(values.credential_type || definition.defaultType).trim().toLowerCase();
+        if ('username' in values) values.username = values.username.trim();
+        if ('account_role' in values) {
+          const rawRole = (values.account_role || 'normal').trim();
+          values.account_role = CREDENTIAL_ROLE_VALUE_ALIASES[rawRole]
+            || CREDENTIAL_ROLE_VALUE_ALIASES[rawRole.toLowerCase()]
+            || rawRole.toLowerCase();
+        }
+        if ('snmp_server' in values) values.snmp_server = values.snmp_server.trim();
+
+        if (!values.credential_name) errors.push({ sheet: definition.name, row: rowNumber, message: '凭据名称不能为空' });
+        if (!definition.allowedTypes.includes(values.credential_type)) {
+          errors.push({ sheet: definition.name, row: rowNumber, message: `${definition.name} Sheet 的凭据类型必须是 ${definition.allowedTypes.join('、')}` });
+        }
+        if (definition.key === 'ssh' && values.account_role && !CRED_ROLE_OPTS.some(option => option.value === values.account_role)) {
+          errors.push({ sheet: definition.name, row: rowNumber, message: '账号角色必须是普通账号、特权账号、通用账号或未指定' });
+        }
+        const nameKey = values.credential_name.toLocaleLowerCase();
+        if (nameKey && (existingNames.has(nameKey) || seenNames.has(nameKey))) {
+          errors.push({ sheet: definition.name, row: rowNumber, message: '凭据名称已存在或在导入文件中重复' });
+        }
+        if (nameKey) seenNames.add(nameKey);
+        if (definition.key === 'snmp' && values.credential_type === 'snmpv2' && !String(values.snmp_community || '').trim()) {
+          errors.push({ sheet: definition.name, row: rowNumber, message: 'snmpv2 必须填写 SNMP Community' });
+        }
+        if (Object.keys(values).length === 0) {
+          errors.push({ sheet: definition.name, row: rowNumber, message: '未识别到字段，请使用 SSH 或 SNMP 导入模板' });
+        } else {
+          normalizedRows.push({ sheet: definition.key, sheetName: definition.name, row: rowNumber, values });
+        }
+      });
+    });
+
+    if (normalizedRows.length === 0 && errors.length === 0) {
+      errors.push({ sheet: '文件', row: 1, message: '文件中没有可导入的凭据数据' });
+    }
+    return { normalizedRows, errors };
+  }, [rows]);
+
+  const handleCredentialImportFile = useCallback(async (file?: File) => {
+    if (!file) return;
+    setCredentialImportOpen(true);
+    setCredentialImportFileName(file.name);
+    setCredentialImportRows([]);
+    setCredentialImportErrors([]);
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheetInputs = workbook.SheetNames.map(name => ({
+        name,
+        rows: XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[name], { defval: '' }),
+      })).filter(item => item.rows.length > 0);
+      if (!sheetInputs.length) throw new Error('导入文件没有可读取的工作表或数据');
+      const result = validateCredentialImportRows(sheetInputs);
+      setCredentialImportRows(result.normalizedRows);
+      setCredentialImportErrors(result.errors);
+    } catch (e: any) {
+      setCredentialImportErrors([{ sheet: '文件', row: 1, message: e.message || '无法读取导入文件' }]);
+    } finally {
+      if (credentialImportInputRef.current) credentialImportInputRef.current.value = '';
+    }
+  }, [validateCredentialImportRows]);
+
+  const importCredentialRows = useCallback(async () => {
+    if (credentialImporting || !credentialImportRows.length || credentialImportErrors.length) return;
+    setCredentialImporting(true);
+    setError('');
+    const failed: CredentialImportError[] = [];
+    let imported = 0;
+    try {
+      for (const item of credentialImportRows) {
+        try {
+          await apiSend('/api/credentials', 'POST', item.values);
+          imported += 1;
+        } catch (e: any) {
+          failed.push({ sheet: item.sheetName, row: item.row, message: e.message || '导入失败' });
+        }
+      }
+      if (imported > 0) await load();
+      if (failed.length) {
+        setCredentialImportErrors(failed);
+        setNotice(zh ? `已导入 ${imported} 条，${failed.length} 条失败，请检查错误信息` : `${imported} imported, ${failed.length} failed. Check the errors.`);
+        return;
+      }
+      setCredentialImportOpen(false);
+      setCredentialImportRows([]);
+      setNotice(zh ? `已成功导入 ${imported} 条凭据` : `Imported ${imported} credential(s)`);
+    } catch (e: any) {
+      setError(e.message || String(e));
+    } finally {
+      setCredentialImporting(false);
+    }
+  }, [credentialImportErrors.length, credentialImportRows, credentialImporting, load, zh]);
 
   const exportVlanInventory = useCallback(async () => {
     if (vlanExporting) return;
@@ -3116,6 +3378,43 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 </button>
               </>
             )}
+            {tab === 'credentials' && (
+              <>
+                <input
+                  ref={credentialImportInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={event => { void handleCredentialImportFile(event.target.files?.[0]); }}
+                />
+                <button
+                  onClick={downloadCredentialImportTemplate}
+                  disabled={credentialTemplateDownloading}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-black/8 bg-white text-black/35 transition-colors hover:border-[#00bceb]/25 hover:bg-[#00bceb]/5 hover:text-[#0088b0] disabled:cursor-not-allowed disabled:opacity-50"
+                  title={zh ? '下载凭据导入模板' : 'Download credential import template'}
+                  aria-label={zh ? '下载凭据导入模板' : 'Download credential import template'}
+                >
+                  <FileSpreadsheet size={14} className={credentialTemplateDownloading ? 'animate-pulse' : ''} />
+                </button>
+                <button
+                  onClick={() => credentialImportInputRef.current?.click()}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#9eeaf7] bg-[#f1fcff] text-[#007d9d] transition-colors hover:border-[#00bceb]/50 hover:bg-[#e5faff]"
+                  title={zh ? '上传凭据' : 'Upload credentials'}
+                  aria-label={zh ? '上传凭据' : 'Upload credentials'}
+                >
+                  <Upload size={14} />
+                </button>
+                <button
+                  onClick={exportCredentialInventory}
+                  disabled={credentialExporting}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-black/8 bg-white text-black/35 transition-colors hover:border-[#00bceb]/25 hover:bg-[#00bceb]/5 hover:text-[#0088b0] disabled:cursor-not-allowed disabled:opacity-50"
+                  title={zh ? '导出凭据（密码为空）' : 'Export credentials (passwords blank)'}
+                  aria-label={zh ? '导出凭据（密码为空）' : 'Export credentials (passwords blank)'}
+                >
+                  <Download size={14} className={credentialExporting ? 'animate-pulse' : ''} />
+                </button>
+              </>
+            )}
             <button
               onClick={load}
               className="inline-flex h-10 items-center justify-center gap-1.5 rounded-full border border-[#d8e5ef] bg-[#f8fafc] px-4 text-xs font-semibold text-[#164e63] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#9eeaf7] hover:bg-white hover:text-[#007d9d]"
@@ -3558,6 +3857,84 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
         </div>
         )}
       </div>
+
+      {credentialImportOpen && (
+        <div className="fixed inset-0 z-[115] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => !credentialImporting && setCredentialImportOpen(false)} />
+          <div className="relative flex max-h-[88vh] w-full max-w-5xl flex-col rounded-3xl border border-black/8 bg-white p-6 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-black/5 pb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-[#164e63]">{zh ? '上传凭据' : 'Upload Credentials'}</h2>
+                <p className="mt-1 text-xs text-slate-500">{credentialImportFileName || (zh ? '请选择 Excel 或 CSV 文件' : 'Choose an Excel or CSV file')} · {zh ? 'SSH 与 SNMP 按不同字段分别导入' : 'SSH and SNMP use separate field sets'}</p>
+              </div>
+              <button disabled={credentialImporting} onClick={() => setCredentialImportOpen(false)} className="rounded-xl border border-black/10 p-1.5 text-black/55 hover:bg-black/[0.03] disabled:opacity-40"><X size={16} /></button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto py-4">
+              <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm ${credentialImportErrors.length ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                {credentialImportErrors.length
+                  ? (zh ? `发现 ${credentialImportErrors.length} 个校验问题，请修正文件后重新上传` : `${credentialImportErrors.length} validation issue(s) found. Fix the file and upload again.`)
+                  : (zh ? `已识别 ${credentialImportRows.length} 条凭据，确认后将写入凭据中心` : `${credentialImportRows.length} credential(s) detected. Confirm to import them.`)}
+              </div>
+              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                {zh ? '安全提示：密码、Enable 密码和 SNMP Community 只会提交到后端加密保存，预览中不会显示明文；导出文件中的这些字段始终为空。' : 'Security: passwords and SNMP Community are sent to the backend for encryption and are never shown in plaintext in the preview or exports.'}
+              </div>
+              {credentialImportErrors.length > 0 && (
+                <div className="mb-4 max-h-36 overflow-y-auto rounded-2xl border border-rose-100 bg-white p-3 text-xs text-rose-700">
+                  {credentialImportErrors.map((item, index) => <div key={`${item.sheet}-${item.row}-${index}`} className="py-1">[{item.sheet}] {zh ? `第 ${item.row} 行` : `Row ${item.row}`}: {item.message}</div>)}
+                </div>
+              )}
+              <div className="space-y-4">
+                {CREDENTIAL_SHEET_DEFS.map(sheet => {
+                  const sheetRows = credentialImportRows.filter(item => item.sheet === sheet.key);
+                  return (
+                    <div key={sheet.key} className="overflow-hidden rounded-2xl border border-slate-200">
+                      <div className="flex items-center justify-between bg-slate-50 px-4 py-2.5">
+                        <span className="text-sm font-semibold text-[#164e63]">{sheet.name}</span>
+                        <span className="text-xs text-slate-400">{sheetRows.length} {zh ? '条' : 'row(s)'}</span>
+                      </div>
+                      {sheetRows.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="nx-data-table nx-data-table--compact text-left text-xs">
+                            <thead className="bg-white text-slate-500">
+                              <tr>{sheet.columns.map(column => <th key={column.key} className="whitespace-nowrap px-3 py-2 font-semibold">{column.label}</th>)}</tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {sheetRows.slice(0, 10).map((item, index) => (
+                                <tr key={`${item.row}-${index}`}>
+                                  {sheet.columns.map(column => {
+                                    const value = String(item.values[column.key] || '');
+                                    const displayValue = CREDENTIAL_SECRET_FIELDS.has(column.key)
+                                      ? (value ? (zh ? '已填写' : 'Provided') : '-')
+                                      : (value || '-');
+                                    return <td key={column.key} className="max-w-52 truncate whitespace-nowrap px-3 py-2 text-slate-600">{displayValue}</td>;
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {sheetRows.length > 10 && <div className="border-t border-slate-100 px-3 py-2 text-xs text-slate-400">{zh ? `仅预览前 10 条，共 ${sheetRows.length} 条` : `Showing 10 of ${sheetRows.length} row(s)`}</div>}
+                        </div>
+                      ) : (
+                        <div className="px-4 py-4 text-xs text-slate-400">{zh ? '该 Sheet 没有可导入数据' : 'No importable data in this sheet'}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/5 pt-4">
+              <button disabled={credentialTemplateDownloading} onClick={downloadCredentialImportTemplate} className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"><FileSpreadsheet size={14} className={credentialTemplateDownloading ? 'animate-pulse' : ''} />{zh ? '下载双 Sheet 模板' : 'Download two-sheet template'}</button>
+              <div className="flex items-center gap-2">
+                <button disabled={credentialImporting} onClick={() => setCredentialImportOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40">{zh ? '取消' : 'Cancel'}</button>
+                <button disabled={credentialImporting || !credentialImportRows.length || credentialImportErrors.length > 0} onClick={() => void importCredentialRows()} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-40">
+                  {credentialImporting && <RefreshCw size={14} className="animate-spin" />}
+                  {credentialImporting ? (zh ? '导入中...' : 'Importing...') : (zh ? '确认导入' : 'Confirm import')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {siteImportOpen && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
