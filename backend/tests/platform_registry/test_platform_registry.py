@@ -11,6 +11,7 @@ from services.platform_registry_service import (
     _normalize_records,
     create_profile,
     create_release,
+    delete_profile,
     delete_release,
     execute_platform_action,
     is_safe_read_command,
@@ -19,6 +20,7 @@ from services.platform_registry_service import (
     list_release_actions,
     preview_platform_action,
     transition_release,
+    update_profile,
     update_release_action,
 )
 from services.platform_registry_health_service import get_profile_health
@@ -159,6 +161,64 @@ def test_registry_read_model_returns_tenant_scoped_binding_stats(isolated_db):
     assert cisco["online_device_count"] == 1
     assert cisco["current_release_status"] == "PUBLISHED"
     assert cisco["current_action_count"] > 0
+
+
+def test_custom_profile_can_be_updated_and_unbound_profile_archived(isolated_db):
+    user = {"id": "profile-owner", "username": "profile-owner", "role": "Operator", "tenant_id": "tenant-1"}
+    profile = create_profile(
+        {"platform_code": "crud_lab", "name_en": "CRUD Lab", "vendor": "Acme", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        user,
+    )
+
+    updated = update_profile(profile["id"], {"name_en": "CRUD Lab Updated", "description": "editable metadata"}, user)
+    assert updated["name_en"] == "CRUD Lab Updated"
+    assert updated["description"] == "editable metadata"
+
+    deleted = delete_profile(profile["id"], user)
+    assert deleted == {"id": profile["id"], "status": "ARCHIVED", "deleted": True, "bound_device_count": 0}
+    assert all(item["id"] != profile["id"] for item in list_profiles(user))
+
+
+def test_bound_profile_cannot_delete_or_change_identity_but_can_change_metadata(isolated_db):
+    user = {"id": "bound-owner", "username": "bound-owner", "role": "Operator", "tenant_id": "tenant-1"}
+    profile = create_profile(
+        {"platform_code": "bound_lab", "name_en": "Bound Lab", "vendor": "Acme", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
+        user,
+    )
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO devices (id, hostname, platform, platform_profile_id, tenant_id) VALUES (?, ?, ?, ?, ?)",
+            ("bound-profile-device", "bound-device", "bound_lab", profile["id"], "tenant-1"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(PlatformRegistryError) as identity_error:
+        update_profile(profile["id"], {"platform_code": "bound_lab_v2"}, user)
+    assert identity_error.value.code == "PLATFORM_IDENTITY_LOCKED"
+
+    metadata = update_profile(profile["id"], {"vendor": "Acme Updated"}, user)
+    assert metadata["vendor"] == "Acme Updated"
+
+    with pytest.raises(PlatformRegistryError) as delete_error:
+        delete_profile(profile["id"], user)
+    assert delete_error.value.code == "PLATFORM_BOUND_DEVICES"
+    assert delete_error.value.status_code == 409
+
+
+def test_system_profile_is_read_only_for_profile_crud(isolated_db):
+    user = {"id": "system-editor", "username": "system-editor", "role": "Administrator", "tenant_id": "tenant-1"}
+    system_profile_id = "system-profile-cisco_ios"
+
+    with pytest.raises(PlatformRegistryError) as update_error:
+        update_profile(system_profile_id, {"name_en": "Do not edit"}, user)
+    assert update_error.value.code == "SYSTEM_PROFILE_READ_ONLY"
+
+    with pytest.raises(PlatformRegistryError) as delete_error:
+        delete_profile(system_profile_id, user)
+    assert delete_error.value.code == "SYSTEM_PROFILE_READ_ONLY"
 
 
 def test_standard_normalizer_applies_contract_aliases_and_scalar_types():

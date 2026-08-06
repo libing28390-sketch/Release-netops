@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Edit2,
   ExternalLink,
   FileCode2,
   Filter,
@@ -23,6 +24,7 @@ import { useNavigate } from 'react-router-dom';
 import PageHero from '../components/PageHero';
 import ResultStatusModal from '../components/ResultStatusModal';
 import { apiRequest } from '../api/http';
+import { ALL_VENDOR_NAMES } from './AssetManagement/constants';
 
 interface ApiEnvelope<T> {
   success: boolean;
@@ -430,10 +432,12 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const [rejectReleaseId, setRejectReleaseId] = useState('');
   const [rejectReleaseReason, setRejectReleaseReason] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardMode, setWizardMode] = useState<'create' | 'edit'>('create');
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [createForm, setCreateForm] = useState<CreateProfileForm>(EMPTY_CREATE_PROFILE);
   const [wizardSaving, setWizardSaving] = useState(false);
   const [wizardError, setWizardError] = useState('');
+  const [profileDeleting, setProfileDeleting] = useState(false);
   const deepLink = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedDetail = params.get('detail');
@@ -499,7 +503,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
         setError(zh ? `未找到指定的平台 Profile：${deepLink.profileId}` : `Requested platform Profile was not found: ${deepLink.profileId}`);
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : (zh ? '平台注册表加载失败' : 'Failed to load platform registry'));
+      setError(cause instanceof Error ? cause.message : (zh ? '平台注册加载失败' : 'Failed to load platform registry'));
     } finally {
       setLoading(false);
     }
@@ -635,6 +639,15 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
     [profiles],
   );
 
+  // Vendor identity is selected from the registry catalog rather than typed
+  // freely, so custom profiles keep the same canonical vendor spelling as
+  // the built-in profiles.  Keep the current value available while editing
+  // older/custom data that may no longer be present in the visible list.
+  const vendorOptions = useMemo(
+    () => Array.from(new Set([...ALL_VENDOR_NAMES, ...vendors, createForm.vendor].filter(Boolean))).sort(),
+    [createForm.vendor, vendors],
+  );
+
   const filteredProfiles = useMemo(() => {
     const query = search.trim().toLowerCase();
     return profiles.filter((profile) => {
@@ -653,6 +666,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const selectedListProfile = profiles.find((profile) => profile.id === selectedProfileId) || null;
   const currentProfile: PlatformProfileDetail | null = selectedProfile
     || (selectedListProfile ? { ...selectedListProfile, releases: [] } : null);
+  const isCustomProfile = Boolean(currentProfile)
+    && String(currentProfile?.source || '').toUpperCase() !== 'SYSTEM';
   const currentRelease = currentProfile?.releases?.find((release) => release.id === currentProfile.current_release_id)
     || currentProfile?.releases?.[0];
   const activeRelease = currentProfile?.releases?.find((release) => release.id === actionReleaseId) || currentRelease;
@@ -701,7 +716,25 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
 
   const openCreateWizard = () => {
     const firstDriver = capabilities?.allowed_connection_drivers?.[0] || '';
+    setWizardMode('create');
     setCreateForm({ ...EMPTY_CREATE_PROFILE, connection_driver: firstDriver });
+    setWizardStep(1);
+    setWizardError('');
+    setWizardOpen(true);
+  };
+
+  const openEditWizard = () => {
+    if (!currentProfile || !canWrite || String(currentProfile.source || '').toUpperCase() === 'SYSTEM') return;
+    setWizardMode('edit');
+    setCreateForm({
+      platform_code: currentProfile.platform_code || '',
+      name_zh: currentProfile.name_zh || '',
+      name_en: currentProfile.name_en || '',
+      vendor: currentProfile.vendor || '',
+      connection_driver: currentProfile.connection_driver || '',
+      parser_platform: currentProfile.parser_platform || '',
+      description: currentProfile.description || '',
+    });
     setWizardStep(1);
     setWizardError('');
     setWizardOpen(true);
@@ -719,6 +752,22 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
     setWizardSaving(true);
     setWizardError('');
     try {
+      if (wizardMode === 'edit' && currentProfile) {
+        await apiRequest<ApiEnvelope<PlatformProfile>>(
+          `/api/platform-registry/profiles/${encodeURIComponent(currentProfile.id)}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify({
+              ...createForm,
+              platform_code: createForm.platform_code.trim().toLowerCase(),
+              parser_platform: createForm.parser_platform.trim().toLowerCase(),
+            }),
+          },
+        );
+        await Promise.all([refreshProfiles(), loadProfile(currentProfile.id)]);
+        setWizardOpen(false);
+        return;
+      }
       const profileResponse = await apiRequest<ApiEnvelope<PlatformProfile>>('/api/platform-registry/profiles', {
         method: 'POST',
         body: JSON.stringify({
@@ -745,7 +794,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   };
 
   const createDraftRelease = async () => {
-    if (!currentProfile || !canWrite) return;
+    if (!currentProfile || !canWrite || !isCustomProfile) return;
     try {
       const response = await apiRequest<ApiEnvelope<PlatformRelease>>(
         `/api/platform-registry/profiles/${encodeURIComponent(currentProfile.id)}/releases`,
@@ -764,7 +813,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   };
 
   const saveActionMapping = async (action: ActionDefinition) => {
-    if (!activeRelease?.id || !canWrite || activeRelease.status !== 'DRAFT') return;
+    if (!activeRelease?.id || !canWrite || !isCustomProfile || activeRelease.status !== 'DRAFT') return;
     setActionSaving(true);
     setActionsError('');
     try {
@@ -793,8 +842,35 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
     }
   };
 
+  const deletePlatformProfile = async () => {
+    if (!currentProfile || !canWrite || String(currentProfile.source || '').toUpperCase() === 'SYSTEM' || profileDeleting) return;
+    const boundDeviceCountForDelete = Number(currentProfile.bound_device_count || 0);
+    if (boundDeviceCountForDelete > 0) {
+      setError(zh ? `该平台仍绑定 ${boundDeviceCountForDelete} 台设备，不能删除。` : `This platform still has ${boundDeviceCountForDelete} bound device(s) and cannot be deleted.`);
+      return;
+    }
+    const confirmed = window.confirm(
+      zh
+        ? `确定删除平台“${displayName(currentProfile, zh)}”吗？删除后平台会归档，不能继续用于设备绑定。`
+        : `Delete “${displayName(currentProfile, zh)}”? It will be archived and cannot be used for new device bindings.`,
+    );
+    if (!confirmed) return;
+    setProfileDeleting(true);
+    setError('');
+    try {
+      await apiRequest(`/api/platform-registry/profiles/${encodeURIComponent(currentProfile.id)}`, { method: 'DELETE' });
+      setSelectedProfile(null);
+      setSelectedProfileId('');
+      await refreshProfiles();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : (zh ? '删除平台失败' : 'Failed to delete platform'));
+    } finally {
+      setProfileDeleting(false);
+    }
+  };
+
   const deleteDraftRelease = async () => {
-    if (!activeRelease?.id || !currentProfile || !canWrite || activeRelease.status !== 'DRAFT' || releaseDeleting) return;
+    if (!activeRelease?.id || !currentProfile || !canWrite || !isCustomProfile || activeRelease.status !== 'DRAFT' || releaseDeleting) return;
     const confirmed = window.confirm(
       zh
         ? `确定删除 v${activeRelease.release_number} 草稿吗？草稿中的单条命令修改也会一起删除。`
@@ -817,6 +893,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   };
 
   const transitionRelease = async (releaseId: string, event: 'validate' | 'submit' | 'withdraw' | 'approve' | 'reject' | 'publish', reason = '') => {
+    if (!currentProfile || !isCustomProfile) return;
     try {
       await apiRequest(event === 'validate'
         ? `/api/platform-registry/releases/${encodeURIComponent(releaseId)}/validate`
@@ -837,7 +914,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
     <div className="flex h-full min-h-0 flex-col" style={{ background: 'var(--main-bg)' }}>
       <PageHero
         icon={Layers3}
-        title={zh ? '平台注册表' : 'Platform Registry'}
+        title={zh ? '平台注册' : 'Platform Registry'}
         subtitle={zh ? '查看平台来源、Release、动作映射和设备绑定状态' : 'Review platform source, releases, action mappings, and device bindings'}
         eyebrow={zh ? '自动化平台管理' : 'AUTOMATION PLATFORM MANAGEMENT'}
         accent="#0891b2"
@@ -851,7 +928,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                 className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-cyan-700"
               >
                 <Plus size={14} />
-                {zh ? '新建平台' : 'Create platform'}
+                {zh ? '新建自定义平台' : 'Create custom platform'}
               </button>
             )}
             <button
@@ -872,8 +949,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
           <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
             <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
               <div>
-                <h2 className="text-base font-bold text-slate-800">{zh ? '新建自定义平台' : 'Create custom platform'}</h2>
-                <p className="mt-1 text-[11px] text-slate-500">{zh ? '创建平台档案并自动生成一个只读 Draft Release。' : 'Create the profile and automatically seed a read-only draft release.'}</p>
+                <h2 className="text-base font-bold text-slate-800">{wizardMode === 'edit' ? (zh ? '编辑自定义平台' : 'Edit custom platform') : (zh ? '新建自定义平台' : 'Create custom platform')}</h2>
+                <p className="mt-1 text-[11px] text-slate-500">{wizardMode === 'edit' ? (zh ? '仅自定义平台可编辑；系统内置平台保持只读。' : 'Only custom profiles can be edited; system profiles remain read-only.') : (zh ? '创建平台档案并自动生成一个只读 Draft Release。' : 'Create the profile and automatically seed a read-only draft release.')}</p>
               </div>
               <button type="button" onClick={() => setWizardOpen(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X size={16} /></button>
             </div>
@@ -886,8 +963,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
               {wizardError && <div className="rounded-xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{wizardError}</div>}
               {wizardStep === 1 && (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="text-xs font-semibold text-slate-600">{zh ? '平台编码' : 'Platform code'}<input value={createForm.platform_code} onChange={(event) => setCreateForm((current) => ({ ...current, platform_code: event.target.value }))} placeholder="acme_router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
-                  <label className="text-xs font-semibold text-slate-600">{zh ? '厂商' : 'Vendor'}<input value={createForm.vendor} onChange={(event) => setCreateForm((current) => ({ ...current, vendor: event.target.value }))} placeholder="Acme" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '平台编码' : 'Platform code'}<input value={createForm.platform_code} onChange={(event) => setCreateForm((current) => ({ ...current, platform_code: event.target.value }))} disabled={wizardMode === 'edit' && Number(currentProfile?.bound_device_count || 0) > 0} placeholder="acme_router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:bg-slate-100" /></label>
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '厂商' : 'Vendor'}<select value={createForm.vendor} onChange={(event) => setCreateForm((current) => ({ ...current, vendor: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"><option value="">{zh ? '请选择厂商' : 'Select vendor'}</option>{vendorOptions.map((vendor) => <option key={vendor} value={vendor}>{vendor}</option>)}</select></label>
                   <label className="text-xs font-semibold text-slate-600">{zh ? '中文名称' : 'Chinese name'}<input value={createForm.name_zh} onChange={(event) => setCreateForm((current) => ({ ...current, name_zh: event.target.value }))} placeholder={zh ? '可选' : 'Optional'} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
                   <label className="text-xs font-semibold text-slate-600">{zh ? '英文名称' : 'English name'}<input value={createForm.name_en} onChange={(event) => setCreateForm((current) => ({ ...current, name_en: event.target.value }))} placeholder="Acme Router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
                   <label className="text-xs font-semibold text-slate-600 sm:col-span-2">{zh ? '平台说明' : 'Description'}<textarea value={createForm.description} onChange={(event) => setCreateForm((current) => ({ ...current, description: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
@@ -895,8 +972,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
               )}
               {wizardStep === 2 && (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="text-xs font-semibold text-slate-600">{zh ? '连接驱动' : 'Connection driver'}<select value={createForm.connection_driver} onChange={(event) => setCreateForm((current) => ({ ...current, connection_driver: event.target.value }))} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100"><option value="">{zh ? '请选择' : 'Select driver'}</option>{(capabilities?.allowed_connection_drivers || []).map((driver) => <option key={driver} value={driver}>{driver}</option>)}</select></label>
-                  <label className="text-xs font-semibold text-slate-600">{zh ? '解析平台' : 'Parser platform'}<input value={createForm.parser_platform} onChange={(event) => setCreateForm((current) => ({ ...current, parser_platform: event.target.value }))} placeholder="acme_router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '连接驱动' : 'Connection driver'}<select value={createForm.connection_driver} onChange={(event) => setCreateForm((current) => ({ ...current, connection_driver: event.target.value }))} disabled={wizardMode === 'edit' && Number(currentProfile?.bound_device_count || 0) > 0} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:bg-slate-100"><option value="">{zh ? '请选择' : 'Select driver'}</option>{(capabilities?.allowed_connection_drivers || []).map((driver) => <option key={driver} value={driver}>{driver}</option>)}</select></label>
+                  <label className="text-xs font-semibold text-slate-600">{zh ? '解析平台' : 'Parser platform'}<input value={createForm.parser_platform} onChange={(event) => setCreateForm((current) => ({ ...current, parser_platform: event.target.value }))} disabled={wizardMode === 'edit' && Number(currentProfile?.bound_device_count || 0) > 0} placeholder="acme_router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:bg-slate-100" /></label>
                   <div className="rounded-xl border border-cyan-100 bg-cyan-50/60 px-3 py-3 text-[11px] leading-5 text-cyan-800 sm:col-span-2">
                     {zh ? '驱动必须来自后端 allowlist；解析模板需要后续在 TextFSM 页面创建、测试并发布后再绑定到动作。' : 'The driver must come from the backend allowlist. Create, test, and publish parser templates before binding them to actions.'}
                   </div>
@@ -911,10 +988,10 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                       [zh ? '英文名称' : 'English name', createForm.name_en],
                       [zh ? '连接驱动' : 'Driver', createForm.connection_driver],
                       [zh ? '解析平台' : 'Parser platform', createForm.parser_platform.toLowerCase()],
-                    [zh ? '初始状态' : 'Initial state', zh ? '自定义 / 启用 / 草稿 Release' : 'CUSTOM / ACTIVE / DRAFT release'],
+                    [zh ? '初始状态' : 'Initial state', wizardMode === 'edit' ? (zh ? '保留当前 Release 和绑定关系' : 'Existing releases and bindings are preserved') : (zh ? '自定义 / 启用 / 草稿 Release' : 'CUSTOM / ACTIVE / DRAFT release')],
                     ].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-50 px-3 py-2"><div className="text-[10px] text-slate-400">{label}</div><div className="mt-1 break-all text-xs font-semibold text-slate-700">{value || '-'}</div></div>)}
                   </div>
-                  <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3 text-[11px] leading-5 text-amber-800">{zh ? '创建不会自动发布或绑定设备；需要完成动作映射、TextFSM 回归和审批流后才可发布。' : 'Creation does not publish the profile or bind devices. Complete action mappings, TextFSM regression, and approval before publishing.'}</div>
+                  <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3 text-[11px] leading-5 text-amber-800">{wizardMode === 'edit' ? (zh ? '已绑定设备的平台只允许修改名称、厂商和说明；平台编码、驱动和解析平台会被锁定。' : 'Profiles with bound devices only allow name, vendor, and description edits; platform code, driver, and parser platform are locked.') : (zh ? '创建不会自动发布或绑定设备；需要完成动作映射、TextFSM 回归和审批流后才可发布。' : 'Creation does not publish the profile or bind devices. Complete action mappings, TextFSM regression, and approval before publishing.')}</div>
                 </div>
               )}
             </div>
@@ -925,7 +1002,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                 {wizardStep < 3 ? (
                   <button type="button" onClick={() => { setWizardError(''); setWizardStep((step) => (step + 1) as 1 | 2 | 3); }} className="rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700">{zh ? '下一步' : 'Next'}</button>
                 ) : (
-                  <button type="button" onClick={() => void createPlatformProfile()} disabled={wizardSaving} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50">{wizardSaving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}{zh ? '创建平台' : 'Create platform'}</button>
+                  <button type="button" onClick={() => void createPlatformProfile()} disabled={wizardSaving} className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50">{wizardSaving ? <Loader2 size={14} className="animate-spin" /> : wizardMode === 'edit' ? <Save size={14} /> : <Plus size={14} />}{wizardMode === 'edit' ? (zh ? '保存修改' : 'Save changes') : (zh ? '创建平台' : 'Create platform')}</button>
                 )}
               </div>
             </div>
@@ -941,7 +1018,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
             <div className="font-semibold">{canWrite ? (zh ? '受控写入模式' : 'Controlled write mode') : (zh ? '当前阶段为只读审查模式' : 'Read-only review mode')}</div>
             <div className="mt-0.5 text-cyan-700/80">
               {canWrite
-                ? (zh ? '写入操作受 PLATFORM_REGISTRY_ENABLED、角色档案和后端权限共同控制；发布仍需独立审批。' : 'Writes are gated by PLATFORM_REGISTRY_ENABLED, role profile, and backend authorization; publication still requires independent approval.')
+                ? (zh ? '自定义平台支持新增、编辑和归档；系统内置平台只读，绑定设备后不能删除；发布仍需独立审批。' : 'Custom platforms support create, edit, and archive; built-in platforms are read-only and bound platforms cannot be deleted; publication still requires independent approval.')
                 : (zh
                   ? '本页面默认只读；创建、编辑、审批和发布由 PLATFORM_REGISTRY_ENABLED 及后端权限共同控制。'
                   : 'This page is read-only by default; create, edit, approval, and publish controls are gated by PLATFORM_REGISTRY_ENABLED and backend authorization.')}
@@ -1101,11 +1178,39 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                       </div>
                       <div className="mt-1 font-mono text-[11px] text-slate-400">{currentProfile.platform_code}</div>
                     </div>
-                    <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${isReady(currentProfile) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                      {isReady(currentProfile) ? <CheckCircle2 size={13} /> : <ShieldAlert size={13} />}
-                      {isReady(currentProfile) ? (zh ? '注册表就绪' : 'Registry ready') : (zh ? '需要关注' : 'Needs attention')}
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ${isReady(currentProfile) ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                        {isReady(currentProfile) ? <CheckCircle2 size={13} /> : <ShieldAlert size={13} />}
+                        {isReady(currentProfile) ? (zh ? '注册表就绪' : 'Registry ready') : (zh ? '需要关注' : 'Needs attention')}
+                      </div>
+                      {String(currentProfile.source || '').toUpperCase() === 'SYSTEM' ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-500">{zh ? '系统内置 · 只读' : 'System built-in · read-only'}</span>
+                          {canWrite && <>
+                            <button type="button" disabled title={zh ? '系统内置平台不可编辑' : 'Built-in platforms cannot be edited'} className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[10px] font-semibold text-slate-400"><Edit2 size={12} />{zh ? '编辑平台' : 'Edit platform'}</button>
+                            <button type="button" disabled title={zh ? '系统内置平台不可删除' : 'Built-in platforms cannot be deleted'} className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[10px] font-semibold text-slate-400"><Trash2 size={12} />{zh ? '删除平台' : 'Delete platform'}</button>
+                          </>}
+                        </div>
+                      ) : canWrite ? (
+                        <div className="flex items-center gap-1.5">
+                          <button type="button" onClick={openEditWizard} className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50"><Edit2 size={12} />{zh ? '编辑平台' : 'Edit platform'}</button>
+                          <button
+                            type="button"
+                            onClick={() => void deletePlatformProfile()}
+                            disabled={profileDeleting || Number(currentProfile.bound_device_count || 0) > 0}
+                            title={Number(currentProfile.bound_device_count || 0) > 0 ? (zh ? '存在绑定设备，不能删除' : 'Cannot delete while devices are bound') : undefined}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-45"
+                          ><Trash2 size={12} />{profileDeleting ? (zh ? '删除中' : 'Deleting') : (zh ? '删除平台' : 'Delete platform')}</button>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
+                  {String(currentProfile.source || '').toUpperCase() === 'SYSTEM' && (
+                    <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] leading-4 text-slate-500">
+                      <LockKeyhole size={13} className="mt-0.5 shrink-0" />
+                      <span>{zh ? '当前为系统内置平台，只能查看和绑定设备。点击右上角“新建自定义平台”后，选中自定义平台即可使用编辑和归档操作。' : 'This is a built-in platform and is read-only. Use “Create custom platform” above, then select the custom profile to edit or archive it.'}</span>
+                    </div>
+                  )}
                   <div className="mt-3 flex gap-1 overflow-x-auto">
                     {([
                       ['overview', zh ? '基本信息' : 'Overview'],
@@ -1262,8 +1367,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                               <span className="text-[10px] text-slate-400">{zh ? '按单条 action_code 修改并保存' : 'Edit and save one action_code at a time'}</span>
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
-                              {canWrite && <button type="button" onClick={() => void createDraftRelease()} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-cyan-700"><Plus size={12} />{zh ? '新建草稿' : 'New draft'}</button>}
-                              {canWrite && activeRelease?.status === 'DRAFT' && <button type="button" onClick={() => void deleteDraftRelease()} disabled={releaseDeleting} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={12} />{releaseDeleting ? (zh ? '删除中' : 'Deleting') : (zh ? '删除草稿' : 'Delete draft')}</button>}
+                              {canWrite && isCustomProfile && <button type="button" onClick={() => void createDraftRelease()} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-cyan-700"><Plus size={12} />{zh ? '新建草稿' : 'New draft'}</button>}
+                              {canWrite && isCustomProfile && activeRelease?.status === 'DRAFT' && <button type="button" onClick={() => void deleteDraftRelease()} disabled={releaseDeleting} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={12} />{releaseDeleting ? (zh ? '删除中' : 'Deleting') : (zh ? '删除草稿' : 'Delete draft')}</button>}
                             </div>
                           </div>
                           {activeRelease?.status === 'DRAFT' && <div className="mt-2 flex items-center gap-1.5 text-[10px] text-cyan-700"><Save size={12} />{zh ? '修改命令或 TextFSM 后，点击动作行内的“保存命令”；保存只更新当前 action_code。' : 'Edit the command or TextFSM, then use the row “Save command” button; only the current action_code is updated.'}</div>}
@@ -1336,7 +1441,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                                       <button type="button" onClick={() => void saveActionMapping(action)} disabled={actionSaving} className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-2 text-[10px] font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"><Save size={12} />{actionSaving ? (zh ? '保存中' : 'Saving') : (zh ? '保存命令' : 'Save command')}</button>
                                       <button type="button" onClick={() => setEditingActionCode('')} className="rounded-lg px-2.5 py-2 text-[10px] font-semibold text-slate-500 hover:bg-slate-100">{zh ? '取消' : 'Cancel'}</button>
                                     </div>
-                                  ) : canWrite && activeRelease?.status === 'DRAFT' ? (
+                                  ) : canWrite && isCustomProfile && activeRelease?.status === 'DRAFT' ? (
                                     <button type="button" aria-label={zh ? '编辑命令/解析版本' : 'Edit command/parser'} onClick={() => { const currentVersion = parserVersions.find((version) => version.id === action.parser_template_version_id); setEditingActionCode(action.action_code); setEditingCommand(action.command || ''); setEditingParserVersionId(currentVersion && parserVersionMatchesCommand(currentVersion, action.command) ? currentVersion.id : ''); }} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[10px] font-semibold text-cyan-700 transition hover:border-cyan-400 hover:bg-cyan-50"><Save size={12} />{zh ? '编辑此动作的命令和解析版本' : 'Edit this action command and parser'}</button>
                                   ) : null}
                                 </div>
@@ -1363,12 +1468,12 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                               <span>{zh ? '验证' : 'Validation'}：{statusLabel(release.validation_status, zh)}</span>
                             </div>
                             {release.checksum && <div className="mt-2 break-all font-mono text-[9px] text-slate-400">checksum: {release.checksum}</div>}
-                            {(canWrite || canReview) && (
+                            {((canWrite && isCustomProfile) || (canReview && isCustomProfile)) && (
                               <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-                                {canWrite && release.status === 'DRAFT' && <><button type="button" onClick={() => void transitionRelease(release.id, 'validate')} className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200 hover:bg-cyan-50">{zh ? '验证' : 'Validate'}</button><button type="button" onClick={() => void transitionRelease(release.id, 'submit')} className="rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-cyan-700">{zh ? '提交审批' : 'Submit'}</button></>}
+                                {canWrite && isCustomProfile && release.status === 'DRAFT' && <><button type="button" onClick={() => void transitionRelease(release.id, 'validate')} className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 ring-1 ring-cyan-200 hover:bg-cyan-50">{zh ? '验证' : 'Validate'}</button><button type="button" onClick={() => void transitionRelease(release.id, 'submit')} className="rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-cyan-700">{zh ? '提交审批' : 'Submit'}</button></>}
                                 {releaseWithdrawAllowed(release) && <button type="button" onClick={() => void transitionRelease(release.id, 'withdraw')} className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-200 hover:bg-amber-50">{zh ? '撤回到草稿' : 'Withdraw'}</button>}
-                                {canReview && release.status === 'IN_REVIEW' && <><button type="button" onClick={() => { setRejectReleaseReason(''); setRejectReleaseId(release.id); }} disabled={releaseSelfReviewBlocked(release)} title={releaseSelfReviewBlocked(release) ? (zh ? '创建人不能审核自己的 Release，请由另一位具备审批权限的管理员处理。' : 'The creator cannot review their own Release; ask another authorized reviewer.') : undefined} className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">{zh ? '驳回' : 'Reject'}</button><button type="button" onClick={() => void transitionRelease(release.id, 'approve')} disabled={releaseSelfReviewBlocked(release)} title={releaseSelfReviewBlocked(release) ? (zh ? '创建人不能审核自己的 Release，请由另一位具备审批权限的管理员处理。' : 'The creator cannot review their own Release; ask another authorized reviewer.') : undefined} className="rounded-lg bg-amber-500 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50">{zh ? '批准' : 'Approve'}</button>{releaseSelfReviewBlocked(release) && <span className="self-center text-[10px] text-rose-600">{zh ? '创建人不能自审批' : 'Creator cannot self-review'}</span>}</>}
-                                {canReview && release.status === 'APPROVED' && <button type="button" onClick={() => void transitionRelease(release.id, 'publish')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-emerald-700">{zh ? '发布' : 'Publish'}</button>}
+                                {canReview && isCustomProfile && release.status === 'IN_REVIEW' && <><button type="button" onClick={() => { setRejectReleaseReason(''); setRejectReleaseId(release.id); }} disabled={releaseSelfReviewBlocked(release)} title={releaseSelfReviewBlocked(release) ? (zh ? '创建人不能审核自己的 Release，请由另一位具备审批权限的管理员处理。' : 'The creator cannot review their own Release; ask another authorized reviewer.') : undefined} className="rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">{zh ? '驳回' : 'Reject'}</button><button type="button" onClick={() => void transitionRelease(release.id, 'approve')} disabled={releaseSelfReviewBlocked(release)} title={releaseSelfReviewBlocked(release) ? (zh ? '创建人不能审核自己的 Release，请由另一位具备审批权限的管理员处理。' : 'The creator cannot review their own Release; ask another authorized reviewer.') : undefined} className="rounded-lg bg-amber-500 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50">{zh ? '批准' : 'Approve'}</button>{releaseSelfReviewBlocked(release) && <span className="self-center text-[10px] text-rose-600">{zh ? '创建人不能自审批' : 'Creator cannot self-review'}</span>}</>}
+                                {canReview && isCustomProfile && release.status === 'APPROVED' && <button type="button" onClick={() => void transitionRelease(release.id, 'publish')} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-emerald-700">{zh ? '发布' : 'Publish'}</button>}
                               </div>
                             )}
                           </div>

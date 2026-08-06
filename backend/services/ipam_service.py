@@ -477,7 +477,7 @@ def _load_interface_prefix_candidates(conn) -> dict:
                   d.site_id, d.tenant_id, d.platform, d.device_type_id
            FROM interfaces i
            JOIN devices d ON d.id = i.device_id
-            WHERE (COALESCE(i.is_l3, FALSE) = TRUE OR COALESCE(i.ip_enabled, 0) = 1)
+            WHERE (COALESCE(i.is_l3, 0) = 1 OR COALESCE(i.ip_enabled, 0) = 1)
              AND (COALESCE(i.primary_ip, '') <> '' OR COALESCE(i.ip_address, '') <> '')
            ORDER BY d.hostname, i.interface_name'''
     ).fetchall()

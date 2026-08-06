@@ -9,6 +9,7 @@ from api.platform_registry import (
     PlatformActionUpdateRequest,
     PlatformBatchBindingRequest,
     PlatformProfileCreateRequest,
+    PlatformProfileUpdateRequest,
     PlatformReleaseCreateRequest,
     PlatformRollbackRequest,
     _require_registry_enabled,
@@ -50,6 +51,7 @@ def test_platform_write_request_models_reject_unknown_fields_and_bound_values():
     assert profile.model_dump()["platform_code"] == "tenant_edge"
     assert PlatformReleaseCreateRequest().safety_policy == {"read_only": True}
     assert PlatformRollbackRequest(release_id="release-1").release_id == "release-1"
+    assert PlatformProfileUpdateRequest(name_en="Updated name").name_en == "Updated name"
     assert PlatformActionUpdateRequest(command="show version").command == "show version"
 
     with pytest.raises(ValidationError):
@@ -88,7 +90,7 @@ def test_operator_cannot_approve_publish_or_rollback_resources():
 
 def test_permission_catalog_exposes_reviewed_resource_actions_and_roles():
     catalog = permission_catalog()
-    assert catalog["platform"] == ["approve", "bind_device", "create", "edit_draft", "publish", "rollback", "submit", "view"]
+    assert catalog["platform"] == ["approve", "bind_device", "create", "delete", "edit_draft", "publish", "rollback", "submit", "update", "view"]
     assert "delete" in catalog["textfsm"]
     assert catalog["sample_output"] == ["delete", "upload", "view"]
     assert "Template Developer" in RECOMMENDED_ROLE_PROFILES

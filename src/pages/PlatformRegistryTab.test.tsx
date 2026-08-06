@@ -45,20 +45,28 @@ describe('PlatformRegistryTab', () => {
 
   it('renders the default read-only state for Viewer', async () => {
     render(<MemoryRouter><PlatformRegistryTab language="zh" currentUser={{ role: 'Viewer' }} /></MemoryRouter>);
-    expect(await screen.findByText('平台注册表')).toBeTruthy();
+    expect(await screen.findByText('平台注册')).toBeTruthy();
     expect(screen.getByText('当前阶段为只读审查模式')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '新建平台' })).toBeNull();
   });
 
   it('opens and completes the three-step create wizard for Platform Maintainer', async () => {
     vi.unstubAllGlobals();
-    installPlatformFetch(true);
+    installPlatformFetch(true, [
+      { id: 'system-cisco', platform_code: 'cisco_ios', name_zh: 'Cisco IOS', name_en: 'Cisco IOS', vendor: 'Cisco', source: 'SYSTEM', status: 'ACTIVE' },
+      { id: 'system-huawei', platform_code: 'huawei_vrp', name_zh: 'Huawei VRP', name_en: 'Huawei VRP', vendor: 'Huawei', source: 'SYSTEM', status: 'ACTIVE' },
+    ]);
     const user = userEvent.setup();
     render(<MemoryRouter><PlatformRegistryTab language="zh" currentUser={{ role: 'Operator', role_profile: 'Platform Maintainer' }} /></MemoryRouter>);
 
-    await screen.findByText('平台注册表');
-    await user.click(screen.getByRole('button', { name: '新建平台' }));
+    await screen.findByText('平台注册');
+    await user.click(screen.getByRole('button', { name: '新建自定义平台' }));
     expect(screen.getByRole('dialog')).toBeTruthy();
+    const vendorPicker = screen.getByRole('combobox', { name: '厂商' });
+    expect(vendorPicker).toBeTruthy();
+    expect(Array.from((vendorPicker as HTMLSelectElement).options).some((option) => option.value === 'Cisco')).toBe(true);
+    await user.selectOptions(vendorPicker, 'Huawei');
+    expect((vendorPicker as HTMLSelectElement).value).toBe('Huawei');
     await user.click(screen.getByRole('button', { name: '下一步' }));
     expect(screen.getByText(/连接与解析/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: '下一步' }));
@@ -67,6 +75,39 @@ describe('PlatformRegistryTab', () => {
     expect(screen.getAllByRole('option', { name: '系统' }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByRole('option', { name: '自定义' }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole('button', { name: '创建平台' })).toBeTruthy();
+  });
+
+  it('shows custom CRUD controls and marks built-in CRUD controls as read-only', async () => {
+    vi.unstubAllGlobals();
+    const customProfile = {
+      id: 'profile-crud',
+      platform_code: 'crud_lab',
+      parser_platform: 'cisco_ios',
+      connection_driver: 'netmiko',
+      name_zh: '自定义平台',
+      name_en: 'Custom platform',
+      vendor: 'Acme',
+      source: 'CUSTOM',
+      status: 'ACTIVE',
+      bound_device_count: 0,
+      current_release_id: null,
+    };
+    installPlatformFetch(true, [customProfile], { ...customProfile, releases: [] });
+    const user = userEvent.setup();
+    render(<MemoryRouter><PlatformRegistryTab language="zh" currentUser={{ role: 'Operator' }} /></MemoryRouter>);
+
+    await screen.findByRole('heading', { name: '自定义平台' });
+    expect((screen.getByRole('button', { name: '编辑平台' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: '删除平台' }) as HTMLButtonElement).disabled).toBe(false);
+
+    cleanup();
+    vi.unstubAllGlobals();
+    installPlatformFetch(true, [{ ...customProfile, id: 'system-crud', source: 'SYSTEM', name_zh: '系统平台', name_en: 'System platform' }], { ...customProfile, id: 'system-crud', source: 'SYSTEM', name_zh: '系统平台', name_en: 'System platform', releases: [] });
+    render(<MemoryRouter><PlatformRegistryTab language="zh" currentUser={{ role: 'Operator' }} /></MemoryRouter>);
+
+    await screen.findByRole('heading', { name: '系统平台' });
+    expect((screen.getByRole('button', { name: '编辑平台' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: '删除平台' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('offers only compatible published parser versions and sends the replacement id', async () => {

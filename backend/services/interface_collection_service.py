@@ -349,7 +349,7 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
                 conn.execute(
                     """UPDATE interfaces SET
                            primary_ip = '', ip_address = '', ip_prefix_length = NULL,
-                           is_l3 = FALSE, ip_enabled = 0,
+                           is_l3 = 0, ip_enabled = 0,
                            admin_status = 'unknown', oper_status = 'unknown',
                            last_seen = ?
                        WHERE id = ?""",
@@ -358,9 +358,9 @@ def _upsert_interfaces(device: dict[str, Any], interface_rows: list[dict[str, An
         for item in interface_rows:
             detected_interface_type = infer_interface_type(item.get("interface_name"))
             interface_ip = item.get("interface_ip") or ""
-            l3_enabled = bool(interface_ip) or detected_interface_type in {
+            l3_enabled = int(bool(interface_ip) or detected_interface_type in {
                 "svi", "loopback", "tunnel", "sub_interface"
-            }
+            })
             ip_enabled = 1 if interface_ip else 0
             default_mode = "l3" if detected_interface_type in {
                 "svi", "loopback", "tunnel", "sub_interface"

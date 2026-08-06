@@ -123,6 +123,8 @@ export function getRouteContext(pathname: string): RouteContext {
       automationPage = 'textfsm-templates';
     } else if (second === 'textfsm-registry') {
       automationPage = 'textfsm-registry';
+    } else if (second === 'platforms') {
+      activeTab = 'platform-registry';
     } else if (second === 'scripts') {
       automationPage = 'scripts';
     } else {
@@ -144,14 +146,12 @@ export function getRouteContext(pathname: string): RouteContext {
       activeTab = 'capacity';
     }
   }
-  // 10. Platform Management (/management/...)
+  // 10. Management (/management/...)
   else if (first === 'management') {
     if (second === 'audit') {
       activeTab = 'audit';
     } else if (second === 'users') {
       activeTab = 'users';
-    } else if (second === 'platforms') {
-      activeTab = 'platform-registry';
     } else if (second === 'credentials') {
       activeTab = 'credentials';
     } else {

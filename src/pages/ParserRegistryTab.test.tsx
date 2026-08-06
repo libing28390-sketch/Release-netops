@@ -257,7 +257,7 @@ describe('ParserRegistryTab', () => {
     expect(screen.getByText(/Cisco IOS · v3 PUBLISHED/)).toBeTruthy();
     const platformRegistryLink = screen.getByRole('link', { name: /Edit in Platform Registry/ });
     expect(platformRegistryLink.getAttribute('href')).toBe(
-      '/management/platforms?detail=mappings&profile_id=profile-cisco-1&release_id=release-cisco-1',
+      '/automation/platforms?detail=mappings&profile_id=profile-cisco-1&release_id=release-cisco-1',
     );
     expect(platformRegistryLink.getAttribute('target')).toBe('_blank');
     expect(platformRegistryLink.getAttribute('rel')).toBe('noopener noreferrer');

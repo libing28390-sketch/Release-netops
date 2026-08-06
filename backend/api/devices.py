@@ -44,6 +44,49 @@ def _vendor_from_platform(platform: str) -> str:
     if 'juniper' in p or 'junos' in p:
         return 'Juniper'
     return ''
+
+
+def _resolve_platform_binding(
+    conn,
+    platform_profile_id: object,
+    fallback_platform: object,
+    *,
+    existing: dict | None = None,
+    clear_existing: bool = False,
+) -> tuple[str, str, str, int]:
+    """Resolve a concrete registry profile while keeping legacy device writes valid.
+
+    ``platform`` is the device-facing platform code used by older consumers;
+    ``platform_profile_id`` is the concrete product/version identity from the
+    platform registry.  The form submits both when a registry profile is
+    selected, so the backend must make the profile code authoritative and
+    persist the binding atomically with the device row.
+    """
+    submitted = platform_profile_id
+    if submitted is None and existing is not None and not clear_existing:
+        submitted = existing.get('platform_profile_id')
+
+    profile_id = str(submitted or '').strip()
+    if profile_id:
+        profile = conn.execute(
+            'SELECT id, platform_code, status FROM platform_profiles WHERE id = ?',
+            (profile_id,),
+        ).fetchone()
+        if not profile:
+            raise HTTPException(status_code=400, detail='Platform profile not found')
+        if str(profile['status'] or '').upper() == 'ARCHIVED':
+            raise HTTPException(status_code=400, detail='Archived platform profiles cannot be assigned to devices')
+        return str(profile['platform_code']), profile_id, 'MANUAL', 0
+
+    platform = str(fallback_platform or '').strip() or 'cisco_ios'
+    if existing is not None and platform_profile_id is None and not clear_existing:
+        return (
+            platform,
+            str(existing.get('platform_profile_id') or ''),
+            str(existing.get('platform_source') or 'LEGACY'),
+            int(existing.get('platform_locked') or 0),
+        )
+    return platform, '', 'LEGACY', 0
   
   
 def _record_instant_execution(
@@ -633,7 +676,8 @@ def read_devices(
                 'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.sn, d.model, d.version, '
                 'd.role, d.site, d.uptime, d.connection_method, d.cpu_usage, d.memory_usage, d.temp, '
                 'd.site_id, d.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor, '
-                'd.device_category, d.management_port, d.lifecycle_status'
+                'd.device_category, d.management_port, d.lifecycle_status, '
+                'd.platform_profile_id, d.platform_source, d.platform_locked'
                 + asset_cols
             )
 
@@ -690,6 +734,15 @@ def read_devices(
 def create_device(device: dict = Body(...)):
     conn = get_db_connection()
     device_id = device.get('id') or str(uuid.uuid4())
+    try:
+        platform, platform_profile_id, platform_source, platform_locked = _resolve_platform_binding(
+            conn,
+            device.get('platform_profile_id'),
+            device.get('platform'),
+        )
+    except HTTPException:
+        conn.close()
+        raise
     cred_source = (device.get('credential_source') or 'local').lower()
     vault_path = device.get('vault_path', '')
 
@@ -732,14 +785,15 @@ def create_device(device: dict = Body(...)):
                 sn, model, version, role, site, uptime, connection_method, snmp_community, 
                 snmp_port, lifecycle_status, enable_password, priv_username, credential_source, 
                 vault_path, normal_username, normal_password, admin_username, admin_password, auth_model,
-                device_category, power_watts, credential_id
+                device_category, power_watts, credential_id, platform_profile_id,
+                platform_source, platform_locked
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             device_id,
             device.get('hostname'),
             device.get('ip_address'),
-            device.get('platform'),
+            platform,
             device.get('status', 'pending'),
             device.get('compliance', 'unknown'),
             device.get('username'),
@@ -765,7 +819,10 @@ def create_device(device: dict = Body(...)):
             device.get('auth_model', 'single'),
             device.get('device_category', ''),
             int(device.get('power_watts') or 0),
-            credential_id
+            credential_id,
+            platform_profile_id or None,
+            platform_source,
+            platform_locked,
         ))
         conn.execute(
             'UPDATE devices SET site_id = ? WHERE id = ?',
@@ -788,7 +845,7 @@ def create_device(device: dict = Body(...)):
             target_id=device_id,
             target_name=device.get('hostname'),
             device_id=device_id,
-            details={'ip_address': device.get('ip_address'), 'platform': device.get('platform')},
+            details={'ip_address': device.get('ip_address'), 'platform': platform, 'platform_profile_id': platform_profile_id or None},
         )
         return _sanitize_device_item(dict(new_device))
     except Exception as e:
@@ -856,6 +913,20 @@ def update_device(device_id: str, device: dict = Body(...)):
         existing_row = conn.execute('SELECT * FROM devices WHERE id = ?', (device_id,)).fetchone()
         if not existing_row:
             raise HTTPException(status_code=404, detail='Device not found')
+
+        existing_device = dict(existing_row)
+        clear_platform_binding = (
+            'platform_profile_id' in device
+            and device.get('platform_profile_id') in (None, '')
+            and str(device.get('platform_source') or '').upper() == 'LEGACY'
+        )
+        platform, platform_profile_id, platform_source, platform_locked = _resolve_platform_binding(
+            conn,
+            device.get('platform_profile_id'),
+            device.get('platform', existing_row['platform']),
+            existing=existing_device,
+            clear_existing=clear_platform_binding,
+        )
 
         cred_source = (device.get('credential_source') or existing_row['credential_source'] or 'local').lower()
         vault_path = device.get('vault_path', '')
@@ -926,7 +997,7 @@ def update_device(device_id: str, device: dict = Body(...)):
         ''', (
             device.get('hostname', ''),
             device.get('ip_address', ''),
-            device.get('platform', 'cisco_ios'),
+            platform,
             device.get('sn', ''),
             device.get('model', ''),
             device.get('version', ''),
@@ -955,6 +1026,12 @@ def update_device(device_id: str, device: dict = Body(...)):
             device_id
         ))
         conn.execute(
+            '''UPDATE devices
+               SET platform_profile_id = ?, platform_source = ?, platform_locked = ?
+               WHERE id = ?''',
+            (platform_profile_id or None, platform_source, platform_locked, device_id),
+        )
+        conn.execute(
             'UPDATE devices SET site_id = ? WHERE id = ?',
             (_resolve_device_site_id(conn, device.get('site_id'), device.get('site')), device_id),
         )
@@ -967,7 +1044,11 @@ def update_device(device_id: str, device: dict = Body(...)):
 
         # Track lifecycle transition in audit details
         old_lifecycle = existing_row['lifecycle_status'] or 'staging'
-        audit_details: dict = {'ip_address': device.get('ip_address'), 'platform': device.get('platform')}
+        audit_details: dict = {
+            'ip_address': device.get('ip_address'),
+            'platform': platform,
+            'platform_profile_id': platform_profile_id or None,
+        }
         if old_lifecycle != new_lifecycle:
             audit_details['lifecycle_transition'] = f"{old_lifecycle} → {new_lifecycle}"
 
@@ -986,6 +1067,8 @@ def update_device(device_id: str, device: dict = Body(...)):
             details=audit_details,
         )
         return {"status": "success"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:

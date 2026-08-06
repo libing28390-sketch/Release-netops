@@ -41,25 +41,109 @@ export const EMPTY_FORM = {
   tag_ids: [] as string[],
 };
 
+/**
+ * Canonical asset vendor catalog.  Keep this list broader than the current
+ * driver registry: selecting a vendor records the asset identity, while the
+ * concrete automation/parser support is still determined by the platform
+ * profile selected below it.
+ */
+export const NETWORK_VENDOR_NAMES = [
+  'Cisco', 'Huawei', 'H3C', 'Arista', 'Juniper', 'Ruijie', 'ZTE', 'Maipu',
+  'DPtech', 'DCN', 'FiberHome', 'Nokia', 'Aruba', 'Extreme Networks',
+  'Ruckus', 'MikroTik', 'Ubiquiti', 'D-Link', 'TP-Link', 'Dell', 'Brocade',
+  'Ciena', 'Alcatel-Lucent Enterprise', 'Allied Telesis', 'Edgecore',
+] as const;
+
+export const SECURITY_VENDOR_NAMES = [
+  'Fortinet', 'Palo Alto', 'Hillstone', 'Sangfor', 'Check Point', 'Sophos',
+  'SonicWall', 'WatchGuard', 'F5', 'A10 Networks', 'Barracuda', 'Venustech',
+  'NSFOCUS', 'Topsec', 'Qi An Xin',
+] as const;
+
+export const NETWORK_VENDOR_GROUPS = [
+  { key: 'network', labelZh: '网络设备厂商', labelEn: 'Network vendors', vendors: NETWORK_VENDOR_NAMES },
+  { key: 'security', labelZh: '网络安全厂商', labelEn: 'Security vendors', vendors: SECURITY_VENDOR_NAMES },
+] as const;
+
+export const ALL_VENDOR_NAMES = [...NETWORK_VENDOR_NAMES, ...SECURITY_VENDOR_NAMES] as const;
+
+/**
+ * Import aliases keep the human-friendly values used in Excel templates
+ * compatible with the canonical vendor names stored by the asset API.
+ */
+export const VENDOR_IMPORT_ALIASES: Record<string, string> = {
+  '思科': 'Cisco',
+  '华为': 'Huawei',
+  '华三': 'H3C',
+  '阿里斯塔': 'Arista',
+  '瞻博': 'Juniper',
+  '锐捷': 'Ruijie',
+  '中兴': 'ZTE',
+  '迈普': 'Maipu',
+  '迪普': 'DPtech',
+  '神州数码': 'DCN',
+  '烽火': 'FiberHome',
+  '诺基亚': 'Nokia',
+  '极进': 'Extreme Networks',
+  '山石': 'Hillstone',
+  '深信服': 'Sangfor',
+  '检查点': 'Check Point',
+  '奇安信': 'Qi An Xin',
+  '天融信': 'Topsec',
+  '绿盟': 'NSFOCUS',
+  '启明星辰': 'Venustech',
+  '飞塔': 'Fortinet',
+  '帕洛阿尔托': 'Palo Alto',
+};
+
 export const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]> = {
-  Cisco:      [{ value: 'cisco_ios', label: 'Cisco IOS' }, { value: 'cisco_nxos', label: 'Cisco NX-OS' }, { value: 'cisco_xe', label: 'Cisco IOS-XE' }],
-  Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRPv5' }, { value: 'huawei_vrpv8', label: 'Huawei VRPv8' }],
+  Cisco:      [{ value: 'cisco_ios', label: 'Cisco IOS' }, { value: 'cisco_nxos', label: 'Cisco NX-OS' }, { value: 'cisco_xe', label: 'Cisco IOS-XE' }, { value: 'cisco_iosxr', label: 'Cisco IOS-XR' }, { value: 'cisco_asa', label: 'Cisco ASA/Firepower' }],
+  Huawei:     [{ value: 'huawei_vrp', label: 'Huawei VRPv5' }, { value: 'huawei_vrpv8', label: 'Huawei VRPv8' }, { value: 'huawei_smartax', label: 'Huawei SmartAX' }, { value: 'huawei_usg', label: 'Huawei USG' }],
   H3C:        [
     { value: 'hp_comware', label: 'H3C Comware V5' },
     { value: 'h3c_comware', label: 'H3C Comware V7' },
     { value: 'h3c_comware9', label: 'H3C Comware V9' },
   ],
   Arista:     [{ value: 'arista_eos', label: 'Arista EOS' }],
-  Juniper:    [{ value: 'juniper_junos', label: 'Juniper JunOS' }],
-  Ruijie:     [{ value: 'ruijie_rgos', label: 'Ruijie RGOS' }],
+  Juniper:    [{ value: 'juniper_junos', label: 'Juniper JunOS' }, { value: 'juniper_srx', label: 'Juniper SRX' }],
+  Ruijie:     [{ value: 'ruijie_rgos', label: 'Ruijie RGOS' }, { value: 'ruijie_os', label: 'Ruijie OS' }],
   Fortinet:   [{ value: 'fortinet', label: 'FortiOS' }],
   'Palo Alto':[{ value: 'paloalto_panos', label: 'PAN-OS' }],
+  Hillstone:  [{ value: 'hillstone_stoneos', label: 'Hillstone StoneOS' }],
+  Sangfor:    [{ value: 'sangfor_ngaf', label: 'Sangfor NGAF / Network Secure' }],
+  'Check Point': [{ value: 'check_point_gaia', label: 'Check Point Gaia' }],
+  Sophos:     [{ value: 'sophos_firewall', label: 'Sophos Firewall' }],
+  SonicWall:  [{ value: 'sonicwall_sonicos', label: 'SonicOS' }],
+  WatchGuard: [{ value: 'watchguard_fireware', label: 'WatchGuard Fireware' }],
+  F5:         [{ value: 'f5_bigip', label: 'F5 BIG-IP' }],
+  'A10 Networks': [{ value: 'a10_acos', label: 'A10 ACOS' }],
+  Barracuda:  [{ value: 'barracuda_cloudgen', label: 'Barracuda CloudGen Firewall' }],
+  Venustech:  [{ value: 'venustech_usg', label: 'Venustech USG' }],
+  NSFOCUS:    [{ value: 'nsfocus_firewall', label: 'NSFOCUS Firewall/WAF' }],
+  Topsec:     [{ value: 'topsec_firewall', label: 'Topsec Firewall' }],
+  'Qi An Xin': [{ value: 'qianxin_firewall', label: 'Qi An Xin Firewall' }],
   ZTE:        [{ value: 'zte_zxros', label: 'ZTE ZXROS' }],
   Maipu:      [{ value: 'maipu', label: 'Maipu Network OS' }],
   DPtech:     [
     { value: 'dptech_conplat', label: 'DPTech Conplat (Switch)' },
     { value: 'dptech_conplat_fw', label: 'DPTech Conplat FW (Firewall)' },
   ],
+  DCN:        [{ value: 'dcn_network', label: 'DCN Network OS' }],
+  FiberHome:  [{ value: 'fiberhome_fengine', label: 'FiberHome Fengine' }],
+  Nokia:      [{ value: 'nokia_sros', label: 'Nokia SR OS' }],
+  Aruba:      [{ value: 'aruba_aos_cx', label: 'Aruba AOS-CX' }, { value: 'aruba_aos', label: 'Aruba AOS' }],
+  'Extreme Networks': [{ value: 'extreme_exos', label: 'Extreme EXOS' }, { value: 'extreme_voss', label: 'Extreme VOSS' }],
+  Ruckus:     [{ value: 'ruckus_fastiron', label: 'Ruckus FastIron' }],
+  MikroTik:   [{ value: 'mikrotik_routeros', label: 'MikroTik RouterOS' }],
+  Ubiquiti:   [{ value: 'ubiquiti_edgeswitch', label: 'Ubiquiti EdgeOS/EdgeSwitch' }, { value: 'ubiquiti_unifi', label: 'Ubiquiti UniFi' }],
+  'D-Link':   [{ value: 'dlink_network', label: 'D-Link Network' }],
+  'TP-Link':  [{ value: 'tplink_omada', label: 'TP-Link Omada' }],
+  Dell:       [{ value: 'dell_os10', label: 'Dell OS10' }],
+  Brocade:    [{ value: 'brocade_fastiron', label: 'Brocade FastIron' }],
+  Ciena:      [{ value: 'ciena_saos', label: 'Ciena SAOS' }],
+  'Alcatel-Lucent Enterprise': [{ value: 'ale_aos', label: 'ALE AOS' }],
+  'Allied Telesis': [{ value: 'allied_telesis_awplus', label: 'AlliedWare Plus' }],
+  Edgecore:   [{ value: 'edgecore_ocnos', label: 'Edgecore OcNOS' }],
 };
 
 export const SERVER_PLATFORMS = [
@@ -82,6 +166,10 @@ export const uniquePlatforms = (items: { value: string; label: string }[]) => {
 };
 
 export const ALL_PLATFORMS = uniquePlatforms([...Object.values(VENDOR_PLATFORMS).flat(), ...SERVER_PLATFORMS]);
+
+export const NETWORK_PLATFORM_PLATFORMS = uniquePlatforms(
+  [...NETWORK_VENDOR_NAMES, ...SECURITY_VENDOR_NAMES].flatMap(vendor => VENDOR_PLATFORMS[vendor] || []),
+);
 
 export const getPlatformsForVendor = (vendor?: string) => {
   if (!vendor) return ALL_PLATFORMS;
@@ -147,9 +235,13 @@ export const COL_MAP: Record<string, string> = {
 
 export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
   vendor: {
+    ...VENDOR_IMPORT_ALIASES,
     '思科': 'Cisco', '华为': 'Huawei', '华三': 'H3C', '阿里斯塔': 'Arista',
     '瞻博': 'Juniper', '锐捷': 'Ruijie', '飞塔': 'Fortinet', '帕洛阿尔托': 'Palo Alto',
     '中兴': 'ZTE', '迈普': 'Maipu', '迪普': 'DPtech', '迪普科技': 'DPtech', 'DPTech': 'DPtech', 'DPtech': 'DPtech', 'dptech': 'DPtech',
+    '神州数码': 'DCN', '烽火': 'FiberHome', '诺基亚': 'Nokia', '极进': 'Extreme Networks',
+    '山石': 'Hillstone', '深信服': 'Sangfor', '检查点': 'Check Point', '奇安信': 'Qi An Xin',
+    '天融信': 'Topsec', '绿盟': 'NSFOCUS', '启明星辰': 'Venustech', '飞塔科技': 'Fortinet',
     '戴尔': 'Dell', '惠普': 'HP', '联想': 'Lenovo',
     '浪潮': 'Inspur', '通用服务器': 'Generic Server',
   },
@@ -216,3 +308,25 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     'SD-WAN边缘': 'sdwan_edge', 'VPN网关': 'vpn_gateway', '其他网络设备': 'other_network', '其他': 'other',
   },
 };
+
+// Accept both the canonical platform code and the display label shown in the
+// platform catalog. This keeps imports forward-compatible as new vendors are
+// added to VENDOR_PLATFORMS.
+for (const platform of ALL_PLATFORMS) {
+  IMPORT_VALUE_MAP.platform[platform.value] = platform.value;
+  IMPORT_VALUE_MAP.platform[platform.label] = platform.value;
+}
+
+export const NETWORK_IMPORT_VENDOR_VALUES = Array.from(new Set([
+  ...NETWORK_VENDOR_NAMES,
+  ...SECURITY_VENDOR_NAMES,
+  ...Object.keys(VENDOR_IMPORT_ALIASES),
+]));
+
+const networkPlatformCodes = new Set(NETWORK_PLATFORM_PLATFORMS.map(platform => platform.value));
+export const NETWORK_IMPORT_PLATFORM_VALUES = Array.from(new Set([
+  ...NETWORK_PLATFORM_PLATFORMS.flatMap(platform => [platform.value, platform.label]),
+  ...Object.entries(IMPORT_VALUE_MAP.platform)
+    .filter(([, value]) => networkPlatformCodes.has(value))
+    .map(([label]) => label),
+]));

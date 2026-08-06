@@ -122,9 +122,9 @@ def test_locator_uses_lldp_uplink_when_gateway_is_on_the_access_switch(isolated_
     )
     conn.execute(
         """INSERT INTO prefixes
-           (id, prefix, gateway, status, gateway_device_id)
-           VALUES (?, ?, ?, ?, ?)""",
-        ("prefix-locator-uplink", "172.16.5.0/24", "172.16.5.1", "active", "device-access-gw"),
+           (id, prefix, prefix_cidr, gateway, status, gateway_device_id)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("prefix-locator-uplink", "172.16.5.0/24", "172.16.5.0/24", "172.16.5.1", "active", "device-access-gw"),
     )
     conn.execute(
         """INSERT INTO network_endpoints

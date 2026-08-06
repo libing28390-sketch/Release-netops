@@ -19,11 +19,13 @@ interface DeviceFormModalProps {
 }
 
 interface RegistryPlatformOption {
+  id: string;
   platform_code: string;
   name_zh?: string;
   name_en?: string;
   vendor?: string;
   source?: string;
+  status?: string;
 }
 
 const PLATFORM_OPTIONS = [
@@ -138,6 +140,31 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
       })),
   ];
 
+  const selectedPlatformValue = form.platform_profile_id || form.platform || 'cisco_ios';
+  const selectedRegistryProfile = registryPlatforms.find((profile) => profile.id === form.platform_profile_id);
+  const missingRegistryProfile = form.platform_profile_id && !selectedRegistryProfile;
+
+  const handlePlatformChange = (value: string) => {
+    const profile = registryPlatforms.find((item) => item.id === value);
+    if (profile) {
+      onFormChange({
+        ...form,
+        platform: profile.platform_code,
+        platform_profile_id: profile.id,
+        platform_source: 'MANUAL',
+        platform_locked: false,
+      });
+      return;
+    }
+    onFormChange({
+      ...form,
+      platform: value,
+      platform_profile_id: null,
+      platform_source: 'LEGACY',
+      platform_locked: false,
+    });
+  };
+
   const handleFieldChange = <K extends keyof Device>(key: K, value: Device[K] | string | number | undefined) => {
     onFormChange({ ...form, [key]: value });
   };
@@ -200,17 +227,49 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Software / Platform</label>
+              <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">
+                {language === 'zh' ? '设备平台（注册表）' : 'Device Platform (Registry)'}
+                <a
+                  href="/automation/platforms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-2 normal-case tracking-normal text-cyan-600 hover:text-cyan-800"
+                >
+                  {language === 'zh' ? '管理平台' : 'Manage platforms'}
+                </a>
+              </label>
               <select
-                value={form.platform || 'cisco_ios'}
-                title="Device platform"
-                onChange={(event) => handleFieldChange('platform', event.target.value)}
+                value={selectedPlatformValue}
+                title={language === 'zh' ? '选择设备平台' : 'Select device platform'}
+                onChange={(event) => handlePlatformChange(event.target.value)}
                 className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
               >
-                {platformOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
+                {missingRegistryProfile && (
+                  <option value={form.platform_profile_id || ''}>
+                    {form.platform || form.platform_profile_id}
+                  </option>
+                )}
+                {registryPlatforms.length > 0 && (
+                  <optgroup label={language === 'zh' ? '平台注册' : 'Platform Registry'}>
+                    {registryPlatforms.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {language === 'zh' ? (profile.name_zh || profile.name_en || profile.platform_code) : (profile.name_en || profile.name_zh || profile.platform_code)}
+                        {profile.vendor ? ` · ${profile.vendor}` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                <optgroup label={language === 'zh' ? '兼容驱动（未绑定注册表）' : 'Legacy driver (unbound)'}>
+                  {platformOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </optgroup>
               </select>
+              <p className="mt-1 text-[10px] text-black/40">
+                {selectedRegistryProfile
+                  ? (language === 'zh' ? `已绑定：${selectedRegistryProfile.platform_code}` : `Bound to ${selectedRegistryProfile.platform_code}`)
+                  : (language === 'zh' ? '选择注册表平台后，设备会绑定到具体产品/版本。' : 'Choose a registry profile to bind the concrete product/version.')}
+              </p>
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Role</label>

@@ -13,6 +13,7 @@ from core.rbac import authorize_resource
 from services.platform_registry_service import (
     PlatformRegistryError,
     _assert_profile_access,
+    _assert_profile_active,
     _row_dict,
     platform_codes_match,
 )
@@ -476,14 +477,20 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
         raise _scope_denied("PLATFORM_BIND_FORCE_FORBIDDEN")
     conn = get_db_connection()
     try:
-        device = _load_device(conn, device_id, user, lock=True)
-        if device.get("platform_locked") and not force:
-            raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", "Device platform binding is locked", status_code=409)
+        import database as database_module
+        if database_module._USE_PG:
+            conn.execute("SELECT id FROM platform_profiles WHERE id = ? FOR UPDATE", (platform_profile_id,)).fetchone()
+        else:
+            conn.execute("BEGIN IMMEDIATE")
         profile = _assert_profile_access(conn, platform_profile_id, user)
+        _assert_profile_active(profile)
         profile_tenant = str(profile.get("tenant_id") or "")
         user_tenant = str(user.get("tenant_id") or "")
         if profile_tenant and profile_tenant != user_tenant and user.get("role") != "Administrator":
             raise _scope_denied("PLATFORM_SCOPE_DENIED")
+        device = _load_device(conn, device_id, user, lock=True)
+        if device.get("platform_locked") and not force:
+            raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", "Device platform binding is locked", status_code=409)
         _assert_device_profile_platform(device, profile)
         conn.execute(
             """UPDATE devices SET platform_profile_id = ?, platform = ?, platform_source = ?,
@@ -542,6 +549,7 @@ def bind_devices_batch(
     conn = get_db_connection()
     try:
         profile = _assert_profile_access(conn, platform_profile_id, user)
+        _assert_profile_active(profile)
         old_and_new: list[dict[str, Any]] = []
         for device_id in normalized_ids:
             device = _load_device(conn, device_id, user, lock=True)

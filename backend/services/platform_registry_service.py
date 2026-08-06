@@ -707,8 +707,173 @@ def create_profile(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, A
         conn.close()
 
 
+def _assert_profile_active(profile: dict[str, Any]) -> None:
+    if str(profile.get("status") or "ACTIVE").upper() == "ARCHIVED":
+        raise PlatformRegistryError(
+            "PROFILE_ARCHIVED",
+            "Archived platform profiles cannot be changed",
+            status_code=409,
+        )
+
+
+def _assert_profile_writable(profile: dict[str, Any]) -> None:
+    _assert_profile_active(profile)
+    source = str(profile.get("source") or "CUSTOM").upper()
+    if source == "SYSTEM":
+        raise PlatformRegistryError(
+            "SYSTEM_PROFILE_READ_ONLY",
+            "System platform profiles are read-only",
+            status_code=403,
+        )
+
+
+def _profile_bound_device_count(conn, profile_id: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS count FROM devices WHERE platform_profile_id = ?",
+        (profile_id,),
+    ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def _lock_profile_for_write(conn, profile_id: str) -> None:
+    """Serialize profile mutations with device binding and other writers."""
+    import database as _database
+
+    if _database._USE_PG:
+        conn.execute("SELECT id FROM platform_profiles WHERE id = ? FOR UPDATE", (profile_id,)).fetchone()
+    else:
+        conn.execute("BEGIN IMMEDIATE")
+
+
+def update_profile(profile_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    """Update a custom profile while protecting bound device identity."""
+    conn = get_db_connection()
+    try:
+        _lock_profile_for_write(conn, profile_id)
+        profile = _assert_profile_access(conn, profile_id, user)
+        _assert_profile_writable(profile)
+
+        allowed_fields = (
+            "platform_code", "name_zh", "name_en", "vendor",
+            "connection_driver", "parser_platform", "description",
+        )
+        updates: dict[str, Any] = {
+            key: payload[key]
+            for key in allowed_fields
+            if key in payload
+        }
+        if not updates:
+            return profile
+
+        if "platform_code" in updates:
+            updates["platform_code"] = validate_platform_code(updates["platform_code"])
+        if "connection_driver" in updates:
+            driver = str(updates["connection_driver"] or "").strip().lower()
+            if driver not in ALLOWED_CONNECTION_DRIVERS:
+                raise PlatformRegistryError(
+                    "INVALID_CONNECTION_DRIVER",
+                    "connection_driver is not in the system allowlist",
+                )
+            updates["connection_driver"] = driver
+        if "parser_platform" in updates:
+            parser_platform = str(updates["parser_platform"] or "").strip().lower()
+            if not parser_platform:
+                raise PlatformRegistryError("INVALID_PARSER_PLATFORM", "parser_platform is required")
+            updates["parser_platform"] = parser_platform
+        for key in ("name_zh", "name_en", "vendor", "description"):
+            if key in updates:
+                updates[key] = str(updates[key] or "").strip()
+
+        bound_count = _profile_bound_device_count(conn, profile_id)
+        identity_fields = {"platform_code", "connection_driver", "parser_platform"}
+        identity_changed = any(
+            key in updates and str(updates[key]) != str(profile.get(key) or "")
+            for key in identity_fields
+        )
+        if bound_count and identity_changed:
+            raise PlatformRegistryError(
+                "PLATFORM_IDENTITY_LOCKED",
+                f"Platform identity cannot change while {bound_count} device(s) are bound",
+                status_code=409,
+            )
+
+        if "platform_code" in updates and updates["platform_code"] != profile.get("platform_code"):
+            tenant_id = profile.get("tenant_id")
+            duplicate = conn.execute(
+                """SELECT id FROM platform_profiles
+                   WHERE id <> ? AND platform_code = ?
+                     AND ((tenant_id = ?) OR (tenant_id IS NULL AND ? IS NULL))
+                   LIMIT 1""",
+                (profile_id, updates["platform_code"], tenant_id, tenant_id),
+            ).fetchone()
+            if duplicate:
+                raise PlatformRegistryError(
+                    "PLATFORM_CODE_CONFLICT",
+                    "A platform with this code already exists in the same scope",
+                    status_code=409,
+                )
+
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        values = [updates[key] for key in updates]
+        now = _now()
+        conn.execute(
+            f"UPDATE platform_profiles SET {assignments}, updated_at = ?, lock_version = lock_version + 1 WHERE id = ?",
+            (*values, now, profile_id),
+        )
+        conn.commit()
+        invalidate_platform_registry_cache()
+        return get_profile(profile_id, user)
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def delete_profile(profile_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Archive a custom profile; bound profiles and system profiles are protected."""
+    conn = get_db_connection()
+    try:
+        _lock_profile_for_write(conn, profile_id)
+        profile = _assert_profile_access(conn, profile_id, user)
+        _assert_profile_writable(profile)
+        bound_count = _profile_bound_device_count(conn, profile_id)
+        if bound_count:
+            raise PlatformRegistryError(
+                "PLATFORM_BOUND_DEVICES",
+                f"Platform has {bound_count} bound device(s) and cannot be deleted",
+                status_code=409,
+            )
+
+        now = _now()
+        conn.execute(
+            "UPDATE platform_profiles SET status = 'ARCHIVED', updated_at = ?, lock_version = lock_version + 1 WHERE id = ?",
+            (now, profile_id),
+        )
+        conn.commit()
+        invalidate_platform_registry_cache()
+        return {
+            "id": profile_id,
+            "status": "ARCHIVED",
+            "deleted": True,
+            "bound_device_count": 0,
+        }
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def create_release(profile_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     profile = get_profile(profile_id, user)
+    _assert_profile_writable(profile)
     now = _now()
     conn = get_db_connection()
     try:
@@ -1224,6 +1389,7 @@ def delete_release(release_id: str, user: dict[str, Any]) -> dict[str, Any]:
             conn.execute("BEGIN IMMEDIATE")
         release = _release_for_id(conn, release_id, lock=_database._USE_PG)
         profile = _assert_profile_access(conn, release["profile_id"], user)
+        _assert_profile_writable(profile)
         if release["status"] != "DRAFT":
             raise PlatformRegistryError("RELEASE_IMMUTABLE", "Only draft releases can be deleted")
         if str(profile.get("current_release_id") or "") == str(release_id):
@@ -1249,6 +1415,7 @@ def update_release_action(release_id: str, action_code: str, payload: dict[str, 
             conn.execute("BEGIN IMMEDIATE")
         release = _release_for_id(conn, release_id, lock=_database._USE_PG)
         profile = _assert_profile_access(conn, release["profile_id"], user)
+        _assert_profile_writable(profile)
         if release["status"] != "DRAFT":
             raise PlatformRegistryError("RELEASE_IMMUTABLE", "Only draft releases can be edited")
         definition = conn.execute("SELECT * FROM action_definitions WHERE action_code = ?", (action_code,)).fetchone()
@@ -1299,6 +1466,7 @@ def validate_release(release_id: str, user: dict[str, Any]) -> dict[str, Any]:
     try:
         release = _release_for_id(conn, release_id)
         profile = _assert_profile_access(conn, release["profile_id"], user)
+        _assert_profile_writable(profile)
         actions = conn.execute("SELECT a.*, d.max_output_bytes, d.max_records FROM platform_release_actions a JOIN action_definitions d ON d.action_code = a.action_code WHERE a.release_id = ?", (release_id,)).fetchall()
         errors: list[dict[str, str]] = []
         regression: list[dict[str, Any]] = []
@@ -1353,6 +1521,7 @@ def transition_release(release_id: str, event: str, user: dict[str, Any], *, rea
             conn.execute("BEGIN IMMEDIATE")
         release = _release_for_id(conn, release_id, lock=True)
         profile = _assert_profile_access(conn, release["profile_id"], user)
+        _assert_profile_writable(profile)
         if event == "publish" and _database._USE_PG:
             conn.execute("SELECT id FROM platform_profiles WHERE id = ? FOR UPDATE", (release["profile_id"],)).fetchone()
         if release["status"] != target[0]:
@@ -1523,6 +1692,7 @@ def rollback_profile(profile_id: str, release_id: str | None, user: dict[str, An
         else:
             conn.execute("BEGIN IMMEDIATE")
         profile = _assert_profile_access(conn, profile_id, user)
+        _assert_profile_writable(profile)
         from core.rbac import authorize_resource
         if not authorize_resource(user, "platform", "rollback", tenant_id=profile.get("tenant_id")):
             raise PlatformRegistryError("RELEASE_ROLE_FORBIDDEN", "Platform rollback permission is required", status_code=403)

@@ -22,6 +22,7 @@ from services.platform_registry_service import (
     create_profile,
     create_release,
     delete_release,
+    delete_profile,
     execute_platform_action,
     get_profile,
     list_compatible_parser_versions,
@@ -31,6 +32,7 @@ from services.platform_registry_service import (
     preview_platform_action,
     rollback_profile,
     transition_release,
+    update_profile,
     update_release_action,
     validate_release,
 )
@@ -73,6 +75,16 @@ class PlatformProfileCreateRequest(_PlatformRequestModel):
     parser_platform: str = Field(..., min_length=1, max_length=64)
     description: str = Field(default="", max_length=2_000)
     tenant_id: str | None = Field(default=None, max_length=128)
+
+
+class PlatformProfileUpdateRequest(_PlatformRequestModel):
+    platform_code: str | None = Field(default=None, min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]{2,63}$")
+    name_zh: str | None = Field(default=None, max_length=128)
+    name_en: str | None = Field(default=None, max_length=128)
+    vendor: str | None = Field(default=None, max_length=128)
+    connection_driver: str | None = Field(default=None, min_length=1, max_length=64)
+    parser_platform: str | None = Field(default=None, min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=2_000)
 
 
 class PlatformReleaseCreateRequest(_PlatformRequestModel):
@@ -226,6 +238,29 @@ def api_list_identification_conflicts(
 def api_create_profile(payload: PlatformProfileCreateRequest, user=require_permission("platform", "create")):
     _require_registry_enabled()
     return {"success": True, "data": _call(create_profile, payload.model_dump(exclude_none=True), user), "message": "Platform profile created"}
+
+
+@router.put("/profiles/{profile_id}")
+def api_update_profile(
+    profile_id: str = Path(..., min_length=1, max_length=128),
+    payload: PlatformProfileUpdateRequest = ...,
+    user=require_permission("platform", "update"),
+):
+    _require_registry_enabled()
+    return {
+        "success": True,
+        "data": _call(update_profile, profile_id, payload.model_dump(exclude_unset=True), user),
+        "message": "Platform profile updated",
+    }
+
+
+@router.delete("/profiles/{profile_id}")
+def api_delete_profile(
+    profile_id: str = Path(..., min_length=1, max_length=128),
+    user=require_permission("platform", "delete"),
+):
+    _require_registry_enabled()
+    return {"success": True, "data": _call(delete_profile, profile_id, user), "message": "Platform profile archived"}
 
 
 @router.get("/profiles/{profile_id}")

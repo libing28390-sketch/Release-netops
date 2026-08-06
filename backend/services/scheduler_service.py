@@ -1246,7 +1246,7 @@ def sync_topology_and_interfaces_job():
                     iface['mac_address'], iface['speed'], iface['bandwidth'], iface['duplex'],
                     iface['switchport_mode'], iface['access_vlan'],
                     iface.get('primary_ip'), iface.get('ip_address'),
-                    None if iface.get('is_l3') is None else bool(iface.get('is_l3')),
+                    None if iface.get('is_l3') is None else int(bool(iface.get('is_l3'))),
                 )
                 if existing_id:
                     db_conn.execute('''

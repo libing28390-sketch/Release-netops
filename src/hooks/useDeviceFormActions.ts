@@ -111,7 +111,7 @@ export const useDeviceFormActions = ({ devices, setDevices, showToast }: UseDevi
         showToast('Device added successfully', 'success');
         setShowLifecycleConfirm(null);
       } else {
-        showToast(`Failed to add device: ${data.error}`, 'error');
+        showToast(`Failed to add device: ${data.error || data.detail || response.statusText}`, 'error');
       }
     } catch (error) {
       showToast(`Error adding device: ${error}`, 'error');

@@ -123,6 +123,7 @@ export const navConfig: NavGroup[] = [
       { id: 'inspection-metrics',  label: '巡检指标',   labelEn: 'Inspection Metrics',   path: '/automation/metrics',             icon: 'BarChart2' },
       { id: 'textfsm-templates',   label: '解析模板',   labelEn: 'Parse Templates',      path: '/automation/textfsm',             icon: 'FileCode2', requiredRole: 'Operator' },
       { id: 'textfsm-registry',    label: '模板注册表', labelEn: 'Template Registry',     path: '/automation/textfsm-registry',    icon: 'GitBranch', requiredRole: 'Operator' },
+      { id: 'platform-registry',   label: '平台注册',   labelEn: 'Platform Registry',     path: '/automation/platforms',           icon: 'Layers3', requiredRole: 'Viewer' },
       { id: 'scripts',             label: '操作管理',   labelEn: 'Operations',           path: '/automation/scripts',             icon: 'Code2', requiredRole: 'Operator' },
     ],
   },
@@ -160,16 +161,6 @@ export const navConfig: NavGroup[] = [
       { id: 'audit',        label: '审计日志', labelEn: 'Audit Logs',        icon: 'Clock',  path: '/management/audit',       requiredRole: 'Administrator' },
       { id: 'users',        label: '用户管理', labelEn: 'Users',             icon: 'User',   path: '/management/users',       requiredRole: 'Administrator' },
       { id: 'credentials',  label: '凭据轮换', labelEn: 'Password Rotation', icon: 'Key',    path: '/management/credentials', requiredRole: 'Administrator' },
-    ],
-  },
-  {
-    id: 'platform-registry',
-    label: 'Platform Registry',
-    labelEn: 'PLATFORM REGISTRY',
-    icon: 'Settings',
-    section: true,
-    children: [
-      { id: 'platform-registry-entry', label: 'Platform Registry', labelEn: 'Platform Registry', path: '/management/platforms', icon: 'Settings', requiredRole: 'Viewer' },
     ],
   },
 ];

@@ -450,7 +450,6 @@ const App: React.FC = () => {
       '/audit': '/management/audit',
       '/users': '/management/users',
       '/credentials': '/management/credentials',
-      '/platforms': '/management/platforms',
     };
     if (p === '/ipam') {
       navigate('/ipam/locate', { replace: true });

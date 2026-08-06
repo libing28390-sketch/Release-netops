@@ -4,7 +4,7 @@ import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTri
 import DateTimePicker from '../../../components/DateTimePicker';
 import { Asset } from '../types';
 import type { TagDefinition } from '../../../types';
-import { VENDOR_PLATFORMS, SERVER_PLATFORMS, ALL_PLATFORMS, getPlatformsForVendor, STATUSES, LIFECYCLE_STATUSES } from '../constants';
+import { VENDOR_PLATFORMS, NETWORK_VENDOR_GROUPS, ALL_VENDOR_NAMES, SERVER_PLATFORMS, ALL_PLATFORMS, getPlatformsForVendor, STATUSES, LIFECYCLE_STATUSES } from '../constants';
 import { AssetTagPicker } from './AssetTagPicker';
 import { isReservedSystemSite } from '../../../utils/siteIdentity';
 
@@ -270,19 +270,14 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     title="Vendor"
                   >
                     <option value="">{zh ? '选择设备厂商...' : 'Select vendor...'}</option>
-                    <option value="Cisco">Cisco</option>
-                    <option value="Huawei">Huawei</option>
-                    <option value="H3C">H3C</option>
-                    <option value="Arista">Arista</option>
-                    <option value="Juniper">Juniper</option>
-                    <option value="Ruijie">Ruijie</option>
-                    <option value="Maipu">Maipu</option>
-                    <option value="DCN">DCN</option>
-                    <option value="DPtech">DPtech</option>
-                    <option value="FiberHome">FiberHome</option>
-                    <option value="Fortinet">Fortinet</option>
-                    <option value="Palo Alto">Palo Alto</option>
-                    <option value="ZTE">ZTE</option>
+                    {NETWORK_VENDOR_GROUPS.map(group => (
+                      <optgroup key={group.key} label={zh ? group.labelZh : group.labelEn}>
+                        {group.vendors.map(vendor => <option key={vendor} value={vendor}>{vendor}</option>)}
+                      </optgroup>
+                    ))}
+                    {form.vendor && !ALL_VENDOR_NAMES.includes(form.vendor as typeof ALL_VENDOR_NAMES[number]) && (
+                      <option value={form.vendor}>{form.vendor} ({zh ? '当前值' : 'Current value'})</option>
+                    )}
                   </select>
                 )}
               </div>

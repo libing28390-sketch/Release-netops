@@ -175,7 +175,7 @@ class InventoryRepository:
                     interface_id, interface.device_id, interface.name_raw, interface.name_raw, interface.name_display,
                     interface.interface_type, interface.description, interface.speed, interface.bandwidth,
                     interface.mtu, interface.mac, interface.admin_status, interface.oper_status,
-                    interface.is_l3, interface.vrf_id, interface.primary_ip,
+                    int(bool(interface.is_l3)), interface.vrf_id, interface.primary_ip,
                     interface.parent_interface_id, interface.lag_id, interface.vlan_mode,
                     interface.access_vlan, interface.native_vlan, allowed_vlans_str
                 )
