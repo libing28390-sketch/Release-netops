@@ -153,6 +153,23 @@ export const navConfig: NavGroup[] = [
     ],
   },
   {
+    id: 'ai-center-group',
+    label: 'AI 中心',
+    labelEn: 'AI CENTER',
+    icon: 'Bot',
+    children: [
+      { id: 'ai-providers',  label: 'Provider 供应商', labelEn: 'Providers',    path: '/ai/providers', activeMatch: '/ai/center,/ai/providers', icon: 'Server' },
+      { id: 'ai-models',     label: 'Model & 路由',   labelEn: 'Models',       path: '/ai/models',     icon: 'Cpu' },
+      { id: 'ai-prompts',    label: 'Prompt 提示词',   labelEn: 'Prompts',      path: '/ai/prompts',    icon: 'FileCode2' },
+      { id: 'ai-copilot',    label: 'AI Copilot 对话', labelEn: 'AI Copilot',   path: '/ai/copilot',    icon: 'MessageSquare' },
+      { id: 'ai-agents',     label: 'Agent 注册表',    labelEn: 'Agents',       path: '/ai/agents',     icon: 'Layers3' },
+      { id: 'ai-knowledge',  label: '知识库管理',      labelEn: 'Knowledge',    path: '/ai/knowledge',  icon: 'BookOpen' },
+      { id: 'ai-governance', label: 'AI 变更治理',    labelEn: 'Governance',   path: '/ai/governance', icon: 'ShieldCheck' },
+      { id: 'ai-usage',      label: 'Token 统计审计',  labelEn: 'Token Usage',  path: '/ai/usage',      icon: 'Activity' },
+    ],
+  },
+
+  {
     id: 'management',
     label: '平台管理',
     labelEn: 'MANAGEMENT',

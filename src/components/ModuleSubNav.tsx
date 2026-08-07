@@ -54,6 +54,10 @@ import {
   Users,
   Wrench,
   Zap,
+  Bot,
+  Cpu,
+  Layers3,
+  MessageSquare,
 } from 'lucide-react';
 import { navConfig } from './AppSidebar/navConfig';
 import { useSystem } from '../hooks/useSystem';
@@ -70,10 +74,10 @@ const LS_KEY = 'nexora_module_nav';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, Archive, BarChart2, BarChart3, Bell, Building2, CalendarClock,
-  ClipboardCheck, ClipboardList, Clock, Code2, Columns3, Database,
+  Activity, Archive, BarChart2, BarChart3, Bell, Bot, Building2, CalendarClock,
+  ClipboardCheck, ClipboardList, Clock, Code2, Columns3, Cpu, Database,
   FileCode2, FileEdit, FileSearch, FileText, GitBranch, GitCompare, Globe,
-  History, Inbox, Key, Layers, LayoutDashboard, MapPin, Network, Package,
+  History, Inbox, Key, Layers, Layers3, LayoutDashboard, MapPin, MessageSquare, Network, Package,
   PlusCircle, Router, Search, Server, Shield, ShieldAlert, ShieldCheck,
   SlidersHorizontal, Star, Tag, Terminal, Timer, TrendingUp,
   User, UserCheck, Users, Wrench, Zap,
@@ -102,13 +106,18 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
     });
   };
 
+  const checkChildActive = (child: any, path: string) => {
+    if (child.activeMatch) {
+      const prefixes = child.activeMatch.split(',');
+      if (prefixes.some((p: string) => path === p || path.startsWith(p + '/'))) return true;
+    }
+    return path === child.path || path.startsWith(child.path + '/');
+  };
+
   // Find group that owns the current path
   const currentGroup = navConfig.find(group =>
-    group.children.some(child => {
-      if (child.activeMatch && pathname.startsWith(child.activeMatch)) return true;
-      return pathname === child.path || pathname.startsWith(child.path + '/');
-    })
-  );
+    group.children.some(child => checkChildActive(child, pathname))
+  ) || (pathname.startsWith('/ai') ? navConfig.find(g => g.id === 'ai-center-group') : undefined);
 
   useEffect(() => {
     if (currentGroup?.id !== 'tickets' || !currentUser) return;
@@ -170,10 +179,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
 
   if (visibleChildren.length === 0) return null;
 
-  const isActive = (child: typeof visibleChildren[0]) => {
-    if (child.activeMatch && pathname.startsWith(child.activeMatch)) return true;
-    return pathname === child.path || pathname.startsWith(child.path + '/');
-  };
+  const isActive = (child: typeof visibleChildren[0]) => checkChildActive(child, pathname);
 
   const groupLabel = zh ? currentGroup.label : (currentGroup.labelEn || currentGroup.label);
   const GroupIcon = currentGroup.icon ? iconMap[currentGroup.icon] : undefined;

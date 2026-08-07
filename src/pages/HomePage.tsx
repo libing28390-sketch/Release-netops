@@ -30,6 +30,7 @@ import {
   Zap,
   Globe,
   Database,
+  Bot,
 } from 'lucide-react';
 import type { Device, Job, NotificationItem, HostResourceSnapshot } from '../types';
 
@@ -57,7 +58,7 @@ interface AppEntry {
   accent: string;
 }
 
-/* ─────────────── App definitions ─────────────── */
+/* ─────────────── App definitions (12 Modules) ─────────────── */
 
 const apps: AppEntry[] = [
   { id: 'access',     label: '操作工作台', labelEn: 'Operation Workspace', desc: '终端接入与登录',     descEn: 'Terminal access',      icon: Activity,          path: '/access/workspace',    accent: '#13c2c2' },
@@ -71,6 +72,7 @@ const apps: AppEntry[] = [
   { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      desc: '变更审批与跟踪',     descEn: 'Change & approval',    icon: ClipboardList,     path: '/change-orders/all',  accent: '#1677ff' },
   { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      desc: '趋势分析与报表',     descEn: 'Trends & reports',     icon: BarChart2,         path: '/capacity/analysis',  accent: '#13c2c2' },
   { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     desc: '用户、审计与系统',   descEn: 'Users, audit & system', icon: SlidersHorizontal, path: '/management/audit',   accent: '#8c8c8c' },
+  { id: 'ai',         label: 'AI 中心',    labelEn: 'AI Center',    desc: 'Copilot、Agent与排障', descEn: 'Copilot, Agent & RAG', icon: Bot,               path: '/ai/center',          accent: '#6366f1' },
 ];
 
 /* ─────────────── Helpers ─────────────── */
@@ -151,427 +153,217 @@ const HomePage: React.FC<HomePageProps> = ({
     { label: zh ? 'CPU 使用率' : 'CPU Usage',  value: stats.cpuPercent !== null ? `${stats.cpuPercent}%` : '—', sub: zh ? '主机资源' : 'host resource', icon: Cpu, accent: '#722ed1' },
   ];
 
-  /* ── Recent events: merge alerts + jobs, sort by time, take 5 ── */
-  const recentEvents = useMemo(() => {
-    const alertItems = notifications.slice(0, 10).map(n => ({
-      id: n.id,
-      type: 'alert' as const,
-      title: n.title || (zh ? '告警' : 'Alert'),
-      severity: n.severity,
-      time: n.time,
-      read: n.read,
-    }));
-    const jobItems = jobs.slice(0, 10).map(j => ({
-      id: j.id,
-      type: 'job' as const,
-      title: `${j.task_name}`,
-      severity: j.status === 'failed' ? 'high' : j.status === 'success' ? 'low' : ('medium' as string),
-      time: j.created_at,
-      read: j.status === 'success',
-    }));
-    return [...alertItems, ...jobItems]
-      .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-      .slice(0, 5);
-  }, [notifications, jobs, zh]);
-
-  /* ── Quick actions ── */
+  /* ── Quick Action Buttons ── */
   const quickActions = [
-    { label: zh ? '添加设备' : 'Add Device',       icon: Plus, path: '/assets',             accent: '#1677ff' },
-    { label: zh ? '执行备份' : 'Run Backup',        icon: Play, path: '/config/backup',      accent: '#722ed1' },
-    { label: zh ? '创建工单' : 'New Ticket',        icon: ClipboardList, path: '/change-orders', accent: '#fa8c16' },
-    { label: zh ? '设备巡检' : 'Inspection',        icon: Activity, path: '/automation/inspections', accent: '#0891b2' },
+    { label: zh ? '添加设备' : 'Add Device', path: '/assets/network-devices', icon: Plus },
+    { label: zh ? '执行巡检' : 'Run Inspection', path: '/automation/inspections', icon: Play },
+    { label: zh ? '查看配置差异' : 'View Config Diff', path: '/config/diff', icon: FileCode2 },
+    { label: zh ? '新建变更工单' : 'New Change Order', path: '/change-orders/new', icon: ClipboardList },
   ];
 
-  const severityDot: Record<string, string> = { critical: '#f5222d', high: '#fa541c', medium: '#fa8c16', low: '#52c41a' };
-
   return (
-    <div
-      className="select-none h-full"
-      style={{ background: 'var(--app-bg)' }}
-    >
-      <div className="max-w-[960px] xl:max-w-[1200px] 2xl:max-w-[1440px] w-full mx-auto px-5 sm:px-8 py-6">
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
+      {/* ════════ 1. Title + Inline Metrics ════════ */}
+      <motion.div
+        initial={{ opacity: 0, y: -6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25 }}
+        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b pb-5"
+        style={{ borderColor: 'var(--card-border)' }}
+      >
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight" style={{ color: 'var(--heading-text)' }}>
+            {zh ? '你好，欢迎回来' : 'Welcome back'}
+          </h1>
+          <p className="text-[13px] mt-1" style={{ color: 'var(--muted-text)' }}>
+            {zh
+              ? `今日网络 · ${stats.total} 台设备 · ${stats.online} 台在线 · ${stats.critical} 条严重告警`
+              : `Today · ${stats.total} devices · ${stats.online} online · ${stats.critical} critical alerts`}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--dim-text)' }}>
+          {stats.hostname && (
+            <span className="px-2.5 py-1 rounded-full" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
+              {stats.hostname}
+            </span>
+          )}
+          {stats.dbStatus && (
+            <span
+              className="px-2.5 py-1 rounded-full font-medium"
+              style={{
+                background: stats.dbOk ? 'rgba(82,196,26,0.12)' : 'rgba(245,34,45,0.12)',
+                color: stats.dbOk ? '#52c41a' : '#f5222d',
+              }}
+            >
+              DB · {stats.dbStatus}
+            </span>
+          )}
+        </div>
+      </motion.div>
 
-        {/* ════════ 1. Greeting / status summary ════════ */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="flex flex-wrap items-end justify-between gap-3"
-        >
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight" style={{ color: 'var(--heading-text)' }}>
-              {zh ? '你好，欢迎回来' : 'Welcome back'}
-            </h1>
-            <p className="text-[13px] mt-1" style={{ color: 'var(--muted-text)' }}>
-              {zh
-                ? `今日网络 · ${stats.total} 台设备 · ${stats.online} 台在线 · ${stats.critical} 条严重告警`
-                : `Today · ${stats.total} devices · ${stats.online} online · ${stats.critical} critical alerts`}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--dim-text)' }}>
-            {stats.hostname && (
-              <span className="px-2.5 py-1 rounded-full" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-                {stats.hostname}
-              </span>
-            )}
-            {stats.dbStatus && (
-              <span
-                className="px-2.5 py-1 rounded-full font-medium"
-                style={{
-                  background: stats.dbOk ? 'rgba(82,196,26,0.12)' : 'rgba(245,34,45,0.12)',
-                  color: stats.dbOk ? '#52c41a' : '#f5222d',
-                }}
+      {/* ════════ 2. Module Grid — 4 cols card nav (12 Modules) ════════ */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.04 }}
+        className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3"
+      >
+        {apps.map((app, idx) => {
+          const Icon = app.icon;
+          return (
+            <motion.button
+              key={app.id}
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.2, delay: 0.06 + 0.025 * idx }}
+              onClick={() => navigate(app.path)}
+              className="group flex items-center gap-3 rounded-xl px-3.5 py-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 transition-all duration-150 text-left"
+              style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = app.accent + '60'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--card-border)'; }}
+            >
+              <div
+                className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-transform duration-150 group-hover:scale-105"
+                style={{ background: app.accent + '15', color: app.accent }}
               >
-                DB · {stats.dbStatus}
-              </span>
-            )}
-          </div>
-        </motion.div>
+                <Icon size={18} strokeWidth={2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium truncate" style={{ color: 'var(--heading-text)' }}>
+                  {zh ? app.label : app.labelEn}
+                </div>
+                <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--dim-text)' }}>
+                  {zh ? app.desc : app.descEn}
+                </div>
+              </div>
+            </motion.button>
+          );
+        })}
+      </motion.div>
 
-        {/* ════════ 2. Module Grid — 4 cols card nav ════════ */}
+      {/* ════════ 3. Stat Blocks — 4 cols ════════ */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.12 }}
+        className="grid grid-cols-2 sm:grid-cols-4 gap-3.5"
+      >
+        {statBlocks.map((block, idx) => {
+          const Icon = block.icon;
+          return (
+            <div
+              key={idx}
+              className="rounded-xl p-4 flex flex-col justify-between transition-all duration-150"
+              style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium" style={{ color: 'var(--muted-text)' }}>
+                  {block.label}
+                </span>
+                <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: block.accent + '15', color: block.accent }}>
+                  <Icon size={15} strokeWidth={2} />
+                </div>
+              </div>
+              <div className="mt-3">
+                <div className="text-2xl font-bold tracking-tight" style={{ color: 'var(--heading-text)' }}>
+                  {block.value}
+                </div>
+                <div className="text-[11px] mt-0.5" style={{ color: 'var(--dim-text)' }}>
+                  {block.sub}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </motion.div>
+
+      {/* ════════ 4. Two-Column Layout — Recent Activity + Quick Actions ════════ */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Left (2 cols): System Platform Overview */}
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.04 }}
-          className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3"
-        >
-          {apps.map((app, idx) => {
-            const Icon = app.icon;
-            return (
-              <motion.button
-                key={app.id}
-                initial={{ opacity: 0, scale: 0.97 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.2, delay: 0.06 + 0.025 * idx }}
-                onClick={() => navigate(app.path)}
-                className="group flex items-center gap-3 rounded-xl px-3.5 py-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 transition-all duration-150 text-left"
-                style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = app.accent + '60'; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--card-border)'; }}
-              >
-                <div
-                  className="flex items-center justify-center w-10 h-10 rounded-lg flex-shrink-0 transition-transform duration-150 group-hover:scale-105"
-                  style={{ background: `${app.accent}14` }}
-                >
-                  <Icon size={20} strokeWidth={1.6} style={{ color: app.accent }} />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-[13px] font-semibold leading-tight" style={{ color: 'var(--heading-text)' }}>
-                    {zh ? app.label : app.labelEn}
-                  </div>
-                  <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--muted-text)' }}>
-                    {zh ? app.desc : app.descEn}
-                  </div>
-                </div>
-              </motion.button>
-            );
-          })}
-        </motion.div>
-
-        {/* ════════ 3. Stat Blocks — 4 cols ════════ */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.12 }}
-          className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3"
-        >
-          {statBlocks.map((s, i) => {
-            const Icon = s.icon;
-            return (
-              <div
-                key={i}
-                className="relative rounded-xl px-4 py-4 overflow-hidden"
-                style={{
-                  background: 'var(--card-bg)',
-                  border: '1px solid var(--card-border)',
-                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)',
-                }}
-              >
-                {/* Accent left bar */}
-                <span
-                  aria-hidden
-                  className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r"
-                  style={{ background: s.accent }}
-                />
-                <div className="flex items-start justify-between gap-3 pl-2">
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-medium uppercase tracking-wider" style={{ color: 'var(--muted-text)' }}>
-                      {s.label}
-                    </div>
-                    <div
-                      className="text-[26px] font-bold tabular-nums leading-none mt-1.5"
-                      style={{ color: s.accent }}
-                    >
-                      {s.value}
-                    </div>
-                    <div className="text-[11px] mt-1.5" style={{ color: 'var(--dim-text)' }}>
-                      {s.sub}
-                    </div>
-                  </div>
-                  <div
-                    className="flex items-center justify-center w-9 h-9 rounded-lg flex-shrink-0"
-                    style={{ background: `${s.accent}1a` }}
-                  >
-                    <Icon size={18} strokeWidth={1.7} style={{ color: s.accent }} />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </motion.div>
-
-        {/* ════════ 4. Two-column: Recent Activity + Quick Actions ════════ */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.18 }}
-          className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-4"
+          className="lg:col-span-2 rounded-xl p-5 space-y-4"
+          style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}
         >
-          {/* ── Left: Recent Activity (2/3) ── */}
-          <div
-            className="md:col-span-2 rounded-xl px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-[13px] font-semibold" style={{ color: 'var(--heading-text)' }}>
-                {zh ? '最近动态' : 'Recent Activity'}
-              </span>
-              <button
-                onClick={() => navigate('/alerts')}
-                className="text-[11px] flex items-center gap-0.5 cursor-pointer"
-                style={{ color: 'var(--muted-text)' }}
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold tracking-tight" style={{ color: 'var(--heading-text)' }}>
+              {zh ? '厂商与平台分布' : 'Platform Distribution'}
+            </h3>
+            <button
+              onClick={() => navigate('/assets/network-devices')}
+              className="text-xs flex items-center gap-1 hover:underline cursor-pointer"
+              style={{ color: 'var(--accent-color)' }}
+            >
+              {zh ? '查看全部设备' : 'View all devices'} <ArrowRight size={13} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {stats.platforms.map(([platform, count]) => (
+              <div
+                key={platform}
+                className="p-3 rounded-lg flex items-center justify-between text-xs"
+                style={{ background: 'var(--subtle-bg)', border: '1px solid var(--subtle-border)' }}
               >
-                {zh ? '查看全部' : 'View all'} <ArrowRight size={11} />
-              </button>
-            </div>
-
-            {recentEvents.length === 0 ? (
-              <div className="text-[12px] py-6 text-center" style={{ color: 'var(--dim-text)' }}>
-                {zh ? '暂无动态' : 'No recent activity'}
+                <span className="font-mono text-gray-700 dark:text-gray-300 truncate">{platform}</span>
+                <span className="font-bold text-indigo-600 dark:text-indigo-400 ml-2">{count} 台</span>
               </div>
-            ) : (
-              <div className="space-y-0">
-                {recentEvents.map((ev, i) => (
-                  <div
-                    key={ev.id + i}
-                    className="flex items-center gap-3 py-2 border-b last:border-b-0"
-                    style={{ borderColor: 'var(--card-border)' }}
-                  >
-                    {/* severity dot */}
-                    <div
-                      className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                      style={{ background: severityDot[ev.severity] || '#8c8c8c' }}
-                    />
-                    {/* icon */}
-                    {ev.type === 'alert'
-                      ? <Bell size={13} strokeWidth={1.5} style={{ color: 'var(--muted-text)' }} className="flex-shrink-0" />
-                      : <Zap  size={13} strokeWidth={1.5} style={{ color: 'var(--muted-text)' }} className="flex-shrink-0" />}
-                    {/* text */}
-                    <span className="text-[12px] flex-1 truncate" style={{ color: 'var(--body-text)' }}>
-                      {ev.title}
-                    </span>
-                    {/* time */}
-                    <span className="text-[11px] flex-shrink-0 flex items-center gap-1" style={{ color: 'var(--dim-text)' }}>
-                      <Clock size={10} /> {timeAgo(ev.time, zh)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+            ))}
           </div>
 
-          {/* ── Right: Quick Actions (1/3) ── */}
-          <div
-            className="rounded-xl px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
-          >
-            <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
-              {zh ? '快捷操作' : 'Quick Actions'}
-            </span>
-            <div className="space-y-2">
-              {quickActions.map((a, i) => {
-                const AIcon = a.icon;
-                return (
-                  <button
-                    key={i}
-                    onClick={() => navigate(a.path)}
-                    className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left cursor-pointer transition-colors duration-150"
-                    style={{ background: 'transparent' }}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--app-hover-bg)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    <div
-                      className="flex items-center justify-center w-7 h-7 rounded-md flex-shrink-0"
-                      style={{ background: `${a.accent}14` }}
-                    >
-                      <AIcon size={14} strokeWidth={1.6} style={{ color: a.accent }} />
-                    </div>
-                    <span className="text-[12px] font-medium" style={{ color: 'var(--heading-text)' }}>{a.label}</span>
-                    <ArrowRight size={12} className="ml-auto flex-shrink-0" style={{ color: 'var(--dim-text)' }} />
-                  </button>
-                );
-              })}
+          {/* Quick host resources details if available */}
+          {hostResources && (
+            <div className="pt-3 border-t grid grid-cols-3 gap-3 text-xs" style={{ borderColor: 'var(--card-border)' }}>
+              <div>
+                <span style={{ color: 'var(--dim-text)' }}>内存使用:</span>{' '}
+                <strong style={{ color: 'var(--heading-text)' }}>{stats.memUsedGb} GB / {stats.memTotalGb} GB ({stats.memPercent}%)</strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--dim-text)' }}>磁盘使用:</span>{' '}
+                <strong style={{ color: 'var(--heading-text)' }}>{stats.diskUsedGb} GB / {stats.diskTotalGb} GB ({stats.diskPercent}%)</strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--dim-text)' }}>在线运行:</span>{' '}
+                <strong style={{ color: 'var(--heading-text)' }}>{stats.uptimeHours} 小时</strong>
+              </div>
             </div>
-          </div>
+          )}
         </motion.div>
 
-        {/* ════════ 5. Three-column: Device Status │ Host Resources │ Platform Distribution ════════ */}
+        {/* Right (1 col): Quick Actions */}
         <motion.div
-          initial={{ opacity: 0, y: 10 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.24 }}
-          className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4"
+          transition={{ duration: 0.3, delay: 0.22 }}
+          className="rounded-xl p-5 space-y-4"
+          style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}
         >
-          {/* ── Left: Device Status Overview ── */}
-          <div
-            className="rounded-xl px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
-          >
-            <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
-              {zh ? '设备状态' : 'Device Status'}
-            </span>
-            {stats.total > 0 ? (
-              <>
-                {/* Stacked status bar */}
-                <div className="flex h-2.5 rounded-full overflow-hidden mb-3" style={{ background: 'var(--app-hover-bg)' }}>
-                  {stats.online > 0 && (
-                    <div style={{ width: `${(stats.online / stats.total) * 100}%`, background: '#52c41a' }} />
-                  )}
-                  {stats.pending > 0 && (
-                    <div style={{ width: `${(stats.pending / stats.total) * 100}%`, background: '#fa8c16' }} />
-                  )}
-                  {stats.offline > 0 && (
-                    <div style={{ width: `${(stats.offline / stats.total) * 100}%`, background: '#f5222d' }} />
-                  )}
-                </div>
-                {/* Legend */}
-                <div className="space-y-1.5">
-                  {([
-                    { label: zh ? '在线' : 'Online', count: stats.online, color: '#52c41a' },
-                    { label: zh ? '离线' : 'Offline', count: stats.offline, color: '#f5222d' },
-                    { label: zh ? '待定' : 'Pending', count: stats.pending, color: '#fa8c16' },
-                  ] as const).map(s => (
-                    <div key={s.label} className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full" style={{ background: s.color }} />
-                        <span className="text-[12px]" style={{ color: 'var(--body-text)' }}>{s.label}</span>
-                      </div>
-                      <span className="text-[12px] font-medium tabular-nums" style={{ color: 'var(--heading-text)' }}>
-                        {s.count}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="text-[12px] py-4 text-center" style={{ color: 'var(--dim-text)' }}>
-                {zh ? '暂无设备' : 'No devices'}
-              </div>
-            )}
-          </div>
+          <h3 className="text-sm font-semibold tracking-tight" style={{ color: 'var(--heading-text)' }}>
+            {zh ? '快捷入口' : 'Quick Actions'}
+          </h3>
 
-          {/* ── Middle: Host Resources ── */}
-          <div
-            className="rounded-xl px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
-          >
-            <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
-              {zh ? '主机资源' : 'Host Resources'}
-            </span>
-            <div className="space-y-3">
-              {([
-                {
-                  label: 'CPU',
-                  icon: Cpu,
-                  percent: stats.cpuPercent,
-                  sub: stats.cpuPercent !== null ? `${stats.cpuPercent}%` : '—',
-                  color: '#722ed1',
-                },
-                {
-                  label: zh ? '内存' : 'Memory',
-                  icon: MemoryStick,
-                  percent: stats.memPercent,
-                  sub: stats.memUsedGb !== null && stats.memTotalGb !== null
-                    ? `${stats.memUsedGb.toFixed(1)} / ${stats.memTotalGb.toFixed(1)} GB`
-                    : '—',
-                  color: '#1677ff',
-                },
-                {
-                  label: zh ? '磁盘' : 'Disk',
-                  icon: HardDrive,
-                  percent: stats.diskPercent,
-                  sub: stats.diskUsedGb !== null && stats.diskTotalGb !== null
-                    ? `${stats.diskUsedGb.toFixed(1)} / ${stats.diskTotalGb.toFixed(1)} GB`
-                    : '—',
-                  color: '#13c2c2',
-                },
-              ] as const).map(r => {
-                const RIcon = r.icon;
-                const pct = r.percent ?? 0;
-                return (
-                  <div key={r.label}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-1.5">
-                        <RIcon size={12} strokeWidth={1.6} style={{ color: r.color }} />
-                        <span className="text-[11px] font-medium" style={{ color: 'var(--body-text)' }}>{r.label}</span>
-                      </div>
-                      <span className="text-[11px] tabular-nums" style={{ color: 'var(--muted-text)' }}>{r.sub}</span>
-                    </div>
-                    <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--app-hover-bg)' }}>
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{
-                          width: r.percent !== null ? `${Math.min(pct, 100)}%` : '0%',
-                          background: pct >= 90 ? '#f5222d' : pct >= 70 ? '#fa8c16' : r.color,
-                        }}
-                      />
-                    </div>
+          <div className="space-y-2">
+            {quickActions.map((qa, idx) => {
+              const Icon = qa.icon;
+              return (
+                <button
+                  key={idx}
+                  onClick={() => navigate(qa.path)}
+                  className="w-full flex items-center justify-between p-3 rounded-lg text-xs font-medium transition cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/60"
+                  style={{ border: '1px solid var(--subtle-border)' }}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Icon size={15} className="text-indigo-500" />
+                    <span style={{ color: 'var(--heading-text)' }}>{qa.label}</span>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* ── Right: Platform Distribution ── */}
-          <div
-            className="rounded-xl px-4 py-3.5"
-            style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', boxShadow: '0 4px 16px rgba(0, 0, 0, 0.04)' }}
-          >
-            <span className="text-[13px] font-semibold block mb-3" style={{ color: 'var(--heading-text)' }}>
-              {zh ? '平台分布' : 'Platform Distribution'}
-            </span>
-            {stats.platforms.length > 0 ? (
-              <div className="space-y-2">
-                {stats.platforms.map(([platform, count]) => (
-                  <div key={platform}>
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-[11px]" style={{ color: 'var(--body-text)' }}>{platform}</span>
-                      <span className="text-[11px] font-medium tabular-nums" style={{ color: 'var(--heading-text)' }}>
-                        {count}
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--app-hover-bg)' }}>
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{
-                          width: `${(count / stats.total) * 100}%`,
-                          background: '#0078d4',
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-[12px] py-4 text-center" style={{ color: 'var(--dim-text)' }}>
-                {zh ? '暂无数据' : 'No data'}
-              </div>
-            )}
+                  <ArrowRight size={13} style={{ color: 'var(--dim-text)' }} />
+                </button>
+              );
+            })}
           </div>
         </motion.div>
-
-        {/* bottom spacer */}
-        <div className="h-4" />
       </div>
     </div>
   );

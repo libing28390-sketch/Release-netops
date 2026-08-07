@@ -6,6 +6,7 @@ if os.environ.get("NODE_ENV") == "development":
     sys.dont_write_bytecode = True
 
 # Add backend directory to sys.path to resolve core, api, services, etc.
+# SOCKS proxy support initialized
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # --- CRITICAL WINDOWS FIX ---
@@ -76,6 +77,7 @@ from api.discovery import router as discovery_router
 from api.graph import router as graph_router
 from api.system import router as system_router
 from api.access import router as access_router
+from ai.api import ai_router
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
 from engine.orchestrator import get_telemetry_orchestrator
 import logging
@@ -502,6 +504,7 @@ app.include_router(device_registry_router, prefix="/api")
 app.include_router(change_orders_router,  prefix="/api")
 app.include_router(pam_router,            prefix="/api")
 app.include_router(audit_router,          prefix="/api")
+app.include_router(ai_router,             prefix="/api")
 # PAM WebSocket 单独注册
 app.include_router(pam_ws_router,         prefix="/api")
 

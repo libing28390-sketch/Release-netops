@@ -210,23 +210,36 @@ export function getRouteContext(pathname: string): RouteContext {
       cmdbPage = 'credentials';
     }
   }
+  // 14. AI Center (/ai/...)
+  else if (first === 'ai') {
+    if (second === 'providers') activeTab = 'ai-providers';
+    else if (second === 'models') activeTab = 'ai-models';
+    else if (second === 'prompts') activeTab = 'ai-prompts';
+    else if (second === 'copilot') activeTab = 'ai-copilot';
+    else if (second === 'agents') activeTab = 'ai-agents';
+    else if (second === 'knowledge') activeTab = 'ai-knowledge';
+    else if (second === 'governance') activeTab = 'ai-governance';
+    else if (second === 'usage') activeTab = 'ai-usage';
+    else activeTab = 'ai-providers';
+  }
   // 12. Legacy or other direct paths
   else {
     if (first === 'overview') activeTab = 'overview';
+    else if (first === 'ai-center' || first === 'ai') activeTab = 'ai-providers';
+    else if (first === 'ai-providers') activeTab = 'ai-providers';
+    else if (first === 'ai-models') activeTab = 'ai-models';
+    else if (first === 'ai-prompts') activeTab = 'ai-prompts';
+    else if (first === 'ai-copilot') activeTab = 'ai-copilot';
+    else if (first === 'ai-agents') activeTab = 'ai-agents';
+    else if (first === 'ai-governance') activeTab = 'ai-governance';
+    else if (first === 'ai-usage') activeTab = 'ai-usage';
+
     else if (first === 'monitoring') activeTab = 'monitoring';
     else if (first === 'topology') activeTab = 'topology';
     else if (first === 'pam-audit') activeTab = 'pam-audit';
     else if (first === 'alert-history') activeTab = 'alert-history';
     else if (first === 'alert-rules') activeTab = 'alert-rules';
     else if (first === 'maintenance') activeTab = 'maintenance';
-    else if (first === 'ipam') {
-      activeTab = 'ipam';
-      ipamPage = 'locate';
-    }
-    else if (first === 'cmdb') {
-      activeTab = 'cmdb';
-      cmdbPage = 'credentials';
-    }
     else if (first === 'path-diagnose') activeTab = 'path-diagnose';
     else if (first === 'ip-locator') activeTab = 'ip-locator';
     else if (first === 'nsot') activeTab = 'nsot';

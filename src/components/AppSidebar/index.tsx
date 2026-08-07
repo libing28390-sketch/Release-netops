@@ -6,6 +6,14 @@
  *   - Collapsible section groups with chevron animation
  *   - Active route detection via useLocation()
  *   - Search shortcut bar ("/" global keyboard shortcut)
+/**
+ * AppSidebar — Main navigation sidebar for Nexora.
+ *
+ * Features:
+ *   - Mini mode toggle (260px ↔ 64px) with localStorage persistence
+ *   - Collapsible section groups with chevron animation
+ *   - Active route detection via useLocation()
+ *   - Search shortcut bar ("/" global keyboard shortcut)
  *   - Badge counts with P1 critical styling
  *   - Mobile drawer mode with backdrop
  *   - Fully accessible (keyboard navigable, aria attributes)
@@ -16,6 +24,7 @@ import {
   Activity,
   BarChart2,
   Bell,
+  BookOpen,
   ClipboardList,
   Clock,
   FileText,
@@ -38,6 +47,11 @@ import {
   User,
   X,
   Zap,
+  Bot,
+  Cpu,
+  MessageSquare,
+  Wrench,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { navConfig } from './navConfig';
@@ -49,8 +63,9 @@ import { useSystem } from '../../hooks/useSystem';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, BarChart2, Bell, ClipboardList, Clock, FileCode2, FileText, GitBranch, Globe, Key, Layers3, Lock, Monitor, Server, Settings, Shield, ShieldAlert, Terminal, User, Zap,
+  Activity, BarChart2, Bell, BookOpen, Bot, ClipboardList, Clock, Cpu, FileCode2, FileText, GitBranch, Globe, Key, Layers3, Lock, MessageSquare, Monitor, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
 };
+
 
 /** RBAC role hierarchy levels */
 const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, Viewer: 1 };
@@ -73,6 +88,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
   const navigate = useNavigate();
   const searchRef = useRef<HTMLInputElement>(null);
   const { systemInfo } = useSystem();
+
 
   /* ─────────── Mini mode ─────────── */
   const [mini, setMini] = useState(() => {

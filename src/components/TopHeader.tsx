@@ -4,6 +4,7 @@ import {
   Activity,
   BarChart2,
   Bell,
+  Bot,
   ChevronDown,
   ClipboardList,
   Clock,
@@ -124,6 +125,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
     { id: 'tickets',    label: '工单管理',   labelEn: 'Tickets',      icon: ClipboardList,     path: '/change-orders/all',  accent: '#1677ff', minRole: 'Viewer' },
     { id: 'capacity',   label: '容量与报表', labelEn: 'Reports',      icon: BarChart2,         path: '/capacity/analysis',  accent: '#13c2c2', minRole: 'Viewer' },
     { id: 'platform',   label: '平台管理',   labelEn: 'Platform',     icon: SlidersHorizontal, path: '/management/audit',   accent: '#8c8c8c', minRole: 'Administrator' },
+    { id: 'ai',         label: 'AI 中心',    labelEn: 'AI Center',    icon: Bot,               path: '/ai/providers',       accent: '#6366f1', minRole: 'Viewer' },
   ], []);
 
   const userRoleLvl = ROLE_LEVEL[currentUser?.role || 'Viewer'] || 1;

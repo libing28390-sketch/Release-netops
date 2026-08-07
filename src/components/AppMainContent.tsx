@@ -58,6 +58,8 @@ const ScriptManagementTab = lazy(() => import('../pages/ScriptManagementTab'));
 const ConfigScheduleTab = lazy(() => import('../pages/ConfigScheduleTab'));
 const AccessCenterTab = lazy(() => import('../pages/AccessCenterTab'));
 const PAMAuditTab = lazy(() => import('../pages/PAMAuditTab'));
+const AiCenterPage = lazy(() => import('../pages/ai/AiCenterPage'));
+
 
 const lazyPanelFallback = (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-black/5 bg-white/70 text-sm text-black/40">
@@ -1281,6 +1283,14 @@ const AppMainContent: React.FC = () => {
           />
         </Suspense>
       )}
+
+      {(activeTab === 'ai-center' || activeTab.startsWith('ai-')) && (
+        <Suspense fallback={lazyPanelFallback}>
+          <AiCenterPage activeSubTab={activeTab.startsWith('ai-') && activeTab !== 'ai-center' ? activeTab.replace('ai-', '') : 'providers'} />
+        </Suspense>
+      )}
+
+
 
     </main>
   );
