@@ -89,6 +89,12 @@ def render_asset_analysis(query: str, analysis: Dict[str, Any]) -> str:
 
     health = analysis.get("health", {})
     alerts = analysis.get("alerts", {})
+    psu_distribution = ", ".join(
+        f"{key} {value}" for key, value in health.get("psu_status", {}).items()
+    ) or "\u65e0\u6570\u636e"
+    lifecycle_distribution = ", ".join(
+        f"{key} {value}" for key, value in analysis.get("by_lifecycle", {}).items()
+    ) or "\u65e0\u6570\u636e"
     lines.extend([
         "",
         "### \u516d\u3001\u72b6\u6001\u4e0e\u544a\u8b66\uff08\u4ec5\u57fa\u4e8e\u5b9e\u9645\u5b57\u6bb5\uff09",
@@ -96,14 +102,14 @@ def render_asset_analysis(query: str, analysis: Dict[str, Any]) -> str:
         f"- \u8bbe\u5907\u72b6\u6001\uff1a{health.get('online_devices', 0)} \u53f0 online / {total} \u53f0\u603b\u6570\u3002",
         f"- \u5f53\u524d\u672a\u6062\u590d\u544a\u8b66\uff1a{alerts.get('active_count', 0)} \u6761\uff1b\u6700\u8fd1 24 \u5c0f\u65f6\u65b0\u589e\uff1a{alerts.get('recent_24h_count', 0)} \u6761\u3002",
         f"- CPU \u5feb\u7167\uff1a{health.get('cpu_observed_devices', 0)} \u53f0\u6709\u6570\u503c\uff0c\u6700\u5927\u503c {health.get('max_cpu', '-')}; \u8fd9\u4e0d\u7b49\u4e8e\u5df2\u5224\u5b9a\u4e3a\u8d85\u9608\u503c\u3002",
-        f"- PSU \u5b57\u6bb5\u5206\u5e03\uff1a{', '.join(f'{k} {v}' for k, v in health.get('psu_status', {}).items()) or '\u65e0\u6570\u636e'}\u3002",
+        f"- PSU \u5b57\u6bb5\u5206\u5e03\uff1a{psu_distribution}\u3002",
     ])
 
     lines.extend([
         "",
         "### \u4e03\u3001\u6570\u636e\u8d28\u91cf\u548c\u8fb9\u754c",
         "",
-        f"- \u751f\u547d\u5468\u671f\u5b57\u6bb5\u5206\u5e03\uff1a{', '.join(f'{k} {v}' for k, v in analysis.get('by_lifecycle', {}).items()) or '\u65e0\u6570\u636e'}\u3002",
+        f"- \u751f\u547d\u5468\u671f\u5b57\u6bb5\u5206\u5e03\uff1a{lifecycle_distribution}\u3002",
         "- \u672c\u6b21\u6570\u636e\u6ca1\u6709\u53ef\u7528\u7684\u5382\u5546 EOL \u65e5\u671f\u6216\u751f\u547d\u5468\u671f\u76ee\u5f55\uff0c\u4e0d\u80fd\u4ec5\u51ed\u7248\u672c\u53f7\u5224\u5b9a\u201cEOL\u8bbe\u5907\u201d\u3002",
         f"- \u7248\u672c\u7f3a\u5931\uff1a{missing_version} \u53f0\uff1b\u533a\u57df\u7f3a\u5931\uff1a{analysis.get('data_quality', {}).get('missing_site', 0)} \u53f0\u3002",
     ])
