@@ -48,12 +48,19 @@ const PLATFORM_OPTIONS = [
 ];
 
 const ROLE_OPTIONS = [
-  'Core',
-  'Distribution',
-  'Access',
-  'Edge',
+  'Router',
   'Firewall',
+  'Core Switch',
+  'Aggregation Switch',
+  'Access Switch',
+  'Server Switch',
+  'Wireless AC',
+  'Wireless AP',
   'Load Balancer',
+  'SD-WAN Edge',
+  'OOB Switch',
+  'Server',
+  'Other',
   'Unknown',
 ];
 
@@ -274,11 +281,14 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
             <div>
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Role</label>
               <select
-                value={form.role || 'Access'}
+                value={form.role || 'Unknown'}
                 title="Device role"
                 onChange={(event) => handleFieldChange('role', event.target.value)}
                 className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
               >
+                {form.role && !ROLE_OPTIONS.includes(form.role) && (
+                  <option value={form.role}>{form.role} (legacy)</option>
+                )}
                 {ROLE_OPTIONS.map((role) => (
                   <option key={role} value={role}>{role}</option>
                 ))}

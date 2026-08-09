@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Query
 from database.core import get_db_connection
 from ai.security.permissions import require_ai_permission
+from ai.services.metrics import ai_metrics
 
 router = APIRouter(tags=["AI Audit & Usage"])
 
@@ -91,3 +92,9 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
             "avg_latency_ms": round(avg_latency_ms, 2),
             "scene_breakdown": scene_breakdown
         }
+
+
+@router.get("/metrics", response_model=Dict[str, Any])
+def get_ai_metrics(user=Depends(require_ai_permission("ai.audit.view"))):
+    """Return low-cardinality provider/tool/agent metrics without payloads."""
+    return ai_metrics.snapshot()

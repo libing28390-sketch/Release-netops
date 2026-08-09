@@ -68,6 +68,7 @@ export default defineConfig(({ mode }) => {
           '**/backup/**',
           '**/data/**',
           '**/dist/**',
+          '**/.codex-build-validation*/**',
         ],
       },
       proxy: {

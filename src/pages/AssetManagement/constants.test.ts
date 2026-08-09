@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALL_VENDOR_NAMES,
+  COL_MAP,
   IMPORT_VALUE_MAP,
   NETWORK_IMPORT_PLATFORM_VALUES,
   NETWORK_IMPORT_VENDOR_VALUES,
@@ -27,5 +28,13 @@ describe('asset vendor catalog', () => {
     expect(NETWORK_IMPORT_PLATFORM_VALUES).toContain('hillstone_stoneos');
     expect(IMPORT_VALUE_MAP.vendor['山石']).toBe('Hillstone');
     expect(IMPORT_VALUE_MAP.platform['Hillstone StoneOS']).toBe('hillstone_stoneos');
+  });
+});
+
+describe('asset import role header contract', () => {
+  it('accepts both display and API-style role headers', () => {
+    expect(COL_MAP.Role).toBe('device_role');
+    expect(COL_MAP.role).toBe('device_role');
+    expect(COL_MAP.device_role).toBe('device_role');
   });
 });

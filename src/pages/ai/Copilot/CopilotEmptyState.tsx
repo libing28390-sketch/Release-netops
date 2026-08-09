@@ -34,7 +34,7 @@ export const CopilotEmptyState: React.FC<CopilotEmptyStateProps> = ({ onSelectPr
   ];
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[480px] max-w-2xl mx-auto px-4 text-center select-none space-y-8 py-10">
+    <div className="flex min-h-[220px] flex-1 flex-col items-center justify-center max-w-2xl mx-auto w-full px-4 text-center select-none space-y-6 sm:space-y-8 py-6 sm:py-10">
       {/* Hero Icon & Greeting */}
       <div className="space-y-3">
         <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-100 dark:border-indigo-900 flex items-center justify-center text-indigo-600 dark:text-indigo-400 mx-auto shadow-sm">

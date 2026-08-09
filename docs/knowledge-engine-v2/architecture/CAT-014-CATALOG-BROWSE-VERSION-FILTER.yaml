@@ -1,0 +1,49 @@
+task_id: CAT-014
+priority: P1
+owner: FE
+milestone: M2
+status: frozen_browse_and_version_filter_contract
+depends_on: [CAT-013]
+
+purpose:
+  hierarchy_browse: [vendor, family, series, model]
+  version_filter: software_scope_primary_or_compatibility_version
+  identity_rule: software_version_never_changes_product_identity
+
+ui_contract:
+  page: /ai/catalog
+  filters: [vendor_id, family_code, series_code, model, software_version]
+  result_fields: [vendor, family, series, model, os_family, software_train, primary_version, compatibility_version, status]
+  empty_state: show_current_filters_and_clear_action
+  read_only: true
+  draft_rows_labelled: true
+
+api_contract:
+  endpoint: GET /api/knowledge-v2/catalog
+  query:
+    vendor_id: optional
+    family_code: optional
+    series_code: optional
+    model: optional_substring
+    software_version: optional_exact_case_insensitive
+  tenant_scope: request_user_tenant_only
+  response: CAT-013_KnowledgeCatalogResponse
+  bounded_inputs: true
+  invalid_input: fail_closed
+
+version_semantics:
+  primary_version: applicable_primary_release
+  compatibility_version: reviewed_compatibility_release
+  unknown_version: does_not_match
+  no_driver_authority: true
+  no_credential_authority: true
+
+performance:
+  filtering_boundary: server_side_query_contract
+  unbounded_fulltext: forbidden
+  pagination_gate: required_before_catalog_exceeds_500_rows
+
+rollback:
+  runtime: remove_CAT014_filters_and_retain_CAT013_read_only_listing
+  data: no_database_change
+  preserve_v1: true

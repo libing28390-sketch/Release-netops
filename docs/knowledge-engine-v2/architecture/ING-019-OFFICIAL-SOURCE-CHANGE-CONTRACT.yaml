@@ -1,0 +1,82 @@
+task_id: ING-019
+title: Official source removal, replacement, and version-update detection
+milestone: M2
+priority: P1
+owner: BE
+status: implemented_pending_final_gate
+
+authority:
+  source_registry: kb_source_registry
+  immutable_source_version: kb_source_version
+  append_only_detection_evidence: kb_source_refresh_observation
+  durable_application_action: kb_source_change_action
+
+detection:
+  removal:
+    eligible_sources: official_only
+    http_statuses: [404, 410]
+    observation_outcome: failed
+    detection_type: removed
+    source_version_baseline_required: true
+    action: quarantine_source_and_linked_published_documents
+  replacement:
+    eligible_sources: official_only
+    requires_prior_source_version: true
+    evidence: validated_safe_redirect_to_material_host_or_path_change
+    canonical_equivalence: [default_https_port, trailing_slash, index_document]
+    action: quarantine_source_and_linked_published_documents
+  version_update:
+    eligible_sources: official_only
+    requires_prior_source_version: true
+    evidence: changed_sha256_content_hash
+    detection_type: version_updated
+    action: retain_active_source_and_append_immutable_version
+
+non_detection:
+  non_removal_4xx: [401, 403, 418, 429]
+  same_hash: none
+  http_304: none
+  first_successful_fetch: none
+  non_official_source: none
+
+durability:
+  observation_mutability: append_only
+  source_version_fact_match: [tenant_id, source_registry_id, content_hash, byte_size]
+  action_states: [pending, applying, applied, failed]
+  retry: failed_action_is_claimable_and_idempotent
+  stale_claim_recovery_minutes: 5
+  raw_sql_guards: [observation_update_delete_rejected, observation_insert_invariants, action_observation_scope]
+
+security:
+  safe_outbound_boundary: CAT-004
+  response_body_persistence: forbidden
+  error_evidence: stable_code_and_numeric_http_status_only
+  tenant_scope: every_read_write_and_action_query
+  permission: knowledge_source_update_required_for_action
+  replacement_url: retained_only_in_validated_observation_evidence
+
+api:
+  refresh_history: GET /api/knowledge-v2/sources/{source_id}/refresh-observations
+  additive_fields: [detection_type, replacement_url, version_signal, change_action_id]
+  forbidden_fields: [version_signal_json, response_body, credentials, provider_error_text]
+
+rollback:
+  runtime: disable_source_freshness_scheduler_and_change_action_worker
+  data: retain_append_only_observations_actions_and_immutable_source_versions
+  v1_impact: none
+
+verification:
+  focused_tests:
+    - backend/tests/catalog/test_ing019_source_change_detection.py
+    - backend/tests/catalog/test_ing019_safe_outbound.py
+    - backend/tests/database/test_m0121_knowledge_v2_source_change_detection.py
+  related_regression:
+    - backend/tests/catalog/test_ing018_source_freshness.py
+    - backend/tests/catalog/test_cat004_secure_outbound.py
+  required_cases:
+    - removal_404_410
+    - non_removal_4xx
+    - replacement_and_canonical_equivalence
+    - changed_hash_after_baseline
+    - same_hash_and_304
+    - tenant_permission_retry_redaction

@@ -22,6 +22,7 @@ from services.platform_registry_service import (
     transition_release,
     update_profile,
     update_release_action,
+    iter_action_definitions,
 )
 from services.platform_registry_health_service import get_profile_health
 
@@ -95,7 +96,7 @@ def test_migration_seeds_registry_and_action_catalog(isolated_db):
             ).fetchall()
         }
         assert {"validation_status", "validation_result_json", "submitted_by", "approved_by", "published_by", "lock_version"} <= version_columns
-        assert conn.execute("SELECT COUNT(*) AS count FROM action_definitions").fetchone()["count"] == 26
+        assert conn.execute("SELECT COUNT(*) AS count FROM action_definitions").fetchone()["count"] == len(iter_action_definitions())
         release = conn.execute(
             """SELECT p.platform_code, r.status, r.release_number
                FROM platform_profiles p JOIN platform_releases r ON r.id = p.current_release_id

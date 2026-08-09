@@ -862,8 +862,12 @@ class SiteCreate(BaseModel):
 
     @model_validator(mode='after')
     def validate_phone_for_country(self):
-        if self.country in _CHINA_COUNTRY_VALUES and not _re.fullmatch(r'^(?:\+86|0)?1[3-9]\d{9}$|^0\d{2,3}-?\d{7,8}$|^\+[1-9]\d{6,14}$', self.contact_phone):
-            raise ValueError('contact_phone must be a valid 11-digit Chinese mobile, landline, or international number')
+        # When the site country is China, an international value must contain
+        # the complete +86 prefix plus an 11-digit mobile number.  The
+        # generic E.164 validator intentionally remains broader for other
+        # countries, but must not admit a truncated +86 number here.
+        if self.country in _CHINA_COUNTRY_VALUES and not _re.fullmatch(r'^(?:1[3-9]\d{9}|0\d{2,3}-?\d{7,8}|\+861[3-9]\d{9})$', self.contact_phone):
+            raise ValueError('contact_phone must be a valid +86 Chinese mobile, landline, or international number')
         return self
 
     @field_validator('status')

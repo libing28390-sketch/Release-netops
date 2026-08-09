@@ -36,6 +36,7 @@ LEGACY_SSH_ERROR_CODE = "legacy_ssh_algorithms"
 SSH_AUTH_ERROR_CODE = "ssh_authentication_failed"
 SSH_TIMEOUT_ERROR_CODE = "ssh_transport_timeout"
 SSH_TRANSPORT_ERROR_CODE = "ssh_transport_unreachable"
+SSH_HOST_KEY_ERROR_CODE = "ssh_host_key_untrusted"
 
 PAGING_PROMPT_RE = re.compile(
     r"(?:----\s*More\s*----|--\s*More\s*--|--More--|<---\s*More\s*--->|Press\s+any\s+key\s+to\s+continue)",
@@ -300,8 +301,36 @@ def build_ssh_transport_guidance(error_text: str) -> str:
     )
 
 
+def is_ssh_host_key_error(error_text: str) -> bool:
+    """Return whether an SSH failure is caused by host-key trust validation."""
+    normalized = (error_text or "").lower()
+    indicators = (
+        "host key is not trusted",
+        "host key is not known",
+        "host key mismatch",
+        "host key has changed",
+        "hostkeynotverifiable",
+        "known_hosts",
+        "known hosts",
+    )
+    return any(indicator in normalized for indicator in indicators)
+
+
+def build_ssh_host_key_guidance(error_text: str) -> str:
+    """Build safe guidance for an untrusted or changed SSH host key."""
+    if not is_ssh_host_key_error(error_text):
+        return error_text
+
+    return (
+        "SSH 主机密钥未登记或与已登记指纹不一致。请管理员先核对设备的 SHA256 主机密钥指纹，"
+        "再在资产的 PAM Host Key 设置中登记；不要用关闭 Host Key 校验的方式绕过。"
+    )
+
+
 def get_ssh_error_code(error_text: str) -> str | None:
     """返回已识别的 SSH 错误分类。"""
+    if is_ssh_host_key_error(error_text):
+        return SSH_HOST_KEY_ERROR_CODE
     if is_legacy_ssh_negotiation_error(error_text):
         return LEGACY_SSH_ERROR_CODE
     if is_ssh_authentication_error(error_text):
@@ -324,6 +353,8 @@ def build_ssh_error_guidance(error_text: str) -> str:
         return build_ssh_timeout_guidance(error_text)
     if error_code == SSH_TRANSPORT_ERROR_CODE:
         return build_ssh_transport_guidance(error_text)
+    if error_code == SSH_HOST_KEY_ERROR_CODE:
+        return build_ssh_host_key_guidance(error_text)
     return error_text
 
 

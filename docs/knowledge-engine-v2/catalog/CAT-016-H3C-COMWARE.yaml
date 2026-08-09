@@ -1,0 +1,202 @@
+task_id: CAT-016
+priority: P2
+owner: NET+AI
+milestone: M2
+status: reviewed_sample_pending_source_allowlist_and_catalog_migration
+authority:
+  vendor_scope: GOV-008
+  base_official_allowlist: CAT-001
+  source_taxonomy: CAT-002
+  product_identity_contract: DB-006
+  os_software_contract: DB-007
+  network_driver_contract: netops-network-drivers
+  source_authority: H3C Technical Support
+
+vendor:
+  vendor_id: h3c
+  display_name: H3C
+  status: active
+  catalog_scope: tenant-default-reviewed-seed
+
+product_family:
+  code: s6520x
+  display_name: H3C S6520X
+  status: active
+  description: H3C S6520X data-center switch family with Comware 7 software.
+  source_kind: product_page
+  canonical_source:
+    source_ref: cat016:h3c:www:s6520x-hardware
+    url: https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S6520X_E-11670/202512/2727552_294551_0.htm
+  product_series:
+    - code: s6520x_ei
+      display_name: S6520X-EI
+      status: active
+      model_code_rule: '^S6520X-(?:30|54)(?:QC|HC|HF)(?:-UPWR)?-EI$'
+      product_identity_is_orthogonal_to:
+        - cli_platform
+        - connection_driver
+        - software_train
+        - software_version
+      model_samples:
+        - model_code: S6520X-30QC-EI
+          display_name: H3C S6520X-30QC-EI
+          status: draft
+          review_status: sample_pending_source_registry_review
+          source_refs:
+            - cat016:h3c:www:s6520x-hardware
+        - model_code: S6520X-54QC-EI
+          display_name: H3C S6520X-54QC-EI
+          status: draft
+          review_status: sample_pending_source_registry_review
+          source_refs:
+            - cat016:h3c:www:s6520x-hardware
+        - model_code: S6520X-54HC-EI
+          display_name: H3C S6520X-54HC-EI
+          status: draft
+          review_status: sample_pending_source_registry_review
+          source_refs:
+            - cat016:h3c:www:s6520x-hardware
+
+software_scope:
+  primary_version: CMW710-R6823
+  compatibility_version: CMW710-R6820
+  software_versions: [CMW710-R6823, CMW710-R6820, CMW710-R6817]
+  os_family: Comware 7
+  software_train: CMW710
+  rule: >-
+    A Comware release narrows document applicability but never becomes a
+    product family, series, model, vendor, or network-driver parent.
+  unknown_version: quarantine_and_require_review
+
+os_family:
+  code: comware
+  display_name: Comware
+  status: draft
+  version_scheme: h3c_comware_release
+  description: H3C Comware operating-system family; generation and release train stay orthogonal to product identity.
+  generations:
+    - code: comware7
+      display_name: Comware 7
+      status: draft
+      generation_order: 7
+      explicit_platform_mappings:
+        - os_generation: comware7
+          cli_platform: h3c_comware
+          connection_driver: hp_comware
+          parser_platform: hp_comware
+          driver_authority: false
+      release_trains:
+        - code: cmw710
+          display_name: CMW710
+          status: draft
+          version_pattern: '^CMW710-R[0-9]+(?:P[0-9]+)?(?:HS[0-9]+)?$'
+          software_versions:
+            - original_version_string: CMW710-R6823
+              normalized_version: cmw710-r6823
+              sort_key: [710, 6823, 0]
+              status: draft
+              applicability: primary_CAT016_s6520x_scope
+              source_ref: cat016:h3c:www:s6520x-software
+            - original_version_string: CMW710-R6820
+              normalized_version: cmw710-r6820
+              sort_key: [710, 6820, 0]
+              status: draft
+              applicability: compatibility_CAT016_s6520x_scope
+              source_ref: cat016:h3c:www:s6520x-software
+            - original_version_string: CMW710-R6817
+              normalized_version: cmw710-r6817
+              sort_key: [710, 6817, 0]
+              status: draft
+              applicability: reviewed_candidate_CAT016_s6520x_scope
+              source_ref: cat016:h3c:www:s6520x-software
+
+platform_binding_advisory:
+  platform_code: h3c_comware
+  connection_driver: hp_comware
+  parser_platform: hp_comware
+  driver_authority: false
+  execution_write_authority: false
+  parser_boundary: >-
+    hp_comware is the canonical TextFSM/parser namespace; h3c_comware is the
+    catalog/device identity and command-catalog namespace. No parser filename
+    may be inferred from a model or version string.
+  forbidden_inference: [vendor_from_model, driver_from_alias, parser_from_version]
+
+identity_rules:
+  canonical_code_case: preserve_model_code_case
+  vendor_resolution: explicit_h3c_only
+  family_resolution: exact_s6520x
+  series_resolution:
+    exact_and_reviewed_aliases: [S6520X, S6520X-EI, H3C S6520X]
+    result: series_candidate_only
+  model_resolution:
+    full_model_code_required_for_unique_identity: true
+    partial_prefix_result: candidate_list_and_clarification
+    unknown_model_result: UNKNOWN_and_no_vendor_or_driver_guess
+  ambiguity:
+    no_first_match_fallback: true
+    return_candidates: true
+    require_manual_clarification: true
+
+version_rules:
+  original_version_string_immutable: true
+  normalized_version_is_derived: true
+  normalization: trim_nfkc_preserve_vendor_tokens_and_lowercase_for_lookup
+  ordering: cmw710_sort_key_only
+  exact_lookup_requires: active_reviewed_version_row
+  range_values: never_exact_version_identity
+  malformed_or_wrong_scheme: reject_or_pending_review
+  unknown_version: UNKNOWN_and_require_source_or_clarification
+
+source_allowlist:
+  status: pending_CAT001_additive_extension
+  base_contract: CAT-001
+  reason: >-
+    CAT-001 deliberately freezes the Huawei/Cisco first batch. CAT-016 keeps
+    H3C evidence as a reviewed sample and does not widen live collection until
+    an additive H3C allowlist review is recorded.
+  official_hosts:
+    - host: www.h3c.com
+      path_prefixes:
+        - /en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S6520X_E-11670/202512/
+        - /en/Support/Resource_Center/EN/Switches/Catalog/S6520X/S6520X-EI/
+  collection_activation: forbidden_until_CAT001_CAT003_CAT004_review
+
+source_refs:
+  - source_ref: cat016:h3c:www:s6520x-hardware
+    source_type: product_page
+    url: https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S6520X_E-11670/202512/2727552_294551_0.htm
+    path_scope: /en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S6520X_E-11670/202512/
+  - source_ref: cat016:h3c:www:s6520x-software
+    source_type: official_url
+    url: https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S6520X/S6520X-EI/default.htm
+    path_scope: /en/Support/Resource_Center/EN/Switches/Catalog/S6520X/S6520X-EI/
+
+unknown_and_legacy_policy:
+  preserved_v1_fields: [ai_document.os_family, ai_document.os_generation, ai_document.software_train, ai_document.software_release, devices.version]
+  never_rewrite_original: true
+  out_of_scope_values: [Comware5, Comware9, CMW500, CMW910, CMW999]
+  behavior: retain_original_return_UNKNOWN_and_require_review
+
+activation_gate:
+  catalog_rows: reviewed_seed_only_until_DB006_migration
+  model_status: draft_until_source_allowlist_and_exact_sku_review
+  version_status: draft_until_source_record_content_hash_and_version_review
+  required_before_active:
+    - additive_H3C_source_allowlist_review
+    - tenant_scoped_vendor_and_parent_ids
+    - exact_model_code_evidence
+    - duplicate_and_ambiguous_model_report
+    - CAT-009_alias_conflict_result
+    - CAT-011_manual_resolution_state
+    - explicit_platform_mapping_review
+  forbidden:
+    - infer_vendor_from_model_string
+    - infer_driver_from_alias
+    - infer_parser_namespace_from_version
+    - rewrite_v1_ai_document_metadata
+
+rollback:
+  runtime: disable_cat016_catalog_reads_and_use_v1_advisory_resolver
+  data: retain_reviewed_seed_artifact_and_all_v1_metadata
+  production_ddl: none_in_CAT-016

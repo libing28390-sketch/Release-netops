@@ -46,6 +46,11 @@ export interface TopologyAggregationDevice {
   group_level?: TopologyHierarchyLevel;
   group_path?: TopologyDrillSegment[];
   group_can_drill?: boolean;
+  /** Evidence-derived graph rank. Role remains identity metadata only. */
+  topology_rank?: number;
+  relation_rank?: number;
+  rank?: number;
+  role_identity?: string;
 }
 
 export interface TopologyAggregationLink {
@@ -74,19 +79,13 @@ export interface TopologyAggregationResult<
   expandedGroupIds: string[];
 }
 
-const layerForDevice = (device: TopologyAggregationDevice) => {
-  const fingerprint = [device.role, device.hostname, device.model, device.platform]
-    .map((value) => String(value || '').toLowerCase())
-    .join(' ');
-  if (/(firewall|fortigate|forti|palo|pan-|checkpoint|srx|asa|ftd|\bfw\b)/.test(fingerprint)) return 'PERIMETER';
-  if (/(router|gateway|wan|edge router|\bisr\b|\basr\b|\bmx\b)/.test(fingerprint)) return 'PERIMETER';
-  if (/(core|backbone|spine|leaf-spine)/.test(fingerprint)) return 'CORE';
-  if (/(distribution|aggregation|agg)/.test(fingerprint)) return 'AGGREGATION';
-  if (/(access|edge|acc[-_ ]?sw)/.test(fingerprint)) return 'ACCESS';
-  return 'DEVICE';
+const relationRankForDevice = (device: TopologyAggregationDevice): number => {
+  const candidate = device.topology_rank ?? device.relation_rank ?? device.rank;
+  const parsed = Number(candidate);
+  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 0;
 };
 
-const layerRank: Record<string, number> = { PERIMETER: 0, CORE: 1, AGGREGATION: 2, ACCESS: 3, DEVICE: 4 };
+const relationLayerLabel = (device: TopologyAggregationDevice) => `RANK_${relationRankForDevice(device)}`;
 
 const getSite = (device: TopologyAggregationDevice) => {
   const id = String(device.site_id || device.site || '').trim();
@@ -123,7 +122,7 @@ const getHierarchySegment = (
     const key = normalizeValue(device.rack_id) || fallbackKey(label);
     return { level, key, label };
   }
-  const label = layerForDevice(device);
+  const label = relationLayerLabel(device);
   return { level, key: label.toLowerCase(), label };
 };
 
@@ -220,9 +219,9 @@ export const aggregateTopologyGraph = <
     const groupId = `group:${mode}:${drillPath.map((segment) => `${segment.level}:${segment.key}`).join('|')}:${key}`;
     const segment = getHierarchySegment(members[0], groupLevel);
     const siteLabel = getSiteLabel(members[0]);
-    const layer = members
-      .map(layerForDevice)
-      .sort((left, right) => (layerRank[left] ?? 9) - (layerRank[right] ?? 9))[0];
+    const layer = relationLayerLabel(members
+      .slice()
+      .sort((left, right) => relationRankForDevice(left) - relationRankForDevice(right))[0]);
     const online = members.filter((member) => String(member.status).toLowerCase() === 'online').length;
     const offline = members.filter((member) => String(member.status).toLowerCase() === 'offline').length;
     const warning = members.filter((member) => String(member.health_status || '').toLowerCase() === 'warning').length;
@@ -232,7 +231,9 @@ export const aggregateTopologyGraph = <
       id: groupId,
       hostname: segment.label,
       ip_address: '',
-      role: `${layer} GROUP`,
+      // Role is retained as an identity label; it is not converted into a
+      // visual layer or used as a layout constraint.
+      role: members[0].role,
       platform: 'topology-group',
       model: 'topology-group',
       site: siteLabel,

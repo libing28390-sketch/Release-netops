@@ -1,0 +1,55 @@
+task_id: DB-004
+milestone: M1
+status: implemented_with_fail_closed_check
+authority: PostgreSQL
+required_extensions:
+  - name: vector
+    capability: pgvector_vector_storage_and_similarity_indexes
+    package_hint: pgvector
+    check: pg_extension_and_pg_available_extensions
+    install: CREATE EXTENSION IF NOT EXISTS vector
+    missing_error_code: POSTGRES_EXTENSION_MISSING
+  - name: pg_trgm
+    capability: trigram_similarity_for_alias_and_typo_matching
+    package_hint: PostgreSQL_contrib
+    check: pg_extension_and_pg_available_extensions
+    install: CREATE EXTENSION IF NOT EXISTS pg_trgm
+    missing_error_code: POSTGRES_EXTENSION_MISSING
+optional_extensions:
+  - name: pgcrypto
+    capability: optional_server_uuid_or_hash_helpers
+    policy: not_required_for_V2_bootstrap; application_uuid_factory_remains_authoritative
+non_postgresql_behavior:
+  sqlite:
+    state: NOT_APPLICABLE
+    allow_local_tests: true
+    production_evidence: forbidden
+    message: SQLite compatibility mode does not prove PostgreSQL extension availability
+error_contract:
+  inspection_failure: POSTGRES_EXTENSION_INSPECTION_FAILED
+  missing_extension: POSTGRES_EXTENSION_MISSING
+  install_failure: POSTGRES_EXTENSION_INSTALL_FAILED
+  safe_message_rules: [no_DSN,no_password,no_API_key,no_raw_driver_payload]
+  actionable_message: include_extension_name_package_hint_privilege_or_restart_action
+migration_behavior:
+  module: backend/database/migrations/m0104_ai_pgvector_rag.py
+  before_indexes: check_and_install_vector_and_pg_trgm
+  failure: raise_and_halt_higher_migrations
+  swallowed_exception: forbidden
+  idempotent: true
+verification:
+  installed_rows: pg_extension.extname_and_extversion
+  available_rows: pg_available_extensions.name_and_version
+  after_install_recheck: required
+  vector_dimension: validated_by_embedding_contract_and_later_DB_CHK_tasks
+  index_plan: pgvector_and_pg_trgm_indexes_are_rebuildable_derived_data
+security:
+  create_extension: allowlist_only
+  privilege: require_database_admin_or_CREATE_extension_privilege
+  outbound_network: none
+  secrets: never_logged
+rollback:
+  schema: drop_only_derived_indexes_or_extension_after_dependency_review
+  data: no_source_or_document_rows_touched
+  runtime: V1_or_local_lexical_fallback_if_extension_gate_fails
+next_tasks: [DB-005, DB-016, CHK-011, RET-008, RET-009, RET-010, REL-002]

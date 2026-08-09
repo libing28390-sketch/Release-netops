@@ -218,8 +218,10 @@ export function getRouteContext(pathname: string): RouteContext {
     else if (second === 'copilot') activeTab = 'ai-copilot';
     else if (second === 'agents') activeTab = 'ai-agents';
     else if (second === 'knowledge') activeTab = 'ai-knowledge';
+    else if (second === 'catalog') activeTab = 'ai-catalog';
     else if (second === 'governance') activeTab = 'ai-governance';
     else if (second === 'usage') activeTab = 'ai-usage';
+    else if (second === 'security') activeTab = 'ai-security';
     else activeTab = 'ai-providers';
   }
   // 12. Legacy or other direct paths
@@ -233,6 +235,7 @@ export function getRouteContext(pathname: string): RouteContext {
     else if (first === 'ai-agents') activeTab = 'ai-agents';
     else if (first === 'ai-governance') activeTab = 'ai-governance';
     else if (first === 'ai-usage') activeTab = 'ai-usage';
+    else if (first === 'ai-security') activeTab = 'ai-security';
 
     else if (first === 'monitoring') activeTab = 'monitoring';
     else if (first === 'topology') activeTab = 'topology';

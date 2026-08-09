@@ -1,0 +1,299 @@
+task_id: DB-001
+milestone: M1
+contract_version: v2.0
+status: frozen_for_implementation
+authority:
+  production_database: PostgreSQL
+  local_test_database: SQLite_compatibility_only
+  source_of_truth: Document_and_Document_Version
+  derived_data: Chunk_Embedding_Index_and_Retrieval_features
+naming:
+  table_case: lower_snake_case
+  table_prefixes:
+    knowledge: kb_
+    ai_control_plane: ai_
+    audit: audit_
+  table_number: singular_noun
+  primary_key: id
+  primary_key_type: uuid
+  foreign_key: referenced_entity_id
+  tenant_key: tenant_id
+  creator_key: created_by
+  updater_key: updated_by
+  created_timestamp: created_at
+  updated_timestamp: updated_at
+  status_column: status
+  version_column: version_no
+  hash_column: content_hash
+  json_column_suffix: _json
+  timestamp_type: timestamptz
+  boolean_type: boolean
+  enum_storage: constrained_text_or_postgresql_enum
+  forbidden_names: [camelCase, PascalCase, uid, uuid_id, fk_id, data, info, misc]
+common_columns:
+  - name: id
+    type: uuid
+    nullable: false
+    rule: immutable_primary_key
+  - name: tenant_id
+    type: uuid
+    nullable: false
+    rule: every_tenant_scoped_row_has_explicit_scope
+  - name: created_at
+    type: timestamptz
+    nullable: false
+    rule: set_once_in_utc
+  - name: updated_at
+    type: timestamptz
+    nullable: false
+    rule: update_on_mutation_in_utc
+  - name: created_by
+    type: uuid
+    nullable: false
+    rule: opaque_principal_or_system_identity
+  - name: updated_by
+    type: uuid
+    nullable: false
+    rule: opaque_principal_or_system_identity
+  - name: status
+    type: text
+    nullable: false
+    rule: entity_specific_allowlist_and_fail_closed_unknown
+  - name: metadata_json
+    type: jsonb
+    nullable: true
+    rule: extensible_metadata_only_not_authorization_or_identity
+entities:
+  - name: kb_vendor
+    aggregate: catalog
+    purpose: canonical_vendor_registry
+    required_columns: [id, tenant_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    unique_keys: [[tenant_id, code]]
+  - name: kb_product_family
+    aggregate: catalog
+    purpose: product_identity_level_one
+    required_columns: [id, tenant_id, vendor_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [vendor_id -> kb_vendor.id]
+    unique_keys: [[tenant_id, vendor_id, code]]
+  - name: kb_product_series
+    aggregate: catalog
+    purpose: product_identity_level_two
+    required_columns: [id, tenant_id, family_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [family_id -> kb_product_family.id]
+    unique_keys: [[tenant_id, family_id, code]]
+  - name: kb_product_model
+    aggregate: catalog
+    purpose: product_identity_level_three
+    required_columns: [id, tenant_id, series_id, model_code, display_name, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [series_id -> kb_product_series.id]
+    unique_keys: [[tenant_id, series_id, model_code]]
+  - name: kb_product_alias
+    aggregate: catalog
+    purpose: controlled_exact_alias_and_prefix_resolution
+    required_columns: [id, tenant_id, product_model_id, alias, normalized_alias, alias_kind, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [product_model_id -> kb_product_model.id]
+    unique_keys: [[tenant_id, normalized_alias, alias_kind]]
+  - name: kb_os_family
+    aggregate: catalog
+    purpose: operating_system_identity
+    required_columns: [id, tenant_id, vendor_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [vendor_id -> kb_vendor.id]
+    unique_keys: [[tenant_id, vendor_id, code]]
+  - name: kb_os_generation
+    aggregate: catalog
+    purpose: operating_system_generation
+    required_columns: [id, tenant_id, os_family_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [os_family_id -> kb_os_family.id]
+    unique_keys: [[tenant_id, os_family_id, code]]
+  - name: kb_release_train
+    aggregate: catalog
+    purpose: software_train_without_os_or_product_inference
+    required_columns: [id, tenant_id, vendor_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [vendor_id -> kb_vendor.id]
+    unique_keys: [[tenant_id, vendor_id, code]]
+  - name: kb_software_version
+    aggregate: catalog
+    purpose: released_software_version
+    required_columns: [id, tenant_id, release_train_id, version_string, normalized_version, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [release_train_id -> kb_release_train.id]
+    unique_keys: [[tenant_id, release_train_id, normalized_version]]
+  - name: kb_source_registry
+    aggregate: source
+    purpose: allowlisted_source_and_collection_policy
+    required_columns: [id, tenant_id, source_type, canonical_url, allowed_host, trust_level, collection_policy_json, status, created_at, updated_at, created_by, updated_by]
+    unique_keys: [[tenant_id, canonical_url]]
+    security: allowed_host_and_trust_level_are_server_authorized
+  - name: kb_source_version
+    aggregate: source
+    purpose: immutable_fetch_manifest
+    required_columns: [id, tenant_id, source_registry_id, fetched_at, content_hash, byte_size, parser_name, parser_version, source_etag, source_last_modified, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [source_registry_id -> kb_source_registry.id]
+    unique_keys: [[tenant_id, source_registry_id, content_hash]]
+    security: original_bytes_or_verified_source_reference_is_retained
+  - name: kb_collection
+    aggregate: knowledge
+    purpose: official_or_enterprise_knowledge_boundary
+    required_columns: [id, tenant_id, code, name, collection_kind, acl_json, status, created_at, updated_at, created_by, updated_by]
+    unique_keys: [[tenant_id, code]]
+    security: collection_kind_and_acl_are_required_for_retrieval
+  - name: kb_document
+    aggregate: knowledge
+    purpose: stable_document_identity_and_source_owner
+    required_columns: [id, tenant_id, collection_id, source_registry_id, canonical_key, title, document_kind, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [collection_id -> kb_collection.id, source_registry_id -> kb_source_registry.id]
+    unique_keys: [[tenant_id, collection_id, canonical_key]]
+    invariant: document_identity_is_not_a_derived_chunk_or_embedding
+  - name: kb_document_version
+    aggregate: knowledge
+    purpose: immutable_document_fact_and_rebuild_input
+    required_columns: [id, tenant_id, document_id, source_version_id, version_no, original_content, normalized_content, content_hash, metadata_json, metadata_hash, parser_name, parser_version, trust_level, acl_json, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [document_id -> kb_document.id, source_version_id -> kb_source_version.id]
+    unique_keys: [[tenant_id, document_id, version_no], [tenant_id, document_id, content_hash]]
+    invariant: original_content_and_hash_are_immutable
+  - name: kb_document_product
+    aggregate: knowledge
+    purpose: explicit_document_to_product_applicability
+    required_columns: [id, tenant_id, document_version_id, product_model_id, applicability_kind, evidence_json, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [document_version_id -> kb_document_version.id, product_model_id -> kb_product_model.id]
+    unique_keys: [[tenant_id, document_version_id, product_model_id, applicability_kind]]
+  - name: kb_document_software
+    aggregate: knowledge
+    purpose: explicit_document_to_os_and_software_applicability
+    required_columns: [id, tenant_id, document_version_id, os_generation_id, software_version_id, cli_platform, evidence_json, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [document_version_id -> kb_document_version.id, os_generation_id -> kb_os_generation.id, software_version_id -> kb_software_version.id]
+    unique_keys: [[tenant_id, document_version_id, os_generation_id, software_version_id, cli_platform]]
+  - name: kb_chunk_version
+    aggregate: retrieval
+    purpose: immutable_chunk_generation_for_document_version
+    required_columns: [id, tenant_id, document_version_id, generation_no, chunker_name, chunker_version, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [document_version_id -> kb_document_version.id]
+    unique_keys: [[tenant_id, document_version_id, generation_no]]
+  - name: kb_chunk
+    aggregate: retrieval
+    purpose: retrievable_parent_child_chunk
+    required_columns: [id, tenant_id, chunk_version_id, parent_chunk_id, ordinal, chunk_role, chunk_type, content, raw_content, embedding_content, heading_path_json, source_locator_json, token_count, content_hash, is_retrieval_candidate, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [chunk_version_id -> kb_chunk_version.id, parent_chunk_id -> kb_chunk.id]
+    unique_keys: [[tenant_id, chunk_version_id, ordinal]]
+    invariant: chunk_is_derived_and_rebuildable
+  - name: kb_chunk_edge
+    aggregate: retrieval
+    purpose: explicit_neighbor_relationship
+    required_columns: [id, tenant_id, chunk_version_id, from_chunk_id, to_chunk_id, edge_kind, ordinal_delta, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [chunk_version_id -> kb_chunk_version.id, from_chunk_id -> kb_chunk.id, to_chunk_id -> kb_chunk.id]
+    unique_keys: [[tenant_id, chunk_version_id, from_chunk_id, to_chunk_id, edge_kind]]
+  - name: kb_embedding_model
+    aggregate: retrieval
+    purpose: pinned_embedding_contract
+    required_columns: [id, tenant_id, provider_id, model_code, dimension, contract_version, mode, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [provider_id -> ai_provider.id]
+    unique_keys: [[tenant_id, provider_id, model_code, contract_version]]
+  - name: kb_chunk_embedding
+    aggregate: retrieval
+    purpose: versioned_derived_vector
+    required_columns: [id, tenant_id, chunk_id, embedding_model_id, index_version_id, vector_value, dimension, vector_hash, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [chunk_id -> kb_chunk.id, embedding_model_id -> kb_embedding_model.id, index_version_id -> kb_index_version.id]
+    unique_keys: [[tenant_id, chunk_id, embedding_model_id, index_version_id]]
+    invariant: vector_contract_must_match_model_dimension_and_version
+  - name: kb_index_version
+    aggregate: retrieval
+    purpose: searchable_index_generation_and_cutover_pointer
+    required_columns: [id, tenant_id, generation_no, lexical_index_version, trigram_index_version, vector_index_version, status, verified_at, rollback_to_id, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [rollback_to_id -> kb_index_version.id]
+    unique_keys: [[tenant_id, generation_no]]
+  - name: kb_import_job
+    aggregate: ingestion
+    purpose: idempotent_import_reindex_and_rebuild_job
+    required_columns: [id, tenant_id, job_kind, scope_json, dry_run, status, total_count, parsed_count, failed_count, retry_count, cancelled_at, error_json, created_at, updated_at, created_by, updated_by]
+    unique_keys: [[tenant_id, id]]
+  - name: ai_provider
+    aggregate: ai_control_plane
+    purpose: provider_instance_with_encrypted_secret_reference
+    required_columns: [id, tenant_id, provider_type, name, base_url, secret_ref, key_version, enabled, status, created_at, updated_at, created_by, updated_by]
+    unique_keys: [[tenant_id, name]]
+    security: secret_ref_only; plaintext_api_key_never_persisted_or_returned
+  - name: ai_model
+    aggregate: ai_control_plane
+    purpose: provider_owned_model_capability_contract
+    required_columns: [id, tenant_id, provider_id, model_code, model_type, capabilities_json, context_length, max_output_tokens, enabled, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [provider_id -> ai_provider.id]
+    unique_keys: [[tenant_id, provider_id, model_code]]
+  - name: ai_model_route
+    aggregate: ai_control_plane
+    purpose: scene_tenant_role_authorized_primary_and_fallback_route
+    required_columns: [id, tenant_id, scene, primary_model_id, fallback_model_id, route_reason, allowed_roles_json, enabled, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [primary_model_id -> ai_model.id, fallback_model_id -> ai_model.id]
+    unique_keys: [[tenant_id, scene]]
+    security: requested_model_cannot_bypass_route_policy_or_gateway
+  - name: ai_request_trace
+    aggregate: observability
+    purpose: tenant_safe_request_provenance_and_attempt_chain
+    required_columns: [id, tenant_id, request_id, conversation_id, scene, requested_provider_id, requested_model_id, actual_provider_id, actual_model_id, route_reason, security_decision, retrieval_trace_id, citation_trace_id, status, created_at, updated_at, created_by, updated_by]
+    foreign_keys: [requested_provider_id -> ai_provider.id, requested_model_id -> ai_model.id, actual_provider_id -> ai_provider.id, actual_model_id -> ai_model.id]
+    security: opaque_user_reference_and_metadata_only_no_raw_prompt_or_secret
+relationships:
+  - from: kb_vendor
+    to: kb_product_family
+    cardinality: one_to_many
+  - from: kb_product_family
+    to: kb_product_series
+    cardinality: one_to_many
+  - from: kb_product_series
+    to: kb_product_model
+    cardinality: one_to_many
+  - from: kb_document
+    to: kb_document_version
+    cardinality: one_to_many
+  - from: kb_document_version
+    to: kb_chunk_version
+    cardinality: one_to_many
+  - from: kb_chunk_version
+    to: kb_chunk
+    cardinality: one_to_many
+  - from: kb_chunk
+    to: kb_chunk_edge
+    cardinality: many_to_many_via_edge
+  - from: kb_chunk
+    to: kb_chunk_embedding
+    cardinality: one_to_many_by_index_generation
+  - from: kb_index_version
+    to: kb_chunk_embedding
+    cardinality: one_to_many
+  - from: ai_provider
+    to: ai_model
+    cardinality: one_to_many
+  - from: ai_model
+    to: ai_model_route
+    cardinality: many_to_many_by_scene_role
+invariants:
+  - production_authority_is_postgresql
+  - tenant_id_is_required_on_every_tenant_scoped_entity
+  - product_os_and_software_version_are_orthogonal
+  - original_document_version_is_immutable_fact_source
+  - chunks_embeddings_and_indexes_are_derived_generations
+  - every_foreign_key_uses_referenced_entity_id
+  - every_status_has_explicit_allowlist_and_unknown_fails_closed
+  - secrets_are_referenced_not_stored_in_domain_tables
+  - vector_dimension_model_and_contract_version_are_atomic
+  - v1_tables_and_routes_are_preserved_until_migration_gate
+compatibility_mapping:
+  ai_knowledge_base: kb_collection
+  ai_document: kb_document_plus_kb_document_version
+  ai_document_chunk: kb_chunk_plus_kb_chunk_embedding
+  ai_knowledge_directory: kb_collection_directory_follow_up_task
+  ai_provider: ai_provider_additive_tenant_and_secret_ref_columns
+  ai_model: ai_model_additive_capability_contract
+  ai_model_route: ai_model_route_primary_and_fallback_adapter
+  ai_request_log: ai_request_trace_additive_projection
+  rule: mappings_are_adapters_not_permission_to_overwrite_v1
+freeze_gates:
+  - all_entities_have_id_tenant_id_created_at_updated_at_created_by_updated_by_status
+  - all_foreign_keys_and_unique_keys_have_postgresql_definitions
+  - product_os_software_dimensions_have_no_cross_dimension_inference
+  - original_content_hash_and_document_version_are_immutable
+  - derived_generations_have_rollback_to_or_previous_ready_pointer
+  - fresh_upgrade_downgrade_and_v1_parallel_tests_are_required_before_migration
+rollback:
+  contract: disable_v2_and_restore_last_ready_generation
+  data: retain_v1_rows_and_original_document_bytes
+  schema: apply_only_verified_additive_downgrade; never_delete_source_fact
+next_tasks: [DB-002, DB-003, DB-004, DB-005, DB-006, DB-007, DB-008, DB-009, DB-010]

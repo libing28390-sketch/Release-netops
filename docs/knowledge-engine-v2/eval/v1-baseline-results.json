@@ -1,0 +1,292 @@
+{
+  "baseline_id": "nexora-kb-v1-20260809",
+  "system_under_test": "current-local-rag-retrieval-path",
+  "case_count": 10,
+  "metrics": {
+    "retrieval_accuracy": 1.0,
+    "wrong_vendor_rate": 0.0,
+    "version_conflict_rate": 0.0,
+    "citation_accuracy": 1.0,
+    "citation_recall": 1.0,
+    "latency_ms": {
+      "average": 0.2894,
+      "p50": 0.2624,
+      "p95": 0.5398,
+      "max": 0.656
+    }
+  },
+  "cases": [
+    {
+      "id": "Q01",
+      "query": "S5735-L-V2 V600 ARP",
+      "expected_ids": [
+        "arp-v600"
+      ],
+      "returned_ids": [
+        "arp-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.656,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v600.display_arp.command"
+        ]
+      }
+    },
+    {
+      "id": "Q02",
+      "query": "S5735-L-V2 V600 VLAN config",
+      "expected_ids": [
+        "vlan-v600"
+      ],
+      "returned_ids": [
+        "vlan-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.1837,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v600.vlan_access.configuration"
+        ]
+      }
+    },
+    {
+      "id": "Q03",
+      "query": "Huawei V300 OSPF output",
+      "expected_ids": [
+        "ospf-v300"
+      ],
+      "returned_ids": [
+        "ospf-v300"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.2828,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v300.display_ospf_peer.output.001"
+        ]
+      }
+    },
+    {
+      "id": "Q04",
+      "query": "Huawei V600 OSPF output",
+      "expected_ids": [
+        "ospf-v600"
+      ],
+      "returned_ids": [
+        "ospf-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.2021,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v600.display_ospf_peer_brief.output.001"
+        ]
+      }
+    },
+    {
+      "id": "Q05",
+      "query": "display ospf peer meaning",
+      "expected_ids": [
+        "ospf-v300",
+        "ospf-v600"
+      ],
+      "returned_ids": [
+        "ospf-v300",
+        "ospf-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.3977,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
+        "metadata_candidate_documents": 2,
+        "candidate_count": 2,
+        "vector_top_n": 2,
+        "dedup_document_count": 2,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 2,
+        "final_document_ids": [
+          "huawei.yunshan.v300.display_ospf_peer.output.001",
+          "huawei.yunshan.v600.display_ospf_peer_brief.output.001"
+        ]
+      }
+    },
+    {
+      "id": "Q06",
+      "query": "CloudEngine 6800 hardware",
+      "expected_ids": [
+        "hw-ce-series",
+        "hw-ce-model"
+      ],
+      "returned_ids": [
+        "hw-ce-series",
+        "hw-ce-model"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.3516,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))",
+        "metadata_candidate_documents": 2,
+        "candidate_count": 2,
+        "vector_top_n": 2,
+        "dedup_document_count": 2,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 2,
+        "final_document_ids": [
+          "huawei.cloudengine-6800.product_registry.series",
+          "huawei.cloudengine-6800.ce6885.product_registry.model"
+        ]
+      }
+    },
+    {
+      "id": "Q07",
+      "query": "CloudEngine 6800 OSPF config",
+      "expected_ids": [],
+      "returned_ids": [],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.2419,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))",
+        "metadata_candidate_documents": 0,
+        "candidate_count": 0,
+        "vector_top_n": 0,
+        "dedup_document_count": 0,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 0,
+        "final_document_ids": []
+      }
+    },
+    {
+      "id": "Q08",
+      "query": "Cisco ARP",
+      "expected_ids": [
+        "cisco-arp"
+      ],
+      "returned_ids": [
+        "cisco-arp"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.1446,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "cisco.iosxe.show_arp.command"
+        ]
+      }
+    },
+    {
+      "id": "Q09",
+      "query": "H3C OSPF command",
+      "expected_ids": [
+        "h3c-ospf"
+      ],
+      "returned_ids": [
+        "h3c-ospf"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.1323,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "h3c.comware.display_ospf_peer.command"
+        ]
+      }
+    },
+    {
+      "id": "Q10",
+      "query": "S5735-L-V2 V600 ARP no vendor",
+      "expected_ids": [
+        "arp-v600"
+      ],
+      "returned_ids": [
+        "arp-v600"
+      ],
+      "retrieval_correct": true,
+      "citation_precision": 1.0,
+      "vendor_mismatch": false,
+      "version_conflict": false,
+      "latency_ms": 0.3008,
+      "debug": {
+        "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
+        "metadata_candidate_documents": 1,
+        "candidate_count": 1,
+        "vector_top_n": 1,
+        "dedup_document_count": 1,
+        "incompatible_embedding_chunks": 0,
+        "expanded_context_chunks": 1,
+        "final_document_ids": [
+          "huawei.yunshan.v600.display_arp.command"
+        ]
+      }
+    }
+  ],
+  "external_network_call": false,
+  "production_database_write": false
+}

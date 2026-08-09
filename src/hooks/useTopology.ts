@@ -62,6 +62,13 @@ export type TopologyDecoratedLink = {
   aggregation_bandwidth_mbps?: number | null;
   members?: Array<Record<string, unknown>>;
   is_unmanaged?: boolean;
+  relation_type?: string;
+  semantic_relation?: string;
+  confidence?: number;
+  semantic_confidence?: number;
+  manual_confirmed?: boolean | number;
+  is_manual?: boolean | number;
+  rank_excluded?: boolean | number;
 };
 
 export type TopologySiteSummary = {
@@ -95,6 +102,19 @@ export type TopologyDiscoveryProgress = {
 
 export type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
 export type TopologyProtocolFilter = 'all' | 'lldp';
+export type TopologyGraphView = 'all' | 'physical' | 'l2' | 'l3' | 'logical' | 'site' | 'external' | 'oob';
+
+export type TopologyHistoryItem = {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  event_type: string;
+  before?: unknown;
+  after?: unknown;
+  source?: string;
+  actor?: string;
+  created_at?: string;
+};
 
 const topologyAuthHeaders = (): Record<string, string> => {
   const token = localStorage.getItem('netops_token');
@@ -171,9 +191,11 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     exclude_tag_ids: [],
   }));
   const [topologyLinkStatusFilter, setTopologyLinkStatusFilter] = useState<TopologyLinkStatusFilter>('all');
-  // Topology discovery is LLDP-based by default; keep the protocol contract
-  // internal instead of exposing a redundant one-option filter in the toolbar.
-  const [topologyProtocolFilter, setTopologyProtocolFilter] = useState<TopologyProtocolFilter>('lldp');
+  const [topologyGraphView, setTopologyGraphView] = useState<TopologyGraphView>('physical');
+  // The graph view selects the relation family. Protocol remains an optional
+  // evidence filter and defaults to all so logical views are not hidden by an
+  // old LLDP-only default.
+  const [topologyProtocolFilter, setTopologyProtocolFilter] = useState<TopologyProtocolFilter>('all');
   const [selectedTopologyDeviceId, setSelectedTopologyDeviceId] = useState<string | null>(null);
   const [selectedTopologyLinkKey, setSelectedTopologyLinkKey] = useState<string | null>(null);
   const [topologyDiscoveryRunning, setTopologyDiscoveryRunning] = useState(false);
@@ -181,6 +203,8 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
   const [topologyDiscoveryProgress, setTopologyDiscoveryProgress] = useState<TopologyDiscoveryProgress | null>(null);
   const [topologyDiscoveryDevices, setTopologyDiscoveryDevices] = useState<any[]>([]);
   const [topologySites, setTopologySites] = useState<TopologySiteSummary[]>([]);
+  const [topologyNodeMetadata, setTopologyNodeMetadata] = useState<Record<string, Partial<Device>>>({});
+  const [topologyGraphNodeDevices, setTopologyGraphNodeDevices] = useState<Device[]>([]);
   const [topologyDataError, setTopologyDataError] = useState('');
   // A topology canvas represents the currently verified graph. Historical
   // links remain available through the explicit stale-link toggle, but must
@@ -196,13 +220,121 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     const params = new URLSearchParams({ limit: '5000' });
     params.set('include_stale', hideStaleLinks ? 'false' : 'true');
     if (topologySiteFilter !== 'all') params.set('site_id', topologySiteFilter);
-    const [linksResponse, sitesResponse] = await Promise.all([
+    const graphParams = new URLSearchParams({
+      view: topologyGraphView,
+      limit: '5000',
+      include_stale: hideStaleLinks ? 'false' : 'true',
+    });
+    if (topologySiteFilter !== 'all') graphParams.set('site_id', topologySiteFilter);
+    const [linksResponse, sitesResponse, graphResponse] = await Promise.all([
       fetch(`/api/topology/links?${params.toString()}`, { headers: topologyAuthHeaders() }),
       fetch('/api/topology/sites', { headers: topologyAuthHeaders() }),
+      fetch(`/api/topology/graph?${graphParams.toString()}`, { headers: topologyAuthHeaders() }),
     ]);
     if (!linksResponse.ok) throw new Error(`topology_links_${linksResponse.status}`);
     const linksPayload = await linksResponse.json();
-    const nextLinks = Array.isArray(linksPayload?.links) ? linksPayload.links : [];
+    const legacyLinks = Array.isArray(linksPayload?.links) ? linksPayload.links : [];
+    let nextLinks = legacyLinks;
+    const graphNodeMetadata: Record<string, Partial<Device>> = {};
+    if (graphResponse.ok) {
+      const graphPayload = await graphResponse.json();
+      const graphNodes = Array.isArray(graphPayload?.nodes) ? graphPayload.nodes : [];
+      const graphEdges = Array.isArray(graphPayload?.edges) ? graphPayload.edges : [];
+      const nodeMap = new Map<string, any>(graphNodes.map((node: any) => [String(node.id), node]));
+      const graphOnlyDevices: Device[] = [];
+      graphNodes.forEach((node: any) => {
+        const nodeId = String(node.id || '').trim();
+        const deviceId = String(node.device_id || nodeId).trim();
+        if (!deviceId) return;
+        if (!node.device_id) {
+          graphOnlyDevices.push({
+            id: deviceId,
+            hostname: String(node.display_name || node.canonical_key || deviceId),
+            ip_address: String(node.metadata?.ip_address || ''),
+            platform: 'topology-graph',
+            status: 'online',
+            compliance: 'unknown',
+            sn: '',
+            model: '',
+            version: '',
+            role: String(node.role_identity || 'Unknown'),
+            site: String(node.site_id || ''),
+            site_id: node.site_id || undefined,
+            uptime: '',
+            connection_method: 'ssh',
+            config_history: [],
+            device_category: String(node.node_type || 'UNKNOWN'),
+            function: node.function || '',
+            zone: node.zone || 'Unknown',
+            topology_node_type: node.node_type,
+          });
+        }
+        graphNodeMetadata[deviceId] = {
+          topology_node_id: nodeId,
+          topology_rank: Number(node.rank || 0),
+          relation_rank: Number(node.rank || 0),
+          role_identity: node.role_identity,
+          topology_node_type: node.node_type,
+          function: node.function || '',
+          zone: node.zone || 'Unknown',
+          layout_override: node.layout_override || {},
+        };
+      });
+      const graphLinks = graphEdges
+        .map((edge: any) => {
+          const source = nodeMap.get(String(edge.source_node_id));
+          const target = nodeMap.get(String(edge.target_node_id));
+          const sourceDeviceId = String(source?.device_id || source?.id || '').trim();
+          const targetDeviceId = String(target?.device_id || target?.id || '').trim();
+          if (!sourceDeviceId || !targetDeviceId) return null;
+          const metadata = edge.metadata && typeof edge.metadata === 'object' ? edge.metadata : {};
+          const sources = Array.isArray(metadata.source_types) ? metadata.source_types.map(String) : [];
+          return {
+            id: edge.id,
+            link_key: edge.id,
+            source_device_id: sourceDeviceId,
+            target_device_id: targetDeviceId,
+            source_hostname: source.display_name || source.canonical_key || sourceDeviceId,
+            target_hostname: target.display_name || target.canonical_key || targetDeviceId,
+            source_port: edge.source_interface || '',
+            target_port: edge.target_interface || '',
+            source_port_normalized: edge.source_interface || '',
+            target_port_normalized: edge.target_interface || '',
+            source_site_id: source.site_id || '',
+            target_site_id: target.site_id || '',
+            discovery_source: sources.join('+') || String(edge.relation_type || '').toLowerCase(),
+            discovery_sources: sources,
+            metadata_json: JSON.stringify(metadata),
+            evidence_count: Number(edge.evidence_count || 0),
+            confidence: Number(edge.existence_confidence || 0),
+            semantic_confidence: Number(edge.semantic_confidence || 0),
+            relation_type: edge.relation_type,
+            semantic_relation: edge.semantic_relation || '',
+            status: edge.status || 'active',
+            last_seen: edge.last_seen,
+            is_manual: Number(edge.is_manual || 0),
+            manual_confirmed: Number(edge.manual_confirmed || 0),
+            rank_excluded: Number(edge.rank_excluded || 0),
+            inferred: String(edge.relation_type || '').toUpperCase() !== 'PHYSICAL',
+            operational_state: edge.status === 'stale' ? 'stale' : 'unknown',
+          };
+        })
+        .filter(Boolean);
+      setTopologyGraphNodeDevices(graphOnlyDevices);
+      // During a rolling upgrade the legacy physical table can be populated
+      // before the evidence projection catches up. Keep that safe fallback
+      // only for the physical view; logical/OOB views must not be polluted by
+      // physical links when their graph family is empty.
+      nextLinks = graphLinks.length > 0 || topologyGraphView !== 'physical' ? graphLinks : legacyLinks;
+    } else {
+      setTopologyGraphNodeDevices([]);
+    }
+    const nextNodeMetadata = {
+      ...(linksPayload?.node_metadata && typeof linksPayload.node_metadata === 'object'
+        ? linksPayload.node_metadata as Record<string, Partial<Device>>
+        : {}),
+      ...graphNodeMetadata,
+    };
     // A device can be added from the asset/CMDB page while this SPA is still
     // holding the previous device snapshot. In that case the backend returns
     // valid links, but the frontend would drop them because their endpoint IDs
@@ -217,12 +349,15 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
       if (hasUnknownEndpoint) await refreshDevices();
     }
     setTopologyLinks(nextLinks);
+    setTopologyNodeMetadata(nextNodeMetadata);
     if (sitesResponse.ok) {
       const sitesPayload = await sitesResponse.json();
       setTopologySites(Array.isArray(sitesPayload?.items) ? sitesPayload.items : []);
     }
-    setTopologyDataError(sitesResponse.ok ? '' : `topology_sites_${sitesResponse.status}`);
-  }, [devices, hideStaleLinks, refreshDevices, topologySiteFilter]);
+    setTopologyDataError(
+      sitesResponse.ok && graphResponse.ok ? '' : `topology_${!sitesResponse.ok ? 'sites' : 'graph'}_fetch_failed`,
+    );
+  }, [devices, hideStaleLinks, refreshDevices, topologyGraphView, topologySiteFilter]);
 
   React.useEffect(() => {
     let active = true;
@@ -421,6 +556,11 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     return segments.join(' · ') || (language === 'zh' ? '暂无接口遥测' : 'No interface telemetry');
   }, [language]);
 
+  const graphInventory = useMemo(() => {
+    const existingIds = new Set(devices.map((device) => String(device.id)));
+    return [...devices, ...topologyGraphNodeDevices.filter((device) => !existingIds.has(String(device.id)))];
+  }, [devices, topologyGraphNodeDevices]);
+
   const {
     topologySiteOptions,
     topologyRoleOptions,
@@ -428,7 +568,7 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     topologyTagCandidateDevices,
     topologyVisibleDevices,
   } = useTopologyVisibleDevices({
-    devices,
+    devices: graphInventory,
     topologySearch,
     topologyStatusFilter,
     topologyRoleFilter,
@@ -482,6 +622,14 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     if (!hideOrphanDevices) return topologyVisibleDevices;
     return topologyVisibleDevices.filter((device) => topologyConnectedDeviceIds.has(device.id));
   }, [topologyVisibleDevices, hideOrphanDevices, topologyConnectedDeviceIds]);
+
+  const topologyDisplayDevices = useMemo(
+    () => topologyFilteredDevices.map((device) => ({
+      ...device,
+      ...(topologyNodeMetadata[String(device.id)] || {}),
+    })),
+    [topologyFilteredDevices, topologyNodeMetadata],
+  );
 
   const topologyDeviceLinks = useMemo(() => {
     if (!selectedTopologyDeviceId) return [] as TopologyDecoratedLink[];
@@ -793,6 +941,31 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     }
   }, [language, showToast, topologyDiscoveryProgress?.id, topologyDiscoveryRunId, topologyDiscoveryRunning]);
 
+  const handleConfirmTopologyRelation = useCallback(async (edgeId: string, relationType: string) => {
+    const response = await fetch(`/api/topology/graph/edges/${encodeURIComponent(edgeId)}/relation`, {
+      method: 'PUT',
+      headers: { ...topologyAuthHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ relation_type: relationType, tenant_id: 'tenant-default' }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(topologyApiErrorMessage(payload, 'topology_relation_override_failed'));
+    }
+    await refreshTopologyData();
+    showToast(language === 'zh' ? '关系已人工确认，自动发现不会覆盖该判断。' : 'Relation confirmed; automatic discovery will preserve this decision.', 'success');
+  }, [language, refreshTopologyData, showToast]);
+
+  const loadTopologyHistory = useCallback(async (edgeId: string): Promise<TopologyHistoryItem[]> => {
+    const response = await fetch(`/api/topology/graph/history?edge_id=${encodeURIComponent(edgeId)}&limit=50`, {
+      headers: topologyAuthHeaders(),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(topologyApiErrorMessage(payload, 'topology_history_fetch_failed'));
+    }
+    return Array.isArray(payload?.items) ? payload.items as TopologyHistoryItem[] : [];
+  }, []);
+
   return {
     // filters & selection
     topologySearch,
@@ -803,6 +976,8 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     setTopologyRoleFilter,
     topologySiteFilter,
     setTopologySiteFilter,
+    topologyGraphView,
+    setTopologyGraphView,
     topologyTagFilter,
     setTopologyTagFilter,
     topologyLinkStatusFilter,
@@ -829,7 +1004,7 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     topologyRoleOptions,
     topologyTagOptions,
     topologyTagCandidateDevices,
-    topologyVisibleDevices: topologyFilteredDevices,
+    topologyVisibleDevices: topologyDisplayDevices,
     topologyVisibleLinks,
     topologyDeviceLinks,
     topologyStats,
@@ -845,6 +1020,8 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     handleExportMap,
     handleTriggerDiscovery,
     handleCancelDiscovery,
+    handleConfirmTopologyRelation,
+    loadTopologyHistory,
     refreshTopologyData,
   };
 };

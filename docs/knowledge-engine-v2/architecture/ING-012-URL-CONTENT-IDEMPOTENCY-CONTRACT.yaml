@@ -1,0 +1,78 @@
+task_id: ING-012
+title: URL Same Content Idempotency
+priority: P0
+milestone: M2
+status: implemented_pending_gate
+owner: BE
+
+purpose:
+  - Treat one tenant and one canonical URL with the same server-owned content hash as one source version.
+  - Make replay semantics explicit even when callers use different request idempotency keys.
+  - Preserve a new version boundary when the content hash changes.
+
+identity:
+  canonical_url_authority: CAT-003_source_registry
+  content_hash_authority: server_computed_sha256
+  scope: [tenant_id, source_registry_id, canonical_url, content_hash]
+  byte_size: server_verified_non_negative_integer
+  body_persistence: hash_only_memory_boundary
+  default_request_key: sha256_of_canonical_url
+
+decisions:
+  no_existing_version:
+    decision: new_version
+    create_source_version: true
+  same_url_same_content_hash:
+    decision: replay_same_url_same_content
+    return_existing_version: true
+    create_duplicate_version: false
+    duplicate_document_write: false
+  same_url_changed_content_hash:
+    decision: new_version
+    return_existing_version: false
+    follow_up_task: ING-013
+  tenant_mismatch:
+    decision: identity_conflict
+    fail_closed: true
+  source_mismatch:
+    decision: identity_conflict
+    fail_closed: true
+
+concurrency:
+  database_guard: tenant_source_content_hash_unique_constraint
+  write_boundary: record_source_version
+  transaction: commit_one_version_or_rollback
+  race_result: existing_version_replay
+
+api_compatibility:
+  additive_fields: [replayed, idempotency.decision, idempotency.existing_version_id]
+  v1_response_fields: preserved
+  explicit_request_keys: supported
+  different_request_keys_same_content: same_version_replay
+
+security:
+  tenant_predicate_required: true
+  raw_body_in_result: forbidden
+  credentials_and_exception_text: forbidden
+  canonical_url_query_fragment: rejected_by_existing_source_registry_gate
+
+database:
+  production_ddl: none
+  existing_m0116_unique_boundary: reused
+  migration_required: false
+
+operational_boundary:
+  fetch_suppression: not_claimed
+  explanation: hash_is_known_after_CAT-004_safe_fetch; conditional HTTP caching belongs to ING-018
+
+rollback:
+  runtime: remove_idempotency_response_adapter_and_keep_existing_unique_version_guard
+  data: no_duplicate_rows_created; no_delete_required
+
+acceptance:
+  - same_url_same_content_different_request_keys_replays_one_version
+  - same_url_changed_content_creates_new_version
+  - same_url_content_is_tenant_scoped
+  - default_url_key_is_stable_and_does_not_echo_url
+  - invalid_identity_fails_closed
+  - source_version_write_remains_transactional

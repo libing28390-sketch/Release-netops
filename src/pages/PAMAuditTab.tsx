@@ -47,6 +47,23 @@ interface PAMSession {
   risk_summary?: string;
 }
 
+interface PAMCommandEvent {
+  id: string;
+  command_index: number;
+  command_safe: string;
+  canonical_action: string;
+  vendor_platform?: string | null;
+  cli_mode?: string | null;
+  risk_level: string;
+  risk_dimensions: Record<string, unknown>;
+  policy_decision: string;
+  confirmation_required: number;
+  accepted_state?: string | null;
+  execution_status?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
 const STATUS_CONFIG = {
   active:     { dot: 'bg-emerald-500 animate-pulse', text: 'text-emerald-700', bg: 'bg-emerald-50', label: '在线', labelEn: 'Online' },
   connecting: { dot: 'bg-amber-400 animate-pulse',  text: 'text-amber-700',   bg: 'bg-amber-50',   label: '连接中', labelEn: 'Connecting' },
@@ -68,6 +85,8 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
   const [showPlayback, setShowPlayback] = useState(false);
   const [selectedSession, setSelectedSession] = useState<PAMSession | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<PAMSession | null>(null);
+  const [commandEvents, setCommandEvents] = useState<PAMCommandEvent[]>([]);
+  const [commandEventsLoading, setCommandEventsLoading] = useState(false);
   // Kill confirmation modal
   const [killTarget, setKillTarget] = useState<PAMSession | null>(null);
   const [isKilling, setIsKilling] = useState(false);
@@ -162,6 +181,30 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [killTarget, isKilling]);
+
+  useEffect(() => {
+    if (!detailsTarget) {
+      setCommandEvents([]);
+      return;
+    }
+    let cancelled = false;
+    setCommandEventsLoading(true);
+    fetch(`/api/pam/sessions/${encodeURIComponent(detailsTarget.id)}/command-events?limit=100`, { headers: authHeaders() })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((payload: { items?: PAMCommandEvent[] }) => {
+        if (!cancelled) setCommandEvents(Array.isArray(payload.items) ? payload.items : []);
+      })
+      .catch(() => {
+        if (!cancelled) showToast(isZh ? '加载命令审计失败' : 'Failed to load command audit', 'error');
+      })
+      .finally(() => {
+        if (!cancelled) setCommandEventsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [authHeaders, detailsTarget, isZh, showToast]);
 
   const confirmKill = async () => {
     if (!killTarget) return;
@@ -636,6 +679,14 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
             }`}>
               <p className="font-bold">{isZh ? '风险分析' : 'Risk analysis'}</p>
               <p className="mt-1">{detailsTarget.risk_summary || (isZh ? '未命中已知风险命令。' : 'No known risky commands matched.')}</p>
+            </div>
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between"><p className="text-xs font-bold text-slate-700">{isZh ? '结构化命令审计' : 'Structured command audit'}</p><span className="text-[10px] text-slate-400">{commandEvents.length} / {detailsTarget.command_count || 0}</span></div>
+              {commandEventsLoading ? <p className="mt-3 text-xs text-slate-400">{isZh ? '加载中...' : 'Loading...'}</p> : commandEvents.length === 0 ? <p className="mt-3 text-xs text-slate-400">{isZh ? '暂无结构化命令事件（旧会话可能只有录像）' : 'No structured command events for this session.'}</p> : (
+                <div className="mt-3 max-h-52 space-y-2 overflow-auto">
+                  {commandEvents.map((event) => <div key={event.id} className="rounded-lg border border-slate-200 bg-white p-2 text-[11px]"><div className="flex items-center justify-between gap-2"><span className="font-mono text-slate-700">#{event.command_index} {event.command_safe}</span><span className={`rounded px-1.5 py-0.5 font-bold ${event.policy_decision === 'BLOCK' ? 'bg-rose-100 text-rose-700' : event.policy_decision === 'CONFIRM' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{event.policy_decision}</span></div><div className="mt-1 text-slate-400">{event.canonical_action} · {event.risk_level} · {event.cli_mode || 'mode unknown'}</div><div className="mt-1 flex gap-2 text-[10px] text-slate-500"><span>accept: {event.accepted_state || 'unknown'}</span><span>execution: {event.execution_status || 'pending'}</span></div></div>)}
+                </div>
+              )}
             </div>
           </div>
         </div>

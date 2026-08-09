@@ -1,0 +1,59 @@
+schema_version: 1
+task_id: AUD-002
+source:
+  backend_glob: backend/ai/api/*.py
+  mount_file: backend/main.py
+  frontend_contract: src/api/ai.ts
+route_counts:
+  v2_api_ai: 52
+  v1_api_v1_ai: 13
+  total: 65
+permissions:
+  all_routes_require_dependency: require_ai_permission
+  codes:
+    - ai.view
+    - ai.assistant
+    - ai.use
+    - ai.knowledge.manage
+    - ai.provider.manage
+    - ai.model.manage
+    - ai.prompt.manage
+    - ai.audit.view
+    - ai.agent.use
+    - ai.command_explain
+    - ai.config_analyze
+    - ai.diff_analyze
+    - ai.alarm_analyze
+contract_sources:
+  typed_models:
+    - backend/ai/schemas/provider.py
+    - backend/ai/schemas/model.py
+    - backend/ai/schemas/prompt.py
+    - src/api/ai.ts
+  inline_runtime_contracts:
+    - backend/ai/api/assistant.py
+    - backend/ai/api/agents.py
+    - backend/ai/api/governance.py
+    - backend/ai/api/security.py
+    - backend/ai/api/usage.py
+    - backend/ai/api/chat_v1.py
+  frontend_callers:
+    - src/pages/ai/Copilot/AssistantTab.tsx
+    - src/pages/ai/Providers/ProviderManagementTab.tsx
+    - src/pages/ai/Models/ModelManagementTab.tsx
+    - src/pages/ai/PromptCenter/PromptCenterTab.tsx
+    - src/pages/ai/Analysis/AIAnalysisModal.tsx
+    - src/pages/ai/Usage/UsageDashboardTab.tsx
+    - src/pages/ai/Security/SecurityPolicyTab.tsx
+    - src/pages/ai/Knowledge/KnowledgeManagementTab.tsx
+    - src/pages/ai/Governance/GovernanceTab.tsx
+findings:
+  - id: AUD002-F01
+    severity: P1
+    description: Several inline-dict endpoints lack FastAPI response_model and need explicit OpenAPI contracts.
+  - id: AUD002-F02
+    severity: P1
+    description: V1 and V2 chat contracts coexist and require compatibility/deprecation regression.
+  - id: AUD002-F03
+    severity: P2
+    description: Some management/task endpoints have no current React caller and need ownership decisions.

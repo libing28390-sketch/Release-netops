@@ -1,0 +1,69 @@
+task_id: DB-021
+priority: P1
+owner: DBA
+milestone: M1
+status: implemented_read_only_patrol
+authority: PostgreSQL_with_SQLite_compatibility_fixture
+contract_version: v2.0
+depends_on: [DB-001, DB-002, DB-003, DB-018, DB-020]
+
+decision:
+  choice: catalog_driven_read_only_foreign_key_and_tenant_scope_patrol
+  summary: >-
+    Consistency checks are derived from the database's declared single-column
+    foreign keys so V1 and additive V2 migrations cannot silently diverge from
+    a hand-maintained relationship list. Every applicable relationship gets a
+    bounded orphan count and optional tenant-scope mismatch count. Composite
+    keys and missing legacy tables are reported as NOT_APPLICABLE instead of
+    being approximated. The patrol never repairs, deletes, inserts, migrates,
+    or returns raw identifiers/content.
+  invariants:
+    - read_only_no_commit_or_ddl
+    - no_raw_primary_keys_credentials_documents_or_prompts_in_report
+    - orphan_count_uses_left_join_and_non_null_child_reference
+    - tenant_mismatch_is_checked_only_when_both_sides_have_tenant_id
+    - missing_tables_columns_and_composite_keys_fail_closed_as_not_applicable
+    - bounded_checks_and_sample_fingerprints_prevent_unbounded_scan_output
+    - scheduler_uses_cross_instance_lock_and_never_auto_repairs
+    - V1_tables_and_paths_remain_untouched
+
+checks:
+  foreign_key_metadata: [sqlite_pragma_foreign_key_list, postgresql_pg_catalog_constraints]
+  orphan_query: >-
+    SELECT COUNT(*) FROM child LEFT JOIN parent ON child.fk = parent.pk
+    WHERE child.fk IS NOT NULL AND parent.pk IS NULL, optionally restricted by
+    a caller-supplied tenant_id.
+  tenant_scope_query: >-
+    JOIN parent on the declared key and count rows where both tenant_id values
+    exist but differ; never infer tenant scope from an unrelated column.
+  enforcement_signal: sqlite_PRAGMA_foreign_keys_or_postgresql_catalog
+  status: PASS_when_zero_failures; WARN_when_enforcement_is_unknown_or_disabled; FAIL_when_orphans_or_tenant_mismatches_exist
+  output: counts_status_and_sha256_prefix_fingerprints_only
+  limits:
+    max_checks_default: 200
+    sample_limit_default: 5
+
+schedule:
+  job_id: database_consistency_patrol
+  trigger: daily_at_02_25_server_timezone
+  lock: database_consistency_patrol_23_hours
+  behavior_on_error: log_redacted_error_and_return_error_report
+  repair: forbidden_automatic_repair_requires_approved_migration_or_reconciliation_action
+
+security_and_governance:
+  authorization: scheduler_service_identity_only_for_periodic_run
+  tenant_filter: optional_explicit_tenant_id; no_cross_tenant_data_return
+  redaction: [no_dsn, no_password, no_api_key, no_raw_primary_key, no_raw_document, no_raw_prompt]
+  audit: report_status_counts_and_fingerprints_are_log_safe
+
+rollback:
+  schema: no_schema_change
+  data: no_data_change
+  operational: disable_or_remove_scheduler_job; no_restore_required
+
+verification:
+  contract_tests: backend/tests/database/test_db021_consistency_orphan_patrol.py
+  required_checks: [catalog_discovery, clean_pass, orphan_fail, tenant_scope_fail, bounded_output, read_only, scheduler_entrypoint, V1_compatibility, report_markers]
+  production_gate: run_against_approved_read_only_postgresql_replica_or_maintenance_window
+
+next_tasks: [DB-022, DB-023, DB-024]

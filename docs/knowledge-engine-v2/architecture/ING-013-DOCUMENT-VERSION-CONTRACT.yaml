@@ -1,0 +1,68 @@
+task_id: ING-013
+priority: P0
+owner: BE
+milestone: M2
+status: implemented_shadow_boundary
+authority: PostgreSQL
+
+goal: >-
+  Keep one stable tenant-scoped Document identity for a canonical URL and
+  append an immutable Document Version whenever the server-owned source
+  content hash changes.
+
+identity:
+  document_key: [tenant_id, source_registry_id, canonical_url]
+  version_key: [tenant_id, document_id, content_hash]
+  version_number: monotonically_increasing_per_document
+  content_hash: lowercase_sha256_over_server_owned_source_bytes
+  canonical_url: normalized_https_url_without_query_fragment_or_userinfo
+
+behaviors:
+  same_url_same_content:
+    decision: replay_same_document_content
+    action: return_existing_document_version_without_insert_or_fact_update
+  same_url_changed_content:
+    decision: new_version
+    action: append_document_version_and_set_current_version_pointer
+    lineage: supersedes_version_id_points_to_previous_latest_version
+  cross_tenant:
+    decision: reject
+    action: no_read_no_replay_no_write
+  invalid_hash_or_content:
+    decision: reject
+    action: no_document_version_write
+
+fact_boundary:
+  immutable_fields: [tenant_id, document_id, source_version_id, version_no, original_content, content_hash, parser_name, parser_version, fetched_at]
+  rebuildable_fields: [normalized_content, normalized_content_hash, metadata_json, metadata_hash, metadata_parse_status]
+  original_content_rule: raw_bytes_or_verified_source_version_reference_required
+  source_of_truth: kb_source_version
+  lifecycle_statuses: [draft, active, disabled, archived, deleted, quarantined, purged]
+
+storage:
+  migration: m0117_knowledge_v2_document_versions
+  tables: [kb_document, kb_document_version]
+  constraints:
+    - tenant_document_source_canonical_unique
+    - tenant_document_version_no_unique
+    - tenant_document_content_hash_unique
+    - source_and_document_tenant_composite_foreign_keys
+    - immutable_document_version_fact_trigger
+  v1_compatibility: ai_document_and_ai_document_chunk_are_not_updated_or_deleted
+  cutover: shadow_only_until_DB009_DB013_scope_and_lifecycle_gates_pass
+
+security:
+  authorization: knowledge_source_create_or_read_permission_and_tenant_predicate
+  forbidden_output: [raw_body, credentials, unrestricted_exception_text]
+  audit_events: [document_version_added, document_version_replayed]
+  audit_payload: [tenant_id, document_id, document_version_id, version_no, content_hash, decision]
+
+rollback:
+  default: disable_shadow_document_version_adapter_and_restore_v1_reader
+  data_policy: preserve_source_and_document_version_facts; no_destructive_delete
+  trigger_policy: lifecycle_fields_may_change; immutable_fact_fields_may_not_change
+
+handoff:
+  next_task: ING-014
+  note: same_hash_different_url_merge_and_source_alias_policy_is_not_claimed_here
+

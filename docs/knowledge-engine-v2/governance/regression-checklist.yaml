@@ -1,0 +1,71 @@
+schema_version: 1
+project: Nexora Knowledge Engine V2
+owner_role: QA
+default_environment: test
+fail_closed: true
+gates:
+  - id: RG-001
+    name: state_and_task_consistency
+    blocking: true
+    cadence: task
+    commands:
+      - git diff --check
+  - id: RG-002
+    name: configuration_and_secrets
+    blocking: true
+    cadence: pull_request_release
+    commands:
+      - python scripts/validate_kb_v2_test_config.py --file docs/knowledge-engine-v2/governance/test-environment.example --environment test
+      - secret_pattern_scan
+  - id: RG-003
+    name: python_quality
+    blocking: true
+    cadence: pull_request
+    commands:
+      - python -m compileall backend scripts
+  - id: RG-004
+    name: backend_tests
+    blocking: true
+    cadence: pull_request_task
+    commands:
+      - python -m pytest backend/tests -q
+  - id: RG-005
+    name: database_migration
+    blocking: true
+    cadence: migration_task_release
+    checks: [fresh, upgrade, repeat, retry, concurrency, rollback_or_forward_fix]
+  - id: RG-006
+    name: api_contract
+    blocking: true
+    cadence: api_task
+    checks: [openapi, auth, rbac, tenant_scope, errors, pagination, idempotency]
+  - id: RG-007
+    name: ai_rag_security
+    blocking: true
+    cadence: ai_security_task
+    checks: [gateway, dlp, model_allowlist, readonly_tools, citations, failover, kill_switch]
+  - id: RG-008
+    name: network_driver_fixtures
+    blocking: true
+    cadence: network_task
+    checks: [huawei_ce6800, cisco_catalyst_9300, parser, timeout_retry, readonly_boundary]
+  - id: RG-009
+    name: frontend_quality
+    blocking: true
+    cadence: frontend_api_task
+    commands: [npm_run_lint, npm_run_test_frontend, npm_run_build]
+  - id: RG-010
+    name: observability_audit
+    blocking: true
+    cadence: observability_task
+    checks: [request_id, provenance, route_reason, failover, migration_log, flag_audit, redaction]
+  - id: RG-011
+    name: performance_capacity
+    blocking: true
+    cadence: milestone_release
+    checks: [readonly_load, slow_query, queue_budget, connection_pool, retrieval_budget]
+  - id: RG-012
+    name: release_rollback
+    blocking: true
+    cadence: release
+    checks: [manifest, version_matrix, backup_restore_or_forward_fix, flag_zero, v1_fallback]

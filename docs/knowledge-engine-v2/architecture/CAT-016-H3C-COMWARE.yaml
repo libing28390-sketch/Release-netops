@@ -1,0 +1,80 @@
+task_id: CAT-016
+priority: P2
+owner: NET+AI
+milestone: M2
+status: frozen_for_reviewed_sample
+depends_on: [GOV-008, DB-006, DB-007, CAT-001, CAT-002, CAT-012]
+decision:
+  choice: additive_h3c_comware_catalog_seed_without_live_collection
+  summary: >-
+    Add an H3C S6520X/Comware 7 reviewed sample to the read-only catalog
+    adapter. Keep product, OS generation, release train, software version,
+    device identity, connection driver, and parser namespace as separate
+    fields. Do not widen CAT-001's Huawei/Cisco first-batch source allowlist or
+    activate outbound collection as part of this P2 task.
+  invariants:
+    - H3C_model_identity_is_explicit_and_not_vendor_inferred
+    - Comware_generation_and_release_train_are_orthogonal_to_product
+    - exact_CMW710_versions_are_reviewed_candidates_only
+    - h3c_comware_is_catalog_identity_and_hp_comware_is_driver_and_parser
+    - unknown_or_ambiguous_values_fail_closed
+    - CAT001_first_batch_allowlist_remains_unchanged
+    - V1_metadata_and_device_fields_are_never_rewritten
+
+catalog_scope:
+  artifact: docs/knowledge-engine-v2/catalog/CAT-016-H3C-COMWARE.yaml
+  vendor: h3c
+  product_family: s6520x
+  product_series: s6520x_ei
+  model_samples: [S6520X-30QC-EI, S6520X-54QC-EI, S6520X-54HC-EI]
+  os_family: comware
+  generation: comware7
+  release_train: cmw710
+  primary_version: CMW710-R6823
+  compatibility_version: CMW710-R6820
+  candidate_versions: [CMW710-R6817]
+
+mapping_contract:
+  vendor_id: h3c
+  catalog_platform: h3c_comware
+  netmiko_driver: hp_comware
+  parser_platform: hp_comware
+  parser_filename_namespace: hp_comware
+  write_authority: false
+  parser_authority: false
+  explicit_mapping_required: true
+
+source_boundary:
+  source_authority: H3C Technical Support
+  source_allowlist_status: pending_CAT001_additive_extension
+  allowed_host: www.h3c.com
+  source_urls:
+    - https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Product_Literature/Hardware_Information___Specifications/H3C_S6520X_E-11670/202512/2727552_294551_0.htm
+    - https://www.h3c.com/en/Support/Resource_Center/EN/Switches/Catalog/S6520X/S6520X-EI/default.htm
+  query_userinfo_fragment: forbidden
+  live_collection: forbidden_until_CAT001_extension_CAT003_activation_CAT004_gate
+
+resolution:
+  exact_model: unique_only_after_review
+  partial_model: candidates_and_clarification
+  unknown_model: UNKNOWN_and_no_vendor_or_driver_guess
+  exact_version: reviewed_candidate_only_until_source_record_activation
+  unknown_version: UNKNOWN_and_require_source_or_clarification
+  ambiguous_vendor: no_first_match_fallback
+
+data_and_rollback:
+  production_ddl: none
+  persistence: contract_only_read_only_seed
+  v1_impact: none
+  rollback: remove_CAT016_seed_from_read_only_projection_and_retain_v1_fields
+
+acceptance:
+  - product_hierarchy_contains_three_unique_H3C_S6520X_models
+  - Comware7_CMW710_contains_three_unique_valid_versions
+  - software_filter_returns_only_H3C_rows_for_exact_CMW710_version
+  - platform_mapping_matches_network_driver_contract
+  - source_urls_are_https_exact_host_path_without_query_userinfo_fragment
+  - unknown_and_ambiguous_resolution_is_fail_closed
+  - no_production_DDL_or_v1_rewrite
+  - focused_catalog_and_regression_tests_pass
+  - lint_build_compile_secret_scan_and_diff_checks_pass

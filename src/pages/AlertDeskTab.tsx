@@ -27,6 +27,16 @@ interface AlertDeskTabProps extends AlertPageCommonProps {
   onNavigateToTopology?: (deviceId: string) => void;
 }
 
+interface AlertActivityItem {
+  id: string;
+  event_type: string;
+  from_state?: string | null;
+  to_state?: string | null;
+  actor_id?: string | null;
+  created_at: string;
+  metadata?: Record<string, unknown>;
+}
+
 const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, showToast, onOpenMaintenanceForAlert, onNavigateToDevice, onNavigateToTopology }) => {
   const [rows, setRows] = useState<AlertRecord[]>([]);
   const [total, setTotal] = useState(0);
@@ -38,6 +48,8 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const [search, setSearch] = useState('');
   const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<AlertDetailResponse | null>(null);
+  const [activity, setActivity] = useState<AlertActivityItem[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailNote, setDetailNote] = useState('');
   const [assignValue, setAssignValue] = useState('');
@@ -102,6 +114,12 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   useEffect(() => {
     if (!selectedAlertId) return;
     void loadDetail(selectedAlertId);
+    setActivityLoading(true);
+    fetch(`/api/alerts/${encodeURIComponent(selectedAlertId)}/activity?limit=100`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
+      .then((payload: { items?: AlertActivityItem[] }) => setActivity(Array.isArray(payload.items) ? payload.items : []))
+      .catch(() => setActivity([]))
+      .finally(() => setActivityLoading(false));
   }, [selectedAlertId]);
 
   useEffect(() => {
@@ -113,6 +131,7 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
   const closeDetail = () => {
     setSelectedAlertId(null);
     setSelectedDetail(null);
+    setActivity([]);
   };
 
   useAlertOverlayDismiss(Boolean(selectedAlertId), closeDetail);
@@ -888,6 +907,11 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                           </div>
                         </div>
                       )}
+
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-black/30">{language === 'zh' ? '状态活动审计' : 'State activity audit'}</p>
+                        {activityLoading ? <p className="mt-2 text-xs text-black/35">{language === 'zh' ? '加载中...' : 'Loading...'}</p> : activity.length === 0 ? <p className="mt-2 text-xs text-black/35">{language === 'zh' ? '暂无活动记录（旧数据可能尚未迁移）' : 'No activity events yet.'}</p> : <div className="mt-2 max-h-40 overflow-y-auto rounded-xl border border-black/[0.06] bg-[#fafbfc]">{activity.map((event) => <div key={event.id} className="flex items-center justify-between gap-3 border-b border-black/[0.04] px-4 py-2.5 text-xs last:border-b-0"><span className="font-medium text-[#164e63]">{event.event_type}</span><span className="text-black/35">{event.from_state || '—'} → {event.to_state || '—'} · {formatTs(event.created_at)}</span></div>)}</div>}
+                      </div>
                     </div>
                   </>
                 )}

@@ -1,0 +1,69 @@
+task_id: ING-006
+priority: P0
+owner: BE+AI
+milestone: M2
+status: frozen_for_implementation
+depends_on: [DB-009, DB-010, ING-001, ING-004, ING-005]
+decision:
+  choice: one_registry_and_adapter_protocol_for_four_document_formats
+  summary: >-
+    HTML, Markdown, TXT and PDF inputs pass through one byte-bounded registry
+    and one ParsedDocument result contract. Adapters decode and structurally
+    extract only; content cleaning, prompt-injection detection, metadata
+    resolution, chunking and publication remain later stages.
+  invariants:
+    - exactly_four_registered_formats_html_markdown_txt_pdf
+    - every_adapter_returns_the_same_parsed_document_shape
+    - parser_name_and_version_are_explicit_and_stable
+    - input_is_bytes_bounded_to_20MB_and_never_network_fetched
+    - filename_and_mime_mismatch_fail_closed
+    - malformed_encoding_magic_or_front_matter_returns_stable_safe_error
+    - parsed_blocks_have_bounded_source_locators
+    - parser_does_not_claim_cleaning_or_publication
+    - V1_markdown_knowledge_service_remains_compatible
+
+registry_contract:
+  implementation: backend/services/document_parser_adapters.py
+  registry: document_parser_registry
+  formats: [html, markdown, txt, pdf]
+  public_function: parse_document
+  result_fields: [format, text, blocks, metadata, parser_name, parser_version, parse_status, warnings]
+  default_serialization: text_omitted_unless_explicitly_requested
+
+adapter_contract:
+  html:
+    backend: stdlib_html_parser
+    output: structural_blocks_with_line_column_locators
+    warning: html_requires_ing007_content_cleaning
+  markdown:
+    backend: existing_front_matter_parser
+    output: body_without_front_matter_and_metadata_mapping
+    missing_front_matter: warning_not_implicit_authority
+  txt:
+    backend: utf8_sig_decode
+    output: normalized_line_blocks
+  pdf:
+    backend: optional_pypdf_then_safe_text_operator_fallback
+    output: page_count_and_pdf_text_blocks
+    no_text: degraded_status_with_stable_warning
+
+failure_contract:
+  codes: [PARSER_BYTES_REQUIRED, PARSER_EMPTY_DOCUMENT, PARSER_DOCUMENT_TOO_LARGE, PARSER_FORMAT_UNSUPPORTED, PARSER_FORMAT_MISMATCH, PARSER_PDF_MAGIC_INVALID, PARSER_ENCODING_INVALID, PARSER_CONTROL_BYTES, PARSER_MARKDOWN_FRONT_MATTER_INVALID, PARSER_HTML_INVALID, PARSER_REGISTRY_INVALID]
+  redaction: no_raw_body_no_dependency_exception_no_filesystem_path
+
+security_and_boundary:
+  max_bytes: 20000000
+  network: forbidden
+  later_stages: [ING-007_cleaning, ING-008_prompt_injection, ING-010_metadata_validation, ING-011_entity_resolution, ING-006_plus_chunking]
+  audit: parser_name_parser_version_format_status_warning_codes_only
+  rollback: disable_parser_registry_and_route_to_existing_v1_markdown_adapter
+  production_ddl: none
+
+acceptance:
+  focused_tests: backend/tests/ai/test_ing006_document_parser_adapters.py
+  required_checks:
+    - four_format_registry_and_uniform_result_contract
+    - text_line_markdown_frontmatter_html_blocks_pdf_fallback
+    - mismatch_empty_size_encoding_magic_and_control_negative_paths
+    - no_network_import_and_safe_error_contract
+    - DB_AI_catalog_V1_compile_yaml_secret_diff_lint_build_gates

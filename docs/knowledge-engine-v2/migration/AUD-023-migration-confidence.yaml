@@ -1,0 +1,142 @@
+task_id: AUD-023
+milestone: M0
+confidence_scale:
+  A: trusted_for_migration
+  B: conditionally_trusted_with_reconciliation
+  C: rebuild_or_shadow_only
+  D: do_not_migrate_automatically
+rules:
+  - id: CONF-001
+    rule: no_production_snapshot_no_claim
+    description: If authoritative PostgreSQL inventory is unavailable, grade observed row counts as NOT_APPLICABLE rather than zero.
+  - id: CONF-002
+    rule: source_before_derived
+    description: Original document/hash and immutable version lineage must pass before Metadata/Chunk/Embedding migration.
+  - id: CONF-003
+    rule: failed_or_ambiguous_isolation
+    description: Parse, trust, ACL, malware, or compatibility failure goes to quarantine/exclude_from_rag; it never becomes active by default.
+  - id: CONF-004
+    rule: reversible_generation
+    description: Every derived generation has a source hash, parser/chunker/embedding contract, verification counts, and rollback pointer.
+  - id: CONF-005
+    rule: no_secret_in_evidence
+    description: Evidence stores hashes/counts/IDs only; never raw credentials, provider payloads, or full device configuration.
+layers:
+  - layer: original_document
+    source_tables_or_paths: [ai_document.original_content, ai_document.source, upload_json_content, kb_import_files]
+    confidence_grade: C
+    confidence_score: 45
+    lineage: conditional
+    completeness: unknown
+    integrity: partial
+    compatibility: conditional
+    recoverability: partial
+    security: low
+    evidence: [ADR-004, ADR-005, AUD-003, AUD-005, AUD-006, AUD-010, AUD-020]
+    facts:
+      - production_ai_tables_not_observed_in_local_runtime
+      - original_content_added_by_m0113_but_no_immutable_document_version
+      - content_hash_exists_on_current_document_shape
+      - browser_binary_placeholder_and_json_api_bypass_are_open
+    migration_decision: preserve_bytes_hash_first_then_rebuild
+    required_actions: [read_only_inventory, source_hash_snapshot, immutable_version_backfill, attachment_quarantine, provenance_review]
+    acceptance: source_hash_match_100_percent_or_explicit_exception; no_source_row_overwritten; failed_rows_excluded
+    rollback: retain_legacy_source_rows_and_disable_new_generation
+  - layer: metadata
+    source_tables_or_paths: [ai_document.metadata_json, ai_document.semantic_columns, front_matter, source_metadata]
+    confidence_grade: B
+    confidence_score: 68
+    lineage: conditional
+    completeness: partial
+    integrity: conditional
+    compatibility: good
+    recoverability: good
+    security: conditional
+    evidence: [ADR-003, ADR-004, ADR-005, AUD-005, AUD-009, AUD-020]
+    facts:
+      - m0113_adds_typed_metadata_columns_and_jsonb_on_postgresql
+      - front_matter_validation_and_directory_conflict_checks_are_tested
+      - legacy_rows_can_have_missing_metadata_parse_status_or_free_form_trust
+      - source_trust_is_not_an_authorized_enum_and_injection_scan_is_missing
+    migration_decision: validate_normalize_and_quarantine_unknown
+    required_actions: [metadata_schema_version, required_field_report, vendor_platform_normalization, trust_allowlist, injection_scan, tenant_acl_reconciliation]
+    acceptance: required_field_completeness_100_percent_for_active; invalid_or_conflict_rows_excluded; metadata_hash_reproducible
+    rollback: keep_original_metadata_json_and_restore_previous_typed_projection
+  - layer: chunk
+    source_tables_or_paths: [ai_document_chunk.content, raw_content, embedding_content, parent_chunk_id, chunk_metadata]
+    confidence_grade: B
+    confidence_score: 72
+    lineage: conditional
+    completeness: conditional
+    integrity: good
+    compatibility: good
+    recoverability: conditional
+    security: conditional
+    evidence: [ADR-004, AUD-006, AUD-009, AUD-010, AUD-021]
+    facts:
+      - chunking_engine_v2_has_parent_child_role_type_hash_and_source_locator
+      - isolated_heading_cli_table_warning_and_fence_sample_passed
+      - production_chunk_rows_are_not_observable_in_current_local_database
+      - failed_reindex_can_leave_stale_chunks_retrievable_because_ingestion_status_is_not_a_rag_filter
+      - sqlite_foreign_keys_are_not_a_reliable_last_defense
+    migration_decision: rebuild_from_trusted_source_with_generation_and_dual_read
+    required_actions: [orphan_scan, source_to_chunk_hash_map, chunk_fidelity_sample, failed_generation_exclusion, fk_validation, duplicate_scan]
+    acceptance: zero_orphans; zero_unapproved_stale_generation; structural_fidelity_threshold_100_percent_for_required_fields; rollback_generation_available
+    rollback: mark_new_generation_inactive_and_restore_previous_ready_generation
+  - layer: embedding
+    source_tables_or_paths: [ai_document_chunk.embedding, embedding_model, embedding_dimensions, embedding_version, vector_index]
+    confidence_grade: C
+    confidence_score: 52
+    lineage: conditional
+    completeness: unknown
+    integrity: conditional
+    compatibility: low
+    recoverability: conditional
+    security: conditional
+    evidence: [ADR-002, ADR-004, ADR-006, AUD-007, AUD-008, AUD-010, AUD-015]
+    facts:
+      - current_provider_is_local_hybrid_feature_v2_dimension_1536_version_v2
+      - dimension_and_model_mismatch_guard_exists
+      - current_storage_shape_is_json_text_and_pgvector_authority_is_not_proven
+      - remote_embedding_egress_and_rebuild_policy_are_not_frozen
+      - local_runtime_has_no_ai_tables_to_measure
+    migration_decision: do_not_copy_vectors; recompute_under_pinned_contract
+    required_actions: [provider_contract_freeze, vector_storage_decision, dimension_model_version_check, batch_recompute, dual_index_shadow, recall_latency_evaluation, gateway_policy_for_remote]
+    acceptance: vector_dimensions_match_100_percent; model_version_compatibility_100_percent; no_untracked_vectors; recall_non_regression_against_AUD021
+    rollback: route_to_previous_embedding_generation_or_local_lexical_fallback
+confidence_summary:
+  original_document: C
+  metadata: B
+  chunk: B
+  embedding: C
+  auto_migration_allowed: false
+  minimum_gate: source_hash_snapshot_plus_metadata_reconciliation_plus_chunk_fidelity_plus_embedding_recompute
+waves:
+  - id: W0
+    name: authoritative_inventory
+    order: 0
+    actions: [postgres_read_only_snapshot, schema_revision_capture, tenant_scope_capture, count_quality_queries]
+    gate: migration_stops_if_target_unavailable_or_scope_ambiguous
+  - id: W1
+    name: source_and_version_lineage
+    order: 1
+    actions: [copy_original_bytes, calculate_hash, create_document_version, record_provenance, quarantine_attachment_failures]
+    gate: source_hash_match_and_rollback_pointer
+  - id: W2
+    name: metadata_reconciliation
+    order: 2
+    actions: [parse_validate_normalize, map_vendor_platform_version, classify_trust, reconcile_acl, exclude_invalid]
+    gate: active_metadata_completeness_and_conflict_report
+  - id: W3
+    name: chunk_rebuild_and_fidelity
+    order: 3
+    actions: [rechunk_trusted_versions, compare_required_structure, detect_orphans_duplicates_stale, shadow_retrieve]
+    gate: zero_orphan_and_fidelity_threshold
+  - id: W4
+    name: embedding_recompute_and_cutover
+    order: 4
+    actions: [pin_model_dimension_version, recompute_batches, validate_vectors, compare_AUD021_recall_latency, enable_by_flag]
+    gate: vector_contract_and_non_regression
+rollback:
+  default: disable_new_generation_and_restore_last_ready_generation
+  forbidden: overwrite_original_without_hash; delete_legacy_before_gate; mark_failed_as_active; copy_unknown_vectors_as_trusted

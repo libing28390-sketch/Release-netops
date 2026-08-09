@@ -97,7 +97,7 @@ export const ModelManagementTab: React.FC = () => {
               AI Model 模型管理
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              定义可供调用的模型标识（如 deepseek-chat, deepseek-reasoning, gpt-4o）。
+              定义可供调用的模型标识（如 deepseek-v4-flash, deepseek-v4-pro）。
             </p>
           </div>
           <div className="flex gap-3">
@@ -214,7 +214,7 @@ export const ModelManagementTab: React.FC = () => {
                 <input
                   type="text"
                   required
-                  placeholder="例如：DeepSeek V3 Chat"
+                  placeholder="例如：DeepSeek V4 Flash"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white"
@@ -226,7 +226,7 @@ export const ModelManagementTab: React.FC = () => {
                 <input
                   type="text"
                   required
-                  placeholder="deepseek-chat"
+                  placeholder="deepseek-v4-flash"
                   value={modelCode}
                   onChange={(e) => setModelCode(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono"

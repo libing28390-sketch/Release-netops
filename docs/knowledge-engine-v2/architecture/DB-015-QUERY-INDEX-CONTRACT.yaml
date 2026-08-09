@@ -1,0 +1,263 @@
+task_id: DB-015
+priority: P0
+owner: DBA
+milestone: M1
+status: frozen_for_implementation
+authority: PostgreSQL
+contract_version: v2.0
+depends_on: [DB-001, DB-002, DB-003, DB-005, DB-006, DB-007, DB-008, DB-009, DB-013, DB-014]
+
+decision:
+  choice: tenant_first_typed_index_matrix_for_exact_alias_prefix_and_catalog_queries
+  summary: >-
+    V2 query authority is typed relational data. Every tenant-visible lookup
+    starts with tenant_id, then uses the most selective equality, lifecycle,
+    and join keys before a bounded sort or prefix predicate. Exact and alias
+    identity use deterministic normalized columns and database uniqueness;
+    prefix search uses a btree pattern-operator index for anchored prefixes.
+    pg_trgm/GiST or GIN similarity indexes are reserved for DB-016 because
+    they require EXPLAIN and corpus-size validation. JSONB indexes may assist
+    legacy adapters but never replace a typed tenant, status, identity, scope,
+    or permission index.
+  invariants:
+    - tenant_id_is_the_leading_key_for_every_tenant_scoped_lookup
+    - exact_identity_and_alias_uniqueness_are_database_enforced
+    - status_is_indexed_or_part_of_a_documented_partial_active_predicate
+    - vendor_product_version_joins_use_typed_foreign_key_columns
+    - normalized_values_are_stable_lower_btrim_and_unicode_safe
+    - prefix_queries_are_anchored_and_have_a_minimum_search_length
+    - no_index_grants_cross_tenant_visibility_or_bypasses_acl
+    - index_names_and_column_order_are_deterministic_and_reviewable
+    - index_creation_is_concurrent_and_rollback_is_non_destructive
+
+normalization:
+  canonical_expression: lower(btrim(value))
+  whitespace_policy: collapse_internal_whitespace_and_trim_edges
+  separator_policy: preserve_canonical_code_but_store_a_normalized_lookup_value
+  unicode_policy: Unicode_casefold_before_lowercase_comparison; do_not_strip_non_ascii
+  null_policy: null_is_not_empty_and_is_excluded_from_unique_lookup_indexes
+  aliases:
+    canonical_column: normalized_alias
+    alias_kinds: [vendor_alias, family_alias, series_alias, model_alias, version_alias, operator_shortcut]
+    collision_rule: quarantine_conflicting_aliases_and_never_select_arbitrarily
+
+index_naming_and_build_policy:
+  name_format: ix_v2_<table>_<tenant_or_scope>_<columns>[_active|_prefix|_exact]
+  unique_name_format: ux_v2_<table>_<tenant_or_scope>_<columns>[_active]
+  lower_snake_case: true
+  tenant_first: true
+  include_only_read_safe_columns: true
+  partial_active_predicate: status = 'active' AND deleted_at IS NULL where the table has deleted_at
+  nulls_not_distinct: false
+  build: CREATE_INDEX_CONCURRENTLY_in_staging_and_production; transaction_boundary_required
+  lock_budget: no_long_table_rewrite; cancel_if_lock_or_replication_lag_budget_is_exceeded
+  rollback: drop_only_the_new_index_concurrently_after_read_switch_is_disabled
+
+query_classes:
+  exact:
+    semantics: equality_on_typed_code_canonical_key_or_normalized_value
+    operators: ["=", "IS NOT DISTINCT FROM only_when_null_is_explicit"]
+    required_keys: [tenant_id, status_or_active_predicate]
+    no_fallback: do_not_scan_metadata_json_for_canonical_identity
+  alias:
+    semantics: exact_normalized_alias_then_return_one_or_explicitly_ambiguous_candidates
+    required_keys: [tenant_id, normalized_alias, alias_kind, status]
+    uniqueness: one_active_alias_kind_per_tenant_and_product_target; conflicts_are_quarantined
+    ambiguity: resolver_must_return_candidates_and_never_pick_by_row_order
+  prefix:
+    semantics: anchored_prefix_only_on_normalized_code_or_alias
+    operator_class: varchar_pattern_ops
+    minimum_length: 2_codepoints_or_tenant_policy_higher
+    ordering: normalized_value_ASC_then_id_ASC_for_stable_pagination
+    fuzzy_boundary: similarity_or_unanchored_substring_is_DB-016_not_DB-015
+  tenant_status:
+    semantics: tenant_isolation_predicate_precedes_status_and_lifecycle_filters
+    status_values: [active, inactive, archived, deleted, purged]
+    authorization: index_is_not_an_acl; permission_subject_and_acl_join_remain_required
+  vendor_product_version:
+    semantics: typed_fk_join_from_document_scope_to_vendor_product_and_software_catalog
+    join_order: [tenant_id, vendor_id, family_id, series_id, product_model_id, release_train_id, software_version_id]
+    unknown_policy: unresolved_or_unknown_catalog_identity_is_excluded_from_exact_active_results
+
+index_inventory:
+  kb_vendor:
+    - name: ux_v2_kb_vendor_tenant_code_exact
+      kind: unique_btree
+      columns: [tenant_id, normalized_code]
+      predicate: status <> 'purged'
+      supports: [vendor_exact, tenant_status]
+    - name: ix_v2_kb_vendor_tenant_status_name
+      kind: btree
+      columns: [tenant_id, status, normalized_name, id]
+      predicate: null
+      supports: [vendor_prefix, tenant_status]
+  kb_product_family:
+    - name: ux_v2_kb_product_family_tenant_vendor_code_exact
+      kind: unique_btree
+      columns: [tenant_id, vendor_id, normalized_code]
+      predicate: status <> 'purged'
+      supports: [product_family_exact, vendor_product_join]
+    - name: ix_v2_kb_product_family_tenant_vendor_status
+      kind: btree
+      columns: [tenant_id, vendor_id, status, normalized_code, id]
+      predicate: null
+      supports: [product_family_prefix, tenant_status]
+  kb_product_series:
+    - name: ux_v2_kb_product_series_tenant_family_code_exact
+      kind: unique_btree
+      columns: [tenant_id, family_id, normalized_code]
+      predicate: status <> 'purged'
+      supports: [series_exact, vendor_product_join]
+    - name: ix_v2_kb_product_series_tenant_family_status_prefix
+      kind: btree_pattern_ops
+      columns: [tenant_id, family_id, status, normalized_code]
+      predicate: status <> 'purged'
+      supports: [series_prefix, tenant_status]
+  kb_product_model:
+    - name: ux_v2_kb_product_model_tenant_series_code_exact
+      kind: unique_btree
+      columns: [tenant_id, series_id, normalized_model_code]
+      predicate: status <> 'purged'
+      supports: [model_exact, vendor_product_join]
+    - name: ix_v2_kb_product_model_tenant_series_status_prefix
+      kind: btree_pattern_ops
+      columns: [tenant_id, series_id, status, normalized_model_code]
+      predicate: status <> 'purged'
+      supports: [model_prefix, tenant_status]
+  kb_product_alias:
+    - name: ux_v2_kb_product_alias_tenant_alias_kind_active
+      kind: unique_btree
+      columns: [tenant_id, normalized_alias, alias_kind]
+      predicate: status = 'active'
+      supports: [alias_exact, alias_collision_detection]
+    - name: ix_v2_kb_product_alias_tenant_kind_prefix
+      kind: btree_pattern_ops
+      columns: [tenant_id, alias_kind, status, normalized_alias]
+      predicate: status <> 'purged'
+      supports: [alias_prefix, tenant_status]
+    - name: ix_v2_kb_product_alias_tenant_model_status
+      kind: btree
+      columns: [tenant_id, product_model_id, status, alias_kind]
+      predicate: null
+      supports: [model_alias_listing, reverse_catalog_lookup]
+  kb_os_family_and_generation:
+    - name: ux_v2_kb_os_generation_tenant_family_code_exact
+      kind: unique_btree
+      columns: [tenant_id, os_family_id, normalized_code]
+      predicate: status <> 'purged'
+      supports: [os_generation_exact, version_scope_join]
+    - name: ix_v2_kb_os_generation_tenant_vendor_status
+      kind: btree
+      columns: [tenant_id, vendor_id, status, normalized_code, id]
+      predicate: null
+      supports: [vendor_os_lookup, tenant_status]
+  kb_release_train_and_software_version:
+    - name: ux_v2_kb_software_version_tenant_train_version_exact
+      kind: unique_btree
+      columns: [tenant_id, release_train_id, normalized_version]
+      predicate: status <> 'purged'
+      supports: [version_exact, vendor_product_version]
+    - name: ix_v2_kb_software_version_tenant_train_status_prefix
+      kind: btree_pattern_ops
+      columns: [tenant_id, release_train_id, status, normalized_version]
+      predicate: status <> 'purged'
+      supports: [version_prefix, tenant_status]
+  kb_document_and_version:
+    - name: ux_v2_kb_document_tenant_canonical_key_active
+      kind: unique_btree
+      columns: [tenant_id, canonical_key]
+      predicate: status = 'active'
+      supports: [document_exact, idempotent_ingest]
+    - name: ix_v2_kb_document_tenant_status_updated
+      kind: btree
+      columns: [tenant_id, status, updated_at DESC, id]
+      predicate: null
+      supports: [tenant_status, active_document_listing]
+    - name: ix_v2_kb_document_tenant_source_version_status
+      kind: btree
+      columns: [tenant_id, source_version_id, status, id]
+      predicate: null
+      supports: [source_version_lookup, reindex_scope]
+  kb_document_product_and_software:
+    - name: ux_v2_kb_document_scope_tenant_doc_product_version
+      kind: unique_btree
+      columns: [tenant_id, document_version_id, product_model_id, software_version_id, cli_platform]
+      predicate: status <> 'purged'
+      supports: [scope_exact, duplicate_scope_prevention]
+    - name: ix_v2_kb_document_scope_tenant_product_status
+      kind: btree
+      columns: [tenant_id, product_model_id, status, document_version_id]
+      predicate: null
+      supports: [product_document_lookup, tenant_status]
+    - name: ix_v2_kb_document_scope_tenant_version_status
+      kind: btree
+      columns: [tenant_id, software_version_id, status, document_version_id]
+      predicate: null
+      supports: [version_document_lookup, tenant_status]
+  kb_collection_document:
+    - name: ux_v2_kb_collection_document_tenant_membership
+      kind: unique_btree
+      columns: [tenant_id, collection_id, document_id, membership_kind]
+      predicate: status <> 'purged'
+      supports: [membership_exact, idempotent_membership]
+    - name: ix_v2_kb_collection_document_tenant_collection_status_sort
+      kind: btree
+      columns: [tenant_id, collection_id, status, sort_order, document_id]
+      predicate: null
+      supports: [collection_listing, tenant_status]
+
+legacy_and_adapter_audit:
+  m0113_rag_metadata_v2:
+    module: backend/database/migrations/m0113_rag_metadata_v2.py
+    observed_indexes: [ux_ai_document_document_id, ix_ai_document_vendor, ix_ai_document_category, ix_ai_document_cli_platform, ix_ai_document_train, ix_ai_document_feature, ix_ai_document_status, ix_ai_document_chunk_document, ix_ai_document_metadata_gin, ix_ai_document_chunk_metadata_gin]
+    decision: retain_V1_indexes; add_V2_indexes_additively; do_not_treat_metadata_gin_as_catalog_authority
+  product_resolver:
+    module: backend/ai/services/product_resolver.py
+    observed: [SERIES_ALIASES, canonical_series_normalization, explicit_vendor_and_software_train_filters, advisory_registry_scan]
+    decision: static_aliases_are_seed_or_fallback_only; kb_product_alias_and_typed_catalog_are_authoritative
+  rag_retriever:
+    module: backend/ai/services/rag_retriever.py
+    observed: [tenant_status_predicate, vendor_and_product_scalar_filters, legacy_metadata_json_fallback]
+    decision: V2_typed_scope_indexes_first; legacy_JSON_fallback_is_adapter_only_and_must_be_metered
+
+explain_and_acceptance:
+  required_plans: [exact_vendor, exact_model, alias_exact, model_prefix, version_prefix, tenant_status_listing, product_version_document_join]
+  explain_format: EXPLAIN_(ANALYZE,_BUFFERS,_FORMAT_JSON)_on_staging_fixture_and_representative_production_statistics
+  acceptance:
+    - plan_uses_tenant_leading_index_or_documented_reason
+    - no_unbounded_seq_scan_on_active_catalog_fixture
+    - estimated_rows_and_actual_rows_are_within_tenant_threshold
+    - p95_latency_and_buffer_budget_are_recorded
+    - prefix_scan_is_anchored_and_respects_minimum_length
+    - cross_tenant_rows_are_zero_in_result_and_plan_predicates
+    - index_size_and_write_amplification_are_recorded_before_release
+  defer_to_db016: [pg_trgm_similarity, unanchored_substring, FTS, JSONB_GIN_operator_class, pgvector_ivfflat_or_hnsw]
+
+security_and_governance:
+  authorization: tenant_id_and_acl_scope_predicate_must_be_applied_before_or_with_index_lookup
+  fail_closed: missing_tenant_or_status_or_catalog_scope_is_not_returned_as_active_exact_match
+  audit_events: [index_plan_review, alias_collision_quarantine, index_build, index_cancel, index_drop, query_fallback]
+  no_secret_in_index: [api_key, password, private_key, snmp_community, raw_prompt, raw_document]
+  rbac: catalog_read_requires_scoped_read; catalog_write_and_index_maintenance_require_separate_permissions
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_015
+  order: [add_normalized_columns_nullable, backfill_in_batches, validate_normalization_and_collisions, create_concurrently, dual_read_shadow, explain_gate, switch_read, add_constraints_in_later_migration]
+  fresh_upgrade: same_inventory_and_names_on_fresh_and_current_highest_schema
+  idempotence: IF_NOT_EXISTS_or_catalog_check_and_repeatable_backfill
+  downgrade: disable_V2_index_read_switch_then_drop_only_V2_indexes_concurrently; preserve_rows_and_V1_indexes
+  production_gate: DB-016_EXPLAIN_plus_DB-017_to_DB-020_migration_tests_and_V1_parallel_results_required
+
+verification:
+  contract_tests: backend/tests/database/test_db015_query_index_contract.py
+  test_database: SQLite_compatibility_only_for_contract_probes
+  production_database: PostgreSQL_required_for_pattern_operator_and_EXPLAIN_validation
+  required_checks: [index_inventory, exact_alias_prefix_semantics, tenant_status_ordering, vendor_product_version_joins, legacy_audit, explain_gate, security, rollback, report_markers]
+
+rollback:
+  runtime: disable_V2_catalog_lookup_feature_flag_and_use_last_verified_V1_or_typed_read_adapter
+  schema: drop_only_DB-015_indexes_concurrently_after_no_read_dependency
+  data: no_data_deletion; retain_normalized_columns_and_original_values_until_reconciled
+  audit: retain_collision_plan_build_cancel_drop_and_fallback_events
+
+next_tasks: [DB-016, DB-017, DB-018, DB-019, DB-020, DB-021]

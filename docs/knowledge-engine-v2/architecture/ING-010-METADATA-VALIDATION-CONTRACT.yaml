@@ -1,0 +1,153 @@
+task_id: ING-010
+title: Document Metadata extraction, normalization, validation, and UNKNOWN handling
+date: 2026-08-09
+status: frozen_for_implementation
+depends_on: [ING-006, ING-007, ING-008, ING-009, DB-014, AUD-023]
+
+decision:
+  choice: deterministic_local_metadata_gate_before_entity_resolution
+  summary: >-
+    Metadata is extracted only from a cleaned document, bounded source
+    metadata, directory hints, headings, and filenames. It is normalized and
+    validated locally. Unknown Product, OS, Software Version, platform, vendor,
+    or required fields remain explicit and are passed to ING-011; the service
+    never guesses a canonical network entity from body text.
+
+pipeline_boundary:
+  required_order: [parsed, cleaned, security_scanned, metadata_normalized, entity_resolved]
+  input_type: services.document_content_cleaning.CleanedDocument
+  security_input: services.document_security_scan.DocumentSecurityScanResult
+  security_match: format_and_document_sha256_must_match
+  output_type: services.document_metadata_extraction.DocumentMetadataResult
+  side_effects: none
+  network_access: forbidden
+  filesystem_access: forbidden
+
+authority:
+  precedence: [document_metadata, source_metadata, document_heading, filename, directory_hint, safe_default, default_unknown]
+  source_conflict_fields: [vendor, document_category, source_type, official_only]
+  source_conflict_action: fail_closed
+  source_owned_fields: [source_id, source_version_id, source_url, source_trust_level, classification, exclude_from_rag]
+  document_source_owned_field_action: reject
+  directory_rule: hint_and_conflict_check_only
+  directory_override: forbidden
+  server_owned_fields:
+    - tenant_id
+    - workspace_id
+    - user_id
+    - created_by
+    - updated_by
+    - acl
+    - acl_json
+    - permissions
+    - roles
+    - authorization
+    - api_key
+    - password
+    - secret
+    - token
+    - private_key
+    - raw_content
+    - original_content
+    - content
+    - body
+  server_owned_field_action: reject_at_any_depth
+
+normalization:
+  contract_version: "1.0"
+  extractor_version: "1.0.0"
+  unicode: NFKC
+  keys: lowercase_snake_case_ascii_max_64
+  duplicate_normalized_keys: reject
+  text: whitespace_collapsed_control_bytes_rejected
+  booleans: [true, false, yes, no, 1, 0]
+  vendor_aliases: [Huawei, Cisco, H3C, Ruijie, all]
+  document_categories:
+    - hardware
+    - command
+    - configuration
+    - cli_output
+    - troubleshooting
+    - example
+    - release_note
+    - reference
+    - guide
+    - sop
+    - product
+    - other
+  lifecycle_statuses: [draft, active, published, quarantined, superseded, disabled, archived, deprecated]
+  rag_priority: integer_0_to_100
+  list_fields: [product_models, applicable_product_models, tags, keywords]
+  total_size_limit_bytes: 65536
+  field_limit: 128
+  nesting_limit: 4
+  deterministic_hash: sha256_of_canonical_json
+
+unknown_policy:
+  string_sentinel: UNKNOWN
+  typed_unknown: null
+  tokens: [unknown, n/a, na, none, null, unset, "-", 未知, 未指定, 不明]
+  applicability_fields:
+    - product_family
+    - product_series
+    - product_model
+    - os_family
+    - os_generation
+    - software_train
+    - software_release
+    - cli_platform
+  missing_status_default: draft
+  unresolved_value_rule: bounded_semantic_value_only
+  audit_value_rule: hash_only
+  decision: review_and_continue_to_ING-011
+  publication_rule: unknown_or_review_metadata_cannot_publish
+  inference_rule: body_text_must_not_select_vendor_product_os_version_or_driver
+
+security:
+  quarantined_ing008_document: skip_extraction_and_propagate_quarantine
+  secret_or_instruction_like_metadata: reject
+  raw_document_body_in_result: forbidden
+  raw_credentials_in_error_or_audit: forbidden
+  tenant_acl_identity_in_metadata: forbidden
+
+persistence:
+  production_ddl: none
+  existing_schema: backend/database/migrations/m0113_rag_metadata_v2.py
+  json_authority: normalized_metadata_and_bounded_extensions
+  relational_projection: ai.services.knowledge_metadata.metadata_columns
+  source_registry_authority: unchanged
+  v1_tables: unchanged
+
+stable_errors:
+  - METADATA_CLEANED_DOCUMENT_REQUIRED
+  - METADATA_SECURITY_SCAN_REQUIRED
+  - METADATA_SECURITY_SCAN_MISMATCH
+  - METADATA_SECURITY_VIOLATION
+  - METADATA_MAPPING_REQUIRED
+  - METADATA_KEY_INVALID
+  - METADATA_DUPLICATE_KEY
+  - METADATA_RESERVED_FIELD
+  - METADATA_VALUE_INVALID
+  - METADATA_BOOLEAN_INVALID
+  - METADATA_PRIORITY_INVALID
+  - METADATA_TOO_LARGE
+  - METADATA_SOURCE_CONFLICT
+  - METADATA_SOURCE_FIELD_FORBIDDEN
+  - METADATA_DIRECTORY_CONFLICT
+  - METADATA_OFFICIAL_SOURCE_CONFLICT
+
+rollback:
+  action: disable_ING010_adapter_and_retain_existing_V1_front_matter_helpers
+  schema_rollback: none
+  data_deletion: forbidden
+  v1_fallback: ai.services.knowledge_metadata
+
+acceptance:
+  - html_markdown_txt_pdf_share_one_result_contract
+  - complete_metadata_is_deterministic_and_projects_typed_columns
+  - missing_and_unrecognized_values_are_explicit_UNKNOWN_or_null
+  - unknown_entities_are_not_guessed_from_body_or_directory
+  - invalid_boolean_priority_reserved_secret_conflict_and_mismatch_paths_fail_closed
+  - quarantined_documents_never_reach_entity_resolution
+  - result_and_errors_do_not_contain_raw_body_or_secret_values
+  - focused_AI_catalog_database_V1_compile_yaml_secret_diff_lint_build_gates_pass

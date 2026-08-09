@@ -1,0 +1,82 @@
+task_id: ING-003
+priority: P0
+owner: BE+SEC
+milestone: M2
+status: frozen_for_implementation
+depends_on: [CAT-001, CAT-003, CAT-004, DB-008, ING-001, ING-002]
+decision:
+  choice: one_fail_closed_url_and_egress_security_boundary
+  summary: >-
+    All Knowledge V2 URL imports use one canonical URL decision and one safe
+    outbound connection boundary. URL syntax and registered host/path checks
+    happen before DNS; DNS is resolved immediately before each connection
+    attempt and every redirect hop is independently revalidated. Response
+    bytes are streamed through a bounded size and wall-clock deadline.
+  invariants:
+    - only_absolute_https_urls_on_port_443_are_accepted
+    - url_userinfo_query_fragment_ip_literals_and_encoded_separators_are_rejected
+    - host_and_registered_path_are_exactly_rechecked_on_every_redirect
+    - private_loopback_link_local_multicast_reserved_unspecified_and_metadata_ips_are_blocked
+    - environment_proxy_and_implicit_redirect_following_are_disabled
+    - dns_is_re_resolved_before_each_retry_or_redirect_connection
+    - response_content_type_declared_length_and_streamed_bytes_are_bounded
+    - response_wall_clock_deadline_is_enforced_during_streaming
+    - security_decisions_and_errors_never_contain_credentials_or_response_body
+
+url_decision:
+  implementation: backend/services/safe_outbound_http.py
+  api: validate_url_security
+  output: [canonical_url, host, port, path, resolved_addresses]
+  redaction: no_headers_no_credentials_no_body_no_raw_dns_exception
+  preflight: canonicalization_and_source_boundary_without_dns
+  connection_gate: same_decision_with_fresh_dns_resolution_before_client_send
+
+url_rules:
+  schemes: [https]
+  ports: [443]
+  host_match: exact_registered_host
+  path_match: registered_path_or_descendant
+  forbidden: [userinfo, password, fragment, query_by_default, wildcard_host, control_bytes, encoded_dot, encoded_slash, encoded_backslash, literal_backslash]
+
+ssrf_rules:
+  resolver: socket_getaddrinfo_or_injected_test_resolver
+  ip_literal: forbidden
+  blocked_classes: [loopback, private, link_local, multicast, unspecified, reserved, non_global, cloud_metadata]
+  empty_answers: fail_closed
+  resolver_failure: safe_502_without_exception_text
+  proxy: trust_env_false
+
+redirect_rules:
+  follow_redirects: false
+  revalidate_every_hop: true
+  max_hops: source_registry.redirect_limit_bounded_0_to_10
+  cross_host: forbidden
+  https_downgrade: forbidden
+  missing_location: fail_closed
+
+response_rules:
+  methods: [GET, HEAD]
+  content_types: [text/html, text/plain, application/pdf, application/json, application/xml]
+  max_bytes: source_policy_bounded_1KiB_to_100MiB
+  declared_content_length: reject_negative_or_over_limit
+  streamed_bytes: reject_before_append_when_over_limit
+  timeout_seconds: source_policy_bounded_1_to_120
+  retries: bounded_0_to_2_for_5xx_only
+
+integration:
+  url_import: ING-002_uses_safe_fetch_only
+  audit: fetch_started_fetch_completed_fetch_failed_with_safe_codes
+  persistence: hash_only_source_version_manifest_no_raw_body
+  rbac: knowledge_source_create_and_tenant_scope
+  rollback: disable_or_quarantine_source_registry_row; preserve_v1_source_hints
+  production_ddl: none
+
+acceptance:
+  focused_tests: backend/tests/catalog/test_ing003_url_security.py
+  required_checks:
+    - syntax_and_allowlist_negative_matrix
+    - ip_literal_private_dns_empty_dns_and_resolver_failure
+    - redirect_host_protocol_path_and_hop_revalidation
+    - retry_dns_refresh_and_stream_size_deadline
+    - CAT-003_CAT-004_ING-002_regression
+    - DB_AI_regression_v1_baseline_compile_yaml_secret_diff_lint_build

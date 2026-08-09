@@ -67,6 +67,11 @@ from api.collection_plans import router as collection_plans_router
 from api.textfsm_templates import router as textfsm_templates_router
 from api.parser_templates import router as parser_templates_router
 from api.platform_registry import router as platform_registry_router, device_registry_router
+from api.knowledge_sources import router as knowledge_sources_router
+from api.knowledge_documents import router as knowledge_documents_router
+from api.knowledge_catalog import router as knowledge_catalog_router
+from api.knowledge_collections import router as knowledge_collections_router
+from api.knowledge_ingestion import router as knowledge_ingestion_router
 from api.tags import router as tags_router
 from api.scheduled_jobs import router as scheduled_jobs_router
 from api.racks import router as racks_router
@@ -78,6 +83,9 @@ from api.graph import router as graph_router
 from api.system import router as system_router
 from api.access import router as access_router
 from ai.api import ai_router
+from ai.gateway.exceptions import AIException
+from ai.api.chat_v1 import router as ai_v1_chat_router
+from ai.api.security import load_persisted_security_policy
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
 from engine.orchestrator import get_telemetry_orchestrator
 import logging
@@ -128,11 +136,23 @@ async def lifespan(app: FastAPI):
 
     # Initialize Database once
     init_db()
+    load_persisted_security_policy()
     try:
         seed_data()
         logger.info("Database seeding successfully checked/completed.")
     except Exception as e:
         logger.error(f"Database seeding failed: {e}", exc_info=True)
+
+    # Backfill the evidence-first knowledge graph from existing normalized
+    # topology observations.  Discovery runs call the same projection after
+    # every rebuild; startup makes already-collected evidence visible on
+    # installations upgraded after the graph tables were introduced.
+    try:
+        from services.topology_service import _sync_evidence_graph_from_observations
+        _sync_evidence_graph_from_observations()
+        logger.info("[Topology] Evidence graph projection synchronized.")
+    except Exception as e:
+        logger.warning(f"[Topology] Evidence graph projection skipped: {e}")
     
     # ── One-time PAM stale-session recovery ──
     # After a server restart, sessions that were 'active' or 'connecting'
@@ -159,6 +179,37 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         synchronized_scheduler_job('device_health_sampler', expire_seconds=55)(record_device_health_snapshot),
         'interval', minutes=1, id='device_health_sampler', replace_existing=True
+    )
+
+    # ING-018: periodically revalidate active Knowledge Engine sources using
+    # server-owned ETag/Last-Modified validators.  The scheduler lock keeps
+    # multiple application instances from refreshing the same batch; the
+    # service itself remains tenant-scoped and fail-closed per source.
+    from services.source_freshness_service import (
+        REFRESH_INTERVAL_MINUTES,
+        run_scheduled_source_freshness_refresh,
+    )
+    scheduler.add_job(
+        synchronized_scheduler_job('knowledge_source_freshness_refresh', expire_seconds=(REFRESH_INTERVAL_MINUTES * 60) - 5)(
+            run_scheduled_source_freshness_refresh
+        ),
+        'interval', minutes=REFRESH_INTERVAL_MINUTES,
+        id='knowledge_source_freshness_refresh', replace_existing=True,
+        max_instances=1, coalesce=True,
+    )
+
+    # Read-only database consistency and orphan patrol.  The job is bounded,
+    # never repairs rows, and is protected by the same cross-instance lock as
+    # the other maintenance jobs.  Findings are logged as counts/fingerprints
+    # only; operators use an approved migration or reconciliation action for
+    # any repair.
+    from database.consistency import run_scheduled_consistency_patrol
+    scheduler.add_job(
+        synchronized_scheduler_job('database_consistency_patrol', expire_seconds=23 * 3600)(
+            run_scheduled_consistency_patrol
+        ),
+        'cron', hour=2, minute=25, id='database_consistency_patrol', replace_existing=True,
+        max_instances=1, coalesce=True,
     )
     
     from services.telemetry_service import record_device_telemetry_snapshot
@@ -408,6 +459,23 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "服务内部异常，请联系管理员查看后端日志"},
     )
 
+
+@app.exception_handler(AIException)
+async def ai_exception_handler(request: Request, exc: AIException):
+    """Return stable AI error codes without exposing provider/payload details."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "request_id": exc.request_id,
+                "details": exc.details,
+            },
+        },
+    )
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     # 注意：Pydantic v2 的 exc.errors() 在 ctx 里可能携带原始异常对象
@@ -500,11 +568,18 @@ app.include_router(collection_plans_router, prefix="/api")
 app.include_router(textfsm_templates_router, prefix="/api")
 app.include_router(parser_templates_router, prefix="/api")
 app.include_router(platform_registry_router, prefix="/api")
+app.include_router(knowledge_sources_router, prefix="/api")
+app.include_router(knowledge_documents_router, prefix="/api")
+app.include_router(knowledge_catalog_router, prefix="/api")
+app.include_router(knowledge_collections_router, prefix="/api")
+app.include_router(knowledge_ingestion_router, prefix="/api")
 app.include_router(device_registry_router, prefix="/api")
 app.include_router(change_orders_router,  prefix="/api")
 app.include_router(pam_router,            prefix="/api")
 app.include_router(audit_router,          prefix="/api")
 app.include_router(ai_router,             prefix="/api")
+# Versioned contract used by API clients; its prefix already contains /api/v1.
+app.include_router(ai_v1_chat_router)
 # PAM WebSocket 单独注册
 app.include_router(pam_ws_router,         prefix="/api")
 

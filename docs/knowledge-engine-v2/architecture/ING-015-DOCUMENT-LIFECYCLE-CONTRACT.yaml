@@ -1,0 +1,75 @@
+task_id: ING-015
+priority: P0
+owner: BE
+milestone: M2
+status: implemented_shadow_boundary
+authority: PostgreSQL
+
+goal: >-
+  Give every V2 Document and Document Version an explicit Draft, Published,
+  Quarantined, Superseded or Disabled lifecycle with tenant scope, CAS,
+  idempotent requests, audit and a fail-closed retrieval gate.
+
+states:
+  draft:
+    retrieval_eligible: false
+    meaning: parsed_or_created_but_not_approved
+  published:
+    retrieval_eligible: true
+    compatibility_status_projection: active
+    meaning: approved_and_eligible_subject_to_scope_acl_trust_and_security
+  quarantined:
+    retrieval_eligible: false
+    meaning: isolated_for_security_parse_quality_or_review
+  superseded:
+    retrieval_eligible: false
+    compatibility_status_projection: archived
+    meaning: replaced_by_a_newer_published_version
+  disabled:
+    retrieval_eligible: false
+    meaning: intentionally_not_operational_but_retained
+
+transitions:
+  draft: [published, quarantined, disabled]
+  published: [quarantined, superseded, disabled]
+  quarantined: [published, disabled]
+  disabled: [published, quarantined]
+  superseded: []
+  supersede_precondition: replacement_version_id_same_tenant_document_and_published
+  published_preconditions: [source_version_present, metadata_not_failed, tenant_scope, permission]
+  quarantine_precondition: bounded_reason_and_no_raw_body_or_secret
+
+storage:
+  migration: m0119_knowledge_v2_document_lifecycle
+  lifecycle_authority: lifecycle_status
+  compatibility_projection: status_remains_draft_or_active_or_quarantined_or_archived_or_disabled
+  event_table: kb_document_lifecycle_event
+  event_unique_key: [tenant_id, request_id]
+  CAS: [tenant_id, id, lifecycle_revision, lifecycle_status, expected_updated_at]
+  columns: [lifecycle_status, lifecycle_revision, lifecycle_changed_at, lifecycle_changed_by, lifecycle_reason, published_at, quarantined_at, superseded_at, disabled_at, legal_hold]
+  v1_compatibility: ai_document_and_ai_document_chunk_are_not_updated_or_deleted
+  cutover: shadow_only_until_scope_chunk_index_and_release_gates_pass
+
+api:
+  read: GET /api/knowledge-v2/documents/{document_id}/lifecycle
+  transition: POST /api/knowledge-v2/documents/{document_id}/lifecycle
+  unknown_fields: forbidden
+  response: additive_document_document_version_event_and_retrieval_eligible_fields
+
+security:
+  authorization: knowledge_source_read_or_update_permission_and_tenant_predicate
+  cross_tenant: no_read_no_transition_no_event
+  audit: before_after_status_actor_reason_request_id_and_version_ids_only
+  forbidden_output: [raw_body, credentials, unrestricted_exception_text, authorization_in_metadata]
+  direct_sql_bypass: later_database_guard_and_release_migration_required
+
+rollback:
+  default: disable_lifecycle_adapter_and_keep_existing_v1_reader
+  reversible: [draft, published, quarantined, disabled]
+  irreversible: superseded_is_history_only; no_in_place_restore
+  data_policy: preserve_events_source_facts_and_v1_rows
+  production_ddl: release_gated_transaction_only
+
+handoff:
+  next_task: ING-016
+  note: parsing/chunking and index generation must consume retrieval_eligible_only

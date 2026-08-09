@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check, Terminal, Shield, Code2 } from 'lucide-react';
+import { Copy, Check, Terminal } from 'lucide-react';
+import { copyTextWithFallback } from '../utils/clipboard';
 
 interface MarkdownRendererProps {
   content: string;
@@ -24,6 +25,7 @@ const VENDOR_BADGES: Record<string, { label: string; color: string; bg: string }
 
 const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ language, code }) => {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const langKey = (language || '').toLowerCase();
   const badgeInfo = VENDOR_BADGES[langKey] || {
     label: language ? `${language.toUpperCase()} Code` : 'CLI / Text',
@@ -32,25 +34,12 @@ const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ languag
   };
 
   const handleCopy = async () => {
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(code);
-      } else {
-        const textArea = document.createElement('textarea');
-        textArea.value = code;
-        textArea.style.position = 'fixed';
-        textArea.style.opacity = '0';
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-      }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (e) {
-      console.error('Failed to copy text:', e);
-    }
+    const copiedSuccessfully = await copyTextWithFallback(code);
+    setCopyFailed(!copiedSuccessfully);
+    if (!copiedSuccessfully) return;
+
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -65,41 +54,22 @@ const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ languag
         </span>
       </div>
 
-      <div className="flex items-center gap-1.5">
-        <button
-          onClick={() => alert('配置已成功保存至 [脚本与模板管理]！')}
-          className="flex items-center gap-1 text-gray-400 hover:text-amber-300 transition px-2 py-1 rounded hover:bg-gray-800 text-[11px]"
-          title="保存为配置模板"
-        >
-          <span>☆ 保存模板</span>
-        </button>
-
-        <button
-          onClick={() => alert('正在跳转至 [自动化变更引擎] 校验并创建配置任务...')}
-          className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition px-2 py-1 rounded hover:bg-gray-800 text-[11px] font-medium"
-          title="发送至自动化部署引擎"
-        >
-          <span>⚡ 创建变更任务</span>
-        </button>
-
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1 text-gray-400 hover:text-white transition px-2 py-1 rounded hover:bg-gray-800 text-[11px]"
-          title="复制配置命令"
-        >
-          {copied ? (
-            <>
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-emerald-400">已复制</span>
-            </>
-          ) : (
-            <>
-              <Copy className="w-3.5 h-3.5" />
-              <span>复制配置</span>
-            </>
-          )}
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label={copied ? '已复制代码' : '复制代码'}
+        title={copyFailed ? '复制失败，请检查浏览器权限' : copied ? '已复制代码' : '复制代码'}
+        className={`p-1.5 rounded-md transition ${
+          copied
+            ? 'text-emerald-400 hover:bg-emerald-400/10'
+            : copyFailed
+              ? 'text-rose-400 hover:bg-rose-400/10'
+              : 'text-gray-400 hover:text-white hover:bg-gray-800'
+        }`}
+      >
+        {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+        <span className="sr-only">{copied ? '已复制代码' : '复制代码'}</span>
+      </button>
     </div>
   );
 };

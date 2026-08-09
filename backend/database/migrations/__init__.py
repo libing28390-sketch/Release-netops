@@ -35,11 +35,41 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
 _TRACKING_TABLE = "schema_migrations"
+
+
+class MigrationHistoryError(RuntimeError):
+    """Raised when the recorded migration history cannot be reconciled safely."""
+
+
+@dataclass(frozen=True)
+class MigrationPlan:
+    """Read-only plan used by fresh installs and repeatable upgrades.
+
+    The plan deliberately contains versions/names rather than SQL.  Callers can
+    inspect it before applying anything, and a history mismatch fails closed
+    instead of silently skipping a removed or renamed migration.
+    """
+
+    fresh_install: bool
+    discovered_versions: tuple[int, ...]
+    applied_versions: tuple[int, ...]
+    pending_versions: tuple[int, ...]
+    unknown_applied_versions: tuple[int, ...]
+    name_drift: tuple[tuple[int, str, str], ...]
+
+    @property
+    def safe(self) -> bool:
+        return not self.unknown_applied_versions and not self.name_drift
+
+    def safe_for(self, *, strict_history: bool) -> bool:
+        """Return whether this plan may run under the requested history mode."""
+        return not self.name_drift and (not strict_history or not self.unknown_applied_versions)
 
 
 def _utc_now_iso() -> str:
@@ -55,6 +85,47 @@ def _ensure_tracking_table(cursor) -> None:
             applied_at TEXT NOT NULL
         )
         """
+    )
+
+
+def get_applied_records(conn) -> dict[int, str]:
+    """Return the tracked version/name map without mutating migration state."""
+    cursor = conn.cursor()
+    _ensure_tracking_table(cursor)
+    conn.commit()
+    rows = cursor.execute(f"SELECT version, name FROM {_TRACKING_TABLE}").fetchall()
+    return {int(row[0]): str(row[1]) for row in rows}
+
+
+def build_migration_plan(conn, use_pg: bool | None = None) -> MigrationPlan:
+    """Build a deterministic fresh/upgrade plan before executing any module."""
+    if use_pg is None:
+        from ..core import _USE_PG as use_pg  # type: ignore
+
+    migrations = discover_migrations()
+    discovered = {int(module.VERSION): module for module in migrations}
+    if len(discovered) != len(migrations):
+        raise MigrationHistoryError("Duplicate migration versions discovered")
+
+    records = get_applied_records(conn)
+    unknown = tuple(sorted(set(records) - set(discovered)))
+    drift = tuple(
+        (version, records[version], str(getattr(discovered[version], "NAME", "")))
+        for version in sorted(set(records) & set(discovered))
+        if records[version] != str(getattr(discovered[version], "NAME", ""))
+    )
+    if records and 1 not in records:
+        # A non-empty history without the immutable baseline marker is not a
+        # fresh install and cannot be safely auto-repaired.
+        drift = drift + ((1, "<missing>", str(getattr(discovered.get(1), "NAME", "baseline"))),)
+    pending = tuple(sorted(set(discovered) - set(records)))
+    return MigrationPlan(
+        fresh_install=not records,
+        discovered_versions=tuple(sorted(discovered)),
+        applied_versions=tuple(sorted(records)),
+        pending_versions=pending,
+        unknown_applied_versions=unknown,
+        name_drift=drift,
     )
 
 
@@ -86,14 +157,15 @@ def discover_migrations() -> list:
 
 
 def get_applied_versions(conn) -> set[int]:
-    cursor = conn.cursor()
-    _ensure_tracking_table(cursor)
-    conn.commit()
-    rows = cursor.execute(f"SELECT version FROM {_TRACKING_TABLE}").fetchall()
-    return {int(r[0]) for r in rows}
+    return set(get_applied_records(conn))
 
 
-def run_migrations(conn, use_pg: bool | None = None) -> int:
+def run_migrations(
+    conn,
+    use_pg: bool | None = None,
+    *,
+    strict_history: bool = False,
+) -> int:
     """
     Apply all pending migrations in version order.
 
@@ -103,26 +175,37 @@ def run_migrations(conn, use_pg: bool | None = None) -> int:
     if use_pg is None:
         from ..core import _USE_PG as use_pg  # type: ignore
 
+    try:
+        plan = build_migration_plan(conn, use_pg)
+    except Exception as exc:
+        logger.error("[migrations] Planning failed: %s", exc, exc_info=True)
+        return 0
+
+    if not plan.safe_for(strict_history=strict_history):
+        logger.error(
+            "[migrations] Unsafe history (strict=%s): unknown=%s name_drift=%s; no migration applied",
+            strict_history,
+            plan.unknown_applied_versions,
+            plan.name_drift,
+        )
+        return 0
+
+    logger.info(
+        "[migrations] Plan fresh=%s applied=%s pending=%s",
+        plan.fresh_install,
+        plan.applied_versions,
+        plan.pending_versions,
+    )
+
+    migrations_by_version = {int(module.VERSION): module for module in discover_migrations()}
     cursor = conn.cursor()
-    _ensure_tracking_table(cursor)
-    conn.commit()
-
-    try:
-        applied = get_applied_versions(conn)
-    except Exception as exc:
-        logger.error("[migrations] Could not read %s: %s", _TRACKING_TABLE, exc)
-        return 0
-
-    try:
-        migrations = discover_migrations()
-    except Exception as exc:
-        logger.error("[migrations] Discovery failed: %s", exc, exc_info=True)
-        return 0
+    applied = set(plan.applied_versions)
 
     count = 0
-    for module in migrations:
+    for version in plan.pending_versions:
+        module = migrations_by_version[version]
         version = int(module.VERSION)
-        name = getattr(module, "NAME", module.__name__)
+        name = getattr(module, "NAME", getattr(module, "__name__", "<migration>"))
         if version in applied:
             continue
         try:

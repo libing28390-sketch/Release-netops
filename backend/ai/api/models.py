@@ -61,6 +61,12 @@ def create_model(payload: AIModelCreate, user=Depends(require_ai_permission("ai.
     
     with get_db_connection() as conn:
         cursor = conn.cursor()
+        provider_row = cursor.execute(
+            "SELECT provider_type FROM ai_provider WHERE id = ?",
+            (payload.provider_id,),
+        ).fetchone()
+        if not provider_row or str(provider_row[0] or '').lower() != 'deepseek':
+            raise HTTPException(status_code=400, detail='Only DeepSeek V1 providers may own AI models')
         if payload.is_default:
             cursor.execute("UPDATE ai_model SET is_default = 0")
             

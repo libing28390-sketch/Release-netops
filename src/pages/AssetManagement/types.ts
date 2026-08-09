@@ -55,6 +55,8 @@ export interface Asset {
   is_managed?: number;
   takeover_error?: string;
   device_category?: string;
+  function?: string;
+  zone?: string;
   power_watts?: number | string;
 }
 

@@ -18,10 +18,23 @@ from services.topology_service import (
     get_discovery_run,
     get_unmanaged_neighbors,
     get_topology_generation_status,
+    get_topology_node_metadata,
     get_topology_site_summaries,
     list_discovery_runs,
     request_cancel_discovery_run,
     select_topology_discovery_devices,
+)
+from services.topology_graph_service import (
+    apply_layout_override,
+    apply_relation_override,
+    build_graph,
+    get_edge_evidence,
+    get_graph,
+    get_physical_links,
+    get_topology_history,
+    persist_graph,
+    record_manual_layout_override,
+    record_manual_relation_override,
 )
 
 router = APIRouter()
@@ -138,14 +151,33 @@ def get_links(
     if cache_hit:
         return cached
 
-    managed_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
+    # The evidence graph is now the primary physical-link read model. Keep
+    # the legacy table as a rolling-upgrade fallback only.
+    try:
+        managed_links = get_physical_links(
+            tenant_id='tenant-default',
+            site_id=site_id,
+            limit=limit,
+            include_stale=include_stale,
+        )
+        graph_read_model = 'evidence_graph'
+    except Exception:
+        managed_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
+        graph_read_model = 'legacy_topology_links'
+    if not managed_links:
+        legacy_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
+        if legacy_links:
+            managed_links = legacy_links
+            graph_read_model = 'legacy_topology_links_fallback'
     unmanaged = get_unmanaged_neighbors(site_id=site_id)
     response = {
         'links': managed_links,
+        'node_metadata': get_topology_node_metadata(site_id=site_id),
         'unmanaged_nodes': unmanaged.get('unmanaged_nodes', []),
         'unmanaged_links': unmanaged.get('unmanaged_links', []),
         'truncated': len(managed_links) >= limit,
         'limit': limit,
+        'graph_read_model': graph_read_model,
     }
     read_cache.set('topology', cache_key, response, TOPOLOGY_CACHE_TTL_SECONDS)
     return response
@@ -261,3 +293,184 @@ def cancel_topology_discovery_run(run_id: str, request: Request):
     if not request_cancel_discovery_run(run_id):
         raise HTTPException(status_code=404, detail='Topology discovery run not found')
     return {'success': True, 'run_id': run_id, 'status': 'cancelling'}
+
+
+@router.get('/topology/graph')
+def get_evidence_graph(
+    view: str = Query(default='all', pattern='^(all|physical|l2|l3|logical|site|external|oob)$'),
+    site_id: str | None = Query(default=None),
+    limit: int = Query(default=5000, ge=1, le=20000),
+    include_stale: bool = Query(default=False),
+    tenant_id: str = Query(default='tenant-default'),
+):
+    """Return a paged graph read model with evidence-derived layout ranks."""
+    return get_graph(
+        tenant_id=tenant_id, view=view, site_id=site_id, limit=limit,
+        include_stale=include_stale,
+    )
+
+
+@router.post('/topology/graph/rebuild')
+def rebuild_evidence_graph(payload: dict = Body(...)):
+    """Normalize a discovery batch and persist nodes/edges/evidence.
+
+    This endpoint accepts observation metadata only. Raw device output belongs
+    to the discovery evidence retention path and is not copied into the graph.
+    """
+    tenant_id = str(payload.get('tenant_id') or 'tenant-default')
+    nodes = payload.get('nodes') if isinstance(payload.get('nodes'), list) else []
+    observations = payload.get('observations') if isinstance(payload.get('observations'), list) else []
+    graph = build_graph(nodes, observations, tenant_id=tenant_id)
+    counts = persist_graph(graph)
+    return {"success": True, **counts, "layout": graph.get("ranks", {})}
+
+
+@router.get('/topology/graph/edges/{edge_id}/evidence')
+def get_graph_edge_evidence(
+    edge_id: str,
+    tenant_id: str = Query(default='tenant-default'),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    return {"edge_id": edge_id, "items": get_edge_evidence(edge_id, tenant_id=tenant_id, limit=limit)}
+
+
+@router.get('/topology/graph/history')
+def get_graph_history(
+    request: Request,
+    tenant_id: str = Query(default='tenant-default'),
+    edge_id: str | None = Query(default=None),
+    node_id: str | None = Query(default=None),
+    event_type: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    _get_authenticated_session(request)
+    return get_topology_history(
+        tenant_id=tenant_id,
+        edge_id=edge_id,
+        node_id=node_id,
+        event_type=event_type,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.put('/topology/graph/edges/{edge_id}/relation')
+def override_graph_relation(edge_id: str, request: Request, payload: dict = Body(...)):
+    session = _get_authenticated_session(request)
+    relation = str(payload.get('relation_type') or '').upper()
+    tenant_id = str(payload.get('tenant_id') or 'tenant-default')
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM topology_edges WHERE id = ? AND tenant_id = ?",
+            (edge_id, tenant_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Topology edge not found')
+        before = dict(row)
+        try:
+            metadata = json.loads(row['metadata_json'] or '{}')
+        except Exception:
+            metadata = {}
+        updated = apply_relation_override({
+            "id": before['id'], "tenant_id": before['tenant_id'],
+            "source_node_id": before['source_node_id'], "target_node_id": before['target_node_id'],
+            "relation_type": before['relation_type'], "direction": before['direction'],
+            "semantic_relation": before.get('semantic_relation') or '',
+            "rank_excluded": before.get('rank_excluded') or 0,
+            "metadata": metadata, "is_manual": before.get('is_manual') or 0,
+        }, relation_type=relation, actor=str(session.get('username') or 'api'))
+        conn.execute(
+            """
+            UPDATE topology_edges
+            SET relation_type = ?, semantic_relation = ?, rank_excluded = ?,
+                is_manual = 1, manual_confirmed = 1, metadata_json = ?, updated_at = ?
+            WHERE id = ? AND tenant_id = ?
+            """,
+            (
+                updated['relation_type'], updated.get('semantic_relation') or '',
+                int(updated.get('rank_excluded') or 0),
+                json.dumps(updated['metadata'], ensure_ascii=False),
+                datetime.now(timezone.utc).isoformat(), edge_id, tenant_id,
+            ),
+        )
+        try:
+            conn.execute(
+                """
+                UPDATE topology_relations
+                SET relation_type = ?, semantic_relation = ?, rank_excluded = ?,
+                    is_manual = 1, metadata_json = ?, updated_at = ?
+                WHERE edge_id = ? AND tenant_id = ?
+                """,
+                (
+                    updated['relation_type'], updated.get('semantic_relation') or '',
+                    int(updated.get('rank_excluded') or 0),
+                    json.dumps(updated['metadata'], ensure_ascii=False),
+                    datetime.now(timezone.utc).isoformat(), edge_id, tenant_id,
+                ),
+            )
+        except Exception:
+            pass
+        conn.commit()
+        after = {
+            'relation_type': updated['relation_type'],
+            'semantic_relation': updated.get('semantic_relation') or '',
+            'rank_excluded': int(updated.get('rank_excluded') or 0),
+            'is_manual': 1,
+            'manual_confirmed': 1,
+        }
+        try:
+            record_manual_relation_override(
+                edge_id, tenant_id=tenant_id,
+                before={
+                    'relation_type': before.get('relation_type'),
+                    'semantic_relation': before.get('semantic_relation') or '',
+                    'is_manual': before.get('is_manual') or 0,
+                },
+                after=after,
+                actor=str(session.get('username') or 'api'),
+            )
+        except Exception:
+            pass
+        return {"success": True, "edge_id": edge_id, "relation_type": updated['relation_type'], "is_manual": True}
+    finally:
+        conn.close()
+
+
+@router.put('/topology/graph/nodes/{node_id}/layout')
+def override_graph_layout(node_id: str, request: Request, payload: dict = Body(...)):
+    session = _get_authenticated_session(request)
+    tenant_id = str(payload.get('tenant_id') or 'tenant-default')
+    try:
+        override = apply_layout_override(payload.get('layout') or {}, x=float(payload['x']), y=float(payload['y']))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail='x and y must be finite numbers') from exc
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, layout_override_json FROM topology_nodes WHERE id = ? AND tenant_id = ?",
+            (node_id, tenant_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Topology node not found')
+        try:
+            before = json.loads(row['layout_override_json'] or '{}')
+        except Exception:
+            before = {}
+        saved_layout = {**override, 'updated_by': session.get('username', 'api')}
+        conn.execute(
+            "UPDATE topology_nodes SET layout_override_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+            (json.dumps(saved_layout, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), node_id, tenant_id),
+        )
+        conn.commit()
+        try:
+            record_manual_layout_override(
+                node_id, tenant_id=tenant_id, before=before, after=saved_layout,
+                actor=str(session.get('username') or 'api'),
+            )
+        except Exception:
+            pass
+        return {"success": True, "node_id": node_id, "layout": override}
+    finally:
+        conn.close()

@@ -64,6 +64,20 @@ export const usePageTitle = ({
       };
       return map[inventorySubPage] || inventorySubPage;
     }
+    if (activeTab.startsWith('ai-')) {
+      const map: Record<string, string> = {
+        'ai-providers': language === 'zh' ? 'AI Provider 供应商' : 'AI Providers',
+        'ai-models': language === 'zh' ? 'AI 模型与路由' : 'AI Models & Routes',
+        'ai-prompts': language === 'zh' ? 'AI Prompt 提示词' : 'AI Prompts',
+        'ai-copilot': language === 'zh' ? 'AI Copilot 对话' : 'AI Copilot',
+        'ai-agents': language === 'zh' ? 'AI Agent 注册表' : 'AI Agents',
+        'ai-knowledge': language === 'zh' ? 'AI 知识库' : 'AI Knowledge',
+        'ai-governance': language === 'zh' ? 'AI 变更治理' : 'AI Governance',
+        'ai-usage': language === 'zh' ? 'AI Token 统计审计' : 'AI Token Usage',
+        'ai-security': language === 'zh' ? 'AI 安全网关' : 'AI Security Gateway',
+      };
+      return map[activeTab] || (language === 'zh' ? 'AI 中心' : 'AI Center');
+    }
     if (activeTab === 'users') return t('userManagement');
     if (activeTab === 'platform-registry') return language === 'zh' ? '平台注册' : 'Platform Registry';
     if (activeTab === 'alerts') return language === 'zh' ? '告警信息' : 'Alert Desk';

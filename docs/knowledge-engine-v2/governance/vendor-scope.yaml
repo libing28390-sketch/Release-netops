@@ -1,0 +1,77 @@
+schema_version: 1
+project: Nexora Knowledge Engine V2
+scope_id: GOV-008
+read_only_first: true
+devices:
+  - vendor: Huawei
+    product_family: CloudEngine 6800
+    model_pattern: CE68xx
+    platform_code: huawei_vrp
+    os_family: VRP8
+    driver_aliases: [huawei_vrp, huawei_vrpv8, ce_vrp]
+    primary_version: V300R024C10SPC500
+    compatibility_version: V300R023C00SPC500
+    topologies: [standalone, mlag_pair_fixture]
+    commands:
+      - display version
+      - display interface brief
+      - display vlan
+      - display lldp neighbor brief
+      - display arp all
+      - display ip routing-table
+      - display eth-trunk
+      - display cpu-usage
+      - display memory-usage
+      - display bgp peer
+    forbidden_write_patterns: [configure, commit, save, reboot, reset, delete]
+    existing_fixture_evidence:
+      - backend/tests/fixtures/cli/huawei/huawei_vrpv8/display_bgp_peer/vrpv8_ce16800.txt
+    missing_fixture_work:
+      - ce6800_display_version
+      - ce6800_stack_or_mlag_output
+  - vendor: Cisco
+    product_family: Catalyst 9300
+    model_pattern: C9300
+    platform_code: cisco_ios
+    os_family: IOS-XE
+    driver_aliases: [cisco_ios, cisco_iosxe]
+    primary_version: 17.9.x
+    compatibility_version: 17.18.x
+    topologies: [standalone, stackwise_fixture]
+    commands:
+      - show version
+      - show inventory
+      - show interfaces status
+      - show ip interface brief
+      - show vlan brief
+      - show lldp neighbors detail
+      - show ip arp
+      - show ip route
+      - show etherchannel summary
+      - show processes cpu
+      - show processes memory
+      - show environment temperature
+    forbidden_write_patterns: [configure terminal, write memory, copy, reload, erase, delete]
+    existing_fixture_evidence:
+      - backend/tests/fixtures/cli/cisco/cisco_ios/show_environment_temperature/iosxe_c9300.txt
+    missing_fixture_work:
+      - c9300_show_version_exact_17_9
+      - c9300_stackwise_output
+sources:
+  huawei:
+    - https://support.huawei.com/enterprise/en/doc/EDOC1100463796/2a5291b7/configuration-precautions-for-vxlan
+  cisco_17_9:
+    - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-9/command_reference/b_179_9300_cr/system_management_commands.html
+  cisco_17_18:
+    - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-18/command_reference/b_1718_9300_cr/system_management_commands.html
+required_sample_fields:
+  - sample_id
+  - vendor
+  - product_family
+  - exact_model
+  - platform_code
+  - os_version
+  - output_hash
+  - source_type
+  - collected_at
+  - parser_version

@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileText, Upload, XCircle } from 'lucide-react';
+import { Download, FileText, Upload, XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface ImportInventoryModalProps {
@@ -18,6 +18,36 @@ const ImportInventoryModal: React.FC<ImportInventoryModalProps> = ({
   onImport,
 }) => {
   if (!open) return null;
+
+  const handleDownloadTemplate = () => {
+    const rows = [
+      [
+        'Hostname', 'Asset Tag', 'Type', 'Vendor', 'Model', 'Role', 'Function', 'Zone',
+        'Device Category', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection',
+        'Username', 'Password', 'Normal User', 'Normal Password',
+        'Admin User', 'Admin Password', 'Enable Secret',
+        'SNMP Community', 'SNMP Port', 'Status',
+      ],
+      [
+        'core-sw-01', 'NET-001', 'network_device', 'Cisco', 'C9300',
+        'core', 'core routing', 'production', 'switch', 'cisco_ios',
+        '10.0.0.1', '22', 'ssh', 'netops', 'change-me',
+        'netops', 'change-me', 'netadmin', 'change-me', 'change-me',
+        '', '161', 'active',
+      ],
+    ];
+    const csv = rows
+      .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\r\n');
+    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = language === 'zh' ? '资产导入模板.csv' : 'asset_import_template.csv';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -43,7 +73,7 @@ const ImportInventoryModal: React.FC<ImportInventoryModalProps> = ({
               </div>
               <div className="text-center">
                 <p className="text-sm font-medium">{t('clickToUpload')}</p>
-                <p className="text-xs text-black/30 mt-1">JSON, CSV (max. 10MB)</p>
+                <p className="text-xs text-black/30 mt-1">JSON, CSV (max. 10MB) · Role / role supported</p>
               </div>
             </div>
 
@@ -53,7 +83,15 @@ const ImportInventoryModal: React.FC<ImportInventoryModalProps> = ({
                 <p className="text-xs font-medium text-blue-900">{t('downloadTemplate')}</p>
                 <p className="text-[10px] text-blue-700">{t('getStandardCsv')}</p>
               </div>
-              <button className="text-[10px] font-bold uppercase text-blue-600 hover:underline">{t('export')}</button>
+              <button
+                type="button"
+                onClick={handleDownloadTemplate}
+                className="inline-flex items-center gap-1 text-[10px] font-bold uppercase text-blue-600 hover:underline"
+                title={language === 'zh' ? '下载包含 SSH 凭据、功能和区域字段的 CSV 模板' : 'Download CSV template with SSH credentials, Function and Zone fields'}
+              >
+                <Download size={13} />
+                {t('export')}
+              </button>
             </div>
           </div>
 

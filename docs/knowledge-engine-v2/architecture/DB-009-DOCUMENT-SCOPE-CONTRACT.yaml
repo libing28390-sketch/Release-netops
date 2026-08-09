@@ -1,0 +1,186 @@
+task_id: DB-009
+priority: P0
+owner: DBA
+status: frozen_for_implementation
+milestone: M1
+authority: PostgreSQL
+
+decision:
+  choice: immutable_document_identity_plus_versioned_facts_and_explicit_scope_links
+  summary: >-
+    Establish kb_document as stable identity, kb_document_version as immutable
+    source/content fact, and kb_document_product/kb_document_software as the
+    explicit applicability boundary. Document Scope is a conceptual read model
+    over collection ACL plus these two relational links; no free-text or JSON
+    array is allowed to become canonical applicability.
+  invariants:
+    - original_content_and_content_hash_are_immutable_facts
+    - normalized_content_and_metadata_are_rebuildable_derivations
+    - source_registry_and_source_version_are_explicit_references
+    - product_and_os_software_scope_is_explicit_and_tenant_scoped
+    - unknown_or_ambiguous_scope_is_not_retrieval_eligible
+    - acl_and_trust_are_separate_from_product_or_source_identity
+    - one_document_identity_may_have_many_immutable_versions
+
+entities:
+  kb_document:
+    table: kb_document
+    purpose: stable_document_identity_and_source_owner
+    required_columns: [id, tenant_id, collection_id, source_registry_id, canonical_key, title, document_kind, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [description, language, publisher, source_uri, trust_level, acl_json, metadata_json, current_version_id, retention_class, source_kind, canonical_source]
+    foreign_keys:
+      - tenant_id_and_collection_id_to_kb_collection_tenant_and_id
+      - tenant_id_and_source_registry_id_to_kb_source_registry_tenant_and_id
+      - current_version_id_to_kb_document_version_id_deferred_until_version_exists
+    unique_keys: [[tenant_id, collection_id, canonical_key]]
+    identity_rules:
+      canonical_key: stable_source_or_business_key_not_file_path_or_acl
+      title: display_only_not_identity
+      document_kind: allowlisted_classification
+    document_kinds: [official_manual, product_registry, command_reference, configuration, cli_output, troubleshooting, example, enterprise_sop, user_note]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, quarantined, purged]
+    retrieval_gate: active_document_plus_active_current_version_plus_active_scope_and_acl
+
+  kb_document_version:
+    table: kb_document_version
+    purpose: immutable_document_fact_and_rebuild_input
+    required_columns: [id, tenant_id, document_id, source_version_id, version_no, original_content, normalized_content, content_hash, metadata_json, metadata_hash, parser_name, parser_version, trust_level, acl_json, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [mime_type, byte_size, original_content_ref, normalized_content_hash, metadata_parse_status, metadata_parse_error, fetched_at, approved_at, approved_by, supersedes_version_id]
+    foreign_keys:
+      - tenant_id_and_document_id_to_kb_document_tenant_and_id
+      - tenant_id_and_source_version_id_to_kb_source_version_tenant_and_id
+      - supersedes_version_id_to_kb_document_version_id
+    unique_keys: [[tenant_id, document_id, version_no], [tenant_id, document_id, content_hash]]
+    immutability:
+      fact_fields: [document_id, source_version_id, version_no, original_content, content_hash, parser_name, parser_version, fetched_at]
+      derived_fields: [normalized_content, normalized_content_hash, metadata_json, metadata_hash, metadata_parse_status]
+      update_rule: append_new_version_and_never_overwrite_original_or_hash
+      content_hash_algorithm: sha256_lowercase_hex_over_original_content_or_declared_canonical_bytes
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, quarantined, purged]
+    trust_levels: [official, reviewed, internal, untrusted]
+    retrieval_gate: only_active_verified_version_with_scope
+
+  kb_document_product:
+    table: kb_document_product
+    purpose: explicit_document_to_product_applicability
+    required_columns: [id, tenant_id, document_version_id, product_model_id, applicability_kind, evidence_json, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [confidence, evidence_source, source_locator_json, review_state, metadata_json]
+    foreign_keys:
+      - tenant_id_and_document_version_id_to_kb_document_version_tenant_and_id
+      - tenant_id_and_product_model_id_to_kb_product_model_tenant_and_id
+    unique_keys: [[tenant_id, document_version_id, product_model_id, applicability_kind]]
+    applicability_kinds: [exact_model, catalog_expanded_series, catalog_expanded_family, reviewed_pattern]
+    rules:
+      product_model_id_required: true
+      broad_scope: expand_only_to_reviewed_active_models_no_all_sentinel
+      evidence_required: true
+      ambiguity: pending_review_and_not_retrieval_eligible
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, quarantined, purged]
+
+  kb_document_software:
+    table: kb_document_software
+    purpose: explicit_document_to_os_and_software_applicability
+    required_columns: [id, tenant_id, document_version_id, os_generation_id, software_version_id, cli_platform, evidence_json, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [applicability_kind, confidence, evidence_source, source_locator_json, review_state, metadata_json]
+    foreign_keys:
+      - tenant_id_and_document_version_id_to_kb_document_version_tenant_and_id
+      - tenant_id_and_os_generation_id_to_kb_os_generation_tenant_and_id
+      - tenant_id_and_software_version_id_to_kb_software_version_tenant_and_id
+    unique_keys: [[tenant_id, document_version_id, os_generation_id, software_version_id, cli_platform]]
+    nullable_by_contract:
+      software_version_id: null_only_for_os_generation_or_train_range_scope_with_evidence
+      cli_platform: null_only_when_document_is_platform_agnostic_and_scope_evidence_says_so
+    applicability_kinds: [exact_os_version, os_generation, release_train_range, explicit_cli_platform]
+    rules:
+      os_generation_id_required: true
+      all_sentinel_forbidden: true
+      software_version_range: represented_by_applicability_kind_and_evidence_not_fake_exact_row
+      platform_mapping: explicit_canonical_code_only_no_driver_inference
+      ambiguity: pending_review_and_not_retrieval_eligible
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, quarantined, purged]
+
+document_scope:
+  conceptual_read_model: true
+  no_separate_kb_document_scope_table: true
+  composed_of:
+    - kb_document.collection_id_and_collection_acl
+    - kb_document_product
+    - kb_document_software
+  required_for_retrieval:
+    - document_active
+    - version_active_and_verified
+    - collection_acl_allows_actor
+    - every_applicability_link_active_and_evidence_approved
+  scope_resolution:
+    exact_product_and_version: highest_specificity
+    broader_catalog_scope: only_after_reviewed_expansion
+    unknown_scope: quarantine_or_require_clarification
+    no_scope: allowed_only_for_general_document_kind_and_explicit_policy
+  forbidden_shortcuts:
+    - product_or_version_arrays_as_authoritative_scope
+    - vendor_text_only_applicability
+    - cli_platform_as_product_or_os_foreign_key
+    - all_or_unknown_sentinel_as_cross_scope_match
+    - acl_in_metadata_json
+
+metadata_and_provenance:
+  metadata_json: parser_extensions_and_display_metadata_only
+  high_frequency_relational_fields: [tenant_id, status, collection_id, source_registry_id, document_id, source_version_id, product_model_id, os_generation_id, software_version_id, cli_platform]
+  evidence_json: [source_locator, extraction_method, confidence, reviewer, reviewed_at]
+  provenance_requirements:
+    source_version_reference: required_for_external_or_fetched_document
+    original_content_retention: required_or_verified_content_reference
+    parser_name_and_version: required
+    metadata_parse_error: retained_without_hiding_original_content
+
+legacy_gap_audit:
+  ai_document:
+    observed_fields: [id, knowledge_base_id, name, source, vendor, platform, version, status, tenant_id, acl_json, source_trust_level, knowledge_source_type, original_content, content_hash, metadata_json]
+    mapping: kb_document_plus_kb_document_version
+    gap: no_stable_version_table_and_no_explicit_scope_link_tables
+    migration_rule: dual_read_legacy_then_explicit_v2_and_never_delete_original_content
+  ai_document_chunk:
+    classification: derived_retrieval_output_handled_by_DB-010
+    migration_rule: keep_until_v2_chunk_generation_is_verified
+  ai_knowledge_base:
+    classification: legacy_collection_boundary_handled_by_DB-013
+    migration_rule: preserve_tenant_and_acl_mapping
+  knowledge_service_delete_paths:
+    observed: direct_ai_document_and_chunk_delete_exists
+    v2_rule: lifecycle_disable_or_archive_first_and_purge_only_after_reference_gate
+  rag_metadata:
+    observed_fields: [product_family, product_series, product_model, os_family, os_generation, software_train, software_release, cli_platform]
+    classification: import_hint_not_canonical_scope
+    migration_rule: resolve_to_explicit_scope_links_with_evidence
+
+tenant_security_and_audit:
+  common_columns: [id, tenant_id, created_at, updated_at, created_by, updated_by, status]
+  tenant_fk_strategy: composite_tenant_id_plus_parent_id_foreign_keys
+  authorization: document_manage_or_scope_review_permission_and_tenant_scope_required
+  audit_events: [document_created, document_version_added, document_version_approved, scope_added, scope_rejected, document_disabled, document_archived, document_purged]
+  acl_boundary: collection_or_document_acl_is_evaluated_before_retrieval_and_citation
+  untrusted_content: document_content_and_metadata_are_untrusted_data_for_prompt_injection_controls
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_009
+  prerequisites:
+    - DB-001_to_DB-008_contracts_are_available
+    - PostgreSQL_snapshot_and_document_inventory_are_available
+    - duplicate_document_and_content_hash_report_is_approved
+    - product_os_software_resolution_and_acl_review_are_available
+  forward_steps:
+    - create_document_and_version_tables_with_immutable_hash_constraints
+    - create_explicit_product_and_software_scope_links
+    - map_legacy_ai_document_rows_without_rewriting_original_content
+    - verify_scope_acl_and_citation_visibility_before_activation
+  rollback:
+    - disable_v2_document_reads_and_scope_writes
+    - preserve_ai_document_and_ai_document_chunk_rows
+    - remove_only_unreferenced_v2_rows_transactionally
+    - restore_v1_document_adapter_and_retrieval_path
+  data_loss_policy: no_original_content_delete_and_no_legacy_metadata_rewrite
+
+v1_compatibility:
+  preserved_sources: [ai_document, ai_document_chunk, ai_knowledge_base, knowledge_service_api_contract]
+  adapter_rule: V1 documents remain readable while V2 versions/scopes run in shadow
+  production_cutover: prohibited_until_DB-010_DB-013_and_DB-018_DB-020_gates_pass

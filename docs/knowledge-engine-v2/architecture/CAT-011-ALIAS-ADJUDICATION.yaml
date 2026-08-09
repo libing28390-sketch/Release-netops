@@ -1,0 +1,52 @@
+task_id: CAT-011
+priority: P0
+owner: BE
+milestone: M2
+status: frozen_service_contract
+depends_on: [CAT-009, CAT-010, DB-006]
+tenant_scope:
+  required: true
+  cross_tenant_candidates: forbidden
+
+conflict_detection:
+  group_key: tenant_id_normalized_alias_alias_kind
+  cross_model_status: ambiguous_pending_review
+  same_model_status: duplicate_same_target
+  no_first_match_fallback: true
+  audit_fields: [conflict_status, conflict_group, conflict_reason, conflict_count]
+
+candidate_list:
+  bounded: true
+  one_row_per_product_model: true
+  fields: [candidate_rank, product_model_id, alias_kind, conflict_status, selection_allowed]
+  ambiguous_requires_clarification: true
+  prefix_and_trigram_never_unique: true
+  unknown_never_guesses_vendor_or_driver: true
+
+manual_adjudication:
+  review_statuses: [pending_review, approved, rejected]
+  decisions: [approve, reject, reset]
+  required_audit: [reviewer_id, reviewed_at, review_note]
+  approval:
+    exact_and_canonical: one_selected_record_only
+    competing_records: rejected
+    alias_lifecycle: unchanged
+  rejection:
+    all_records: rejected
+    resolver_result: unknown
+  reset:
+    result: pending_review
+  prefix_and_trigram: remain_candidate_only_after_approval
+
+security:
+  reviewer_metadata_secrets: forbidden
+  alias_never_authorizes_device_or_driver: true
+  tenant_scope_enforced: true
+
+persistence:
+  production_ddl: none_in_CAT-011
+  repository_binding: later_DB006_catalog_migration
+
+rollback:
+  runtime: disable_CAT011_adjudication_and_keep_CAT009_resolution
+  data: retain_review_audit_and_pending_aliases

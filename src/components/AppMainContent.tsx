@@ -366,6 +366,7 @@ const AppMainContent: React.FC = () => {
     topologyLinkStats,
     topologySearch,
     topologySiteFilter,
+    topologyGraphView,
     topologyTagFilter,
     topologyRoleFilter,
     topologyStatusFilter,
@@ -393,8 +394,11 @@ const AppMainContent: React.FC = () => {
     handleTriggerDiscovery,
     handleCancelDiscovery,
     handleExportMap,
+    handleConfirmTopologyRelation,
+    loadTopologyHistory,
     setTopologySearch,
     setTopologySiteFilter,
+    setTopologyGraphView,
     setTopologyTagFilter,
     setTopologyRoleFilter,
     setTopologyStatusFilter,
@@ -417,6 +421,7 @@ const AppMainContent: React.FC = () => {
     activeTab === 'maintenance' || 
     activeTab === 'platform-registry' ||
     (activeTab === 'automation' && automationPage === 'metrics');
+  const isAiTab = activeTab === 'ai-center' || activeTab.startsWith('ai-');
 
   const getDeviceFetchMode = () => {
     if (activeTab === 'inventory') return 'full';
@@ -427,7 +432,7 @@ const AppMainContent: React.FC = () => {
     return 'light';
   };
 
-  const mainClassName = `relative flex-1 min-w-0 flex flex-col min-h-0 ${isStandaloneScrollTab ? 'overflow-hidden' : 'overflow-y-auto'}`;
+  const mainClassName = `relative flex-1 min-w-0 flex flex-col min-h-0 ${isStandaloneScrollTab || isAiTab ? 'overflow-hidden' : 'overflow-y-auto'}`;
 
   return (
     <main className={mainClassName}>
@@ -674,6 +679,7 @@ const AppMainContent: React.FC = () => {
             topologyLinkStats={topologyLinkStats}
             topologySearch={topologySearch}
             topologySiteFilter={topologySiteFilter}
+            topologyGraphView={topologyGraphView}
             topologyTagFilter={topologyTagFilter}
             topologyRoleFilter={topologyRoleFilter}
             topologyStatusFilter={topologyStatusFilter}
@@ -703,13 +709,16 @@ const AppMainContent: React.FC = () => {
             onExportMap={handleExportMap}
             onTopologySearchChange={setTopologySearch}
             onTopologySiteFilterChange={setTopologySiteFilter}
+            onTopologyGraphViewChange={setTopologyGraphView}
             onTopologyTagFilterChange={setTopologyTagFilter}
             onTopologyRoleFilterChange={setTopologyRoleFilter}
             onTopologyStatusFilterChange={setTopologyStatusFilter}
             onTopologyLinkStatusFilterChange={setTopologyLinkStatusFilter}
             onTopologyProtocolFilterChange={setTopologyProtocolFilter}
              onSelectTopologyDevice={setSelectedTopologyDeviceId}
-             onSelectTopologyLink={setSelectedTopologyLinkKey}
+            onSelectTopologyLink={setSelectedTopologyLinkKey}
+            onConfirmTopologyRelation={handleConfirmTopologyRelation}
+            loadTopologyHistory={loadTopologyHistory}
              onOpenWorkspace={(device) => {
                const workspaceUrl = `/access/workspace?device_id=${encodeURIComponent(device.id)}&auto=normal`;
                const workspaceWindow = window.open(workspaceUrl, '_blank', 'noopener,noreferrer');

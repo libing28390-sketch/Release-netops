@@ -22,6 +22,7 @@ from services.collection_status_service import record_collection_result
 from services.vault_service import resolve_collector_credentials
 from services.collection_plan_service import should_collect
 from services import tag_service
+from services.alert_control_service import AlertState, find_active_silence_for_alert, transition_state
 from core.crypto import decrypt_credential
 
 logger = logging.getLogger(__name__)
@@ -120,11 +121,110 @@ def _create_alert_event(
 
 def _resolve_alert_event(dedupe_key: str):
     now = _utc_now_iso()
+    row = _db_quick(
+        "SELECT id FROM alert_events WHERE dedupe_key = ? AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 1",
+        (dedupe_key,), fetch=True,
+    )
     _db_quick('''
         UPDATE alert_events
         SET resolved_at = ?, workflow_status = 'resolved', updated_at = ?
         WHERE dedupe_key = ? AND resolved_at IS NULL
     ''', (now, now, dedupe_key))
+    return str(row['id']) if row else None
+
+
+def _persist_alert_transition(dedupe_key: str, transition: AlertState, rule: dict, device_id: str, interface_name: str | None):
+    """Persist hysteresis state so a worker restart cannot erase FOR/recovery state."""
+    try:
+        _db_quick(
+            """
+            INSERT INTO alert_rule_states
+                (id, rule_id, target_key, state, pending_since, recovery_since,
+                 breach_count, recovery_count, flap_count, last_status, last_transition_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(rule_id, target_key) DO UPDATE SET
+                state=excluded.state, pending_since=excluded.pending_since,
+                recovery_since=excluded.recovery_since, breach_count=excluded.breach_count,
+                recovery_count=excluded.recovery_count, flap_count=excluded.flap_count,
+                last_status=excluded.last_status, last_transition_at=excluded.last_transition_at,
+                updated_at=excluded.updated_at
+            """,
+            (
+                f"ars_{uuid.uuid4().hex[:16]}",
+                str(rule.get('id') or dedupe_key),
+                f"{device_id}:{interface_name or ''}",
+                transition.state,
+                transition.pending_since.isoformat() if transition.pending_since else None,
+                transition.recovery_since.isoformat() if transition.recovery_since else None,
+                transition.breach_count,
+                transition.recovery_count,
+                transition.flap_count,
+                'active' if transition.state in {'PENDING', 'ACTIVE', 'RECOVERING'} else 'resolved',
+                _utc_now_iso() if transition.transitions else None,
+                _utc_now_iso(),
+            ),
+        )
+    except Exception:
+        # m0105 may not have been applied on an older development database;
+        # the in-memory state remains authoritative until the next migration.
+        logger.debug("Alert transition state table unavailable", exc_info=True)
+
+
+def _load_alert_transition_state(dedupe_key: str, rule: dict, device_id: str, interface_name: str | None) -> AlertState:
+    """Restore persisted FOR/recovery counters after a monitor restart."""
+    rule_id = str(rule.get('id') or dedupe_key)
+    target_key = f"{device_id}:{interface_name or ''}"
+    try:
+        row = _db_quick(
+            """
+            SELECT state, pending_since, recovery_since, breach_count,
+                   recovery_count, flap_count
+            FROM alert_rule_states
+            WHERE rule_id = ? AND target_key = ?
+            LIMIT 1
+            """,
+            (rule_id, target_key),
+            fetch=True,
+        )
+        if not row:
+            return AlertState()
+
+        def parse_timestamp(value):
+            if not value:
+                return None
+            try:
+                parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                return None
+
+        return AlertState(
+            state=str(row['state'] or 'OK'),
+            pending_since=parse_timestamp(row['pending_since']),
+            recovery_since=parse_timestamp(row['recovery_since']),
+            breach_count=int(row['breach_count'] or 0),
+            recovery_count=int(row['recovery_count'] or 0),
+            flap_count=int(row['flap_count'] or 0),
+        )
+    except Exception:
+        logger.debug("Alert transition state could not be restored", exc_info=True)
+        return AlertState()
+
+
+def _record_alert_activity(alert_id: str | None, event_type: str, *, from_state: str | None = None, to_state: str | None = None, metadata: dict | None = None):
+    if not alert_id:
+        return
+    try:
+        _db_quick(
+            """
+            INSERT INTO alert_activity
+                (id, alert_id, event_type, from_state, to_state, metadata_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (f"aact_{uuid.uuid4().hex[:16]}", alert_id, event_type, from_state, to_state, json.dumps(metadata or {}, ensure_ascii=False), _utc_now_iso()),
+        )
+    except Exception:
+        logger.debug("Alert activity table unavailable", exc_info=True)
 
 def _run_telemetry_maintenance():
     # Roll up raw 5s telemetry to 1-minute table and enforce retention windows.
@@ -193,6 +293,7 @@ def _run_telemetry_maintenance():
 
 # --- GLOBAL TELEMETRY STATE ---
 open_alerts = {}
+alert_transition_states: dict[str, AlertState] = {}
 protocol_peer_cache = {}
 protocol_transition_history = {}
 protocol_notify_suppressed_until = {}
@@ -758,9 +859,42 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
                      device_id: str, interface_name: str | None = None,
                      ip_address: str = '', status: str = '', rule: dict | None = None,
                      notify: bool = True):
+    alert_rule = rule or {}
     currently_open = open_alerts.get(dedupe_key)
+    if currently_open is None:
+        # Rehydrate the open projection as well as the hysteresis state so a
+        # worker restart does not create duplicate alerts or lose recovery.
+        try:
+            existing = _db_quick(
+                "SELECT created_at FROM alert_events WHERE dedupe_key = ? AND resolved_at IS NULL ORDER BY created_at ASC LIMIT 1",
+                (dedupe_key,),
+                fetch=True,
+            )
+            if existing:
+                currently_open = str(existing['created_at'] or '')
+                open_alerts[dedupe_key] = currently_open
+        except Exception:
+            currently_open = None
+    transition_state_row = alert_transition_states.get(dedupe_key)
+    if transition_state_row is None:
+        transition_state_row = _load_alert_transition_state(dedupe_key, alert_rule, device_id, interface_name)
+        alert_transition_states[dedupe_key] = transition_state_row
+    transition = transition_state(
+        transition_state_row,
+        breached=bool(is_active),
+        for_seconds=int(alert_rule.get('for_duration_seconds') or 0),
+        recovery_threshold=int(alert_rule.get('recovery_threshold') or alert_rule.get('recover_after_count') or 1),
+        recovery_seconds=int(alert_rule.get('recovery_duration_seconds') or 0),
+    )
+    _persist_alert_transition(dedupe_key, transition_state_row, alert_rule, device_id, interface_name)
+    # Raw observations remain available to the monitor; only the operator
+    # alert projection waits for FOR/recovery hysteresis.
+    if is_active and not transition.emit and transition.state != 'ACTIVE':
+        return
+    if (not is_active) and not transition.emit:
+        return
     if is_active and not currently_open:
-        maintenance_window = alert_maintenance_service.find_active_window_for_alert({
+        alert_context = {
             'dedupe_key': dedupe_key,
             'severity': severity,
             'title': title,
@@ -768,16 +902,19 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
             'device_id': device_id,
             'interface_name': interface_name,
             'ip_address': ip_address,
-        })
+        }
+        maintenance_window = alert_maintenance_service.find_active_window_for_alert(alert_context)
+        silence = find_active_silence_for_alert(alert_context)
         workflow_status = 'suppressed' if maintenance_window else 'open'
-        note = f"Suppressed by maintenance window: {maintenance_window['name']}" if maintenance_window else ''
-        _, created_at = _create_alert_event(
+        note = f"Suppressed by maintenance window: {maintenance_window['name']}" if maintenance_window else f"Notification silenced: {silence['reason']}" if silence else ''
+        alert_id, created_at = _create_alert_event(
             dedupe_key, severity, title, message, device_id, interface_name,
             workflow_status=workflow_status,
             note=note,
         )
+        _record_alert_activity(alert_id, 'SUPPRESSED' if maintenance_window else 'SILENCED' if silence else 'OPENED', to_state=workflow_status, metadata={"dedupe_key": dedupe_key, "source": "network_monitor", "silence_id": silence.get('id') if silence else None})
         open_alerts[dedupe_key] = created_at  # store first-occurrence time
-        if maintenance_window:
+        if maintenance_window or silence:
             return
         object_name = interface_name if interface_name else dedupe_key
         if notify and _protocol_transition_notify_allowed(dedupe_key):
@@ -795,7 +932,8 @@ def set_alert_state(dedupe_key: str, is_active: bool, severity: str, title: str,
             "SELECT workflow_status FROM alert_events WHERE dedupe_key = ? AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 1",
             (dedupe_key,), fetch=True,
         )
-        _resolve_alert_event(dedupe_key)
+        resolved_alert_id = _resolve_alert_event(dedupe_key)
+        _record_alert_activity(resolved_alert_id, 'RESOLVED', from_state='open', to_state='resolved', metadata={"dedupe_key": dedupe_key, "resolve_type": "automatic_recovery"})
         open_alerts.pop(dedupe_key, None)
         if alert_row and str(alert_row['workflow_status'] or '').lower() == 'suppressed':
             return

@@ -7,6 +7,7 @@ slowapi>=0.1.9
 # Database
 sqlalchemy>=2.0.0,<3.0.0
 psycopg2-binary>=2.9.9
+PyYAML>=6.0
 
 # Config & Validation
 pydantic>=2.6.0,<3.0.0

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertCircle, Eye, Monitor, ChevronDown, Unplug, Radio } from 'lucide-react';
+import { AlertCircle, Eye, Monitor, ChevronDown, Unplug, Radio, History, Save, ShieldCheck } from 'lucide-react';
 import type { Device } from '../types';
 
 interface TopologyOperationalTone {
@@ -25,6 +25,12 @@ interface TopologyDecoratedLinkLike {
   last_seen?: string;
   evidence_sources: string[];
   evidence_count?: number;
+  relation_type?: string;
+  semantic_relation?: string;
+  confidence?: number;
+  semantic_confidence?: number;
+  is_manual?: number | boolean;
+  manual_confirmed?: number | boolean;
   reverse_confirmed?: boolean;
   link_kind?: string;
   aggregation_protocol?: string;
@@ -57,6 +63,18 @@ interface TopologyInspectorPanelProps {
   formatTopologyOperationalState: (value?: string) => string;
   formatTopologyEvidenceLabel: (value?: string) => string;
   getTopologyOperationalTone: (value?: string) => TopologyOperationalTone;
+  onConfirmTopologyRelation: (edgeId: string, relationType: string) => Promise<void>;
+  loadTopologyHistory: (edgeId: string) => Promise<Array<{
+    id: string;
+    entity_type: string;
+    entity_id: string;
+    event_type: string;
+    before?: unknown;
+    after?: unknown;
+    source?: string;
+    actor?: string;
+    created_at?: string;
+  }>>;
 }
 
 /* ── helpers ── */
@@ -126,8 +144,58 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
   formatTopologyOperationalState,
   formatTopologyEvidenceLabel,
   getTopologyOperationalTone,
+  onConfirmTopologyRelation,
+  loadTopologyHistory,
 }) => {
   const zh = language === 'zh';
+  const [relationDraft, setRelationDraft] = useState('UNKNOWN');
+  const [relationSaving, setRelationSaving] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyItems, setHistoryItems] = useState<Array<{
+    id: string;
+    entity_type: string;
+    entity_id: string;
+    event_type: string;
+    before?: unknown;
+    after?: unknown;
+    source?: string;
+    actor?: string;
+    created_at?: string;
+  }>>([]);
+
+  React.useEffect(() => {
+    setRelationDraft(String(selectedTopologyLink?.relation_type || 'UNKNOWN').toUpperCase());
+    setHistoryOpen(false);
+    setHistoryItems([]);
+  }, [selectedTopologyLink?.id, selectedTopologyLink?.relation_type]);
+
+  const confirmRelation = async () => {
+    const edgeId = String(selectedTopologyLink?.id || selectedTopologyLink?.link_key || '').trim();
+    if (!edgeId) return;
+    setRelationSaving(true);
+    try {
+      await onConfirmTopologyRelation(edgeId, relationDraft);
+    } finally {
+      setRelationSaving(false);
+    }
+  };
+
+  const toggleHistory = async () => {
+    const edgeId = String(selectedTopologyLink?.id || selectedTopologyLink?.link_key || '').trim();
+    if (!edgeId) return;
+    if (historyOpen) {
+      setHistoryOpen(false);
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      setHistoryItems(await loadTopologyHistory(edgeId));
+      setHistoryOpen(true);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   /* ── empty state ── */
   if (!selectedTopologyDevice) {
@@ -293,6 +361,63 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
               <span className="text-[10px] text-slate-400">
                 · {formatTopologyLastSeen(selectedTopologyLink.last_seen)}
               </span>
+            </div>
+            <div className="mt-3 rounded-lg bg-white/70 p-2.5 ring-1 ring-slate-200/70">
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                <ShieldCheck size={13} className="text-cyan-600" />
+                {zh ? '关系语义确认' : 'Relation confirmation'}
+                {Boolean(selectedTopologyLink.manual_confirmed || selectedTopologyLink.is_manual) && (
+                  <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] text-emerald-700">{zh ? '已人工确认' : 'Manual'}</span>
+                )}
+              </div>
+              <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <select
+                  value={relationDraft}
+                  onChange={(event) => setRelationDraft(event.target.value)}
+                  className="min-w-0 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700 outline-none focus:border-cyan-400"
+                >
+                  {['PHYSICAL', 'HIERARCHICAL', 'PEER', 'HA', 'L2_NEIGHBOR', 'L3_NEIGHBOR', 'WAN', 'OOB', 'CONTROL', 'TUNNEL', 'UNKNOWN'].map((relation) => (
+                    <option key={relation} value={relation}>{relation}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={relationSaving}
+                  onClick={() => { void confirmRelation(); }}
+                  className="inline-flex items-center gap-1 rounded-md bg-cyan-600 px-2.5 py-1.5 text-[10px] font-bold text-white transition-colors hover:bg-cyan-700 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <Save size={12} />
+                  {relationSaving ? (zh ? '保存中' : 'Saving') : (zh ? '确认关系' : 'Confirm')}
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
+                <span>{zh ? '连接可信度' : 'Existence'}: {Math.round(Number(selectedTopologyLink.confidence || 0) * 100)}%</span>
+                <span>{zh ? '关系判断可信度' : 'Semantic'}: {Math.round(Number(selectedTopologyLink.semantic_confidence || 0) * 100)}%</span>
+                {selectedTopologyLink.semantic_relation && <span>{zh ? '语义' : 'Meaning'}: {selectedTopologyLink.semantic_relation}</span>}
+              </div>
+              <button
+                type="button"
+                onClick={() => { void toggleHistory(); }}
+                className="mt-2 inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-cyan-700"
+              >
+                <History size={12} />
+                {historyLoading ? (zh ? '读取历史中…' : 'Loading history…') : (historyOpen ? (zh ? '收起历史' : 'Hide history') : (zh ? '查看关系历史' : 'View relation history'))}
+              </button>
+              {historyOpen && (
+                <div className="mt-2 max-h-36 space-y-1.5 overflow-auto border-t border-slate-100 pt-2">
+                  {historyItems.length === 0 ? (
+                    <p className="text-[10px] text-slate-400">{zh ? '暂无历史变更' : 'No history yet'}</p>
+                  ) : historyItems.map((item) => (
+                    <div key={item.id} className="rounded bg-slate-50 px-2 py-1.5 text-[10px] text-slate-500">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-slate-700">{item.event_type}</span>
+                        <span>{item.created_at || '-'}</span>
+                      </div>
+                      <div className="mt-0.5">{item.actor || item.source || 'system'}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

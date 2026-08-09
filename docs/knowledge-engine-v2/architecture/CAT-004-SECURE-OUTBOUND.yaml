@@ -1,0 +1,40 @@
+task: CAT-004
+title: Secure outbound collection boundary
+status: PASS
+source_of_truth: docs/knowledge-engine-v2/16-development-master-checklist.md
+contract:
+  scheme: https-only
+  port: 443-only
+  host_match: exact_registered_host
+  path_match: registered_path_or_descendant
+  redirects:
+    follow_redirects: false
+    revalidate_every_hop: true
+    max_hops: registry_policy_bounded_0_to_10
+    cross_host: forbidden
+    https_downgrade: forbidden
+    query_userinfo_fragment: forbidden
+    encoded_traversal_or_separator: forbidden
+  dns_ssrf:
+    resolve_before_each_connection_attempt: true
+    ip_literals: forbidden
+    private_loopback_link_local_multicast_unspecified_reserved: forbidden
+    cloud_metadata: forbidden
+    environment_proxy: disabled
+  request:
+    methods: [GET, HEAD]
+    timeout: registry_policy_bounded_1_to_120_seconds
+    response_bytes: registry_policy_bounded_1KiB_to_100MiB
+    content_types: [text/html, text/plain, application/pdf, application/json, application/xml]
+    retries: bounded_0_to_2_retries_for_5xx_only
+  persistence:
+    raw_body: never_returned_or_audited
+    source_version: sha256_and_immutable_fetch_facts
+    audit_events: [fetch_started, fetch_completed, fetch_failed]
+  rollback:
+    runtime: disable_or_quarantine_source_registry_row
+    data: preserve_source_versions_and_v1_source_hints
+test_boundary:
+  transport: httpx.MockTransport
+  live_vendor_access: forbidden
+  focused_tests: backend/tests/catalog/test_cat004_secure_outbound.py

@@ -13,6 +13,7 @@ import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
 type TopologyProtocolFilter = 'all' | 'lldp';
+type TopologyGraphView = 'all' | 'physical' | 'l2' | 'l3' | 'logical' | 'site' | 'external' | 'oob';
 
 const TOPOLOGY_ROLE_LABELS: Record<string, { zh: string; en: string }> = {
   access: { zh: '接入层', en: 'Access' },
@@ -70,6 +71,13 @@ interface TopologyDecoratedLinkLike {
   last_seen?: string;
   evidence_sources: string[];
   evidence_count?: number;
+  relation_type?: string;
+  semantic_relation?: string;
+  confidence?: number;
+  semantic_confidence?: number;
+  is_manual?: number | boolean;
+  manual_confirmed?: number | boolean;
+  rank_excluded?: number | boolean;
   reverse_confirmed?: boolean;
   link_kind?: string;
   aggregation_protocol?: string;
@@ -262,6 +270,7 @@ interface TopologyPageProps {
   topologyLinkStats: TopologyLinkStats;
   topologySearch: string;
   topologySiteFilter: string;
+  topologyGraphView: TopologyGraphView;
   topologyTagFilter: TagFilterConfig;
   topologyRoleFilter: string;
   topologyStatusFilter: TopologyStatusFilter;
@@ -287,6 +296,7 @@ interface TopologyPageProps {
   onExportMap: () => void;
   onTopologySearchChange: (value: string) => void;
   onTopologySiteFilterChange: (value: string) => void;
+  onTopologyGraphViewChange: (value: TopologyGraphView) => void;
   onTopologyTagFilterChange: (value: TagFilterConfig) => void;
   onTopologyRoleFilterChange: (value: string) => void;
   onTopologyStatusFilterChange: (value: TopologyStatusFilter) => void;
@@ -294,6 +304,18 @@ interface TopologyPageProps {
   onTopologyProtocolFilterChange: (value: TopologyProtocolFilter) => void;
   onSelectTopologyDevice: (deviceId: string) => void;
   onSelectTopologyLink: (linkKey: string | null) => void;
+  onConfirmTopologyRelation: (edgeId: string, relationType: string) => Promise<void>;
+  loadTopologyHistory: (edgeId: string) => Promise<Array<{
+    id: string;
+    entity_type: string;
+    entity_id: string;
+    event_type: string;
+    before?: unknown;
+    after?: unknown;
+    source?: string;
+    actor?: string;
+    created_at?: string;
+  }>>;
   onOpenWorkspace: (device: Device) => void;
   onOpenDeviceDetail: (device: Device) => void;
   onOpenMonitoring: () => void;
@@ -320,6 +342,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   topologyLinkStats,
   topologySearch,
   topologySiteFilter,
+  topologyGraphView,
   topologyTagFilter,
   topologyRoleFilter,
   topologyStatusFilter,
@@ -345,6 +368,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   onExportMap,
   onTopologySearchChange,
   onTopologySiteFilterChange,
+  onTopologyGraphViewChange,
   onTopologyTagFilterChange,
   onTopologyRoleFilterChange,
   onTopologyStatusFilterChange,
@@ -352,6 +376,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
   onTopologyProtocolFilterChange,
   onSelectTopologyDevice,
   onSelectTopologyLink,
+  onConfirmTopologyRelation,
+  loadTopologyHistory,
   onOpenWorkspace,
   onOpenDeviceDetail,
   onOpenMonitoring,
@@ -632,7 +658,7 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
       </div>
 
       <div className="ops-toolbar rounded-2xl p-4">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_repeat(6,minmax(0,0.8fr))]">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_repeat(7,minmax(0,0.8fr))]">
           <label className="ops-control flex items-center gap-2 rounded-xl px-3 py-2">
             <Search size={15} className="text-black/35" />
             <input
@@ -650,6 +676,20 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           >
             <option value="all">{language === 'zh' ? '全部站点' : 'All Sites'}</option>
             {topologySiteOptions.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
+          </select>
+          <select
+            value={topologyGraphView}
+            onChange={(event) => onTopologyGraphViewChange(event.target.value as TopologyGraphView)}
+            title={language === 'zh' ? '选择关系视图' : 'Choose relation view'}
+            className="ops-control rounded-xl px-3 py-2 text-sm outline-none"
+          >
+            <option value="physical">{language === 'zh' ? '物理视图（LLDP/CDP）' : 'Physical (LLDP/CDP)'}</option>
+            <option value="l2">{language === 'zh' ? '二层视图（STP/MAC）' : 'L2 (STP/MAC)'}</option>
+            <option value="l3">{language === 'zh' ? '三层视图（OSPF/BGP/路由）' : 'L3 (OSPF/BGP/Routing)'}</option>
+            <option value="logical">{language === 'zh' ? '逻辑视图（L3/路由）' : 'Logical (L3/Routing)'}</option>
+            <option value="all">{language === 'zh' ? '综合视图' : 'Composite'}</option>
+            <option value="oob">{language === 'zh' ? 'OOB 管理视图' : 'OOB management'}</option>
+            <option value="external">{language === 'zh' ? '外部/端点视图' : 'External / endpoint'}</option>
           </select>
           <div className="relative">
             <button
@@ -893,6 +933,8 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
           formatTopologyOperationalState={formatTopologyOperationalState}
           formatTopologyEvidenceLabel={formatTopologyEvidenceLabel}
           getTopologyOperationalTone={getTopologyOperationalTone}
+          onConfirmTopologyRelation={onConfirmTopologyRelation}
+          loadTopologyHistory={loadTopologyHistory}
         />}
       </div>
       </div>

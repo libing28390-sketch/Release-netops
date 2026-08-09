@@ -1,0 +1,113 @@
+task_id: DB-018
+priority: P0
+owner: DBA+BE
+milestone: M1
+status: implemented_and_contract_frozen
+authority: PostgreSQL_with_SQLite_compatibility_adapter
+contract_version: v2.0
+depends_on: [DB-017]
+
+decision:
+  choice: deterministic_plan_then_ordered_idempotent_runner
+  summary: >-
+    The baseline bootstrap remains the single fresh-schema creator and the
+    versioned migration runner synchronizes every discovered module on top of
+    it. A read-only MigrationPlan records fresh/upgrade state, applied/pending
+    versions, unknown history, and name drift before any module runs. Production
+    bootstrap uses strict history mode; compatibility probes may use an
+    explicit non-strict mode for isolated fake migrations. Each module commits
+    its own tracking row only after upgrade succeeds, and a failure rolls back
+    the current module and leaves it pending for a corrected retry.
+  invariants:
+    - fresh_schema_runs_baseline_then_all_discovered_versions_in_order
+    - repeated_bootstrap_and_runner_calls_apply_zero_already_tracked_versions
+    - tracking_row_is_inserted_only_after_successful_upgrade_and_commit
+    - module_failure_rolls_back_current_module_and_halts_higher_versions
+    - strict_production_history_rejects_unknown_versions_and_name_drift
+    - no_migration_module_is_silently_skipped_or_reordered
+    - fresh_and_highest_upgrade_converge_to_the_same_schema_contract
+    - SQLite_adapter_tests_never_claim_PostgreSQL_extension_or_EXPLAIN_support
+
+runtime_contract:
+  tracking_table: schema_migrations
+  tracking_columns: [version_primary_key, name, applied_at]
+  discovery: pkgutil_mNNNN_module_scan_sorted_by_numeric_VERSION
+  plan_api: backend.database.migrations.build_migration_plan
+  plan_fields: [fresh_install, discovered_versions, applied_versions, pending_versions, unknown_applied_versions, name_drift]
+  execution_api: backend.database.migrations.run_migrations
+  production_call: backend.database.schema.init_db_calls_run_migrations_with_strict_history_true
+  compatibility_call: strict_history_false_only_for_explicit_isolated_test_probe
+  tracking_rule: INSERT_schema_migrations_after_upgrade_before_commit
+  failure_rule: rollback_current_connection_and_leave_version_untracked
+  retry_rule: next_boot_replans_untracked_version_and_retries_corrected_module
+
+fresh_schema_sync:
+  steps: [create_baseline_tables_and_defaults, commit_baseline, create_tracking_table, plan_fresh_versions, run_version_1_baseline_marker, apply_ordered_pending_modules, verify_tracking_count_and_schema_contract]
+  baseline: m0001_baseline_is_immutable_noop_marker_for_monolithic_bootstrap
+  convergence: fresh_schema_and_current_highest_upgrade_have_same_discovered_applied_set_and_required_tables
+  no_replay: baseline_bootstrap_uses_IF_NOT_EXISTS_and_ensure_column; tracked_migrations_skip_on_second_boot
+  partial_bootstrap: baseline_remains_usable; migration_plan_does_not_resurrect_deleted_history; strict_missing_baseline_is_unsafe
+
+idempotency_contract:
+  module_requirements: [VERSION_unique, NAME_stable, upgrade(cursor,use_pg), backend_aware_SQL, IF_NOT_EXISTS_or_catalog_guard, bounded_backfill, no_unconditional_duplicate_seed]
+  runner_guards: [numeric_sort, duplicate_VERSION_rejection, name_drift_detection, unknown_history_detection_in_strict_mode, applied_set_skip, per_module_commit, rollback_on_exception]
+  seed_rules: [stable_business_key, ON_CONFLICT_or_INSERT_OR_IGNORE, no_random_duplicate_defaults, secret_free_default_data]
+  repeat_probe: [first_run_applies_pending, second_run_returns_zero, tracking_rows_unchanged, schema_objects_unchanged, data_counts_unchanged]
+
+history_safety:
+  strict_mode: [unknown_applied_version, name_drift, missing_baseline_marker_in_nonempty_history]
+  response: no_new_migration_is_applied; emit_safe_error_and_audit_context
+  non_strict_mode: only_allowed_for_explicit_fake_or_subset_unit_probe; never_service_bootstrap
+  repair: restore_matching_module_or_record_A DR_and_manual_approval; no_delete_or_rewrite_schema_migrations
+
+failure_recovery:
+  module_exception: [rollback, no_tracking_insert, halt_higher_versions, log_safe_module_version_and_exception_type]
+  corrected_retry: [replan, rerun_untracked_module, verify_prior_tracking_rows_unchanged, continue_order]
+  partial_commit: tracking_row_and_module_DDL_commit_atomically_where_backend_supports
+  postgres_concurrent_ddl: excluded_from_runner_transaction_and_moved_to_DB-016/DB-019/DB-020_maintenance_runner
+  operator_stop: persist_plan_and_last_module_in_audit_without_marking_pending_as_applied
+
+legacy_audit:
+  schema_bootstrap:
+    module: backend/database/schema.py
+    observed: [_init_db_logic_baseline, schema_migrations_absence_detection, baseline_commit, run_migrations_after_bootstrap]
+    decision: preserve_baseline; strict_plan_is_new_sync_gate
+  migration_runner:
+    module: backend/database/migrations/__init__.py
+    observed: [ordered_discovery, tracking_table, per_module_commit, rollback_and_halt]
+    implemented: [MigrationPlan, build_migration_plan, get_applied_records, strict_history_mode]
+  m0001_baseline:
+    module: backend/database/migrations/m0001_baseline.py
+    decision: immutable_marker_only; no_duplicate_baseline_DDL
+  m0002_and_later:
+    decision: existing_IF_NOT_EXISTS_and_catalog_guards_remain_required; no_V1_table_drop
+
+security_and_governance:
+  authorization: production_runner_identity_and_database_role_are_separate_from_application_RBAC; maintenance_audit_required
+  audit_events: [fresh_plan, upgrade_plan, module_start, module_success, module_failure, rollback, strict_history_block, retry]
+  redaction: no_DSN_password_API_key_device_credential_raw_prompt_or_raw_document_in_plan_or_error
+  data_protection: tracking_table_contains_version_name_time_only; payloads_remain_in_domain_tables_with_retention
+  rollback: restore_last_verified_schema_and_leave_untracked_module_pending; never_delete_tracking_history
+
+migration_contract:
+  status: implementation_in_runner_no_V2_production_DDL_in_db_018
+  fresh_install: baseline_bootstrap_plus_strict_ordered_runner
+  upgrade: plan_applied_and_pending_then_apply_once_per_version
+  repeat: same_plan_after_completion_has_empty_pending_set
+  downgrade: no_automatic_downgrade; use_release_restore_and_explicit_migration_rollback
+  production_gate: DB-019_upgrade_and_DB-020_fresh_failure_rollback_tests_required
+
+verification:
+  contract_tests: backend/tests/database/test_db018_idempotent_fresh_sync.py
+  existing_regression: backend/tests/test_schema_migrations.py
+  required_checks: [fresh_plan, ordered_discovery, strict_history, idempotent_repeat, failure_retry, tracking_commit, schema_init_call, report_markers]
+  test_database: SQLite_isolated_and_in_memory_probes
+  production_database: PostgreSQL_fresh_upgrade_and_lock_validation_in_DB-019_DB-020
+
+rollback:
+  runtime: stop_after_failed_module_and_keep_prior_tracked_versions
+  schema: restore_last_verified_backup_or_module_specific_downgrade; no_tracking_history_delete
+  data: preserve_baseline_and_migration_rows; quarantine_partial_backfill_per_DB-017
+  audit: retain_plan_and_failure_context_without_secrets
+
+next_tasks: [DB-019, DB-020, DB-021, MIG-001]

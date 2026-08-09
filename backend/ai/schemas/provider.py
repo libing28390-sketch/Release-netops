@@ -5,7 +5,7 @@ Pydantic Schemas for AI Provider Management
 from __future__ import annotations
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AIProviderBase(BaseModel):
@@ -20,7 +20,25 @@ class AIProviderBase(BaseModel):
 
 class AIProviderCreate(AIProviderBase):
     api_key: Optional[str] = Field(None, description="Plaintext API Key (will be AES encrypted)")
-    default_model_code: Optional[str] = Field(None, description="Initial Model Code (e.g. deepseek-chat, gpt-4o)")
+    default_model_code: Optional[str] = Field(None, description="Initial Model Code (e.g. deepseek-v4-flash, deepseek-v4-pro)")
+
+    @field_validator('provider_type')
+    @classmethod
+    def validate_provider_type(cls, value: str) -> str:
+        normalized = str(value or '').strip().lower()
+        if normalized != 'deepseek':
+            raise ValueError('DeepSeek V1 only permits provider_type=deepseek')
+        return normalized
+
+    @field_validator('default_model_code')
+    @classmethod
+    def validate_default_model_code(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or value == '':
+            return value
+        normalized = str(value).strip().lower()
+        if normalized not in {'deepseek-v4-flash', 'deepseek-v4-pro'}:
+            raise ValueError('DeepSeek V1 only permits deepseek-v4-flash or deepseek-v4-pro')
+        return normalized
 
 
 class AIProviderUpdate(BaseModel):
@@ -32,6 +50,16 @@ class AIProviderUpdate(BaseModel):
     max_retries: Optional[int] = Field(None, ge=0, le=10)
     proxy_url: Optional[str] = None
     enabled: Optional[bool] = None
+
+    @field_validator('provider_type')
+    @classmethod
+    def validate_provider_type(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        normalized = str(value).strip().lower()
+        if normalized != 'deepseek':
+            raise ValueError('DeepSeek V1 only permits provider_type=deepseek')
+        return normalized
 
 
 class AIProviderResponse(AIProviderBase):

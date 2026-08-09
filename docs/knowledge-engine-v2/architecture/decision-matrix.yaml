@@ -1,0 +1,205 @@
+task_id: AUD-022
+milestone: M0
+decision_vocabulary: [KEEP, REFACTOR, REPLACE, REMOVE]
+rules:
+  KEEP: preserve as an architectural invariant; only add tests/observability.
+  REFACTOR: retain responsibility and contract, but change implementation behind a compatibility seam.
+  REPLACE: introduce a new implementation and migrate behind a reversible dual-run or adapter.
+  REMOVE: delete only after dependency, migration, rollback, and V1 compatibility gates pass.
+decisions:
+  - id: DEC-001
+    component: v1_v2_parallel_compatibility
+    decision: KEEP
+    rationale: ADR-001 requires reversible V1/V2 parallel operation and no flag-day cutover.
+    evidence: [ADR-001, AUD-001, AUD-002, AUD-021]
+    next_tasks: [DB-001, API-001, EVAL-001, MIG-001, REL-001]
+    v1_impact: preserve
+    rollback: disable V2 feature flag and keep V1 route active
+  - id: DEC-002
+    component: postgresql_authoritative_storage
+    decision: KEEP
+    rationale: ADR-002 freezes PostgreSQL as production source of truth; SQLite remains local/test-only.
+    evidence: [ADR-002, AUD-003, AUD-004]
+    next_tasks: [DB-001, DB-002, MIG-001, REL-001]
+    v1_impact: preserve
+    rollback: revert only additive migration after compatibility verification
+  - id: DEC-003
+    component: product_os_software_version_orthogonal_model
+    decision: KEEP
+    rationale: ADR-003 prevents a software train or display alias from silently becoming device identity.
+    evidence: [ADR-003, AUD-005, AUD-009, AUD-021]
+    next_tasks: [CAT-001, CAT-002, RET-001, EVAL-001]
+    v1_impact: preserve
+    rollback: retain legacy alias mapping behind explicit resolver adapter
+  - id: DEC-004
+    component: document_version_as_fact_source_and_derived_index
+    decision: REFACTOR
+    rationale: ADR-004 is correct, but current ai_document stores mutable source/derived fields together and lacks immutable document-version lineage.
+    evidence: [ADR-004, AUD-005, AUD-006, AUD-010, AUD-023]
+    next_tasks: [DB-001, DB-003, ING-001, CHK-001, MIG-001]
+    v1_impact: preserve through dual-write/read adapter
+    rollback: stop V2 reads and keep legacy document/chunk read path
+  - id: DEC-005
+    component: official_enterprise_knowledge_domains
+    decision: REFACTOR
+    rationale: ADR-005 remains the policy; source_trust_level and ACL exist but import trust/review/quarantine are not enforced.
+    evidence: [ADR-005, AUD-005, AUD-010, AUD-014, AUD-020]
+    next_tasks: [CAT-001, ING-001, ING-004, RET-001, SEC-001]
+    v1_impact: preserve existing active documents as explicitly classified legacy
+    rollback: disable new domain gate and serve only the prior scoped domain
+  - id: DEC-006
+    component: external_ai_security_and_data_egress_gateway
+    decision: REFACTOR
+    rationale: Gateway/DLP/tokenization is the correct boundary, but provider allowlist, prompt injection action, key crypto, audit scope and fail-closed coverage have open findings.
+    evidence: [ADR-006, AUD-015, AUD-016, AUD-017, AUD-018, AUD-019, AUD-020]
+    next_tasks: [LLM-001, SEC-001, SEC-002, API-001, OBS-001]
+    v1_impact: V1 remains default local/disabled external AI
+    rollback: set external AI disabled/kill switch and use local deterministic path
+  - id: DEC-007
+    component: read_only_ai_consultation_default
+    decision: KEEP
+    rationale: ADR-007 and current ToolRegistry R0 controls correctly keep ordinary consultation read-only.
+    evidence: [ADR-007, AUD-001, AUD-012, AUD-017]
+    next_tasks: [COP-001, DIA-001, SEC-005]
+    v1_impact: preserve
+    rollback: disable any newly introduced tool capability
+  - id: DEC-008
+    component: change_governance_and_write_path
+    decision: REFACTOR
+    rationale: ADR-008 is frozen, but end-to-end proposal/approval/execute/verify/rollback wiring is not complete and must not be inferred from read-only tools.
+    evidence: [ADR-008, AUD-001, AUD-012, AUD-017]
+    next_tasks: [DIA-001, DIA-005, API-004, SEC-010, REL-008]
+    v1_impact: no V1 write path is removed
+    rollback: keep proposal-only mode and disable execution flag
+  - id: DEC-009
+    component: deterministic_metadata_match_precedence
+    decision: KEEP
+    rationale: ADR-009 and the baseline prove SQL hard filters precede ranking and prevent incompatible platform matches.
+    evidence: [ADR-009, AUD-009, AUD-021]
+    next_tasks: [RET-001, RET-003, EVAL-001]
+    v1_impact: preserve
+    rollback: retain existing lexical fallback only behind shadow comparison
+  - id: DEC-010
+    component: ambiguity_clarification_and_cross_platform_labeling
+    decision: REFACTOR
+    rationale: ADR-010 is correct and partially implemented; clarification, audit events, source trust and streaming/non-streaming behavior need one contract.
+    evidence: [ADR-010, AUD-009, AUD-012, AUD-013, AUD-021]
+    next_tasks: [RET-010, CIT-001, COP-004, API-003, EVAL-004]
+    v1_impact: preserve safe no-match/clarification fallback
+    rollback: use existing no-match response and disable cross-platform V2 flag
+  - id: DEC-011
+    component: multi_provider_multi_model_route_and_fallback
+    decision: REFACTOR
+    rationale: ADR-011 freezes provider/model/route separation; current tables and router exist but UI/request wiring and DeepSeek-only policy remain incomplete.
+    evidence: [ADR-011, AUD-012, AUD-015, AUD-017]
+    next_tasks: [LLM-001, LLM-003, LLM-007, API-001, KUI-001]
+    v1_impact: retain default route and V1 request contract through adapter
+    rollback: select the known V1 default route and disable user model switching
+  - id: DEC-012
+    component: answer_provenance_and_citation_dto
+    decision: REFACTOR
+    rationale: ADR-012 requires actual route/provenance; current citations and document ids lack a complete open/version/URL/tenant-safe DTO.
+    evidence: [ADR-012, AUD-013, AUD-019, AUD-021]
+    next_tasks: [CIT-001, CIT-003, API-006, COP-010, EVAL-006]
+    v1_impact: keep existing citations as legacy projection
+    rollback: render legacy citation text while V2 DTO remains shadow-only
+  - id: DEC-013
+    component: ai_security_crypto_helper
+    decision: REPLACE
+    rationale: AUD-018 found SHA-256(secret) derivation, insecure defaults and no version/key-id rotation; use versioned core crypto with fail-closed key management.
+    evidence: [ADR-006, AUD-018]
+    next_tasks: [DB-009, SEC-003, SEC-004, MIG-004, REL-005]
+    v1_impact: decrypt legacy rows through an explicit migration adapter
+    rollback: keep dual decrypt/read-only legacy format until re-encryption verification
+  - id: DEC-014
+    component: agent_trace_and_ai_audit_storage
+    decision: REFACTOR
+    rationale: AUD-019 found plaintext agent user ids, missing tenant-owner predicates, unsanitized trace fields and retention gaps.
+    evidence: [AUD-019, ADR-006]
+    next_tasks: [DB-010, API-007, SEC-008, OBS-003, MIG-006]
+    v1_impact: no deletion of existing trace until retention/backfill gate
+    rollback: disable new trace reader and retain metadata-only audit path
+  - id: DEC-015
+    component: prompt_injection_html_attachment_and_knowledge_ingest
+    decision: REFACTOR
+    rationale: AUD-020 confirmed output escaping but P0 gaps in non-executable context, server-side attachment gate, quarantine and source trust authorization.
+    evidence: [ADR-005, ADR-006, AUD-020]
+    next_tasks: [ING-001, ING-006, ING-012, SEC-011, KUI-012, EVAL-010]
+    v1_impact: existing knowledge remains readable as legacy until reclassification
+    rollback: set new ingestion policy to deny/quarantine and keep legacy read-only retrieval
+  - id: DEC-016
+    component: metadata_hard_filter_rag_retriever
+    decision: KEEP
+    rationale: The SQL candidate contract and baseline are the correct retrieval foundation; no replacement is justified.
+    evidence: [ADR-009, AUD-009, AUD-021]
+    next_tasks: [RET-001, RET-002, RET-005]
+    v1_impact: preserve
+    rollback: shadow V2 scoring and retain V1 result projection
+  - id: DEC-017
+    component: vector_embedding_and_rerank_implementation
+    decision: REFACTOR
+    rationale: Local deterministic embedding is a useful safe fallback, but production vector storage/index/rerank/version health and remote egress contract are incomplete.
+    evidence: [AUD-007, AUD-008, AUD-009, AUD-015]
+    next_tasks: [DB-014, RET-012, RET-014, LLM-020, MIG-010]
+    v1_impact: local lexical path remains available
+    rollback: route to deterministic local embedding and lexical ranking
+  - id: DEC-018
+    component: copilot_model_speed_reasoning_controls
+    decision: REFACTOR
+    rationale: AUD-012 shows controls are UI-only; request, Gateway, provider payload and SSE provenance are not connected.
+    evidence: [AUD-012, ADR-011, ADR-012]
+    next_tasks: [KUI-001, KUI-004, API-001, LLM-009, OBS-005]
+    v1_impact: keep V1 chat body and defaults when controls are absent
+    rollback: hide controls and use server defaults
+  - id: DEC-019
+    component: client_side_attachment_import_and_binary_placeholder
+    decision: REPLACE
+    rationale: Browser-only ZIP/text parsing and binary placeholders are bypassable and cannot provide server-side malware/provenance guarantees.
+    evidence: [AUD-020, AUD-002]
+    next_tasks: [ING-012, ING-013, API-008, SEC-011, REL-009]
+    v1_impact: keep legacy text import behind a compatibility adapter until server gate is live
+    rollback: disable attachment upload and allow approved text-only import
+  - id: DEC-020
+    component: direct_provider_test_connection_methods
+    decision: REMOVE
+    rationale: AUD-017 found latent Provider.test_connection methods that can become a Gateway bypass; the public route already uses the Gateway seam.
+    evidence: [AUD-017]
+    next_tasks: [LLM-006, SEC-002, API-002]
+    v1_impact: public provider test endpoint remains, only direct bypass is removed
+    rollback: restore only a Gateway-backed facade, never a direct network method
+  - id: DEC-021
+    component: unscoped_dict_api_payloads
+    decision: REFACTOR
+    rationale: Knowledge/provider/assistant APIs accept broad dictionaries; schema, enum, size, tenant and model authorization must become explicit contracts.
+    evidence: [AUD-002, AUD-012, AUD-018, AUD-020]
+    next_tasks: [API-001, API-003, API-008, SEC-014, EVAL-012]
+    v1_impact: accept legacy fields through versioned adapter with deprecation telemetry
+    rollback: retain V1 response projection while V2 validation is shadowed
+  - id: DEC-022
+    component: legacy_localstorage_raw_copilot_sessions
+    decision: REFACTOR
+    rationale: V1 fallback preserves continuity but keeps raw browser data and bypasses server retention/classification; migrate then retire only after evidence.
+    evidence: [ADR-001, AUD-011, AUD-019]
+    next_tasks: [COP-015, KUI-015, API-006, MIG-012]
+    v1_impact: preserve import-once compatibility
+    rollback: keep read-only import fallback without creating new raw sessions
+  - id: DEC-023
+    component: observability_metrics_and_route_provenance
+    decision: REFACTOR
+    rationale: Basic request/latency counters exist, but tenant-safe route/model/fallback, policy decision, retrieval and trace metrics are not a single contract.
+    evidence: [ADR-012, AUD-002, AUD-019, AUD-021]
+    next_tasks: [OBS-001, OBS-003, OBS-005, API-009, EVAL-015]
+    v1_impact: retain existing metrics names through additive labels
+    rollback: remove only additive labels/dashboard panels
+  - id: DEC-024
+    component: baseline_and_regression_evaluation
+    decision: KEEP
+    rationale: AUD-021 creates the first reproducible gold/evidence baseline; it is the gate for every later RET/LLM/EVAL change.
+    evidence: [AUD-021]
+    next_tasks: [EVAL-001, EVAL-010, EVAL-015, REL-010]
+    v1_impact: preserve
+    rollback: retain prior baseline JSON and disable new evaluator in release pipeline
+go_no_go:
+  no_go_until: [DEC-006, DEC-013, DEC-014, DEC-015, DEC-019, DEC-020]
+  conditional_go_allowed_for: [DEC-004, DEC-010, DEC-011, DEC-012, DEC-017, DEC-018, DEC-021, DEC-022, DEC-023]
+  keep_as_invariants: [DEC-001, DEC-002, DEC-003, DEC-007, DEC-009, DEC-016, DEC-024]

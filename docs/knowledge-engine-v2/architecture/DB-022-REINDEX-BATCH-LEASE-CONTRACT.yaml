@@ -1,0 +1,76 @@
+task_id: DB-022
+priority: P1
+owner: DBA
+milestone: M1
+status: implemented_runtime_coordination
+authority: PostgreSQL_with_SQLite_compatibility_fixture
+contract_version: v2.0
+depends_on: [DB-010, DB-011, DB-016, DB-017, DB-020]
+
+decision:
+  choice: keyset_batches_with_database_lease_and_idempotent_document_replace
+  summary: >-
+    Reindex reads documents by a stable primary-key keyset page rather than
+    OFFSET or a full in-memory corpus. A worker acquires an expiring
+    knowledge_reindex:<job_id> lease from the existing scheduler_locks table,
+    heartbeats before each document and batch, and only the owner token may
+    renew or release it. A committed batch checkpoint is stored inside the
+    private job scope metadata; API responses expose only batch size and a
+    boolean checkpoint flag. Lease loss leaves retry_wait and resumes from the
+    last committed cursor. Document writes remain transactionally replaceable
+    and idempotent, so a crash window may reprocess one batch but cannot expose
+    a second worker's writes concurrently.
+  invariants:
+    - stable_id_keyset_order_no_offset_scan
+    - bounded_batch_size_1_to_5000_default_250
+    - one_active_worker_per_job_across_processes
+    - lease_owner_token_fences_stale_heartbeat_and_release
+    - heartbeat_before_each_document_and_batch
+    - checkpoint_after_batch_terminal_outcomes_only
+    - lease_loss_is_retryable_and_never_claims_uncommitted_document_success
+    - document_replace_is_idempotent_and_source_rows_are_preserved
+    - counters_are_server_maintained_and_progress_is_derived
+    - API_scope_does_not_expose_private_cursor_or_lease_owner
+
+batch:
+  selection: "WHERE d.id > :last_id ORDER BY d.id LIMIT :batch_size"
+  no_full_corpus_materialization: true
+  max_batch_size: 5000
+  default_batch_size: 250
+  checkpoint: private_scope_control.cursor_after_committed_batch
+  retry_semantics: at_least_once_document_attempt_with_idempotent_replace
+
+lease:
+  storage: existing_scheduler_locks
+  lock_name: knowledge_reindex_colon_job_id
+  owner_token: opaque_worker_uuid_in_locked_at
+  default_seconds: 900
+  stale_recovery: expires_at_allows_new_owner
+  heartbeat: compare_lock_name_and_owner_token_then_extend_expiry
+  release: compare_lock_name_and_owner_token_only
+  failure: status_retry_wait_and_preserve_last_checkpoint
+
+concurrency:
+  duplicate_run: second_worker_returns_current_snapshot_without_mutation
+  database_lock: scheduler_locks_primary_key_insert
+  document_lock: document_scoped_transaction_and_idempotent_generation_replace
+  cross_tenant: tenant_scope_clause_is_always_applied
+  cancellation: no_new_batch_after_lease_or_cancel_gate; current_document_finishes_or_retries
+
+security_and_governance:
+  permissions: [ai.knowledge.manage_for_start_retry, ai.view_for_status]
+  redaction: [no_raw_lease_owner, no_raw_document_content, no_raw_credentials, no_api_key, no_dsn]
+  audit: job_status_counters_and_checkpoint_state_only
+  automatic_repair: forbidden
+
+rollback:
+  schema: no_new_DDL_in_DB_022; existing_scheduler_locks_and_job_scope_are_backward_compatible
+  data: source_documents_are_never_deleted; failed_batch_is_retried
+  operational: stop_worker_then_expire_or_release_job_lease
+
+verification:
+  contract_tests: backend/tests/database/test_db022_reindex_batch_lease.py
+  required_checks: [contract_markers, keyset_limit, lease_exclusion, heartbeat_fencing, batch_checkpoint, lease_loss_resume, bounded_progress, V1_preservation, report_markers]
+  production_gate: load_test_on_approved_staging_corpus_before_large_reindex
+
+next_tasks: [DB-023, DB-024, CAT-001]

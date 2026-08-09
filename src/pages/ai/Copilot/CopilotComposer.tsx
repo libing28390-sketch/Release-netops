@@ -18,7 +18,7 @@ interface CopilotComposerProps {
 
 export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   onSend,
-  selectedModel = 'deepseek-chat',
+  selectedModel = 'deepseek-v4-flash',
   onSelectModel,
   models = [],
   disabled,
@@ -81,9 +81,6 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   const defaultModels: CopilotModelOption[] = [
     { id: 'm0', name: 'DeepSeek V4 Flash (默认极速)', model_code: 'deepseek-v4-flash', provider_name: 'DeepSeek' },
     { id: 'm0pro', name: 'DeepSeek V4 Pro (专业旗舰)', model_code: 'deepseek-v4-pro', provider_name: 'DeepSeek' },
-    { id: 'm1', name: 'DeepSeek V3 (通用对话)', model_code: 'deepseek-chat', provider_name: 'DeepSeek' },
-    { id: 'm2', name: 'DeepSeek R1 (深度推理)', model_code: 'deepseek-reasoner', provider_name: 'DeepSeek' },
-    { id: 'm3', name: 'DeepSeek Coder (代码专家)', model_code: 'deepseek-coder', provider_name: 'DeepSeek' },
   ];
 
   const effectiveModels = models.length > 0 ? models : defaultModels;
@@ -107,7 +104,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   };
 
   return (
-    <div className="relative max-w-[820px] mx-auto w-full px-4 pb-4 pt-1 font-sans">
+    <div className="relative max-w-[820px] mx-auto w-full shrink-0 px-3 sm:px-4 pb-3 sm:pb-4 pt-1 font-sans">
       {/* Quick Menu Popover */}
       {showQuickMenu && (
         <div className="absolute bottom-full mb-2 left-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-2 shadow-xl z-20 w-64 space-y-1 text-xs">
@@ -316,7 +313,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
         />
 
         {/* Model & Inference Selector Pill (Matching Image 1 Trigger Style) */}
-        <div className="mb-0.5 flex-shrink-0">
+        <div className="mb-0.5 min-w-0 flex-shrink">
           <button
             type="button"
             onClick={() => {
@@ -327,7 +324,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
             title="点击展开模型与推理控制面板"
           >
             <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
-            <span>{currentModelObj?.name?.split(' ')[0] || 'DeepSeek V3'} {reasoningLevel === 'high' ? '最高' : ''}</span>
+            <span className="max-w-[7rem] truncate sm:max-w-[12rem]">{currentModelObj?.name?.split(' ')[0] || 'DeepSeek V4'} {reasoningLevel === 'high' ? '最高' : ''}</span>
             <ChevronDown className="w-3 h-3 text-gray-400 ml-0.5" />
           </button>
         </div>

@@ -1,0 +1,195 @@
+task_id: DB-014
+priority: P0
+owner: DBA
+milestone: M1
+status: frozen_for_implementation
+authority: PostgreSQL
+contract_version: v2.0
+
+decision:
+  choice: typed_relational_authority_with_bounded_jsonb_extension_payloads
+  summary: >-
+    PostgreSQL relations, foreign keys, CHECK/unique constraints and typed
+    columns are authoritative for identity, tenant, lifecycle, joins,
+    permissions, high-frequency filters and counters. JSONB is retained for
+    variable long-tail metadata, parser evidence, policy payloads and bounded
+    snapshots only. A JSONB value may be projected to typed columns after
+    observed query demand, but a JSON key alone may never become an
+    authorization, uniqueness, tenant or canonical scope decision.
+  invariants:
+    - identity_foreign_key_tenant_status_and_permission_anchors_are_relational
+    - high_frequency_filter_fields_are_typed_and_indexable
+    - uniqueness_and_idempotency_are_database_constraints_not_json_checks
+    - JSONB_is_versioned_bounded_redacted_and_not_canonical_authority
+    - JSONB_projection_never_widens_acl_or_scope
+    - legacy_json_is_preserved_during_typed_backfill_and_collision_rows_quarantined
+    - unknown_keys_and_malformed_json_fail_closed_for_security_decisions
+    - generated_json_indexes_are_additive_and_EXPLAIN_verified
+
+boundary_rules:
+  mandatory_relational_authority:
+    identity_and_join: [id, tenant_id, vendor_id, family_id, series_id, product_model_id, os_family_id, os_generation_id, release_train_id, software_version_id, source_registry_id, source_version_id, collection_id, document_id, document_version_id, chunk_version_id, chunk_id, parent_chunk_id, from_chunk_id, to_chunk_id, provider_id, model_id, primary_model_id, fallback_model_id, index_version_id, import_job_id, request_trace_id]
+    lifecycle_and_security: [status, enabled, lifecycle_status, execution_state, trust_level, security_decision, acl_policy_id, created_by, updated_by, deleted_by, cancelled_by]
+    high_frequency_filter: [code, name, canonical_key, vendor_code, product_family_code, product_series_code, model_code, os_family_code, os_generation_code, release_train_code, normalized_version, source_type, document_kind, collection_kind, membership_kind, cli_platform, chunk_role, chunk_type, edge_kind, job_kind, phase, scene, provider_type, model_code, dimension, contract_version]
+    high_frequency_counters: [total_count, processed_count, parsed_count, failed_count, retry_count, candidate_count, selected_count, token_count, progress_percent, latency_ms, input_tokens, output_tokens, payload_bytes]
+    rule: never_accept_only_json_key_for_any_mandatory_relational_authority_field
+  jsonb_allowed_extension_payloads:
+    metadata_json:
+      purpose: long_tail_descriptive_metadata_and_parser_provenance
+      examples: [publisher_labels, language_hints, extracted_attributes, source_relative_path, parser_warnings, UI_display_hints]
+      forbidden: [tenant_id, id, foreign_key, ACL_decision, lifecycle_status, canonical_scope, uniqueness, retrieval_authorization]
+    acl_json:
+      purpose: variable_policy_members_and_conditions_after_relational_scope_anchor
+      examples: [allowed_roles, allowed_user_ids, allowed_site_ids, deny_roles, deny_user_ids, conditions]
+      required_relational_anchors: [tenant_id, resource_id_or_collection_id, status, acl_policy_version, acl_hash]
+      forbidden: [implicit_tenant, default_allow, canonical_document_scope, membership_identity]
+    scope_json:
+      purpose: import_or_job_input_snapshot_and_replay_context
+      examples: [requested_document_ids, vendor_filter, directory_path, dry_run_options]
+      required_relational_anchors: [tenant_id, job_id, job_kind, status]
+      forbidden: [authoritative_document_product_link, ACL_grant, uniqueness, retry_counter]
+    error_json:
+      purpose: bounded_structured_error_events_and_safe_diagnostics
+      examples: [code, safe_message, phase, item_id, retryable, correlation_id]
+      required_relational_projections: [last_error_code, error_count, failed_count, phase, status]
+      forbidden: [password, api_key, DSN, raw_prompt, raw_document, raw_device_credential]
+    evidence_json:
+      purpose: provenance_supporting_a_fact_or_applicability_link
+      examples: [source_locator, quote_hash, parser_evidence, reviewer_note]
+      required_relational_anchors: [tenant_id, source_version_id_or_document_version_id, status]
+      forbidden: [sole_product_id, sole_software_id, ACL_decision, tenant_scope]
+    retrieval_trace_json:
+      purpose: bounded_debug_snapshot_for_a_trace_projection
+      examples: [filter_hash, resolution_evidence, score_breakdown_version]
+      required_relational_anchors: [tenant_id, request_trace_id, status]
+      forbidden: [raw_query, raw_chunk, raw_answer, security_bypass]
+    derived_context_json:
+      purpose: rebuildable_chunk_or_embedding_context
+      examples: [heading_path, source_locator, parser_attributes]
+      required_relational_anchors: [tenant_id, chunk_id, chunk_version_id, status]
+      forbidden: [authorization, canonical_document_identity, neighbor_truth_from_ordinal_only]
+
+table_boundary_matrix:
+  kb_vendor:
+    relational_authority: [tenant_id, code, name, status]
+    jsonb_allowed: [metadata_json]
+  kb_product_family:
+    relational_authority: [tenant_id, vendor_id, code, status]
+    jsonb_allowed: [metadata_json]
+  kb_product_series:
+    relational_authority: [tenant_id, family_id, code, status]
+    jsonb_allowed: [metadata_json]
+  kb_product_model:
+    relational_authority: [tenant_id, series_id, model_code, status]
+    jsonb_allowed: [metadata_json]
+  kb_product_alias:
+    relational_authority: [tenant_id, product_model_id, normalized_alias, alias_kind, status]
+    jsonb_allowed: [metadata_json]
+  kb_os_family_and_generation:
+    relational_authority: [tenant_id, vendor_id, os_family_id, code, status]
+    jsonb_allowed: [metadata_json]
+  kb_release_train_and_software_version:
+    relational_authority: [tenant_id, vendor_id, release_train_id, normalized_version, status]
+    jsonb_allowed: [metadata_json]
+  kb_source_registry_and_version:
+    relational_authority: [tenant_id, canonical_url, allowed_host, source_registry_id, content_hash, parser_name, parser_version, status]
+    jsonb_allowed: [collection_policy_json, metadata_json]
+  kb_collection:
+    relational_authority: [tenant_id, code, collection_kind, status, acl_policy_id, acl_hash]
+    jsonb_allowed: [acl_json, metadata_json]
+  kb_document_and_version:
+    relational_authority: [tenant_id, collection_id, document_id, document_version_id, canonical_key, status, content_hash, trust_level, source_registry_id, source_version_id]
+    jsonb_allowed: [metadata_json, acl_json, evidence_json]
+    forbidden_json_authority: [product_scope, software_scope, canonical_identity, active_version_pointer]
+  kb_document_product_and_software:
+    relational_authority: [tenant_id, document_version_id, product_model_id, os_generation_id, software_version_id, cli_platform, applicability_kind, status]
+    jsonb_allowed: [evidence_json]
+  kb_collection_document:
+    relational_authority: [tenant_id, collection_id, document_id, membership_kind, status, sort_order]
+    jsonb_allowed: [metadata_json]
+  kb_chunk_generation_and_chunk:
+    relational_authority: [tenant_id, document_version_id, chunk_version_id, chunk_id, parent_chunk_id, ordinal, chunk_role, chunk_type, content_hash, is_retrieval_candidate, status]
+    jsonb_allowed: [heading_path_json, source_locator_json, metadata_json]
+  kb_chunk_edge:
+    relational_authority: [tenant_id, chunk_version_id, from_chunk_id, to_chunk_id, edge_kind, status]
+    jsonb_allowed: [metadata_json]
+  kb_embedding_and_index:
+    relational_authority: [tenant_id, provider_id, model_code, dimension, contract_version, chunk_id, embedding_model_id, index_version_id, generation_no, status]
+    jsonb_allowed: [metadata_json]
+  kb_import_job:
+    relational_authority: [tenant_id, job_kind, status, execution_state, phase, total_count, processed_count, failed_count, retry_count, cancelled_at, idempotency_key]
+    jsonb_allowed: [scope_json, error_json, metadata_json]
+  ai_provider_model_route:
+    relational_authority: [tenant_id, provider_type, provider_id, model_id, scene, primary_model_id, fallback_model_id, enabled, status]
+    jsonb_allowed: [capabilities_json, allowed_roles_json, metadata_json]
+  ai_request_and_trace:
+    relational_authority: [tenant_id, request_id, scene, requested_provider_id, requested_model_id, actual_provider_id, actual_model_id, status, security_decision]
+    jsonb_allowed: [retrieval_trace_json, metadata_json]
+
+jsonb_schema_and_limits:
+  storage_type: PostgreSQL_JSONB_in_production; TEXT_JSON_adapter_only_in_legacy_SQLite
+  version_field: payload_schema_version_required_for_new_contract_payloads
+  allowed_top_level_keys: entity_specific_allowlist_or_registered_extension_namespace
+  unknown_keys: retain_as_untrusted_metadata_or_quarantine; never_drive_authorization
+  size_limits: [per_payload_bytes_tenant_policy, per_value_length_tenant_policy, max_nesting_depth_tenant_policy]
+  value_types: [string, number, boolean, null, bounded_object, bounded_array]
+  redaction: recursive_secret_redaction_before_persist_and_before_export
+  null_semantics: null_is_not_unknown_or_all_and_must_not_expand_scope
+  canonical_hash: hash_after_normalization_for_audit_and_idempotency_only
+  retention: metadata_and_error_payloads_follow_entity_retention_and_purge_audit
+
+promotion_policy:
+  trigger: [repeated_filter_query, uniqueness_requirement, permission_decision, join_requirement, sort_requirement, EXPLAIN_regression]
+  process: [inventory_keys, define_typed_column, nullable_backfill, collision_report, dual_read, validate_counts, add_constraint, switch_read, retain_json]
+  acceptance: [zero_unresolved_authorization_rows, zero_unresolved_unique_collisions_or_quarantine, query_plan_uses_typed_index, V1_parallel_read_matches]
+  rollback: disable_typed_read_switch_and_keep_original_json_and_legacy_rows
+  forbidden: silently_promote_json_key_or_delete_original_json_before_gate
+
+legacy_gap_audit:
+  m0113_rag_metadata_v2:
+    module: backend/database/migrations/m0113_rag_metadata_v2.py
+    observed: [metadata_json_text_to_jsonb, metadata_gin_index, typed_vendor_category_platform_train_feature_status_columns, legacy_json_repair_to_empty_object]
+    boundary_decision: typed_high_frequency_columns_are_authoritative; metadata_json_is_retained_derived_or_long_tail
+  rag_retriever:
+    module: backend/ai/services/rag_retriever.py
+    observed: [scalar_vendor_category_product_platform_filters, metadata_json_array_fallback_for_legacy_rows, tenant/status/ACL_predicates]
+    boundary_decision: legacy_JSON_fallback_only_during_adapter; V2 relational_scope_and_catalog_links_win
+  knowledge_service:
+    module: backend/ai/services/knowledge_service.py
+    observed: [metadata_json_persistence, semantic_scalar_columns, acl_json, tenant_id]
+    boundary_decision: service_must_write_typed_authority_and_keep_json_as_untrusted_extension
+  ai_control_plane:
+    modules: [backend/database/migrations/m0103_ai_platform_tables.py, backend/database/migrations/m0105_ai_security_operations_graph.py]
+    observed: [capabilities_json, allowed_roles_json, acl_json, details_json, citations_json]
+    boundary_decision: provider/model/route/tenant/status/permission anchors are relational; arrays/policies remain bounded payloads
+
+security_and_governance:
+  authorization: permission_subject_and_tenant_scope_must_be_relational_or_joinable_before_JSONB_policy_evaluation
+  fail_closed: malformed_json_unknown_status_missing_tenant_or_missing_typed_anchor_excluded_from_active_reads
+  no_secret: [api_key, password, private_key, snmp_community, raw_device_credential, raw_prompt]
+  audit: record_promotion_backfill_collision_quarantine_constraint_switch_and_rollback
+  JSONB_export: only_redacted_registered_keys_and_permission_filtered_fields
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_014
+  prerequisites: [DB-001_core_entities, DB-002_common_columns, DB-003_lifecycle, DB-009_scope, DB-013_membership]
+  fresh_upgrade: typed_authority_columns_and_constraints_before_json_indexes
+  idempotence: repeatable_inventory_backfill_and_no_duplicate_promotions
+  downgrade: disable_promoted_reads_and_restore_legacy_json_adapter_without_deleting_json
+  rollback: switch_to_last_verified_typed_or_legacy_read_model_and_quarantine_unresolved_rows
+  production_gate: forbidden_until_DB-015_DB-016_MIG_and_V1_parallel_EXPLAIN_tests_pass
+  data_loss_policy: preserve_original_json_and_canonical_source_facts; no_silent_json_rewrite
+
+verification:
+  contract_tests: backend/tests/database/test_db014_relational_jsonb_boundary.py
+  required_checks: [mandatory_relational_set, JSONB_allowlist, table_boundary_matrix, no_permission_in_only_JSONB, promotion_policy, legacy_migration_audit, security_limits, rollback_and_report_markers]
+  test_database: SQLite_compatibility_only_for_contract_probes
+  production_database: PostgreSQL_required_for_JSONB_types_and_EXPLAIN_validation
+
+rollback:
+  runtime: disable_promoted_typed_projection_or_feature_flag_and_use_verified_legacy_adapter
+  data: retain_original_json_canonical_rows_and_quarantine_collisions
+  schema: no_DB-014_production_DDL; later_constraints_additive_and_downgrade_verified
+  audit: retain_boundary_promotion_and_collision_events
+
+next_tasks: [DB-015, DB-016, DB-017, DB-018, DB-019, DB-020, MIG-001, CHK-001]

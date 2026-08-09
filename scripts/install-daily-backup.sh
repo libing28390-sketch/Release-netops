@@ -59,8 +59,22 @@ else
     exit 1
 fi
 
+# Export a deterministic, redacted Knowledge Engine source manifest beside the
+# dump.  It contains hashes/counts only; the source content and credentials
+# never enter the manifest.  A missing runtime is a hard failure so a backup
+# without its restore-verification companion cannot be mistaken for complete.
+MANIFEST_OUT="\$BACKUP_DIR/netops-\$TS.source-manifest.json"
+if [ -x "\$PROJECT_DIR/.venv/bin/python" ] && PYTHONPATH="\$PROJECT_DIR/backend" "\$PROJECT_DIR/.venv/bin/python" -m database.backup manifest --output "\$MANIFEST_OUT"; then
+    echo "[netops-backup] wrote \$MANIFEST_OUT"
+else
+    echo "[netops-backup] source manifest export failed" >&2
+    rm -f "\$OUT" "\$MANIFEST_OUT"
+    exit 1
+fi
+
 # Retain only the last RETENTION_DAYS days.
 find "\$BACKUP_DIR" -maxdepth 1 -type f -name 'netops-*.sql.gz' -mtime +\$RETENTION_DAYS -delete
+find "\$BACKUP_DIR" -maxdepth 1 -type f -name 'netops-*.source-manifest.json' -mtime +\$RETENTION_DAYS -delete
 EOF
 
 chmod 755 /etc/cron.daily/netops-backup

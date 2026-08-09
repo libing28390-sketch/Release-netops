@@ -1,0 +1,107 @@
+task_id: AUD-012
+milestone: M0
+priority: P0
+scope: frontend_copilot_to_backend_request
+sources:
+  frontend:
+    - src/pages/ai/Copilot/AssistantTab.tsx
+    - src/pages/ai/Copilot/CopilotComposer.tsx
+    - src/pages/ai/Copilot/CopilotHeader.tsx
+    - src/api/ai.ts
+  backend:
+    - backend/ai/api/assistant.py
+    - backend/ai/services/assistant.py
+    - backend/ai/gateway/llm_gateway.py
+    - backend/ai/api/chat_v1.py
+    - backend/ai/providers/openai_compatible.py
+request_trace:
+  ui_model_state: selectedModel
+  ui_reasoning_state: reasoningLevel
+  ui_speed_state: speedLevel
+  ui_handler: AssistantTab.handleSend
+  api_function: chatAssistantStream
+  endpoint: POST /api/ai/assistant/chat-stream
+  body_fields:
+    - message
+    - history
+    - conversation_id
+  backend_request_fields:
+    - message
+    - history
+    - conversation_id
+  gateway_call:
+    scene: chat
+    model_id: null
+    model_resolution: ModelRouter.resolve_route
+controls:
+  model:
+    ui_state_changes: true
+    request_field_present: false
+    gateway_field_present: false
+    provider_payload_present: false
+    conclusion: UI_ONLY
+  reasoning:
+    ui_state_changes: true
+    request_field_present: false
+    gateway_field_present: false
+    provider_payload_present: false
+    conclusion: UI_ONLY
+  speed:
+    ui_state_changes: true
+    request_field_present: false
+    gateway_field_present: false
+    provider_payload_present: false
+    conclusion: UI_ONLY
+backend_capabilities:
+  v1_request_supports:
+    - model
+    - temperature
+    - max_tokens
+    - thinking
+    - reasoning_effort
+  gateway_supports:
+    - model_id
+    - temperature
+    - max_tokens
+    - thinking
+    - reasoning_effort
+  provider_supports:
+    - model
+    - temperature
+    - max_tokens
+    - thinking
+    - reasoning_effort
+findings:
+  - id: AUD012-F01
+    severity: P0
+    status: OPEN
+    summary: V2 selected model is not sent; chat route chooses the effective model
+  - id: AUD012-F02
+    severity: P0
+    status: OPEN
+    summary: V2 reasoning control is local UI state only
+  - id: AUD012-F03
+    severity: P0
+    status: OPEN
+    summary: V2 speed control has no request or provider mapping
+  - id: AUD012-F04
+    severity: P1
+    status: OPEN
+    summary: V1 and V2 chat contracts expose inconsistent control capabilities
+  - id: AUD012-F05
+    severity: P1
+    status: OPEN
+    summary: V2 stream metadata does not disclose effective provider/model
+  - id: AUD012-F06
+    severity: P2
+    status: OPEN
+    summary: creative is displayed by state branch but not offered by the speed panel
+verification:
+  real_provider_called: false
+  production_data_changed: false
+  source_assertions: PASS
+  frontend_progress_tests: PASS
+conclusion:
+  audit_status: PASS
+  copilot_controls_release_ready: false
+  p0_blockers: 3

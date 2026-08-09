@@ -43,7 +43,15 @@ ADMIN_ONLY_PATHS = {
 
 RESOURCE_ACTION_CATALOG = {
     'platform': {'view', 'create', 'update', 'delete', 'edit_draft', 'submit', 'approve', 'publish', 'rollback', 'bind_device'},
+    'knowledge_source': {'read', 'view', 'create', 'update', 'delete', 'validate', 'enable', 'disable'},
+    # Import jobs are a separate control-plane resource.  Keeping these
+    # actions distinct from source CRUD prevents a source editor from silently
+    # cancelling or replaying a tenant's ingestion work.
+    'knowledge_import': {'read', 'view', 'create', 'manage', 'cancel', 'retry'},
+    'knowledge_catalog': {'read', 'view', 'resolve', 'review', 'import', 'rollback'},
+    'knowledge_collection': {'read', 'view', 'create', 'update', 'archive'},
     'command': {'view', 'edit_draft', 'test', 'execute'},
+    'pam': {'view', 'request_approval', 'approve', 'create_change', 'intervene'},
     'textfsm': {'view', 'create', 'edit_draft', 'delete', 'test', 'submit', 'approve', 'publish', 'rollback', 'deprecate'},
     'sample_output': {'upload', 'view', 'delete'},
     'playbook': {'view', 'create', 'edit_draft', 'test', 'submit', 'approve', 'publish', 'execute', 'schedule', 'rollback'},
@@ -55,7 +63,7 @@ RESOURCE_ACTION_CATALOG = {
 # narrower profile when one is assigned.
 RECOMMENDED_ROLE_PROFILES = {
     'Platform Viewer': {
-        'platform': {'view'}, 'command': {'view'}, 'textfsm': {'view'},
+        'platform': {'view'}, 'knowledge_source': {'read', 'view'}, 'knowledge_import': {'read', 'view'}, 'knowledge_catalog': {'read', 'view', 'resolve'}, 'knowledge_collection': {'read', 'view'}, 'command': {'view'}, 'textfsm': {'view'},
         'sample_output': {'view'}, 'playbook': {'view'},
     },
     'Template Developer': {
@@ -65,6 +73,10 @@ RECOMMENDED_ROLE_PROFILES = {
     },
     'Platform Maintainer': {
         'platform': {'view', 'create', 'update', 'delete', 'edit_draft', 'submit', 'bind_device'},
+        'knowledge_source': {'read', 'view', 'create', 'update', 'delete', 'validate', 'enable', 'disable'},
+        'knowledge_import': {'read', 'view', 'create', 'manage', 'cancel', 'retry'},
+        'knowledge_catalog': {'read', 'view', 'resolve', 'review', 'import', 'rollback'},
+        'knowledge_collection': {'read', 'view', 'create', 'update', 'archive'},
         'command': {'view', 'edit_draft', 'test'}, 'textfsm': {'view'},
         'sample_output': {'view'}, 'playbook': {'view'},
     },
@@ -76,6 +88,7 @@ RECOMMENDED_ROLE_PROFILES = {
     'Release Manager': {
         'platform': {'view', 'approve', 'publish', 'rollback'},
         'command': {'view'}, 'textfsm': {'view', 'approve', 'publish', 'rollback', 'deprecate'},
+        'pam': {'view', 'approve'},
         'sample_output': {'view'},
         'playbook': {'view', 'approve', 'publish', 'rollback'},
     },
@@ -85,6 +98,7 @@ RECOMMENDED_ROLE_PROFILES = {
     },
     'Automation Operator': {
         'platform': {'view'}, 'command': {'view', 'execute'}, 'textfsm': {'view'},
+        'pam': {'view', 'request_approval', 'create_change', 'intervene'},
         'sample_output': {'view'}, 'playbook': {'view', 'execute'},
     },
     'System Administrator': {'*': {'*'}},
@@ -99,7 +113,8 @@ RESOURCE_ACTIONS = {
     # duties even when individual routes use resource permissions.
     'Operator': {
         'read', 'view', 'create', 'update', 'edit_draft', 'submit',
-        'bind_device', 'test', 'execute', 'upload', 'delete',
+        'bind_device', 'test', 'execute', 'upload', 'delete', 'manage', 'cancel', 'retry',
+        'request_approval', 'create_change', 'intervene', 'archive',
         'reserve', 'allocate', 'release', 'export',
     },
     'Viewer': {'read', 'view'},

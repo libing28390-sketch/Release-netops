@@ -53,7 +53,7 @@ def init_db():
         # Apply versioned, tracked schema migrations on top of the baseline.
         try:
             from .migrations import run_migrations
-            applied = run_migrations(conn, _USE_PG)
+            applied = run_migrations(conn, _USE_PG, strict_history=True)
             if applied:
                 logger.info("Applied %d pending schema migration(s).", applied)
         except Exception as mig_exc:
@@ -2876,6 +2876,11 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('physical_assets', 'u_height', 'INTEGER NOT NULL DEFAULT 1')
     ensure_column('physical_assets', 'planned_start_u', 'INTEGER')
     ensure_column('physical_assets', 'device_category', "TEXT DEFAULT ''")
+    # Topology semantics are asset attributes, not layout hints.  Keep these
+    # columns in the baseline as well as m0115 so fresh and upgraded
+    # installations expose the same asset/device contract.
+    ensure_column('physical_assets', 'function', "TEXT DEFAULT ''")
+    ensure_column('physical_assets', 'zone', "TEXT DEFAULT 'Unknown'")
     ensure_column('physical_assets', 'power_watts', "INTEGER DEFAULT 0")
 
     ensure_column('devices', 'credential_id', 'TEXT')
@@ -2894,6 +2899,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('devices', 'password_expires_at', "TEXT DEFAULT ''")
     ensure_column('devices', 'rotation_status', "TEXT DEFAULT ''")
     ensure_column('devices', 'device_category', "TEXT DEFAULT ''")
+    ensure_column('devices', 'function', "TEXT DEFAULT ''")
+    ensure_column('devices', 'zone', "TEXT DEFAULT 'Unknown'")
     ensure_column('devices', 'power_watts', "INTEGER DEFAULT 0")
 
     cursor.execute(
@@ -3018,6 +3025,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     # Soft-delete support: snapshot the asset hostname at session creation time
     # so the audit trail remains identifiable after the underlying asset/device
     # is removed (asset_id is then cleared but the row itself is preserved).
+    ensure_column('pam_sessions', 'tenant_id', "TEXT DEFAULT 'tenant-default'")
     ensure_column('pam_sessions', 'target_hostname', "TEXT DEFAULT ''")
     ensure_column('pam_sessions', 'archived', 'INTEGER DEFAULT 0')
 

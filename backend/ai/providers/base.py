@@ -32,6 +32,9 @@ class BaseLLMProvider(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Dict[str, Any]] = None,
         thinking: bool = False,
+        reasoning_effort: Optional[str] = None,
+        user_id: Optional[str] = None,
+        stream: bool = False,
     ) -> Dict[str, Any]:
         """
         Execute chat completion.
@@ -41,7 +44,8 @@ class BaseLLMProvider(ABC):
           - 'input_tokens': int
           - 'output_tokens': int
           - 'tool_calls': optional list
-          - 'raw': dict
+          - 'finish_reason': optional provider finish reason
+          - 'reasoning_content': optional internal-only reasoning trace
         """
         pass
 

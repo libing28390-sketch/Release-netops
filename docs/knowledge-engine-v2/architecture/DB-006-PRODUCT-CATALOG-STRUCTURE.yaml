@@ -1,0 +1,159 @@
+task_id: DB-006
+priority: P0
+owner: DBA
+status: frozen_for_implementation
+milestone: M1
+authority: PostgreSQL
+
+decision:
+  choice: additive_tenant_scoped_four_level_product_catalog
+  summary: >-
+    Implement the DB-001 canonical hierarchy kb_product_family ->
+    kb_product_series -> kb_product_model and a controlled model alias table.
+    Keep inventory device_types and denormalized V1/RAG metadata as compatibility
+    sources; do not silently promote either source into canonical catalog facts.
+  invariants:
+    - vendor_is_the_only_parent_of_product_family
+    - family_is_the_only_parent_of_product_series
+    - series_is_the_only_parent_of_product_model
+    - alias_targets_a_product_model_and_never_a_driver_or_software_version
+    - every_row_is_tenant_scoped_and_cross_tenant_foreign_keys_fail_closed
+    - identity_and_filter_fields_are_relational_not_metadata_json
+    - software_train_and_cli_platform_remain_orthogonal_to_product_identity
+
+entities:
+  kb_product_family:
+    table: kb_product_family
+    purpose: product_identity_level_one
+    required_columns: [id, tenant_id, vendor_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [description, metadata_json, source_kind, canonical_source]
+    foreign_keys: [tenant_id_and_vendor_id_to_kb_vendor_tenant_and_id]
+    unique_keys: [[tenant_id, vendor_id, code]]
+    code_rule: lowercase_ascii_slug_3_to_64_characters
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, purged]
+
+  kb_product_series:
+    table: kb_product_series
+    purpose: product_identity_level_two
+    required_columns: [id, tenant_id, family_id, code, name, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [description, model_pattern_json, metadata_json, source_kind, canonical_source]
+    foreign_keys: [tenant_id_and_family_id_to_kb_product_family_tenant_and_id]
+    unique_keys: [[tenant_id, family_id, code]]
+    code_rule: lowercase_ascii_slug_3_to_64_characters
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, purged]
+
+  kb_product_model:
+    table: kb_product_model
+    purpose: product_identity_level_three
+    required_columns: [id, tenant_id, series_id, model_code, display_name, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [part_number, description, device_role, metadata_json, source_kind, canonical_source]
+    foreign_keys: [tenant_id_and_series_id_to_kb_product_series_tenant_and_id]
+    unique_keys: [[tenant_id, series_id, model_code]]
+    model_code_rule: trimmed_case_preserving_code_1_to_128_characters
+    display_name_rule: non_empty_human_display_name_1_to_256_characters
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, purged]
+
+  kb_product_alias:
+    table: kb_product_alias
+    purpose: controlled_exact_alias_and_prefix_resolution
+    required_columns: [id, tenant_id, product_model_id, alias, normalized_alias, alias_kind, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [locale, evidence_json, source_kind, canonical_source, metadata_json]
+    foreign_keys: [tenant_id_and_product_model_id_to_kb_product_model_tenant_and_id]
+    unique_keys: [[tenant_id, normalized_alias, alias_kind]]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, purged]
+    alias_kinds:
+      exact: exact_operator_or_source_string
+      canonical: approved_display_or_manufacturer_alias
+      prefix: bounded_prefix_for_model_family_queries
+      trigram: candidate_search_only_not_identity
+    status_rules:
+      active_aliases_only: retrieval_and_resolution
+      pending_or_rejected: never_used_for_authorization_or_execution
+      deleted_or_archived: retained_for_audit_but_not_resolution
+    normalization:
+      algorithm: unicode_nfkc_casefold_trim_collapse_whitespace_and_dash_to_space
+      deterministic: true
+      original_alias_is_preserved: true
+      no_silent_transliteration: true
+    conflict_rules:
+      same_normalized_alias_same_kind: reject_or_manual_review
+      same_alias_multiple_models: ambiguous_pending_review
+      trigram_similarity: ranking_signal_only
+      no_first_match_fallback: true
+
+tenant_and_constraints:
+  common_columns: [id, tenant_id, created_at, updated_at, created_by, updated_by, status]
+  tenant_fk_strategy: composite_tenant_id_plus_parent_id_foreign_keys
+  tenant_scope:
+    system_seed: represented_by_explicit_tenant_scope_and_reviewed_seed_policy
+    tenant_custom: tenant_id_is_required_and_never_crosses_tenant_boundary
+  check_constraints:
+    - code_and_model_code_length_and_charset
+    - status_allowlist_fail_closed
+    - alias_kind_allowlist_fail_closed
+    - normalized_alias_not_empty
+  forbidden_storage:
+    - product_family_in_metadata_json_as_canonical_identity
+    - product_series_in_metadata_json_as_canonical_identity
+    - product_model_in_metadata_json_as_authorization_filter
+    - vendor_text_join_without_kb_vendor_id
+    - cli_platform_or_software_train_as_product_parent
+
+legacy_gap_audit:
+  device_types:
+    observed_table: device_types
+    observed_columns: [id, vendor, model, part_number, u_height, device_role, is_full_depth, description, created_at, updated_at]
+    observed_constraint: unique_vendor_and_model_only
+    classification: inventory_hardware_type_not_canonical_knowledge_product
+    migration_rule: retain_and_map_only_after_vendor_scope_and_provenance_review
+    forbidden_action: automatic_family_series_creation_from_one_free_text_model
+  rag_metadata:
+    observed_fields: [product_family, product_series, product_model, product_models, applicable_product_models]
+    source_tables: [ai_document, ai_document_chunk]
+    classification: denormalized_v1_compatibility_and_import_input
+    migration_rule: preserve_original_values_and_backfill_explicit_foreign_keys_in_later_task
+    forbidden_action: delete_or_rewrite_original_document_metadata
+  static_resolver_aliases:
+    source: "backend/ai/services/product_resolver.py: ProductResolver.SERIES_ALIASES"
+    classification: advisory_runtime_aliases
+    migration_rule: seed_as_reviewed_kb_product_alias_rows_only_when_target_model_is_unambiguous
+    forbidden_action: treat_static_alias_dictionary_as_authoritative_catalog
+
+catalog_resolution_boundary:
+  input_fields: [tenant_id, vendor_id, family_code, series_code, model_code, alias]
+  resolution_order:
+    - exact_active_normalized_alias
+    - exact_active_model_code_within_series
+    - exact_active_series_code_within_family
+    - exact_active_family_code_within_vendor
+    - prefix_or_trigram_candidate_list
+    - manual_review_or_clarification
+  ambiguity_behavior: return_candidates_and_require_clarification
+  unknown_behavior: return_unknown_and_never_guess_vendor_or_platform
+  execution_boundary: catalog_resolution_never_selects_a_network_driver
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_006
+  prerequisites:
+    - DB-001_and_DB-002_contracts_are_available
+    - DB-005_vendor_boundary_is_frozen
+    - PostgreSQL_schema_snapshot_and_tenant_inventory_are_available
+    - duplicate_and_ambiguous_model_report_is_approved
+  forward_steps:
+    - create_tables_with_common_columns_composite_tenant_fks_and_checks
+    - seed_reviewed_vendor_and_product_facts
+    - import_aliases_as_pending_then_validate_conflicts
+    - expose_only_active_rows_to_catalog_and_retrieval
+    - backfill_document_links_in_DB-009_after_catalog_gate
+  rollback:
+    - disable_v2_catalog_reads_and_writes_by_feature_flag
+    - retain_all_v1_metadata_and_device_types_rows
+    - remove_only_unreferenced_v2_catalog_rows_transactionally
+    - restore_legacy_resolver_adapter
+  data_loss_policy: no_destructive_delete_and_no_legacy_metadata_rewrite
+
+v1_compatibility:
+  preserved_sources: [device_types, ai_document, ai_document_chunk, ProductResolver.SERIES_ALIASES]
+  adapter_rule: dual_read_legacy_then_explicit_v2_when_active
+  fallback: v1_metadata_resolution_with_ambiguity_signal
+  production_cutover: prohibited_until_DB-018_DB-020_fresh_upgrade_rollback_and_V1_regression_gates

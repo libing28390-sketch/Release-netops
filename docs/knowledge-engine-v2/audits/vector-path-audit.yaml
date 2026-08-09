@@ -1,0 +1,72 @@
+schema_version: 1
+task_id: AUD-008
+scope: "确认 Vector 查询是否真正使用 pgvector，并记录 SQLite/本地兼容分支"
+sources:
+  - backend/database/core.py
+  - backend/database/migrations/m0103_ai_platform_tables.py
+  - backend/database/migrations/m0104_ai_pgvector_rag.py
+  - backend/database/migrations/m0111_ai_chunking_v2.py
+  - backend/database/migrations/m0113_rag_metadata_v2.py
+  - backend/ai/services/rag_retriever.py
+  - backend/tests/ai/test_rag_retriever_v2.py
+storage:
+  embedding_column: "ai_document_chunk.embedding TEXT"
+  postgres_vector_type: false
+  embedding_serialization: json_text
+  embedding_dimension_constraint: false
+  model_metadata_columns:
+    - embedding_model
+    - embedding_dimensions
+    - embedding_version
+pgvector:
+  extension_attempted_by: backend/database/migrations/m0104_ai_pgvector_rag.py
+  extension_statement: "CREATE EXTENSION IF NOT EXISTS vector"
+  extension_error_policy: swallowed_best_effort
+  vector_column_migration: false
+  ann_index: false
+  distance_operators: []
+  vector_order_by: false
+  database_top_n: false
+  actual_query_usage: false
+query_path:
+  sql_candidate_selection: true
+  sql_order: "document_id, ordinal, chunk_id"
+  sql_selects_embedding: true
+  python_query_embedding: "embedding_provider.embed_text"
+  python_chunk_decode: "json.loads"
+  python_similarity: "RAGRetriever._cosine"
+  python_mixed_ranking: true
+  debug_vector_top_n: "len(rows), not database ANN top-N"
+postgres_branch:
+  selector: "DATABASE_URL starts with postgres:// or postgresql://"
+  changed_behavior: "JSONB metadata predicates and PostgreSQL column introspection only"
+  vector_path_same_as_sqlite: true
+sqlite_branch:
+  selector: "DATABASE_URL unset or non-PostgreSQL"
+  database_path: data/netops.db
+  metadata_filter: "CAST(metadata_json AS TEXT) LIKE"
+  embedding_path: "JSON text -> Python cosine"
+  local_runtime_ai_tables: []
+  fixture_coverage: "SQLite in-memory schemas with embedding TEXT and _USE_PG=False"
+findings:
+  - id: AUD008-F01
+    severity: P0
+    status: open_for_followup
+    description: "Current retrieval cannot claim pgvector ANN; there is no vector column, vector operator, or ANN index."
+  - id: AUD008-F02
+    severity: P0
+    status: open_for_followup
+    description: "JSON TEXT embeddings and application-side O(N) scoring are not a production-scale vector query contract."
+  - id: AUD008-F03
+    severity: P1
+    status: open_for_followup
+    description: "m0104 swallows extension creation errors, so migration success does not prove pgvector availability."
+  - id: AUD008-F04
+    severity: P1
+    status: observed
+    description: "The local SQLite database has no AI tables; PostgreSQL runtime validation requires the target environment."
+conclusion:
+  audit_status: PASS
+  pgvector_ann_in_use: false
+  sqlite_compatibility_documented: true
+  production_vector_release_allowed: false

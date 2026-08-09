@@ -1,0 +1,88 @@
+schema_version: 1
+task_id: AUD-010
+scope: "审计文档 Create/Update/Delete/Reindex 是否产生孤儿 Chunk 或 Vector"
+sources:
+  - backend/ai/services/knowledge_service.py
+  - backend/ai/services/knowledge_reindex_service.py
+  - backend/ai/api/assistant.py
+  - backend/database/core.py
+  - backend/database/migrations/m0103_ai_platform_tables.py
+  - backend/database/migrations/m0110_repair_ai_document_platforms.py
+  - backend/database/migrations/m0113_rag_metadata_v2.py
+  - backend/tests/ai/test_knowledge_chunking_v2_ingestion.py
+operations:
+  create:
+    endpoint: POST_/api/ai/documents
+    service: KnowledgeService.add_document_and_chunk
+    chunks_and_embedding_same_transaction: true
+    embedding_before_chunk_insert: true
+    explicit_commit_after_all_chunks: true
+    failure_rollback: true
+    tenant_scope: true
+  update:
+    endpoint: null
+    service_method: null
+    status: not_implemented
+    replacement_path: full_document_reindex
+  delete:
+    endpoints:
+      - DELETE_/api/ai/documents/{doc_id}
+      - POST_/api/ai/documents/batch-delete
+    delete_order: "chunks then parent"
+    independent_vector_table: false
+    tenant_scope: true
+    explicit_commit: true
+    sqlite_fk_pragma: false
+  reindex:
+    endpoint: POST_/api/ai/knowledge-reindex
+    service: KnowledgeReindexService._process_document
+    generate_all_embeddings_before_delete: true
+    replace_in_one_transaction: true
+    per_document_error_isolated: true
+    old_chunks_on_parse_or_embedding_failure: retained
+    failure_document_ingestion_status: failed
+    rag_filters_ingestion_status: false
+schema:
+  chunk_parent_fk_declared: true
+  chunk_parent_fk_on_delete: CASCADE
+  embedding_storage: inline_json_text_on_chunk
+  independent_vector_table: false
+  sqlite_foreign_keys_enabled: false
+runtime_probes:
+  create_embedding_failure:
+    result: rollback
+    document_count: 0
+    chunk_count: 0
+  reindex_success:
+    parent_count: 1
+    chunk_count: 1
+    orphan_chunk_count: 0
+  reindex_embedding_failure:
+    old_chunk_retained: true
+    old_chunk_content: "old chunk"
+  delete_success:
+    parent_count: 0
+    chunk_count: 0
+findings:
+  - id: AUD010-F01
+    severity: P0
+    status: open_for_followup
+    description: "No formal document Update API exists; CRUD completion cannot be claimed."
+  - id: AUD010-F02
+    severity: P0
+    status: open_for_followup
+    description: "Failed reindex preserves old chunks but ingestion_status=failed is not a RAG hard filter, so stale vectors may still be served."
+  - id: AUD010-F03
+    severity: P1
+    status: open_for_followup
+    description: "SQLite foreign_keys pragma is disabled; parent-only direct deletes can bypass declared cascade and leave orphan chunks."
+  - id: AUD010-F04
+    severity: P2
+    status: observed
+    description: "Public Create/Delete/Reindex success paths use transaction boundaries and the service-level fixture produced no orphan rows."
+conclusion:
+  audit_status: PASS
+  public_success_paths_orphan_safe: true
+  update_api_ready: false
+  stale_failure_policy_ready: false
+  production_release_allowed: false

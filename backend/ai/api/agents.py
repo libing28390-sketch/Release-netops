@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from database.core import get_db_connection
-from ai.security.permissions import require_ai_permission
+from ai.security.permissions import ROLE_AI_PERMISSIONS, require_ai_permission
 from ai.tools.registry import tool_registry
 from ai.agents.runner import agent_runner
 
@@ -19,7 +19,9 @@ router = APIRouter(prefix="/agents", tags=["AI Agents & Tools"])
 class AgentRunRequest(BaseModel):
     agent_code: str = Field("troubleshooting_agent", description="Agent code identifier")
     question: str = Field(..., description="Troubleshooting problem description")
-    max_steps: int = Field(6, ge=1, le=15)
+    max_steps: int = Field(6, ge=1, le=50)
+    max_tool_calls: int = Field(12, ge=1, le=200)
+    timeout_seconds: int = Field(180, ge=5, le=3600)
 
 
 @router.get("/tools")
@@ -36,8 +38,26 @@ async def run_agent(req: AgentRunRequest, user=Depends(require_ai_permission("ai
         agent_code=req.agent_code,
         question=req.question,
         max_steps=req.max_steps,
-        user_id=user_id
+        max_tool_calls=req.max_tool_calls,
+        timeout_seconds=req.timeout_seconds,
+        user_id=user_id,
+        tenant_id=user.get("tenant_id"),
+        permissions=set(user.get("permissions") or ROLE_AI_PERMISSIONS.get(user.get("role", "Viewer"), set())),
     )
+
+
+@router.post("/runs/{run_id}/cancel")
+def cancel_agent_run(run_id: str, user=Depends(require_ai_permission("ai.agent.use"))):
+    """Request cancellation; the runner observes it between provider/tool steps."""
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT id, status FROM ai_agent_run WHERE id = ?", (run_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Agent run '{run_id}' not found.")
+        if row[1] in {"finished", "error", "cancelled", "timeout", "budget_exceeded", "step_limit"}:
+            return {"run_id": run_id, "status": row[1], "cancel_requested": False}
+        conn.execute("UPDATE ai_agent_run SET cancel_requested = 1 WHERE id = ?", (run_id,))
+        conn.commit()
+    return {"run_id": run_id, "status": "cancelling", "cancel_requested": True}
 
 
 @router.get("/runs/{run_id}/trace")

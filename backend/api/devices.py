@@ -201,9 +201,13 @@ def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str |
                 site_id, rack, rack_unit, u_height, planned_start_u, management_ip, business_ip, device_role,
                 vlan, uplink_switch, uplink_port,
                 status, lifecycle_status, purchase_date, warranty_expiry, department, notes, created_at, updated_at,
-                platform, connection_method, username, normal_username, normal_password,
+                platform, connection_method, device_category, function, zone, username, normal_username, normal_password,
                 admin_username, admin_password, auth_model, enable_password, management_port
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
         ''', (
             asset_id, 'network_device', '', device.get('sn', ''), vendor,
             device.get('model', ''), device.get('hostname', ''),
@@ -212,6 +216,7 @@ def _create_linked_asset_for_device(conn, device_id: str, device: dict) -> str |
             '', '', '',
             'active', device.get('lifecycle_status') or 'staging', '', '', '', '', now, now,
             device.get('platform', ''), device.get('connection_method', 'ssh'),
+            device.get('device_category', ''), device.get('function', ''), device.get('zone', 'Unknown') or 'Unknown',
             device.get('username', ''), device.get('normal_username', ''),
             encrypt_credential(normal_password) if normal_password else '',
             device.get('admin_username', ''),
@@ -330,6 +335,9 @@ def _build_ssh_failure_response(hostname: str | None, ip_address: str, error_tex
     elif error_code == 'ssh_transport_unreachable':
         detail = '设备 IP 可达，但 SSH 传输层未正常建立。'
         stage_detail = f'目标主机未完成 SSH 会话建立，请检查 {port} 端口、SSH 服务或安全策略。'
+    elif error_code == 'ssh_host_key_untrusted':
+        detail = '设备可达，但 SSH 主机密钥未登记或与已登记指纹不一致。'
+        stage_detail = '请管理员核对设备 SHA256 主机密钥指纹后，再在资产 PAM Host Key 设置中登记。'
 
     content = {
         'detail': detail,
@@ -380,6 +388,7 @@ def _build_device_operation_ssh_failure_response(
         'ssh_authentication_failed': f'{device_label} 可达，但 SSH 认证被拒绝。请检查账号密码或 AAA/VTY 配置。',
         'ssh_transport_timeout': f'{device_label} 管理地址可达，但 SSH 会话建立或读取超时。',
         'ssh_transport_unreachable': f'{device_label} IP/TCP 可达性检查后，SSH 传输层未正常建立。',
+        'ssh_host_key_untrusted': f'{device_label} SSH 主机密钥未登记或与已登记指纹不一致。',
     }
 
     return JSONResponse(
@@ -785,10 +794,14 @@ def create_device(device: dict = Body(...)):
                 sn, model, version, role, site, uptime, connection_method, snmp_community, 
                 snmp_port, lifecycle_status, enable_password, priv_username, credential_source, 
                 vault_path, normal_username, normal_password, admin_username, admin_password, auth_model,
-                device_category, power_watts, credential_id, platform_profile_id,
+                device_category, function, zone, power_watts, credential_id, platform_profile_id,
                 platform_source, platform_locked
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
         ''', (
             device_id,
             device.get('hostname'),
@@ -818,6 +831,8 @@ def create_device(device: dict = Body(...)):
             '', # Store empty admin_password in devices table
             device.get('auth_model', 'single'),
             device.get('device_category', ''),
+            device.get('function', ''),
+            device.get('zone', 'Unknown') or 'Unknown',
             int(device.get('power_watts') or 0),
             credential_id,
             platform_profile_id or None,
@@ -992,7 +1007,7 @@ def update_device(device_id: str, device: dict = Body(...)):
                 username = ?, password = ?, current_config = ?, config_history = ?, snmp_community = ?, snmp_port = ?, 
                 lifecycle_status = ?, enable_password = ?, priv_username = ?, credential_source = ?, vault_path = ?,
                 normal_username = ?, normal_password = ?, admin_username = ?, admin_password = ?, auth_model = ?,
-                device_category = ?, power_watts = ?, credential_id = ?
+                device_category = ?, function = ?, zone = ?, power_watts = ?, credential_id = ?
             WHERE id = ?
         ''', (
             device.get('hostname', ''),
@@ -1021,6 +1036,8 @@ def update_device(device_id: str, device: dict = Body(...)):
             '', # Empty admin_password column
             device.get('auth_model', 'single'),
             device.get('device_category', ''),
+            device.get('function', ''),
+            device.get('zone', 'Unknown') or 'Unknown',
             int(device.get('power_watts') or 0),
             credential_id,
             device_id
@@ -1037,8 +1054,17 @@ def update_device(device_id: str, device: dict = Body(...)):
         )
         if existing_row['asset_id']:
             conn.execute(
-                'UPDATE physical_assets SET lifecycle_status = ?, updated_at = ? WHERE id = ?',
-                (new_lifecycle, _utc_now(), existing_row['asset_id']),
+                '''UPDATE physical_assets
+                   SET lifecycle_status = ?, device_category = ?, function = ?, zone = ?, updated_at = ?
+                   WHERE id = ?''',
+                (
+                    new_lifecycle,
+                    device.get('device_category', ''),
+                    device.get('function', ''),
+                    device.get('zone', 'Unknown') or 'Unknown',
+                    _utc_now(),
+                    existing_row['asset_id'],
+                ),
             )
         conn.commit()
 

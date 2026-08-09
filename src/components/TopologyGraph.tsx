@@ -8,6 +8,7 @@ import {
   type TopologyDisplayMode,
 } from '../utils/topologyAggregation';
 import { buildTopologyExportFilename, getTopologyExportPixelRatio } from '../utils/topologyExport';
+import { buildFoldedChainPositions, repairTopologyLayout } from '../utils/topologyLayout';
 
 const topologyIconAssets = import.meta.glob('../assets/topology/devices/**/*.svg', {
   eager: true,
@@ -60,6 +61,11 @@ interface Device {
   group_level?: TopologyHierarchyLevel;
   group_path?: TopologyDrillSegment[];
   group_can_drill?: boolean;
+  /** Evidence-derived rank; role remains an identity attribute only. */
+  topology_rank?: number;
+  relation_rank?: number;
+  rank?: number;
+  topology_node_id?: string;
 }
 
 interface Link {
@@ -91,6 +97,13 @@ interface Link {
   is_unmanaged?: boolean;
   group_link?: boolean;
   grouped_link_count?: number;
+  relation_type?: string;
+  semantic_relation?: string;
+  existence_confidence?: number;
+  semantic_confidence?: number;
+  manual_confirmed?: boolean | number;
+  is_manual?: boolean | number;
+  rank_excluded?: boolean | number;
 }
 
 type BandwidthTierKey = '10m' | '100m' | '1g' | '10g' | '40g' | '80g' | '100g' | '200g' | 'unknown';
@@ -241,6 +254,65 @@ const getLinkDisplayBandwidthMbps = (item: any): number =>
     ? getAggregationMemberBandwidthMbps(item)
     : Number(item?.bandwidth_mbps || 0);
 
+type TopologyLinkStyle = {
+  relationType: string;
+  color: string;
+  dash: string;
+  width: number;
+};
+
+const normalizeTopologyRelationType = (item: any): string => {
+  const raw = String(item?.relation_type || item?.semantic_relation || '').trim().toUpperCase();
+  if (raw) return raw;
+  // Legacy /topology/links rows predate the graph API. They represent the
+  // physical view, so keep them visually equivalent to PHYSICAL edges.
+  return 'PHYSICAL';
+};
+
+const getTopologyLinkStyle = (item: any): TopologyLinkStyle => {
+  const relationType = normalizeTopologyRelationType(item);
+  if (relationType === 'PHYSICAL') {
+    const bandwidth = getBandwidthTier(getLinkDisplayBandwidthMbps(item));
+    return { relationType, color: bandwidth.color, dash: 'none', width: 3 };
+  }
+
+  const styles: Record<string, Omit<TopologyLinkStyle, 'relationType'>> = {
+    HIERARCHICAL: { color: '#2563eb', dash: '8,5', width: 2.8 },
+    PEER: { color: '#7c3aed', dash: '9,5', width: 2.6 },
+    HA: { color: '#dc2626', dash: '3,4', width: 2.8 },
+    HA_PEER: { color: '#dc2626', dash: '3,4', width: 2.8 },
+    STACK: { color: '#be123c', dash: '2,4', width: 2.8 },
+    IRF: { color: '#be123c', dash: '2,4', width: 2.8 },
+    CSS: { color: '#be123c', dash: '2,4', width: 2.8 },
+    VC: { color: '#be123c', dash: '2,4', width: 2.8 },
+    MLAG_PEER: { color: '#be123c', dash: '2,4', width: 2.8 },
+    VPC_PEER: { color: '#be123c', dash: '2,4', width: 2.8 },
+    L2_NEIGHBOR: { color: '#d97706', dash: '7,4', width: 2.5 },
+    STP: { color: '#d97706', dash: '7,4', width: 2.5 },
+    L3_NEIGHBOR: { color: '#0891b2', dash: '8,5', width: 2.5 },
+    ROUTING: { color: '#0891b2', dash: '8,5', width: 2.5 },
+    WAN: { color: '#db2777', dash: '10,5', width: 2.8 },
+    INTER_SITE: { color: '#db2777', dash: '10,5', width: 2.8 },
+    CONTROL: { color: '#16a34a', dash: '3,5', width: 2.5 },
+    TUNNEL: { color: '#9333ea', dash: '2,6', width: 2.8 },
+    OOB: { color: '#64748b', dash: '2,5', width: 2.5 },
+    UNKNOWN: { color: '#64748b', dash: '4,6', width: 2.2 },
+  };
+  return {
+    relationType,
+    ...(styles[relationType] || styles.UNKNOWN),
+  };
+};
+
+const getTopologyLinkDash = (item: any): string => {
+  if (item.inferred) return '6,5';
+  if (item.is_unmanaged) return '4,3';
+  if (item.operational_state === 'down') return '8,4';
+  if (String(item.link_kind || '').toLowerCase() === 'aggregation'
+    && Number(item.member_count || 0) > Number(item.active_member_count || 0)) return '9,4';
+  return getTopologyLinkStyle(item).dash;
+};
+
 const abbreviateInterface = (value?: string) => {
   const raw = getFullInterfaceLabel(value);
   if (!raw) return '';
@@ -303,17 +375,15 @@ type TopologyLayoutMode = 'hierarchy' | 'horizontal' | 'force' | 'radial';
 type PortLabelMode = 'auto' | 'visible' | 'hidden';
 
 const getLayerTone = (device: Device) => {
+  const layer = getDeviceTopologyLayer(device);
+  if (layer != null) {
+    const hue = (layer * 47) % 360;
+    return { color: `hsl(${hue} 62% 38%)`, soft: `hsla(${hue} 62% 48% / 0.14)`, label: `RANK_${layer}` };
+  }
   if (device.is_group) {
     const groupLayer = String(device.group_layer || device.group_label || '').toUpperCase();
-    if (groupLayer === 'CORE') return { color: '#1e40af', soft: 'rgba(30,64,175,0.16)', label: '核心层' };
-    if (groupLayer === 'AGGREGATION') return { color: '#1d4ed8', soft: 'rgba(29,78,216,0.14)', label: '汇聚层' };
-    if (groupLayer === 'ACCESS') return { color: '#075985', soft: 'rgba(7,89,133,0.14)', label: '接入层' };
-    return { color: '#475569', soft: 'rgba(71,85,105,0.12)', label: '分组' };
+    return { color: '#475569', soft: 'rgba(71,85,105,0.12)', label: groupLayer || 'GROUP' };
   }
-  const layer = getDeviceTopologyLayer(device);
-  if (layer === 0) return { color: '#1e40af', soft: 'rgba(30,64,175,0.16)', label: '核心层' };
-  if (layer === 1) return { color: '#1d4ed8', soft: 'rgba(29,78,216,0.14)', label: '汇聚层' };
-  if (layer === 2) return { color: '#075985', soft: 'rgba(7,89,133,0.14)', label: '接入层' };
   const kind = getDeviceGlyphKind(device);
   if (kind === 'firewall') return { color: '#b91c1c', soft: 'rgba(185,28,28,0.14)', label: '防火墙' };
   if (kind === 'router') return { color: '#c2410c', soft: 'rgba(194,65,12,0.14)', label: '路由器' };
@@ -345,11 +415,8 @@ const buildLayerSummary = (devices: Device[]): LayerSummary[] => {
       });
     }
   });
-  const order = ['核心层', '汇聚层', '路由器', '防火墙', '负载均衡', 'WAF', 'VPN 网关', '接入层', '服务器', '设备'];
   return Array.from(summary.values()).sort((left, right) => {
-    const leftIndex = order.indexOf(left.label);
-    const rightIndex = order.indexOf(right.label);
-    return (leftIndex < 0 ? order.length : leftIndex) - (rightIndex < 0 ? order.length : rightIndex);
+    return left.label.localeCompare(right.label, undefined, { numeric: true });
   });
 };
 
@@ -647,16 +714,9 @@ const buildHorizontalRowPositions = (ids: string[], width: number, height: numbe
 };
 
 const getDeviceTopologyLayer = (device: Device): number | null => {
-  const fingerprint = [device.role, device.hostname, device.model, device.platform]
-    .map((value) => String(value || '').toLowerCase())
-    .join(' ');
-  // Keep boundary and security appliances in the same edge row instead of
-  // silently placing them in the aggregation row when no layer keyword exists.
-  if (['router', 'firewall', 'load_balancer', 'waf', 'vpn_gateway'].includes(getDeviceGlyphKind(device))) return -1;
-  if (/(core|核心|backbone|骨干)/.test(fingerprint)) return 0;
-  if (/(distribution|aggregation|汇聚|分布)/.test(fingerprint)) return 1;
-  if (/(access|接入|edge|acc[-_ ]?sw)/.test(fingerprint)) return 2;
-  return null;
+  const candidate = device.topology_rank ?? device.relation_rank ?? device.rank;
+  const parsed = Number(candidate);
+  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : null;
 };
 
 const getTopologyExportSiteLabel = (devices: Device[]): string => {
@@ -692,16 +752,14 @@ const buildLayeredPositions = (devices: Device[], links: Link[], width: number, 
   if (devices.length === 0) return null;
   const layers = devices.map(getDeviceTopologyLayer);
   const hasExplicitLayers = layers.some((layer) => layer != null);
-  if (!hasExplicitLayers && !devices.every((device) => getDeviceGlyphKind(device) === 'switch')) return null;
-  if (!hasExplicitLayers || new Set(layers).size === 1) {
-    const chainOrder = getLinearChainOrder(devices, links);
-    const orderedIds = chainOrder || [...devices]
-      .sort((left, right) => left.hostname.localeCompare(right.hostname))
-      .map((device) => device.id);
-    return buildHorizontalRowPositions(orderedIds, width, height);
-  }
+  const distinctLayers = new Set(layers.filter((layer): layer is number => layer != null));
+  // A physical/LLDP graph without evidence-derived rank is not a hierarchy.
+  // Returning null lets the caller use the relationship-aware force layout;
+  // sorting those devices into a fake horizontal chain changes the meaning
+  // of the graph and was the source of the regression reported by users.
+  if (!hasExplicitLayers || distinctLayers.size <= 1) return null;
 
-  const fallbackLayer = Math.max(...layers.filter((layer): layer is number => layer != null), 1);
+  const fallbackLayer = Math.max(...layers.filter((layer): layer is number => layer != null), 0);
   const grouped = new Map<number, Device[]>();
   devices.forEach((device, index) => {
     const layer = layers[index] ?? fallbackLayer;
@@ -781,6 +839,13 @@ const calculateAutoLayoutPositions = (
   if (layoutMode === 'hierarchy') {
     const layeredPositions = buildLayeredPositions(devices, links, width, height);
     if (layeredPositions) return layeredPositions;
+
+    // A physical chain has enough relationship evidence to be laid out
+    // deterministically. Fold the chain into two columns so the middle pair
+    // forms the top horizontal link and the remaining links stay vertical,
+    // matching the normal network-diagram reading order.
+    const chainOrder = getLinearChainOrder(devices, links);
+    if (chainOrder) return buildFoldedChainPositions(chainOrder, width, height);
   }
 
   const { positions: seededPositions } = buildSeedPositions(devices, width, height);
@@ -807,16 +872,26 @@ const calculateAutoLayoutPositions = (
     simulation.stop();
   }
 
+  const repairedPositions = repairTopologyLayout(nodes, graphLinks, {
+    minX: 48,
+    maxX: Math.max(48, width - 48),
+    minY: 56,
+    maxY: Math.max(56, height - 56),
+    nodeRadius: 44,
+    edgeGap: 18,
+  });
   return Object.fromEntries(nodes.map((node) => [node.id, {
-    x: clampPosition(node.x || width / 2, 48, Math.max(48, width - 48)),
-    y: clampPosition(node.y || height / 2, 56, Math.max(56, height - 56)),
+    x: clampPosition(repairedPositions[node.id]?.x ?? node.x ?? width / 2, 48, Math.max(48, width - 48)),
+    y: clampPosition(repairedPositions[node.id]?.y ?? node.y ?? height / 2, 56, Math.max(56, height - 56)),
   }]));
 };
 
 const clampPosition = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
-const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v3';
+const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v6';
+const TOPOLOGY_LAYOUT_SCHEMA = 'evidence-relationship-v4';
 
 type PersistedTopologyLayout = {
+  schema?: string;
   positions?: Record<string, { x: number; y: number }>;
   transform?: { x: number; y: number; k: number };
   layoutMode?: 'free';
@@ -1011,7 +1086,7 @@ const buildMinimapSnapshot = (
       sourceY: toMiniY(link.source.y || 0),
       targetX: toMiniX(link.target.x || 0),
       targetY: toMiniY(link.target.y || 0),
-      color: getBandwidthTier(getLinkDisplayBandwidthMbps(link)).color,
+      color: getTopologyLinkStyle(link).color,
       width: 2.5,
     })),
     viewport: {
@@ -1253,12 +1328,14 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       ? d3.zoomIdentity.translate(snapshot.transform.x, snapshot.transform.y).scale(snapshot.transform.k)
       : null;
     writePersistedLayout({
+      schema: TOPOLOGY_LAYOUT_SCHEMA,
       positions: persistedPositionsRef.current,
       transform: snapshot.transform,
       layoutMode: 'free',
       displayMode: layoutMode,
     });
     syncLayoutToBackend({
+      schema: TOPOLOGY_LAYOUT_SCHEMA,
       positions: persistedPositionsRef.current,
       transform: snapshot.transform,
       layoutMode: 'free',
@@ -1352,6 +1429,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     if (!hydrationCompleteRef.current) return;
     const transform = zoomTransformRef.current;
     const layout = {
+      schema: TOPOLOGY_LAYOUT_SCHEMA,
       positions: persistedPositionsRef.current,
       transform: transform ? { x: transform.x, y: transform.y, k: transform.k } : undefined,
       layoutMode: 'free' as const,
@@ -1421,6 +1499,28 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     persistCurrentLayout(nextLayoutMode);
     applyTransform(createDefaultTransform(viewport.width, viewport.height, Object.values(next)));
     setLayoutVersion((value) => value + 1);
+  };
+
+  const syncGraphNodeLayoutOverrides = (nodeIds: string[], positions: Record<string, { x: number; y: number }>) => {
+    if (typeof window === 'undefined') return;
+    const token = window.localStorage.getItem('netops_token');
+    if (!token) return;
+    const requests = nodeIds.map((nodeId) => {
+      const position = positions[nodeId];
+      if (!position) return Promise.resolve();
+      const graphNode = graphDevices.find((device: any) => String(device.id) === String(nodeId)) as any;
+      const graphNodeId = String(graphNode?.topology_node_id || (
+        String(nodeId).startsWith('device:') || String(nodeId).startsWith('unknown:') || String(nodeId).startsWith('site:') || String(nodeId).startsWith('group:')
+          ? nodeId
+          : `device:${nodeId}`
+      ));
+      return fetch(`/api/topology/graph/nodes/${encodeURIComponent(graphNodeId)}/layout`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ x: position.x, y: position.y, tenant_id: 'tenant-default' }),
+      }).catch(() => undefined);
+    });
+    void Promise.all(requests);
   };
 
   const snapCurrentLayoutToGrid = () => {
@@ -1513,17 +1613,21 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
   useEffect(() => {
     const persistedLayout = readPersistedLayout();
-    // The canvas intentionally has one supported layout: hierarchy by role.
-    // Discard positions saved by the removed layout modes.
+    // The canvas intentionally has one supported layout: evidence hierarchy.
+    // Discard positions saved by the removed layout modes; role identity is
+    // never converted into a geometric layer.
     setLayoutMode('hierarchy');
     // Keep the default topology presentation on direct links.  An older
     // saved `orthogonal` preference must not unexpectedly turn diagonal
     // adjacencies into elbow routes after a refresh.
     setRoutingMode('straight');
-    const compatibleLocalLayout = layoutIsFree(persistedLayout) && persistedLayout.displayMode === 'hierarchy';
+    const compatibleLocalLayout = persistedLayout.schema === TOPOLOGY_LAYOUT_SCHEMA
+      && layoutIsFree(persistedLayout)
+      && persistedLayout.displayMode === 'hierarchy';
     persistedPositionsRef.current = compatibleLocalLayout ? (persistedLayout.positions || {}) : {};
     writePersistedLayout({
       ...persistedLayout,
+      schema: TOPOLOGY_LAYOUT_SCHEMA,
       layoutMode: 'free',
       displayMode: 'hierarchy',
       routingMode: 'straight',
@@ -1554,7 +1658,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         if (!layout || typeof layout !== 'object') return;
         setLayoutMode('hierarchy');
         setRoutingMode('straight');
-        const compatibleRemoteLayout = layoutIsFree(layout) && String(layout.displayMode || '') === 'hierarchy';
+        const compatibleRemoteLayout = layout.schema === TOPOLOGY_LAYOUT_SCHEMA
+          && layoutIsFree(layout)
+          && String(layout.displayMode || '') === 'hierarchy';
         persistedPositionsRef.current = compatibleRemoteLayout ? (layout.positions || {}) : {};
         if (compatibleRemoteLayout && layout.transform) {
           zoomTransformRef.current = d3.zoomIdentity
@@ -1567,6 +1673,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         }
         writePersistedLayout({
           ...layout,
+          schema: TOPOLOGY_LAYOUT_SCHEMA,
           layoutMode: 'free',
           displayMode: 'hierarchy',
           routingMode: 'straight',
@@ -1796,32 +1903,15 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const linearPositions = layoutMode === 'horizontal' ? buildLinearPositions(graphDevices, graphLinks, width, height) : null;
     const radialPositions = layoutMode === 'radial' ? buildRadialPositions(graphDevices, width, height) : null;
     const structuredPositions = layeredPositions || linearPositions || radialPositions;
-    const hasPersistedPositions = Object.keys(persistedPositionsRef.current).length > 0;
-    const shouldAutoArrange = !hasPersistedPositions;
+    const hasCompletePersistedPositions = graphDevices.length > 0 && graphDevices.every((device) => {
+      const position = persistedPositionsRef.current[device.id];
+      return Number.isFinite(position?.x) && Number.isFinite(position?.y);
+    });
+    const shouldAutoArrange = !hasCompletePersistedPositions;
     const autoPositions = shouldAutoArrange
       ? (structuredPositions || calculateAutoLayoutPositions(graphDevices, graphLinks, width, height, layoutMode))
       : null;
-    // Firewall nodes have a dedicated top row. Keep that row in natural
-    // hostname order even when an older saved layout contains the opposite
-    // horizontal positions (for example F1090-10 before F1090-9).
     const hierarchyRowXOverrides = new Map<string, number>();
-    if (layoutMode === 'hierarchy' && structuredPositions) {
-      const firewallDevices = graphDevices
-        .filter((device) => getDeviceTopologyLayer(device) === -1)
-        .sort(compareTopologyDeviceNames);
-      // Reuse the existing world-coordinate slots when available. Using the
-      // freshly calculated row positions here would stretch only firewalls
-      // when the canvas enters fullscreen, while other layers still use their
-      // saved positions and become misaligned.
-      const firewallXPositions = firewallDevices
-        .map((device) => persistedPositionsRef.current[device.id]?.x ?? structuredPositions[device.id]?.x)
-        .filter((x): x is number => typeof x === 'number')
-        .sort((left, right) => left - right);
-      firewallDevices.forEach((device, index) => {
-        const x = firewallXPositions[index];
-        if (typeof x === 'number') hierarchyRowXOverrides.set(device.id, x);
-      });
-    }
     const nodes = graphDevices.map((device) => {
       let x = hierarchyRowXOverrides.get(device.id) ?? autoPositions?.[device.id]?.x ?? persistedPositionsRef.current[device.id]?.x ?? structuredPositions?.[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2;
       let y = autoPositions?.[device.id]?.y ?? persistedPositionsRef.current[device.id]?.y ?? structuredPositions?.[device.id]?.y ?? seededPositions[device.id]?.y ?? height / 2;
@@ -1879,10 +1969,8 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       return getHoverEndpointId(item.source) === deviceId || getHoverEndpointId(item.target) === deviceId;
     };
     const layerSummary = buildLayerSummary(graphDevices);
-    // Repeating ACCESS below every node is useful for a small mixed-layer
-    // topology, but becomes visual noise when all devices are in one layer or
-    // when the graph contains many nodes. In those cases the site badge,
-    // legend, and node tooltip carry the same information more efficiently.
+    // Repeating rank labels below every node is useful for a small mixed graph,
+    // but becomes visual noise when the graph contains many nodes.
     const showNodeRoleLabels = !structuredPositions && layerSummary.length > 1 && graphDevices.length <= 20;
     const showLayerLegend = graphDevices.length > 12 || (!structuredPositions && layerSummary.length > 1);
     const layerSummaryBySite = new Map<string, string>();
@@ -2190,17 +2278,17 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('fill', 'none')
       .attr('stroke', 'transparent')
       .attr('stroke-width', 18)
-      .style('cursor', (item: any) => (item.inferred ? 'default' : 'pointer'))
+      // Logical and inferred relations are still actionable: they can be
+      // inspected and manually confirmed without being mistaken for LLDP.
+      .style('cursor', 'pointer')
       .on('click', (_event, item: any) => {
-        if (!onLinkClick || item.inferred) return;
+        if (!onLinkClick) return;
         onLinkClick(item as Link);
       })
       .on('pointerenter', (event, item: any) => {
-        if (item.inferred) return;
         updateLinkHoverCard(event, item as Link);
       })
       .on('pointermove', (event, item: any) => {
-        if (item.inferred) return;
         updateLinkHoverCard(event, item as Link);
       })
       .on('pointerleave', () => {
@@ -2216,15 +2304,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       // A given bandwidth always has one color. Discovery state is shown by
       // the dash pattern below, so inferred/unmanaged links do not look like
       // a different, faded bandwidth class.
-      .attr('stroke', (item: any) => getBandwidthTier(getLinkDisplayBandwidthMbps(item)).color)
-      .attr('stroke-width', 3)
+      .attr('stroke', (item: any) => getTopologyLinkStyle(item).color)
+      .attr('stroke-width', (item: any) => getTopologyLinkStyle(item).width)
       .attr('vector-effect', 'non-scaling-stroke')
       .attr('stroke-dasharray', (item: any) => {
-        if (item.inferred) return '6,5';
-        if (item.is_unmanaged) return '4,3';
-        if (item.operational_state === 'down') return '8,4';
-        if (String(item.link_kind || '').toLowerCase() === 'aggregation' && Number(item.member_count || 0) > Number(item.active_member_count || 0)) return '9,4';
-        return 'none';
+        return getTopologyLinkDash(item);
       })
       .attr('stroke-linejoin', 'round')
       // Keep every visible link equally clear. Selection is shown by the
@@ -3064,6 +3148,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         if (dragBeforePositionsRef.current) {
           recordLayoutHistory(dragBeforePositionsRef.current, persistedPositionsRef.current);
         }
+        syncGraphNodeLayoutOverrides(dragGroupRef.current?.ids || [event.subject.id], persistedPositionsRef.current);
         persistCurrentLayout();
       }
       dragStateRef.current = { id: null, moved: false };
@@ -3100,9 +3185,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       <div className="absolute right-4 top-4 z-10 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-end gap-1.5 rounded-2xl border border-slate-200 bg-white/95 px-2.5 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.12)] backdrop-blur-sm">
         <span
           className="inline-flex h-8 items-center rounded-xl border border-cyan-200 bg-cyan-50 px-2.5 text-[10px] font-extrabold text-cyan-700"
-          title="当前使用按设备角色分层的拓扑布局"
+          title="拓扑位置由关系证据决定；设备角色仅作为身份信息展示"
         >
-          层级 · 角色
+          证据 · 关系
         </span>
         <select
           value={displayScope}

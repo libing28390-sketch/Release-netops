@@ -1,0 +1,49 @@
+schema_version: 1
+project: Nexora Knowledge Engine V2
+journeys:
+  - id: UJ-001
+    name: consultation
+    permissions: [ai.assistant]
+    default_mode: readonly
+    entrypoints: [/api/ai/assistant/chat, /api/ai/assistant/chat-stream]
+    required_context: [tenant, vendor, product, os, software_version, scope]
+    outputs: [answer, citations, request_id, provider, model, model_version, route_reason, failover_chain, freshness]
+    hard_gates: [security_gateway, dlp, acl, clarification_on_ambiguity, v1_fallback, no_device_write]
+  - id: UJ-002
+    name: troubleshooting
+    permissions: [ai.use, ai.agent.use]
+    default_mode: readonly
+    entrypoints: [/api/ai/agents/run, /api/ai/assistant/ip-location, /api/ai/assistant/mac-location]
+    required_context: [tenant, target_scope, symptom, time_window, evidence_budget]
+    outputs: [diagnosis_id, run_id, evidence, hypotheses, freshness, next_readonly_steps, blocked_reason]
+    hard_gates: [rbac, tenant_scope, read_only_tools, rate_budget, timeout_cancel, no_implicit_write]
+  - id: UJ-003
+    name: configuration_generation
+    permissions: [ai.use]
+    default_mode: candidate_only
+    entrypoints: [/api/ai/governance/generate-config, /api/ai/governance/create-draft]
+    required_context: [tenant, device, vendor, product, os, software_version, intent, change_window]
+    outputs: [candidate_commands, risk, diff, prerequisites, verification_commands, rollback_commands, citations, draft_id]
+    hard_gates: [platform_allowlist, secret_redaction, static_risk_check, human_approval, no_direct_execution]
+  - id: UJ-004
+    name: knowledge_retrieval
+    permissions: [ai.view, ai.knowledge.manage]
+    default_mode: acl_filtered
+    entrypoints: [/api/ai/assistant/knowledge-stats, /api/ai/assistant/knowledge-options, /api/ai/assistant/documents]
+    required_context: [tenant, knowledge_domain, vendor, product, os, software_version, category]
+    outputs: [items, total, match_method, source, trust, version, citation_locator, freshness, index_status]
+    hard_gates: [acl, source_domain_separation, version_hard_filter, match_precedence, pagination, source_preservation]
+common_hard_gates: [security_gateway, dlp, audit, provenance, request_id, v1_fallback, no_implicit_network_write]
+transition_rules:
+  - from: consultation
+    to: troubleshooting
+    condition: user_confirms_symptom_and_scope
+  - from: troubleshooting
+    to: configuration_generation
+    condition: user_requests_change_draft_and_target_context_is_complete
+  - from: consultation
+    to: knowledge_retrieval
+    condition: explicit_search_or_citation_request
+  - from: troubleshooting
+    to: knowledge_retrieval
+    condition: evidence_lookup_needed

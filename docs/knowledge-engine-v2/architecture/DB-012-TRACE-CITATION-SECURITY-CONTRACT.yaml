@@ -1,0 +1,207 @@
+task_id: DB-012
+priority: P0
+owner: DBA
+milestone: M1
+status: frozen_for_implementation
+authority: PostgreSQL
+contract_version: v2.0
+
+decision:
+  choice: append_only_request_spine_with_retrieval_rag_citation_and_security_projections
+  summary: >-
+    ai_request_trace is the tenant-scoped request provenance spine. Four
+    explicit logical structures hang from it: Retrieval Log, RAG Trace,
+    Citation Validation, and Security Audit. They are normalized event
+    contracts, not an instruction to hide high-frequency fields in one JSONB
+    blob. Existing ai_request_log, ai_messages/ai_evidence, ai_outbound_audits
+    and audit_events remain V1 adapters until a reviewed migration creates the
+    V2 projections. Every trace is append-only, linked by opaque ids, ACL and
+    trust checked, and safe to inspect without exposing prompt, answer, source
+    content or secret material.
+  invariants:
+    - one_tenant_scoped_request_trace_is_the_root_of_every_attempt_chain
+    - retrieval_and_rag_attempts_are_distinct_from_provider_request_logs
+    - citation_validation_must_reference_a_selected_verified_source
+    - security_audit_records_policy_decisions_not_payload_bodies
+    - unknown_status_or_validation_result_fails_closed
+    - trace_ids_are_opaque_and_cross_tenant_links_are_forbidden
+    - append_only_events_are_idempotent_by_tenant_and_event_key
+    - retention_and_purge_are_audited_without_deleting_source_facts
+
+canonical_spine:
+  entity: ai_request_trace
+  source: DB-001
+  required_columns: [id, tenant_id, request_id, conversation_id, scene, requested_provider_id, requested_model_id, actual_provider_id, actual_model_id, route_reason, security_decision, retrieval_trace_id, citation_trace_id, status, created_at, updated_at, created_by, updated_by]
+  foreign_keys: [requested_provider_id -> ai_provider.id, requested_model_id -> ai_model.id, actual_provider_id -> ai_provider.id, actual_model_id -> ai_model.id]
+  unique_keys: [[tenant_id, request_id]]
+  status_allowlist: [started, retrieving, generating, completed, blocked, failed, cancelled]
+  status_rule: unknown_status_is_excluded_from_operator_reads_and_cannot_be_marked_completed
+  provenance_contract:
+    request_id: server_generated_opaque_correlation_id
+    conversation_id: opaque_conversation_reference_or_null
+    route_reason: allowlisted_reason_code_not_free_text_secret
+    security_decision: allowlisted_gateway_decision
+    retrieval_trace_id: root_or_null_until_retrieval_starts
+    citation_trace_id: root_or_null_until_validation_starts
+    raw_content: forbidden
+  storage_adapter: ai_request_log_and_llm_gateway_are_V1_attempt_log_not_complete_V2_spine
+
+logical_structures:
+  retrieval_log:
+    structure_name: Retrieval Log
+    canonical_table_target: kb_retrieval_log
+    aggregate: observability
+    purpose: one_row_per_local_or_remote_retrieval_attempt_and_candidate_snapshot
+    required_fields: [id, tenant_id, request_trace_id, retrieval_trace_id, attempt_no, scene, query_hash, query_length, filter_hash, collection_scope_hash, index_version_id, chunk_version_id, embedding_model_id, candidate_count, selected_count, filtered_count, latency_ms, status, security_decision, created_at]
+    optional_fields: [document_candidate_count, dedup_document_count, vector_top_n, lexical_score_version, retriever_version, acl_filter_version, failure_code, completed_at, metadata_json]
+    status_allowlist: [started, candidate_built, filtered, ranked, selected, no_match, blocked, failed]
+    count_invariants: [candidate_count_gte_selected_count, selected_count_gte_zero, latency_ms_gte_zero]
+    privacy: [query_hash_is_hmac_or_server_salted_sha256, no_raw_query, no_raw_chunk, no_raw_metadata, opaque_scope_and_filter_hashes]
+    relation_rules: [request_trace_same_tenant, index_generation_must_be_ready_for_selected, chunk_generation_matches_index, ACL_and_trust_checked_before_selected_count]
+    idempotency: tenant_id_plus_retrieval_trace_id_plus_attempt_no_unique
+    current_adapter:
+      module: backend/ai/services/assistant.py
+      observed_method: _knowledge_retrieval_trace
+      observed_output: [source, status, metadata_candidate_documents, candidate_count, dedup_document_count, final_document_count, vector_top_n, clarification_required, cross_platform_search, request, resolution]
+
+  rag_trace:
+    structure_name: RAG Trace
+    canonical_table_target: kb_rag_trace
+    aggregate: observability
+    purpose: answer_provenance_and_attempt_chain_across_retrieval_citation_and_provider_generation
+    required_fields: [id, tenant_id, request_trace_id, rag_trace_id, retrieval_trace_id, citation_trace_id, attempt_no, prompt_id, prompt_version, model_id, index_version_id, context_chunk_count, context_hash, answer_hash, status, created_at]
+    optional_fields: [fallback_from_attempt_id, fallback_reason, input_token_count, output_token_count, latency_ms, safety_classification, answer_policy_version, error_code, completed_at, metadata_json]
+    status_allowlist: [started, context_ready, generating, fallback, completed, blocked, failed, cancelled]
+    attempt_chain: [primary_attempt, fallback_attempts, final_attempt_id, all_attempts_same_tenant]
+    privacy: [context_hash_only, answer_hash_only, prompt_body_forbidden, provider_secret_forbidden, raw_device_output_forbidden]
+    completion_rule: completed_requires_retrieval_trace_and_security_decision_and_citation_trace_or_explicit_no_citation_reason
+    current_adapter:
+      module: backend/ai/services/assistant.py
+      observed_fields: [knowledge_trace, citations, request_id]
+      gap: assistant_response_trace_is_returned_to_API_but_not_persisted_as_one_append_only_RAG_trace
+
+  citation_validation:
+    structure_name: Citation Validation
+    canonical_table_target: kb_citation_validation
+    aggregate: observability
+    purpose: validate_each_answer_citation_against_selected_document_version_chunk_and_acl
+    required_fields: [id, tenant_id, citation_trace_id, rag_trace_id, citation_no, document_id, document_version_id, chunk_id, chunk_content_hash, locator_hash, claim_hash, validation_status, validator_version, validated_at]
+    optional_fields: [source_version_id, source_trust_level, evidence_kind, freshness_at, failure_code, review_required, metadata_json]
+    validation_statuses: [verified, missing, mismatch, stale, acl_denied, untrusted, not_checked, failed]
+    validation_order: [citation_shape, trace_membership, document_version_active, chunk_active, content_hash_match, locator_valid, ACL_and_trust, freshness_policy]
+    pass_rule: verified_requires_all_required_steps_and_source_row_is_active_and_tenant_visible
+    fail_rule: any_failed_step_marks_citation_non_verified_and_answer_must_not_claim_verified_fact
+    privacy: [claim_hash_only, locator_hash_or_structured_locator, no_answer_span_body, no_source_body_copy]
+    idempotency: tenant_id_plus_rag_trace_id_plus_citation_no_plus_validator_version_unique
+    current_adapter:
+      modules: [backend/ai/services/assistant.py, backend/ai/services/conversation_service.py, backend/database/migrations/m0105_ai_security_operations_graph.py]
+      observed_fields: [citations, citations_json, ai_evidence.citation, ai_evidence.fact_json, ai_evidence.confidence]
+      gap: citation_payload_is_stored_or_returned_without_source_hash_and_validation_result
+
+  security_audit:
+    structure_name: Security Audit
+    canonical_table_target: audit_ai_security_event
+    aggregate: audit
+    purpose: metadata_only_gateway_retrieval_citation_and_provider_policy_decision_ledger
+    required_fields: [id, tenant_id, request_trace_id, event_key, direction, policy_version, decision, status, data_level, finding_categories_json, payload_bytes, redaction_count, actor_id, created_at]
+    optional_fields: [rag_trace_id, retrieval_trace_id, citation_trace_id, provider_id, model_id, scene, task_id, error_code, source_ip_hash, metadata_json]
+    direction_allowlist: [retrieval_input, retrieval_output, citation_check, llm_input, llm_output, tool_input, tool_output, admin_action]
+    decision_allowlist: [allow, minimize, redact, block, fail_closed, review]
+    status_allowlist: [recorded, blocked, failed, reviewed]
+    data_levels: [D0, D1, D2, D3, D4, D5, D6]
+    privacy: [no_prompt_body, no_answer_body, no_document_body, no_api_key, no_password, no_private_key, no_raw_device_output]
+    redaction_rule: redact_before_persist_and_before_API_read; only_counts_hashes_and_codes_are_retained
+    current_adapters:
+      modules: [backend/ai/gateway/llm_gateway.py, backend/services/audit_service.py]
+      tables: [ai_outbound_audits, audit_events]
+      observed_fields: [request_id, tenant_id, task_id, scene, provider_type, model_code, decision, max_data_level, finding_categories_json, payload_bytes, status, error_code, request_id, before_json, after_json]
+      gap: outbound_audit_and_generic_audit_are_not_yet_joined_to_retrieval_and_citation_trace_ids
+
+trace_relationships:
+  - from: ai_request_trace
+    to: kb_retrieval_log
+    cardinality: one_to_many_attempts
+    key: retrieval_trace_id
+    rule: same_tenant_and_request_id
+  - from: kb_retrieval_log
+    to: kb_rag_trace
+    cardinality: one_to_many_generation_attempts
+    key: retrieval_trace_id
+  - from: kb_rag_trace
+    to: kb_citation_validation
+    cardinality: one_to_many_citations
+    key: citation_trace_id
+  - from: ai_request_trace
+    to: audit_ai_security_event
+    cardinality: one_to_many_security_events
+    key: request_trace_id
+  - from: kb_rag_trace
+    to: audit_ai_security_event
+    cardinality: optional_many_security_events
+    key: rag_trace_id
+  - from: kb_citation_validation
+    to: kb_document_version
+    cardinality: many_to_one_verified_source
+  - from: kb_citation_validation
+    to: kb_chunk
+    cardinality: many_to_one_verified_chunk
+
+state_and_consistency:
+  root_statuses: [started, retrieving, generating, completed, blocked, failed, cancelled]
+  monotonic_rules: [retrieval_trace_created_before_rag_context_ready, citation_trace_created_before_citation_validation, completed_after_security_decision]
+  terminal_rules: [completed_requires_trace_chain_or_explicit_no_retrieval_reason, blocked_requires_security_audit, failed_requires_stable_error_code, cancelled_requires_actor_or_system_reason]
+  cross_tenant: reject_and_emit_security_audit_without_disclosing_foreign_row
+  unknown: fail_closed_and_never_treat_unknown_as_verified_or_allowed
+  append_only: update_only_server_completion_fields; corrections_append_superseding_event
+
+tenant_security_and_audit:
+  tenant_scope: tenant_id_in_every_insert_select_join_and_retention_predicate
+  permissions: [ai.trace.read, ai.trace.read_sensitive_metadata, ai.citation.validate, ai.audit.read, ai.audit.export]
+  least_privilege: operators_read_counts_hashes_and_safe_codes; source_content_requires_existing_kb_scope_permission
+  audit_events: [trace_started, retrieval_started, retrieval_blocked, retrieval_completed, rag_attempt_started, rag_fallback, citation_verified, citation_rejected, security_decision, trace_completed, trace_failed, trace_retention_purged]
+  security_failure: audit_write_failure_must_not_open_gateway_or_mark_unverified_citation_as_verified
+  retention: trace_and_audit_retention_by_tenant_policy; purge_requires_audit_permission_and_tombstone
+
+legacy_gap_audit:
+  ai_request_log:
+    migration: backend/database/migrations/m0103_ai_platform_tables.py
+    observed_columns: [request_id, user_id, scene, provider_id, model_id, prompt_id, prompt_version, input_tokens, output_tokens, latency_ms, status, error_code, error_message, created_at]
+    classification: provider_attempt_log_adapter_not_retrieval_rag_citation_spine
+  ai_request_trace:
+    source: DB-001
+    observed: canonical_request_provenance_fields_exist_but_no_physical_retrieval_rag_citation_tables_yet
+  ai_outbound_audits:
+    migration: backend/database/migrations/m0105_ai_security_operations_graph.py
+    classification: metadata_only_external_egress_security_adapter
+  audit_events:
+    module: backend/services/audit_service.py
+    observed: redact_audit_value_recursively_and_persist_generic_before_after_request_id
+    classification: generic_audit_adapter_not_trace_joined_security_ledger
+  ai_messages_and_evidence:
+    migration: backend/database/migrations/m0105_ai_security_operations_graph.py
+    observed: [citations_json, citation, fact_json, confidence]
+    classification: conversation_and_tool_evidence_adapter_not_hash_validated_citation_record
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_012
+  prerequisites: [DB-003_lifecycle, DB-008_source_policy, DB-009_document_scope, DB-010_chunk_index_generation, DB-011_job_state]
+  fresh_upgrade: create_trace_projections_and_indexes_after_postgresql_schema_review
+  idempotence: tenant_event_key_unique_and_replay_safe
+  downgrade: disable_V2_trace_writes_and_keep_V1_request_audit_messages_and_evidence
+  rollback: route_read_panels_to_V1_adapters_and_never_promote_unverified_citations
+  production_gate: forbidden_until_CIT_SEC_OBS_API_and_MIG_trace_chain_tests_pass
+  data_loss_policy: no_source_document_delete_and_no_raw_prompt_backfill
+
+verification:
+  contract_tests: backend/tests/database/test_db012_trace_citation_security_contract.py
+  required_checks: [DB-001_request_trace_alignment, lifecycle_and_status, retrieval_log_fields, rag_trace_fields, citation_validation_rules, security_audit_redaction, relationship_tenant_guards, legacy_adapter_audit, report_markers]
+  test_database: SQLite_compatibility_only_for_contract_probes
+  production_database: PostgreSQL_required_for_actual_append_only_constraints_and_retention
+
+rollback:
+  runtime: disable_V2_trace_projection_and_keep_gateway_fail_closed
+  data: retain_V1_request_logs_messages_evidence_and_outbound_audits; preserve_trace_tombstones
+  schema: no_DB-012_production_DDL; later_migration_requires_fresh_upgrade_and_verified_downgrade
+  security: never_fallback_from_audit_failure_to_unvalidated_external_answer
+
+next_tasks: [DB-013, DB-014, DB-015, DB-016, DB-017, CIT-001, SEC-001, OBS-001, API-001]

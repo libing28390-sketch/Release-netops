@@ -1,0 +1,42 @@
+task_id: CAT-009
+priority: P0
+owner: AI+BE
+milestone: M2
+status: frozen_persistence_neutral_contract
+depends_on: [DB-006, CAT-005, CAT-006, CAT-007, CAT-008]
+contract:
+  entity: kb_product_alias
+  kinds:
+    exact: unique_identity_lookup
+    canonical: reviewed_manufacturer_or_display_alias
+    prefix: bounded_candidate_search_not_unique_identity
+    trigram: similarity_candidate_search_only
+  required_fields: [tenant_id, product_model_id, alias, normalized_alias, alias_kind, status]
+  normalization:
+    algorithm: unicode_nfkc_casefold_trim_collapse_whitespace_and_dash_to_space
+    deterministic: true
+    original_alias_preserved: true
+    transliteration: forbidden
+    endpoint_or_credential_alias: forbidden
+  conflicts:
+    exact_and_canonical: same_normalized_alias_across_models_is_ambiguous_pending_review
+    prefix_and_trigram: candidate_collision_never_unique_identity
+    same_model_duplicate: duplicate_same_target
+    fields: [conflict_status, conflict_group, conflict_reason, conflict_count]
+    no_first_match_fallback: true
+  resolution:
+    tenant_scope_required: true
+    active_status_only: true
+    precedence: [exact, canonical, prefix, trigram, unknown]
+    ambiguity: return_candidates_and_require_clarification
+    unknown: return_unknown_and_never_guess_vendor_or_driver
+  persistence:
+    production_ddl: none_in_CAT-009
+    repository_binding: later_DB006_catalog_migration
+  security:
+    alias_never_authorizes_device_or_driver: true
+    evidence_and_audit_required: true
+    secrets_forbidden: true
+rollback:
+  runtime: disable_v2_alias_resolution_and_use_v1_advisory_resolver
+  data: retain_v1_metadata_and_pending_alias_records

@@ -1,0 +1,76 @@
+task_id: DB-023
+priority: P1
+owner: DBA+OPS
+milestone: M1
+status: implemented_backup_restore_rehearsal
+authority: PostgreSQL_with_SQLite_compatibility_fixture
+contract_version: v2.0
+depends_on: [DB-003, DB-008, DB-018, DB-020, DB-021]
+
+decision:
+  choice: pg_dump_custom_plus_redacted_source_manifest_plus_isolated_restore_rehearsal
+  summary: >-
+    PostgreSQL remains the production authority and is backed up with
+    pg_dump custom format from DATABASE_URL supplied by the environment. Each
+    dump must have a deterministic redacted Source Manifest companion. The
+    manifest contains counts, schema version, status, source/content/metadata
+    hashes, and tenant/name/document-key hashes; raw identifiers, URLs, paths,
+    source content, metadata, credentials, and prompts are omitted. SQLite
+    uses the online backup API only for local/fixture compatibility. Restore
+    rehearsal always targets an explicit isolated database/path and compares
+    integrity, row counts, and manifest digest; production restore is
+    forbidden by this task.
+  invariants:
+    - backup_source_is_not_deleted_or_overwritten
+    - pg_dump_credentials_are_environment_only
+    - dump_without_manifest_is_incomplete
+    - manifest_is_deterministic_except_generated_at
+    - manifest_contains_hashes_and_counts_not_raw_source_values
+    - restore_rehearsal_is_isolated_and_never_targets_production
+    - integrity_and_manifest_digest_must_match_after_restore
+    - V1_tables_and_migration_history_are_preserved
+
+backup:
+  postgres:
+    tool: pg_dump
+    format: custom
+    flags: [--no-owner, --file]
+    credential_source: DATABASE_URL_environment_only
+    retention: existing_daily_script_retention_days
+  sqlite:
+    tool: sqlite3_online_backup_api
+    production_authority: false
+  companion_manifest:
+    format: nexora-knowledge-source-manifest/v2
+    required_fields: [schema_version, document_count, chunk_count, source_manifest_digest, documents, redaction]
+
+manifest:
+  source_tables: [ai_document, ai_document_chunk, schema_migrations]
+  per_document_fields: [document_key_hash, external_document_id_hash, name_hash, source_ref_hash, content_hash, metadata_hash, tenant_hash, vendor_hash, platform_hash, status, source_type, source_trust_level, updated_at]
+  excluded_fields: [raw_document_id, raw_document_name, raw_source, raw_path, raw_url, raw_content, raw_metadata, raw_tenant_id, credential, prompt]
+  digest: sha256_canonical_sorted_records
+  tenant_filter: optional_explicit_tenant_id
+
+restore_rehearsal:
+  sqlite: online_backup_to_new_explicit_path_then_integrity_check_and_manifest_compare
+  postgres: pg_restore_to_isolated_rehearsal_database_then_compare_counts_and_manifest_digest
+  required_checks: [integrity_check, schema_version, document_count, chunk_count, source_manifest_digest, no_production_target]
+  failure: abort_rehearsal_and_preserve_backup; no_source_delete
+
+security_and_governance:
+  authorization: approved_operator_or_backup_service_identity
+  storage: backup_directory_750_or_equivalent_private_acl
+  logs: no_database_url_password_api_key_or_raw_document_values
+  restore: production_restore_forbidden_in_DB_023
+
+rollback:
+  backup: remove_only_explicit_test_artifacts_after_review
+  manifest: immutable_companion_can_be_archived_with_matching_dump
+  production: restore_requires_separate_change_record_and_approved_snapshot
+
+verification:
+  contract_tests: backend/tests/database/test_db023_backup_manifest_restore.py
+  required_checks: [contract_markers, manifest_redaction, deterministic_digest, sqlite_backup, restore_rehearsal, postgres_plan, failure_path, V1_preservation, script_markers]
+  production_gate: run_pg_dump_and_pg_restore_against_approved_isolated_postgresql_rehearsal
+
+next_tasks: [DB-024, CAT-001]

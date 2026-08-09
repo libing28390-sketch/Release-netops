@@ -33,10 +33,11 @@ def encrypt_api_key(plaintext: Optional[str]) -> Optional[str]:
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), None)
         return base64.b64encode(nonce + ciphertext).decode("ascii")
-    else:  # Fallback portable obfuscation if cryptography lib missing
-        key_stream = (key * ((len(plaintext) // len(key)) + 1))[:len(plaintext)]
-        xored = bytes(a ^ b for a, b in zip(plaintext.encode("utf-8"), key_stream))
-        return "fallback:" + base64.b64encode(xored).decode("ascii")
+    else:
+        # A reversible XOR obfuscation is not encryption and could expose
+        # provider credentials.  Refuse to persist a key until AES-GCM is
+        # available instead of silently weakening the security boundary.
+        raise RuntimeError("cryptography with AES-GCM is required to encrypt AI provider keys")
 
 
 def decrypt_api_key(encrypted_b64: Optional[str]) -> Optional[str]:
@@ -44,11 +45,6 @@ def decrypt_api_key(encrypted_b64: Optional[str]) -> Optional[str]:
     if not encrypted_b64:
         return None
     key = _get_encryption_key()
-    if encrypted_b64.startswith("fallback:"):
-        xored = base64.b64decode(encrypted_b64[9:].encode("ascii"))
-        key_stream = (key * ((len(xored) // len(key)) + 1))[:len(xored)]
-        return bytes(a ^ b for a, b in zip(xored, key_stream)).decode("utf-8")
-    
     if _HAS_CRYPTOGRAPHY:
         try:
             raw_data = base64.b64decode(encrypted_b64.encode("ascii"))

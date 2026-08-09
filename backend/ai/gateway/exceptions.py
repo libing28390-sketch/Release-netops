@@ -65,3 +65,10 @@ class AINetworkException(AIException):
 class AIInvalidResponseException(AIException):
     def __init__(self, message: str = "Invalid response format from AI Provider", request_id: Optional[str] = None):
         super().__init__("AI_INVALID_RESPONSE", message, request_id, status.HTTP_502_BAD_GATEWAY)
+
+
+class AISecurityBlockedException(AIException):
+    """External AI egress was refused by the fail-closed security gateway."""
+
+    def __init__(self, message: str = "AI request blocked by security policy", request_id: Optional[str] = None):
+        super().__init__("AI_SECURITY_BLOCKED", message, request_id, status.HTTP_403_FORBIDDEN)

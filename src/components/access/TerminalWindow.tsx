@@ -91,6 +91,19 @@ function humanizeError(raw: string, isZh: boolean): { title: string; detail?: st
           hint: 'Ask an administrator to populate the PAM credential vault.',
         };
   }
+  if (s.includes('ssh_authentication_failed') || s.includes('all authentication methods failed')) {
+    return isZh
+      ? {
+          title: 'SSH 账号认证失败',
+          detail: raw,
+          hint: '当前 Web 会话使用的是资产配置的账号，请核对用户名、密码及设备 AAA/VTY 策略。',
+        }
+      : {
+          title: 'SSH account authentication failed',
+          detail: raw,
+          hint: 'The Web session uses the asset-configured account. Verify its username, password, and AAA/VTY policy.',
+        };
+  }
   if (s.includes('ssh_error') || s.includes('ssh connection failed') || s.includes('authentication failed')) {
     return isZh
       ? {
@@ -136,7 +149,6 @@ function explainClose(code: number, reason: string, isZh: boolean): { title: str
 
 export default function TerminalWindow({ sessionToken, hostname, language }: TerminalWindowProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermRef = useRef<Terminal | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const isZh = (language || 'zh') === 'zh';
 
@@ -173,7 +185,12 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
     term.open(terminalRef.current);
     fitAddon.fit();
     term.focus();
-    xtermRef.current = term;
+
+    const sendInput = (data: string) => {
+      const socket = wsRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: 'input', data }));
+    };
 
     // Putty-style: Copy on select (Works fine on HTTP)
     term.onSelectionChange(() => {
@@ -209,9 +226,7 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
     terminalRef.current.onpaste = (e) => {
       e.preventDefault();
       const text = e.clipboardData?.getData('text');
-      if (text && wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'input', data: text }));
-      }
+      if (text) sendInput(text);
     };
 
     term.writeln(`\x1b[1;36m>>> ${isZh ? '正在连接' : 'Connecting to'} ${hostname}...\x1b[0m`);
@@ -236,6 +251,7 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
     const wsUrl = `${WS_BASE}/api/pam/ws/${sessionToken}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+    let closeCardRendered = false;
 
     ws.onopen = () => {
       // Send initial resize
@@ -254,7 +270,10 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
           if (msg.message) term.write(msg.message);
         } else if (msg.type === 'error') {
           const h = humanizeError(msg.message || '', isZh);
-          writeErrorCard('error', h.title, h.detail, h.hint);
+          if (!closeCardRendered) {
+            closeCardRendered = true;
+            writeErrorCard('error', h.title, h.detail, h.hint);
+          }
         }
       } catch (err) {
         console.error('Failed to parse WS message', err);
@@ -262,15 +281,19 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
     };
 
     ws.onerror = (err) => {
+      if (closeCardRendered) return;
       writeErrorCard(
         'error',
         isZh ? '无法连接到受控网关' : 'Unable to reach the controlled gateway',
         isZh ? '请检查网络连接或代理配置，然后重试。' : 'Check your network connection or proxy settings, then retry.'
       );
+      closeCardRendered = true;
       console.error('WS Error:', err);
     };
 
     ws.onclose = (event) => {
+      if (event.code === 1000 || closeCardRendered) return;
+      closeCardRendered = true;
       const h = explainClose(event.code, event.reason || '', isZh);
       // Friendly-close codes render as info/warning; 1011/1008 stay as error.
       const kind = event.code === 1000 ? 'info' : (event.code === 1008 || event.code === 1011 || event.code === 1006) ? 'error' : 'warning';
@@ -279,9 +302,7 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
 
     // 3. Handle Input
     term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }));
-      }
+      sendInput(data);
     });
 
     // 4. Handle Keyboard Shortcuts (Paste)
@@ -289,10 +310,8 @@ export default function TerminalWindow({ sessionToken, hostname, language }: Ter
       // Ctrl+V or Shift+Insert
       if ((e.ctrlKey && e.key === 'v') || (e.shiftKey && e.key === 'Insert')) {
         if (e.type === 'keydown') {
-          navigator.clipboard.readText().then(text => {
-            if (text && wsRef.current?.readyState === WebSocket.OPEN) {
-              wsRef.current.send(JSON.stringify({ type: 'input', data: text }));
-            }
+            navigator.clipboard.readText().then(text => {
+            if (text) sendInput(text);
           }).catch(() => {
             // If API blocked, let the browser handle it naturally or ignore
           });

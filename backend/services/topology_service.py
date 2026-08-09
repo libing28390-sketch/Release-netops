@@ -1352,6 +1352,7 @@ def _replace_device_observations(
 def rebuild_links_from_observations() -> int:
     with _topology_rebuild_lock:
         total_links = _rebuild_links_from_observations_unlocked()
+        _sync_evidence_graph_from_observations()
         invalidate_read_cache('topology')
         return total_links
 
@@ -1897,9 +1898,24 @@ async def discover_device_neighbors(
                 device,
                 platform_action_session,
             )
+            from services.topology_protocol_service import collect_protocol_evidence
+
+            protocol_summary = await asyncio.to_thread(
+                collect_protocol_evidence,
+                device,
+                run_id=run_id,
+                platform_action_session=platform_action_session,
+            )
         finally:
             if platform_action_session is not None:
                 await asyncio.to_thread(platform_action_session.__exit__, None, None, None)
+        if 'protocol_summary' not in locals():
+            protocol_summary = {
+                'success': False,
+                'observations_count': 0,
+                'protocols': [],
+                'error': 'protocol_collection_not_started',
+            }
         observations = _deduplicate_observations(observations)
         match_summary = _replace_device_observations(device, observations, run_id)
         total_links = rebuild_links_from_observations() if rebuild_links else None
@@ -1918,6 +1934,7 @@ async def discover_device_neighbors(
                 'ambiguous': match_summary['ambiguous'],
                 'unmatched': match_summary['unmatched'],
                 'aggregation': aggregation_summary,
+                'protocols': protocol_summary,
                 'run_id': run_id,
                 'protocol': 'lldp',
                 'collection_status': collection_status,
@@ -1932,7 +1949,11 @@ async def discover_device_neighbors(
             'ambiguous_count': match_summary['ambiguous'],
             'unmatched_count': match_summary['unmatched'],
             'total_links': total_links,
-            'protocols': sorted({item.get('protocol') or 'lldp' for item in observations}),
+            'protocols': sorted(
+                {'lldp', *{item.get('protocol') or 'lldp' for item in observations}, *protocol_summary.get('protocols', [])}
+            ),
+            'protocol_observations_count': int(protocol_summary.get('observations_count') or 0),
+            'protocol_collection': protocol_summary,
             'aggregation': aggregation_summary,
         }
     except Exception as exc:
@@ -2392,6 +2413,170 @@ def get_current_links(
             item['ttl_seconds'] = TOPOLOGY_LINK_TTL_SECONDS
             result.append(item)
         return result
+    finally:
+        conn.close()
+
+
+def _sync_evidence_graph_from_observations() -> None:
+    """Project safe discovery metadata into the evidence graph after rebuild.
+
+    ``topology_links`` remains the backwards-compatible physical-link read
+    model. The graph model receives only normalized endpoint/protocol/confidence
+    metadata; raw parser payloads, neighbor strings and addresses stay in the
+    restricted discovery evidence table and are never copied to graph edges.
+    """
+    try:
+        from services.topology_graph_service import build_graph, persist_graph
+
+        with get_db_connection() as conn:
+            device_rows = conn.execute(
+                """
+                SELECT id, hostname, ip_address, site_id, role, device_category,
+                       function, zone, status
+                FROM devices
+                """
+            ).fetchall()
+            nodes = [
+                {
+                    'id': f"device:{row['id']}",
+                    'canonical_key': f"device:{row['id']}",
+                    'device_id': str(row['id']),
+                    'hostname': str(row['hostname'] or row['id']),
+                    'ip_address': row['ip_address'],
+                    'site_id': row['site_id'],
+                    'role': row['role'],
+                    'function': row['function'] or row['device_category'],
+                    'zone': row['zone'] or 'Unknown',
+                    'status': 'active' if str(row['status'] or '').lower() != 'decommissioned' else 'inactive',
+                }
+                for row in device_rows
+            ]
+            observation_rows = conn.execute(
+                """
+                SELECT source_device_id, target_device_id, source_port_normalized,
+                       target_port_normalized, protocol, confidence, collected_at,
+                       match_status, is_active, neighbor_name_normalized,
+                       neighbor_ip_address
+                FROM topology_observations
+                WHERE COALESCE(is_active, 1) = 1
+                """
+            ).fetchall()
+            observations = []
+            for row in observation_rows:
+                target = row['target_device_id'] or row['neighbor_ip_address'] or row['neighbor_name_normalized']
+                if not target:
+                    continue
+                observations.append({
+                    'source_device_id': str(row['source_device_id']),
+                    'target_device_id': str(target),
+                    'target_ip': row['neighbor_ip_address'] or '',
+                    'source_interface': row['source_port_normalized'],
+                    'target_interface': row['target_port_normalized'],
+                    'source_type': str(row['protocol'] or 'lldp').lower(),
+                    'protocol': str(row['protocol'] or 'lldp').lower(),
+                    'confidence': float(row['confidence'] or 0),
+                    'observed_at': row['collected_at'],
+                    'metadata': {
+                        'match_status': row['match_status'] or 'unmatched',
+                        'target_identity': row['neighbor_name_normalized'] or '',
+                    },
+                })
+            # Protocol observations are normalized facts, not topology_links.
+            # Keep unresolved identities so the graph exposes formal UNKNOWN
+            # nodes instead of guessing a device match.
+            try:
+                protocol_rows = conn.execute(
+                    """
+                    SELECT source_device_id, target_device_id, target_identity,
+                           target_ip, source_interface, target_interface,
+                           protocol, relation_type, direction, observation_json,
+                           confidence, last_seen
+                    FROM topology_protocol_observations
+                    WHERE is_active = 1
+                    """
+                ).fetchall()
+            except Exception:
+                protocol_rows = []
+            for row in protocol_rows:
+                observation = {}
+                try:
+                    observation = json.loads(row['observation_json'] or '{}')
+                except (TypeError, ValueError):
+                    observation = {}
+                metadata = dict(observation.get('metadata') or {})
+                metadata['semantic_relation'] = observation.get('semantic_relation') or ''
+                target = row['target_device_id'] or row['target_identity'] or row['target_ip']
+                if not target:
+                    continue
+                observations.append({
+                    'source_device_id': str(row['source_device_id']),
+                    'target_device_id': str(target),
+                    'target_ip': row['target_ip'] or '',
+                    'source_interface': row['source_interface'],
+                    'target_interface': row['target_interface'],
+                    'source_type': str(row['protocol'] or 'unknown').lower(),
+                    'protocol': str(row['protocol'] or 'unknown').lower(),
+                    'relation_type': row['relation_type'],
+                    'direction': row['direction'],
+                    'semantic_relation': observation.get('semantic_relation') or '',
+                    'confidence': float(row['confidence'] or 0),
+                    'observed_at': row['last_seen'],
+                    'metadata': metadata,
+                })
+        graph = build_graph(nodes, observations, tenant_id='tenant-default')
+        persist_graph(graph)
+    except Exception:
+        # The graph migration is additive and may not yet exist on a rolling
+        # upgrade. Physical topology rebuild remains authoritative until the
+        # next startup applies m0105.
+        logger.debug('Evidence graph projection skipped', exc_info=True)
+
+
+def get_topology_node_metadata(site_id: str | None = None) -> dict[str, dict[str, Any]]:
+    """Return evidence-derived node rank/layout metadata for the legacy link API.
+
+    The canvas still consumes ``/topology/links`` for backwards compatibility,
+    while the evidence graph is persisted in ``topology_nodes``. Keeping this
+    small read model on the link response lets existing clients receive the
+    graph rank without rebuilding their device inventory contract. Missing
+    migration tables are treated as an empty metadata set so older deployments
+    continue to render physical LLDP links during upgrade.
+    """
+    conn = get_db_connection()
+    try:
+        clauses = ["status = 'active'", "device_id IS NOT NULL", "device_id <> ''"]
+        params: list[Any] = []
+        if site_id:
+            clauses.append("(site_id = ? OR node_type = 'SITE')")
+            params.append(site_id)
+        rows = conn.execute(
+            """
+            SELECT device_id, rank, layout_override_json, role_identity, node_type
+            FROM topology_nodes
+            WHERE """ + " AND ".join(clauses),
+            tuple(params),
+        ).fetchall()
+        result: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            item = dict(row)
+            device_id = str(item.get('device_id') or '').strip()
+            if not device_id:
+                continue
+            try:
+                layout = json.loads(item.get('layout_override_json') or '{}')
+            except (TypeError, ValueError):
+                layout = {}
+            result[device_id] = {
+                'topology_rank': max(0, int(item.get('rank') or 0)),
+                'role_identity': str(item.get('role_identity') or 'UNKNOWN'),
+                'topology_node_type': str(item.get('node_type') or 'DEVICE'),
+                'layout_override': layout if isinstance(layout, dict) else {},
+            }
+        return result
+    except Exception:
+        # The migration is applied during startup, but the link read path must
+        # remain available while an older installation is being upgraded.
+        return {}
     finally:
         conn.close()
 

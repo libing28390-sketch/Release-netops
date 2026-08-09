@@ -1,0 +1,38 @@
+schema_version: 1
+task_id: AUD-006
+runtime:
+  database: data/netops.db
+  ai_document_chunk_present: false
+  production_random_sample: NOT_AVAILABLE
+isolated_sample:
+  fixture: title_cli_table_warning_version_code_fence
+  vendor: Huawei
+  platform: huawei_vrpv8
+  verified_version: V300R024C10SPC500
+  chunk_count: 2
+  checks:
+    title_heading_path: PASS
+    cli_command: PASS
+    table_block: PASS
+    warning_marker: PASS
+    version_in_embedding_content: PASS
+    balanced_code_fence: PASS
+engine_contract:
+  source: backend/ai/chunking/engine.py
+  block_types: [heading, code, table, warning, note, cli_command, command_output]
+  persisted_fields: [raw_content, embedding_content, heading_path, content_hash, source_locator, chunk_role, chunk_type, metadata, is_retrieval_candidate]
+  parent_is_retrieval_candidate: false
+real_sample_protocol:
+  strata: [tenant_id, source_trust_level, vendor, platform, knowledge_source_type]
+  fixed_seed_required: true
+  full_text_in_evidence: false
+  compare: [source_hash, raw_content_hash, embedding_content_hash, heading_path, metadata, chunk_role, chunk_type, locator]
+findings:
+  - id: AUD006-F01
+    severity: P0
+    status: OPEN
+    description: Production random sample is unavailable because local V2 AI tables are not applied.
+  - id: AUD006-F02
+    severity: P1
+    status: OPEN
+    description: Title preservation for source formats without headings depends on ingest metadata.

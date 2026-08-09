@@ -17,6 +17,26 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # CI must never inherit a production dotenv.  These values are isolated,
+    # non-secret test defaults; provider/device credentials stay in fixtures.
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: sqlite:////tmp/nexora-kb-v2-ci.db
+      REDIS_URL: redis://127.0.0.1:6379/11
+      SECRET_KEY: test-only-secret-placeholder
+      CREDENTIAL_ENCRYPTION_KEY: test-only-credential-placeholder
+      AI_ENABLED: "false"
+      EXTERNAL_AI_ENABLED: "false"
+      KNOWLEDGE_V2_ENABLED: "false"
+      KNOWLEDGE_V2_SHADOW_READ: "false"
+      KNOWLEDGE_V2_ROLLOUT_PERCENT: "0"
+      KNOWLEDGE_V2_WRITE_ENABLED: "false"
+      NETWORK_WRITE_ENABLED: "false"
+      PRODUCTION_CREDENTIALS_ALLOWED: "false"
+      AI_GATEWAY_MODE: mock
+      DATA_CLASSIFICATION: synthetic
+      DEVICE_CREDENTIAL_SOURCE: fixture
+      KB_V2_SECRET_NAMESPACE: nexora-kb-v2/test
 
     steps:
       - name: Checkout
@@ -34,6 +54,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install pytest
+
+      - name: Validate isolated V2 test configuration
+        run: python scripts/validate_kb_v2_test_config.py --file docs/knowledge-engine-v2/governance/test-environment.example --environment test
 
       - name: Run pytest (strict)
         run: pytest

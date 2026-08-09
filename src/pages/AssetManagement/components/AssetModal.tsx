@@ -9,14 +9,20 @@ import { AssetTagPicker } from './AssetTagPicker';
 import { isReservedSystemSite } from '../../../utils/siteIdentity';
 
 const TOPOLOGY_ROLE_OPTIONS = [
-  { value: 'core', label: { zh: '核心层', en: 'Core' } },
-  { value: 'distribution', label: { zh: '汇聚层', en: 'Distribution' } },
-  { value: 'access', label: { zh: '接入层', en: 'Access' } },
-  { value: 'edge', label: { zh: '边缘层', en: 'Edge' } },
-  { value: 'switch', label: { zh: '通用交换机', en: 'Switch' } },
   { value: 'router', label: { zh: '路由器', en: 'Router' } },
   { value: 'firewall', label: { zh: '防火墙', en: 'Firewall' } },
+  { value: 'core_switch', label: { zh: '核心交换机', en: 'Core Switch' } },
+  { value: 'aggregation_switch', label: { zh: '汇聚交换机', en: 'Aggregation Switch' } },
+  { value: 'access_switch', label: { zh: '接入交换机', en: 'Access Switch' } },
+  { value: 'server_switch', label: { zh: '服务器交换机', en: 'Server Switch' } },
+  { value: 'wireless_ac', label: { zh: '无线 AC', en: 'Wireless AC' } },
+  { value: 'wireless_ap', label: { zh: '无线 AP', en: 'Wireless AP' } },
+  { value: 'load_balancer', label: { zh: '负载均衡', en: 'Load Balancer' } },
+  { value: 'sdwan_edge', label: { zh: 'SD-WAN Edge', en: 'SD-WAN Edge' } },
+  { value: 'oob_switch', label: { zh: 'OOB 管理交换机', en: 'OOB Switch' } },
+  { value: 'server', label: { zh: '服务器', en: 'Server' } },
   { value: 'other', label: { zh: '其他', en: 'Other' } },
+  { value: 'unknown', label: { zh: '未知', en: 'Unknown' } },
 ] as const;
 
 interface AssetModalProps {
@@ -381,6 +387,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   )}
                 </select>
               </div>
+              <Field label={zh ? '功能' : 'Function'} value={form.function || ''} onChange={v => setForm(f => ({ ...f, function: v }))} placeholder={zh ? '如：核心路由 / 业务服务器' : 'e.g. core routing / application'} />
+              <Field label={zh ? '区域' : 'Zone'} value={form.zone || ''} onChange={v => setForm(f => ({ ...f, zone: v }))} placeholder={zh ? '如：生产区 / OOB' : 'e.g. production / OOB'} />
               <Field label={zh ? '额定功率 (W)' : 'Power (W)'} value={form.power_watts} onChange={v => setForm(f => ({ ...f, power_watts: v }))} placeholder="e.g. 350" />
             </div>
 
@@ -394,11 +402,14 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 title="Topology Role"
               >
                 <option value="">{zh ? '请选择拓扑角色...' : 'Select topology role...'}</option>
+                {form.device_role && !TOPOLOGY_ROLE_OPTIONS.some(option => option.value === form.device_role) && (
+                  <option value={form.device_role}>{form.device_role} (legacy)</option>
+                )}
                 {TOPOLOGY_ROLE_OPTIONS.map(option => (
                   <option key={option.value} value={option.value}>{option.label[zh ? 'zh' : 'en']}</option>
                 ))}
               </select>
-              <p className="mt-1 text-[9px] text-cyan-900/50">{zh ? '用于拓扑图分层，不等同于接口的 access/trunk 模式。' : 'Controls topology layers; different from interface access/trunk mode.'}</p>
+              <p className="mt-1 text-[9px] text-cyan-900/50">{zh ? '记录设备身份；拓扑层级由关系证据和布局算法计算，不由角色固定。' : 'Records device identity; topology layers are calculated from evidence, not fixed by role.'}</p>
             </div>}
 
             {(form.asset_type === 'network_device' || form.asset_type === 'server') && (

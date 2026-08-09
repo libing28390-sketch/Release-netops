@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from database.core import get_db_connection
-from ai.security.crypto import encrypt_api_key, mask_api_key, decrypt_api_key
+from ai.security.crypto import encrypt_api_key, mask_api_key
 from ai.security.permissions import require_ai_permission
 from ai.schemas.provider import (
     AIProviderCreate,
@@ -17,8 +17,8 @@ from ai.schemas.provider import (
     AIProviderTestResponse,
     AIProviderUpdate,
 )
-from ai.providers.deepseek import DeepSeekProvider
-from ai.providers.openai_compatible import OpenAICompatibleProvider
+from ai.gateway.exceptions import AIException
+from ai.gateway.llm_gateway import llm_gateway
 
 router = APIRouter(prefix="/providers", tags=["AI Providers"])
 
@@ -52,6 +52,11 @@ def list_providers(user=Depends(require_ai_permission("ai.provider.manage"))):
 @router.post("", response_model=AIProviderResponse, status_code=status.HTTP_201_CREATED)
 def create_provider(payload: AIProviderCreate, user=Depends(require_ai_permission("ai.provider.manage"))):
     """Create a new AI Provider with AES-256-GCM encrypted API key."""
+    if payload.base_url and payload.base_url.rstrip('/') not in {
+        'https://api.deepseek.com',
+        'https://api.deepseek.com/v1',
+    }:
+        raise HTTPException(status_code=400, detail='DeepSeek provider must use the official HTTPS endpoint')
     now_iso = datetime.now(timezone.utc).isoformat()
     p_id = f"prov_{uuid.uuid4().hex[:12]}"
     
@@ -88,8 +93,8 @@ def create_provider(payload: AIProviderCreate, user=Depends(require_ai_permissio
             })
         elif p_type == "deepseek":
             models_to_create.extend([
-                {"code": "deepseek-chat", "name": "DeepSeek Chat", "type": "chat"},
-                {"code": "deepseek-reasoner", "name": "DeepSeek Reasoner (R1)", "type": "chat", "thinking": True}
+                {"code": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "type": "chat"},
+                {"code": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "type": "chat", "thinking": True}
             ])
         elif p_type in ("openai", "qwen"):
             default_code = "gpt-4o" if p_type == "openai" else "qwen-max"
@@ -147,6 +152,11 @@ def create_provider(payload: AIProviderCreate, user=Depends(require_ai_permissio
 @router.put("/{provider_id}", response_model=AIProviderResponse)
 def update_provider(provider_id: str, payload: AIProviderUpdate, user=Depends(require_ai_permission("ai.provider.manage"))):
     """Update an existing AI Provider."""
+    if payload.base_url and payload.base_url.rstrip('/') not in {
+        'https://api.deepseek.com',
+        'https://api.deepseek.com/v1',
+    }:
+        raise HTTPException(status_code=400, detail='DeepSeek provider must use the official HTTPS endpoint')
     now_iso = datetime.now(timezone.utc).isoformat()
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -205,40 +215,49 @@ def delete_provider(provider_id: str, user=Depends(require_ai_permission("ai.pro
 
 @router.post("/{provider_id}/test", response_model=AIProviderTestResponse)
 async def test_provider_connection(provider_id: str, user=Depends(require_ai_permission("ai.provider.manage"))):
-    """Test API connection to an AI Provider."""
+    """Test through the same security gateway as production traffic.
+
+    A Provider object must never expose a direct test path that can bypass the
+    egress policy. The probe contains only a public, non-enterprise prompt.
+    """
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, name, provider_type, base_url, api_key_encrypted, timeout, max_retries, proxy_url FROM ai_provider WHERE id = ?",
+            "SELECT id, name, provider_type FROM ai_provider WHERE id = ?",
             (provider_id,)
         )
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found.")
         
-        p_data = {
-            "id": row[0],
-            "name": row[1],
-            "provider_type": row[2],
-            "base_url": row[3],
-            "timeout": row[5],
-            "max_retries": row[6],
-            "proxy_url": row[7],
-        }
-        plain_key = decrypt_api_key(row[4])
-        
-        p_type = p_data["provider_type"].lower()
-        if p_type == "deepseek":
-            provider_inst = DeepSeekProvider(p_data, api_key=plain_key)
-        else:
-            provider_inst = OpenAICompatibleProvider(p_data, api_key=plain_key)
-        
-        res = await provider_inst.test_connection()
+        model_row = cursor.execute(
+            "SELECT id, model_code FROM ai_model WHERE provider_id = ? AND enabled = 1 ORDER BY is_default DESC, priority DESC LIMIT 1",
+            (provider_id,),
+        ).fetchone()
+    if not model_row:
+        raise HTTPException(status_code=400, detail="Provider has no enabled V4 model")
+    started = datetime.now(timezone.utc)
+    try:
+        result = await llm_gateway.chat(
+            scene="provider_test",
+            model_id=model_row[0],
+            messages=[{"role": "user", "content": "Reply with one short word: ok"}],
+            user_id=str(user.get("username") or "provider-test"),
+            tenant_id=str(user.get("tenant_id") or "tenant-default"),
+            max_tokens=16,
+        )
         return AIProviderTestResponse(
-            success=res["success"],
-            latency_ms=res["latency_ms"],
-            message=res["message"],
-            model_tested=res.get("model_tested"),
-            sample_response=res.get("sample_response"),
-            error_code=res.get("error_code")
+            success=True,
+            latency_ms=int((datetime.now(timezone.utc) - started).total_seconds() * 1000),
+            message="provider connection succeeded through security gateway",
+            model_tested=model_row[1],
+            sample_response=str(result.get("content") or "")[:150],
+        )
+    except AIException as exc:
+        return AIProviderTestResponse(
+            success=False,
+            latency_ms=int((datetime.now(timezone.utc) - started).total_seconds() * 1000),
+            message="provider connection test blocked or failed",
+            model_tested=model_row[1],
+            error_code=exc.code,
         )

@@ -1,3 +1,5 @@
+import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Body, HTTPException, Query, Depends
 from core.rbac import require_role
@@ -7,6 +9,7 @@ from database import get_db_connection
 from services import alert_maintenance_service
 from services import alert_rule_service
 from services.audit_service import log_audit_event
+from services.alert_control_service import AlertState, check_no_data, compute_health, correlate_alerts, detect_storm, suppress_dependency_alerts, transition_state
 
 
 router = APIRouter()
@@ -66,6 +69,213 @@ def _row_to_alert(row) -> dict:
     item['is_open'] = resolved_at is None
     item['note'] = item.get('note') or ''
     return item
+
+
+@router.get('/alerts/{alert_id}/activity')
+def list_alert_activity(alert_id: str, limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0)):
+    """Return metadata-only state transitions for one alert."""
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, alert_id, event_type, actor_id, from_state, to_state, note, metadata_json, created_at FROM alert_activity WHERE alert_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (alert_id, limit, offset),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item['metadata'] = json.loads(item.pop('metadata_json') or '{}')
+            except Exception:
+                item['metadata'] = {}
+            items.append(item)
+        return {'items': items, 'alert_id': alert_id, 'limit': limit, 'offset': offset}
+    except Exception:
+        # Keep the endpoint compatible with installations before m0105.
+        return {'items': [], 'alert_id': alert_id, 'limit': limit, 'offset': offset}
+    finally:
+        conn.close()
+
+
+@router.get('/alerts/{alert_id}/correlations')
+def list_alert_correlations(alert_id: str, limit: int = Query(default=100, ge=1, le=500)):
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, alert_id, root_alert_id, correlation_type, confidence, evidence_json, created_at FROM alert_correlations WHERE alert_id = ? ORDER BY confidence DESC, created_at DESC LIMIT ?",
+            (alert_id, limit),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item['evidence'] = json.loads(item.pop('evidence_json') or '[]')
+            except Exception:
+                item['evidence'] = []
+            items.append(item)
+        return {'items': items, 'alert_id': alert_id}
+    except Exception:
+        return {'items': [], 'alert_id': alert_id}
+    finally:
+        conn.close()
+
+
+@router.get('/alerts/storms')
+def list_alert_storms(limit: int = Query(default=50, ge=1, le=200), status: str = Query(default='open')):
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, tenant_id, fingerprint, window_start, window_end, alert_count, site_count, type_count, status, metadata_json FROM alert_storms WHERE status = ? ORDER BY window_start DESC LIMIT ?",
+            (status, limit),
+        ).fetchall()
+        return {'items': [dict(row) for row in rows]}
+    except Exception:
+        return {'items': []}
+    finally:
+        conn.close()
+
+
+@router.post('/alerts/dry-run')
+def alert_rule_dry_run(payload: dict = Body(...)):
+    """Evaluate lifecycle policy without changing alert_events or notifications."""
+    state = AlertState(state=str(payload.get('state') or 'OK'))
+    transition = transition_state(
+        state,
+        breached=bool(payload.get('breached', False)),
+        for_seconds=int(payload.get('for_seconds') or 0),
+        recovery_threshold=int(payload.get('recovery_threshold') or 1),
+        recovery_seconds=int(payload.get('recovery_seconds') or 0),
+    )
+    return {
+        'state': transition.state,
+        'emit': transition.emit,
+        'event': transition.event,
+        'reason': transition.reason,
+        'counters': {'breach_count': state.breach_count, 'recovery_count': state.recovery_count},
+        'side_effects': [],
+    }
+
+
+@router.post('/alerts/analyze-batch')
+def analyze_alert_batch(payload: dict = Body(...)):
+    """Return explainable correlation/suppression/storm results without writes."""
+    alerts = payload.get('alerts') if isinstance(payload.get('alerts'), list) else []
+    edges = payload.get('edges') if isinstance(payload.get('edges'), list) else []
+    correlations = correlate_alerts(alerts)
+    suppressed = suppress_dependency_alerts(alerts, edges)
+    storm = detect_storm(alerts, count_threshold=int(payload.get('storm_threshold') or 20))
+    return {'alerts': suppressed, 'correlations': correlations, 'storm': storm, 'external_calls': 0}
+
+
+def _parse_optional_timestamp(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail='last_sample_at must be an ISO timestamp') from exc
+
+
+@router.post('/alerts/health/evaluate')
+def evaluate_alert_health(payload: dict = Body(...)):
+    """Evaluate health/no-data evidence without creating an alert or probing out."""
+    return {
+        'health': compute_health(
+            icmp=payload.get('icmp'),
+            snmp=payload.get('snmp'),
+            ssh=payload.get('ssh'),
+        ),
+        'no_data': check_no_data(
+            _parse_optional_timestamp(payload.get('last_sample_at')),
+            threshold_seconds=int(payload.get('no_data_seconds') or 300),
+        ),
+        'external_calls': 0,
+    }
+
+
+@router.get('/alerts/silences')
+def list_alert_silences(status: str = Query(default='active'), limit: int = Query(default=100, ge=1, le=500)):
+    """List notification silences separately from scheduled maintenance."""
+    conn = get_db_connection()
+    try:
+        now = _utc_now_iso()
+        conn.execute("UPDATE alert_silences SET status = 'expired' WHERE status = 'active' AND ends_at < ?", (now,))
+        params: list = []
+        where = ""
+        if status != 'all':
+            where = "WHERE status = ?"
+            params.append(status)
+        rows = conn.execute(
+            f"SELECT id, tenant_id, scope_json, reason, starts_at, ends_at, created_by, status FROM alert_silences {where} ORDER BY starts_at DESC LIMIT ?",
+            tuple([*params, limit]),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item['scope'] = json.loads(item.pop('scope_json') or '{}')
+            except (TypeError, ValueError):
+                item['scope'] = {}
+            items.append(item)
+        conn.commit()
+        return {'items': items}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail='Alert silence storage is not available') from exc
+    finally:
+        conn.close()
+
+
+@router.post('/alerts/silences')
+def create_alert_silence(payload: dict = Body(...)):
+    """Create a temporary notification silence; raw alert state is preserved."""
+    reason = str(payload.get('reason') or '').strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail='reason is required')
+    scope = payload.get('scope') if isinstance(payload.get('scope'), dict) else {}
+    starts_at = str(payload.get('starts_at') or _utc_now_iso())
+    ends_at = str(payload.get('ends_at') or '')
+    if not ends_at:
+        raise HTTPException(status_code=400, detail='ends_at is required')
+    try:
+        start_dt = datetime.fromisoformat(starts_at.replace('Z', '+00:00'))
+        end_dt = datetime.fromisoformat(ends_at.replace('Z', '+00:00'))
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=timezone.utc)
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=timezone.utc)
+        if start_dt >= end_dt:
+            raise ValueError
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail='ends_at must be later than starts_at') from exc
+    silence_id = f"silence_{uuid.uuid4().hex[:16]}"
+    now = _utc_now_iso()
+    created_by = str(payload.get('created_by') or 'system')[:128]
+    tenant_id = str(payload.get('tenant_id') or 'tenant-default')[:128]
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO alert_silences (id, tenant_id, scope_json, reason, starts_at, ends_at, created_by, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+            (silence_id, tenant_id, json.dumps(scope, ensure_ascii=False), reason, starts_at, ends_at, created_by, now),
+        )
+        conn.commit()
+        return {'id': silence_id, 'tenant_id': tenant_id, 'scope': scope, 'reason': reason, 'starts_at': starts_at, 'ends_at': ends_at, 'created_by': created_by, 'status': 'active', 'created_at': now}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail='Alert silence storage is not available') from exc
+    finally:
+        conn.close()
+
+
+@router.post('/alerts/silences/{silence_id}/expire')
+def expire_alert_silence(silence_id: str, payload: dict = Body(default={} )):
+    conn = get_db_connection()
+    try:
+        result = conn.execute("UPDATE alert_silences SET status = 'expired' WHERE id = ? AND status = 'active'", (silence_id,))
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail='Active silence not found')
+        conn.commit()
+        return {'success': True, 'id': silence_id, 'status': 'expired', 'actor': payload.get('actor_username') or 'system'}
+    finally:
+        conn.close()
 
 
 @router.get('/alerts/summary')
@@ -839,5 +1049,3 @@ def update_alert_note(alert_id: str, payload: dict = Body(default={})):
         return {'success': True}
     finally:
         conn.close()
-
-

@@ -21,6 +21,7 @@ AI_PERMISSION_CODES = {
     "ai.prompt.manage": "Manage AI Prompt Center & Templates",
     "ai.knowledge.manage": "Manage AI Knowledge Base & RAG Documents",
     "ai.audit.view": "View AI Audit Logs & Usage Dashboards",
+    "ai.agent.use": "Run read-only AI agents",
 }
 
 # Role permissions mapping
@@ -28,7 +29,8 @@ ROLE_AI_PERMISSIONS: Dict[str, Set[str]] = {
     "Administrator": set(AI_PERMISSION_CODES.keys()),
     "Operator": {
         "ai.view", "ai.use", "ai.command_explain", "ai.config_analyze",
-        "ai.diff_analyze", "ai.alarm_analyze", "ai.assistant", "ai.audit.view"
+        "ai.diff_analyze", "ai.alarm_analyze", "ai.assistant", "ai.audit.view",
+        "ai.agent.use",
     },
     "Viewer": {
         "ai.view", "ai.command_explain", "ai.config_analyze",

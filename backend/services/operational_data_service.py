@@ -32,6 +32,7 @@ SUPPORTED_CATEGORIES = (
     'ospf',
     'eigrp',
     'isis',
+    'stp',
     'rip',
     'bfd',
     'bgp_routes',
@@ -379,7 +380,10 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'mac_table': ['display mac-address'],
         'vlan': ['display vlan brief'],
         'routing_table': ['display ip routing-table'],
-        'bgp': ['display bgp peer ipv4 unicast'],
+        # Comware V5 accepts the family command without the V7/V9 `unicast`
+        # suffix. Keep this catalog separate from H3C Comware V7/V9 so a
+        # parser template cannot be selected for the wrong CLI grammar.
+        'bgp': ['display bgp peer ipv4'],
         'ospf': ['display ospf peer'],
         'bgp_routes': ['display bgp routing-table ipv4'],
         'ntp': ['display ntp-service status'],
@@ -480,6 +484,27 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
     },
 }
 
+# STP/MSTP is a separate operational category. Its records become
+# L2_NEIGHBOR evidence with state/role/instance metadata; it never creates a
+# PHYSICAL relation by itself.
+_STP_COMMANDS = {
+    'cisco_ios': ['show spanning-tree'],
+    'cisco_nxos': ['show spanning-tree'],
+    'arista_eos': ['show spanning-tree'],
+    'huawei_vrp': ['display stp brief'],
+    'huawei_vrpv8': ['display stp brief'],
+    'h3c_comware': ['display stp brief'],
+    'h3c_comware9': ['display stp brief'],
+    'hp_comware': ['display stp brief'],
+    'ruijie_rgos': ['show spanning-tree'],
+    'zte_zxros': ['show spanning-tree'],
+    'dptech_ios': ['show spanning-tree'],
+    'maipu': ['show spanning-tree'],
+    'juniper_junos': ['show spanning-tree bridge'],
+}
+for _platform_name, _commands in _STP_COMMANDS.items():
+    COMMAND_CATALOG.setdefault(_platform_name, {})['stp'] = _commands
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -512,6 +537,7 @@ def _resolve_categories(
             "ospf": "ospf",
             "eigrp": "eigrp",
             "isis": "isis",
+            "stp": "stp",
             "rip": "rip",
             "bfd": "bfd",
             "mac_table": "mac_table",
@@ -538,7 +564,8 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
         'neighbors': 'get_lldp_neighbors', 'interfaces': 'get_interface_brief',
         'arp': 'get_arp_table', 'mac_table': 'get_mac_table', 'vlan': 'get_vlan_table',
         'routing_table': 'get_route_table', 'bgp': 'get_bgp_neighbors',
-        'ospf': 'get_ospf_neighbors', 'eth_trunk': 'get_link_aggregation',
+        'ospf': 'get_ospf_neighbors', 'isis': 'get_isis_neighbors', 'stp': 'get_stp',
+        'eth_trunk': 'get_link_aggregation',
         'transceiver': 'get_transceivers', 'version': 'get_version',
     }
     from services.platform_registry_service import SYSTEM_PROFILES, resolve_action_mapping, normalize_platform_code
@@ -594,6 +621,8 @@ _REGISTRY_ACTION_BY_CATEGORY = {
     'bgp': 'get_bgp_neighbors',
     'bgp_routes': 'get_bgp_routes',
     'ospf': 'get_ospf_neighbors',
+    'isis': 'get_isis_neighbors',
+    'stp': 'get_stp',
     'eth_trunk': 'get_link_aggregation',
     'transceiver': 'get_transceivers',
     'version': 'get_version',
@@ -1375,7 +1404,70 @@ def _parse_aggregation_raw(output: str, platform: str = '') -> list[dict[str, An
     return records
 
 
+def _parse_stp_raw(output: str, platform: str = '') -> list[dict[str, Any]]:
+    """Parse common Cisco/Huawei/Comware STP and MSTP summary rows.
+
+    The parser is intentionally conservative: a line must contain an
+    interface and a forwarding/blocking state (or an explicit STP role). A
+    partial bridge summary therefore cannot manufacture a topology edge.
+    """
+    records: list[dict[str, Any]] = []
+    interface_pattern = re.compile(
+        r'\b(?:Gi|Fa|Te|Eth|Ethernet|GE|XGigabitEthernet|GigabitEthernet|'
+        r'ge-|xe-|et-|ae|Po|Port-channel|Bridge-Aggregation|Eth-Trunk)'
+        r'[A-Za-z0-9./:-]*\d[A-Za-z0-9./:-]*\b',
+        re.IGNORECASE,
+    )
+    state_pattern = re.compile(
+        r'\b(FWD|FORWARDING|FORWARD|BLK|BLOCKING|DISCARDING|LEARN|LEARNING|'
+        r'LISTEN|LISTENING|DOWN|UP|ACTIVE|INACTIVE)\b', re.IGNORECASE,
+    )
+    role_pattern = re.compile(
+        r'\b(ROOT|DESG|DESIGNATED|ALTN|ALTERNATE|BACKUP|MASTER|DISCARDING)\b',
+        re.IGNORECASE,
+    )
+    instance_pattern = re.compile(r'\b(?:MSTI?|INSTANCE|VLAN)\s*[-:]?\s*(\d+)\b', re.IGNORECASE)
+    bridge_pattern = re.compile(r'\b(?:[0-9a-f]{4}\.){2}[0-9a-f]{4}\b', re.IGNORECASE)
+    error_markers = ('invalid input', 'unrecognized', 'unknown command', 'not found', 'error')
+
+    for raw_line in str(output or '').splitlines():
+        line = raw_line.strip()
+        lower = line.lower()
+        if not line or any(marker in lower for marker in error_markers):
+            continue
+        interface_match = interface_pattern.search(line)
+        state_match = state_pattern.search(line)
+        role_match = role_pattern.search(line)
+        if not interface_match or (not state_match and not role_match):
+            continue
+        state = (state_match.group(1) if state_match else '').upper()
+        state_aliases = {
+            'FWD': 'forwarding', 'FORWARD': 'forwarding', 'FORWARDING': 'forwarding',
+            'BLK': 'blocking', 'BLOCKING': 'blocking', 'DISCARDING': 'blocking',
+            'LEARN': 'learning', 'LEARNING': 'learning', 'LISTEN': 'listening',
+            'LISTENING': 'listening', 'UP': 'forwarding', 'DOWN': 'down',
+            'ACTIVE': 'forwarding', 'INACTIVE': 'down',
+        }
+        role = (role_match.group(1).upper() if role_match else '')
+        role_aliases = {'DESG': 'designated', 'DESIGNATED': 'designated', 'ROOT': 'root', 'ALTN': 'alternate', 'ALTERNATE': 'alternate', 'BACKUP': 'backup', 'MASTER': 'master'}
+        record: dict[str, Any] = {
+            'interface': interface_match.group(0),
+            'state': state_aliases.get(state, state.lower() or 'discovered'),
+            'role': role_aliases.get(role, role.lower()),
+            'instance': (instance_pattern.search(line).group(1) if instance_pattern.search(line) else '0'),
+        }
+        bridge_match = bridge_pattern.search(line)
+        if bridge_match:
+            record['designated_bridge'] = bridge_match.group(0)
+        records.append(record)
+    return records
+
+
 def _parse_command_output(platform: str, category: str, command: str, output: str) -> list[dict[str, Any]]:
+    if category == 'stp':
+        raw_stp = _parse_stp_raw(output, platform)
+        if raw_stp:
+            return raw_stp
     records: list[dict[str, Any]] = []
     try:
         records = _parse_with_ntc(platform, command, output)

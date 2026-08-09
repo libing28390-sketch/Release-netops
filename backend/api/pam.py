@@ -26,14 +26,46 @@ import io
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query, Request
+from fastapi import APIRouter, Body, HTTPException, WebSocket, WebSocketDisconnect, Query, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
+from core.rbac import require_permission
 
 from database import get_db_connection
+from core.config import settings
 from services.vault_service import resolve_device_credentials
 from services.audit_service import log_audit_event
 from services.connection_profile import resolve_ssh_port
+from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
+from services.pam_audit_service import (
+    CommandAssembler,
+    PromptParser,
+    assess_command,
+    redact_output,
+    record_command_output,
+    build_command_submission,
+    persist_command_submission,
+    mark_command_event,
+    create_approval_request,
+    decide_approval,
+    create_change_transaction,
+    record_session_intervention,
+    create_jit_grant,
+    revoke_jit_grant,
+    check_jit_grant,
+    review_break_glass,
+    record_file_transfer,
+    create_batch_operation,
+    update_batch_progress,
+    create_deferred_action,
+    detect_behavior_risk,
+    reconcile_tacacs_event,
+    create_rollback_checkpoint,
+    verify_rollback_checkpoint,
+    generate_session_summary,
+    explain_command_risk,
+    queue_external_event,
+)
 
 router = APIRouter()
 # WebSocket 路由单独放在无依赖的 router，避免 FastAPI 在 WS 握手阶段
@@ -160,6 +192,15 @@ def _resolve_session_creds(device: dict, asset: dict, access_level: str) -> dict
             username = 'user' if is_server else 'admin'
 
     return {'username': username or '', 'password': password or ''}
+
+
+def _ssh_failure_message(error: Exception) -> tuple[str, str | None]:
+    """Return a safe user-facing PAM SSH error without exposing credentials."""
+    raw_error = str(error or '').strip()
+    error_code = get_ssh_error_code(raw_error)
+    if error_code:
+        return f'{error_code}: {build_ssh_error_guidance(raw_error)}', error_code
+    return f'ssh_connection_failed: {raw_error or "SSH connection failed"}', None
 
 
 def _verify_mfa(username: str, fixed_pin: str, mfa_code: str, mfa_nonce: Optional[str] = None) -> tuple[bool, str]:
@@ -308,6 +349,10 @@ def create_session(payload: SessionCreateIn, request: Request):
         if not auth_session or not auth_session.get('username'):
             raise HTTPException(status_code=401, detail='Not authenticated')
         requester = auth_session['username']
+        tenant_id = str(auth_session.get('tenant_id') or 'tenant-default')
+        device_tenant = str(device.get('tenant_id') or 'tenant-default')
+        if tenant_id != 'tenant-default' and device_tenant not in {tenant_id, 'tenant-default'}:
+            raise HTTPException(status_code=404, detail='Asset not found')
 
         # 3. Access control: admin requires MFA
         level = (payload.access_level or 'normal').strip().lower()
@@ -346,14 +391,14 @@ def create_session(payload: SessionCreateIn, request: Request):
 
         conn.execute('''
             INSERT INTO pam_sessions (
-                id, asset_id, device_id, requester_username, access_level,
+                id, tenant_id, asset_id, device_id, requester_username, access_level,
                 login_username, connect_method, target_ip, target_port,
                 target_hostname,
                 status, session_token, token_expires_at, token_consumed,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
         ''', (
-            session_id, payload.asset_id, device['id'], requester,
+            session_id, tenant_id, payload.asset_id, device['id'], requester,
             level, creds['username'], payload.connect_method,
             ip, target_port,
             asset.get('hostname') or device.get('hostname') or ip,
@@ -411,6 +456,7 @@ def list_sessions(
     risk_level: str = '',
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
+    user=require_permission('pam', 'view'),
 ):
     """List PAM sessions for admin monitoring."""
     conn = get_db_connection()
@@ -428,6 +474,10 @@ def list_sessions(
 
         conditions = []
         params = []
+        tenant_id = str(user.get('tenant_id') or 'tenant-default') if isinstance(user, dict) else None
+        if tenant_id:
+            conditions.append("(tenant_id = ? OR tenant_id = 'tenant-default' OR tenant_id IS NULL)")
+            params.append(tenant_id)
         if status:
             normalized_status = status.strip().lower()
             if normalized_status == 'active':
@@ -536,6 +586,7 @@ def export_sessions_csv(
     access_level: str = '',
     connect_method: str = '',
     risk_level: str = '',
+    user=require_permission('pam', 'view'),
 ):
     """Export the filtered PAM audit result without exposing credentials."""
     items: list[dict] = []
@@ -550,6 +601,7 @@ def export_sessions_csv(
             risk_level=risk_level,
             page=page,
             page_size=200,
+            user=user,
         )
         batch = result.get('items') or []
         items.extend(batch)
@@ -593,13 +645,18 @@ def export_sessions_csv(
 
 
 @router.post('/pam/sessions/{session_id}/kill')
-async def kill_session(session_id: str):
+async def kill_session(session_id: str, user=require_permission('pam', 'intervene')):
     """Admin force-terminate an active session."""
     conn = get_db_connection()
     try:
         row = conn.execute('SELECT * FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail='Session not found')
+        if isinstance(user, dict):
+            row_tenant = str((dict(row).get('tenant_id') or 'tenant-default'))
+            user_tenant = str(user.get('tenant_id') or 'tenant-default')
+            if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
+                raise HTTPException(status_code=404, detail='Session not found')
         if row['status'] in ('closed', 'error'):
             # Still pop from memory map in case of leftover WS
             _active_sessions.pop(session_id, None)
@@ -641,13 +698,20 @@ async def kill_session(session_id: str):
 
 
 @router.get('/pam/sessions/{session_id}/recording')
-def get_session_recording(session_id: str):
+def get_session_recording(session_id: str, user=require_permission('pam', 'view')):
     """Retrieve session recording file."""
     conn = get_db_connection()
     try:
         row = conn.execute('SELECT recording_path FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
         if not row or not row['recording_path']:
             raise HTTPException(status_code=404, detail='Recording not found')
+        if isinstance(user, dict):
+            session_row = conn.execute('SELECT tenant_id FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
+            if session_row:
+                row_tenant = str(session_row['tenant_id'] or 'tenant-default')
+                user_tenant = str(user.get('tenant_id') or 'tenant-default')
+                if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
+                    raise HTTPException(status_code=404, detail='Recording not found')
         
         import os
         path = row['recording_path']
@@ -789,30 +853,39 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
             return client
 
         logger.info(f"[PAM] Attempting SSH connection to {ip}:{port} as {username}...")
+        legacy_ssh = bool(getattr(settings, 'PAM_ALLOW_LEGACY_SSH', False))
+        encryption_algs = [
+            'chacha20-poly1305@openssh.com', 'aes256-gcm@openssh.com', 'aes128-gcm@openssh.com',
+            'aes256-ctr', 'aes192-ctr', 'aes128-ctr',
+        ]
+        kex_algs = [
+            'curve25519-sha256', 'curve25519-sha256@libssh.org',
+            'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521',
+            'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group14-sha1',
+        ]
+        mac_algs = [
+            'hmac-sha2-256-etm@openssh.com', 'hmac-sha2-512-etm@openssh.com',
+            'hmac-sha2-256', 'hmac-sha2-512',
+        ]
+        if legacy_ssh:
+            encryption_algs.extend(['aes256-cbc', 'aes192-cbc', 'aes128-cbc', '3des-cbc'])
+            kex_algs.append('diffie-hellman-group1-sha1')
+            mac_algs.extend(['hmac-sha1-etm@openssh.com', 'hmac-sha1', 'hmac-md5'])
         ssh_conn = await asyncssh.connect(
             ip, port=port, username=username, password=password,
-            known_hosts=None, client_factory=custom_client_factory,
+            # PAM Web login intentionally does not require per-asset host-key
+            # registration. The session is still recorded and audited; an
+            # operator can use the separate network/security controls when a
+            # deployment needs strict SSH host-key policy.
+            known_hosts=None,
+            client_factory=custom_client_factory,
             login_timeout=15,
             agent_path=None, client_keys=[],
             # Support legacy devices that only use CBC ciphers
-            encryption_algs=[
-                'chacha20-poly1305@openssh.com',
-                'aes256-gcm@openssh.com', 'aes128-gcm@openssh.com',
-                'aes256-ctr', 'aes192-ctr', 'aes128-ctr',
-                'aes256-cbc', 'aes192-cbc', 'aes128-cbc', '3des-cbc'
-            ],
+            encryption_algs=encryption_algs,
             # Also support legacy KEX and MACs often found on older switches
-            kex_algs=[
-                'curve25519-sha256', 'curve25519-sha256@libssh.org',
-                'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521',
-                'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group14-sha1',
-                'diffie-hellman-group1-sha1'
-            ],
-            mac_algs=[
-                'hmac-sha2-256-etm@openssh.com', 'hmac-sha2-512-etm@openssh.com',
-                'hmac-sha1-etm@openssh.com', 'hmac-sha2-256', 'hmac-sha2-512',
-                'hmac-sha1', 'hmac-md5'
-            ]
+            kex_algs=kex_algs,
+            mac_algs=mac_algs,
         )
         logger.info(f"[PAM] SSH connection established to {ip}:{port}")
         
@@ -825,12 +898,22 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
         logger.info(f"[PAM] SSH process created for session {session_id}")
         # SSH Established! Now consume the token.
         _consume_token(session_id)
-    except Exception as e:
-        logger.error(f'[PAM] SSH connection failed for session {session_id}: {e}')
-        _update_session_status(session_id, 'error', close_reason=f'ssh_error: {e}')
+    except Exception as exc:
+        safe_message, error_code = _ssh_failure_message(exc)
+        logger.error(
+            '[PAM] SSH connection failed for session %s code=%s',
+            session_id,
+            error_code or 'ssh_connection_failed',
+            exc_info=True,
+        )
+        _update_session_status(
+            session_id,
+            'error',
+            close_reason=f"ssh_connection_failed:{error_code or 'unknown'}",
+        )
         try:
-            await websocket.send_text(json.dumps({'type': 'error', 'message': f'SSH connection failed: {e}'}))
-            await websocket.close(code=1011)
+            await websocket.send_text(json.dumps({'type': 'error', 'message': safe_message}, ensure_ascii=False))
+            await websocket.close(code=1011, reason=error_code or 'ssh_connection_failed')
         except Exception:
             pass
         return
@@ -893,16 +976,91 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
     close_reason = 'user_disconnect'
     # Track last user activity (keyboard input) for idle timeout enforcement
     last_activity_ts = [time.time()]
+    command_assembler = CommandAssembler()
+    prompt_parser = PromptParser()
+    command_index = 0
+    command_history: list[str] = []
+    cli_mode_state = ['unknown']
+    active_command_event_id: str | None = None
+    audit_tasks: set[asyncio.Task] = set()
+    audit_tail: asyncio.Task | None = None
+    previous_event_hash = str(session.get('last_event_hash') or '') or None
     IDLE_TIMEOUT_SECONDS = 5 * 60  # 5 minutes
     try:
+        def schedule_audit_write(function, *args, **kwargs) -> asyncio.Task:
+            """Queue ordered audit I/O without delaying terminal traffic."""
+            nonlocal audit_tail
+            previous_task = audit_tail
+
+            async def run_ordered():
+                if previous_task:
+                    await previous_task
+                await asyncio.to_thread(function, *args, **kwargs)
+
+            task = asyncio.create_task(run_ordered())
+            audit_tasks.add(task)
+            task.add_done_callback(audit_tasks.discard)
+            audit_tail = task
+            return task
+
         async def upstream():
+            nonlocal command_index, active_command_event_id, previous_event_hash
+
+            def record_submitted_command(command: str):
+                """Build the audit projection after the device received the line."""
+                nonlocal command_index, active_command_event_id, previous_event_hash
+                command_index += 1
+                vendor_platform = str(device.get('platform') or 'unknown')
+                decision = assess_command(
+                    command,
+                    vendor_platform=vendor_platform,
+                    context={'change_window': session.get('change_window') or 'normal'},
+                    asset={'criticality': device.get('criticality') or device.get('importance') or 'normal'},
+                    source_type='interactive',
+                    history=command_history,
+                )
+                submission = build_command_submission(
+                    tenant_id=str(session.get('tenant_id') or 'tenant-default'),
+                    session_id=session_id,
+                    actor_id=str(session.get('requester_username') or username),
+                    device_id=str(session.get('device_id') or ''),
+                    source_type='interactive',
+                    command_index=command_index,
+                    decision=decision,
+                    vendor_platform=vendor_platform,
+                    cli_mode=cli_mode_state[0],
+                    previous_hash=previous_event_hash,
+                    enforcement_mode='audit_only',
+                )
+                operation = submission['operation']
+                command_event = submission['command']
+                previous_event_hash = operation.get('event_hash') or previous_event_hash
+                active_command_event_id = command_event['id']
+                command_history.append(decision.command_safe)
+                schedule_audit_write(persist_command_submission, submission)
+                schedule_audit_write(
+                    mark_command_event,
+                    command_event['id'],
+                    accepted_state='accepted',
+                    execution_status='executing',
+                    started_at=_utc_now(),
+                )
+
             """WebSocket → SSH stdin"""
             async for message in websocket.iter_text():
                 data = json.loads(message)
                 if data.get('type') == 'input':
                     last_activity_ts[0] = time.time()
-                    ssh_proc.stdin.write(data['data'].encode('utf-8'))
-                    await ssh_proc.stdin.drain()
+                    raw_input = str(data.get('data') or '')
+                    if raw_input:
+                        # Forward the exact browser bytes before any audit
+                        # classification. Tab, Enter, arrows, paste, password
+                        # prompts, and vendor-specific controls remain native.
+                        ssh_proc.stdin.write(raw_input.encode('utf-8'))
+                        submitted = command_assembler.feed(raw_input)
+                        for command in submitted:
+                            record_submitted_command(command)
+                        await ssh_proc.stdin.drain()
                 elif data.get('type') == 'resize':
                     try:
                         ssh_proc.change_terminal_size(data.get('cols', 80), data.get('rows', 24))
@@ -917,20 +1075,48 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
                     if output_bytes:
                         # CRITICAL: output is bytes, must decode for JSON
                         output_str = output_bytes.decode('utf-8', errors='replace')
+                        safe_output, _dlp_categories = redact_output(output_str)
+                        output_command_event_id = active_command_event_id
                         
                         # Relay to UI — if WebSocket send fails, the session
                         # is truly dead (client disconnected). Break out.
                         try:
-                            await websocket.send_text(json.dumps({'type': 'output', 'data': output_str}))
+                            await websocket.send_text(json.dumps({'type': 'output', 'data': safe_output}))
                         except Exception as ws_err:
                             logger.info(f"[PAM] WebSocket send failed for session {session_id}, client disconnected: {ws_err}")
                             break
+
+                        # Prompt parsing is only a convenience for later audit
+                        # metadata.  Do it after the terminal relay and off the
+                        # event loop so it can never delay a user's output or
+                        # the next Enter keypress.
+                        prompt_context = await asyncio.to_thread(
+                            prompt_parser.parse,
+                            output_str,
+                            vendor_platform=str(device.get('platform') or 'unknown'),
+                        )
+                        if prompt_context.mode != 'unknown':
+                            cli_mode_state[0] = prompt_context.mode
+
+                        if output_command_event_id:
+                            schedule_audit_write(
+                                record_command_output,
+                                command_event_id=output_command_event_id,
+                                output=output_str,
+                                device_state='observed',
+                            )
+                            schedule_audit_write(
+                                mark_command_event,
+                                output_command_event_id,
+                                execution_status='completed',
+                                finished_at=_utc_now(),
+                            )
                         
                         # Record to file (Asciinema format)
                         if recording_path:
                             try:
                                 rel_time = time.time() - start_time
-                                entry = [rel_time, "o", output_str]
+                                entry = [rel_time, "o", safe_output]
                                 with open(recording_path, 'a', encoding='utf-8') as f:
                                     f.write(json.dumps(entry) + "\n")
                             except Exception:
@@ -940,9 +1126,9 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
                         await asyncio.sleep(0.05)
                 except asyncio.CancelledError:
                     raise
-                except Exception as e:
+                except Exception:
                     # SSH read error — connection truly broken
-                    logger.error(f"[PAM] SSH read error for session {session_id}: {e}")
+                    logger.error("[PAM] SSH read error for session %s", session_id, exc_info=True)
                     break
                 await asyncio.sleep(0.01)
             logger.info(f"[PAM] Downstream loop exited for session {session_id} (EOF={ssh_proc.stdout.at_eof()})")
@@ -996,9 +1182,9 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
 
     except WebSocketDisconnect:
         close_reason = 'user_disconnect'
-    except Exception as e:
-        logger.error(f'[PAM] Session {session_id} error: {e}')
-        close_reason = f'error: {e}'
+    except Exception:
+        logger.error('[PAM] Session %s error', session_id, exc_info=True)
+        close_reason = 'error: session_relay_failed'
     finally:
         # 6. Cleanup
         _active_sessions.pop(session_id, None)
@@ -1014,6 +1200,9 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
             await websocket.close()
         except Exception:
             pass
+
+        if audit_tasks:
+            await asyncio.gather(*tuple(audit_tasks), return_exceptions=True)
 
         _update_session_status(session_id, 'closed', close_reason=close_reason)
         log_audit_event(
@@ -1128,12 +1317,70 @@ def _strip_ansi(text: str) -> str:
 
 
 @router.get('/pam/sessions/{session_id}/commands')
-def get_session_commands(session_id: str):
+def get_session_commands(session_id: str, user=require_permission('pam', 'view')):
     """Extracts typed commands and timestamps from a recording for playback navigation."""
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT recording_path, risk_level, risk_summary FROM pam_sessions WHERE id = ?", (session_id,)).fetchone()
-        if not row or not row['recording_path'] or not os.path.exists(row['recording_path']):
+        row = conn.execute(
+            "SELECT recording_path, risk_level, risk_summary, tenant_id, created_at FROM pam_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if not row:
+            return {"commands": [], "risk_level": 0, "risk_summary": ""}
+
+        if isinstance(user, dict):
+            row_tenant = str(row['tenant_id'] or 'tenant-default')
+            user_tenant = str(user.get('tenant_id') or 'tenant-default')
+            if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
+                raise HTTPException(status_code=404, detail='Session not found')
+
+        # Prefer the structured, redacted command audit projection. The
+        # terminal recording contains prompt/output echo and cannot reliably
+        # distinguish a typed command from device output. Use session-relative
+        # timestamps so the replay sidebar can still seek into the cast file.
+        try:
+            structured_rows = conn.execute(
+                "SELECT command_safe, risk_level, created_at FROM pam_command_events WHERE session_id = ? ORDER BY command_index ASC",
+                (session_id,),
+            ).fetchall()
+        except Exception:
+            structured_rows = []
+        if structured_rows:
+            def _as_datetime(value: object) -> datetime | None:
+                if isinstance(value, datetime):
+                    parsed = value
+                else:
+                    try:
+                        parsed = datetime.fromisoformat(str(value or '').replace('Z', '+00:00'))
+                    except (TypeError, ValueError):
+                        return None
+                if parsed.tzinfo is None:
+                    return parsed.replace(tzinfo=timezone.utc)
+                return parsed
+
+            session_start = _as_datetime(row['created_at'])
+            commands = []
+            for item in structured_rows:
+                text = str(item['command_safe'] or '').strip()
+                if not text:
+                    continue
+                event_time = _as_datetime(item['created_at'])
+                relative_time = max(0.0, (event_time - session_start).total_seconds()) if event_time and session_start else 0.0
+                risk_code = str(item['risk_level'] or '').upper()
+                numeric_risk = 2 if risk_code in {'L3', 'L4', 'HIGH', 'CRITICAL'} else 1 if risk_code in {'L2', 'MEDIUM'} else 0
+                commands.append({"time": relative_time, "text": text, "risk_level": numeric_risk})
+            conn.execute(
+                "UPDATE pam_sessions SET command_count = CASE WHEN COALESCE(command_count, 0) < ? THEN ? ELSE command_count END WHERE id = ?",
+                (len(commands), len(commands), session_id),
+            )
+            conn.commit()
+            return {
+                "commands": commands,
+                "risk_level": row['risk_level'],
+                "risk_summary": row['risk_summary'],
+            }
+
+        if not row['recording_path'] or not os.path.exists(row['recording_path']):
             return {"commands": [], "risk_level": 0, "risk_summary": ""}
         
         path = row['recording_path']
@@ -1210,6 +1457,304 @@ def get_session_commands(session_id: str):
         }
     finally:
         conn.close()
+
+
+@router.get('/pam/sessions/{session_id}/command-events')
+def get_session_command_events(
+    session_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    user=require_permission('pam', 'view'),
+):
+    """Return the structured command audit projection, never raw keystrokes."""
+    conn = get_db_connection()
+    try:
+        if isinstance(user, dict):
+            session_row = conn.execute('SELECT tenant_id FROM pam_sessions WHERE id = ?', (session_id,)).fetchone()
+            if not session_row:
+                raise HTTPException(status_code=404, detail='Session not found')
+            row_tenant = str(session_row['tenant_id'] or 'tenant-default')
+            user_tenant = str(user.get('tenant_id') or 'tenant-default')
+            if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
+                raise HTTPException(status_code=404, detail='Session not found')
+        rows = conn.execute(
+            """
+            SELECT id, command_index, command_safe, canonical_action,
+                   vendor_platform, cli_mode, risk_level, risk_dimensions_json,
+                   policy_decision, confirmation_required, accepted_state,
+                   execution_status, started_at, finished_at, created_at
+            FROM pam_command_events
+            WHERE session_id = ?
+            ORDER BY command_index ASC
+            LIMIT ? OFFSET ?
+            """,
+            (session_id, min(limit, 500), offset),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item['risk_dimensions'] = json.loads(item.pop('risk_dimensions_json') or '{}')
+            except Exception:
+                item['risk_dimensions'] = {}
+            items.append(item)
+        total = conn.execute("SELECT COUNT(*) AS c FROM pam_command_events WHERE session_id = ?", (session_id,)).fetchone()['c']
+        return {'items': items, 'total': int(total or 0), 'limit': min(limit, 500), 'offset': offset}
+    except HTTPException:
+        raise
+    except Exception:
+        # The endpoint remains backwards compatible before m0105 is applied.
+        return {'items': [], 'total': 0, 'limit': min(limit, 500), 'offset': offset}
+    finally:
+        conn.close()
+
+
+@router.post('/pam/approvals')
+def request_pam_approval(
+    payload: dict = Body(...),
+    user=require_permission('pam', 'request_approval'),
+):
+    try:
+        return create_approval_request(
+            tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+            session_id=payload.get('session_id'),
+            command_event_id=str(payload.get('command_event_id') or ''),
+            requester_id=str(user.get('username') or user.get('id') or 'unknown'),
+            reason=str(payload.get('reason') or ''),
+            ttl_seconds=int(payload.get('ttl_seconds') or 900),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/approvals/{approval_id}/decision')
+def decide_pam_approval(
+    approval_id: str,
+    payload: dict = Body(...),
+    user=require_permission('pam', 'approve'),
+):
+    try:
+        return decide_approval(
+            approval_id,
+            approver_id=str(user.get('username') or user.get('id') or 'unknown'),
+            approved=bool(payload.get('approved')),
+            mfa_verified=bool(payload.get('mfa_verified')),
+            decision_note=str(payload.get('decision_note') or ''),
+            tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/change-transactions')
+def create_pam_change_transaction(
+    payload: dict = Body(...),
+    user=require_permission('pam', 'create_change'),
+):
+    try:
+        return create_change_transaction(
+            tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+            session_id=payload.get('session_id'),
+            device_id=payload.get('device_id'),
+            created_by=str(user.get('username') or user.get('id') or 'unknown'),
+            ticket_id=payload.get('ticket_id'),
+            risk_level=str(payload.get('risk_level') or 'L3'),
+            diff=payload.get('diff') if isinstance(payload.get('diff'), dict) else {},
+            rollback_plan=payload.get('rollback_plan') if isinstance(payload.get('rollback_plan'), dict) else {},
+            target_type=str(payload.get('target_type') or 'device'), target_name=str(payload.get('target_name') or ''),
+            config_diff_id=payload.get('config_diff_id'), commit_model=str(payload.get('commit_model') or 'direct'),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/sessions/{session_id}/interventions')
+def intervene_pam_session(
+    session_id: str,
+    payload: dict = Body(...),
+    user=require_permission('pam', 'intervene'),
+):
+    try:
+        return record_session_intervention(
+            tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+            session_id=session_id,
+            action=str(payload.get('action') or ''),
+            actor_id=str(user.get('username') or user.get('id') or 'unknown'),
+            reason=str(payload.get('reason') or ''),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/jit-grants')
+def create_pam_jit_grant(payload: dict = Body(...), user=require_permission('pam', 'create_change')):
+    tenant_id = str(user.get('tenant_id') or 'tenant-default')
+    subject = str(payload.get('subject_user_id') or user.get('username') or user.get('id') or 'unknown')
+    if user.get('role') != 'Administrator':
+        subject = str(user.get('username') or user.get('id') or subject)
+    try:
+        return create_jit_grant(
+            tenant_id=tenant_id,
+            subject_user_id=subject,
+            scope=payload.get('scope') if isinstance(payload.get('scope'), dict) else {},
+            allowed_actions=payload.get('allowed_actions') if isinstance(payload.get('allowed_actions'), list) else [],
+            denied_actions=payload.get('denied_actions') if isinstance(payload.get('denied_actions'), list) else [],
+            created_by=str(user.get('username') or user.get('id') or 'unknown'),
+            reason=str(payload.get('reason') or ''), starts_at=payload.get('starts_at'), ends_at=payload.get('ends_at'),
+            break_glass=bool(payload.get('break_glass')), mfa_verified=bool(payload.get('mfa_verified')),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/jit-grants/{grant_id}/revoke')
+def revoke_pam_jit_grant(grant_id: str, user=require_permission('pam', 'create_change')):
+    try:
+        return revoke_jit_grant(grant_id, tenant_id=str(user.get('tenant_id') or 'tenant-default'), actor_id=str(user.get('username') or user.get('id') or 'unknown'))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/jit-grants/{grant_id}/check')
+def check_pam_jit_grant(grant_id: str, payload: dict = Body(...), user=require_permission('pam', 'view')):
+    return check_jit_grant(
+        grant_id=grant_id,
+        tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+        subject_user_id=str(user.get('username') or user.get('id') or 'unknown'),
+        action=str(payload.get('action') or ''),
+        at=payload.get('at'),
+    )
+
+
+@router.post('/pam/break-glass/{grant_id}/review')
+def review_pam_break_glass(grant_id: str, payload: dict = Body(...), user=require_permission('pam', 'approve')):
+    try:
+        return review_break_glass(
+            grant_id=grant_id, tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+            reviewed_by=str(user.get('username') or user.get('id') or 'unknown'),
+            accepted=bool(payload.get('accepted')), note=str(payload.get('note') or ''),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/file-transfers')
+def audit_pam_file_transfer(payload: dict = Body(...), user=require_permission('pam', 'create_change')):
+    try:
+        return record_file_transfer(
+            tenant_id=str(user.get('tenant_id') or 'tenant-default'), session_id=payload.get('session_id'),
+            actor_id=str(user.get('username') or user.get('id') or 'unknown'), file_name=str(payload.get('file_name') or ''),
+            direction=str(payload.get('direction') or ''), content_hash=str(payload.get('content_hash') or ''),
+            size_bytes=int(payload.get('size_bytes') or 0), approved=bool(payload.get('approved')), mfa_verified=bool(payload.get('mfa_verified')),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/batch-operations')
+def create_pam_batch_operation(payload: dict = Body(...), user=require_permission('pam', 'create_change')):
+    try:
+        return create_batch_operation(
+            tenant_id=str(user.get('tenant_id') or 'tenant-default'), created_by=str(user.get('username') or user.get('id') or 'unknown'),
+            target_ids=payload.get('target_ids') if isinstance(payload.get('target_ids'), list) else [],
+            command_risk_score=int(payload.get('command_risk_score') or 70), asset_criticality=str(payload.get('asset_criticality') or 'normal'),
+            topology_impact=int(payload.get('topology_impact') or 0), concurrency=int(payload.get('concurrency') or 1),
+            canary_count=int(payload.get('canary_count') or 1), failure_threshold=float(payload.get('failure_threshold') or 0.1),
+            change_transaction_id=payload.get('change_transaction_id'), scheduled_at=payload.get('scheduled_at'),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/batch-operations/{operation_id}/progress')
+def update_pam_batch_progress(operation_id: str, payload: dict = Body(...), user=require_permission('pam', 'create_change')):
+    try:
+        return update_batch_progress(
+            operation_id=operation_id, tenant_id=str(user.get('tenant_id') or 'tenant-default'),
+            completed_count=int(payload.get('completed_count') or 0), failed_count=int(payload.get('failed_count') or 0),
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/deferred-actions')
+def create_pam_deferred_action(payload: dict = Body(...), user=require_permission('pam', 'create_change')):
+    try:
+        return create_deferred_action(
+            tenant_id=str(user.get('tenant_id') or 'tenant-default'), session_id=payload.get('session_id'), command_event_id=payload.get('command_event_id'),
+            action_code=str(payload.get('action_code') or ''), execute_at=str(payload.get('execute_at') or ''),
+            created_by=str(user.get('username') or user.get('id') or 'unknown'), risk_level=str(payload.get('risk_level') or 'L3'), reason=str(payload.get('reason') or ''),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/behavior-risk')
+def detect_pam_behavior_risk(payload: dict = Body(...), user=require_permission('pam', 'view')):
+    return detect_behavior_risk(
+        tenant_id=str(user.get('tenant_id') or 'tenant-default'), user_id=str(user.get('username') or user.get('id') or 'unknown'),
+        session_id=payload.get('session_id'), metrics=payload.get('metrics') if isinstance(payload.get('metrics'), dict) else {},
+    )
+
+
+@router.post('/pam/tacacs/reconcile')
+def reconcile_pam_tacacs(payload: dict = Body(...), user=require_permission('pam', 'view')):
+    return reconcile_tacacs_event(
+        tenant_id=str(user.get('tenant_id') or 'tenant-default'), session_id=payload.get('session_id'), command_event_id=payload.get('command_event_id'),
+        nexora_action=str(payload.get('nexora_action') or ''), external_action=str(payload.get('external_action') or ''),
+        metadata=payload.get('metadata') if isinstance(payload.get('metadata'), dict) else {},
+    )
+
+
+@router.post('/pam/rollback-checkpoints')
+def create_pam_rollback_checkpoint(payload: dict = Body(...), user=require_permission('pam', 'create_change')):
+    try:
+        return create_rollback_checkpoint(
+            tenant_id=str(user.get('tenant_id') or 'tenant-default'), change_transaction_id=str(payload.get('change_transaction_id') or ''),
+            device_id=payload.get('device_id'), checkpoint_type=str(payload.get('checkpoint_type') or 'pre_change'), snapshot_id=payload.get('snapshot_id'),
+            details=payload.get('details') if isinstance(payload.get('details'), dict) else {},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/rollback-checkpoints/{checkpoint_id}/verify')
+def verify_pam_rollback_checkpoint(checkpoint_id: str, payload: dict = Body(...), user=require_permission('pam', 'create_change')):
+    try:
+        return verify_rollback_checkpoint(
+            checkpoint_id=checkpoint_id, tenant_id=str(user.get('tenant_id') or 'tenant-default'), health_state=str(payload.get('health_state') or 'UNKNOWN'),
+            passed=bool(payload.get('passed')), details=payload.get('details') if isinstance(payload.get('details'), dict) else {},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post('/pam/sessions/{session_id}/summary')
+def summarize_pam_session(session_id: str, user=require_permission('pam', 'view')):
+    try:
+        return generate_session_summary(tenant_id=str(user.get('tenant_id') or 'tenant-default'), session_id=session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get('/pam/command-events/{command_event_id}/risk-explanation')
+def explain_pam_command_risk(command_event_id: str, user=require_permission('pam', 'view')):
+    try:
+        return explain_command_risk(command_event_id=command_event_id, tenant_id=str(user.get('tenant_id') or 'tenant-default'))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post('/pam/external-events')
+def queue_pam_external_event(payload: dict = Body(...), user=require_permission('pam', 'view')):
+    try:
+        return queue_external_event(
+            tenant_id=str(user.get('tenant_id') or 'tenant-default'), session_id=payload.get('session_id'),
+            event_type=str(payload.get('event_type') or 'pam.audit'), destination_type=str(payload.get('destination_type') or 'json'),
+            payload=payload.get('payload') if isinstance(payload.get('payload'), dict) else {},
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _cleanup_old_sessions():

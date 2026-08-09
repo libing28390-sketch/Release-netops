@@ -1,0 +1,193 @@
+task_id: AUD-016
+milestone: M0
+priority: P0
+scope: external_ai_data_exit_inventory
+gateway_call_inventory:
+  non_stream_chat_sites: 13
+  stream_chat_sites: 2
+  total_sites: 15
+  transport_targets:
+    - backend/ai/providers/openai_compatible.py::chat
+    - backend/ai/providers/openai_compatible.py::chat_stream
+wire_fields:
+  - name: model
+    type: string
+    source: ai_model.model_code
+  - name: messages
+    type: array<object>
+    source: system_user_history_facts_tools
+  - name: stream
+    type: boolean
+    source: gateway_mode
+  - name: temperature
+    type: number_or_null
+    source: model_default_or_request
+  - name: max_tokens
+    type: integer_or_null
+    source: model_default_or_request
+  - name: tools
+    type: array<object>_or_null
+    source: v1_request_or_read_only_agent_contract
+  - name: response_format
+    type: object_or_null
+    source: analysis_or_agent_contract
+  - name: thinking
+    type: object_or_null
+    source: provider_options
+  - name: reasoning_effort
+    type: enum_or_null
+    source: v1_request
+  - name: user
+    type: opaque_string
+    source: security_gateway_tokenization
+  - name: authorization
+    type: header_only_secret
+    source: decrypted_api_key
+    body_persisted: false
+data_classes:
+  D0_system_instructions: system_prompt_prompt_template_tool_schema
+  D1_user_input: question_message_history_change_intent
+  D2_network_identifiers: ip_mac_hostname_device_id_site_interface_vlan
+  D3_network_content: cli_output_config_diff_alarm_raw_rag_chunk
+  D4_tool_and_retrieval: cmdb_arp_mac_lldp_alarm_status_knowledge_metadata
+  D5_control_metadata: model_budget_response_format_reasoning_opaque_user
+  D6_credentials: prohibited_in_messages_and_body
+exits:
+  - id: E-001
+    file: backend/ai/services/intent_parser.py
+    line: 267
+    scene: natural_query
+    endpoint: V2 Copilot intent parsing
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers]
+    response: intent_and_structured_metadata_json
+  - id: E-002
+    file: backend/ai/services/natural_query.py
+    line: 344
+    scene: natural_query
+    endpoint: V2 natural query device summary
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D4_tool_and_retrieval]
+    response: factual_cmdb_summary
+  - id: E-003
+    file: backend/ai/services/assistant.py
+    line: 590
+    scene: chat
+    endpoint: V2 assistant chat
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D3_network_content, D4_tool_and_retrieval]
+    response: content_citations_retrieval_trace
+  - id: E-004
+    file: backend/ai/services/assistant.py
+    line: 816
+    scene: chat
+    endpoint: V2 assistant chat stream
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D3_network_content, D4_tool_and_retrieval]
+    response: sse_tokens
+  - id: E-005
+    file: backend/ai/api/chat_v1.py
+    line: 123
+    scene: chat
+    endpoint: V1 chat
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D3_network_content, D5_control_metadata]
+    response: v1_content_tool_calls
+  - id: E-006
+    file: backend/ai/api/chat_v1.py
+    line: 74
+    scene: chat
+    endpoint: V1 chat stream
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D3_network_content, D5_control_metadata]
+    response: v1_sse_events
+  - id: E-007
+    file: backend/ai/services/command_analysis.py
+    line: 52
+    scene: command_explain
+    endpoint: command analysis
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D3_network_content]
+    response: command_analysis_json
+  - id: E-008
+    file: backend/ai/services/config_analysis.py
+    line: 55
+    scene: config_explain
+    endpoint: configuration analysis
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D3_network_content]
+    response: configuration_risk_json
+  - id: E-009
+    file: backend/ai/services/diff_analysis.py
+    line: 54
+    scene: config_diff
+    endpoint: configuration diff analysis
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D3_network_content]
+    response: diff_risk_and_rollback_json
+  - id: E-010
+    file: backend/ai/services/alarm_analysis.py
+    line: 56
+    scene: alarm_analysis
+    endpoint: alarm analysis
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D3_network_content]
+    response: incident_analysis_json
+  - id: E-011
+    file: backend/ai/services/ip_troubleshooting.py
+    line: 81
+    scene: troubleshooting
+    endpoint: IP location
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D4_tool_and_retrieval]
+    response: ip_trace_json
+  - id: E-012
+    file: backend/ai/services/mac_troubleshooting.py
+    line: 67
+    scene: troubleshooting
+    endpoint: MAC location
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D4_tool_and_retrieval]
+    response: mac_trace_json
+  - id: E-013
+    file: backend/ai/agents/runner.py
+    line: 108
+    scene: agent
+    endpoint: read_only agent step loop
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers, D3_network_content, D4_tool_and_retrieval, D5_control_metadata]
+    response: action_or_final_answer_json
+  - id: E-014
+    file: backend/ai/services/config_generation.py
+    line: 56
+    scene: agent
+    endpoint: config generation
+    data_types: [D0_system_instructions, D1_user_input, D2_network_identifiers]
+    response: commands_verification_rollback_json
+  - id: E-015
+    file: backend/ai/api/providers.py
+    line: 241
+    scene: provider_test
+    endpoint: provider connection test
+    data_types: [D0_system_instructions, D5_control_metadata]
+    response: success_latency_stable_error_sample
+non_egress_paths:
+  - asset_analysis_deterministic_cmdb_report
+  - knowledge_no_match_controlled_answer
+  - cross_platform_local_fallback
+  - local_stable_embedding
+controls:
+  external_default_enabled: false
+  security_gateway_before_provider: true
+  final_dlp: true
+  metadata_only_outbound_audit: true
+  raw_provider_response_removed: true
+findings:
+  - id: AUD016-F01
+    severity: P0
+    status: OPEN
+    summary: all new AI exits must be added to this inventory and use the Gateway
+  - id: AUD016-F02
+    severity: P1
+    status: OPEN
+    summary: knowledge chunks and tool outputs mix network identifiers with正文 and need field-level allowlists
+  - id: AUD016-F03
+    severity: P1
+    status: OPEN
+    summary: command analysis relies on Gateway credential gate instead of the same service-level pre-sanitization as config and diff
+verification:
+  ast_chat_sites: PASS
+  ast_stream_sites: PASS
+  yaml_contract: PASS
+  production_api_called: false
+  production_database_changed: false
+conclusion:
+  inventory_status: PASS
+  p0_findings: 1

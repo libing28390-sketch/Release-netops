@@ -23,8 +23,6 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
   const defaultModels = [
     { id: 'm0', name: 'DeepSeek V4 Flash (默认极速)', model_code: 'deepseek-v4-flash', provider_name: 'DeepSeek' },
     { id: 'm0pro', name: 'DeepSeek V4 Pro (专业旗舰)', model_code: 'deepseek-v4-pro', provider_name: 'DeepSeek' },
-    { id: 'm1', name: 'DeepSeek V3 (通用对话)', model_code: 'deepseek-chat', provider_name: 'DeepSeek' },
-    { id: 'm2', name: 'DeepSeek Reasoner (R1)', model_code: 'deepseek-reasoner', provider_name: 'DeepSeek' },
   ];
 
   const effectiveModels = models.length > 0 ? models : defaultModels;
@@ -37,10 +35,10 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
   }, {} as Record<string, typeof effectiveModels>);
 
   return (
-    <header className="h-14 border-b border-gray-200/70 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xs px-4 flex items-center justify-between select-none">
+    <header className="h-14 min-w-0 shrink-0 border-b border-gray-200/70 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xs px-3 sm:px-4 flex items-center justify-between gap-2 select-none">
       {/* Title & Model Selector */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        <div className="flex min-w-0 items-center gap-2">
           <Bot className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
           <h2 className="font-bold text-gray-900 dark:text-white text-sm truncate max-w-[240px]">
             {sessionTitle || '新对话'}
@@ -69,7 +67,7 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
       </div>
 
       {/* Actions: Clear Chat & Inspector Drawer Toggle */}
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         <span className="hidden sm:flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full font-medium">
           <ShieldCheck className="w-3 h-3" /> 内网事实优先
         </span>

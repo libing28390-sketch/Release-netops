@@ -441,9 +441,13 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
             username, password, sn, model, version, role, site, uptime,
             connection_method, vendor, snmp_community, snmp_port,
             normal_username, normal_password, admin_username, admin_password,
-            enable_password, auth_model, device_category, power_watts,
+            enable_password, auth_model, device_category, function, zone, power_watts,
             onboarding_status, credential_id, admin_credential_id, management_port
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
     ''', (
         device_id, asset_id,
         body.hostname, body.management_ip,
@@ -457,6 +461,8 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
         '', # enable_password column empty
         auth_model,
         getattr(body, 'device_category', '') or '',
+        getattr(body, 'function', '') or '',
+        getattr(body, 'zone', 'Unknown') or 'Unknown',
         getattr(body, 'power_watts', 0) or 0,
         onboarding,
         credential_id or '',
@@ -683,6 +689,8 @@ def _sync_device_from_asset(conn, asset_id: str, body) -> None:
         'snmp_credential_id': getattr(body, 'snmp_credential_id', None),
         'auth_model': getattr(body, 'auth_model', None),
         'device_category': getattr(body, 'device_category', None),
+        'function': getattr(body, 'function', None),
+        'zone': getattr(body, 'zone', None),
         'power_watts': getattr(body, 'power_watts', None),
         'management_port': getattr(body, 'management_port', None),
     }
@@ -888,6 +896,8 @@ class AssetCreate(BaseModel):
     snmp_port: int = 161
     management_port: int = 22
     device_category: str = ''
+    function: str = ''
+    zone: str = 'Unknown'
     power_watts: int = 0
     credential_id: Optional[str] = ''
     admin_credential_id: Optional[str] = ''
@@ -990,6 +1000,8 @@ class AssetUpdate(BaseModel):
     snmp_port: Optional[int] = None
     management_port: Optional[int] = None
     device_category: Optional[str] = None
+    function: Optional[str] = None
+    zone: Optional[str] = None
     power_watts: Optional[int] = None
     production_mode: Optional[str] = None
     takeover_exempt_reason: Optional[str] = None
@@ -1329,10 +1341,14 @@ def create_asset(body: AssetCreate):
                 platform, connection_method, username, password,
                 normal_username, normal_password, admin_username, admin_password,
                 enable_password, auth_model,
-                snmp_community, snmp_port, device_category, power_watts,
+                snmp_community, snmp_port, device_category, function, zone, power_watts,
                 credential_id, admin_credential_id,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
         ''', (
             asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
             body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
@@ -1349,7 +1365,8 @@ def create_asset(body: AssetCreate):
             _safe_encrypt(getattr(body, 'admin_password', '') or ''),
             _safe_encrypt(getattr(body, 'enable_password', '') or ''),
             getattr(body, 'auth_model', '') or 'single',
-            _safe_encrypt(body.snmp_community), body.snmp_port, body.device_category, body.power_watts,
+            _safe_encrypt(body.snmp_community), body.snmp_port, body.device_category,
+            getattr(body, 'function', '') or '', getattr(body, 'zone', 'Unknown') or 'Unknown', body.power_watts,
             body.credential_id or '',
             body.admin_credential_id or '',
             now, now
@@ -1544,7 +1561,7 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
             'status', 'lifecycle_status', 'asset_origin', 'purchase_date', 'warranty_expiry', 'department', 'notes',
             'platform', 'connection_method', 'username', 'password',
             'normal_username', 'normal_password', 'admin_username', 'admin_password', 'enable_password', 'auth_model',
-            'snmp_community', 'snmp_port', 'management_port', 'device_category', 'power_watts', 'credential_id', 'admin_credential_id', 'snmp_credential_id'
+            'snmp_community', 'snmp_port', 'management_port', 'device_category', 'function', 'zone', 'power_watts', 'credential_id', 'admin_credential_id', 'snmp_credential_id'
         ]
         for field in updatable:
             val = getattr(body, field, None)
@@ -1858,11 +1875,17 @@ def import_assets(items: list[AssetCreate]):
                     platform, connection_method, username, password,
                     normal_username, normal_password, admin_username, admin_password,
                     enable_password, auth_model,
-                    snmp_community, snmp_port, management_port, device_category, power_watts,
+                    snmp_community, snmp_port, management_port, device_category, function, zone, power_watts,
                     credential_governance_mode, takeover_exempt_reason, takeover_exempt_at, is_managed,
                     credential_id, admin_credential_id,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
             ''', (
                 asset_id, body.asset_type, body.asset_tag, body.serial_number, body.vendor,
                 body.model, body.hostname, body.site_id, body.rack, body.rack_unit,
@@ -1880,7 +1903,7 @@ def import_assets(items: list[AssetCreate]):
                 getattr(body, 'auth_model', '') or 'single',
                 _safe_encrypt(body.snmp_community), body.snmp_port,
                 getattr(body, 'management_port', 22) or 22,
-                body.device_category, body.power_watts,
+                body.device_category, getattr(body, 'function', '') or '', getattr(body, 'zone', 'Unknown') or 'Unknown', body.power_watts,
                 'legacy_exempt' if legacy_production else 'managed',
                 (body.takeover_exempt_reason or '').strip() if legacy_production else '',
                 now if legacy_production else None,

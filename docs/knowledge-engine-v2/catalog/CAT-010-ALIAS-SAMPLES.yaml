@@ -1,0 +1,183 @@
+task_id: CAT-010
+priority: P0
+owner: AI+NET
+milestone: M2
+status: reviewed_alias_samples_pending_catalog_migration
+depends_on: [CAT-005, CAT-006, CAT-009]
+tenant_scope: tenant-default-reviewed
+
+model_targets:
+  - product_model_id: huawei:cloudengine_6800:ce6800:ce6860-san
+    vendor_id: huawei
+    product_series: ce6800
+    model_code: CE6860-SAN
+  - product_model_id: huawei:cloudengine_6800:ce6800:ce6885-48ys8cq
+    vendor_id: huawei
+    product_series: ce6800
+    model_code: CE6885-48YS8CQ
+  - product_model_id: huawei:cloudengine_6800:ce6800:ce6881-48s6cq
+    vendor_id: huawei
+    product_series: ce6800
+    model_code: CE6881-48S6CQ
+  - product_model_id: cisco:catalyst_9300:c9300:c9300-24t
+    vendor_id: cisco
+    product_series: c9300
+    model_code: C9300-24T
+  - product_model_id: cisco:catalyst_9300:c9300:c9300-48p
+    vendor_id: cisco
+    product_series: c9300
+    model_code: C9300-48P
+  - product_model_id: cisco:catalyst_9300:c9300:c9300-48u
+    vendor_id: cisco
+    product_series: c9300
+    model_code: C9300-48U
+
+alias_samples:
+  # Prefixes deliberately fan out to model candidates; they never identify
+  # one model or authorize the platform driver.
+  - sample_id: huawei-ce68-prefix-ce6860
+    tenant_id: tenant-default-reviewed
+    product_model_id: huawei:cloudengine_6800:ce6800:ce6860-san
+    alias: CE68
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: huawei-ce68-prefix-ce6885
+    tenant_id: tenant-default-reviewed
+    product_model_id: huawei:cloudengine_6800:ce6800:ce6885-48ys8cq
+    alias: CE68
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: huawei-ce688-prefix-ce6885
+    tenant_id: tenant-default-reviewed
+    product_model_id: huawei:cloudengine_6800:ce6800:ce6885-48ys8cq
+    alias: CE688
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: huawei-ce688-prefix-ce6881
+    tenant_id: tenant-default-reviewed
+    product_model_id: huawei:cloudengine_6800:ce6800:ce6881-48s6cq
+    alias: CE688
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: huawei-ce6885-prefix
+    tenant_id: tenant-default-reviewed
+    product_model_id: huawei:cloudengine_6800:ce6800:ce6885-48ys8cq
+    alias: CE6885
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidate_requires_full_sku_confirmation
+  - sample_id: huawei-ce6885-exact
+    tenant_id: tenant-default-reviewed
+    product_model_id: huawei:cloudengine_6800:ce6800:ce6885-48ys8cq
+    alias: CE6885-48YS8CQ
+    alias_kind: exact
+    status: draft
+    expected_outcome: unique_after_active_review
+  - sample_id: huawei-cloudengine-ce6885-canonical
+    tenant_id: tenant-default-reviewed
+    product_model_id: huawei:cloudengine_6800:ce6800:ce6885-48ys8cq
+    alias: CloudEngine CE6885-48YS8CQ
+    alias_kind: canonical
+    status: draft
+    expected_outcome: unique_after_active_review
+  - sample_id: cisco-c9300-prefix-24t
+    tenant_id: tenant-default-reviewed
+    product_model_id: cisco:catalyst_9300:c9300:c9300-24t
+    alias: C9300
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: cisco-c9300-prefix-48p
+    tenant_id: tenant-default-reviewed
+    product_model_id: cisco:catalyst_9300:c9300:c9300-48p
+    alias: C9300
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: cisco-c9300-prefix-48u
+    tenant_id: tenant-default-reviewed
+    product_model_id: cisco:catalyst_9300:c9300:c9300-48u
+    alias: C9300
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: cisco-catalyst93-prefix-24t
+    tenant_id: tenant-default-reviewed
+    product_model_id: cisco:catalyst_9300:c9300:c9300-24t
+    alias: Catalyst93
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: cisco-catalyst93-prefix-48p
+    tenant_id: tenant-default-reviewed
+    product_model_id: cisco:catalyst_9300:c9300:c9300-48p
+    alias: Catalyst93
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: cisco-catalyst93-prefix-48u
+    tenant_id: tenant-default-reviewed
+    product_model_id: cisco:catalyst_9300:c9300:c9300-48u
+    alias: Catalyst93
+    alias_kind: prefix
+    status: draft
+    expected_outcome: candidates_and_clarification
+  - sample_id: cisco-c9300-48p-exact
+    tenant_id: tenant-default-reviewed
+    product_model_id: cisco:catalyst_9300:c9300:c9300-48p
+    alias: C9300-48P
+    alias_kind: exact
+    status: draft
+    expected_outcome: unique_after_active_review
+
+resolution_matrix:
+  - query: CE68
+    vendor: huawei
+    result: candidates_and_clarification
+    no_driver_selection: true
+  - query: CE688
+    vendor: huawei
+    result: candidates_and_clarification
+    no_driver_selection: true
+  - query: CE6885
+    vendor: huawei
+    result: candidate_requires_full_sku_confirmation
+    no_driver_selection: true
+  - query: CE6885-48YS8CQ
+    vendor: huawei
+    result: unique_after_active_review
+    no_driver_selection: true
+  - query: C9300
+    vendor: cisco
+    result: candidates_and_clarification
+    no_driver_selection: true
+  - query: Catalyst93
+    vendor: cisco
+    result: candidates_and_clarification
+    no_driver_selection: true
+  - query: C9300-48P
+    vendor: cisco
+    result: unique_after_active_review
+    no_driver_selection: true
+  - query: C9400-999Z
+    vendor: cisco
+    result: UNKNOWN_and_clarification
+    no_driver_selection: true
+
+acceptance:
+  target_must_be_product_model: true
+  series_aliases_are_candidate_only: true
+  exact_model_aliases_are_unique_only_after_active_review: true
+  conflict_status_required_for_multi_model_prefix: true
+  no_first_match_fallback: true
+  unknown_never_guesses_vendor_or_driver: true
+  v1_metadata_preserved: true
+
+rollback:
+  runtime: disable_cat010_alias_samples_and_keep_cat009_resolution_contract
+  data: retain_pending_samples_and_v1_metadata
+  production_ddl: none_in_CAT-010

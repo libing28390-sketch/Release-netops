@@ -13,6 +13,7 @@ from ai.api.usage import router as usage_router
 from ai.api.assistant import router as assistant_router
 from ai.api.agents import router as agents_router
 from ai.api.governance import router as governance_router
+from ai.api.security import router as security_router
 
 ai_router = APIRouter(prefix="/ai", tags=["Nexora AI Center"])
 
@@ -24,3 +25,4 @@ ai_router.include_router(usage_router)
 ai_router.include_router(assistant_router)
 ai_router.include_router(agents_router)
 ai_router.include_router(governance_router)
+ai_router.include_router(security_router)

@@ -1,5 +1,6 @@
 import React from 'react';
 import { X, Cpu, Clock, Database, Layers, ShieldAlert, Code } from 'lucide-react';
+import type { AssistantRetrievalTrace } from '../../../api/ai';
 
 interface CopilotInspectorDrawerProps {
   isOpen: boolean;
@@ -14,8 +15,20 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
 }) => {
   if (!isOpen) return null;
 
+  const retrieval = activeMessage?.retrieval as AssistantRetrievalTrace | undefined;
+  const retrievalRequest = retrieval?.request || {};
+  const retrievalStatus = retrieval?.status === 'no_match'
+    ? '本地 RAG 已执行 · 精确检索未命中'
+    : retrieval?.status === 'hit'
+      ? '本地 RAG 已执行 · 已命中'
+      : '未收到本次检索 Trace';
+  const llmSkipped = retrieval?.status === 'no_match';
+  const metric = (value: unknown, suffix = '') => (
+    typeof value === 'number' && Number.isFinite(value) ? `${value}${suffix}` : (llmSkipped ? '未调用' : '未上报')
+  );
+
   return (
-    <aside className="w-80 bg-white dark:bg-gray-900 border-l border-gray-200/80 dark:border-gray-800 flex flex-col h-full z-20 shadow-xl text-xs select-none">
+    <aside className="w-80 shrink-0 min-h-0 bg-white dark:bg-gray-900 border-l border-gray-200/80 dark:border-gray-800 flex flex-col h-full z-20 shadow-xl text-xs select-none">
       {/* Header */}
       <div className="p-3.5 border-b border-gray-200/80 dark:border-gray-800 flex items-center justify-between">
         <div className="flex items-center gap-2 font-bold text-gray-900 dark:text-white">
@@ -48,7 +61,7 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
             </div>
             <div className="flex justify-between">
               <span className="text-gray-400">Route Model:</span>
-              <span className="text-gray-700 dark:text-gray-300">DeepSeek Chat</span>
+              <span className="text-gray-700 dark:text-gray-300">{activeMessage?.route_model || (llmSkipped ? '未调用' : '未上报')}</span>
             </div>
           </div>
         </div>
@@ -61,15 +74,15 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
           <div className="font-mono text-[11px] space-y-1">
             <div className="flex justify-between">
               <span className="text-gray-400">Total Latency:</span>
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium">{activeMessage?.latency_ms ? `${activeMessage.latency_ms} ms` : '1820 ms'}</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium">{metric(activeMessage?.latency_ms, ' ms')}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-400">Input Tokens:</span>
-              <span className="text-gray-700 dark:text-gray-300">168 tokens</span>
+              <span className="text-gray-700 dark:text-gray-300">{metric(activeMessage?.input_tokens, ' tokens')}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-400">Output Tokens:</span>
-              <span className="text-gray-700 dark:text-gray-300">205 tokens</span>
+              <span className="text-gray-700 dark:text-gray-300">{metric(activeMessage?.output_tokens, ' tokens')}</span>
             </div>
           </div>
         </div>
@@ -79,7 +92,29 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
           <div className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
             <Database className="w-3.5 h-3.5 text-blue-500" /> 知识库向量命中 (Top Hits)
           </div>
-          {activeMessage?.sources && activeMessage.sources.length > 0 ? (
+          {retrieval ? (
+            <div className="space-y-2 font-mono text-[11px]">
+              <div className={`rounded border px-2 py-1.5 ${retrieval.status === 'no_match' ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300' : 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/20 dark:text-blue-300'}`}>
+                {retrievalStatus}
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-gray-500 dark:text-gray-400">
+                <span>Metadata candidates</span><span className="text-right text-gray-700 dark:text-gray-200">{metric(retrieval.metadata_candidate_documents)}</span>
+                <span>Final documents</span><span className="text-right text-gray-700 dark:text-gray-200">{metric(retrieval.final_document_count)}</span>
+                <span>Vector top-N</span><span className="text-right text-gray-700 dark:text-gray-200">{metric(retrieval.vector_top_n)}</span>
+              </div>
+              {Object.keys(retrievalRequest).length > 0 && (
+                <div className="rounded border border-gray-200 bg-white p-2 text-[10px] text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+                  <div className="mb-1 font-semibold text-gray-700 dark:text-gray-200">精确检索条件</div>
+                  {Object.entries(retrievalRequest).map(([key, value]) => (
+                    <div key={key} className="flex justify-between gap-2"><span>{key}</span><span className="text-right text-gray-700 dark:text-gray-200">{String(value)}</span></div>
+                  ))}
+                </div>
+              )}
+              {retrieval.resolution?.ambiguous && (
+                <div className="text-amber-600 dark:text-amber-300">平台候选存在歧义：{(retrieval.resolution.platform_candidates || []).join('、') || '未上报'}</div>
+              )}
+            </div>
+          ) : activeMessage?.sources && activeMessage.sources.length > 0 ? (
             <div className="space-y-1.5 font-mono text-[11px]">
               {activeMessage.sources.map((src: any, idx: number) => (
                 <div key={idx} className="p-2 bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-700">
@@ -89,7 +124,7 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
               ))}
             </div>
           ) : (
-            <div className="text-[11px] text-gray-400 py-1">未引用外部 RAG 知识库</div>
+            <div className="text-[11px] text-gray-400 py-1">未收到本次检索 Trace（可能是旧消息）</div>
           )}
         </div>
 

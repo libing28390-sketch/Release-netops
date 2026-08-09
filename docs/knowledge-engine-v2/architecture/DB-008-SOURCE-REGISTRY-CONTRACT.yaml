@@ -1,0 +1,176 @@
+task_id: DB-008
+priority: P0
+owner: DBA
+status: frozen_for_implementation
+milestone: M1
+authority: PostgreSQL
+
+decision:
+  choice: explicit_tenant_scoped_source_registry_and_immutable_fetch_manifest
+  summary: >-
+    Establish kb_source_registry as the source identity and collection policy
+    boundary, and kb_source_version as an immutable fetch manifest. Every
+    remote request must pass an exact normalized host allowlist, HTTPS/TLS,
+    redirect, DNS/SSRF, size, timeout, and provenance gate before collection.
+  invariants:
+    - canonical_url_and_allowed_host_are_relational_source_identity
+    - collection_policy_json_is_versioned_policy_not_an_identity_or_acl_store
+    - source_version_content_hash_is_immutable_fact
+    - source_registry_changes_do_not_mutate_existing_source_versions
+    - unknown_or_unallowlisted_hosts_fail_closed
+    - source_trust_is_not_user_authorization
+    - documents_reference_source_registry_and_source_version_in_later_db009
+
+entities:
+  kb_source_registry:
+    table: kb_source_registry
+    purpose: allowlisted_source_and_collection_policy
+    required_columns: [id, tenant_id, source_type, canonical_url, allowed_host, trust_level, collection_policy_json, status, created_at, updated_at, created_by, updated_by]
+    optional_columns: [name, description, allowed_scheme, allowed_port, host_match_mode, fetch_enabled, max_bytes, timeout_seconds, redirect_limit, rate_limit_per_minute, policy_version, policy_hash, metadata_json, source_kind, canonical_source]
+    unique_keys: [[tenant_id, canonical_url]]
+    identity_rules:
+      canonical_url: normalized_absolute_url_without_userinfo_and_fragment
+      allowed_host: lowercase_idna_hostname_without_wildcard
+      host_match_mode: [exact, explicit_subdomain]
+      scheme: https_required_in_production
+      port: 443_only_in_production_unless_explicit_test_exception
+    source_types: [official_vendor, official_product, enterprise, internal, user_upload, api]
+    trust_levels: [official, reviewed, internal, untrusted]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, quarantined, purged]
+    policy_fields:
+      required: [http_methods, user_agent, timeout_seconds, max_bytes, redirect_limit, rate_limit_per_minute, robots_policy, parser_name, parser_version]
+      relational_security_fields: [allowed_host, allowed_scheme, allowed_port, max_bytes, timeout_seconds, redirect_limit, fetch_enabled]
+      json_only_extensions: [headers_allowlist, content_types, selectors, retry_policy, extraction_rules]
+    redirect_policy:
+      revalidate_every_hop: true
+      same_allowlist_required: true
+      https_downgrade_forbidden: true
+      max_hops_field: redirect_limit
+
+  kb_source_version:
+    table: kb_source_version
+    purpose: immutable_fetch_manifest
+    required_columns: [id, tenant_id, source_registry_id, fetched_at, content_hash, byte_size, parser_name, parser_version, source_etag, source_last_modified, status, created_at, updated_at, created_by, updated_by]
+    lifecycle_statuses: [draft, active, disabled, archived, deleted, quarantined, purged]
+    optional_columns: [fetch_url, response_content_type, http_status, raw_content_ref, raw_content_storage, verified_at, verification_method, error_code, error_json, metadata_json]
+    foreign_keys: [tenant_id_and_source_registry_id_to_kb_source_registry_tenant_and_id]
+    unique_keys: [[tenant_id, source_registry_id, content_hash]]
+    immutability:
+      fact_fields: [source_registry_id, fetched_at, content_hash, byte_size, parser_name, parser_version, source_etag, source_last_modified, fetch_url, raw_content_ref]
+      update_rule: append_new_version_and_never_overwrite_fact_fields
+      hash_algorithm: sha256_lowercase_hex
+      byte_size_rule: non_negative_and_matches_retained_payload_or_verified_reference
+    verification_states: [draft, fetched, verified, failed, quarantined, archived, deleted, purged]
+    security: original_bytes_or_verified_source_reference_retained_without_credentials
+
+url_and_ssrf_gate:
+  parse_before_network: true
+  canonicalization:
+    scheme: lowercase
+    host: idna_ascii_lowercase_strip_trailing_dot
+    path: normalize_dot_segments_and_preserve_encoded_data
+    query: preserve_only_declared_safe_parameters
+    fragment: forbidden_for_fetch_identity
+    userinfo: forbidden
+  host_allowlist:
+    exact_match_default: true
+    wildcard_hosts: forbidden
+    subdomains: explicit_registry_row_or_explicit_subdomain_mode_only
+    allowed_host_must_match_canonical_url: true
+  network_safety:
+    tls_certificate_validation: required
+    dns_re_resolve_before_connect: required
+    block_loopback_private_link_local_multicast_and_cloud_metadata: true
+    block_ip_literal_unless_explicit_test_exception: true
+    proxy_and_no_proxy_policy: server_controlled_not_user_supplied
+    outbound_method_allowlist: [GET, HEAD]
+    content_type_allowlist: [text/html, text/plain, application/pdf, application/json, application/xml]
+    max_response_bytes: relational_max_bytes_enforced_before_persist
+    timeout: relational_timeout_seconds_enforced
+  failure_behavior: fail_closed_without_retrying_a_disallowed_target
+
+collection_policy:
+  dry_run_supported: true
+  scheduling: disabled_until_source_registry_active_and_policy_approved
+  retry:
+    max_attempts_bounded: true
+    backoff_server_controlled: true
+    retry_4xx: false
+    retry_5xx: policy_bounded
+  parser:
+    parser_name_and_version_pinned: true
+    parser_change_creates_new_source_version: true
+    extraction_failure: quarantine_source_version
+  robots_and_terms: policy_field_required_and_audited
+  rate_limit: per_source_registry_and_tenant_budget
+  cancellation: cooperative_and_audited
+
+tenant_security_and_audit:
+  common_columns: [id, tenant_id, created_at, updated_at, created_by, updated_by, status]
+  tenant_fk_strategy: composite_tenant_id_plus_parent_id_foreign_keys
+  authorization: source_manage_permission_and_tenant_scope_required
+  audit_events: [source_created, source_updated, source_enabled, source_disabled, fetch_started, fetch_completed, fetch_failed, source_quarantined, policy_changed]
+  secret_policy:
+    forbidden: [url_userinfo, password_in_url, api_key_in_query, bearer_token_in_headers_json, raw_cookie_persistence]
+    redaction: errors_and_audit_events_must_not_include_credentials_or_full_authorization_headers
+  metadata_boundary:
+    collection_policy_json: operational_policy_only
+    metadata_json: non_authoritative_extensions_only
+    acl: document_or_collection_scope_only_and_not_source_host_allowlist
+
+legacy_gap_audit:
+  ai_document:
+    observed_fields: [source, knowledge_source_type, source_trust_level, metadata_json]
+    source_table: ai_document
+    classification: v1_document_hint_not_canonical_source_registry
+    migration_rule: preserve_source_text_and_create_reviewed_registry_reference_later
+  ai_document_metadata:
+    observed_fields: [source_url, source_title, source_section, source_type]
+    classification: import_provenance_input
+    migration_rule: validate_url_against_registry_before_fetch_or_retrieval
+  config_templates:
+    observed_field: official_reference
+    classification: display_reference_not_collection_authority
+    migration_rule: retain_and_revalidate_if_promoted_to_official_source
+  governance_sources:
+    source_files: [docs/knowledge-engine-v2/governance/vendor-scope.yaml, docs/knowledge-engine-v2/governance/poc-scope.yaml]
+    classification: reviewed_seed_candidates
+    observed: vendor_scope_contains_https_urls_but_poc_scope_contains_no_url_values
+    migration_rule: each observed URL becomes an explicit source registry row with host evidence; scope-only files remain review inputs
+
+resolution_boundary:
+  input: canonical_url_and_declared_source_type
+  order:
+    - parse_and_canonicalize_url
+    - resolve_existing_registry_by_tenant_and_canonical_url
+    - verify_allowed_host_scheme_and_port
+    - resolve_dns_and_apply_ssrf_blocks
+    - execute_bounded_request_and_revalidate_redirects
+    - persist_immutable_source_version_manifest
+  unknown_or_unallowlisted: reject_before_network
+  duplicate_content: reuse_existing_content_hash_and_append_fetch_observation
+  policy_change: create_new_policy_version_and_require_review
+
+migration_contract:
+  status: contract_only_no_production_ddl_in_db_008
+  prerequisites:
+    - DB-001_DB-002_DB-003_contracts_are_available
+    - PostgreSQL_snapshot_and_existing_source_inventory_are_available
+    - SSRF_and_outbound_egress_test_harness_is_available
+    - domain_duplicate_and_terms_review_is_approved
+  forward_steps:
+    - create_source_registry_and_source_version_with_composite_tenant_fks
+    - seed_reviewed_governance_source_rows_in_draft
+    - verify_hosts_and_policy_before_activation
+    - retain_immutable_hash_manifest_for_each_fetch
+  rollback:
+    - disable_collection_and_source_registry_writes
+    - preserve_source_versions_and_original_source_hints
+    - archive_unreferenced_registry_rows_without_deleting_facts
+    - restore_v1_source_text_read_path
+  data_loss_policy: no_remote_fetch_from_unallowlisted_target_and_no_source_fact_rewrite
+
+v1_compatibility:
+  preserved_sources: [ai_document.source, ai_document.metadata_json, official_reference, governance_source_urls]
+  adapter_rule: v1_source_hints_are_inputs_only_until_registry_validation_passes
+  production_cutover: prohibited_until_DB-009_and_DB-018_DB-020_source_and_migration_gates_pass

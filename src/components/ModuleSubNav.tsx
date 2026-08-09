@@ -11,6 +11,7 @@ import {
   BarChart2,
   BarChart3,
   Bell,
+  BookOpen,
   Building2,
   CalendarClock,
   ChevronLeft,
@@ -74,7 +75,7 @@ const LS_KEY = 'nexora_module_nav';
 
 /** Map icon string keys (from navConfig) → lucide component */
 const iconMap: Record<string, React.ElementType> = {
-  Activity, Archive, BarChart2, BarChart3, Bell, Bot, Building2, CalendarClock,
+  Activity, Archive, BarChart2, BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock,
   ClipboardCheck, ClipboardList, Clock, Code2, Columns3, Cpu, Database,
   FileCode2, FileEdit, FileSearch, FileText, GitBranch, GitCompare, Globe,
   History, Inbox, Key, Layers, Layers3, LayoutDashboard, MapPin, MessageSquare, Network, Package,
@@ -95,6 +96,7 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem(LS_KEY) === 'collapsed'; } catch { return false; }
   });
+  const [compactViewport, setCompactViewport] = useState(false);
 
   const [todoCounts, setTodoCounts] = useState<{ my: number; group: number; focus: number }>({ my: 0, group: 0, focus: 0 });
 
@@ -105,6 +107,18 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
       return next;
     });
   };
+
+  useEffect(() => {
+    const updateViewportMode = () => setCompactViewport(window.innerWidth < 900);
+    updateViewportMode();
+    window.addEventListener('resize', updateViewportMode);
+    return () => window.removeEventListener('resize', updateViewportMode);
+  }, []);
+
+  // The module rail must not consume the majority of a narrow embedded browser
+  // viewport. Keep the user's preference for desktop, but use the compact rail
+  // automatically when there is not enough room for a second navigation column.
+  const isCompactNav = collapsed || compactViewport;
 
   const checkChildActive = (child: any, path: string) => {
     if (child.activeMatch) {
@@ -188,13 +202,13 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
     <aside
       className="flex-shrink-0 flex flex-col h-full border-r transition-all duration-200 select-none animate-[fadeIn_0.2s_ease-out]"
       style={{
-        width: collapsed ? 48 : 200,
+        width: isCompactNav ? 48 : 200,
         background: 'var(--sidebar-bg)',
         borderColor: 'var(--header-border)',
       }}
     >
       {/* Group title */}
-      {!collapsed ? (
+      {!isCompactNav ? (
         <div className="px-3 pt-4 pb-2 flex items-center gap-2">
           {GroupIcon && (
             <span
@@ -226,13 +240,13 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
       )}
 
       {/* Nav items */}
-      <nav className={`flex-1 overflow-y-auto ${collapsed ? 'px-1.5 pt-2' : 'px-2'}`}>
+      <nav className={`flex-1 overflow-y-auto ${isCompactNav ? 'px-1.5 pt-2' : 'px-2'}`}>
         {visibleChildren.map(child => {
           const active = isActive(child);
           const label = zh ? child.label : (child.labelEn || child.label);
           const Icon = child.icon ? iconMap[child.icon] : undefined;
 
-          if (collapsed) {
+          if (isCompactNav) {
             return (
               <button
                 key={child.id}
@@ -329,16 +343,16 @@ const ModuleSubNav: React.FC<ModuleSubNavProps> = ({ language, userRole, current
           onClick={toggleCollapsed}
           className="w-full flex items-center justify-center rounded-lg p-1.5 transition-colors"
           style={{ color: 'var(--dim-text)' }}
-          title={zh ? (collapsed ? '展开导航' : '收起导航') : (collapsed ? 'Expand' : 'Collapse')}
+          title={zh ? (isCompactNav ? '展开导航' : '收起导航') : (isCompactNav ? 'Expand' : 'Collapse')}
           onMouseEnter={e => { e.currentTarget.style.background = 'var(--app-hover-bg)'; }}
           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
         >
-          {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          {isCompactNav ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
         </button>
       </div>
 
       {/* Version Info Footer */}
-      {!collapsed && (
+      {!isCompactNav && (
         <div className="px-3 py-3 border-t flex flex-col gap-1 flex-shrink-0" style={{ borderColor: 'var(--header-border)', background: 'var(--app-hover-bg)' }}>
           <div className="flex items-center justify-between">
             <span className="text-[9px] font-bold uppercase tracking-wider" style={{ color: 'var(--dim-text)' }}>

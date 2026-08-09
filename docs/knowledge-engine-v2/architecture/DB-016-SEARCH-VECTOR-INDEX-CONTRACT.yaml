@@ -1,0 +1,242 @@
+task_id: DB-016
+priority: P0
+owner: DBA
+milestone: M1
+status: frozen_with_explain_gate
+authority: PostgreSQL
+contract_version: v2.0
+depends_on: [DB-004, DB-010, DB-014, DB-015]
+
+decision:
+  choice: explain_gated_multimodal_search_index_matrix
+  summary: >-
+    FTS, pg_trgm, JSONB and pgvector are separate retrieval accelerators with
+    separate operators, statistics, retention and rollback. The typed
+    tenant/status/ACL predicate is applied before or with every accelerator.
+    Exact, Alias and Prefix remain the first resolution stages. A broad JSONB
+    or vector index must never become an identity or authorization shortcut.
+  invariants:
+    - PostgreSQL_extensions_are_inspected_and_missing_capabilities_fail_closed
+    - every_index_has_a_tenant_status_or_scope_filter_contract
+    - FTS_lexemes_do_not_replace_exact_product_or_version_identity
+    - pg_trgm_similarity_is_fallback_after_exact_alias_and_prefix
+    - JSONB_operator_indexes_cover_registered_keys_only
+    - vector_dimension_model_and_index_version_are_compatible
+    - vector_candidates_are_acl_filtered_and_same_generation_only
+    - each_plan_is_EXPLAIN_ANALYZE_BUFFERS_verified_on_representative_data
+    - SQLite_is_compatibility_only_and_never_evidence_of_PostgreSQL_support
+
+capability_matrix:
+  fts:
+    capability: PostgreSQL_built_in_tsvector_tsquery
+    extension: none
+    required: true
+    missing_behavior: not_applicable_only_when_database_is_SQLite; PostgreSQL_query_fails_closed_if_column_or_index_contract_is_missing
+  pg_trgm:
+    capability: PostgreSQL_pg_trgm
+    extension: pg_trgm
+    required: true
+    missing_behavior: disable_similarity_fallback_and_return_capability_error; do_not_run_unindexed_unanchored_scan
+  jsonb:
+    capability: PostgreSQL_JSONB_GIN_and_expression_indexes
+    extension: none
+    required: true
+    missing_behavior: use_typed_projection_or_explicit_legacy_adapter; malformed_payload_is_excluded
+  pgvector:
+    capability: PostgreSQL_vector
+    extension: vector
+    required: true
+    missing_behavior: disable_vector_stage_and_keep_exact_fts_or_safe_lexical_mode; never_cast_text_as_vector
+  inspection:
+    helper: backend/database/postgres_extensions.py
+    required_extensions: [vector, pg_trgm]
+    fail_closed_codes: [POSTGRES_EXTENSION_MISSING, POSTGRES_EXTENSION_INSPECTION_FAILED, POSTGRES_EXTENSION_INSTALL_FAILED]
+
+retrieval_order:
+  stages: [tenant_acl_scope, exact_catalog, alias_exact, anchored_prefix, fts, pg_trgm_fallback, vector]
+  fallback_contract:
+    fts_failure: may_return_typed_exact_or_prefix_results_with_degraded_flag
+    trgm_failure: may_return_fts_or_typed_results_with_degraded_flag
+    vector_failure: may_return_fts_or_typed_results_with_degraded_flag
+    security_failure: return_no_candidates_and_audited_error
+  no_silent_degradation: capability_or_plan_degradation_is_recorded_in_retrieval_trace
+
+index_definitions:
+  fts:
+    source_tables: [kb_document_version, kb_chunk]
+    typed_columns:
+      - name: search_document
+        type: tsvector
+        expression: setweight(to_tsvector('simple', coalesce(title, '')), 'A') || setweight(to_tsvector('simple', coalesce(normalized_content, '')), 'B')
+        update_rule: immutable_document_version_or_triggered_on_normalized_content_change
+      - name: search_chunk
+        type: tsvector
+        expression: setweight(to_tsvector('simple', coalesce(heading_path_text, '')), 'A') || setweight(to_tsvector('simple', coalesce(content, '')), 'B')
+        update_rule: immutable_chunk_version_or_triggered_on_content_change
+    indexes:
+      - name: ix_v2_kb_document_version_tenant_search_active
+        kind: gin
+        columns: [tenant_id, search_document]
+        sql: CREATE INDEX CONCURRENTLY ix_v2_kb_document_version_tenant_search_active ON kb_document_version USING GIN (search_document) WHERE status = 'active'
+        filter_rule: tenant_id_and_status_are_query_predicates; tenant_id_is_not_embedded_in_tsvector
+      - name: ix_v2_kb_chunk_tenant_search_candidate
+        kind: gin
+        columns: [tenant_id, search_chunk]
+        sql: CREATE INDEX CONCURRENTLY ix_v2_kb_chunk_tenant_search_candidate ON kb_chunk USING GIN (search_chunk) WHERE status = 'active' AND is_retrieval_candidate = true
+        filter_rule: document_acl_and_chunk_generation_are_joined_before_return
+    query_contract:
+      operator: search_vector @@ websearch_to_tsquery('simple', user_query)
+      ranking: ts_rank_cd(search_vector, query) bounded_and_audited
+      language: simple_until_multilingual_dictionary_is_reviewed
+      forbidden: raw_to_tsquery_from_untrusted_input; identity_from_lexeme_only
+
+  pg_trgm:
+    source_tables: [kb_product_alias, kb_product_model, kb_document_version, kb_chunk]
+    operator_class: gin_trgm_ops
+    indexes:
+      - name: ix_v2_kb_product_alias_tenant_alias_trgm
+        kind: gin_trgm
+        columns: [tenant_id, normalized_alias]
+        sql: CREATE INDEX CONCURRENTLY ix_v2_kb_product_alias_tenant_alias_trgm ON kb_product_alias USING GIN (normalized_alias gin_trgm_ops) WHERE status = 'active'
+        filter_rule: tenant_id_and_alias_kind_predicates_required
+      - name: ix_v2_kb_document_version_tenant_content_trgm
+        kind: gin_trgm
+        columns: [tenant_id, normalized_content]
+        sql: CREATE INDEX CONCURRENTLY ix_v2_kb_document_version_tenant_content_trgm ON kb_document_version USING GIN (normalized_content gin_trgm_ops) WHERE status = 'active'
+        filter_rule: only_fallback_or_explicit_similarity_query; minimum_query_length >= 3
+    query_contract:
+      operators: ["%", "<%", "similarity()", "word_similarity()"]
+      threshold: tenant_policy_default_0_35_and_recorded_per_request
+      ordering: similarity_desc_then_id_asc
+      forbidden: unbounded_substring_scan; similarity_before_exact_alias_prefix; ACL_decision_from_score
+
+  jsonb:
+    source_tables: [kb_document_version, kb_chunk, kb_collection, kb_import_job, ai_request_trace]
+    registered_paths:
+      - path: metadata_json
+        keys: [applicable_versions, verified_versions, language, parser_name, parser_version]
+        purpose: legacy_applicability_and_parser_filter_only
+      - path: acl_json
+        keys: [allowed_roles, allowed_site_ids, deny_roles]
+        purpose: bounded_policy_extension_after_relational_acl_anchor
+      - path: retrieval_trace_json
+        keys: [filter_hash, resolution_evidence, score_breakdown_version]
+        purpose: redacted_diagnostics_only
+    indexes:
+      - name: ix_v2_kb_document_version_metadata_path
+        kind: gin_jsonb_path_ops
+        columns: [tenant_id, metadata_json]
+        sql: CREATE INDEX CONCURRENTLY ix_v2_kb_document_version_metadata_path ON kb_document_version USING GIN (metadata_json jsonb_path_ops) WHERE status = 'active'
+        filter_rule: registered_key_allowlist_and_typed_tenant_predicate_required
+      - name: ix_v2_kb_document_version_applicable_versions
+        kind: expression_gin_jsonb
+        columns: [tenant_id, metadata_json -> 'applicable_versions']
+        sql: CREATE INDEX CONCURRENTLY ix_v2_kb_document_version_applicable_versions ON kb_document_version USING GIN ((metadata_json -> 'applicable_versions')) WHERE status = 'active'
+        filter_rule: typed_software_version_join_remains_authoritative
+    query_contract:
+      containment: metadata_json @> jsonb_build_object('registered_key', value)
+      expression: registered_array_path @> jsonb_build_array(value)
+      malformed: reject_or_quarantine_before_indexed_read
+      forbidden: arbitrary_user_key_as_authority; ACL_allow_from_JSONB_without_relational_anchor; raw_prompt_or_secret_indexing
+
+  pgvector:
+    source_tables: [kb_chunk_embedding]
+    column_contract:
+      name: embedding
+      type: vector(dimension)
+      dimension_source: kb_embedding_model.dimension
+      compatibility_key: [tenant_id, chunk_id, embedding_model_id, index_version_id, generation_no]
+      distance: cosine_for_normalized_embedding_unless_model_contract_selects_l2
+    indexes:
+      - name: ix_v2_kb_chunk_embedding_hnsw_cosine_active
+        kind: hnsw_vector_cosine
+        columns: [tenant_id, embedding]
+        sql: CREATE INDEX CONCURRENTLY ix_v2_kb_chunk_embedding_hnsw_cosine_active ON kb_chunk_embedding USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64) WHERE status = 'active'
+        filter_rule: same_model_dimension_index_version_and_acl_join_required
+      - name: ix_v2_kb_chunk_embedding_ivfflat_cosine_active
+        kind: ivfflat_vector_cosine
+        columns: [tenant_id, embedding]
+        sql: CREATE INDEX CONCURRENTLY ix_v2_kb_chunk_embedding_ivfflat_cosine_active ON kb_chunk_embedding USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100) WHERE status = 'active'
+        filter_rule: choose_only_after_corpus_size_and_recall_gate; never_build_on_mixed_dimensions
+    query_contract:
+      operator: ORDER BY embedding <=> query_vector LIMIT bounded_top_k
+      prefilters: [tenant_id, status, index_version_id, embedding_model_id, document_acl_scope]
+      tuning: hnsw_ef_search_or_ivfflat_probes_are_versioned_and_recorded
+      recall: fixture_recall_at_k_and_no_cross_tenant_rows_required
+      forbidden: text_to_vector_cast; mixed_dimension_index; vector_result_without_citation_and_acl_validation
+
+explain_gate:
+  format: EXPLAIN (ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON)
+  transaction: read_only_transaction_with_statement_timeout_and_rollback
+  fixtures:
+    - name: fts_tenant_document_search
+      query_shape: tenant_status_acl_join_and_search_vector_match
+      expected_index: ix_v2_kb_document_version_tenant_search_active
+    - name: trgm_alias_fallback
+      query_shape: tenant_active_alias_similarity_after_prefix_miss
+      expected_index: ix_v2_kb_product_alias_tenant_alias_trgm
+    - name: jsonb_registered_applicable_version
+      query_shape: typed_version_scope_plus_registered_json_array_containment
+      expected_index: ix_v2_kb_document_version_applicable_versions
+    - name: vector_same_generation_search
+      query_shape: tenant_acl_model_index_version_cosine_top_k
+      expected_index: ix_v2_kb_chunk_embedding_hnsw_cosine_active_or_ivfflat
+  acceptance:
+    - required_index_or_reviewed_statistics_reason_is_present
+    - no_unbounded_seq_scan_on_active_fixture_above_threshold
+    - tenant_and_status_predicates_are_visible_in_plan_or_proven_by_join
+    - actual_rows_estimate_error_is_within_20_percent_after_analyze
+    - p95_latency_buffers_wal_and_index_size_are_recorded
+    - vector_recall_at_k_meets_model_contract
+    - zero_cross_tenant_rows_and_zero_acl_denials_leaking_content
+    - no_unbounded_jsonb_or_trigram_fallback_is_allowed
+  artifacts: [plan_json_redacted, query_hash, schema_revision, extension_versions, fixture_hash, threshold_decision, reviewer, captured_at]
+
+legacy_gap_audit:
+  m0104_ai_pgvector_rag:
+    module: backend/database/migrations/m0104_ai_pgvector_rag.py
+    observed: [fail_closed_vector_and_pg_trgm_extension_check, legacy_document_chunk_index_only, no_vector_column_or_EXPLAIN_harness]
+    decision: retain_extension_gate; add_V2_indexes_additively_after_DB-016_EXPLAIN
+  m0113_rag_metadata_v2:
+    module: backend/database/migrations/m0113_rag_metadata_v2.py
+    observed: [metadata_json_JSONB_conversion, metadata_gin_indexes, SQLite_metadata_text_adapter, scalar_legacy_filters]
+    decision: keep_legacy_GIN_as_adapter; registered_JSONB_paths_and_typed_projections_win
+  rag_retriever:
+    module: backend/ai/services/rag_retriever.py
+    observed: [lexical_overlap_score, local_embedding_cosine, metadata_json_fallback, tenant_status_acl_filter]
+    decision: V2_search_indexes_are_shadowed_before_read_switch; existing_lexical_fallback_remains_V1_safe_mode
+  embedding_provider:
+    module: backend/ai/providers/embedding.py
+    observed: [model_id, dimensions, version, deterministic_local_fallback, dimension_compatibility_check]
+    decision: persist_model_dimension_version_and_never_mix_vectors_in_one_index
+
+security_and_governance:
+  authorization: tenant_and_acl_scope_predicate_is_mandatory_for_FTS_trgm_JSONB_and_vector
+  prompt_injection: indexed_content_is_untrusted_and_citation_validation_runs_after_retrieval
+  redaction: no_raw_prompt_answer_document_or_secret_in_plan_artifact_or_index_metadata
+  audit_events: [extension_inspection, index_build, explain_capture, threshold_override, capability_degradation, vector_model_mismatch, fallback]
+  rbac: search_read_requires_scoped_read; index_maintenance_requires_db_maintenance; threshold_override_requires_security_review
+  fail_closed: missing_extension_missing_typed_scope_malformed_JSONB_or_mixed_vector_dimension_returns_no_accelerated_candidates
+
+migration_contract:
+  status: contract_only_no_production_DDL_in_db_016
+  prerequisites: [DB-004_extension_gate, DB-010_embedding_model_contract, DB-014_JSONB_boundary, DB-015_typed_index_matrix]
+  order: [inspect_extensions, add_nullable_search_and_vector_columns, backfill_in_batches, validate_hash_dimension_and_registered_paths, create_indexes_concurrently, ANALYZE, capture_EXPLAIN, shadow_read_compare, enable_stage_by_feature_flag]
+  transaction_rules: CREATE_INDEX_CONCURRENTLY_and_DROP_INDEX_CONCURRENTLY_outside_transaction; EXPLAIN_probe_is_read_only
+  idempotence: catalog_check_names_and_repeatable_backfill; no_duplicate_index_or_mixed_generation
+  downgrade: disable_stage_switch_then_drop_only_DB016_indexes_concurrently; keep_V1_GIN_and_lexical_adapter
+  production_gate: no_cutover_until_all_EXPLAIN_acceptance_rows_and_DB-017_to_DB-020_migration_gates_pass
+
+verification:
+  contract_tests: backend/tests/database/test_db016_search_vector_index_contract.py
+  local_tests: SQLite_contract_and_legacy_adapter_only
+  PostgreSQL_tests: extensions_and_EXPLAIN_required; missing_vector_is_explicit_blocker_for_vector_plan
+  required_checks: [capability_matrix, retrieval_order, FTS_index, pg_trgm_index, JSONB_index, pgvector_index, explain_fixtures, legacy_audit, security, rollback, report_markers]
+
+rollback:
+  runtime: disable_stage_feature_flag_and_use_last_verified_typed_or_V1_lexical_path
+  schema: drop_only_DB016_indexes_concurrently_after_read_dependency_check
+  data: preserve_original_content_metadata_and_embedding_rows; quarantine_dimension_mismatch
+  audit: retain_extension_plan_threshold_build_drop_and_degradation_events
+
+next_tasks: [DB-017, DB-018, DB-019, DB-020, CHK-001, RET-001]

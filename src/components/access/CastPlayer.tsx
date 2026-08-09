@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
+import { authHeaders } from '../../api/http';
 import { 
   Play, 
   Pause, 
@@ -59,6 +60,7 @@ export default function CastPlayer({
   const [duration, setDuration]     = useState(Math.max(totalDuration || 0, 1));
   const [loadState, setLoadState]   = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMsg, setErrorMsg]     = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -156,9 +158,14 @@ export default function CastPlayer({
       setLoadState('loading');
       setErrorMsg('');
       try {
-        const res = await fetch(`/api/pam/sessions/${sessionId}/recording`);
+        const res = await fetch(`/api/pam/sessions/${sessionId}/recording`, {
+          headers: authHeaders(),
+        });
         if (!res.ok) {
           const body = await res.text().catch(() => '');
+          if (res.status === 401) {
+            throw new Error(isZh ? '登录会话已过期，请重新登录后重试回放。' : 'Your login session has expired. Sign in again and retry playback.');
+          }
           throw new Error(`HTTP ${res.status}${body ? ': ' + body.slice(0, 120) : ''}`);
         }
 
@@ -187,6 +194,8 @@ export default function CastPlayer({
         if (events.length === 0) throw new Error('No output events found in recording');
 
         eventsRef.current = events;
+        currentIdxRef.current = 0;
+        pauseOffsetRef.current = 0;
         const effectiveDuration = Math.max(totalDuration || 0, maxTime, 0.5);
         setDuration(effectiveDuration);
         setLoadState('ready');
@@ -194,7 +203,11 @@ export default function CastPlayer({
         // Write first frame — wait until xterm is initialised
         const writeFirst = () => {
           if (xtermRef.current) {
+            xtermRef.current.clear();
             xtermRef.current.write(events[0].data);
+            // The first frame is already on screen; do not render it twice
+            // when the animation loop starts.
+            currentIdxRef.current = 1;
           } else {
             requestAnimationFrame(writeFirst);
           }
@@ -211,7 +224,7 @@ export default function CastPlayer({
 
     load();
     return () => { cancelled = true; };
-  }, [sessionId, totalDuration]);
+  }, [isZh, loadAttempt, sessionId, totalDuration]);
 
   // ── Playback controls ────────────────────────────────────────────────
   const doReset = useCallback(() => {
@@ -222,7 +235,10 @@ export default function CastPlayer({
     setProgress(0);
     xtermRef.current?.clear();
     const events = eventsRef.current;
-    if (events.length > 0) xtermRef.current?.write(events[0].data);
+    if (events.length > 0) {
+      xtermRef.current?.write(events[0].data);
+      currentIdxRef.current = 1;
+    }
   }, []);
 
   const play = useCallback(() => {
@@ -301,16 +317,58 @@ export default function CastPlayer({
   const pct = duration > 0 ? Math.min(100, (progress / duration) * 100) : 0;
 
   const [commands, setCommands] = useState<{time: number, text: string}[]>([]);
+  const [commandsLoading, setCommandsLoading] = useState(false);
+  const [commandsError, setCommandsError] = useState('');
   const [showCommands, setShowCommands] = useState(false);
 
   useEffect(() => {
-    if (loadState === 'ready') {
-      fetch(`/api/pam/sessions/${sessionId}/commands`)
-        .then(r => r.json())
-        .then(data => setCommands(data.commands || []))
-        .catch(() => {});
+    let cancelled = false;
+    setCommandsLoading(true);
+    setCommandsError('');
+    fetch(`/api/pam/sessions/${sessionId}/commands`, { headers: authHeaders() })
+      .then(async (response) => {
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error(isZh ? '登录会话已过期，无法读取命令索引。' : 'Your login session has expired; the command index cannot be loaded.');
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        if (!cancelled) setCommands(Array.isArray(data?.commands) ? data.commands : []);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setCommands([]);
+          setCommandsError(error instanceof Error ? error.message : (isZh ? '命令索引加载失败。' : 'Command index failed to load.'));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCommandsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [isZh, sessionId]);
+
+  const handleDownloadRecording = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/pam/sessions/${sessionId}/recording`, {
+        headers: authHeaders(),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${sessionId}.cast`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error: unknown) {
+      alert(error instanceof Error ? error.message : (isZh ? '下载录像失败。' : 'Failed to download recording.'));
     }
-  }, [sessionId, loadState]);
+  }, [isZh, sessionId]);
 
   const jumpTo = (time: number) => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -380,9 +438,12 @@ export default function CastPlayer({
 
             <button
               onClick={async () => {
-                const res = await fetch(`/api/pam/sessions/${sessionId}/export`, { method: 'POST' });
-                const data = await res.json();
-                if (data.success) {
+                const res = await fetch(`/api/pam/sessions/${sessionId}/export`, {
+                  method: 'POST',
+                  headers: authHeaders(),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.success) {
                   alert(isZh ? '导出任务已启动，完成后将自动下载' : 'Export started, download will begin when ready');
                 } else {
                   alert(isZh ? `导出失败: ${data.error}` : `Export failed: ${data.error}`);
@@ -395,7 +456,7 @@ export default function CastPlayer({
             </button>
 
             <button
-              onClick={() => window.open(`/api/pam/sessions/${sessionId}/recording`, '_blank')}
+              onClick={() => void handleDownloadRecording()}
               className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-cyan-400 transition-colors"
               title={isZh ? '下载录像文件' : 'Download .cast file'}
             >
@@ -415,6 +476,21 @@ export default function CastPlayer({
           <div className="flex-1 bg-[#0f172a] relative overflow-hidden" style={{ minHeight: '320px' }}>
             <div ref={containerRef} className="absolute inset-0 p-2" />
 
+            {loadState === 'error' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f172a]/95 z-10 gap-3 px-6 text-center">
+                <AlertCircle className="w-8 h-8 text-rose-400" />
+                <p className="text-rose-200 text-sm font-semibold">{isZh ? '回放加载失败' : 'Playback could not be loaded'}</p>
+                <p className="max-w-lg text-slate-400 text-xs break-words">{errorMsg}</p>
+                <button
+                  type="button"
+                  onClick={() => setLoadAttempt((value) => value + 1)}
+                  className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-cyan-500"
+                >
+                  {isZh ? '重新加载' : 'Retry'}
+                </button>
+              </div>
+            )}
+
             {loadState === 'loading' && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f172a]/95 z-10 gap-3">
                 <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
@@ -431,7 +507,17 @@ export default function CastPlayer({
                 <div className="px-2 py-0.5 bg-slate-800 text-slate-500 text-[10px] rounded font-mono">INDEX v1</div>
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
-                {commands.length === 0 ? (
+                {commandsLoading ? (
+                  <div className="py-20 text-center text-slate-500 text-xs">
+                    <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin text-cyan-400" />
+                    {isZh ? '正在加载命令索引…' : 'Loading command index...'}
+                  </div>
+                ) : commandsError ? (
+                  <div className="py-16 px-3 text-center text-rose-300 text-xs">
+                    <AlertCircle className="mx-auto mb-2 h-4 w-4" />
+                    <p>{commandsError}</p>
+                  </div>
+                ) : commands.length === 0 ? (
                   <div className="py-20 text-center text-slate-600 text-xs italic">
                     {isZh ? '未检测到具体指令' : 'No commands detected'}
                   </div>
@@ -495,7 +581,12 @@ export default function CastPlayer({
                     <Pause size={18} fill="currentColor" />
                   </button>
                 ) : (
-                  <button onClick={play} disabled={loadState !== 'ready'} className="w-10 h-10 flex items-center justify-center bg-cyan-600 hover:bg-cyan-500 text-white rounded-full">
+                  <button
+                    onClick={play}
+                    disabled={loadState !== 'ready'}
+                    className={`w-10 h-10 flex items-center justify-center text-white rounded-full ${loadState === 'ready' ? 'bg-cyan-600 hover:bg-cyan-500' : 'cursor-not-allowed bg-slate-600 opacity-50'}`}
+                    title={loadState === 'error' ? errorMsg : undefined}
+                  >
                     <Play size={18} fill="currentColor" className="ml-0.5" />
                   </button>
                 )}

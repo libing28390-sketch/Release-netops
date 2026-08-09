@@ -54,6 +54,22 @@ class Settings(BaseSettings):
     CONFIG_MANAGEMENT_URL: str = ""
     CONFIG_MANAGEMENT_TIMEOUT_SECONDS: float = 1.0
 
+    # External AI is opt-in.  Security gateway failures, kill-switch state,
+    # oversized payloads, and provider URL policy are all enforced before an
+    # HTTP request is constructed.
+    AI_ENABLED: bool = False
+    EXTERNAL_AI_ENABLED: bool = False
+    AI_KILL_SWITCH: bool = False
+    AI_SECURITY_VAULT_TTL_SECONDS: int = 3600
+    AI_MAX_PAYLOAD_BYTES: int = 256000
+    AI_PROVIDER_ALLOWLIST: str = "deepseek"
+    AI_DEBUG_PAYLOAD: bool = False
+    AI_OUTBOUND_PROXY_URL: str = ""
+
+    # PAM Web terminal compatibility control. Host-key registration is not a
+    # login prerequisite; legacy algorithms still require explicit opt-in.
+    PAM_ALLOW_LEGACY_SSH: bool = False
+
     # HashiCorp Vault integration
     VAULT_ENABLED: bool = False
     VAULT_ADDR: str = "http://127.0.0.1:8200"

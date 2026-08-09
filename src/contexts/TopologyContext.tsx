@@ -2,6 +2,8 @@ import React, { createContext, useContext, ReactNode } from 'react';
 import type { Device, TagDefinition } from '../types';
 import type { TagFilterConfig } from '../components/TagConditionPicker';
 
+type TopologyGraphView = 'all' | 'physical' | 'l2' | 'l3' | 'logical' | 'site' | 'external' | 'oob';
+
 interface TopologyContextValue {
   setSelectedTopologyDeviceId: (id: string | null) => void;
   setSelectedTopologyLinkKey: (key: string | null) => void;
@@ -22,6 +24,7 @@ interface TopologyContextValue {
   };
   topologySearch: string;
   topologySiteFilter: string;
+  topologyGraphView: TopologyGraphView;
   topologyTagFilter: TagFilterConfig;
   topologyRoleFilter: string;
   topologyStatusFilter: 'all' | 'online' | 'offline' | 'pending';
@@ -63,11 +66,24 @@ interface TopologyContextValue {
   handleExportMap: () => Promise<void>;
   setTopologySearch: (search: string) => void;
   setTopologySiteFilter: (site: string) => void;
+  setTopologyGraphView: (view: TopologyGraphView) => void;
   setTopologyTagFilter: (conditions: TagFilterConfig) => void;
   setTopologyRoleFilter: (role: string) => void;
   setTopologyStatusFilter: (status: "pending" | "offline" | "online" | "all") => void;
   setTopologyLinkStatusFilter: (status: "all" | "up" | "degraded" | "down" | "stale" | "unknown") => void;
   setTopologyProtocolFilter: (protocol: "all" | "lldp") => void;
+  handleConfirmTopologyRelation: (edgeId: string, relationType: string) => Promise<void>;
+  loadTopologyHistory: (edgeId: string) => Promise<Array<{
+    id: string;
+    entity_type: string;
+    entity_id: string;
+    event_type: string;
+    before?: unknown;
+    after?: unknown;
+    source?: string;
+    actor?: string;
+    created_at?: string;
+  }>>;
   formatTopologyPort: (value?: string) => string;
   formatTopologyInterfaceTelemetry: (snapshot: any) => string;
   formatTopologyLastSeen: (value?: string) => string;
