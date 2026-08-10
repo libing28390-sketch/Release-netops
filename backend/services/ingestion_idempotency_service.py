@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any, Mapping
 from urllib.parse import urlsplit
+
+from core.enum_compat import StrEnum
 
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")

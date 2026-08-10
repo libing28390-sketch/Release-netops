@@ -247,6 +247,28 @@ def _seed_protocol_actions(cursor) -> None:
                 continue
             action_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"nexora:{release_id}:{action_code}"))
             checksum = hashlib.sha256(command.encode("utf-8")).hexdigest()
+            existing = cursor.execute(
+                "SELECT id FROM platform_release_actions WHERE release_id = ? AND action_code = ?",
+                (release_id, action_code),
+            ).fetchone()
+            if existing:
+                cursor.execute(
+                    """UPDATE platform_release_actions
+                       SET command = ?, command_checksum = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (command, checksum, now, existing[0]),
+                )
+                continue
+
+            # Earlier seed migrations use the same deterministic UUID scheme.
+            # A legacy row can therefore own this ID under a different natural
+            # key.  Preserve that row and assign this new action a fresh ID.
+            id_owner = cursor.execute(
+                "SELECT 1 FROM platform_release_actions WHERE id = ?",
+                (action_id,),
+            ).fetchone()
+            if id_owner:
+                action_id = str(uuid.uuid4())
             cursor.execute(
                 """
                 INSERT INTO platform_release_actions (

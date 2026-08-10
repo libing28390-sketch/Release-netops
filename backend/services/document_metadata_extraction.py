@@ -9,10 +9,10 @@ import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any, Mapping
 
 from ai.security.classification import DataLevel, classify
+from core.enum_compat import StrEnum
 from ai.services.knowledge_metadata import (
     DIRECTORY_VENDOR_MAP,
     HIGH_FREQUENCY_METADATA_FIELDS,

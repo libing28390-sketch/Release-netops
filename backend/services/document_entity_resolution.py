@@ -13,8 +13,9 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any, Callable, Mapping, Sequence
+
+from core.enum_compat import StrEnum
 
 
 MAX_CANDIDATES = 20

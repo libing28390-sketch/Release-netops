@@ -13,10 +13,10 @@ import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any, Mapping, Protocol
 
 from ai.security.classification import classify_text
+from core.enum_compat import StrEnum
 from services.document_content_cleaning import CleanedDocument
 from services.document_parser_adapters import MAX_PARSE_BYTES, ParsedDocument
 

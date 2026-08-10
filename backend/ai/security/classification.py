@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import IntEnum, StrEnum
+from enum import IntEnum
 from typing import Any, Iterable
+
+from core.enum_compat import StrEnum
 
 
 class DataLevel(IntEnum):
@@ -135,4 +137,3 @@ def action_for(level: DataLevel, *, has_prompt_injection: bool = False) -> Secur
     if level == DataLevel.L2_IDENTIFIER or has_prompt_injection:
         return SecurityAction.TOKENIZE
     return SecurityAction.ALLOW
-
