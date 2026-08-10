@@ -30,6 +30,7 @@ from services.device_health_service import (
     _build_open_alert_stats,
 )
 from services.snmp_service import collect_device_metrics, collect_interface_data
+from services.snmp_metric_profile_service import resolve_metric_profiles
 from services.network_access_limiter import limited_connect_handler
 from core.config import settings
 from core.textfsm import parse_with_textfsm
@@ -642,10 +643,19 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
     snmp_interfaces: list[dict] = []
 
     try:
+        resolved_metrics = resolve_metric_profiles(device)
         loop = asyncio.new_event_loop()
         try:
             snmp_metrics = loop.run_until_complete(
-                collect_device_metrics(ip, platform, community, port)
+                collect_device_metrics(
+                    ip,
+                    platform,
+                    community,
+                    port,
+                    custom_metrics=resolved_metrics.get('metrics') or {},
+                    device_id=str(device.get('id') or ''),
+                    metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
+                )
             )
         except Exception as e:
             logger.warning(f"SNMP metrics collection failed for {ip}: {e}")
@@ -1657,6 +1667,14 @@ def run_inspection(
                 return None
 
         write_failed_count = 0
+
+        def _status_metric_storage(value: Any) -> Any:
+            # inspection_results keeps legacy TEXT columns; do not bind a
+            # Python bool to PostgreSQL TEXT while preserving the API contract.
+            if isinstance(value, bool):
+                return 'true' if value else 'false'
+            return value
+
         for r in results:
             try:
                 conn.execute(insert_sql, (
@@ -1667,7 +1685,8 @@ def run_inspection(
                     _scalar_metric(r.get('cpu_usage')),
                     _scalar_metric(r.get('memory_usage')),
                     _scalar_metric(r.get('temperature')),
-                    r.get('fan_status', ''), r.get('psu_status', ''),
+                    _status_metric_storage(r.get('fan_status', '')),
+                    _status_metric_storage(r.get('psu_status', '')),
                     r.get('interface_total', 0), r.get('interface_up', 0), r.get('interface_down', 0),
                     r.get('interface_flapping', 0), r.get('interface_high_util', 0), r.get('interface_errors', 0),
                     r.get('open_alerts', 0), r.get('critical_alerts', 0),
@@ -1752,11 +1771,12 @@ def run_inspection(
 
 def _load_devices(conn, scope_type: str, scope_filter: str) -> list[dict[str, Any]]:
     select = (
-        'id, hostname, ip_address, platform, status, compliance, role, site, '
+        'id, hostname, ip_address, platform, vendor, model, status, compliance, role, site, '
         'cpu_usage, memory_usage, temp, fan_status, psu_status, '
         'username, password, normal_username, normal_password, '
         'admin_username, admin_password, management_port, enable_password, '
-        'credential_source, vault_path, snmp_community, snmp_port, collection_policy_json'
+        'credential_source, vault_path, snmp_community, snmp_port, '
+        'snmp_cpu_oid, snmp_memory_oid, collection_policy_json'
     )
     if scope_type == 'all':
         rows = conn.execute(f'SELECT {select} FROM devices ORDER BY hostname').fetchall()

@@ -16,11 +16,32 @@ from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
 from core.rbac import require_role
 from services.vault_service import resolve_device_credentials, resolve_collector_credentials, write_credentials as vault_write, vault_available
+from services.snmp_service import normalize_metric_oid
+from services.snmp_metric_profile_service import (
+    create_model_metric_profile,
+    delete_model_metric_profile,
+    get_model_metric_profile_mapping,
+    list_model_metric_profiles_page,
+    mark_model_metric_profile_test,
+    normalize_model_key,
+    normalize_vendor_key,
+    profile_metric_definitions,
+    resolve_metric_profiles,
+    update_model_metric_profile,
+)
 from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
 from datetime import datetime, timezone
 
 _logger = logging.getLogger(__name__)
 logger = _logger
+
+
+def _normalize_device_metric_oid(value: object, field_name: str) -> str:
+    """Validate an optional device-level CPU/memory metric OID."""
+    try:
+        return normalize_metric_oid(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f'{field_name}: {exc}') from exc
 
 
 router = APIRouter()
@@ -267,6 +288,23 @@ def _sanitize_device_item(item: dict) -> dict:
     cmdb_rack_id = str(sanitized.get('cmdb_rack_id') or '').strip()
     if cmdb_rack_id and not str(sanitized.get('rack_id') or '').strip():
         sanitized['rack_id'] = cmdb_rack_id
+
+    # Hardware status has one API contract even though older rows stored
+    # labels (ok/redundant/fail) and some SQLite rows may contain 0/1.
+    # Expose true=normal, false=abnormal, null=unknown to every device-list
+    # consumer while keeping the database columns backward compatible.
+    for status_key in ('fan_status', 'psu_status'):
+        if status_key in sanitized:
+            value = sanitized.get(status_key)
+            if isinstance(value, bool):
+                continue
+            normalized = str(value or '').strip().casefold()
+            if normalized in {'1', 'true', 'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready'}:
+                sanitized[status_key] = True
+            elif normalized in {'0', 'false', 'fail', 'failed', 'warning', 'error', 'down', 'offline', 'alarm'}:
+                sanitized[status_key] = False
+            else:
+                sanitized[status_key] = None
 
     # Synchronize lifecycle status prioritizing physical_assets status when linked
     asset_lifecycle = str(sanitized.get('asset_lifecycle_status') or '').strip()
@@ -684,6 +722,7 @@ def read_devices(
             select_clause = (
                 'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.sn, d.model, d.version, '
                 'd.role, d.site, d.uptime, d.connection_method, d.cpu_usage, d.memory_usage, d.temp, '
+                'd.snmp_cpu_oid, d.snmp_memory_oid, '
                 'd.site_id, d.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor, '
                 'd.device_category, d.management_port, d.lifecycle_status, '
                 'd.platform_profile_id, d.platform_source, d.platform_locked'
@@ -739,6 +778,251 @@ def read_devices(
     finally:
         conn.close()
 
+
+@router.get("/platform-registry/snmp-metric-profiles")
+def list_snmp_metric_profiles(
+    search: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    user=require_role("Viewer"),
+):
+    """List model-scoped SNMP metric templates for the management UI."""
+    conn = get_db_connection()
+    try:
+        result = list_model_metric_profiles_page(
+            conn,
+            search or '',
+            page=page,
+            page_size=page_size,
+        )
+        return {
+            "success": True,
+            "data": result["items"],
+            "total": result["total"],
+            "page": result["page"],
+            "page_size": result["page_size"],
+            "total_pages": result["total_pages"],
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/platform-registry/snmp-metric-profiles")
+def create_snmp_metric_profile(payload: dict = Body(...), user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        profile = create_model_metric_profile(
+            conn,
+            payload,
+            updated_by=user.get('username', 'system'),
+        )
+        conn.commit()
+        log_audit_event(
+            conn=conn,
+            event_type='snmp_metric_profile.create',
+            category='configuration',
+            severity='info',
+            status='success',
+            summary=f"Created SNMP metric profile for {payload.get('vendor', '')}/{payload.get('model', '')}",
+            actor_username=user.get('username', ''),
+            actor_role=user.get('role', ''),
+            target_type='snmp_metric_profile',
+            target_id=profile.get('id', ''),
+            details={'vendor': profile.get('vendor_name', ''), 'model': profile.get('model_name', '')},
+        )
+        conn.commit()
+        return {"success": True, "data": profile}
+    except ValueError as exc:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.put("/platform-registry/snmp-metric-profiles/{profile_id}")
+def update_snmp_metric_profile(profile_id: str, payload: dict = Body(...), user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        profile = update_model_metric_profile(
+            conn,
+            profile_id,
+            payload,
+            updated_by=user.get('username', 'system'),
+        )
+        conn.commit()
+        log_audit_event(
+            conn=conn,
+            event_type='snmp_metric_profile.update',
+            category='configuration',
+            severity='info',
+            status='success',
+            summary=f"Updated SNMP metric profile {profile_id}",
+            actor_username=user.get('username', ''),
+            actor_role=user.get('role', ''),
+            target_type='snmp_metric_profile',
+            target_id=profile_id,
+            details={'vendor': profile.get('vendor_name', ''), 'model': profile.get('model_name', '')},
+        )
+        conn.commit()
+        return {"success": True, "data": profile}
+    except ValueError as exc:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.delete("/platform-registry/snmp-metric-profiles/{profile_id}")
+def delete_snmp_metric_profile(profile_id: str, user=require_role("Operator")):
+    conn = get_db_connection()
+    try:
+        delete_model_metric_profile(conn, profile_id)
+        conn.commit()
+        log_audit_event(
+            conn=conn,
+            event_type='snmp_metric_profile.delete',
+            category='configuration',
+            severity='info',
+            status='success',
+            summary=f"Deleted SNMP metric profile {profile_id}",
+            actor_username=user.get('username', ''),
+            actor_role=user.get('role', ''),
+            target_type='snmp_metric_profile',
+            target_id=profile_id,
+        )
+        conn.commit()
+        return {"success": True, "data": {"profile_id": profile_id}}
+    except ValueError as exc:
+        conn.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.get("/platform-registry/snmp-metric-profiles/{profile_id}/mapping-validation")
+def validate_snmp_metric_profile_mapping(profile_id: str, user=require_role("Viewer")):
+    """Report which inventory devices will receive a model profile."""
+    conn = get_db_connection()
+    try:
+        return {
+            "success": True,
+            "data": get_model_metric_profile_mapping(conn, profile_id),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.post("/platform-registry/snmp-metric-profiles/{profile_id}/test")
+async def test_snmp_metric_profile(
+    profile_id: str,
+    payload: dict = Body(default={}),
+    user=require_role("Operator"),
+):
+    """Live-test a model profile against one matching device.
+
+    A profile is only marked ``verified`` when every configured metric returns
+    a valid typed result (percentage, unit-bearing value, or status boolean).
+    Unverified/failed profiles are deliberately ignored by the background
+    collector.
+    """
+    conn = get_db_connection()
+    try:
+        profile_row = conn.execute(
+            'SELECT * FROM snmp_metric_profiles WHERE id = ?',
+            (profile_id,),
+        ).fetchone()
+        if not profile_row:
+            raise HTTPException(status_code=404, detail='Model OID profile not found')
+        profile = dict(profile_row)
+        requested_device_id = str(payload.get('device_id') or '').strip()
+        if requested_device_id:
+            candidate_rows = conn.execute(
+                'SELECT * FROM devices WHERE id = ?',
+                (requested_device_id,),
+            ).fetchall()
+        else:
+            candidate_rows = conn.execute(
+                "SELECT * FROM devices WHERE LOWER(TRIM(COALESCE(model, ''))) = LOWER(TRIM(?)) "
+                "ORDER BY CASE WHEN status = 'online' THEN 0 ELSE 1 END, hostname",
+                (profile['model_name'],),
+            ).fetchall()
+    finally:
+        conn.close()
+
+    matching = [
+        dict(row) for row in candidate_rows
+        if normalize_model_key(row['model']) == str(profile['model_key'] or '')
+        and normalize_vendor_key(row['vendor'], row['platform']) == str(profile['vendor_key'] or '')
+    ]
+    if not matching:
+        raise HTTPException(status_code=400, detail='No device matches this vendor/model profile')
+
+    device = matching[0]
+    collector_credentials = resolve_collector_credentials(device)
+    snmp_credentials = collector_credentials.get('snmp') or {}
+    ip = snmp_credentials.get('server') or device.get('ip_address') or ''
+    community = snmp_credentials.get('community') or ''
+    port = snmp_credentials.get('port') or 161
+    configured = profile_metric_definitions(profile)
+
+    test_results: dict[str, dict] = {}
+    if not ip or not community:
+        passed = False
+        message = 'SNMP address or community is not configured on the sample device'
+    else:
+        from services.snmp_service import probe_metric_definition
+        import asyncio as _aio
+
+        async def _test_metric(metric: str, config: dict) -> tuple[str, dict]:
+            try:
+                detail = await probe_metric_definition(ip, community, config, int(port))
+                return metric, detail
+            except Exception as exc:
+                return metric, {
+                    'oid': config.get('oid') or config.get('used_oid'),
+                    'value': None,
+                    'passed': False,
+                    'status': 'probe_error',
+                    'message': type(exc).__name__,
+                }
+
+        pairs = await _aio.gather(*[_test_metric(metric, config) for metric, config in configured.items()])
+        test_results = dict(pairs)
+        passed = bool(test_results) and all(item.get('passed') for item in test_results.values())
+        message = (
+            'All configured metrics passed typed SNMP validation'
+            if passed
+            else 'One or more metric definitions failed typed SNMP validation'
+        )
+
+    conn = get_db_connection()
+    try:
+        updated_profile = mark_model_metric_profile_test(
+            conn,
+            profile_id,
+            str(device['id']),
+            passed,
+            message,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        'success': True,
+        'data': {
+            'passed': passed,
+            'message': message,
+            'profile_id': profile_id,
+            'verification_status': updated_profile.get('verification_status'),
+            'sample_device_id': str(device['id']),
+            'sample_hostname': device.get('hostname') or device.get('ip_address') or str(device['id']),
+            'metrics': test_results,
+        },
+    }
+
 @router.post("/devices")
 def create_device(device: dict = Body(...)):
     conn = get_db_connection()
@@ -749,6 +1033,12 @@ def create_device(device: dict = Body(...)):
             device.get('platform_profile_id'),
             device.get('platform'),
         )
+    except HTTPException:
+        conn.close()
+        raise
+    try:
+        snmp_cpu_oid = _normalize_device_metric_oid(device.get('snmp_cpu_oid'), 'snmp_cpu_oid')
+        snmp_memory_oid = _normalize_device_metric_oid(device.get('snmp_memory_oid'), 'snmp_memory_oid')
     except HTTPException:
         conn.close()
         raise
@@ -843,6 +1133,10 @@ def create_device(device: dict = Body(...)):
             'UPDATE devices SET site_id = ? WHERE id = ?',
             (_resolve_device_site_id(conn, device.get('site_id'), device.get('site')), device_id),
         )
+        conn.execute(
+            'UPDATE devices SET snmp_cpu_oid = ?, snmp_memory_oid = ? WHERE id = ?',
+            (snmp_cpu_oid, snmp_memory_oid, device_id),
+        )
         tag_service.sync_device_status_tag(conn, device_id, device.get('status', 'pending'))
         # Plan-A: auto-create linked physical_assets record
         _create_linked_asset_for_device(conn, device_id, device)
@@ -930,6 +1224,19 @@ def update_device(device_id: str, device: dict = Body(...)):
             raise HTTPException(status_code=404, detail='Device not found')
 
         existing_device = dict(existing_row)
+        try:
+            snmp_cpu_oid = (
+                _normalize_device_metric_oid(device.get('snmp_cpu_oid'), 'snmp_cpu_oid')
+                if 'snmp_cpu_oid' in device
+                else str(existing_device.get('snmp_cpu_oid') or '')
+            )
+            snmp_memory_oid = (
+                _normalize_device_metric_oid(device.get('snmp_memory_oid'), 'snmp_memory_oid')
+                if 'snmp_memory_oid' in device
+                else str(existing_device.get('snmp_memory_oid') or '')
+            )
+        except HTTPException:
+            raise
         clear_platform_binding = (
             'platform_profile_id' in device
             and device.get('platform_profile_id') in (None, '')
@@ -1007,7 +1314,8 @@ def update_device(device_id: str, device: dict = Body(...)):
                 username = ?, password = ?, current_config = ?, config_history = ?, snmp_community = ?, snmp_port = ?, 
                 lifecycle_status = ?, enable_password = ?, priv_username = ?, credential_source = ?, vault_path = ?,
                 normal_username = ?, normal_password = ?, admin_username = ?, admin_password = ?, auth_model = ?,
-                device_category = ?, function = ?, zone = ?, power_watts = ?, credential_id = ?
+                device_category = ?, function = ?, zone = ?, power_watts = ?, credential_id = ?,
+                snmp_cpu_oid = ?, snmp_memory_oid = ?
             WHERE id = ?
         ''', (
             device.get('hostname', ''),
@@ -1040,6 +1348,8 @@ def update_device(device_id: str, device: dict = Body(...)):
             device.get('zone', 'Unknown') or 'Unknown',
             int(device.get('power_watts') or 0),
             credential_id,
+            snmp_cpu_oid,
+            snmp_memory_oid,
             device_id
         ))
         conn.execute(
@@ -1809,10 +2119,19 @@ async def snmp_test(device_id: str):
         async def _background_sync():
             try:
                 platform = device['platform'] or 'cisco_ios'
+                resolved_metrics = resolve_metric_profiles(device_data)
                 dev_info, intf_data, metrics = await _aio.gather(
                     collect_device_info(snmp_ip, community, port),
                     collect_interface_data(snmp_ip, community, port),
-                    collect_device_metrics(snmp_ip, platform, community, port),
+                    collect_device_metrics(
+                        snmp_ip,
+                        platform,
+                        community,
+                        port,
+                        custom_metrics=resolved_metrics.get('metrics') or {},
+                        device_id=str(device_data.get('id') or device_id),
+                        metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
+                    ),
                 )
 
                 updates: dict = {}
@@ -1844,6 +2163,14 @@ async def snmp_test(device_id: str):
                     updates['fan_status'] = metrics['fan_status']
                 if metrics.get('psu_status') is not None:
                     updates['psu_status'] = metrics['psu_status']
+
+                # Device status columns remain TEXT for backward-compatible
+                # SQLite/PostgreSQL schemas; persist the boolean contract as
+                # canonical text and normalize it back to bool at API edges.
+                if 'fan_status' in updates and isinstance(updates['fan_status'], bool):
+                    updates['fan_status'] = 'true' if updates['fan_status'] else 'false'
+                if 'psu_status' in updates and isinstance(updates['psu_status'], bool):
+                    updates['psu_status'] = 'true' if updates['psu_status'] else 'false'
 
                 conn2 = get_db_connection()
                 try:

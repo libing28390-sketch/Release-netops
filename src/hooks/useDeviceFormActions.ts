@@ -13,6 +13,8 @@ const EMPTY_ADD_FORM: Partial<Device> = {
   password: '',
   snmp_community: 'public',
   snmp_port: 161,
+  snmp_cpu_oid: '',
+  snmp_memory_oid: '',
   lifecycle_status: 'staging',
 };
 

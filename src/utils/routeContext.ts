@@ -148,7 +148,9 @@ export function getRouteContext(pathname: string): RouteContext {
   }
   // 10. Management (/management/...)
   else if (first === 'management') {
-    if (second === 'audit') {
+    if (second === 'snmp-metric-templates') {
+      activeTab = 'snmp-metric-templates';
+    } else if (second === 'audit') {
       activeTab = 'audit';
     } else if (second === 'users') {
       activeTab = 'users';

@@ -18,3 +18,9 @@ describe('getRouteContext AI routes', () => {
     expect(getRouteContext('/ai-security').activeTab).toBe('ai-security');
   });
 });
+
+describe('getRouteContext platform management routes', () => {
+  it('maps SNMP metric templates to the platform management tab', () => {
+    expect(getRouteContext('/management/snmp-metric-templates').activeTab).toBe('snmp-metric-templates');
+  });
+});

@@ -34,11 +34,24 @@ SNMP 采集服务 — 多厂商 CPU / 内存 / 温度 / 风扇 / 电源 / 接口
 """
 
 import asyncio
+import hashlib
+import json
+import math
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from services.network_access_limiter import get_network_access_limiter
 import logging
 import sys
 import time as _time
-from typing import Optional
+from collections.abc import Mapping
+from typing import Any, Optional
+
+from services.snmp_counter_service import (
+    calculate_counter_delta,
+    load_counter_sample,
+    save_counter_sample,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +283,241 @@ def _resolve_platform(platform: str) -> str:
     return 'cisco_ios'  # default
 
 
+_METRIC_OID_PATTERN = re.compile(r'^\d+(?:\.\d+)+$')
+
+
+def normalize_metric_oid(value: Any) -> str:
+    """Normalize and validate a user-provided CPU/memory metric OID.
+
+    A leading dot is accepted because both ``.1.3...`` and ``1.3...`` are
+    common representations in vendor documentation.  The collector stores
+    the canonical dotted-decimal form without leading/trailing dots.
+    """
+    raw = str(value or '').strip().strip('.')
+    if not raw:
+        return ''
+    if len(raw) > 128 or not _METRIC_OID_PATTERN.fullmatch(raw):
+        raise ValueError('OID must be a dotted decimal SNMP OID, for example 1.3.6.1.2.1.1.3.0')
+    return raw
+
+
+def _safe_metric_oid(value: Any) -> str:
+    """Ignore malformed legacy database values at collection time."""
+    try:
+        return normalize_metric_oid(value)
+    except ValueError:
+        return ''
+
+
+def _parse_snmp_number(value: Any) -> float | None:
+    """Extract a numeric SNMP value from puresnmp's string representation."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or 'nosuchobject' in text.lower() or 'nosuchinstance' in text.lower():
+        return None
+    match = re.search(r'(?<![A-Za-z])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?![A-Za-z])', text)
+    if not match:
+        return None
+    try:
+        number = float(match.group(0))
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _as_percent(number: float | None) -> int | None:
+    if number is None or number < 0 or number > 100:
+        return None
+    return int(round(number))
+
+
+@dataclass(frozen=True)
+class SnmpTypedValue:
+    """A numeric SNMP value with the ASN.1 semantics preserved."""
+
+    number: float | None
+    snmp_type: str
+    counter_bits: int | None = None
+
+
+def _typed_value_from_raw(raw: Any) -> SnmpTypedValue:
+    """Convert a puresnmp raw value without throwing away its type.
+
+    ``PyWrapper`` intentionally pythonizes values and therefore loses the
+    distinction between Counter32, Counter64, Gauge32 and Integer32.  Metric
+    profiles use the raw Client path so width validation is based on the
+    received ASN.1 type rather than on the magnitude of the number.
+    """
+    type_name = type(raw).__name__.casefold()
+    if "counter64" in type_name:
+        snmp_type, counter_bits = "counter", 64
+    elif "counter" in type_name:
+        snmp_type, counter_bits = "counter", 32
+    elif "gauge64" in type_name:
+        snmp_type, counter_bits = "gauge", 64
+    elif "gauge" in type_name:
+        snmp_type, counter_bits = "gauge", 32
+    elif "timetick" in type_name:
+        snmp_type, counter_bits = "timeticks", 32
+    elif any(token in type_name for token in ("integer", "unsigned")):
+        snmp_type, counter_bits = "integer", 32
+    elif isinstance(raw, (int, float)):
+        # This branch is only a defensive fallback for test doubles or an
+        # alternate SNMP library.  It is intentionally not accepted as a
+        # counter unless the template separately declares the counter width.
+        snmp_type, counter_bits = "python_number", None
+    else:
+        snmp_type, counter_bits = "other", None
+
+    raw_number = getattr(raw, "value", raw)
+    if isinstance(raw_number, bool):
+        number = None
+    else:
+        try:
+            number = float(raw_number)
+        except (TypeError, ValueError):
+            number = _parse_snmp_number(raw_number)
+        if number is not None and not math.isfinite(number):
+            number = None
+    return SnmpTypedValue(number=number, snmp_type=snmp_type, counter_bits=counter_bits)
+
+
+async def _collect_custom_percent_metric(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int,
+) -> int | None:
+    """Read a user-supplied percentage OID as a scalar or a small table.
+
+    Exact GET is preferred for scalar OIDs.  If the device exposes the OID as
+    a table/root, WALK is used and the valid 0-100 values are averaged.  This
+    keeps one device-level setting useful for both common SNMP layouts.
+    """
+    value = await _snmp_get(ip, community, oid, port)
+    direct = _as_percent(_parse_snmp_number(value))
+    if direct is not None:
+        return direct
+
+    rows = await _snmp_walk(ip, community, oid, port)
+    values = [
+        parsed
+        for _, raw in rows
+        if (parsed := _as_percent(_parse_snmp_number(raw))) is not None
+    ]
+    if not values:
+        return None
+    return int(round(sum(values) / len(values)))
+
+
+async def _collect_default_cpu_metric(
+    ip: str,
+    community: str,
+    vendor: str,
+    oids: dict[str, str],
+    port: int,
+) -> int | None:
+    if vendor == 'arista_eos':
+        rows = await _snmp_walk(ip, community, oids['cpu'], port)
+        values = [
+            int(parsed)
+            for _, raw in rows
+            if (parsed := _parse_snmp_number(raw)) is not None
+        ]
+        return int(sum(values) / len(values)) if values else None
+
+    rows = await _snmp_walk(ip, community, oids['cpu'], port)
+    if not rows:
+        return None
+    if vendor in ('huawei_vrp', 'h3c_comware', 'juniper_junos'):
+        for _, raw in rows:
+            parsed = _parse_snmp_number(raw)
+            if parsed is not None and parsed > 0:
+                return int(parsed)
+        return None
+
+    for _, raw in rows:
+        parsed = _parse_snmp_number(raw)
+        if parsed is not None:
+            return int(parsed)
+    return None
+
+
+async def _collect_default_memory_metric(
+    ip: str,
+    community: str,
+    vendor: str,
+    oids: dict[str, str],
+    port: int,
+) -> int | None:
+    if vendor == 'cisco_nxos':
+        mem_pct_oid = oids.get('mem_pct')
+        if not mem_pct_oid:
+            return None
+        return _as_percent(_parse_snmp_number(await _snmp_get(ip, community, mem_pct_oid, port)))
+
+    if vendor in ('huawei_vrp', 'h3c_comware', 'juniper_junos', 'fortinet_fortios'):
+        mem_oid = oids.get('mem')
+        if not mem_oid:
+            return None
+        rows = await _snmp_walk(ip, community, mem_oid, port)
+        for _, raw in rows:
+            parsed = _parse_snmp_number(raw)
+            if parsed is not None and parsed > 0:
+                return _as_percent(parsed)
+        return None
+
+    if vendor == 'arista_eos':
+        descr_rows = await _snmp_walk(ip, community, oids['mem_descr'], port)
+        used_rows = await _snmp_walk(ip, community, oids['mem_used'], port)
+        size_rows = await _snmp_walk(ip, community, oids['mem_size'], port)
+        used_map = {
+            idx: int(parsed)
+            for idx, raw in used_rows
+            if (parsed := _parse_snmp_number(raw)) is not None
+        }
+        size_map = {
+            idx: int(parsed)
+            for idx, raw in size_rows
+            if (parsed := _parse_snmp_number(raw)) is not None
+        }
+        ram_idx = None
+        for idx, desc in descr_rows:
+            desc_lower = desc.lower()
+            if 'physical' in desc_lower or 'ram' in desc_lower or 'real' in desc_lower:
+                ram_idx = idx
+                break
+        if ram_idx is None and size_map:
+            ram_idx = max(size_map, key=lambda key: size_map[key])
+        if ram_idx and ram_idx in used_map and ram_idx in size_map and size_map[ram_idx] > 0:
+            return _as_percent((used_map[ram_idx] / size_map[ram_idx]) * 100)
+        return None
+
+    if vendor in ('cisco_ios', 'cisco_iosxr'):
+        cemp_used = oids.get('mem_used_enhanced')
+        cemp_free = oids.get('mem_free_enhanced')
+        used_raw = await _snmp_walk(ip, community, cemp_used, port) if cemp_used else []
+        free_raw = await _snmp_walk(ip, community, cemp_free, port) if cemp_free else []
+        if not used_raw or not free_raw:
+            used_raw = await _snmp_walk(ip, community, oids['mem_used'], port)
+            free_raw = await _snmp_walk(ip, community, oids['mem_free'], port)
+    else:
+        used_oid = oids.get('mem_used')
+        free_oid = oids.get('mem_free')
+        if not used_oid or not free_oid:
+            return None
+        used_raw = await _snmp_walk(ip, community, used_oid, port)
+        free_raw = await _snmp_walk(ip, community, free_oid, port)
+
+    if not used_raw or not free_raw:
+        return None
+    used = _parse_snmp_number(used_raw[0][1]) or 0
+    free = _parse_snmp_number(free_raw[0][1]) or 0
+    total = used + free
+    return _as_percent((used / total) * 100) if total > 0 else None
+
+
 # ═══════════════════════════════════════════════════════════════
 # puresnmp async helpers (replaces pysnmp — Python 3.13 compatible)
 # ═══════════════════════════════════════════════════════════════
@@ -365,6 +613,104 @@ async def _snmp_walk(ip: str, community: str, oid: str, port: int = 161, timeout
     return results
 
 
+async def _snmp_get_typed(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int = 161,
+    timeout: float = 3,
+) -> Optional[SnmpTypedValue]:
+    """GET one OID while preserving its puresnmp ASN.1 type."""
+    async with get_network_access_limiter().async_snmp():
+        try:
+            from puresnmp import Client, ObjectIdentifier, V2C
+
+            client = Client(ip, V2C(community), port=port, sender=_safe_send_udp)
+            result = await asyncio.wait_for(
+                client.get(ObjectIdentifier(oid)),
+                timeout=timeout,
+            )
+            typed = _typed_value_from_raw(result)
+            if typed.number is not None:
+                return typed
+        except Exception as exc:
+            logger.debug("Typed SNMP GET %s %s failed: %s", ip, oid, exc)
+        return None
+
+
+async def _snmp_walk_typed(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int = 161,
+    timeout: float = 5,
+    max_rows: int = 200,
+) -> list[tuple[str, SnmpTypedValue]]:
+    """WALK one OID subtree and preserve each row's ASN.1 type."""
+    results: list[tuple[str, SnmpTypedValue]] = []
+    base_oid = oid.rstrip(".")
+
+    async def _collect():
+        from puresnmp import Client, ObjectIdentifier, V2C
+
+        client = Client(ip, V2C(community), port=port, sender=_safe_send_udp)
+        async for varbind in client.walk(ObjectIdentifier(base_oid)):
+            oid_str = str(varbind.oid)
+            suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + ".") else oid_str
+            typed = _typed_value_from_raw(varbind.value)
+            if typed.number is not None:
+                results.append((suffix, typed))
+            if len(results) >= max_rows:
+                return
+
+    async with get_network_access_limiter().async_snmp():
+        try:
+            await asyncio.wait_for(_collect(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.debug("Typed SNMP WALK %s %s timeout after %ss (%s rows)", ip, oid, timeout, len(results))
+        except Exception as exc:
+            logger.debug("Typed SNMP WALK %s %s failed: %s", ip, oid, exc)
+    return results
+
+
+async def _snmp_bulk_walk_typed(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int = 161,
+    timeout: float = 5,
+    max_repetitions: int = 20,
+    max_rows: int = 2000,
+) -> list[tuple[str, SnmpTypedValue]]:
+    """Typed GETBULK walk used for interface counters."""
+    results: list[tuple[str, SnmpTypedValue]] = []
+    base_oid = oid.rstrip(".")
+
+    async def _collect():
+        from puresnmp import Client, ObjectIdentifier, V2C
+
+        client = Client(ip, V2C(community), port=port, sender=_safe_send_udp)
+        async for varbind in client.bulkwalk([ObjectIdentifier(base_oid)], bulk_size=max_repetitions):
+            oid_str = str(varbind.oid)
+            suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + ".") else oid_str
+            typed = _typed_value_from_raw(varbind.value)
+            if typed.number is not None:
+                results.append((suffix, typed))
+            if len(results) >= max_rows:
+                return
+
+    async with get_network_access_limiter().async_snmp():
+        try:
+            await asyncio.wait_for(_collect(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.debug("Typed SNMP BULK_WALK %s %s timeout after %ss (%s rows)", ip, oid, timeout, len(results))
+        except Exception as exc:
+            logger.debug("Typed SNMP BULK_WALK %s %s failed: %s", ip, oid, exc)
+    if not results:
+        return await _snmp_walk_typed(ip, community, oid, port, timeout=timeout, max_rows=max_rows)
+    return results
+
+
 async def _snmp_bulk_walk(ip: str, community: str, oid: str, port: int = 161, timeout: float = 5, max_repetitions: int = 20) -> list[tuple[str, str]]:
     """Bulk Walk an OID subtree via puresnmp, using GETBULK for high performance."""
     results: list[tuple[str, str]] = []
@@ -393,6 +739,433 @@ async def _snmp_bulk_walk(ip: str, community: str, oid: str, port: int = 161, ti
         logger.debug(f"SNMP BULK_WALK returned no results for {ip} {oid}. Falling back to standard WALK.")
         results = await _snmp_walk(ip, community, oid, port, timeout=timeout)
     return results
+
+
+def _runtime_metric_config(config: Mapping[str, Any] | None, legacy_oid: str = "") -> dict[str, Any]:
+    """Normalize the already-validated profile payload at the collector edge."""
+    raw = dict(config or {})
+    mode = str(raw.get("mode") or "direct_percent").strip().casefold()
+    aliases = {
+        "gauge_percent": "direct_percent",
+        "percent": "direct_percent",
+        "value": "direct_value",
+        "ratio": "used_total_percent",
+        "counter_rate": "counter_rate_percent",
+        "status": "status_code",
+    }
+    mode = aliases.get(mode, mode)
+    default_unit = (
+        "%"
+        if mode in {"direct_percent", "used_total_percent", "used_free_percent", "counter_rate_percent"}
+        else "bool"
+        if mode == "status_code"
+        else ""
+    )
+    return {
+        "mode": mode,
+        "oid": str(raw.get("oid") or legacy_oid or "").strip().strip("."),
+        "used_oid": str(raw.get("used_oid") or raw.get("oid") or "").strip().strip("."),
+        "total_oid": str(raw.get("total_oid") or "").strip().strip("."),
+        "free_oid": str(raw.get("free_oid") or "").strip().strip("."),
+        "capacity_oid": str(raw.get("capacity_oid") or "").strip().strip("."),
+        "counter_bits": raw.get("counter_bits"),
+        "counter_unit": str(raw.get("counter_unit") or "bits").strip().casefold(),
+        "status_ok_values": _runtime_code_values(raw.get("status_ok_values", raw.get("normal_values"))),
+        "status_warning_values": _runtime_code_values(raw.get("status_warning_values", raw.get("warning_values"))),
+        "status_fail_values": _runtime_code_values(raw.get("status_fail_values", raw.get("failure_values"))),
+        "unit": str(raw.get("unit") or default_unit).strip(),
+        "aggregation": str(raw.get("aggregation") or "average").strip().casefold(),
+        "selector": str(raw.get("selector") or "").strip().strip("."),
+        "scale": raw.get("scale", 1),
+        "offset": raw.get("offset", 0),
+    }
+
+
+def _runtime_code_values(value: Any) -> list[int]:
+    values = value if isinstance(value, (list, tuple, set)) else str(value or "").replace("，", ",").split(",")
+    result: list[int] = []
+    for raw in values:
+        try:
+            if str(raw).strip() == "":
+                continue
+            code = int(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if code not in result:
+            result.append(code)
+    return result
+
+
+async def _read_typed_points(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int,
+    selector: str = "",
+) -> list[tuple[str, SnmpTypedValue]]:
+    if not oid:
+        return []
+    direct = await _snmp_get_typed(ip, community, oid, port)
+    if direct is not None:
+        points = [("", direct)]
+    else:
+        points = await _snmp_walk_typed(ip, community, oid, port)
+    if not selector:
+        return points
+    return [(suffix, value) for suffix, value in points if suffix == selector or suffix.endswith(f".{selector}")]
+
+
+def _numeric(raw: Any) -> float | None:
+    try:
+        number = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _aggregate(values: list[float], aggregation: str) -> float | None:
+    if not values:
+        return None
+    if aggregation == "first":
+        return values[0]
+    if aggregation == "max":
+        return max(values)
+    if aggregation == "min":
+        return min(values)
+    if aggregation == "sum":
+        return sum(values)
+    return sum(values) / len(values)
+
+
+def _pair_points(
+    left: list[tuple[str, SnmpTypedValue]],
+    right: list[tuple[str, SnmpTypedValue]],
+) -> list[tuple[str, SnmpTypedValue, SnmpTypedValue]]:
+    """Pair scalar/table values by index, allowing one side to be scalar."""
+    if not left or not right:
+        return []
+    left_map = dict(left)
+    right_map = dict(right)
+    common = set(left_map).intersection(right_map)
+    if common:
+        return [(key, left_map[key], right_map[key]) for key in sorted(common)]
+    if len(left) == 1:
+        return [(key, left[0][1], value) for key, value in right]
+    if len(right) == 1:
+        return [(key, value, right[0][1]) for key, value in left]
+    return []
+
+
+def _absolute_value_allowed(value: SnmpTypedValue) -> bool:
+    # Counter values are never accepted as a current CPU/memory level.  A
+    # vendor that exposes used/total as Counter32 is semantically wrong for a
+    # ratio and must be corrected in the template rather than guessed here.
+    return value.snmp_type in {"gauge", "integer", "python_number"}
+
+
+def _scaled(raw: float, config: Mapping[str, Any]) -> float | None:
+    scale = _numeric(config.get("scale", 1))
+    offset = _numeric(config.get("offset", 0))
+    if scale is None or offset is None or scale <= 0:
+        return None
+    value = raw * scale + offset
+    return value if math.isfinite(value) else None
+
+
+def _parse_sample_time(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _definition_result(
+    config: Mapping[str, Any],
+    *,
+    value: Any,
+    status: str,
+    passed: bool,
+    message: str = "",
+    snmp_types: list[str] | None = None,
+    counter_bits: int | None = None,
+    quality: list[str] | None = None,
+    rows: int = 0,
+) -> dict[str, Any]:
+    output = value
+    if isinstance(output, (int, float)) and not isinstance(output, bool) and math.isfinite(output):
+        output = round(float(output), 3)
+    return {
+        "value": output,
+        "status": status,
+        "passed": passed,
+        "message": message,
+        "mode": config.get("mode"),
+        "oid": config.get("oid") or config.get("used_oid"),
+        "snmp_types": sorted(set(snmp_types or [])),
+        "counter_bits": counter_bits,
+        "unit": config.get("unit") or "",
+        "quality": quality or [],
+        "rows": rows,
+    }
+
+
+async def _collect_metric_definition(
+    ip: str,
+    community: str,
+    config: Mapping[str, Any],
+    port: int,
+    *,
+    device_id: str = "",
+    profile_id: str = "",
+    metric_name: str = "",
+    persist_counter: bool = True,
+) -> dict[str, Any]:
+    """Collect one typed metric definition without implicit reinterpretation."""
+    normalized = _runtime_metric_config(config)
+    mode = normalized["mode"]
+    aggregation = normalized["aggregation"]
+
+    if mode == "direct_percent":
+        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"])
+        if not points:
+            return _definition_result(normalized, value=None, status="missing", passed=False, message="OID returned no numeric value")
+        types = [point.snmp_type for _, point in points]
+        if not all(_absolute_value_allowed(point) for _, point in points):
+            return _definition_result(
+                normalized,
+                value=None,
+                status="type_mismatch",
+                passed=False,
+                message="A Counter32/Counter64 cannot be used as a direct percentage",
+                snmp_types=types,
+                counter_bits=next((point.counter_bits for _, point in points if point.counter_bits), None),
+                rows=len(points),
+            )
+        values = [_scaled(float(point.number), normalized) for _, point in points if point.number is not None]
+        if any(value is None or value < 0 or value > 100 for value in values) or not values:
+            return _definition_result(
+                normalized,
+                value=None,
+                status="out_of_range",
+                passed=False,
+                message="Direct percentage must be within 0..100 after scale/offset",
+                snmp_types=types,
+                rows=len(points),
+            )
+        return _definition_result(
+            normalized,
+            value=_aggregate([float(value) for value in values], aggregation),
+            status="ok",
+            passed=True,
+            snmp_types=types,
+            rows=len(points),
+        )
+
+    if mode == "direct_value":
+        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"])
+        if not points:
+            return _definition_result(normalized, value=None, status="missing", passed=False, message="OID returned no numeric value")
+        types = [point.snmp_type for _, point in points]
+        if not all(_absolute_value_allowed(point) for _, point in points):
+            return _definition_result(
+                normalized,
+                value=None,
+                status="type_mismatch",
+                passed=False,
+                message="A Counter32/Counter64 cannot be used as a direct hardware value",
+                snmp_types=types,
+                counter_bits=next((point.counter_bits for _, point in points if point.counter_bits), None),
+                rows=len(points),
+            )
+        values = [_scaled(float(point.number), normalized) for _, point in points if point.number is not None]
+        if any(value is None for value in values) or not values:
+            return _definition_result(normalized, value=None, status="invalid_value", passed=False, message="Hardware value is not finite", snmp_types=types, rows=len(points))
+        return _definition_result(
+            normalized,
+            value=_aggregate([float(value) for value in values], aggregation),
+            status="ok",
+            passed=True,
+            snmp_types=types,
+            rows=len(points),
+        )
+
+    if mode == "status_code":
+        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"])
+        if not points:
+            return _definition_result(normalized, value=None, status="missing", passed=False, message="Status OID returned no numeric value")
+        types = [point.snmp_type for _, point in points]
+        if not all(_absolute_value_allowed(point) for _, point in points):
+            return _definition_result(normalized, value=None, status="type_mismatch", passed=False, message="Status OID must return Gauge/Integer values", snmp_types=types, rows=len(points))
+        codes = [int(point.number) for _, point in points if point.number is not None and float(point.number).is_integer()]
+        if len(codes) != len(points):
+            return _definition_result(normalized, value=None, status="invalid_status_code", passed=False, message="Status OID must return integer codes", snmp_types=types, rows=len(points))
+        ok_values = set(normalized.get("status_ok_values") or [])
+        warning_values = set(normalized.get("status_warning_values") or [])
+        fail_values = set(normalized.get("status_fail_values") or [])
+        if any(code in fail_values for code in codes):
+            status, boolean_value = "fail", False
+        elif any(code in warning_values for code in codes):
+            # The public contract is binary: true is normal and false is
+            # abnormal. Keep warning as diagnostic status only.
+            status, boolean_value = "warning", False
+        elif all(code in ok_values for code in codes):
+            status, boolean_value = "ok", True
+        else:
+            status, boolean_value = "unknown", None
+        return _definition_result(
+            normalized,
+            value=boolean_value,
+            status=status,
+            passed=boolean_value is not None,
+            message="" if boolean_value is not None else "Device returned an unmapped hardware status code",
+            snmp_types=types,
+            rows=len(points),
+        )
+
+    if mode in {"used_total_percent", "used_free_percent"}:
+        used_points = await _read_typed_points(ip, community, normalized["used_oid"], port, normalized["selector"])
+        denominator_oid = normalized["total_oid"] if mode == "used_total_percent" else normalized["free_oid"]
+        denominator_points = await _read_typed_points(ip, community, denominator_oid, port, normalized["selector"])
+        pairs = _pair_points(used_points, denominator_points)
+        types = [point.snmp_type for _, used, total in pairs for point in (used, total)]
+        if not pairs:
+            return _definition_result(normalized, value=None, status="missing", passed=False, message="Used and denominator OIDs could not be paired", rows=0)
+        if not all(_absolute_value_allowed(point) for _, used, denominator in pairs for point in (used, denominator)):
+            return _definition_result(
+                normalized,
+                value=None,
+                status="type_mismatch",
+                passed=False,
+                message="Ratio operands must be Gauge/Integer values, not SNMP counters",
+                snmp_types=types,
+                rows=len(pairs),
+            )
+        percentages: list[float] = []
+        for _, used, denominator in pairs:
+            used_value = _numeric(used.number)
+            denominator_value = _numeric(denominator.number)
+            if used_value is None or denominator_value is None or used_value < 0 or denominator_value <= 0:
+                return _definition_result(normalized, value=None, status="invalid_denominator", passed=False, message="Ratio denominator must be greater than zero", snmp_types=types, rows=len(pairs))
+            if mode == "used_free_percent":
+                denominator_value += used_value
+            ratio = used_value / denominator_value * 100
+            scaled = _scaled(ratio, normalized)
+            if scaled is None or scaled < 0 or scaled > 100:
+                return _definition_result(normalized, value=None, status="out_of_range", passed=False, message="Calculated ratio must be within 0..100", snmp_types=types, rows=len(pairs))
+            percentages.append(scaled)
+        return _definition_result(normalized, value=_aggregate(percentages, aggregation), status="ok", passed=True, snmp_types=types, rows=len(pairs))
+
+    if mode != "counter_rate_percent":
+        return _definition_result(normalized, value=None, status="unsupported_mode", passed=False, message="Unsupported metric mode")
+
+    points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"])
+    capacity_points = await _read_typed_points(ip, community, normalized["capacity_oid"], port, normalized["selector"])
+    pairs = _pair_points(points, capacity_points)
+    configured_bits = normalized.get("counter_bits")
+    try:
+        configured_bits = int(configured_bits)
+    except (TypeError, ValueError):
+        configured_bits = None
+    types = [point.snmp_type for _, point, _ in pairs]
+    observed_bits = sorted({point.counter_bits for _, point, _ in pairs if point.counter_bits})
+    if not pairs:
+        return _definition_result(normalized, value=None, status="missing", passed=False, message="Counter or capacity OID returned no pair", rows=0)
+    if any(point.snmp_type != "counter" for _, point, _ in pairs):
+        return _definition_result(normalized, value=None, status="type_mismatch", passed=False, message="counter_rate_percent requires Counter32 or Counter64", snmp_types=types, rows=len(pairs))
+    if configured_bits not in (32, 64) or observed_bits != [configured_bits]:
+        return _definition_result(normalized, value=None, status="width_mismatch", passed=False, message=f"Template declares {configured_bits or 'unknown'}-bit but device returned {observed_bits or 'unknown'}-bit counter", snmp_types=types, counter_bits=observed_bits[0] if len(observed_bits) == 1 else None, rows=len(pairs))
+    if any(not _absolute_value_allowed(capacity) for _, _, capacity in pairs):
+        return _definition_result(normalized, value=None, status="capacity_type_mismatch", passed=False, message="Capacity OID must return Gauge/Integer, not a counter", snmp_types=types, counter_bits=configured_bits, rows=len(pairs))
+
+    now = datetime.now(timezone.utc)
+    sampled_at = now.isoformat()
+    current_values: dict[str, int] = {}
+    capacity_values: dict[str, float] = {}
+    for suffix, point, capacity in pairs:
+        if point.number is None or not float(point.number).is_integer() or point.number < 0:
+            return _definition_result(normalized, value=None, status="invalid_counter", passed=False, message="Counter value must be a non-negative integer", snmp_types=types, counter_bits=configured_bits, rows=len(pairs))
+        if capacity.number is None or capacity.number <= 0:
+            return _definition_result(normalized, value=None, status="invalid_capacity", passed=False, message="Capacity must be greater than zero", snmp_types=types, counter_bits=configured_bits, rows=len(pairs))
+        current_values[suffix] = int(point.number)
+        capacity_values[suffix] = float(capacity.number)
+
+    uptime_value = await _snmp_get_typed(ip, community, SYS_UPTIME, port, timeout=2)
+    current_uptime_cs = int(uptime_value.number) if uptime_value and uptime_value.number is not None else None
+    previous = load_counter_sample(device_id, profile_id, metric_name) if device_id and profile_id and metric_name else None
+    config_hash = hashlib.sha256(json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:32]
+    previous_valid = bool(
+        previous
+        and str(previous.get("oid") or "") == normalized["oid"]
+        and str(previous.get("config_hash") or "") == config_hash
+        and int(previous.get("counter_bits") or 0) == configured_bits
+    )
+    previous_values = (previous or {}).get("values") if previous_valid else {}
+    previous_time = _parse_sample_time((previous or {}).get("sampled_at")) if previous_valid else None
+    elapsed = (now - previous_time).total_seconds() if previous_time else None
+    previous_uptime_cs = (previous or {}).get("device_uptime_cs") if previous_valid else None
+
+    unit_multiplier = 8.0 if normalized["counter_unit"] == "octets" else 1.0
+    derived: list[float] = []
+    qualities: list[str] = []
+    for suffix, current_value in current_values.items():
+        old_value = previous_values.get(suffix) if isinstance(previous_values, Mapping) else None
+        if old_value is None or elapsed is None:
+            qualities.append("baseline")
+            continue
+        capacity = capacity_values.get(suffix)
+        max_counter_rate = capacity / unit_multiplier if capacity else None
+        delta = calculate_counter_delta(
+            current_value,
+            old_value,
+            elapsed,
+            configured_bits,
+            max_rate_per_sec=max_counter_rate,
+            current_uptime_cs=current_uptime_cs,
+            previous_uptime_cs=previous_uptime_cs,
+        )
+        quality = str(delta.get("status") or "invalid")
+        qualities.append(quality)
+        if delta.get("rate_per_sec") is None or not capacity:
+            continue
+        utilization = float(delta["rate_per_sec"]) * unit_multiplier / capacity * 100
+        if not math.isfinite(utilization) or utilization < 0 or utilization > 100:
+            qualities.append("utilization_out_of_range")
+            continue
+        derived.append(utilization)
+
+    if persist_counter and device_id and profile_id and metric_name:
+        save_counter_sample(
+            device_id=device_id,
+            profile_id=profile_id,
+            metric_name=metric_name,
+            oid=normalized["oid"],
+            config_hash=config_hash,
+            counter_bits=configured_bits,
+            values=current_values,
+            sampled_at=sampled_at,
+            device_uptime_cs=current_uptime_cs,
+        )
+
+    if derived and len(derived) == len(current_values):
+        status = next((quality for quality in qualities if quality in {"wrapped", "ok"}), "ok")
+        return _definition_result(normalized, value=_aggregate(derived, aggregation), status=status, passed=True, snmp_types=types, counter_bits=configured_bits, quality=qualities, rows=len(pairs))
+    if derived:
+        return _definition_result(normalized, value=None, status="partial_sample", passed=False, message="Not every counter row produced a valid delta", snmp_types=types, counter_bits=configured_bits, quality=qualities, rows=len(pairs))
+    status = "baseline" if "baseline" in qualities else (qualities[0] if qualities else "missing")
+    return _definition_result(normalized, value=None, status=status, passed=status == "baseline", snmp_types=types, counter_bits=configured_bits, quality=qualities, rows=len(pairs))
+
+
+async def probe_metric_definition(
+    ip: str,
+    community: str,
+    config: Mapping[str, Any],
+    port: int = 161,
+) -> dict[str, Any]:
+    """Read and validate a definition without changing a device baseline."""
+    return await _collect_metric_definition(ip, community, config, port, persist_counter=False)
 
 # ═══════════════════════════════════════════════════════════════
 # High-level collection functions
@@ -434,110 +1207,93 @@ async def collect_device_info(ip: str, community: str = 'public', port: int = 16
     return result
 
 
-async def collect_device_metrics(ip: str, platform: str, community: str = 'public', port: int = 161) -> dict:
+async def collect_device_metrics(
+    ip: str,
+    platform: str,
+    community: str = 'public',
+    port: int = 161,
+    custom_oids: dict[str, str] | None = None,
+    *,
+    custom_metrics: Mapping[str, Mapping[str, Any]] | None = None,
+    device_id: str = '',
+    metric_profile_id: str = '',
+) -> dict:
     """
-    Collect CPU, memory, temp, fan, PSU from a single device.
-    Returns dict with keys: cpu_usage, memory_usage, temp, fan_status, psu_status
-    Falls back to None for any value that fails.
+    Collect the standard hardware set (CPU, memory, temperature, fan, PSU,
+    storage, voltage, and power) from a single device.
+    Returns metric values plus typed quality details.  A configured metric is
+    fail-closed: an invalid custom definition does not silently fall back to a
+    different vendor OID and present a misleading value.
     """
-    cache_key = f"metrics:{ip}:{port}"
+    vendor = _resolve_platform(platform)
+    custom_oids = custom_oids or {}
+    custom_cpu_oid = _safe_metric_oid(custom_oids.get('cpu') or custom_oids.get('cpu_oid'))
+    custom_memory_oid = _safe_metric_oid(
+        custom_oids.get('memory')
+        or custom_oids.get('mem')
+        or custom_oids.get('memory_oid')
+    )
+    configured_metrics: dict[str, Mapping[str, Any]] = dict(custom_metrics or {})
+    if custom_cpu_oid and 'cpu' not in configured_metrics:
+        configured_metrics['cpu'] = {'mode': 'direct_percent', 'oid': custom_cpu_oid}
+    if custom_memory_oid and 'memory' not in configured_metrics:
+        configured_metrics['memory'] = {'mode': 'direct_percent', 'oid': custom_memory_oid}
+    # The same target can be represented by multiple device records. Include
+    # credentials and metric overrides in the in-process key so one device
+    # cannot receive another device's cached result.
+    community_token = hashlib.sha256(str(community or '').encode('utf-8')).hexdigest()[:12]
+    metric_token = hashlib.sha256(
+        json.dumps(
+            {key: dict(value) for key, value in configured_metrics.items()},
+            sort_keys=True,
+            default=str,
+        ).encode('utf-8')
+    ).hexdigest()[:16]
+    cache_key = (
+        f"metrics:{ip}:{port}:{vendor}:{community_token}:"
+        f"{metric_profile_id}:{device_id}:{metric_token}"
+    )
     cached = _get_result_cache(cache_key)
     if cached is not None:
         return cached
-    vendor = _resolve_platform(platform)
     oids = VENDOR_OIDS.get(vendor, VENDOR_OIDS['cisco_ios'])
-    result = {'cpu_usage': None, 'memory_usage': None, 'temp': None, 'fan_status': None, 'psu_status': None}
+    result = {
+        'cpu_usage': None,
+        'memory_usage': None,
+        'temp': None,
+        'fan_status': None,
+        'psu_status': None,
+        'storage_usage': None,
+        'voltage': None,
+        'power_watts': None,
+        'hardware_metrics': {},
+        'metric_details': {},
+    }
 
     try:
-        # ── CPU ──
-        if vendor in ('arista_eos',):
-            # Arista: walk hrProcessorLoad, average all cores
-            rows = await _snmp_walk(ip, community, oids['cpu'], port)
-            if rows:
-                vals = [int(v) for _, v in rows if v.isdigit()]
-                result['cpu_usage'] = int(sum(vals) / len(vals)) if vals else None
-        elif vendor in ('huawei_vrp', 'h3c_comware', 'juniper_junos'):
-            # Walk: first non-zero entry (usually the main board / RE)
-            rows = await _snmp_walk(ip, community, oids['cpu'], port)
-            if rows:
-                for _, v in rows:
-                    if v.isdigit() and int(v) > 0:
-                        result['cpu_usage'] = int(v)
-                        break
-        else:
-            # Cisco IOS/NX-OS/IOS-XR: GET first instance
-            rows = await _snmp_walk(ip, community, oids['cpu'], port)
-            if rows:
-                for _, v in rows:
-                    if v.isdigit():
-                        result['cpu_usage'] = int(v)
-                        break
-
-        # ── Memory ──
-        if vendor == 'cisco_nxos':
-            # NX-OS: cseSysMemoryUtilization returns percentage directly
-            mem_pct_oid = oids.get('mem_pct')
-            if mem_pct_oid:
-                val = await _snmp_get(ip, community, mem_pct_oid, port)
-                if val and val.isdigit():
-                    result['memory_usage'] = int(val)
-        elif vendor in ('huawei_vrp', 'h3c_comware', 'juniper_junos', 'fortinet_fortios'):
-            # Direct percentage OID
-            mem_oid = oids.get('mem')
-            if mem_oid:
-                rows = await _snmp_walk(ip, community, mem_oid, port)
-                if rows:
-                    for _, v in rows:
-                        if v.isdigit() and int(v) > 0:
-                            result['memory_usage'] = int(v)
-                            break
-        elif vendor == 'arista_eos':
-            # hrStorage: find "Physical Memory" / "RAM" entry by description
-            descr_rows = await _snmp_walk(ip, community, oids['mem_descr'], port)
-            used_rows = await _snmp_walk(ip, community, oids['mem_used'], port)
-            size_rows = await _snmp_walk(ip, community, oids['mem_size'], port)
-            used_map = {idx: int(v) for idx, v in used_rows if v.isdigit()}
-            size_map = {idx: int(v) for idx, v in size_rows if v.isdigit()}
-            ram_idx = None
-            for idx, desc in descr_rows:
-                desc_lower = desc.lower()
-                if 'physical' in desc_lower or 'ram' in desc_lower or 'real' in desc_lower:
-                    ram_idx = idx
-                    break
-            # Fallback: pick the largest storage entry
-            if ram_idx is None and size_map:
-                ram_idx = max(size_map, key=lambda k: size_map[k])
-            if ram_idx and ram_idx in used_map and ram_idx in size_map and size_map[ram_idx] > 0:
-                result['memory_usage'] = int((used_map[ram_idx] / size_map[ram_idx]) * 100)
-        elif vendor in ('cisco_ios', 'cisco_iosxr'):
-            # Cisco IOS/XE: try CEMP (enhanced) first, fallback to legacy CISCO-MEMORY-POOL-MIB
-            used_raw = None
-            free_raw = None
-            cemp_used = oids.get('mem_used_enhanced')
-            cemp_free = oids.get('mem_free_enhanced')
-            if cemp_used and cemp_free:
-                used_raw = await _snmp_walk(ip, community, cemp_used, port)
-                free_raw = await _snmp_walk(ip, community, cemp_free, port)
-            if not used_raw or not free_raw:
-                # Fallback to legacy OIDs
-                used_raw = await _snmp_walk(ip, community, oids['mem_used'], port)
-                free_raw = await _snmp_walk(ip, community, oids['mem_free'], port)
-            if used_raw and free_raw:
-                used = int(used_raw[0][1]) if used_raw[0][1].isdigit() else 0
-                free = int(free_raw[0][1]) if free_raw[0][1].isdigit() else 0
-                total = used + free
-                if total > 0:
-                    result['memory_usage'] = int((used / total) * 100)
-        else:
-            # Generic Cisco fallback: used / (used + free)
-            used_raw = await _snmp_walk(ip, community, oids.get('mem_used', ''), port)
-            free_raw = await _snmp_walk(ip, community, oids.get('mem_free', ''), port)
-            if used_raw and free_raw:
-                used = int(used_raw[0][1]) if used_raw[0][1].isdigit() else 0
-                free = int(free_raw[0][1]) if free_raw[0][1].isdigit() else 0
-                total = used + free
-                if total > 0:
-                    result['memory_usage'] = int((used / total) * 100)
+        for metric, result_key, default_collector in (
+            ('cpu', 'cpu_usage', _collect_default_cpu_metric),
+            ('memory', 'memory_usage', _collect_default_memory_metric),
+        ):
+            definition = configured_metrics.get(metric)
+            if definition:
+                detail = await _collect_metric_definition(
+                    ip,
+                    community,
+                    definition,
+                    port,
+                    device_id=device_id,
+                    profile_id=metric_profile_id,
+                    metric_name=metric,
+                )
+                result['metric_details'][metric] = detail
+                result['hardware_metrics'][metric] = detail.get('value')
+                # Do not reinterpret an invalid configured OID with a built-in
+                # OID. Missing data must remain visible to the operator.
+                result[result_key] = detail.get('value')
+            else:
+                result[result_key] = await default_collector(ip, community, vendor, oids, port)
+            result['hardware_metrics'][metric] = result[result_key]
 
         # ── Temperature, Fan, PSU ──
         if vendor == 'fortinet_fortios':
@@ -733,12 +1489,55 @@ async def collect_device_metrics(ip: str, platform: str, community: str = 'publi
                             result['psu_status'] = 'single'
                         else:
                             result['psu_status'] = 'fail'
+        # Model-scoped hardware definitions use the same typed collector as
+        # CPU/memory. Built-in vendor logic above remains the fallback when
+        # no model definition exists; a configured definition always wins,
+        # including a deliberate None on a failed probe.
+        for metric, result_key in (
+            ('temperature', 'temp'),
+            ('fan', 'fan_status'),
+            ('power_supply', 'psu_status'),
+            ('storage', 'storage_usage'),
+            ('voltage', 'voltage'),
+            ('power', 'power_watts'),
+        ):
+            definition = configured_metrics.get(metric)
+            if not definition:
+                continue
+            detail = await _collect_metric_definition(
+                ip,
+                community,
+                definition,
+                port,
+                device_id=device_id,
+                profile_id=metric_profile_id,
+                metric_name=metric,
+            )
+            result['metric_details'][metric] = detail
+            result['hardware_metrics'][metric] = detail.get('value')
+            result[result_key] = detail.get('value')
     except Exception as e:
         logger.warning(f"SNMP metrics collection failed for {ip}: {e}")
 
+    def _status_to_bool(value: Any) -> bool | None:
+        if isinstance(value, bool):
+            return value
+        normalized = str(value or '').strip().casefold()
+        if normalized in {'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready'}:
+            return True
+        if normalized in {'fail', 'failed', 'warning', 'down', 'offline', 'alarm'}:
+            return False
+        return None
+
+    # Legacy built-in collectors historically returned labels such as
+    # "redundant" and "fail". Normalize them at the boundary so every
+    # status metric has the same true=normal / false=abnormal contract.
+    result['fan_status'] = _status_to_bool(result.get('fan_status'))
+    result['psu_status'] = _status_to_bool(result.get('psu_status'))
+
     # ── HR-MIB fallback (HOST-RESOURCES-MIB, RFC 2790) ──────────────────────
     # 当厂商私有 OID 无法访问时（SNMP view 限制等），用标准 MIB 兜底
-    if result['cpu_usage'] is None:
+    if result['cpu_usage'] is None and 'cpu' not in configured_metrics:
         try:
             rows = await _snmp_walk(ip, community, HR_PROCESSOR_LOAD, port)
             if rows:
@@ -748,7 +1547,7 @@ async def collect_device_metrics(ip: str, platform: str, community: str = 'publi
         except Exception:
             pass
 
-    if result['memory_usage'] is None:
+    if result['memory_usage'] is None and 'memory' not in configured_metrics:
         try:
             used_rows = await _snmp_walk(ip, community, HR_STORAGE_USED, port)
             size_rows = await _snmp_walk(ip, community, HR_STORAGE_SIZE, port)
@@ -761,6 +1560,18 @@ async def collect_device_metrics(ip: str, platform: str, community: str = 'publi
                     result['memory_usage'] = int(used_map[best_idx] / size_map[best_idx] * 100)
         except Exception:
             pass
+
+    for metric, result_key in (
+        ('cpu', 'cpu_usage'),
+        ('memory', 'memory_usage'),
+        ('temperature', 'temp'),
+        ('fan', 'fan_status'),
+        ('power_supply', 'psu_status'),
+        ('storage', 'storage_usage'),
+        ('voltage', 'voltage'),
+        ('power', 'power_watts'),
+    ):
+        result['hardware_metrics'].setdefault(metric, result.get(result_key))
 
     _set_result_cache(cache_key, result)
     return result
@@ -798,8 +1609,8 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
             _snmp_bulk_walk(ip, community, IF_OPER_STATUS, port),
             _snmp_bulk_walk(ip, community, IF_HIGH_SPEED, port),
             _snmp_bulk_walk(ip, community, IF_SPEED, port),
-            _snmp_bulk_walk(ip, community, IF_HC_IN, port),
-            _snmp_bulk_walk(ip, community, IF_HC_OUT, port),
+            _snmp_bulk_walk_typed(ip, community, IF_HC_IN, port),
+            _snmp_bulk_walk_typed(ip, community, IF_HC_OUT, port),
             _snmp_bulk_walk(ip, community, IF_ALIAS, port),
             _snmp_bulk_walk(ip, community, IF_IN_ERRORS, port),
             _snmp_bulk_walk(ip, community, IF_OUT_ERRORS, port),
@@ -811,18 +1622,37 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
             _snmp_bulk_walk(ip, community, IF_LAST_CHANGE, port),
         )
 
-        # HC counter fallback: if 64-bit counters empty, try 32-bit
-        in_rows = hc_in_rows
-        out_rows = hc_out_rows
-        if not in_rows or not out_rows:
+        # IF-HC-MIB is semantically Counter64 and IF-MIB is Counter32.  Do
+        # not infer width from the magnitude of a value and do not mix one
+        # direction's 64-bit counter with the other direction's 32-bit value.
+        def _counter_rows(rows, expected_bits: int) -> list[tuple[str, str]]:
+            return [
+                (idx, str(int(value.number)))
+                for idx, value in rows
+                if value.snmp_type == 'counter'
+                and value.counter_bits == expected_bits
+                and value.number is not None
+                and float(value.number).is_integer()
+                and value.number >= 0
+            ]
+
+        hc_in_valid = _counter_rows(hc_in_rows, 64)
+        hc_out_valid = _counter_rows(hc_out_rows, 64)
+        hc_in_map = dict(hc_in_valid)
+        hc_out_map = dict(hc_out_valid)
+        hc_pair_indices = set(hc_in_map).intersection(hc_out_map)
+
+        legacy_in_valid: list[tuple[str, str]] = []
+        legacy_out_valid: list[tuple[str, str]] = []
+        if set(interfaces) - hc_pair_indices:
             fb_in, fb_out = await asyncio.gather(
-                _snmp_bulk_walk(ip, community, IF_IN_OCTETS, port) if not in_rows else asyncio.sleep(0, result=in_rows),
-                _snmp_bulk_walk(ip, community, IF_OUT_OCTETS, port) if not out_rows else asyncio.sleep(0, result=out_rows),
+                _snmp_bulk_walk_typed(ip, community, IF_IN_OCTETS, port),
+                _snmp_bulk_walk_typed(ip, community, IF_OUT_OCTETS, port),
             )
-            if not in_rows:
-                in_rows = fb_in
-            if not out_rows:
-                out_rows = fb_out
+            legacy_in_valid = _counter_rows(fb_in, 32)
+            legacy_out_valid = _counter_rows(fb_out, 32)
+        legacy_in_map = dict(legacy_in_valid)
+        legacy_out_map = dict(legacy_out_valid)
 
         # ── Apply collected data to interfaces dict ──
 
@@ -842,19 +1672,20 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
             if idx in interfaces and 'speed_mbps' not in interfaces[idx]:
                 interfaces[idx]['speed_mbps'] = spd
 
-        # Octets
-        for idx, val in hc_in_rows:
-            if idx in interfaces and val.isdigit():
-                interfaces[idx]['in_octets_hc'] = int(val)
-        for idx, val in hc_out_rows:
-            if idx in interfaces and val.isdigit():
-                interfaces[idx]['out_octets_hc'] = int(val)
-        for idx, val in in_rows:
-            if idx in interfaces and val.isdigit():
-                interfaces[idx]['in_octets'] = int(val)
-        for idx, val in out_rows:
-            if idx in interfaces and val.isdigit():
-                interfaces[idx]['out_octets'] = int(val)
+        # Octets: select one common width per interface.
+        for idx in interfaces:
+            if idx in hc_pair_indices:
+                in_value = int(hc_in_map[idx])
+                out_value = int(hc_out_map[idx])
+                interfaces[idx]['in_octets_hc'] = in_value
+                interfaces[idx]['out_octets_hc'] = out_value
+                interfaces[idx]['in_octets'] = in_value
+                interfaces[idx]['out_octets'] = out_value
+                interfaces[idx]['counter_width'] = 64
+            elif idx in legacy_in_map and idx in legacy_out_map:
+                interfaces[idx]['in_octets'] = int(legacy_in_map[idx])
+                interfaces[idx]['out_octets'] = int(legacy_out_map[idx])
+                interfaces[idx]['counter_width'] = 32
 
         # Alias
         for idx, val in alias_rows:
@@ -897,15 +1728,15 @@ async def collect_interface_data(ip: str, community: str = 'public', port: int =
             'if_index': int(data.get('index') or 0) if str(data.get('index') or '').isdigit() else None,
             'status': data.get('status', 'unknown'),
             'speed_mbps': data.get('speed_mbps', 0),
-            'in_octets': data.get('in_octets', 0),
-            'out_octets': data.get('out_octets', 0),
+            'in_octets': data.get('in_octets') if data.get('counter_width') in (32, 64) else None,
+            'out_octets': data.get('out_octets') if data.get('counter_width') in (32, 64) else None,
             'in_octets_hc': data.get('in_octets_hc'),
             'out_octets_hc': data.get('out_octets_hc'),
-            'in_octets_32': data.get('in_octets') if not data.get('in_octets_hc') else None,
-            'out_octets_32': data.get('out_octets') if not data.get('out_octets_hc') else None,
-            'counter_width': 64 if data.get('in_octets_hc') is not None and data.get('out_octets_hc') is not None else 32,
-            'counter_source': 'ifHCInOctets/ifHCOutOctets' if data.get('in_octets_hc') is not None and data.get('out_octets_hc') is not None else 'ifInOctets/ifOutOctets',
-            'counter_quality': 'hc64' if data.get('in_octets_hc') is not None and data.get('out_octets_hc') is not None else 'legacy32_fallback',
+            'in_octets_32': data.get('in_octets') if data.get('in_octets_hc') is None else None,
+            'out_octets_32': data.get('out_octets') if data.get('out_octets_hc') is None else None,
+            'counter_width': data.get('counter_width'),
+            'counter_source': 'ifHCInOctets/ifHCOutOctets' if data.get('counter_width') == 64 else 'ifInOctets/ifOutOctets' if data.get('counter_width') == 32 else 'unavailable',
+            'counter_quality': 'hc64_typed' if data.get('counter_width') == 64 else 'legacy32_typed' if data.get('counter_width') == 32 else 'counter_unavailable',
             'description': data.get('description', ''),
             'in_errors': data.get('in_errors', 0),
             'out_errors': data.get('out_errors', 0),

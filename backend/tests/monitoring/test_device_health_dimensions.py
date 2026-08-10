@@ -66,6 +66,27 @@ def test_collected_metrics_still_drive_health_score_and_severity() -> None:
     assert result["health_score"] < 100
 
 
+def test_boolean_hardware_failure_is_a_health_penalty() -> None:
+    result = evaluate_device_health(
+        {
+            "id": "d-bool-fail",
+            "status": "online",
+            "platform": "cisco_ios",
+            "cpu_usage": 10,
+            "memory_usage": 20,
+            "temp": 35,
+            "fan_status": False,
+            "psu_status": True,
+        },
+        collection_data={
+            "collection_status": "healthy",
+            "data_confidence": 100,
+            "health_metrics_available": True,
+        },
+    )
+    assert result["health_status"] == "critical"
+
+
 def test_overview_separates_availability_and_evaluable_health() -> None:
     overview = build_health_overview(
         [

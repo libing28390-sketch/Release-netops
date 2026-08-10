@@ -5,6 +5,7 @@ import json
 import uuid
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from urllib import request as urlrequest
 from urllib import error as urlerror
 from ping3 import ping
@@ -16,6 +17,7 @@ from services import alert_rule_service
 import re as _re
 import time as _time
 from services.snmp_service import collect_device_metrics, collect_device_info, collect_interface_data
+from services.snmp_metric_profile_service import resolve_metric_profiles
 from services.operational_data_service import collect_operational_data
 from services.network_access_limiter import get_network_access_limiter
 from services.collection_status_service import record_collection_result
@@ -1163,6 +1165,7 @@ async def _process_device_raw(device, cycle_tick: int):
         snmp_available = False
         snmp_error_code = ''
         snmp_error_message = ''
+        metric_details: dict[str, Any] = {}
 
         # Try real SNMP collection (no DB lock held during await)
         cpu_usage = None
@@ -1170,15 +1173,27 @@ async def _process_device_raw(device, cycle_tick: int):
         temp = None
         fan = None
         psu = None
+        hardware_metrics: dict[str, Any] = {}
         if snmp_community:
             try:
-                metrics = await collect_device_metrics(snmp_ip, platform, snmp_community, snmp_port)
+                resolved_metrics = resolve_metric_profiles(device)
+                metrics = await collect_device_metrics(
+                    snmp_ip,
+                    platform,
+                    snmp_community,
+                    snmp_port,
+                    custom_metrics=resolved_metrics.get('metrics') or {},
+                    device_id=str(device.get('id') or ''),
+                    metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
+                )
                 cpu_usage = metrics.get('cpu_usage')
                 memory_usage = metrics.get('memory_usage')
+                metric_details = metrics.get('metric_details') or {}
+                hardware_metrics = metrics.get('hardware_metrics') or {}
                 temp = metrics.get('temp')
                 fan = metrics.get('fan_status')
                 psu = metrics.get('psu_status')
-                snmp_available = any(value is not None for value in (cpu_usage, memory_usage, temp, fan, psu))
+                snmp_available = any(value is not None for value in hardware_metrics.values())
             except Exception as snmp_err:
                 snmp_error_code = 'snmp_metrics_failed'
                 snmp_error_message = type(snmp_err).__name__
@@ -1208,11 +1223,13 @@ async def _process_device_raw(device, cycle_tick: int):
             mem_history.append(memory_usage)
             mem_history = mem_history[-20:]
 
+        fan_db = 'true' if fan is True else 'false' if fan is False else fan
+        psu_db = 'true' if psu is True else 'false' if psu is False else psu
         _db_quick('''
             UPDATE devices 
             SET cpu_usage = ?, memory_usage = ?, cpu_history = ?, memory_history = ?, temp = ?, fan_status = ?, psu_status = ?
             WHERE id = ?
-        ''', (cpu_usage, memory_usage, json.dumps(cpu_history), json.dumps(mem_history), temp, fan, psu, dev_id))
+        ''', (cpu_usage, memory_usage, json.dumps(cpu_history), json.dumps(mem_history), temp, fan_db, psu_db, dev_id))
 
         # CPU / 内存阈值告警
         if cpu_usage is not None:
@@ -1621,7 +1638,7 @@ async def _process_device_raw(device, cycle_tick: int):
         if is_server_asset:
             snmp_available = True  # Linux 服务器采用 SSH 巡检，免除传统 SNMP 可达性告警监控
 
-        metric_values = (cpu_usage, memory_usage, temp, fan, psu)
+        metric_values = tuple(hardware_metrics.values()) or (cpu_usage, memory_usage, temp, fan, psu)
         if is_server_asset:
             record_collection_result(
                 dev_id,
@@ -1644,6 +1661,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 coverage_supported=sum(value is not None for value in metric_values),
                 error_code='' if snmp_available else (snmp_error_code or 'snmp_no_response'),
                 error_message='' if snmp_available else (snmp_error_message or 'SNMP collection returned no data'),
+                metadata={'metric_details': metric_details} if metric_details else None,
             )
 
         snmp_rule = resolve_alert_rule('snmp_unreachable', device_row=device, ip_address=ip)

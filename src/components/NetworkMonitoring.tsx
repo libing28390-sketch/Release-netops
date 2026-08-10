@@ -439,26 +439,34 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
   // UI status formats
   const getFanStatusLabel = (status: any) => {
-    if (status == null || status === '' || status === 0) return zh ? '未知' : 'Unknown';
+    if (status == null || status === '') return zh ? '未知' : 'Unknown';
+    if (status === true || status === 1) return zh ? '正常' : 'OK';
+    if (status === false || status === 0) return zh ? '故障' : 'FAIL';
     const s = String(status).toLowerCase();
     if (s === 'fail' || s === 'failed' || s === 'error' || s === 'down') return zh ? '故障' : 'FAIL';
-    if (s === 'ok' || s === 'normal' || s === 'up' || s === 'healthy') return zh ? '正常' : 'OK';
+    if (s === 'ok' || s === 'normal' || s === 'up' || s === 'healthy' || s === 'true' || s === '1') return zh ? '正常' : 'OK';
+    if (s === 'false' || s === '0') return zh ? '故障' : 'FAIL';
     return String(status).toUpperCase();
   };
 
   const getPsuStatusLabel = (status: any) => {
-    if (status == null || status === '' || status === 0) return zh ? '未知' : 'Unknown';
+    if (status == null || status === '') return zh ? '未知' : 'Unknown';
+    if (status === true || status === 1) return zh ? '正常' : 'OK';
+    if (status === false || status === 0) return zh ? '故障' : 'FAIL';
     const s = String(status).toLowerCase();
     if (s === 'fail' || s === 'failed' || s === 'error' || s === 'down') return zh ? '故障' : 'FAIL';
-    if (s === 'ok' || s === 'normal' || s === 'up' || s === 'healthy') return zh ? '正常' : 'OK';
+    if (s === 'ok' || s === 'normal' || s === 'up' || s === 'healthy' || s === 'true' || s === '1') return zh ? '正常' : 'OK';
+    if (s === 'false' || s === '0') return zh ? '故障' : 'FAIL';
     return String(status).toUpperCase();
   };
 
   const hardwareStatusTone = (status: any) => {
-    if (status == null || status === '' || status === 0) return 'text-slate-500';
+    if (status == null || status === '') return 'text-slate-500';
+    if (status === true || status === 1) return 'text-emerald-500';
+    if (status === false || status === 0) return 'text-red-500';
     const normalized = String(status).toLowerCase();
-    if (['fail', 'failed', 'error', 'down'].includes(normalized)) return 'text-red-500';
-    if (['ok', 'normal', 'up', 'healthy'].includes(normalized)) return 'text-emerald-500';
+    if (['fail', 'failed', 'error', 'down', 'false', '0'].includes(normalized)) return 'text-red-500';
+    if (['ok', 'normal', 'up', 'healthy', 'true', '1'].includes(normalized)) return 'text-emerald-500';
     return 'text-slate-500';
   };
 

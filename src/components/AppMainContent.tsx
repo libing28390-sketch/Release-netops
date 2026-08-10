@@ -49,6 +49,7 @@ const ParserRegistryTab = lazy(() => import('../pages/ParserRegistryTab'));
 const ScheduledJobsTab = lazy(() => import('../pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const PlatformRegistryTab = lazy(() => import('../pages/PlatformRegistryTab'));
+const SnmpMetricTemplatesTab = lazy(() => import('../pages/SnmpMetricTemplatesTab'));
 const RackManagementTab = lazy(() => import('../pages/RackManagementTab'));
 const CmdbManagementTab = lazy(() => import('../pages/CmdbManagementTab'));
 const CmdbAssetManagementTab = lazy(() => import('../pages/CmdbAssetManagementTab'));
@@ -420,6 +421,7 @@ const AppMainContent: React.FC = () => {
     activeTab === 'alert-history' || 
     activeTab === 'maintenance' || 
     activeTab === 'platform-registry' ||
+    activeTab === 'snmp-metric-templates' ||
     (activeTab === 'automation' && automationPage === 'metrics');
   const isAiTab = activeTab === 'ai-center' || activeTab.startsWith('ai-');
 
@@ -1152,6 +1154,12 @@ const AppMainContent: React.FC = () => {
       {activeTab === 'platform-registry' && (
         <Suspense fallback={lazyPanelFallback}>
           <PlatformRegistryTab language={language} currentUser={currentUser} />
+        </Suspense>
+      )}
+
+      {activeTab === 'snmp-metric-templates' && (
+        <Suspense fallback={lazyPanelFallback}>
+          <SnmpMetricTemplatesTab language={language} showToast={showToast} />
         </Suspense>
       )}
 

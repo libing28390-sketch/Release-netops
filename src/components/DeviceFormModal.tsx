@@ -474,6 +474,54 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                 className="w-full rounded-xl border border-black/5 bg-black/[0.02] px-4 py-2.5 text-sm outline-none transition-colors focus:border-black/20 focus:bg-white"
               />
             </div>
+            <div className="col-span-1 rounded-xl border border-cyan-100 bg-cyan-50/50 p-3 sm:col-span-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-cyan-800">
+                {language === 'zh' ? '单台设备例外 OID（高级设置）' : 'Per-device OID override (advanced)'}
+              </p>
+              <p className="mt-1 text-[10px] text-cyan-900/65">
+                {language === 'zh'
+                  ? '同一型号的统一配置请到“平台管理 → SNMP 指标模板”维护；此处只处理单台特殊设备。OID 应直接返回 0–100 使用率，留空则使用型号模板或平台默认。'
+                  : 'Use this only for a single-device exception. Manage shared model mappings under Platform Management → SNMP Metric Templates. The OID must return a 0–100 usage percentage.'}
+                <a
+                  href="/management/snmp-metric-templates"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-2 font-semibold text-cyan-700 underline underline-offset-2 hover:text-cyan-900"
+                >
+                  {language === 'zh' ? '打开模板管理' : 'Open template management'}
+                </a>
+              </p>
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-black/60">
+                    {language === 'zh' ? 'CPU 使用率 OID' : 'CPU usage OID'}
+                  </label>
+                  <input
+                    type="text"
+                    value={form.snmp_cpu_oid || ''}
+                    title={language === 'zh' ? '返回 0–100 CPU 使用率的 SNMP OID' : 'SNMP OID returning CPU usage from 0 to 100'}
+                    onChange={(event) => handleFieldChange('snmp_cpu_oid', event.target.value)}
+                    placeholder="1.3.6.1.4.1...."
+                    spellCheck={false}
+                    className="w-full rounded-lg border border-cyan-200 bg-white px-3 py-2 text-xs font-mono outline-none transition-colors focus:border-cyan-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-black/60">
+                    {language === 'zh' ? '内存使用率 OID' : 'Memory usage OID'}
+                  </label>
+                  <input
+                    type="text"
+                    value={form.snmp_memory_oid || ''}
+                    title={language === 'zh' ? '返回 0–100 内存使用率的 SNMP OID' : 'SNMP OID returning memory usage from 0 to 100'}
+                    onChange={(event) => handleFieldChange('snmp_memory_oid', event.target.value)}
+                    placeholder="1.3.6.1.4.1...."
+                    spellCheck={false}
+                    className="w-full rounded-lg border border-cyan-200 bg-white px-3 py-2 text-xs font-mono outline-none transition-colors focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+            </div>
             <div>
               <label className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-black/60">Username</label>
               <input

@@ -149,6 +149,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         memory_usage INTEGER DEFAULT 0,
         snmp_community TEXT DEFAULT 'public',
         snmp_port INTEGER DEFAULT 161,
+        snmp_cpu_oid TEXT DEFAULT '',
+        snmp_memory_oid TEXT DEFAULT '',
         cpu_history TEXT DEFAULT '[]',
         memory_history TEXT DEFAULT '[]',
         temp INTEGER DEFAULT 35,
@@ -164,6 +166,60 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         switching_capacity_gbps REAL DEFAULT 0.0
     )
     ''')
+
+    # Model-scoped SNMP metric overrides.  The versioned migration creates the
+    # same table for existing installations; keeping the baseline idempotent
+    # also makes fresh databases usable before the migration runner completes.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS snmp_metric_profiles (
+        id TEXT PRIMARY KEY,
+        vendor_key TEXT NOT NULL,
+        vendor_name TEXT NOT NULL DEFAULT '',
+        model_key TEXT NOT NULL,
+        model_name TEXT NOT NULL DEFAULT '',
+        cpu_oid TEXT NOT NULL DEFAULT '',
+        memory_oid TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL DEFAULT '',
+        UNIQUE (vendor_key, model_key)
+    )
+    ''')
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_snmp_metric_profiles_model '
+        'ON snmp_metric_profiles(vendor_key, model_key)'
+    )
+    ensure_column('snmp_metric_profiles', 'verification_status', "TEXT NOT NULL DEFAULT 'unverified'")
+    ensure_column('snmp_metric_profiles', 'last_test_at', 'TEXT')
+    ensure_column('snmp_metric_profiles', 'last_test_device_id', "TEXT NOT NULL DEFAULT ''")
+    ensure_column('snmp_metric_profiles', 'last_test_message', "TEXT NOT NULL DEFAULT ''")
+    ensure_column('snmp_metric_profiles', 'cpu_config_json', "TEXT NOT NULL DEFAULT '{}'")
+    ensure_column('snmp_metric_profiles', 'memory_config_json', "TEXT NOT NULL DEFAULT '{}'")
+    ensure_column('snmp_metric_profiles', 'metric_definitions_json', "TEXT NOT NULL DEFAULT '{}'")
+
+    # Durable baseline for model-defined SNMP counters.  A process-local cache
+    # is not sufficient: a worker restart, multiple workers, or a long poll
+    # interval must not turn a counter into a false rate.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS snmp_metric_counter_samples (
+        device_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        metric_name TEXT NOT NULL,
+        oid TEXT NOT NULL,
+        config_hash TEXT NOT NULL DEFAULT '',
+        counter_bits INTEGER NOT NULL,
+        values_json TEXT NOT NULL DEFAULT '{}',
+        sampled_at TEXT NOT NULL,
+        device_uptime_cs BIGINT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (device_id, profile_id, metric_name),
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_snmp_counter_samples_ts '
+        'ON snmp_metric_counter_samples(sampled_at)'
+    )
 
     # Create interfaces table if not exists
     cursor.execute('''
@@ -2389,6 +2445,10 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         cursor.execute('ALTER TABLE devices ADD COLUMN snmp_community TEXT DEFAULT "public"')
     if 'snmp_port' not in columns:
         cursor.execute('ALTER TABLE devices ADD COLUMN snmp_port INTEGER DEFAULT 161')
+    if 'snmp_cpu_oid' not in columns:
+        cursor.execute("ALTER TABLE devices ADD COLUMN snmp_cpu_oid TEXT DEFAULT ''")
+    if 'snmp_memory_oid' not in columns:
+        cursor.execute("ALTER TABLE devices ADD COLUMN snmp_memory_oid TEXT DEFAULT ''")
     if 'cpu_history' not in columns:
         cursor.execute('ALTER TABLE devices ADD COLUMN cpu_history TEXT DEFAULT "[]"')
     if 'memory_history' not in columns:
@@ -2893,6 +2953,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('devices', 'priv_username', "TEXT DEFAULT ''")
     ensure_column('devices', 'credential_source', "TEXT DEFAULT 'local'")
     ensure_column('devices', 'vault_path', "TEXT DEFAULT ''")
+    ensure_column('devices', 'snmp_cpu_oid', "TEXT DEFAULT ''")
+    ensure_column('devices', 'snmp_memory_oid', "TEXT DEFAULT ''")
     ensure_column('devices', 'onboarding_status', "TEXT DEFAULT 'active'")
     ensure_column('devices', 'onboarding_updated_at', "TEXT DEFAULT ''")
     ensure_column('devices', 'password_last_rotated', "TEXT DEFAULT ''")

@@ -253,8 +253,10 @@ def evaluate_device_health(
     data_confidence = max(0, min(100, int(collection_data.get('data_confidence') or 0)))
     health_metrics_available = bool(collection_data.get('health_metrics_available'))
     compliance = str(device.get('compliance') or 'unknown').lower()
-    fan_status = str(device.get('fan_status') or '').lower()
-    psu_status = str(device.get('psu_status') or '').lower()
+    fan_raw = device.get('fan_status')
+    psu_raw = device.get('psu_status')
+    fan_status = str(fan_raw).lower() if fan_raw is not None else ''
+    psu_status = str(psu_raw).lower() if psu_raw is not None else ''
     interfaces = _parse_json_list(device.get('interface_data')) if not is_server else []
 
     reasons: list[tuple[str, str, int]] = []
@@ -280,10 +282,10 @@ def evaluate_device_health(
 
         # Fan/PSU checks only apply to network devices (servers don't report these)
         if not is_server:
-            if fan_status == 'fail':
+            if fan_raw is False or fan_status in {'false', '0', 'fail', 'failed', 'error', 'down'}:
                 penalize('Fan status indicates a hardware failure', 'critical', 35)
 
-            if psu_status == 'fail':
+            if psu_raw is False or psu_status in {'false', '0', 'fail', 'failed', 'error', 'down'}:
                 penalize('Power supply status indicates a failure', 'critical', 35)
             elif psu_status == 'single':
                 penalize('Power supply lost redundancy', 'warning', 12)

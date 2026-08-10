@@ -68,11 +68,14 @@ export interface Device {
   cpu_history?: number[];
   memory_history?: number[];
   temp?: number;
-  fan_status?: 'ok' | 'fail';
-  psu_status?: 'redundant' | 'single' | 'fail';
+  fan_status?: boolean | 0 | 1 | 'ok' | 'fail' | null;
+  psu_status?: boolean | 0 | 1 | 'redundant' | 'single' | 'fail' | null;
   snmp_community?: string;
   snmp_configured?: boolean;
   snmp_port?: number;
+  /** Optional device-specific OIDs that return CPU/memory usage percentages. */
+  snmp_cpu_oid?: string;
+  snmp_memory_oid?: string;
   management_port?: number;
   sys_name?: string;
   sys_location?: string;

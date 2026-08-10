@@ -52,8 +52,8 @@ interface InspectionResult {
   cpu_usage: number | null;
   memory_usage: number | null;
   temperature: number | null;
-  fan_status: string;
-  psu_status: string;
+  fan_status: boolean | 0 | 1 | string | null;
+  psu_status: boolean | 0 | 1 | string | null;
   interface_total: number;
   interface_up: number;
   interface_down: number;

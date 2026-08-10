@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from database import _USE_PG, get_db_connection
+from services.snmp_counter_service import calculate_counter_delta
 from services.snmp_service import collect_interface_data_detailed
 from services.vault_service import resolve_collector_credentials
 
@@ -145,22 +146,30 @@ def _calculate_rates(link: dict[str, Any], current: dict[str, Any], previous: di
             values[f"{direction}_bps"] = None
             values[f"{direction}_util_pct"] = None
             continue
-        delta = now_counter - old_counter
-        if delta < 0 and counter_width == 32:
-            wrap = float(2**32)
-            delta = now_counter + wrap - old_counter
-            if delta < 0 or delta > max(1, _num(current.get("speed_mbps")) or 0) * 1_000_000 * elapsed / 8 * 1.5:
-                flags[f"{direction}_counter_reset"] = True
-                values[f"{direction}_bps"] = None
-                values[f"{direction}_util_pct"] = None
-                continue
-            flags[f"{direction}_counter_wrap"] = True
-        elif delta < 0:
-            flags[f"{direction}_counter_reset"] = True
+        if counter_width not in (32, 64):
+            flags[f"{direction}_counter_width_unknown"] = True
             values[f"{direction}_bps"] = None
             values[f"{direction}_util_pct"] = None
             continue
-        rate = int(round(delta * 8 / elapsed))
+        speed_bps = max(0.0, (_num(current.get("speed_mbps")) or 0.0) * 1_000_000)
+        delta_result = calculate_counter_delta(
+            now_counter,
+            old_counter,
+            elapsed,
+            counter_width,
+            max_rate_per_sec=speed_bps / 8 if speed_bps else None,
+            current_uptime_cs=int(_num(current.get("device_uptime_cs")) or 0) or None,
+            previous_uptime_cs=int(_num(previous.get("device_uptime_cs")) or 0) or None,
+        )
+        counter_status = str(delta_result.get("status") or "invalid")
+        if counter_status == "wrapped":
+            flags[f"{direction}_counter_wrap"] = True
+        elif counter_status != "ok":
+            flags[f"{direction}_counter_{counter_status}"] = True
+            values[f"{direction}_bps"] = None
+            values[f"{direction}_util_pct"] = None
+            continue
+        rate = int(round(float(delta_result["rate_per_sec"]) * 8))
         physical_bps = max(0, int(round(_num(current.get("speed_mbps")) or 0)) * 1_000_000)
         if physical_bps and rate > physical_bps * 1.2:
             # A live interface can legitimately report more traffic than the
