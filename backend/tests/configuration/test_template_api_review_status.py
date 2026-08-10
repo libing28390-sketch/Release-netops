@@ -49,7 +49,8 @@ def test_create_cannot_forge_official_review_status(tmp_path, monkeypatch) -> No
             "content": "interface Loopback0",
             "official_reference": "https://example.invalid/forged",
             "validation_status": "official_reference_reviewed",
-        }
+        },
+        user={"username": "admin", "role": "Administrator"},
     )
 
     conn = sqlite3.connect(db_path)
@@ -107,6 +108,7 @@ def test_editing_reviewed_template_downgrades_it_to_draft(tmp_path, monkeypatch)
             "platform_family": "cisco_iosxe",
             "software_version": "IOS XE 17.x",
         },
+        user={"username": "admin", "role": "Administrator"},
     )
 
     conn = sqlite3.connect(db_path)

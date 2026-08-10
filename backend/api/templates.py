@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Body
 from pydantic import BaseModel, Field
 import logging
 import os
+import re
 import uuid
 import json
 import threading
@@ -103,54 +104,63 @@ def _definition_payload(template: dict, *, existing: dict | None = None) -> dict
     return metadata
 
 
-def _upsert_template_version(conn, template: dict, *, actor: str, now: str) -> None:
-    """Keep the legacy CRUD endpoint in sync with the versioned center."""
-    version = str(template.get("current_version") or "1.0")
-    values = (
-        template["content"],
-        str(template.get("rollback") or ""),
-        template["variable_schema_json"],
-        template["example_values_json"],
-        template.get("risk_level") or "low",
-        checksum(template["content"]),
-        template.get("status") or "draft",
-        actor,
-        now,
-        template["id"],
-        version,
-    )
-    existing = conn.execute(
-        "SELECT id FROM config_template_versions WHERE template_id = ? AND version = ?",
-        (template["id"], version),
-    ).fetchone()
-    if existing:
-        conn.execute(
-            """
-            UPDATE config_template_versions
-            SET source = ?, rollback_source = ?, variable_schema_json = ?,
-                example_values_json = ?, change_summary = ?, checksum = ?,
-                status = ?, created_by = ?, created_at = ?
-            WHERE template_id = ? AND version = ?
-            """,
-            (*values[:4], "Updated custom template definition", *values[5:]),
+def _next_template_version(conn, template_id: str, current_version: str) -> str:
+    """Return the next unused editable version without overwriting history."""
+    normalized = str(current_version or "1.0").strip().removeprefix("v")
+    match = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", normalized)
+    if match:
+        major, minor, patch = match.groups()
+        candidate = (
+            f"{major}.{minor}.{int(patch) + 1}"
+            if patch is not None
+            else f"{major}.{int(minor) + 1}"
         )
     else:
-        conn.execute(
-            """
-            INSERT INTO config_template_versions (
-                id, template_id, version, source, rollback_source,
-                variable_schema_json, example_values_json, render_options_json,
-                change_summary, checksum, status, created_by, created_at, published_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(uuid.uuid4()), template["id"], version, template["content"],
-                str(template.get("rollback") or ""), template["variable_schema_json"],
-                template["example_values_json"], "{}", "Custom template definition",
-                checksum(template["content"]), template.get("status") or "draft",
-                actor, now, "",
-            ),
-        )
+        candidate = "1.1"
+
+    while conn.execute(
+        "SELECT 1 FROM config_template_versions WHERE template_id = ? AND version = ?",
+        (template_id, candidate),
+    ).fetchone():
+        candidate_match = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", candidate)
+        if candidate_match and candidate_match.group(3) is not None:
+            candidate = (
+                f"{candidate_match.group(1)}.{candidate_match.group(2)}."
+                f"{int(candidate_match.group(3)) + 1}"
+            )
+        elif candidate_match:
+            candidate = f"{candidate_match.group(1)}.{int(candidate_match.group(2)) + 1}"
+        else:
+            candidate = "1.1"
+    return candidate
+
+
+def _insert_template_version(
+    conn,
+    template: dict,
+    *,
+    actor: str,
+    now: str,
+    change_summary: str,
+) -> None:
+    """Append an immutable template version to the versioned center."""
+    version = str(template.get("current_version") or "1.0")
+    conn.execute(
+        """
+        INSERT INTO config_template_versions (
+            id, template_id, version, source, rollback_source,
+            variable_schema_json, example_values_json, render_options_json,
+            change_summary, checksum, status, created_by, created_at, published_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(uuid.uuid4()), template["id"], version, template["content"],
+            str(template.get("rollback") or ""), template["variable_schema_json"],
+            template["example_values_json"], "{}", change_summary,
+            checksum(template["content"]), template.get("status") or "draft",
+            actor, now, "",
+        ),
+    )
 
 
 class TemplateValidationRequest(BaseModel):
@@ -163,7 +173,11 @@ class TemplateValidationRequest(BaseModel):
 
 
 @router.post("/templates/validate")
-def validate_configuration_template(payload: TemplateValidationRequest):
+@router.post("/config-templates/validate")
+def validate_configuration_template(
+    payload: TemplateValidationRequest,
+    _user=require_permission("configuration", "read"),
+):
     """Parse and render a template in a Jinja sandbox without touching devices."""
     return {
         "success": True,
@@ -212,7 +226,11 @@ def read_templates():
     return _read_local_templates_cached()
 
 @router.post("/templates")
-def create_template(template: dict = Body(...)):
+@router.post("/config-templates")
+def create_template(
+    template: dict = Body(...),
+    user=require_permission("configuration", "update"),
+):
     try:
         normalized_vendor, normalized_platform = validate_vendor_platform(
             template.get("vendor") or "",
@@ -230,6 +248,8 @@ def create_template(template: dict = Body(...)):
     )
     if not validation["syntax_valid"]:
         raise HTTPException(status_code=422, detail=validation["issues"])
+    actor_username = str(user.get("username") or "system")
+    actor_role = str(user.get("role") or "Operator")
     conn = get_db_connection()
     template_id = template.get('id') or str(uuid.uuid4())
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -240,7 +260,7 @@ def create_template(template: dict = Body(...)):
         definition["current_version"] = "1.0"
         definition["is_official"] = 0
         definition["source_type"] = "custom"
-        definition["created_by"] = template.get("actor_username") or "admin"
+        definition["created_by"] = actor_username
         definition["created_at"] = now
         definition["updated_at"] = now
         definition["quality_score"] = template_quality_score(definition, definition["schema"])["score"]
@@ -266,7 +286,13 @@ def create_template(template: dict = Body(...)):
                 definition['usage_notes'], definition['risk_notes'], definition['tags_json'], 0, 0,
                 definition['quality_score'],
             ))
-            _upsert_template_version(conn, definition, actor=definition['created_by'], now=now)
+            _insert_template_version(
+                conn,
+                definition,
+                actor=actor_username,
+                now=now,
+                change_summary="Initial custom template version",
+            )
         else:
             conn.execute('''
                 INSERT INTO templates
@@ -288,14 +314,14 @@ def create_template(template: dict = Body(...)):
             severity='medium',
             status='success',
             summary=f"Created template {template.get('name')}",
-            actor_username=template.get('actor_username') or 'admin',
-            actor_role=template.get('actor_role') or 'Administrator',
+            actor_username=actor_username,
+            actor_role=actor_role,
             target_type='template',
             target_id=template_id,
             target_name=template.get('name'),
             details={'vendor': template.get('vendor'), 'type': template.get('type')},
         )
-        return {"success": True, "id": template_id}
+        return {"success": True, "id": template_id, "version": definition["current_version"]}
     except HTTPException:
         raise
     except Exception as e:
@@ -304,7 +330,12 @@ def create_template(template: dict = Body(...)):
         conn.close()
 
 @router.put("/templates/{template_id}")
-def update_template(template_id: str, template: dict = Body(...)):
+@router.put("/config-templates/{template_id}")
+def update_template(
+    template_id: str,
+    template: dict = Body(...),
+    user=require_permission("configuration", "update"),
+):
     try:
         normalized_vendor, normalized_platform = validate_vendor_platform(
             template.get("vendor") or "",
@@ -342,10 +373,26 @@ def update_template(template_id: str, template: dict = Body(...)):
             'name', 'type', 'category', 'vendor', 'content', 'rollback',
             'description', 'platform_family', 'software_version',
         )
-        reviewed_content_changed = any(
-            str(template.get(field, existing.get(field, '')) or '') != str(existing.get(field) or '')
+        comparison_payload = {
+            **template,
+            "vendor": normalized_vendor,
+            "platform_family": normalized_platform,
+        }
+        changed_fields = [
+            field
             for field in reviewed_fields
+            if str(comparison_payload.get(field, existing.get(field, '')) or '')
+            != str(existing.get(field) or '')
+        ]
+        version_definition_changed = (
+            json_value(definition["variable_schema_json"], [])
+            != json_value(existing.get("variable_schema_json"), [])
+            or json_value(definition["example_values_json"], {})
+            != json_value(existing.get("example_values_json"), {})
         )
+        if version_definition_changed:
+            changed_fields.extend(["variable_schema", "example_values"])
+        reviewed_content_changed = bool(changed_fields)
         validation_status = str(existing.get('validation_status') or 'draft')
         official_reference = str(existing.get('official_reference') or '')
         if reviewed_content_changed:
@@ -354,7 +401,12 @@ def update_template(template_id: str, template: dict = Body(...)):
         definition["id"] = template_id
         definition["risk_level"] = validation.get("risk_level") or existing.get("risk_level") or "low"
         definition["status"] = "draft" if reviewed_content_changed else (existing.get("status") or "draft")
-        definition["current_version"] = existing.get("current_version") or "1.0"
+        previous_version = str(existing.get("current_version") or "1.0")
+        definition["current_version"] = (
+            _next_template_version(conn, template_id, previous_version)
+            if reviewed_content_changed and _supports_template_center_columns(conn)
+            else previous_version
+        )
         definition["variable_schema_json"] = definition["variable_schema_json"]
         definition["example_values_json"] = definition["example_values_json"]
         definition["quality_score"] = template_quality_score({**existing, **definition, "validation_status": validation_status}, definition["schema"])["score"]
@@ -422,7 +474,19 @@ def update_template(template_id: str, template: dict = Body(...)):
             "status": definition['status'],
         })
         if _supports_template_center_columns(conn):
-            _upsert_template_version(conn, definition, actor=template.get('actor_username') or existing.get('created_by') or 'admin', now=now)
+            current_version_row = conn.execute(
+                "SELECT 1 FROM config_template_versions WHERE template_id = ? AND version = ?",
+                (template_id, definition["current_version"]),
+            ).fetchone()
+            if reviewed_content_changed or not current_version_row:
+                summary_fields = ", ".join(dict.fromkeys(changed_fields)) or "legacy synchronization"
+                _insert_template_version(
+                    conn,
+                    definition,
+                    actor=str(user.get("username") or "system"),
+                    now=now,
+                    change_summary=f"Updated fields: {summary_fields}",
+                )
         conn.commit()
         _invalidate_templates_cache()
         log_audit_event(
@@ -431,14 +495,20 @@ def update_template(template_id: str, template: dict = Body(...)):
             severity='medium',
             status='success',
             summary=f"Updated template {template.get('name')}",
-            actor_username=template.get('actor_username') or 'admin',
-            actor_role=template.get('actor_role') or 'Administrator',
+            actor_username=str(user.get('username') or 'system'),
+            actor_role=str(user.get('role') or 'Operator'),
             target_type='template',
             target_id=template_id,
             target_name=template.get('name'),
-            details={'type': template.get('type'), 'vendor': template.get('vendor')},
+            details={
+                'type': template.get('type'),
+                'vendor': normalized_vendor,
+                'previous_version': previous_version,
+                'version': definition['current_version'],
+                'changed_fields': list(dict.fromkeys(changed_fields)),
+            },
         )
-        return {"success": True}
+        return {"success": True, "id": template_id, "version": definition["current_version"]}
     except HTTPException:
         raise
     except Exception as e:
@@ -448,6 +518,7 @@ def update_template(template_id: str, template: dict = Body(...)):
 
 
 @router.delete("/templates/{template_id}")
+@router.delete("/config-templates/{template_id}")
 def delete_template(template_id: str, user=require_permission("configuration", "update")):
     """Archive a custom template; official templates must be copied first."""
     conn = get_db_connection()
@@ -458,6 +529,13 @@ def delete_template(template_id: str, user=require_permission("configuration", "
         template = dict(row)
         if bool(template.get("is_official")) or template.get("source_type") == "official":
             raise HTTPException(status_code=403, detail="Official templates are read-only; archive a custom copy instead")
+        if str(template.get("status") or "").lower() == "archived":
+            return {
+                "success": True,
+                "archived": True,
+                "already_archived": True,
+                "id": template_id,
+            }
         now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         conn.execute(
             "UPDATE templates SET status = 'archived', updated_at = ?, validation_status = 'draft' WHERE id = ?",
@@ -478,7 +556,12 @@ def delete_template(template_id: str, user=require_permission("configuration", "
             target_name=template.get('name') or template_id,
             details={'mode': 'soft_delete', 'status': 'archived'},
         )
-        return {"success": True, "archived": True, "id": template_id}
+        return {
+            "success": True,
+            "archived": True,
+            "already_archived": False,
+            "id": template_id,
+        }
     except HTTPException:
         raise
     except Exception as exc:

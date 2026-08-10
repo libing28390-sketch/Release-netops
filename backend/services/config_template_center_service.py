@@ -27,6 +27,12 @@ _INTERFACE = re.compile(
     re.I,
 )
 
+_SECRET_NAME_TOKENS = {
+    "password", "passwd", "secret", "community", "token", "credential",
+    "private", "shared",
+}
+_PUBLIC_KEY_NAMES = {"public_key", "key_id", "key_name", "key_type"}
+
 
 _PARAMETER_METADATA: dict[str, dict[str, Any]] = {
     "vlan_id": {
@@ -160,9 +166,17 @@ def _label_for(name: str) -> str:
     return known.get(name, name.replace("_", " ").replace(".", " / ").title())
 
 
+def _is_secret_parameter_name(name: str) -> bool:
+    lowered = re.sub(r"[.\-]+", "_", str(name or "").strip().lower())
+    if lowered in _PUBLIC_KEY_NAMES or lowered.startswith("public_key_"):
+        return False
+    tokens = {token for token in lowered.split("_") if token}
+    return bool(tokens & _SECRET_NAME_TOKENS) or lowered == "key" or lowered.endswith("_key")
+
+
 def _type_for(name: str, default_value: Any) -> str:
     lowered = name.lower()
-    if "password" in lowered or "secret" in lowered or "community" in lowered:
+    if _is_secret_parameter_name(lowered):
         return "password"
     if lowered in {"vlan", "vlan_id", "native_vlan", "access_vlan"} or lowered.endswith("_vlan"):
         return "vlan_id"
@@ -220,6 +234,10 @@ def enrich_variable_schema(schema: list[dict[str, Any]], content: str = "") -> l
             if metadata.get("validation_rules"):
                 existing_rules = item.get("validation_rules") if isinstance(item.get("validation_rules"), dict) else {}
                 item["validation_rules"] = {**metadata["validation_rules"], **existing_rules}
+        if _is_secret_parameter_name(name):
+            item["type"] = "password"
+            item["is_secret"] = True
+            item["allow_multiline"] = False
         if not item.get("label"):
             item["label"] = _label_for(name)
         if not item.get("description"):
@@ -587,6 +605,13 @@ def render_template_center(
     options = options or {}
     parameter_result = validate_parameters(schema, values, vendor=vendor, platform=platform)
     if not parameter_result["valid"]:
+        safe_parameter_result = {
+            **parameter_result,
+            "normalized_values": redact_parameter_values(
+                schema,
+                parameter_result.get("normalized_values", {}),
+            ),
+        }
         return {
             "success": False,
             "render_status": "parameter_error",
@@ -600,7 +625,7 @@ def render_template_center(
             "risk_level": "none",
             "risk_items": [],
             "source_map": [],
-            "parameter_validation": parameter_result,
+            "parameter_validation": safe_parameter_result,
         }
 
     validation = validate_template(
@@ -639,6 +664,13 @@ def render_template_center(
         for warning in validation.get("warnings", [])
     ]
     warnings = parameter_result["warnings"] + warnings
+    safe_parameter_result = {
+        **parameter_result,
+        "normalized_values": redact_parameter_values(
+            schema,
+            parameter_result.get("normalized_values", {}),
+        ),
+    }
     return {
         "success": bool(validation.get("render_valid")) and not errors,
         "render_status": "success" if validation.get("render_valid") and not errors else "render_error",
@@ -653,7 +685,7 @@ def render_template_center(
         "risk_level": validation.get("risk_level", "none"),
         "risk_items": validation.get("risk_items", []),
         "source_map": source_map,
-        "parameter_validation": parameter_result,
+        "parameter_validation": safe_parameter_result,
         "official_references": validation.get("official_references", []),
     }
 

@@ -1,5 +1,6 @@
 from services.config_template_center_service import (
     infer_variable_schema,
+    render_template_center,
     validate_parameters,
 )
 from services.config_template_validation_service import validate_template
@@ -88,3 +89,38 @@ def test_invalid_netmask_and_wildcard_mask_are_rejected() -> None:
     )
     assert result["valid"] is False
     assert {item["field"] for item in result["errors"]} == {"netmask", "wildcard_mask"}
+
+
+def test_secret_key_and_token_names_are_inferred_and_rendered_safely() -> None:
+    source = (
+        'key {{ tacacs_key | default("secret123") }}\n'
+        'radius key {{ radius_key | default("radius-secret") }}\n'
+        'token {{ api_token | default("token-value") }}\n'
+        'public {{ public_key | default("ssh-rsa AAAA") }}\n'
+    )
+    schema = infer_variable_schema(source)
+    by_name = {item["name"]: item for item in schema}
+
+    assert by_name["tacacs_key"]["type"] == "password"
+    assert by_name["radius_key"]["is_secret"] is True
+    assert by_name["api_token"]["is_secret"] is True
+    assert by_name["public_key"]["type"] != "password"
+
+    result = render_template_center(
+        content=source,
+        rollback="",
+        schema=schema,
+        values={},
+        vendor="Cisco",
+        platform="cisco_iosxe",
+        software_version="17.x",
+    )
+
+    assert result["success"] is True
+    assert "secret123" not in result["rendered_output"]
+    assert "radius-secret" not in result["rendered_output"]
+    assert "token-value" not in result["rendered_output"]
+    assert result["parameter_validation"]["normalized_values"]["tacacs_key"] == "***"
+    assert {item["variable"] for item in result["source_map"]}.isdisjoint(
+        {"tacacs_key", "radius_key", "api_token"}
+    )

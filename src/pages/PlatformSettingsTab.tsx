@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -12,6 +12,8 @@ import {
   Code2,
   Copy,
   Download,
+  Eye,
+  EyeOff,
   FileCode2,
   FileCog,
   FileJson,
@@ -139,6 +141,10 @@ interface RenderResult {
   risk_items: Array<{ line: number; command: string; message: string }>;
   source_map: Array<{ output_line: number; variable: string; value: string; source: string }>;
   quality_score?: number;
+  parameter_validation?: {
+    sources?: Record<string, string>;
+    normalized_values?: Record<string, unknown>;
+  };
 }
 
 interface ParameterProfile {
@@ -281,6 +287,39 @@ const PARAMETER_TYPE_LABELS: Record<string, { zh: string; en: string }> = {
 
 const parameterTypeLabel = (type: string, zh: boolean) => PARAMETER_TYPE_LABELS[type]?.[zh ? 'zh' : 'en'] || type;
 
+const hasParameterValue = (value: unknown) => value !== undefined && value !== null && value !== '';
+
+const isSensitiveVariable = (item: TemplateVariable) => {
+  if (item.is_secret || item.type === 'password') return true;
+  const normalized = item.name.toLowerCase().replace(/[.\-]+/g, '_');
+  if (['public_key', 'key_id', 'key_name', 'key_type'].includes(normalized) || normalized.startsWith('public_key_')) return false;
+  const tokens = new Set(normalized.split('_').filter(Boolean));
+  return ['password', 'passwd', 'secret', 'community', 'token', 'credential', 'private', 'shared'].some((token) => tokens.has(token))
+    || normalized === 'key'
+    || normalized.endsWith('_key');
+};
+
+const sourceLabel = (source: string, zh: boolean) => {
+  if (zh) return SOURCE_LABELS[source] || source;
+  const labels: Record<string, string> = {
+    user: 'User input',
+    template_default: 'Template default',
+    example: 'Example',
+    profile: 'Parameter profile',
+    system: 'System',
+    device: 'Device context',
+  };
+  return labels[source] || source;
+};
+
+const riskLabel = (risk: string | undefined, zh: boolean) => ({
+  none: zh ? '无风险' : 'None',
+  low: zh ? '低风险' : 'Low',
+  medium: zh ? '中风险' : 'Medium',
+  high: zh ? '高风险' : 'High',
+  critical: zh ? '严重风险' : 'Critical',
+}[risk || 'none'] || risk || (zh ? '无风险' : 'None'));
+
 const PREVIEW_TABS: Array<{ id: PreviewTab; zh: string; en: string; icon: React.ReactNode }> = [
   { id: 'preview', zh: '命令预览', en: 'Preview', icon: <FileCode2 size={13} /> },
   { id: 'source', zh: '模板源码', en: 'Source', icon: <Code2 size={13} /> },
@@ -319,8 +358,7 @@ const formatModelPattern = (pattern: unknown) => {
 };
 
 const formatLastUsed = (value: string | null | undefined, zh: boolean) => {
-  if (value === null || value === '') return zh ? '从未使用' : 'Never used';
-  if (value === undefined) return zh ? '数据异常' : 'Data unavailable';
+  if (value === null || value === undefined || value === '') return zh ? '从未使用' : 'Never used';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return zh ? '时间格式错误' : 'Invalid time';
   return parsed.toLocaleString(zh ? 'zh-CN' : 'en-US');
@@ -358,6 +396,74 @@ const copyText = async (content: string) => {
   if (!copied) throw new Error('Clipboard is unavailable');
 };
 
+interface TemplateLibraryCardProps {
+  template: ConfigTemplate;
+  selected: boolean;
+  zh: boolean;
+  onSelect: (templateId: string) => void;
+  onFavorite: (template: ConfigTemplate) => void;
+  onEdit: (template: ConfigTemplate) => void;
+  onArchive: (template: ConfigTemplate) => void;
+  onCopy: (template: ConfigTemplate) => void;
+}
+
+const TemplateLibraryCard = React.memo<TemplateLibraryCardProps>(({
+  template,
+  selected,
+  zh,
+  onSelect,
+  onFavorite,
+  onEdit,
+  onArchive,
+  onCopy,
+}) => {
+  const brand = VENDOR_STYLE[template.vendor || 'Custom'] || VENDOR_STYLE.Custom;
+  const official = Boolean(template.is_official || template.source_type === 'official');
+  const variableCount = parseJson<TemplateVariable[]>(template.variable_schema_json, []).length;
+  return (
+    <div
+      className={`group relative rounded-xl border transition ${selected ? 'border-cyan-300 bg-cyan-50/50 shadow-sm ring-1 ring-cyan-100' : 'border-slate-200 bg-white hover:border-cyan-200'}`}
+      style={{ contentVisibility: 'auto', containIntrinsicSize: '0 124px' }}
+    >
+      <button type="button" onClick={() => onSelect(template.id)} className="w-full p-3 pr-9 text-left">
+        <div className="flex items-center gap-1.5">
+          <span className={`rounded px-1.5 py-0.5 text-[9px] font-black ring-1 ${brand.chip}`}>{template.vendor || 'Custom'}</span>
+          {template.platform_family && <span className="max-w-24 truncate rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">{template.platform_family}</span>}
+          <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${official ? 'bg-blue-50 text-blue-700' : 'bg-violet-50 text-violet-700'}`}>
+            {official ? (zh ? '官方' : 'Official') : (zh ? '自定义' : 'Custom')}
+          </span>
+        </div>
+        <p className="mt-2 truncate text-[13px] font-black text-slate-800">{template.name}</p>
+        <p className="mt-1 line-clamp-2 min-h-8 text-[10px] leading-4 text-slate-500">{template.description || (zh ? '暂无模板说明' : 'No description')}</p>
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-[9px] text-slate-400">
+          <span>{variableCount || '—'} {zh ? '变量' : 'vars'}</span>
+          <span>· v{template.current_version || '1.0'}</span>
+          <span>· {template.risk_level || 'low'}</span>
+          <span>· {formatLastUsed(template.lastUsed, zh)}</span>
+        </div>
+      </button>
+      <button type="button" onClick={() => void onFavorite(template)} className={`absolute right-2 top-2 rounded-lg p-1.5 transition ${template.is_favorite ? 'text-amber-500' : 'text-slate-300 opacity-0 hover:text-amber-500 group-hover:opacity-100'}`} title={zh ? '收藏模板' : 'Favorite'}>
+        <Star size={13} fill={template.is_favorite ? 'currentColor' : 'none'} />
+      </button>
+      {!official && (
+        <>
+          <button type="button" onClick={() => onEdit(template)} className="absolute right-9 top-2 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-cyan-50 hover:text-cyan-700 group-hover:opacity-100" title={zh ? '编辑自定义模板' : 'Edit custom template'}>
+            <Pencil size={12} />
+          </button>
+          <button type="button" onClick={() => void onArchive(template)} className="absolute bottom-2 right-2 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100" title={zh ? '归档模板' : 'Archive template'}>
+            <Trash2 size={12} />
+          </button>
+        </>
+      )}
+      <button type="button" onClick={() => void onCopy(template)} className="absolute bottom-2 right-9 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-cyan-50 hover:text-cyan-700 group-hover:opacity-100" title={zh ? '复制为自定义模板' : 'Copy as custom template'}>
+        <Copy size={12} />
+      </button>
+    </div>
+  );
+});
+
+TemplateLibraryCard.displayName = 'TemplateLibraryCard';
+
 const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   t,
   language,
@@ -382,6 +488,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   const [sourceFilter, setSourceFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'name' | 'updated' | 'usage' | 'quality'>('updated');
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [leftWidth, setLeftWidth] = useState(326);
   const [parameterWidth, setParameterWidth] = useState(400);
@@ -401,6 +508,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [profileName, setProfileName] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
+  const [profileExpanded, setProfileExpanded] = useState(false);
   const [sourceSaving, setSourceSaving] = useState(false);
   const [taskCreating, setTaskCreating] = useState(false);
   const [versionFrom, setVersionFrom] = useState('');
@@ -415,11 +523,21 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     content: '', rollback: '', example_values: '{}', variable_schema: [],
   });
   const [creatingTemplate, setCreatingTemplate] = useState(false);
+  const [reviewAcknowledged, setReviewAcknowledged] = useState(false);
+  const [revealedSecrets, setRevealedSecrets] = useState<Record<string, boolean>>({});
   const parameterDrafts = useRef<Record<string, Record<string, unknown>>>({});
   const previousTemplateIdRef = useRef(selectedTemplateId);
   const activeTemplateIdRef = useRef(selectedTemplateId);
   const loadRequestRef = useRef(0);
+  const loadingTemplateIdRef = useRef('');
+  const templateLoadAbortRef = useRef<AbortController | null>(null);
+  const templateCacheRef = useRef<Map<string, { detail: TemplateDetail; profiles: ParameterProfile[] }>>(new Map());
+  const detailRef = useRef<TemplateDetail | null>(null);
+  const sourceContentRef = useRef('');
   const draftStorageKey = (templateId: string) => `nexora.config-template-draft.${templateId}`;
+
+  detailRef.current = detail;
+  sourceContentRef.current = sourceContent;
 
   useEffect(() => {
     setTemplates(configTemplates);
@@ -435,75 +553,28 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     }
   }, [templates]);
 
-  const loadTemplate = useCallback(async (templateId: string) => {
-    if (!templateId || templateId.startsWith('draft-')) return;
-    const requestId = ++loadRequestRef.current;
-    setDetailLoading(true);
+  const applyLoadedTemplate = useCallback((
+    templateId: string,
+    templateDetail: TemplateDetail,
+    templateProfiles: ParameterProfile[],
+  ) => {
+    if (activeTemplateIdRef.current !== templateId) return;
+    let storedDraft: { parameters?: Record<string, unknown>; source?: string } | null = null;
     try {
-      const [templateDetail, templateProfiles] = await Promise.all([
-        apiRequest<TemplateDetail>(`/api/config-templates/${encodeURIComponent(templateId)}`),
-        apiRequest<ParameterProfile[]>(`/api/config-templates/${encodeURIComponent(templateId)}/parameter-profiles`),
-      ]);
-      if (requestId !== loadRequestRef.current || activeTemplateIdRef.current !== templateId) return;
+      const raw = window.localStorage.getItem(`nexora.config-template-draft.${templateId}`);
+      storedDraft = raw ? JSON.parse(raw) as { parameters?: Record<string, unknown>; source?: string } : null;
+    } catch {
+      storedDraft = null;
+    }
+    const draft = parameterDrafts.current[templateId] || storedDraft?.parameters;
+    const versions = templateDetail.versions || [];
+    startTransition(() => {
       setDetail(templateDetail);
-      setProfiles(templateProfiles || []);
-      let storedDraft: { parameters?: Record<string, unknown>; source?: string } | null = null;
-      try {
-        const raw = window.localStorage.getItem(draftStorageKey(templateId));
-        storedDraft = raw ? JSON.parse(raw) as { parameters?: Record<string, unknown>; source?: string } : null;
-      } catch {
-        storedDraft = null;
-      }
+      setProfiles(templateProfiles);
       setSourceContent(storedDraft?.source || templateDetail.version?.source || templateDetail.content || '');
       setSourceDirty(Boolean(storedDraft?.source));
-      const draft = parameterDrafts.current[templateId] || storedDraft?.parameters;
       setParameters(draft || {});
-      setParameterSources(
-        draft
-          ? Object.fromEntries(Object.keys(draft).map((name) => [name, 'user']))
-          : {},
-      );
-      setSelectedProfileId('');
-      setProfileName('');
-      setRenderResult(null);
-      setLastSuccessfulResult(null);
-      setRenderState('idle');
-      setPreviewTab('preview');
-      const versions = templateDetail.versions || [];
-      setVersionTo(templateDetail.current_version || versions[0]?.version || '1.0');
-      setVersionFrom(versions[1]?.version || versions[0]?.version || '1.0');
-    } catch (error) {
-      if (requestId !== loadRequestRef.current || activeTemplateIdRef.current !== templateId) return;
-      showToast(
-        error instanceof Error ? error.message : (zh ? '模板详情加载失败' : 'Failed to load template details'),
-        'error',
-      );
-    } finally {
-      if (requestId === loadRequestRef.current) setDetailLoading(false);
-    }
-  }, [showToast, zh]);
-
-  useEffect(() => {
-    const previousId = previousTemplateIdRef.current;
-    activeTemplateIdRef.current = selectedTemplateId;
-    if (previousId && previousId !== selectedTemplateId) {
-      // A parameter draft belongs to the template it was created for. Never
-      // carry it into another template, including drafts kept by an earlier
-      // page visit or by a background refresh.
-      parameterDrafts.current = {};
-      try {
-        Object.keys(window.localStorage)
-          .filter((key) => key.startsWith('nexora.config-template-draft.'))
-          .forEach((key) => window.localStorage.removeItem(key));
-      } catch {
-        // Local storage is optional; in-memory state is still cleared below.
-      }
-      setDetail(null);
-      setProfiles([]);
-      setParameters({});
-      setParameterSources({});
-      setSourceContent('');
-      setSourceDirty(false);
+      setParameterSources(draft ? Object.fromEntries(Object.keys(draft).map((name) => [name, 'user'])) : {});
       setSelectedProfileId('');
       setProfileName('');
       setRenderResult(null);
@@ -512,6 +583,74 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
       setPreviewTab('preview');
       setPreviewSearch('');
       setGroupCollapsed({});
+      setReviewAcknowledged(false);
+      setRevealedSecrets({});
+      setProfileExpanded(false);
+      setVersionTo(templateDetail.current_version || versions[0]?.version || '1.0');
+      setVersionFrom(versions[1]?.version || versions[0]?.version || '1.0');
+    });
+  }, []);
+
+  const loadTemplate = useCallback(async (templateId: string, force = false) => {
+    if (!templateId || templateId.startsWith('draft-')) return;
+    if (loadingTemplateIdRef.current === templateId) return;
+    const cached = force ? undefined : templateCacheRef.current.get(templateId);
+    if (cached) {
+      templateLoadAbortRef.current?.abort();
+      templateLoadAbortRef.current = null;
+      loadingTemplateIdRef.current = '';
+      loadRequestRef.current += 1;
+      applyLoadedTemplate(templateId, cached.detail, cached.profiles);
+      setDetailLoading(false);
+      return;
+    }
+    templateLoadAbortRef.current?.abort();
+    const abortController = new AbortController();
+    templateLoadAbortRef.current = abortController;
+    loadingTemplateIdRef.current = templateId;
+    const requestId = ++loadRequestRef.current;
+    setDetailLoading(true);
+    const profilesPromise = apiRequest<ParameterProfile[]>(`/api/config-templates/${encodeURIComponent(templateId)}/parameter-profiles`, { signal: abortController.signal })
+      .catch(() => [] as ParameterProfile[]);
+    try {
+      const templateDetail = await apiRequest<TemplateDetail>(`/api/config-templates/${encodeURIComponent(templateId)}`, { signal: abortController.signal });
+      if (requestId !== loadRequestRef.current || activeTemplateIdRef.current !== templateId) return;
+      templateCacheRef.current.set(templateId, { detail: templateDetail, profiles: [] });
+      applyLoadedTemplate(templateId, templateDetail, []);
+      void profilesPromise.then((templateProfiles) => {
+        templateCacheRef.current.set(templateId, { detail: templateDetail, profiles: templateProfiles || [] });
+        if (activeTemplateIdRef.current === templateId) setProfiles(templateProfiles || []);
+      });
+    } catch (error) {
+      if (requestId !== loadRequestRef.current || activeTemplateIdRef.current !== templateId) return;
+      if (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError') return;
+      showToast(
+        error instanceof Error ? error.message : (zh ? '模板详情加载失败' : 'Failed to load template details'),
+        'error',
+      );
+    } finally {
+      if (requestId === loadRequestRef.current) {
+        if (templateLoadAbortRef.current === abortController) templateLoadAbortRef.current = null;
+        loadingTemplateIdRef.current = '';
+        setDetailLoading(false);
+      }
+    }
+  }, [applyLoadedTemplate, showToast, zh]);
+
+  useEffect(() => () => {
+    templateLoadAbortRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    const previousId = previousTemplateIdRef.current;
+    activeTemplateIdRef.current = selectedTemplateId;
+    if (previousId && previousId !== selectedTemplateId) {
+      // Keep the current detail visible until the next response arrives. This
+      // avoids a full three-pane teardown and lets keyed drafts remain isolated
+      // without scanning and deleting all localStorage entries on every click.
+      setReviewAcknowledged(false);
+      setRevealedSecrets({});
+      setProfileExpanded(false);
     }
     previousTemplateIdRef.current = selectedTemplateId;
   }, [selectedTemplateId]);
@@ -533,6 +672,13 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
 
   const schema = detail?.variable_schema || detail?.version?.variable_schema || [];
 
+  const effectiveParameterValue = useCallback((item: TemplateVariable) => {
+    const explicitValue = parameters[item.name];
+    if (hasParameterValue(explicitValue)) return explicitValue;
+    if (hasParameterValue(item.default_value)) return item.default_value;
+    return '';
+  }, [parameters]);
+
   const groupedSchema = useMemo(() => {
     const groups = new Map<string, TemplateVariable[]>();
     schema
@@ -546,10 +692,18 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   }, [schema, zh]);
 
   const requiredVariables = useMemo(() => schema.filter((item) => item.required), [schema]);
-  const completedRequired = useMemo(() => requiredVariables.filter((item) => {
-    const value = parameters[item.name];
-    return value !== undefined && value !== null && value !== '';
-  }).length, [parameters, requiredVariables]);
+  const completedRequired = useMemo(
+    () => requiredVariables.filter((item) => hasParameterValue(effectiveParameterValue(item))).length,
+    [effectiveParameterValue, requiredVariables],
+  );
+  const filledParameterCount = useMemo(
+    () => schema.filter((item) => hasParameterValue(effectiveParameterValue(item))).length,
+    [effectiveParameterValue, schema],
+  );
+  const availableDefaultCount = useMemo(
+    () => schema.filter((item) => !hasParameterValue(parameters[item.name]) && hasParameterValue(item.default_value)).length,
+    [parameters, schema],
+  );
 
   const fieldErrors = useMemo(() => {
     const map = new Map<string, string>();
@@ -574,7 +728,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   }, [fieldErrors, schema, zh]);
 
   const runRender = useCallback(async (showFeedback = false) => {
-    if (!detail?.id) return;
+    if (!detail?.id || detail.id !== activeTemplateIdRef.current) return;
     const templateId = detail.id;
     setRenderState('rendering');
     try {
@@ -617,6 +771,10 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     }, 400);
     return () => window.clearTimeout(timer);
   }, [detail?.id, parameters, runRender]);
+
+  useEffect(() => {
+    setReviewAcknowledged(false);
+  }, [detail?.current_version, detail?.id, parameters]);
 
   const filteredTemplates = useMemo(() => {
     const normalized = keyword.trim().toLowerCase();
@@ -678,10 +836,23 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     }
   }, [platformFilter, platformOptions]);
 
+  const activeFilterCount = [vendorFilter, platformFilter, categoryFilter, sourceFilter, statusFilter]
+    .filter((value) => value !== 'all').length;
+
+  const clearFilters = useCallback(() => {
+    setVendorFilter('all');
+    setPlatformFilter('all');
+    setCategoryFilter('all');
+    setSourceFilter('all');
+    setStatusFilter('all');
+    setSortBy('updated');
+  }, []);
+
   const selectTemplate = useCallback((id: string) => {
-    if (id === selectedTemplateId) return;
+    if (id === activeTemplateIdRef.current) return;
+    activeTemplateIdRef.current = id;
     onSelectTemplateIdChange(id);
-  }, [onSelectTemplateIdChange, selectedTemplateId]);
+  }, [onSelectTemplateIdChange]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -726,6 +897,26 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     setParameterSources(Object.fromEntries(Object.keys(next).map((name) => [name, 'example'])));
     if (detail.id) parameterDrafts.current[detail.id] = next;
   }, [detail, schema]);
+
+  const applyTemplateDefaults = useCallback(() => {
+    if (!detail) return;
+    const defaults = Object.fromEntries(
+      schema
+        .filter((item) => hasParameterValue(item.default_value))
+        .map((item) => [item.name, item.default_value]),
+    );
+    const next = { ...defaults, ...parameters };
+    setParameters(next);
+    setParameterSources((current) => ({
+      ...Object.fromEntries(Object.keys(defaults).map((name) => [name, 'template_default'])),
+      ...current,
+    }));
+    if (detail.id) parameterDrafts.current[detail.id] = next;
+    showToast(
+      zh ? `已应用 ${Object.keys(defaults).length} 个模板默认值` : `Applied ${Object.keys(defaults).length} template defaults`,
+      'success',
+    );
+  }, [detail, parameters, schema, showToast, zh]);
 
   const resetParameters = useCallback(() => {
     setParameters({});
@@ -801,11 +992,13 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     try {
       await apiRequest(`/api/config-templates/${encodeURIComponent(template.id)}/favorite?favorite=${favorite}`, { method: 'PUT' });
       setTemplates((items) => items.map((item) => item.id === template.id ? { ...item, is_favorite: favorite } as ConfigTemplate : item));
-      if (detail?.id === template.id) setDetail({ ...detail, is_favorite: favorite });
+      setDetail((current) => current?.id === template.id ? { ...current, is_favorite: favorite } : current);
+      const cached = templateCacheRef.current.get(template.id);
+      if (cached) templateCacheRef.current.set(template.id, { ...cached, detail: { ...cached.detail, is_favorite: favorite } });
     } catch (error) {
       showToast(error instanceof Error ? error.message : (zh ? '收藏操作失败' : 'Favorite action failed'), 'error');
     }
-  }, [detail, showToast, zh]);
+  }, [showToast, zh]);
 
   const resetEditorForm = useCallback(() => {
     setCreateForm({
@@ -824,8 +1017,9 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
       || parseJson<TemplateVariable[]>(selected?.variable_schema_json, []);
     const examples = selected?.example_values
       || parseJson<Record<string, unknown>>(selected?.example_values_json, {});
-    const source = selected?.id === detail?.id
-      ? sourceContent
+    const currentDetail = detailRef.current;
+    const source = selected?.id === currentDetail?.id
+      ? sourceContentRef.current
       : (selected?.version?.source || selected?.content || '');
     setEditingTemplateId(selected?.id || null);
     setCreateForm({
@@ -843,7 +1037,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
       variable_schema: schema,
     });
     setShowCreate(true);
-  }, [detail?.id, sourceContent, zh]);
+  }, [zh]);
 
   const updateEditorVariable = useCallback((index: number, patch: Partial<TemplateVariable>) => {
     setCreateForm((current) => ({
@@ -879,19 +1073,19 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
         rollback: createForm.rollback,
         variable_schema: createForm.variable_schema,
         example_values: exampleValues,
-        actor_username: 'current-user',
       };
       const result = await apiRequest<{ id?: string; success: boolean }>(
-        editingTemplateId ? `/api/templates/${encodeURIComponent(editingTemplateId)}` : '/api/templates',
+        editingTemplateId ? `/api/config-templates/${encodeURIComponent(editingTemplateId)}` : '/api/config-templates',
         { method: editingTemplateId ? 'PUT' : 'POST', body: JSON.stringify(payload) },
       );
       const items = await refreshTemplates();
       const targetId = result.id || editingTemplateId || '';
+      if (targetId) templateCacheRef.current.delete(targetId);
       setShowCreate(false);
       setEditingTemplateId(null);
       if (targetId && items.some((item) => item.id === targetId)) {
         selectTemplate(targetId);
-        await loadTemplate(targetId);
+        await loadTemplate(targetId, true);
       }
       showToast(editingTemplateId ? (zh ? '自定义模板已更新，字段和示例已同步' : 'Custom template updated') : (zh ? '自定义模板已创建，字段和示例已生成' : 'Custom template created'), 'success');
     } catch (error) {
@@ -908,9 +1102,10 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     }
     if (!window.confirm(zh ? `确定归档自定义模板“${template.name}”吗？归档后不会再出现在模板库中。` : `Archive custom template "${template.name}"? It will be hidden from the library.`)) return;
     try {
-      await apiRequest(`/api/templates/${encodeURIComponent(template.id)}`, { method: 'DELETE' });
+      await apiRequest(`/api/config-templates/${encodeURIComponent(template.id)}`, { method: 'DELETE' });
+      templateCacheRef.current.delete(template.id);
       const items = await refreshTemplates();
-      if (selectedTemplateId === template.id) {
+      if (activeTemplateIdRef.current === template.id) {
         setDetail(null);
         const next = items[0];
         if (next) selectTemplate(next.id);
@@ -919,7 +1114,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     } catch (error) {
       showToast(error instanceof Error ? error.message : (zh ? '模板删除失败' : 'Failed to archive template'), 'error');
     }
-  }, [refreshTemplates, selectTemplate, selectedTemplateId, showToast, zh]);
+  }, [refreshTemplates, selectTemplate, showToast, zh]);
 
   const copyTemplate = useCallback(async (template: ConfigTemplate) => {
     try {
@@ -940,19 +1135,19 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
     if (!detail?.id || !sourceContent.trim()) return;
     setSourceSaving(true);
     try {
-      await apiRequest(`/api/templates/${encodeURIComponent(detail.id)}`, {
+      await apiRequest(`/api/config-templates/${encodeURIComponent(detail.id)}`, {
         method: 'PUT',
         body: JSON.stringify({
           ...detail,
           content: sourceContent,
           lastUsed: detail.lastUsed,
-          actor_username: 'current-user',
         }),
       });
       setSourceDirty(false);
       try { window.localStorage.removeItem(draftStorageKey(detail.id)); } catch { /* best effort */ }
       await refreshTemplates();
-      await loadTemplate(detail.id);
+      templateCacheRef.current.delete(detail.id);
+      await loadTemplate(detail.id, true);
       showToast(zh ? '模板源码已保存，审核状态已重置为草稿' : 'Template saved and review status reset to draft', 'success');
     } catch (error) {
       showToast(error instanceof Error ? error.message : (zh ? '模板保存失败' : 'Failed to save template'), 'error');
@@ -1055,14 +1250,66 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   }, [leftWidth, parameterWidth]);
 
   const visibleRender = renderResult?.success ? renderResult : lastSuccessfulResult;
+  const safePreviewOutput = useMemo(() => {
+    let output = visibleRender?.rendered_output || '';
+    const secretValues = schema
+      .filter(isSensitiveVariable)
+      .map((item) => String(effectiveParameterValue(item) || ''))
+      .filter((value) => value.length >= 3)
+      .sort((left, right) => right.length - left.length);
+    secretValues.forEach((value) => {
+      output = output.split(value).join('••••••••');
+    });
+    return output;
+  }, [effectiveParameterValue, schema, visibleRender?.rendered_output]);
+  const safeParameterValues = useMemo(() => {
+    const sensitiveNames = new Set(schema.filter(isSensitiveVariable).map((item) => item.name));
+    return Object.fromEntries(
+      Object.entries(parameters).map(([name, value]) => [name, sensitiveNames.has(name) && hasParameterValue(value) ? '***' : value]),
+    );
+  }, [parameters, schema]);
+  const effectiveParameterSources = useMemo(() => ({
+    ...(renderResult?.parameter_validation?.sources || {}),
+    ...parameterSources,
+  }), [parameterSources, renderResult?.parameter_validation?.sources]);
+  const warningCount = renderResult?.warnings.length || 0;
+  const errorCount = renderResult?.errors.length || 0;
+  const highRisk = ['high', 'critical'].includes(visibleRender?.risk_level || 'none');
+  const requiresReviewAcknowledgement = warningCount > 0 || highRisk;
+  const workflowStep = !detail
+    ? 1
+    : completedRequired < requiredVariables.length
+      ? 2
+      : !visibleRender?.success || errorCount > 0 || (requiresReviewAcknowledgement && !reviewAcknowledged)
+        ? 3
+        : 4;
+  const canCreateTask = Boolean(
+    lastSuccessfulResult?.success
+    && !taskCreating
+    && errorCount === 0
+    && (!requiresReviewAcknowledgement || reviewAcknowledged),
+  );
+  const taskBlockedReason = !lastSuccessfulResult?.success
+    ? (zh ? '请先完成参数并生成有效配置' : 'Complete the parameters and generate a valid configuration')
+    : errorCount > 0
+      ? (zh ? `仍有 ${errorCount} 个错误需要处理` : `${errorCount} errors still need attention`)
+      : requiresReviewAcknowledgement && !reviewAcknowledged
+        ? (zh ? '请先查看并确认警告或高风险命令' : 'Review and acknowledge warnings or high-risk commands first')
+        : '';
+  const workflowSteps = [
+    { number: 1, title: zh ? '选择模板' : 'Select', detail: detail?.name || (zh ? '从模板库开始' : 'Choose from the library') },
+    { number: 2, title: zh ? '填写参数' : 'Parameters', detail: `${completedRequired}/${requiredVariables.length} ${zh ? '个必填已完成' : 'required complete'}` },
+    { number: 3, title: zh ? '检查配置' : 'Review', detail: errorCount > 0 ? `${errorCount} ${zh ? '个错误' : 'errors'}` : warningCount > 0 ? `${warningCount} ${zh ? '条警告待确认' : 'warnings to review'}` : (zh ? '语法、风险与回滚' : 'Syntax, risk, and rollback') },
+    { number: 4, title: zh ? '创建任务' : 'Create task', detail: workflowStep === 4 ? (zh ? '可以进入任务中心' : 'Ready for Automation') : (zh ? '完成检查后继续' : 'Available after review') },
+  ];
   const previewLines = useMemo(() => {
-    const lines = (visibleRender?.rendered_output || '').split('\n');
+    const lines = safePreviewOutput.split('\n');
     const search = previewSearch.trim().toLowerCase();
     if (!search) return lines.map((content, index) => ({ content, number: index + 1 }));
     return lines
       .map((content, index) => ({ content, number: index + 1 }))
       .filter((line) => line.content.toLowerCase().includes(search));
-  }, [previewSearch, visibleRender?.rendered_output]);
+  }, [previewSearch, safePreviewOutput]);
 
   const renderPreviewContent = useCallback((line: string, lineNumber: number) => {
     const maps = visibleRender?.source_map.filter((item) => item.output_line === lineNumber && item.value) || [];
@@ -1086,13 +1333,36 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   }, [visibleRender?.source_map, zh]);
 
   const renderVariableInput = (item: TemplateVariable) => {
-    const value = parameters[item.name] ?? '';
+    const value = effectiveParameterValue(item);
+    const sensitive = isSensitiveVariable(item);
     const commonProps = {
       value: String(value),
       onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => updateParameter(item.name, event.target.value),
       className: `${fieldClass} ${fieldErrors.has(item.name) ? 'border-rose-400 ring-2 ring-rose-100' : ''}`,
       placeholder: item.placeholder || (item.example_value !== undefined ? String(item.example_value) : ''),
     };
+    if (sensitive) {
+      const revealed = Boolean(revealedSecrets[item.name]);
+      return (
+        <div className="relative">
+          <input
+            {...commonProps}
+            type={revealed ? 'text' : 'password'}
+            autoComplete="new-password"
+            className={`${commonProps.className} pr-10`}
+          />
+          <button
+            type="button"
+            onClick={() => setRevealedSecrets((current) => ({ ...current, [item.name]: !revealed }))}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            aria-label={revealed ? (zh ? '隐藏敏感值' : 'Hide secret') : (zh ? '显示敏感值' : 'Show secret')}
+            title={revealed ? (zh ? '隐藏敏感值' : 'Hide secret') : (zh ? '显示敏感值' : 'Show secret')}
+          >
+            {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </div>
+      );
+    }
     if (item.type === 'boolean') {
       return (
         <button
@@ -1169,22 +1439,37 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
         )}
       />
 
-      <div className="grid shrink-0 grid-cols-2 gap-3 px-5 pt-4 md:grid-cols-4">
-        {[
-          { icon: FolderOpen, label: zh ? '模板总数' : 'Templates', value: templates.length, sub: `${templates.filter((item) => item.is_official).length} ${zh ? '官方' : 'official'}`, tone: 'bg-slate-100 text-slate-700' },
-          { icon: ClipboardList, label: zh ? '当前模板参数' : 'Parameters', value: `${completedRequired}/${requiredVariables.length}`, sub: `${schema.length} ${zh ? '个参数' : 'parameters'}`, tone: completedRequired === requiredVariables.length ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700' },
-          { icon: WandSparkles, label: zh ? '渲染状态' : 'Render status', value: renderState === 'rendering' ? (zh ? '渲染中' : 'Rendering') : renderState === 'success' ? (zh ? '成功' : 'Success') : renderState === 'warning' ? (zh ? '有警告' : 'Warning') : renderState === 'error' ? (zh ? '失败' : 'Failed') : (zh ? '未渲染' : 'Idle'), sub: visibleRender ? `${visibleRender.command_count} ${zh ? '条命令' : 'commands'}` : '—', tone: renderState === 'success' ? 'bg-emerald-50 text-emerald-700' : renderState === 'error' ? 'bg-rose-50 text-rose-700' : 'bg-cyan-50 text-cyan-700' },
-          { icon: ShieldCheck, label: zh ? '模板质量' : 'Template quality', value: `${detail?.quality?.score ?? detail?.quality_score ?? 0}`, sub: zh ? '语法·参数·说明·回滚' : 'Syntax · schema · docs · rollback', tone: (detail?.quality?.score || 0) >= 80 ? 'bg-emerald-50 text-emerald-700' : 'bg-violet-50 text-violet-700' },
-        ].map((metric) => (
-          <div key={metric.label} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${metric.tone}`}><metric.icon size={16} /></span>
-            <div className="min-w-0">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{metric.label}</p>
-              <p className="truncate text-lg font-black text-slate-800">{metric.value}</p>
-              <p className="truncate text-[9px] text-slate-400">{metric.sub}</p>
-            </div>
+      <div className="shrink-0 px-5 pt-2">
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
+          <div className="grid grid-cols-2 gap-1 lg:grid-cols-4">
+            {workflowSteps.map((step, index) => {
+              const active = workflowStep === step.number;
+              const complete = workflowStep > step.number;
+              return (
+                <div key={step.number} className="relative flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1">
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${complete ? 'bg-emerald-100 text-emerald-700' : active ? 'bg-cyan-600 text-white shadow-sm shadow-cyan-200' : 'bg-slate-100 text-slate-400'}`}>
+                    {complete ? <Check size={11} /> : step.number}
+                  </span>
+                  <div className="min-w-0">
+                    <p className={`text-[11px] font-black ${active ? 'text-cyan-800' : complete ? 'text-emerald-700' : 'text-slate-600'}`}>{step.title}</p>
+                    <p className="truncate text-[9px] text-slate-400">{step.detail}</p>
+                  </div>
+                  {index < workflowSteps.length - 1 && <ChevronRight size={11} className="absolute -right-1 hidden text-slate-300 lg:block" />}
+                </div>
+              );
+            })}
           </div>
-        ))}
+          <div className="mt-0.5 flex min-h-5 flex-wrap items-center gap-1.5 border-t border-slate-100 pt-1 text-[9px] text-slate-500">
+            <span>{templates.length} {zh ? '个模板' : 'templates'}</span>
+            <span>·</span>
+            <span>{schema.length} {zh ? '个参数' : 'parameters'}，{availableDefaultCount} {zh ? '个使用模板默认值' : 'using defaults'}</span>
+            <span>·</span>
+            <button type="button" onClick={() => setPreviewTab('checks')} className={`${warningCount > 0 ? 'font-bold text-amber-700 hover:text-amber-800' : 'text-slate-500'}`}>
+              {errorCount > 0 ? `${errorCount} ${zh ? '个错误' : 'errors'}` : warningCount > 0 ? `${warningCount} ${zh ? '条警告' : 'warnings'}` : (zh ? '校验正常' : 'Validation clear')}
+            </button>
+            <span className="ml-auto">{zh ? '模板质量' : 'Quality'} {detail?.quality?.score ?? detail?.quality_score ?? 0}</span>
+          </div>
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 gap-0 overflow-hidden p-5 pt-4">
@@ -1212,25 +1497,30 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder={zh ? '名称、描述、厂商、平台、命令…' : 'Name, vendor, platform, commands…'} className={`${fieldClass} pl-9`} />
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-1.5">
-                  {[
-                    [vendorFilter, setVendorFilter, zh ? '全部厂商' : 'All vendors', vendorOptions],
-                    [platformFilter, setPlatformFilter, zh ? '全部平台' : 'All platforms', platformOptions],
-                    [categoryFilter, setCategoryFilter, zh ? '全部场景' : 'All scenarios', distinct('category')],
-                    [sourceFilter, setSourceFilter, zh ? '全部来源' : 'All sources', ['official', 'custom', 'team', 'mine']],
-                    [statusFilter, setStatusFilter, zh ? '全部状态' : 'All statuses', ['published', 'draft', 'review', 'archived']],
-                    [sortBy, setSortBy, zh ? '最近更新' : 'Recently updated', ['updated', 'name', 'usage', 'quality']],
-                  ].map(([value, setter, placeholder, options], index) => (
-                    <select
-                      key={String(placeholder)}
-                      value={String(value)}
-                      onChange={(event) => (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value)}
-                      className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[9px] font-semibold text-slate-600 outline-none"
-                    >
-                      <option value={index === 5 ? 'updated' : 'all'}>{String(placeholder)}</option>
-                      {(options as string[]).map((option) => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  ))}
+                  <select value={vendorFilter} onChange={(event) => setVendorFilter(event.target.value)} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-[10px] font-semibold text-slate-600 outline-none focus:border-cyan-300">
+                    <option value="all">{zh ? '全部厂商' : 'All vendors'}</option>
+                    {vendorOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <select value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-[10px] font-semibold text-slate-600 outline-none focus:border-cyan-300">
+                    <option value="all">{zh ? '全部平台' : 'All platforms'}</option>
+                    {platformOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
                 </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <button type="button" onClick={() => setAdvancedFiltersOpen((value) => !value)} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${advancedFiltersOpen || activeFilterCount > 0 ? 'border-cyan-200 bg-cyan-50 text-cyan-700' : 'border-slate-200 text-slate-500'}`}>
+                    <Filter size={11} />{zh ? '高级筛选' : 'More filters'}{activeFilterCount > 0 && <span className="rounded-full bg-cyan-600 px-1.5 text-[8px] text-white">{activeFilterCount}</span>}
+                  </button>
+                  {(activeFilterCount > 0 || sortBy !== 'updated') && <button type="button" onClick={clearFilters} className="text-[10px] font-bold text-slate-400 hover:text-rose-600">{zh ? '清空' : 'Clear'}</button>}
+                  <span className="ml-auto text-[10px] text-slate-400">{filteredTemplates.length}/{templates.length}</span>
+                </div>
+                {advancedFiltersOpen && (
+                  <div className="mt-2 grid grid-cols-2 gap-1.5 rounded-xl border border-slate-100 bg-slate-50/70 p-2">
+                    <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-600"><option value="all">{zh ? '全部场景' : 'All scenarios'}</option>{distinct('category').map((option) => <option key={option} value={option}>{option}</option>)}</select>
+                    <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-600"><option value="all">{zh ? '全部来源' : 'All sources'}</option>{['official', 'custom', 'team', 'mine'].map((option) => <option key={option} value={option}>{option}</option>)}</select>
+                    <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-600"><option value="all">{zh ? '全部状态' : 'All statuses'}</option>{['published', 'draft', 'review', 'archived'].map((option) => <option key={option} value={option}>{option}</option>)}</select>
+                    <select value={sortBy} onChange={(event) => setSortBy(event.target.value as typeof sortBy)} className="min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] text-slate-600"><option value="updated">{zh ? '最近更新' : 'Recently updated'}</option><option value="name">{zh ? '名称' : 'Name'}</option><option value="usage">{zh ? '使用次数' : 'Usage'}</option><option value="quality">{zh ? '质量' : 'Quality'}</option></select>
+                  </div>
+                )}
               </div>
               <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
                 {filteredTemplates.length === 0 ? (
@@ -1238,47 +1528,19 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                     <Filter size={24} className="mx-auto text-slate-200" />
                     <p className="mt-2 text-[10px] text-slate-400">{zh ? '没有匹配模板' : 'No matching templates'}</p>
                   </div>
-                ) : filteredTemplates.map((template) => {
-                  const selected = template.id === selectedTemplateId;
-                  const brand = VENDOR_STYLE[template.vendor || 'Custom'] || VENDOR_STYLE.Custom;
-                  return (
-                    <div key={template.id} className={`group relative rounded-xl border transition ${selected ? 'border-cyan-300 bg-cyan-50/50 shadow-sm ring-1 ring-cyan-100' : 'border-slate-200 bg-white hover:border-cyan-200'}`}>
-                      <button type="button" onClick={() => selectTemplate(template.id)} className="w-full p-3 pr-9 text-left">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`rounded px-1.5 py-0.5 text-[8px] font-black ring-1 ${brand.chip}`}>{template.vendor || 'Custom'}</span>
-                          {template.platform_family && <span className="max-w-24 truncate rounded bg-slate-100 px-1.5 py-0.5 text-[8px] font-bold text-slate-500">{template.platform_family}</span>}
-                          <span className={`rounded px-1.5 py-0.5 text-[8px] font-bold ${template.is_official || template.source_type === 'official' ? 'bg-blue-50 text-blue-700' : 'bg-violet-50 text-violet-700'}`}>
-                            {template.is_official || template.source_type === 'official' ? (zh ? '官方' : 'Official') : (zh ? '自定义' : 'Custom')}
-                          </span>
-                        </div>
-                        <p className="mt-2 truncate text-xs font-black text-slate-800">{template.name}</p>
-                        <p className="mt-1 line-clamp-2 min-h-7 text-[9px] leading-3.5 text-slate-400">{template.description || (zh ? '暂无模板说明' : 'No description')}</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-1 text-[8px] text-slate-400">
-                          <span>{parseJson<TemplateVariable[]>(template.variable_schema_json, []).length || '—'} {zh ? '变量' : 'vars'}</span>
-                          <span>· v{template.current_version || '1.0'}</span>
-                          <span>· {template.risk_level || 'low'}</span>
-                          <span>· {formatLastUsed(template.lastUsed, zh)}</span>
-                        </div>
-                      </button>
-                      <button type="button" onClick={() => void toggleFavorite(template)} className={`absolute right-2 top-2 rounded-lg p-1.5 transition ${template.is_favorite ? 'text-amber-500' : 'text-slate-300 opacity-0 hover:text-amber-500 group-hover:opacity-100'}`} title={zh ? '收藏模板' : 'Favorite'}>
-                        <Star size={13} fill={template.is_favorite ? 'currentColor' : 'none'} />
-                      </button>
-                      {!template.is_official && template.source_type !== 'official' && (
-                        <>
-                          <button type="button" onClick={(event) => { event.stopPropagation(); openTemplateEditor(template); }} className="absolute right-9 top-2 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-cyan-50 hover:text-cyan-700 group-hover:opacity-100" title={zh ? '编辑自定义模板' : 'Edit custom template'}>
-                            <Pencil size={12} />
-                          </button>
-                          <button type="button" onClick={(event) => { event.stopPropagation(); void deleteTemplate(template); }} className="absolute bottom-2 right-2 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100" title={zh ? '归档模板' : 'Archive template'}>
-                            <Trash2 size={12} />
-                          </button>
-                        </>
-                      )}
-                      <button type="button" onClick={(event) => { event.stopPropagation(); void copyTemplate(template); }} className="absolute bottom-2 right-9 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-cyan-50 hover:text-cyan-700 group-hover:opacity-100" title={zh ? '复制为自定义模板' : 'Copy as custom template'}>
-                        <Copy size={12} />
-                      </button>
-                    </div>
-                  );
-                })}
+                ) : filteredTemplates.map((template) => (
+                  <TemplateLibraryCard
+                    key={template.id}
+                    template={template}
+                    selected={template.id === selectedTemplateId}
+                    zh={zh}
+                    onSelect={selectTemplate}
+                    onFavorite={toggleFavorite}
+                    onEdit={openTemplateEditor}
+                    onArchive={deleteTemplate}
+                    onCopy={copyTemplate}
+                  />
+                ))}
               </div>
             </>
           )}
@@ -1301,11 +1563,12 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             </div>
             {detail && (
               <div className="mt-3 flex flex-wrap gap-1.5">
-                <button type="button" onClick={() => void copyTemplate(detail)} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[9px] font-bold text-violet-700 hover:bg-violet-100"><Copy size={10} className="mr-1 inline" />{zh ? '复制为自定义' : 'Copy as custom'}</button>
-                {!detail.is_official && detail.source_type !== 'official' && <button type="button" onClick={() => openTemplateEditor(detail)} className="rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1 text-[9px] font-bold text-cyan-700 hover:bg-cyan-100"><Pencil size={10} className="mr-1 inline" />{zh ? '编辑模板' : 'Edit template'}</button>}
-                <button type="button" onClick={loadExamples} className="rounded-lg border border-slate-200 px-2 py-1 text-[9px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><Sparkles size={10} className="mr-1 inline" />{zh ? '加载示例' : 'Example'}</button>
-                <button type="button" onClick={resetParameters} className="rounded-lg border border-slate-200 px-2 py-1 text-[9px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><RefreshCw size={10} className="mr-1 inline" />{zh ? '重置参数' : 'Reset'}</button>
-                <button type="button" onClick={() => void runRender(true)} className="rounded-lg bg-slate-900 px-2 py-1 text-[9px] font-bold text-white"><WandSparkles size={10} className="mr-1 inline" />{zh ? '立即渲染' : 'Render'}</button>
+                <button type="button" onClick={() => void copyTemplate(detail)} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-bold text-violet-700 hover:bg-violet-100"><Copy size={11} className="mr-1 inline" />{zh ? '复制为自定义' : 'Copy as custom'}</button>
+                {!detail.is_official && detail.source_type !== 'official' && <button type="button" onClick={() => openTemplateEditor(detail)} className="rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1 text-[10px] font-bold text-cyan-700 hover:bg-cyan-100"><Pencil size={11} className="mr-1 inline" />{zh ? '编辑模板' : 'Edit template'}</button>}
+                <button type="button" onClick={loadExamples} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><Sparkles size={11} className="mr-1 inline" />{zh ? '加载示例' : 'Example'}</button>
+                {availableDefaultCount > 0 && <button type="button" onClick={applyTemplateDefaults} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100"><Check size={11} className="mr-1 inline" />{zh ? `应用默认值 (${availableDefaultCount})` : `Apply defaults (${availableDefaultCount})`}</button>}
+                <button type="button" onClick={resetParameters} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><RefreshCw size={11} className="mr-1 inline" />{zh ? '重置参数' : 'Reset'}</button>
+                <button type="button" onClick={() => void runRender(true)} className="rounded-lg bg-slate-900 px-2 py-1 text-[10px] font-bold text-white"><WandSparkles size={11} className="mr-1 inline" />{zh ? '刷新预览' : 'Refresh preview'}</button>
               </div>
             )}
           </div>
@@ -1313,20 +1576,31 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
           {detail ? (
             <>
               <div className="shrink-0 border-b border-slate-100 bg-slate-50 p-3">
-                <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{zh ? '参数方案' : 'Parameter profile'}</label>
-                <div className="mt-1.5 flex gap-1.5">
-                  <select value={selectedProfileId} onChange={(event) => loadProfile(event.target.value)} className={`${fieldClass} min-w-0 flex-1`}>
-                    <option value="">{zh ? '未使用参数方案' : 'No profile'}</option>
-                    {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · v{profile.template_version}</option>)}
-                  </select>
-                  <button type="button" disabled={!selectedProfileId} onClick={() => void deleteProfile()} className="rounded-xl border border-slate-200 p-2 text-slate-400 hover:border-rose-200 hover:text-rose-600 disabled:opacity-30"><Trash2 size={13} /></button>
-                </div>
-                <div className="mt-1.5 flex gap-1.5">
-                  <input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder={zh ? '输入方案名称后保存当前参数' : 'Profile name'} className={`${fieldClass} min-w-0 flex-1`} />
-                  <button type="button" disabled={!profileName.trim() || savingProfile} onClick={() => void saveProfile()} className="inline-flex items-center gap-1 rounded-xl bg-cyan-600 px-3 text-[9px] font-bold text-white disabled:opacity-40">
-                    {savingProfile ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />} {zh ? '保存' : 'Save'}
-                  </button>
-                </div>
+                <button type="button" onClick={() => setProfileExpanded((value) => !value)} className="flex w-full items-center gap-2 text-left">
+                  <ChevronDown size={12} className={`text-slate-400 transition ${profileExpanded ? '' : '-rotate-90'}`} />
+                  <span className="text-[10px] font-black text-slate-600">{zh ? '参数方案' : 'Parameter profile'}</span>
+                  <span className="ml-auto max-w-48 truncate text-[10px] text-slate-400">
+                    {profiles.find((profile) => profile.id === selectedProfileId)?.name || (zh ? '可选：保存并复用一组参数' : 'Optional: save and reuse values')}
+                  </span>
+                </button>
+                {profileExpanded && (
+                  <div className="mt-2">
+                    <div className="flex gap-1.5">
+                      <select value={selectedProfileId} onChange={(event) => loadProfile(event.target.value)} className={`${fieldClass} min-w-0 flex-1`}>
+                        <option value="">{zh ? '未使用参数方案' : 'No profile'}</option>
+                        {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · v{profile.template_version}</option>)}
+                      </select>
+                      <button type="button" disabled={!selectedProfileId} onClick={() => void deleteProfile()} className="rounded-xl border border-slate-200 p-2 text-slate-400 hover:border-rose-200 hover:text-rose-600 disabled:opacity-30" title={zh ? '删除参数方案' : 'Delete profile'}><Trash2 size={13} /></button>
+                    </div>
+                    <div className="mt-1.5 flex gap-1.5">
+                      <input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder={zh ? '输入方案名称后保存当前参数' : 'Profile name'} className={`${fieldClass} min-w-0 flex-1`} />
+                      <button type="button" disabled={!profileName.trim() || savingProfile} onClick={() => void saveProfile()} className="inline-flex items-center gap-1 rounded-xl bg-cyan-600 px-3 text-[10px] font-bold text-white disabled:opacity-40">
+                        {savingProfile ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />} {zh ? '保存' : 'Save'}
+                      </button>
+                    </div>
+                    <p className="mt-1.5 text-[9px] leading-4 text-slate-400">{zh ? '敏感参数不会保存明文，加载方案后需要重新输入。' : 'Secret values are never stored in plain text and must be re-entered.'}</p>
+                  </div>
+                )}
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -1334,12 +1608,12 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   {[
                     [zh ? '总数' : 'Total', schema.length],
                     [zh ? '必填' : 'Required', requiredVariables.length],
-                    [zh ? '已填写' : 'Filled', Object.values(parameters).filter((value) => value !== '' && value !== null && value !== undefined).length],
+                    [zh ? '已填写' : 'Filled', filledParameterCount],
                     [zh ? '未完成' : 'Missing', Math.max(0, requiredVariables.length - completedRequired)],
                   ].map(([label, value]) => (
                     <div key={String(label)}>
                       <p className="text-sm font-black text-slate-700">{value}</p>
-                      <p className="text-[8px] text-slate-400">{label}</p>
+                      <p className="text-[9px] text-slate-400">{label}</p>
                     </div>
                   ))}
                 </div>
@@ -1383,22 +1657,22 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                       {!collapsed && (
                         <div className="space-y-3 p-3">
                           {items.map((item) => {
-                            const source = parameterSources[item.name] || (item.default_value !== undefined && item.default_value !== null ? 'template_default' : '');
+                            const source = effectiveParameterSources[item.name] || (hasParameterValue(item.default_value) ? 'template_default' : '');
                             return (
                               <label key={item.name} className="block">
                                 <div className="mb-1.5 flex items-center gap-2">
-                                  <span className="text-[10px] font-bold text-slate-700">{item.label || item.name}</span>
+                                  <span className="text-[11px] font-bold text-slate-700">{item.label || item.name}</span>
                                   {item.required ? <span className="text-[9px] font-black text-rose-500">*</span> : <span className="text-[8px] text-slate-400">{zh ? '可选' : 'optional'}</span>}
-                                  <code className="ml-auto text-[8px] text-slate-300">{parameterTypeLabel(item.type, zh)}</code>
+                                  <code className="ml-auto text-[9px] text-slate-400">{parameterTypeLabel(item.type, zh)}</code>
                                 </div>
                                 {renderVariableInput(item)}
                                 <div className="mt-1 flex items-start gap-2">
                                   {fieldErrors.has(item.name) ? (
-                                    <p className="flex-1 text-[9px] leading-4 text-rose-600">{fieldErrors.get(item.name)}</p>
+                                    <p className="flex-1 text-[10px] leading-4 text-rose-600">{fieldErrors.get(item.name)}</p>
                                   ) : (
-                                    <p className="flex-1 text-[9px] leading-4 text-slate-400">{item.description || item.placeholder || ''}</p>
+                                    <p className="flex-1 text-[10px] leading-4 text-slate-400">{item.description || item.placeholder || ''}</p>
                                   )}
-                                  {source && <span className="shrink-0 rounded bg-cyan-50 px-1.5 py-0.5 text-[8px] font-bold text-cyan-700">{SOURCE_LABELS[source] || source}</span>}
+                                  {source && <span className="shrink-0 rounded bg-cyan-50 px-1.5 py-0.5 text-[9px] font-bold text-cyan-700">{sourceLabel(source, zh)}</span>}
                                 </div>
                               </label>
                             );
@@ -1443,19 +1717,17 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                     <input value={previewSearch} onChange={(event) => setPreviewSearch(event.target.value)} placeholder={zh ? '搜索命令' : 'Search output'} className="w-32 rounded-lg border border-slate-200 py-1.5 pl-7 pr-2 text-[9px] outline-none focus:border-cyan-300" />
                   </div>
                   <button type="button" onClick={() => setWrapPreview((value) => !value)} className={`rounded-lg border p-1.5 ${wrapPreview ? 'border-cyan-200 bg-cyan-50 text-cyan-700' : 'border-slate-200 text-slate-500'}`} title={zh ? '自动换行' : 'Wrap'}><WrapText size={12} /></button>
-                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => {
-                    void copyText(visibleRender?.rendered_output || '')
+                  <button type="button" disabled={!safePreviewOutput} onClick={() => {
+                    void copyText(safePreviewOutput)
                       .then(() => showToast(t('copied'), 'success'))
                       .catch(() => showToast(zh ? '复制失败，请手动选择文本复制' : 'Copy failed; select the text manually', 'error'));
                   }} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30" title={zh ? '复制全部' : 'Copy all'}><Copy size={12} /></button>
-                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => {
-                    if (!visibleRender) return;
-                    downloadText(visibleRender.rendered_output, `${safeFileName(detail?.name || 'config')}.txt`);
+                  <button type="button" disabled={!safePreviewOutput} onClick={() => {
+                    downloadText(safePreviewOutput, `${safeFileName(detail?.name || 'config')}.txt`);
                     showToast(zh ? '已下载 TXT 配置' : 'TXT configuration downloaded', 'success');
                   }} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30" title="TXT" aria-label={zh ? '下载 TXT 配置' : 'Download TXT'}><Download size={12} /></button>
-                  <button type="button" disabled={!visibleRender?.rendered_output} onClick={() => {
-                    if (!visibleRender) return;
-                    downloadText(visibleRender.rendered_output, `${safeFileName(detail?.name || 'config')}.cfg`);
+                  <button type="button" disabled={!safePreviewOutput} onClick={() => {
+                    downloadText(safePreviewOutput, `${safeFileName(detail?.name || 'config')}.cfg`);
                     showToast(zh ? '已下载 CFG 配置' : 'CFG configuration downloaded', 'success');
                   }} className="rounded-lg border border-slate-200 px-2 py-1 text-[8px] font-bold text-slate-500 disabled:opacity-30" aria-label={zh ? '下载 CFG 配置' : 'Download CFG'}>CFG</button>
                 </>
@@ -1464,14 +1736,15 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-3 border-b border-slate-100 bg-slate-50 px-4 py-2">
+          <div className={`flex shrink-0 items-center gap-3 border-b px-4 py-2 ${errorCount > 0 ? 'border-rose-100 bg-rose-50/60' : warningCount > 0 ? 'border-amber-100 bg-amber-50/60' : 'border-slate-100 bg-slate-50'}`}>
             {renderState === 'rendering' ? <Loader2 size={13} className="animate-spin text-cyan-600" /> : renderState === 'success' ? <CheckCircle2 size={13} className="text-emerald-600" /> : renderState === 'warning' ? <AlertTriangle size={13} className="text-amber-600" /> : renderState === 'error' ? <AlertCircle size={13} className="text-rose-600" /> : <Code2 size={13} className="text-slate-400" />}
-            <p className="text-[10px] font-bold text-slate-600">
+            <button type="button" onClick={() => (errorCount > 0 || warningCount > 0) && setPreviewTab('checks')} className={`text-left text-[10px] font-bold ${errorCount > 0 ? 'text-rose-700' : warningCount > 0 ? 'text-amber-700' : 'text-slate-600'}`}>
               {renderState === 'rendering' ? (zh ? '参数已变化，正在实时渲染…' : 'Rendering parameter changes…') : renderState === 'success' ? (zh ? '渲染成功' : 'Rendered successfully') : renderState === 'warning' ? (zh ? '渲染成功，但存在警告' : 'Rendered with warnings') : renderState === 'error' ? (zh ? '渲染失败，已保留上一次成功结果' : 'Render failed; previous result retained') : (zh ? '等待参数输入' : 'Waiting for parameters')}
-            </p>
+              {(errorCount > 0 || warningCount > 0) && <span className="ml-1 font-normal underline decoration-dotted">{zh ? '查看详情' : 'View details'}</span>}
+            </button>
             {visibleRender && <span className="text-[9px] text-slate-400">{visibleRender.line_count} {zh ? '行' : 'lines'} · {visibleRender.used_variables.length} {zh ? '个参数' : 'variables'} · {visibleRender.defaulted_variables.length} {zh ? '个默认值' : 'defaults'}</span>}
             <span className={`ml-auto rounded-full px-2 py-0.5 text-[8px] font-black uppercase ${visibleRender?.risk_level === 'critical' ? 'bg-rose-100 text-rose-700' : visibleRender?.risk_level === 'high' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700'}`}>
-              {zh ? '风险' : 'Risk'} {visibleRender?.risk_level || 'none'}
+              {zh ? '风险' : 'Risk'} {riskLabel(visibleRender?.risk_level, zh)}
             </span>
           </div>
 
@@ -1480,7 +1753,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
               <div ref={previewScrollRef} className="h-full overflow-auto bg-[#0b1220] py-3 font-mono text-[11px] leading-5 text-slate-300">
                 {!detail ? (
                   <EmptyState icon={Layers} title={zh ? '请从左侧选择一个配置模板' : 'Select a template'} />
-                ) : !visibleRender?.rendered_output ? (
+                ) : !safePreviewOutput ? (
                   <EmptyState icon={WandSparkles} title={requiredVariables.length > completedRequired ? (zh ? `请先完成 ${requiredVariables.length - completedRequired} 个必填参数` : `Complete ${requiredVariables.length - completedRequired} required parameters`) : (zh ? '模板尚未生成命令，请检查条件表达式' : 'No commands generated')} />
                 ) : previewLines.map((line) => (
                   <div key={line.number} className="flex min-w-max px-3 hover:bg-white/[0.035]">
@@ -1518,8 +1791,8 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                   template_id: detail?.id || null,
                   template_version: detail?.current_version || null,
                   parameter_profile_id: selectedProfileId || null,
-                  parameters,
-                  parameter_sources: parameterSources,
+                  parameters: safeParameterValues,
+                  parameter_sources: effectiveParameterSources,
                 }, null, 2)}</pre>
               </div>
             )}
@@ -1580,12 +1853,20 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             )}
           </div>
 
-          <div className="flex shrink-0 items-center gap-3 border-t border-slate-100 bg-white px-4 py-3">
+          <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-slate-100 bg-white px-4 py-3">
             <div className="min-w-0 flex-1">
               <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{zh ? '下一步' : 'Next step'}</p>
-              <p className="truncate text-[10px] text-slate-600">{zh ? '将当前模板、版本、参数和校验摘要带入任务中心' : 'Send the template, version, parameters, and validation summary to Automation'}</p>
+              {requiresReviewAcknowledgement ? (
+                <label className="mt-1 flex cursor-pointer items-start gap-2 text-[10px] leading-4 text-slate-600">
+                  <input type="checkbox" checked={reviewAcknowledged} onChange={(event) => setReviewAcknowledged(event.target.checked)} className="mt-0.5 accent-cyan-600" />
+                  <span>{zh ? `我已查看并确认 ${warningCount > 0 ? `${warningCount} 条警告` : '高风险命令'}` : `I reviewed and acknowledge ${warningCount > 0 ? `${warningCount} warning(s)` : 'high-risk commands'}`}</span>
+                </label>
+              ) : (
+                <p className="truncate text-[10px] text-slate-600">{zh ? '将当前模板、版本、参数和校验摘要带入任务中心' : 'Send the template, version, parameters, and validation summary to Automation'}</p>
+              )}
+              {!canCreateTask && taskBlockedReason && <p className="mt-1 truncate text-[10px] text-amber-700">{taskBlockedReason}</p>}
             </div>
-            <button type="button" disabled={!lastSuccessfulResult?.success || taskCreating || (renderResult?.errors.length || 0) > 0} onClick={() => void createTaskDraft()} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">
+            <button type="button" disabled={!canCreateTask} title={taskBlockedReason || undefined} onClick={() => void createTaskDraft()} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-2 text-xs font-black text-white shadow-lg shadow-cyan-200 disabled:cursor-not-allowed disabled:opacity-40">
               {taskCreating ? <Loader2 size={14} className="animate-spin" /> : <ClipboardList size={14} />}
               {zh ? '基于当前结果创建任务' : 'Create task from result'}
             </button>

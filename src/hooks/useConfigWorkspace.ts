@@ -203,20 +203,14 @@ export const useConfigWorkspace = ({
   }, [editorContent, configMissingVariables, configScopedDevices]);
 
   const refreshConfigWorkspace = useCallback(async () => {
-    const [templatesRes, varsRes] = await Promise.all([
-      fetch('/api/templates'),
-      fetch('/api/vars'),
+    const [templatesPayload, nextGlobalVars] = await Promise.all([
+      apiRequest<{ items: ConfigTemplate[] }>('/api/config-templates?page=1&page_size=200&sort=updated'),
+      apiRequest<GlobalVar[]>('/api/vars'),
     ]);
 
-    let nextTemplates: ConfigTemplate[] = [];
-    if (templatesRes.ok) {
-      nextTemplates = await templatesRes.json();
-      setConfigTemplates(nextTemplates);
-    }
-
-    if (varsRes.ok) {
-      setGlobalVars(await varsRes.json());
-    }
+    const nextTemplates = templatesPayload.items || [];
+    setConfigTemplates(nextTemplates);
+    setGlobalVars(nextGlobalVars);
 
     const nextSelectedId = nextTemplates.some((template) => template.id === selectedTemplateId)
       ? selectedTemplateId
@@ -362,7 +356,7 @@ export const useConfigWorkspace = ({
     }
     try {
       const response = await apiRequest<{ success: boolean; data: TemplateValidationResult }>(
-        '/api/templates/validate',
+        '/api/config-templates/validate',
         {
           method: 'POST',
           body: JSON.stringify({
@@ -403,28 +397,21 @@ export const useConfigWorkspace = ({
       ...selectedConfigTemplate,
       content: editorContent,
       lastUsed: new Date().toISOString().slice(0, 16).replace('T', ' '),
-      actor_username: currentUser.username || 'admin',
-      actor_role: currentUser.role || 'Administrator',
     };
 
     try {
       const isDraft = selectedConfigTemplate.id.startsWith('draft-');
-      const response = await fetch(isDraft ? '/api/templates' : `/api/templates/${selectedConfigTemplate.id}`, {
+      await apiRequest(isDraft ? '/api/config-templates' : `/api/config-templates/${selectedConfigTemplate.id}`, {
         method: isDraft ? 'POST' : 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.detail || response.statusText);
-      }
       await refreshConfigWorkspace();
       showToast(language === 'zh' ? '模板已保存' : 'Template saved', 'success');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       showToast(language === 'zh' ? `保存模板失败: ${message}` : `Failed to save template: ${message}`, 'error');
     }
-  }, [selectedConfigTemplate, editorContent, currentUser, refreshConfigWorkspace, language, showToast]);
+  }, [selectedConfigTemplate, editorContent, refreshConfigWorkspace, language, showToast]);
 
   return {
     // raw state setters used by external loaders (fetchSharedData)

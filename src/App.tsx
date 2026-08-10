@@ -823,7 +823,7 @@ const App: React.FC = () => {
       const [scriptsRes, usersRes, templatesRes, varsRes] = await Promise.all([
         fetch('/api/scripts', { headers }),
         fetch('/api/users', { headers }),
-        fetch('/api/templates', { headers }),
+        fetch('/api/config-templates?page=1&page_size=200&sort=updated', { headers }),
         fetch('/api/vars', { headers })
       ]);
 
@@ -833,7 +833,10 @@ const App: React.FC = () => {
       if (scriptsRes.ok) setScripts(await scriptsRes.json());
       if (usersRes.ok) setUsers(await usersRes.json());
       if (templatesRes.ok) {
-        const tpls = await templatesRes.json();
+        const templatePayload = await templatesRes.json();
+        const tpls: ConfigTemplate[] = Array.isArray(templatePayload)
+          ? templatePayload
+          : (templatePayload.items || []);
         setConfigTemplates(tpls);
         if (tpls.length > 0 && !selectedTemplateId) {
           setSelectedTemplateId(tpls[0].id);
