@@ -66,6 +66,17 @@ def _get_authenticated_session(request: Request) -> dict:
     return sess
 
 
+def _resolve_graph_tenant(session: dict, requested_tenant: object = None) -> str:
+    """Keep graph reads and writes inside the caller's tenant boundary."""
+    session_tenant = str(session.get('tenant_id') or 'tenant-default').strip() or 'tenant-default'
+    requested = str(requested_tenant or session_tenant).strip() or session_tenant
+    if str(session.get('role') or '').lower() == 'administrator':
+        return requested
+    if requested != session_tenant:
+        raise HTTPException(status_code=403, detail='Topology tenant access denied')
+    return session_tenant
+
+
 @router.post('/topology/discover')
 async def trigger_discovery(
     request: Request,
@@ -297,13 +308,16 @@ def cancel_topology_discovery_run(run_id: str, request: Request):
 
 @router.get('/topology/graph')
 def get_evidence_graph(
+    request: Request,
     view: str = Query(default='all', pattern='^(all|physical|l2|l3|logical|site|external|oob)$'),
     site_id: str | None = Query(default=None),
     limit: int = Query(default=5000, ge=1, le=20000),
     include_stale: bool = Query(default=False),
-    tenant_id: str = Query(default='tenant-default'),
+    tenant_id: str | None = Query(default=None),
 ):
     """Return a paged graph read model with evidence-derived layout ranks."""
+    session = _get_authenticated_session(request)
+    tenant_id = _resolve_graph_tenant(session, tenant_id)
     return get_graph(
         tenant_id=tenant_id, view=view, site_id=site_id, limit=limit,
         include_stale=include_stale,
@@ -311,13 +325,14 @@ def get_evidence_graph(
 
 
 @router.post('/topology/graph/rebuild')
-def rebuild_evidence_graph(payload: dict = Body(...)):
+def rebuild_evidence_graph(request: Request, payload: dict = Body(...)):
     """Normalize a discovery batch and persist nodes/edges/evidence.
 
     This endpoint accepts observation metadata only. Raw device output belongs
     to the discovery evidence retention path and is not copied into the graph.
     """
-    tenant_id = str(payload.get('tenant_id') or 'tenant-default')
+    session = _get_authenticated_session(request)
+    tenant_id = _resolve_graph_tenant(session, payload.get('tenant_id'))
     nodes = payload.get('nodes') if isinstance(payload.get('nodes'), list) else []
     observations = payload.get('observations') if isinstance(payload.get('observations'), list) else []
     graph = build_graph(nodes, observations, tenant_id=tenant_id)
@@ -328,23 +343,27 @@ def rebuild_evidence_graph(payload: dict = Body(...)):
 @router.get('/topology/graph/edges/{edge_id}/evidence')
 def get_graph_edge_evidence(
     edge_id: str,
-    tenant_id: str = Query(default='tenant-default'),
+    request: Request,
+    tenant_id: str | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
 ):
+    session = _get_authenticated_session(request)
+    tenant_id = _resolve_graph_tenant(session, tenant_id)
     return {"edge_id": edge_id, "items": get_edge_evidence(edge_id, tenant_id=tenant_id, limit=limit)}
 
 
 @router.get('/topology/graph/history')
 def get_graph_history(
     request: Request,
-    tenant_id: str = Query(default='tenant-default'),
+    tenant_id: str | None = Query(default=None),
     edge_id: str | None = Query(default=None),
     node_id: str | None = Query(default=None),
     event_type: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ):
-    _get_authenticated_session(request)
+    session = _get_authenticated_session(request)
+    tenant_id = _resolve_graph_tenant(session, tenant_id)
     return get_topology_history(
         tenant_id=tenant_id,
         edge_id=edge_id,
@@ -359,7 +378,7 @@ def get_graph_history(
 def override_graph_relation(edge_id: str, request: Request, payload: dict = Body(...)):
     session = _get_authenticated_session(request)
     relation = str(payload.get('relation_type') or '').upper()
-    tenant_id = str(payload.get('tenant_id') or 'tenant-default')
+    tenant_id = _resolve_graph_tenant(session, payload.get('tenant_id'))
     conn = get_db_connection()
     try:
         row = conn.execute(
@@ -441,7 +460,7 @@ def override_graph_relation(edge_id: str, request: Request, payload: dict = Body
 @router.put('/topology/graph/nodes/{node_id}/layout')
 def override_graph_layout(node_id: str, request: Request, payload: dict = Body(...)):
     session = _get_authenticated_session(request)
-    tenant_id = str(payload.get('tenant_id') or 'tenant-default')
+    tenant_id = _resolve_graph_tenant(session, payload.get('tenant_id'))
     try:
         override = apply_layout_override(payload.get('layout') or {}, x=float(payload['x']), y=float(payload['y']))
     except (KeyError, TypeError, ValueError) as exc:

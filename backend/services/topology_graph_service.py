@@ -179,7 +179,6 @@ def _explicit_relation(raw: dict[str, Any]) -> str:
         "L3": "L3_NEIGHBOR",
         "L3_PEER": "PEER",
         "L2": "L2_NEIGHBOR",
-        "HA_PEER": "HA",
         "VRRP": "VRRP_HSRP",
         "HSRP": "VRRP_HSRP",
         "MLAG": "MLAG_PEER",
@@ -231,7 +230,7 @@ def normalize_observation(raw: dict[str, Any]) -> dict[str, Any]:
     elif source_type in {"lldp", "cdp"} or protocol in {"lldp", "cdp"}:
         relation_type = "PHYSICAL"
     elif protocol in {"ha", "ha_peer", "firewall_ha", "cluster"} or source_type in {"ha", "ha_peer", "firewall_ha"}:
-        relation_type = "HA"
+        relation_type = "HA_PEER"
     elif protocol in {"vrrp", "hsrp"}:
         relation_type = "VRRP_HSRP"
     elif protocol in {"stack", "irf", "css", "vc", "mlag", "vpc"}:
@@ -278,7 +277,7 @@ def normalize_observation(raw: dict[str, Any]) -> dict[str, Any]:
         semantic_relation = semantic_relation or "UNTRUSTED_PHYSICAL_ASSERTION"
 
     direction = str(raw.get("direction") or "").strip().lower()
-    if direction not in {"directed", "undirected"}:
+    if direction not in {"directed", "undirected", "unknown"}:
         direction = "undirected" if relation_type in _UNDIRECTED_RELATIONS else "directed"
 
     source_node = str(raw.get("source_node") or raw.get("source_device_id") or "").strip() or "unknown"
@@ -323,7 +322,7 @@ def canonical_edge_key(observation: dict[str, Any], *, tenant_id: str = "tenant-
     item = normalize_observation(observation)
     left = (str(item["source_node"]), str(item.get("source_interface") or ""))
     right = (str(item["target_node"]), str(item.get("target_interface") or ""))
-    if item["direction"] == "undirected":
+    if item["direction"] in {"undirected", "unknown"} or item["relation_type"] in _UNDIRECTED_RELATIONS:
         left, right = sorted((left, right))
     raw = "|".join([tenant_id, left[0], left[1], right[0], right[1], item["relation_type"]])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
@@ -428,13 +427,26 @@ class _DisjointSet:
 
 
 def calculate_dynamic_ranks(nodes: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, int]:
-    """Calculate ranks from relation constraints, never from role labels."""
-    node_ids = [str(node["id"]) for node in nodes]
+    """Calculate stable ranks from relation constraints, never from role labels.
+
+    Directed cycles are collapsed into strongly connected components before
+    ranks are propagated.  This makes a loop a single equal-rank unit instead
+    of allowing bounded relaxation to produce order-dependent values.
+    """
+    node_ids = sorted({str(node["id"]) for node in nodes})
+    node_id_set = set(node_ids)
     dsu = _DisjointSet(node_ids)
     for edge in edges:
         relation = str(edge.get("relation_type") or "").upper()
-        if relation in _EQUAL_RANK_RELATIONS and not int(edge.get("rank_excluded") or 0):
-            dsu.union(str(edge["source_node_id"]), str(edge["target_node_id"]))
+        source_id = str(edge.get("source_node_id") or "")
+        target_id = str(edge.get("target_node_id") or "")
+        if (
+            source_id in node_id_set
+            and target_id in node_id_set
+            and relation in _EQUAL_RANK_RELATIONS
+            and not int(edge.get("rank_excluded") or 0)
+        ):
+            dsu.union(source_id, target_id)
 
     components = {dsu.find(node_id) for node_id in node_ids}
     component_rank = {component: 0 for component in components}
@@ -446,33 +458,96 @@ def calculate_dynamic_ranks(nodes: list[dict[str, Any]], edges: list[dict[str, A
         except (TypeError, ValueError):
             pass
 
-    constraints = []
+    adjacency: dict[str, set[str]] = {component: set() for component in components}
     for edge in edges:
         relation = str(edge.get("relation_type") or "").upper()
+        source_id = str(edge.get("source_node_id") or "")
+        target_id = str(edge.get("target_node_id") or "")
         if (
             edge.get("direction") == "directed"
             and relation in _DIRECTED_RELATIONS
             and not int(edge.get("rank_excluded") or 0)
             and relation not in _RANK_EXCLUDED_RELATIONS
+            and source_id in node_id_set
+            and target_id in node_id_set
         ):
-            constraints.append(edge)
-
-    # Bellman-Ford style relaxation is deterministic and bounded. Cycles do
-    # not grow forever; they settle at the largest meaningful rank.
-    for _ in range(max(1, len(node_ids) * 2)):
-        changed = False
-        for edge in constraints:
-            source_component = dsu.find(str(edge["source_node_id"]))
-            target_component = dsu.find(str(edge["target_node_id"]))
+            source_component = dsu.find(source_id)
+            target_component = dsu.find(target_id)
             if source_component == target_component:
                 continue
-            proposed = min(20, component_rank.get(source_component, 0) + 1)
-            if proposed > component_rank.get(target_component, 0):
-                component_rank[target_component] = proposed
-                changed = True
-        if not changed:
-            break
-    return {node_id: int(component_rank.get(dsu.find(node_id), 0)) for node_id in node_ids}
+            adjacency.setdefault(source_component, set()).add(target_component)
+
+    # Tarjan SCC traversal is sorted at every boundary so node/edge input
+    # order cannot change either the components or their final ranks.
+    index = 0
+    indices: dict[str, int] = {}
+    lowlinks: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    strongly_connected: list[tuple[str, ...]] = []
+
+    def visit(component: str) -> None:
+        nonlocal index
+        indices[component] = index
+        lowlinks[component] = index
+        index += 1
+        stack.append(component)
+        on_stack.add(component)
+        for target in sorted(adjacency.get(component, set())):
+            if target not in indices:
+                visit(target)
+                lowlinks[component] = min(lowlinks[component], lowlinks[target])
+            elif target in on_stack:
+                lowlinks[component] = min(lowlinks[component], indices[target])
+        if lowlinks[component] != indices[component]:
+            return
+        members: list[str] = []
+        while stack:
+            member = stack.pop()
+            on_stack.remove(member)
+            members.append(member)
+            if member == component:
+                break
+        strongly_connected.append(tuple(sorted(members)))
+
+    for component in sorted(components):
+        if component not in indices:
+            visit(component)
+    strongly_connected.sort()
+    scc_by_component = {
+        component: scc_index
+        for scc_index, members in enumerate(strongly_connected)
+        for component in members
+    }
+    scc_rank = {
+        scc_index: max((component_rank.get(component, 0) for component in members), default=0)
+        for scc_index, members in enumerate(strongly_connected)
+    }
+    scc_adjacency: dict[int, set[int]] = {index: set() for index in range(len(strongly_connected))}
+    indegree = {index: 0 for index in range(len(strongly_connected))}
+    for source_component, targets in adjacency.items():
+        source_scc = scc_by_component[source_component]
+        for target_component in targets:
+            target_scc = scc_by_component[target_component]
+            if source_scc == target_scc or target_scc in scc_adjacency[source_scc]:
+                continue
+            scc_adjacency[source_scc].add(target_scc)
+            indegree[target_scc] += 1
+
+    ready = sorted(index for index, degree in indegree.items() if degree == 0)
+    while ready:
+        source_scc = ready.pop(0)
+        for target_scc in sorted(scc_adjacency[source_scc]):
+            scc_rank[target_scc] = max(scc_rank[target_scc], min(20, scc_rank[source_scc] + 1))
+            indegree[target_scc] -= 1
+            if indegree[target_scc] == 0:
+                ready.append(target_scc)
+                ready.sort()
+
+    return {
+        node_id: int(scc_rank[scc_by_component[dsu.find(node_id)]])
+        for node_id in node_ids
+    }
 
 
 def _resolve_node(
@@ -595,12 +670,15 @@ def build_graph(
                 "display_name": node_map[group_node_id]["display_name"],
                 "metadata": {"source": item.get("protocol")},
             }
-            group_members.append({
-                "group_id": group_node_id,
-                "node_id": source_id,
-                "member_role": item.get("metadata", {}).get("member_role") or "",
-                "metadata": item.get("metadata") or {},
-            })
+            for member_id, member_side in ((source_id, "source"), (target_id, "target")):
+                group_members.append({
+                    "group_id": group_node_id,
+                    "node_id": member_id,
+                    "member_role": item.get("metadata", {}).get(f"{member_side}_member_role")
+                    or item.get("metadata", {}).get("member_role")
+                    or "",
+                    "metadata": {**(item.get("metadata") or {}), "observation_side": member_side},
+                })
 
     edges: list[dict[str, Any]] = []
     for edge in grouped.values():
@@ -679,12 +757,19 @@ def build_graph(
     ranks = calculate_dynamic_ranks(list(node_map.values()), edges)
     for node in node_map.values():
         node["rank"] = ranks.get(node["id"], 0)
+    deduplicated_members: dict[tuple[str, str], dict[str, Any]] = {}
+    for member in group_members:
+        key = (str(member["group_id"]), str(member["node_id"]))
+        existing = deduplicated_members.get(key)
+        if not existing or (not existing.get("member_role") and member.get("member_role")):
+            deduplicated_members[key] = member
+
     return {
         "nodes": list(node_map.values()),
         "edges": edges,
         "ranks": ranks,
         "groups": list(group_defs.values()),
-        "group_members": group_members,
+        "group_members": list(deduplicated_members.values()),
         "anchors": anchors,
     }
 
@@ -796,12 +881,45 @@ def layout_graph(
                 "y": float(row * 120),
                 "manual": 0.0,
             }
+
+    # Ring groups are semantic objects, so render their members as a stable
+    # circle instead of letting the generic layered seed flatten the loop.
+    group_members_by_id: dict[str, set[str]] = defaultdict(set)
+    for member in graph.get("group_members") or []:
+        group_members_by_id[str(member.get("group_id") or "")].add(str(member.get("node_id") or ""))
+    for group in sorted(graph.get("groups") or [], key=lambda item: str(item.get("id") or "")):
+        if str(group.get("group_type") or "").upper() != "RING":
+            continue
+        group_id = str(group.get("id") or "")
+        members = sorted(
+            (member_id for member_id in group_members_by_id.get(group_id, set()) if member_id in layout),
+            key=lambda member_id: (
+                str(node_map.get(member_id, {}).get("display_name") or member_id),
+                member_id,
+            ),
+        )
+        if len(members) < 3:
+            continue
+        center_x = sum(layout[member_id]["x"] for member_id in members) / len(members)
+        center_y = sum(layout[member_id]["y"] for member_id in members) / len(members)
+        radius = min(320.0, max(150.0, len(members) * 42.0))
+        for member_index, member_id in enumerate(members):
+            if layout[member_id].get("manual"):
+                continue
+            angle = -math.pi / 2 + 2 * math.pi * member_index / len(members)
+            layout[member_id] = {
+                "x": center_x + math.cos(angle) * radius,
+                "y": center_y + math.sin(angle) * radius,
+                "manual": 0.0,
+            }
+        if group_id in layout and not layout[group_id].get("manual"):
+            layout[group_id] = {"x": center_x, "y": center_y, "manual": 0.0}
     return layout
 
 
 def apply_relation_override(edge: dict[str, Any], *, relation_type: str, actor: str) -> dict[str, Any]:
     relation = str(relation_type or "").strip().upper()
-    relation = {"L3": "L3_NEIGHBOR", "L2": "L2_NEIGHBOR", "HA_PEER": "HA"}.get(relation, relation)
+    relation = {"L3": "L3_NEIGHBOR", "L2": "L2_NEIGHBOR"}.get(relation, relation)
     if relation not in RELATION_TYPES:
         raise ValueError("unsupported topology relation type")
     before = dict(edge)
@@ -1215,12 +1333,16 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
 
 def _graph_rows(conn: Any, tenant_id: str, view: str, site_id: str | None, limit: int, include_stale: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     view_relation_types = {
-        "physical": {"PHYSICAL"},
-        "l2": {"PHYSICAL", "L2_NEIGHBOR", "ENDPOINT", "RING"},
+        "physical": {"PHYSICAL", "STACK", "IRF", "CSS", "VC"},
+        "l2": {"PHYSICAL", "L2_NEIGHBOR", "ENDPOINT", "RING", "STACK", "IRF", "CSS", "VC", "MLAG_PEER", "VPC_PEER"},
         "l3": {"L3_NEIGHBOR", "WAN", "LOGICAL", "TUNNEL", "HIERARCHICAL", "BRANCH", "PEER"},
-        "logical": {"LOGICAL", "PEER", "L3_NEIGHBOR", "L2_NEIGHBOR", "WAN", "TUNNEL", "HIERARCHICAL", "BRANCH"},
+        "logical": {
+            "LOGICAL", "PEER", "L3_NEIGHBOR", "L2_NEIGHBOR", "WAN", "TUNNEL",
+            "HIERARCHICAL", "BRANCH", "HA", "HA_PEER", "VRRP_HSRP", "STACK",
+            "IRF", "CSS", "VC", "MLAG_PEER", "VPC_PEER", "CONTROL", "RING",
+        },
         "site": {"HIERARCHICAL", "INTER_SITE"},
-        "external": {"ENDPOINT", "TUNNEL", "UNKNOWN"},
+        "external": {"ENDPOINT", "WAN", "TUNNEL", "UNKNOWN"},
         "oob": {"OOB"},
     }
     node_where = ["tenant_id = ?", "status = 'active'"]
@@ -1256,7 +1378,7 @@ def _graph_rows(conn: Any, tenant_id: str, view: str, site_id: str | None, limit
         edge_where.append(f"relation_type IN ({relation_placeholders})")
         edge_params.extend(sorted(relation_types))
     edge_rows = conn.execute(
-        "SELECT id, source_node_id, target_node_id, source_interface, target_interface, relation_type, direction, existence, existence_confidence, semantic_confidence, status, is_manual, manual_confirmed, semantic_relation, rank_excluded, metadata_json, first_seen, last_seen, stale_at FROM topology_edges WHERE "
+        "SELECT topology_edges.id, source_node_id, target_node_id, source_interface, target_interface, relation_type, direction, existence, existence_confidence, semantic_confidence, status, is_manual, manual_confirmed, semantic_relation, rank_excluded, metadata_json, first_seen, last_seen, stale_at, COALESCE(evidence_counts.evidence_count, 0) AS evidence_count FROM topology_edges LEFT JOIN (SELECT edge_id, COUNT(*) AS evidence_count FROM topology_edge_evidence GROUP BY edge_id) AS evidence_counts ON evidence_counts.edge_id = topology_edges.id WHERE "
         + " AND ".join(edge_where) + " ORDER BY last_seen DESC LIMIT ?",
         (*edge_params, limit),
     ).fetchall()
@@ -1264,8 +1386,7 @@ def _graph_rows(conn: Any, tenant_id: str, view: str, site_id: str | None, limit
     for row in edge_rows:
         item = dict(row)
         item["metadata"] = _json_load(item.pop("metadata_json", None), {}) or {}
-        count_row = conn.execute("SELECT COUNT(*) AS count FROM topology_edge_evidence WHERE edge_id = ?", (item["id"],)).fetchone()
-        item["evidence_count"] = int(count_row["count"] if count_row else 0)
+        item["evidence_count"] = int(item.get("evidence_count") or 0)
         edges.append(item)
     return nodes, edges
 
@@ -1283,6 +1404,7 @@ def get_graph(
         nodes, edges = _graph_rows(conn, tenant_id, view, site_id, safe_limit, include_stale)
         graph = {"nodes": nodes, "edges": edges}
         groups: list[dict[str, Any]] = []
+        group_members: list[dict[str, Any]] = []
         try:
             group_rows = conn.execute(
                 "SELECT id, node_id, group_type, display_name, status, metadata_json FROM topology_groups WHERE tenant_id = ? AND status = 'active' LIMIT ?",
@@ -1292,11 +1414,26 @@ def get_graph(
                 item = dict(row)
                 item["metadata"] = _json_load(item.pop("metadata_json", None), {}) or {}
                 groups.append(item)
+            member_rows = conn.execute(
+                """
+                SELECT m.group_id, m.node_id, m.member_role, m.status, m.metadata_json
+                FROM topology_group_members m
+                JOIN topology_groups g ON g.id = m.group_id AND g.tenant_id = m.tenant_id
+                WHERE m.tenant_id = ? AND m.status = 'active' AND g.status = 'active'
+                LIMIT ?
+                """,
+                (tenant_id, safe_limit),
+            ).fetchall()
+            for row in member_rows:
+                item = dict(row)
+                item["metadata"] = _json_load(item.pop("metadata_json", None), {}) or {}
+                group_members.append(item)
         except Exception:
             pass
+        graph["groups"] = groups
+        graph["group_members"] = group_members
         return {
             **graph,
-            "groups": groups,
             "anchors": detect_topology_anchors(nodes, edges),
             "layout": layout_graph(graph),
             "view": view,

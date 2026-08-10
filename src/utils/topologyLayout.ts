@@ -12,6 +12,7 @@ export type TopologyLayoutLink = {
   target_device_id?: string | number;
   source?: string | number | { id?: string | number };
   target?: string | number | { id?: string | number };
+  relation_type?: string;
 };
 
 export type TopologyLayoutBounds = {
@@ -35,6 +36,72 @@ export type TopologyLayoutMetrics = {
   edgeNodeViolation: number;
   nodeOverlaps: number;
   minEdgeNodeDistance: number | null;
+};
+
+/**
+ * Place each connected RING relation component on a deterministic circle.
+ * The generic force/layer layout remains the seed for the component centre,
+ * so multiple rings and sites stay in their natural lanes.
+ */
+export const buildRingGroupPositions = (
+  nodes: Array<{ id: string }>,
+  links: TopologyLayoutLink[],
+  width: number,
+  height: number,
+  seedPositions: Record<string, TopologyLayoutPoint> = {},
+): Record<string, TopologyLayoutPoint> => {
+  const nodeIds = new Set(nodes.map((node) => String(node.id)));
+  const adjacency = new Map<string, Set<string>>();
+  const resolveEndpoint = (endpoint: TopologyLayoutLink['source'] | TopologyLayoutLink['target'], fallback: unknown) => {
+    if (endpoint && typeof endpoint === 'object') return String(endpoint.id || '');
+    return String(endpoint ?? fallback ?? '');
+  };
+  links.forEach((link) => {
+    if (String(link.relation_type || '').toUpperCase() !== 'RING') return;
+    const source = resolveEndpoint(link.source, link.source_device_id);
+    const target = resolveEndpoint(link.target, link.target_device_id);
+    if (!nodeIds.has(source) || !nodeIds.has(target) || source === target) return;
+    if (!adjacency.has(source)) adjacency.set(source, new Set());
+    if (!adjacency.has(target)) adjacency.set(target, new Set());
+    adjacency.get(source)?.add(target);
+    adjacency.get(target)?.add(source);
+  });
+
+  const components: string[][] = [];
+  const visited = new Set<string>();
+  Array.from(adjacency.keys()).sort().forEach((start) => {
+    if (visited.has(start)) return;
+    const members: string[] = [];
+    const queue = [start];
+    visited.add(start);
+    while (queue.length) {
+      const current = queue.shift() as string;
+      members.push(current);
+      Array.from(adjacency.get(current) || []).sort().forEach((neighbor) => {
+        if (visited.has(neighbor)) return;
+        visited.add(neighbor);
+        queue.push(neighbor);
+      });
+    }
+    if (members.length >= 3) components.push(members.sort());
+  });
+
+  const positions: Record<string, TopologyLayoutPoint> = {};
+  components.sort((left, right) => left[0].localeCompare(right[0])).forEach((members, componentIndex) => {
+    const seeded = members.map((member) => seedPositions[member]).filter(Boolean);
+    const fallbackX = width * (componentIndex + 1) / (components.length + 1);
+    const centerX = seeded.length ? seeded.reduce((sum, point) => sum + point.x, 0) / seeded.length : fallbackX;
+    const centerY = seeded.length ? seeded.reduce((sum, point) => sum + point.y, 0) / seeded.length : height / 2;
+    const radius = Math.min(Math.max(110, members.length * 34), Math.max(110, Math.min(width, height) * 0.32));
+    members.forEach((member, index) => {
+      const angle = -Math.PI / 2 + (2 * Math.PI * index) / members.length;
+      positions[member] = {
+        x: Math.max(72, Math.min(width - 72, centerX + Math.cos(angle) * radius)),
+        y: Math.max(82, Math.min(height - 82, centerY + Math.sin(angle) * radius)),
+      };
+    });
+  });
+  return positions;
 };
 
 /**

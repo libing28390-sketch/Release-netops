@@ -8,7 +8,7 @@ import {
   type TopologyDisplayMode,
 } from '../utils/topologyAggregation';
 import { buildTopologyExportFilename, getTopologyExportPixelRatio } from '../utils/topologyExport';
-import { buildFoldedChainPositions, repairTopologyLayout } from '../utils/topologyLayout';
+import { buildFoldedChainPositions, buildRingGroupPositions, repairTopologyLayout } from '../utils/topologyLayout';
 
 const topologyIconAssets = import.meta.glob('../assets/topology/devices/**/*.svg', {
   eager: true,
@@ -1911,14 +1911,26 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const autoPositions = shouldAutoArrange
       ? (structuredPositions || calculateAutoLayoutPositions(graphDevices, graphLinks, width, height, layoutMode))
       : null;
+    const ringPositions = shouldAutoArrange
+      ? buildRingGroupPositions(
+        graphDevices,
+        graphLinks,
+        width,
+        height,
+        autoPositions || structuredPositions || seededPositions,
+      )
+      : {};
     const hierarchyRowXOverrides = new Map<string, number>();
     const nodes = graphDevices.map((device) => {
-      let x = hierarchyRowXOverrides.get(device.id) ?? autoPositions?.[device.id]?.x ?? persistedPositionsRef.current[device.id]?.x ?? structuredPositions?.[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2;
-      let y = autoPositions?.[device.id]?.y ?? persistedPositionsRef.current[device.id]?.y ?? structuredPositions?.[device.id]?.y ?? seededPositions[device.id]?.y ?? height / 2;
+      let x = ringPositions[device.id]?.x ?? hierarchyRowXOverrides.get(device.id) ?? autoPositions?.[device.id]?.x ?? persistedPositionsRef.current[device.id]?.x ?? structuredPositions?.[device.id]?.x ?? seededPositions[device.id]?.x ?? width / 2;
+      let y = ringPositions[device.id]?.y ?? autoPositions?.[device.id]?.y ?? persistedPositionsRef.current[device.id]?.y ?? structuredPositions?.[device.id]?.y ?? seededPositions[device.id]?.y ?? height / 2;
 
       // In structured layout modes, enforce layout constraints (e.g., strict rows in hierarchy)
       // to align layers correctly even if layout data was saved with different/stale Y coordinates.
-      if (layoutMode === 'hierarchy' && structuredPositions?.[device.id]) {
+      if (ringPositions[device.id]) {
+        x = ringPositions[device.id].x;
+        y = ringPositions[device.id].y;
+      } else if (layoutMode === 'hierarchy' && structuredPositions?.[device.id]) {
         y = structuredPositions[device.id].y;
       } else if (layoutMode === 'horizontal' && structuredPositions?.[device.id]) {
         x = structuredPositions[device.id].x;

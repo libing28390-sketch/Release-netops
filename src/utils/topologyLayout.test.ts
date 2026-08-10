@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildFoldedChainPositions,
+  buildRingGroupPositions,
   measureTopologyLayout,
   repairTopologyLayout,
   type TopologyLayoutNode,
@@ -80,5 +81,24 @@ describe('buildFoldedChainPositions', () => {
     expect(positions.R1.x).toBeLessThan(positions.R2.x);
     expect(positions.R3.x).toBeLessThan(positions.R4.x);
     expect(positions.SW5.x).toBeLessThan(positions.SW6.x);
+  });
+});
+
+describe('buildRingGroupPositions', () => {
+  it('lays out ring relations on a stable circle while leaving other nodes untouched', () => {
+    const nodes = ['A', 'B', 'C', 'D', 'OUTSIDE'].map((id) => ({ id }));
+    const links = [
+      { source_device_id: 'A', target_device_id: 'B', relation_type: 'RING' },
+      { source_device_id: 'B', target_device_id: 'C', relation_type: 'RING' },
+      { source_device_id: 'C', target_device_id: 'D', relation_type: 'RING' },
+      { source_device_id: 'D', target_device_id: 'A', relation_type: 'RING' },
+    ];
+    const first = buildRingGroupPositions(nodes, links, 800, 600);
+    const second = buildRingGroupPositions(nodes, [...links].reverse(), 800, 600);
+
+    expect(first).toEqual(second);
+    expect(Object.keys(first).sort()).toEqual(['A', 'B', 'C', 'D']);
+    expect(first.OUTSIDE).toBeUndefined();
+    expect(new Set(Object.values(first).map((point) => `${point.x}:${point.y}`)).size).toBe(4);
   });
 });

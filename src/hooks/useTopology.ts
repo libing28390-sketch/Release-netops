@@ -252,7 +252,10 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
             hostname: String(node.display_name || node.canonical_key || deviceId),
             ip_address: String(node.metadata?.ip_address || ''),
             platform: 'topology-graph',
-            status: 'online',
+            // SITE/GROUP/EXTERNAL/UNKNOWN are graph objects, not monitored
+            // assets.  Keep them visible without reporting a false online
+            // state in the device counters and details.
+            status: 'pending',
             compliance: 'unknown',
             sn: '',
             model: '',
