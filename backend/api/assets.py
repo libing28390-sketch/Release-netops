@@ -18,7 +18,7 @@ from database import get_db_connection
 from core.crypto import encrypt_credential, decrypt_credential
 from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
 from services import tag_service
-from services.vault_service import credential_is_shared
+from services.vault_service import credential_is_shared, resolve_collector_credentials
 from services.site_identity_service import resolve_canonical_site_id
 
 import ping3
@@ -1991,12 +1991,16 @@ async def verify_asset_connectivity(asset_id: str):
         # Check physical_assets first, then linked device
         username = asset.get('username')
         password_enc = asset.get('password')
+        password = decrypt_credential(password_enc) if password_enc else ''
         
-        if not username or not password_enc:
-            dev = conn.execute('SELECT username, password, platform FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
+        if not username or not password:
+            dev = conn.execute('SELECT * FROM devices WHERE asset_id = ?', (asset_id,)).fetchone()
             if dev:
-                username = dev['username']
-                password_enc = dev['password']
+                device = dict(dev)
+                collector_credentials = resolve_collector_credentials(device, ssh_role='normal')
+                ssh_credentials = collector_credentials['ssh']
+                username = str(ssh_credentials['username'] or '')
+                password = str(ssh_credentials['password'] or '')
                 # FORCE linux if it's a server
                 if asset['asset_type'] == 'server':
                     platform = 'linux'
@@ -2010,9 +2014,8 @@ async def verify_asset_connectivity(asset_id: str):
             else:
                 platform = _platform_from_vendor(asset['vendor'], asset['asset_type'])
 
-        if username and password_enc:
+        if username and password:
             try:
-                password = decrypt_credential(password_enc)
                 # Use Scrapli for a quick "fast" login
                 # We just want to see if we can get a prompt
                 import platform as platform_module

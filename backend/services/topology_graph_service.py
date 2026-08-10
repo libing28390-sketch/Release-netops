@@ -28,7 +28,8 @@ NODE_TYPES = {"DEVICE", "SITE", "EXTERNAL", "VIRTUAL", "GROUP", "UNKNOWN"}
 ROLE_IDENTITIES = {
     "ROUTER", "FIREWALL", "CORE_SWITCH", "AGGREGATION_SWITCH", "ACCESS_SWITCH",
     "SERVER_SWITCH", "SWITCH", "WIRELESS_AC", "WIRELESS_AP", "AC", "AP",
-    "LOAD_BALANCER", "SDWAN_EDGE", "OOB_SWITCH", "SERVER", "OTHER", "UNKNOWN",
+    "LOAD_BALANCER", "WAF", "VPN_GATEWAY", "EDGE", "SDWAN_EDGE", "OOB_SWITCH",
+    "SERVER", "OTHER", "UNKNOWN",
 }
 RELATION_TYPES = {
     "PHYSICAL", "HIERARCHICAL", "PEER", "HA", "HA_PEER", "VRRP_HSRP",
@@ -126,6 +127,7 @@ def normalize_role(value: Any) -> str:
         "OOB": "OOB_SWITCH",
         "OOB_SWITCH": "OOB_SWITCH",
         "ROUTING": "ROUTER",
+        "OTHER_NETWORK": "OTHER",
         "OTHER": "OTHER",
     }
     return aliases.get(text, text if text in ROLE_IDENTITIES else "UNKNOWN")
@@ -1361,6 +1363,23 @@ def _graph_rows(conn: Any, tenant_id: str, view: str, site_id: str | None, limit
         item["metadata"] = _json_load(item.pop("metadata_json", None), {}) or {}
         item["layout_override"] = _json_load(item.pop("layout_override_json", None), {}) or {}
         nodes.append(item)
+    # A re-import can recreate a managed device with a new primary key while
+    # historical discovery evidence still references the old key.  Never
+    # expose those orphaned DEVICE nodes as part of the active read model.
+    # Older rolling-upgrade databases may not have the devices table yet, so
+    # retain the additive migration's existing graceful fallback.
+    try:
+        current_device_ids = {
+            str(row["id"])
+            for row in conn.execute("SELECT id FROM devices").fetchall()
+        }
+        nodes = [
+            item for item in nodes
+            if str(item.get("node_type") or "").upper() != "DEVICE"
+            or str(item.get("device_id") or "") in current_device_ids
+        ]
+    except Exception:
+        pass
     node_ids = {str(item["id"]) for item in nodes}
     if not node_ids:
         return nodes, []
@@ -1553,6 +1572,11 @@ def get_physical_links(
         target = node_map.get(str(edge["target_node_id"]), {})
         source_id = str(source.get("device_id") or "").strip()
         target_id = str(target.get("device_id") or "").strip()
+        # Unmanaged/unknown neighbors are returned by the dedicated unmanaged
+        # read model.  Keeping them here would make this managed-link response
+        # non-empty and prevent the API from falling back to topology_links.
+        if not source_id or not target_id:
+            continue
         source_types = (edge.get("metadata") or {}).get("source_types") or []
         links.append({
             "id": edge["id"],

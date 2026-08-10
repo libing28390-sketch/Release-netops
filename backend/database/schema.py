@@ -221,7 +221,6 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         'ON snmp_metric_counter_samples(sampled_at)'
     )
 
-    # Create interfaces table if not exists
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS interfaces (
         id TEXT PRIMARY KEY,
@@ -261,7 +260,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('interfaces', 'ip_address', "TEXT DEFAULT ''")
     ensure_column('interfaces', 'ip_prefix_length', 'INTEGER')
     ensure_column('interfaces', 'ip_version', 'INTEGER')
-    ensure_column('interfaces', 'is_l3', 'INTEGER DEFAULT 0')
+    interface_l3_flag_type = "BOOLEAN DEFAULT FALSE" if _USE_PG else "INTEGER DEFAULT 0"
+    ensure_column('interfaces', 'is_l3', interface_l3_flag_type)
     ensure_column('interfaces', 'last_change', 'TEXT')
     ensure_column('interfaces', 'last_seen', 'TEXT')
     ensure_column('interfaces', 'lag_id', "TEXT DEFAULT ''")

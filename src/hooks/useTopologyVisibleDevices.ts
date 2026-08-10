@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Device, TagDefinition } from '../types';
 import type { TagExpressionGroup, TagFilterConfig } from '../components/TagConditionPicker';
+import { NETWORK_TOPOLOGY_ROLE_VALUES } from '../domain/topologyRoles';
 
 interface UseTopologyVisibleDevicesParams {
   devices: Device[];
@@ -15,22 +16,28 @@ const hasExpressionTerms = (group: TagExpressionGroup): boolean => (
   group.tag_ids.length > 0 || group.groups.some(hasExpressionTerms)
 );
 
-const STANDARD_TOPOLOGY_ROLES = [
-  'core',
-  'distribution',
-  'access',
-  'firewall',
-  'router',
-  'load_balancer',
-  'waf',
-  'vpn_gateway',
-];
+const CANONICAL_TOPOLOGY_ROLES = new Set(NETWORK_TOPOLOGY_ROLE_VALUES);
+const LEGACY_TOPOLOGY_ROLE_ALIASES: Record<string, string> = {
+  core_switch: 'core',
+  aggregation_switch: 'distribution',
+  access_switch: 'access',
+  wireless_ac: 'wireless_controller',
+  ap: 'wireless_ap',
+  sd_wan_edge: 'sdwan_edge',
+  other: 'other_network',
+};
 
 export const getTopologyRoleKey = (device: Device): string => {
   const rawRole = String(device.role || '').trim().toLowerCase();
+  if (CANONICAL_TOPOLOGY_ROLES.has(rawRole)) return rawRole;
+  if (LEGACY_TOPOLOGY_ROLE_ALIASES[rawRole]) return LEGACY_TOPOLOGY_ROLE_ALIASES[rawRole];
   const fingerprint = [device.role, device.hostname, device.model, device.platform]
     .map(value => String(value || '').toLowerCase())
     .join(' ');
+  if (/(sd[-_ ]?wan)/.test(fingerprint)) return 'sdwan_edge';
+  if (/(wireless controller|wireless[_ -]?ac|无线控制器|无线 ?ac)/.test(fingerprint)) return 'wireless_controller';
+  if (/(wireless[_ -]?ap|无线接入点|无线 ?ap)/.test(fingerprint)) return 'wireless_ap';
+  if (/(oob|out[-_ ]?of[-_ ]?band|带外)/.test(fingerprint)) return 'oob_switch';
   if (/(waf|web application firewall|web防火墙)/.test(fingerprint)) return 'waf';
   if (/(load[-_ ]?balanc|\blb\b|f5|big[-_ ]?ip|adc\b|netscaler|citrix adc|haproxy|nginx plus)/.test(fingerprint)) return 'load_balancer';
   if (/(vpn|ipsec gateway|ssl vpn|远程接入网关)/.test(fingerprint)) return 'vpn_gateway';
@@ -38,8 +45,17 @@ export const getTopologyRoleKey = (device: Device): string => {
   if (/(router|路由器|gateway|网关|wan|edge[- ]?router|isr|asr|mx\b)/.test(fingerprint)) return 'router';
   if (/(core|核心|backbone|骨干)/.test(fingerprint)) return 'core';
   if (/(distribution|aggregation|汇聚|分布)/.test(fingerprint)) return 'distribution';
-  if (/(access|接入|edge|acc[-_ ]?sw)/.test(fingerprint)) return 'access';
+  if (/(access|接入|acc[-_ ]?sw)/.test(fingerprint)) return 'access';
+  if (/(edge|边缘)/.test(fingerprint)) return 'edge';
+  if (/(switch|交换机)/.test(fingerprint)) return 'switch';
   return rawRole;
+};
+
+export const getTopologyRoleOptions = (devices: Device[]): string[] => {
+  const customRoles = devices
+    .map(getTopologyRoleKey)
+    .filter(role => role && !CANONICAL_TOPOLOGY_ROLES.has(role));
+  return [...NETWORK_TOPOLOGY_ROLE_VALUES, ...Array.from(new Set(customRoles)).sort((left, right) => left.localeCompare(right))];
 };
 
 export const matchesTopologyTagConditions = (device: Device, filter: TagFilterConfig) => {
@@ -98,10 +114,7 @@ export const useTopologyVisibleDevices = ({
   }, [devices]);
 
   const topologyRoleOptions = useMemo(() => {
-    const customRoles = devices
-      .map(getTopologyRoleKey)
-      .filter(role => role && !STANDARD_TOPOLOGY_ROLES.includes(role));
-    return [...STANDARD_TOPOLOGY_ROLES, ...Array.from(new Set(customRoles)).sort((left, right) => left.localeCompare(right))];
+    return getTopologyRoleOptions(devices);
   }, [devices]);
 
   const topologyTagOptions = useMemo(() => {

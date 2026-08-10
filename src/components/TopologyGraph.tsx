@@ -9,6 +9,8 @@ import {
 } from '../utils/topologyAggregation';
 import { buildTopologyExportFilename, getTopologyExportPixelRatio } from '../utils/topologyExport';
 import { buildFoldedChainPositions, buildRingGroupPositions, repairTopologyLayout } from '../utils/topologyLayout';
+import { buildTopologyRoleLayeredPositions } from '../utils/topologyRoleLayout';
+import { canonicalTopologyRole, topologyRoleLabel } from '../domain/topologyRoles';
 
 const topologyIconAssets = import.meta.glob('../assets/topology/devices/**/*.svg', {
   eager: true,
@@ -22,6 +24,8 @@ interface Device {
   ip_address: string;
   status: string;
   role: string;
+  role_identity?: string;
+  device_category?: string;
   platform?: string;
   model?: string;
   vendor?: string;
@@ -375,7 +379,26 @@ type TopologyLayoutMode = 'hierarchy' | 'horizontal' | 'force' | 'radial';
 type PortLabelMode = 'auto' | 'visible' | 'hidden';
 
 const getLayerTone = (device: Device) => {
+  const roleValue = device.role_identity || device.role || device.device_category;
+  const roleKey = canonicalTopologyRole(roleValue);
+  const roleLabel = roleKey ? topologyRoleLabel(roleKey, 'zh') : '';
   const layer = getDeviceTopologyLayer(device);
+  // Keep the imported topology role readable beside the node. Evidence ranks
+  // still control placement, but must not replace the role identity.
+  if (roleLabel) {
+    const roleTone = roleKey === 'firewall'
+      ? { color: '#b91c1c', soft: 'rgba(185,28,28,0.14)' }
+      : roleKey === 'router'
+        ? { color: '#c2410c', soft: 'rgba(194,65,12,0.14)' }
+        : roleKey === 'waf'
+          ? { color: '#be123c', soft: 'rgba(190,18,60,0.14)' }
+          : roleKey === 'vpn_gateway'
+            ? { color: '#0f766e', soft: 'rgba(15,118,110,0.14)' }
+            : roleKey === 'load_balancer'
+              ? { color: '#7c3aed', soft: 'rgba(124,58,237,0.14)' }
+              : { color: '#475569', soft: 'rgba(71,85,105,0.12)' };
+    return { ...roleTone, label: roleLabel };
+  }
   if (layer != null) {
     const hue = (layer * 47) % 360;
     return { color: `hsl(${hue} 62% 38%)`, soft: `hsla(${hue} 62% 48% / 0.14)`, label: `RANK_${layer}` };
@@ -742,64 +765,8 @@ const fitTopologyLabelText = (label: string, maxWidth: number): string => {
   return `${result || Array.from(label)[0] || ''}${suffix}`;
 };
 
-const compareTopologyDeviceNames = (left: Device, right: Device) =>
-  String(left.hostname || '').localeCompare(String(right.hostname || ''), undefined, {
-    numeric: true,
-    sensitivity: 'base',
-  });
-
-const buildLayeredPositions = (devices: Device[], links: Link[], width: number, height: number) => {
-  if (devices.length === 0) return null;
-  const layers = devices.map(getDeviceTopologyLayer);
-  const hasExplicitLayers = layers.some((layer) => layer != null);
-  const distinctLayers = new Set(layers.filter((layer): layer is number => layer != null));
-  // A physical/LLDP graph without evidence-derived rank is not a hierarchy.
-  // Returning null lets the caller use the relationship-aware force layout;
-  // sorting those devices into a fake horizontal chain changes the meaning
-  // of the graph and was the source of the regression reported by users.
-  if (!hasExplicitLayers || distinctLayers.size <= 1) return null;
-
-  const fallbackLayer = Math.max(...layers.filter((layer): layer is number => layer != null), 0);
-  const grouped = new Map<number, Device[]>();
-  devices.forEach((device, index) => {
-    const layer = layers[index] ?? fallbackLayer;
-    if (!grouped.has(layer)) grouped.set(layer, []);
-    grouped.get(layer)?.push(device);
-  });
-  const layerKeys = Array.from(grouped.keys()).sort((left, right) => left - right);
-  const positions: Record<string, { x: number; y: number }> = {};
-  // Reserve explicit title and legend safe areas. Previously the rows were
-  // centered without accounting for the site summary, device-name plates,
-  // and bandwidth legend, which made the top and bottom rows look clipped.
-  const topInset = 118;
-  const bottomInset = 112;
-  const layerCount = Math.max(layerKeys.length - 1, 1);
-  const availableLayerHeight = Math.max(0, height - topInset - bottomInset);
-  const layerGap = layerKeys.length > 1
-    ? Math.min(170, Math.max(140, availableLayerHeight / layerCount))
-    : 0;
-  const totalLayerHeight = layerGap * Math.max(layerKeys.length - 1, 0);
-  const firstLayerY = layerKeys.length > 1
-    ? Math.max(topInset, Math.min(
-      height - bottomInset - totalLayerHeight,
-      topInset + Math.max(0, (availableLayerHeight - totalLayerHeight) / 2),
-    ))
-    : height * 0.42;
-  layerKeys.forEach((layer, index) => {
-    const rowDevices = grouped.get(layer) || [];
-    const rowIds = rowDevices
-      .sort(compareTopologyDeviceNames)
-      .map((device) => device.id);
-    const rowPositions = buildHorizontalRowPositions(
-      rowIds,
-      width,
-      height,
-      layerKeys.length === 1 ? 0.42 : (firstLayerY + layerGap * index) / height,
-    );
-    Object.assign(positions, rowPositions);
-  });
-  return positions;
-};
+const buildLayeredPositions = (devices: Device[], width: number, height: number) =>
+  buildTopologyRoleLayeredPositions(devices, width, height);
 
 const buildLinearPositions = (devices: Device[], links: Link[], width: number, height: number) => {
   const order = getLinearChainOrder(devices, links);
@@ -837,7 +804,7 @@ const calculateAutoLayoutPositions = (
     return buildHorizontalRowPositions(order, width, height);
   }
   if (layoutMode === 'hierarchy') {
-    const layeredPositions = buildLayeredPositions(devices, links, width, height);
+    const layeredPositions = buildLayeredPositions(devices, width, height);
     if (layeredPositions) return layeredPositions;
 
     // A physical chain has enough relationship evidence to be laid out
@@ -888,7 +855,7 @@ const calculateAutoLayoutPositions = (
 
 const clampPosition = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v6';
-const TOPOLOGY_LAYOUT_SCHEMA = 'evidence-relationship-v4';
+const TOPOLOGY_LAYOUT_SCHEMA = 'evidence-relationship-v5';
 
 type PersistedTopologyLayout = {
   schema?: string;
@@ -1613,9 +1580,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
   useEffect(() => {
     const persistedLayout = readPersistedLayout();
-    // The canvas intentionally has one supported layout: evidence hierarchy.
-    // Discard positions saved by the removed layout modes; role identity is
-    // never converted into a geometric layer.
+    // The canvas intentionally has one supported layout: evidence hierarchy
+    // with a role-tier fallback for undirected physical graphs.
+    // Bump the schema so positions saved by the old force-layout fallback do
+    // not keep a newly imported role hierarchy in its previous arrangement.
     setLayoutMode('hierarchy');
     // Keep the default topology presentation on direct links.  An older
     // saved `orthogonal` preference must not unexpectedly turn diagonal
@@ -1899,7 +1867,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     });
 
     const { positions: seededPositions, siteAnchors } = buildSeedPositions(graphDevices, width, height);
-    const layeredPositions = layoutMode === 'hierarchy' ? buildLayeredPositions(graphDevices, graphLinks, width, height) : null;
+    const layeredPositions = layoutMode === 'hierarchy' ? buildLayeredPositions(graphDevices, width, height) : null;
     const linearPositions = layoutMode === 'horizontal' ? buildLinearPositions(graphDevices, graphLinks, width, height) : null;
     const radialPositions = layoutMode === 'radial' ? buildRadialPositions(graphDevices, width, height) : null;
     const structuredPositions = layeredPositions || linearPositions || radialPositions;
@@ -3197,9 +3165,9 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       <div className="absolute right-4 top-4 z-10 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-end gap-1.5 rounded-2xl border border-slate-200 bg-white/95 px-2.5 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.12)] backdrop-blur-sm">
         <span
           className="inline-flex h-8 items-center rounded-xl border border-cyan-200 bg-cyan-50 px-2.5 text-[10px] font-extrabold text-cyan-700"
-          title="拓扑位置由关系证据决定；设备角色仅作为身份信息展示"
+          title="拓扑位置优先使用有向关系；物理链路按导入角色分层"
         >
-          证据 · 关系
+          角色分层 · 关系优先
         </span>
         <select
           value={displayScope}

@@ -4,26 +4,21 @@ import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTri
 import DateTimePicker from '../../../components/DateTimePicker';
 import { Asset } from '../types';
 import type { TagDefinition } from '../../../types';
-import { VENDOR_PLATFORMS, NETWORK_VENDOR_GROUPS, ALL_VENDOR_NAMES, SERVER_PLATFORMS, ALL_PLATFORMS, getPlatformsForVendor, STATUSES, LIFECYCLE_STATUSES } from '../constants';
+import {
+  VENDOR_PLATFORMS,
+  NETWORK_VENDOR_GROUPS,
+  ALL_VENDOR_NAMES,
+  SERVER_PLATFORMS,
+  ALL_PLATFORMS,
+  getPlatformsForVendor,
+  STATUSES,
+  LIFECYCLE_STATUSES,
+  NETWORK_TOPOLOGY_ROLE_OPTIONS,
+  TOPOLOGY_FUNCTION_OPTIONS,
+  TOPOLOGY_ZONE_OPTIONS,
+} from '../constants';
 import { AssetTagPicker } from './AssetTagPicker';
 import { isReservedSystemSite } from '../../../utils/siteIdentity';
-
-const TOPOLOGY_ROLE_OPTIONS = [
-  { value: 'router', label: { zh: '路由器', en: 'Router' } },
-  { value: 'firewall', label: { zh: '防火墙', en: 'Firewall' } },
-  { value: 'core_switch', label: { zh: '核心交换机', en: 'Core Switch' } },
-  { value: 'aggregation_switch', label: { zh: '汇聚交换机', en: 'Aggregation Switch' } },
-  { value: 'access_switch', label: { zh: '接入交换机', en: 'Access Switch' } },
-  { value: 'server_switch', label: { zh: '服务器交换机', en: 'Server Switch' } },
-  { value: 'wireless_ac', label: { zh: '无线 AC', en: 'Wireless AC' } },
-  { value: 'wireless_ap', label: { zh: '无线 AP', en: 'Wireless AP' } },
-  { value: 'load_balancer', label: { zh: '负载均衡', en: 'Load Balancer' } },
-  { value: 'sdwan_edge', label: { zh: 'SD-WAN Edge', en: 'SD-WAN Edge' } },
-  { value: 'oob_switch', label: { zh: 'OOB 管理交换机', en: 'OOB Switch' } },
-  { value: 'server', label: { zh: '服务器', en: 'Server' } },
-  { value: 'other', label: { zh: '其他', en: 'Other' } },
-  { value: 'unknown', label: { zh: '未知', en: 'Unknown' } },
-] as const;
 
 interface AssetModalProps {
   isOpen: boolean;
@@ -387,8 +382,20 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   )}
                 </select>
               </div>
-              <Field label={zh ? '功能' : 'Function'} value={form.function || ''} onChange={v => setForm(f => ({ ...f, function: v }))} placeholder={zh ? '如：核心路由 / 业务服务器' : 'e.g. core routing / application'} />
-              <Field label={zh ? '区域' : 'Zone'} value={form.zone || ''} onChange={v => setForm(f => ({ ...f, zone: v }))} placeholder={zh ? '如：生产区 / OOB' : 'e.g. production / OOB'} />
+              <SelectField
+                label={zh ? '功能' : 'Function'}
+                value={form.function || ''}
+                onChange={v => setForm(f => ({ ...f, function: v }))}
+                options={TOPOLOGY_FUNCTION_OPTIONS}
+                language={language}
+              />
+              <SelectField
+                label={zh ? '区域' : 'Zone'}
+                value={form.zone || ''}
+                onChange={v => setForm(f => ({ ...f, zone: v }))}
+                options={TOPOLOGY_ZONE_OPTIONS}
+                language={language}
+              />
               <Field label={zh ? '额定功率 (W)' : 'Power (W)'} value={form.power_watts} onChange={v => setForm(f => ({ ...f, power_watts: v }))} placeholder="e.g. 350" />
             </div>
 
@@ -402,10 +409,10 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 title="Topology Role"
               >
                 <option value="">{zh ? '请选择拓扑角色...' : 'Select topology role...'}</option>
-                {form.device_role && !TOPOLOGY_ROLE_OPTIONS.some(option => option.value === form.device_role) && (
-                  <option value={form.device_role}>{form.device_role} (legacy)</option>
+                {form.device_role && !NETWORK_TOPOLOGY_ROLE_OPTIONS.some(option => option.value === form.device_role) && (
+                  <option value={form.device_role}>{form.device_role}</option>
                 )}
-                {TOPOLOGY_ROLE_OPTIONS.map(option => (
+                {NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => (
                   <option key={option.value} value={option.value}>{option.label[zh ? 'zh' : 'en']}</option>
                 ))}
               </select>
@@ -888,6 +895,33 @@ function Field({ label, value, onChange, placeholder, type = 'text', list }: {
         list={list}
         className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 placeholder:text-black/12 focus:outline-none focus:border-[#00bceb]/25"
       />
+    </div>
+  );
+}
+
+function SelectField({ label, value, onChange, options, language }: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: ReadonlyArray<{ readonly value: string; readonly label: { readonly zh: string; readonly en: string } }>;
+  language: string;
+}) {
+  const labelKey = language === 'zh' ? 'zh' : 'en';
+  const hasCurrentValue = !value || options.some(option => option.value === value);
+  return (
+    <div>
+      <label className="block text-[10px] text-black/30 mb-0.5">{label}</label>
+      <select
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 focus:outline-none focus:border-[#00bceb]/25"
+      >
+        <option value="">{language === 'zh' ? '请选择...' : 'Select...'}</option>
+        {!hasCurrentValue && <option value={value}>{value}</option>}
+        {options.map(option => (
+          <option key={option.value} value={option.value}>{option.label[labelKey]}</option>
+        ))}
+      </select>
     </div>
   );
 }

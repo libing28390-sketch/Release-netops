@@ -17,6 +17,20 @@ class _ConnectionProxy:
         return None
 
 
+class _BooleanRecordingConnection(_ConnectionProxy):
+    def __init__(self, connection):
+        super().__init__(connection)
+        self.boolean_updates: list[tuple[str, tuple]] = []
+        self.stale_snapshot_sql = ""
+
+    def execute(self, sql, params=()):
+        if "is_l3 = ?" in sql:
+            self.boolean_updates.append((sql, params))
+        if "is_l3 = FALSE, ip_enabled = 0" in sql:
+            self.stale_snapshot_sql = sql
+        return self._connection.execute(sql, params)
+
+
 def test_interface_snapshot_clears_missing_current_rows(monkeypatch):
     connection = sqlite3.connect(':memory:')
     connection.row_factory = sqlite3.Row
@@ -56,6 +70,45 @@ def test_interface_snapshot_clears_missing_current_rows(monkeypatch):
     assert current['interface_name'] == 'LoopBack0'
     assert current['primary_ip'] == '10.0.0.10'
     assert current['last_seen']
+
+
+def test_interface_snapshot_uses_boolean_flags_for_postgresql_compatibility(monkeypatch):
+    connection = sqlite3.connect(':memory:')
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        CREATE TABLE interfaces (
+            id TEXT PRIMARY KEY, device_id TEXT, interface_name TEXT, description TEXT,
+            admin_status TEXT, oper_status TEXT, primary_ip TEXT,
+            ip_address TEXT, ip_prefix_length INTEGER, is_l3 INTEGER,
+            ip_enabled INTEGER, switchport_mode TEXT, interface_type TEXT,
+            last_seen TEXT
+        );
+        INSERT INTO interfaces VALUES
+            ('old', 'dev-1', 'Ethernet0/2', '', 'up', 'up', '10.0.0.2', '10.0.0.2', 24, 1, 1, 'routed', 'physical', NULL),
+            ('current', 'dev-1', 'LoopBack0', '', 'down', 'down', '10.0.0.9', '10.0.0.9', 32, 1, 1, 'routed', 'physical', NULL);
+        """
+    )
+    recorder = _BooleanRecordingConnection(connection)
+    monkeypatch.setattr(interfaces, 'get_db_connection', lambda: recorder)
+
+    interfaces._upsert_interfaces(
+        {'id': 'dev-1'},
+        [{
+            'interface_name': 'Loop0',
+            'interface_ip': '10.0.0.10',
+            'prefix_length': 32,
+            'admin_status': 'up',
+            'oper_status': 'up',
+        }],
+    )
+
+    assert recorder.stale_snapshot_sql
+    assert len(recorder.boolean_updates) == 1
+    _, params = recorder.boolean_updates[0]
+    assert params[5] is True
+    assert type(params[6]) is int
+    assert params[6] == 1
 
 
 def test_device_ip_output_supersedes_legacy_inventory_rows():

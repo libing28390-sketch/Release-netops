@@ -105,6 +105,10 @@ def test_role_is_identity_and_anchor_detection_is_multi_root():
     assert normalize_role("Core") == "CORE_SWITCH"
     assert normalize_role("Access Switch") == "ACCESS_SWITCH"
     assert normalize_role("OOB Switch") == "OOB_SWITCH"
+    assert normalize_role("WAF") == "WAF"
+    assert normalize_role("VPN Gateway") == "VPN_GATEWAY"
+    assert normalize_role("Edge") == "EDGE"
+    assert normalize_role("Other Network") == "OTHER"
     nodes = [
         {"id": "fw", "node_type": "DEVICE", "function": "Internet Edge", "zone": "WAN"},
         {"id": "isp", "node_type": "EXTERNAL", "display_name": "ISP-A"},
@@ -219,6 +223,38 @@ def graph_db(monkeypatch):
     monkeypatch.setattr(graph_service, "get_db_connection", lambda: conn)
     yield conn
     conn.close()
+
+
+def test_graph_read_model_excludes_reimported_device_ids(graph_db):
+    graph_db.execute("CREATE TABLE devices (id TEXT PRIMARY KEY)")
+    graph_db.executemany(
+        "INSERT INTO devices (id) VALUES (?)",
+        [("current-a",), ("current-b",)],
+    )
+    graph = build_graph(
+        [
+            {"id": "old-a", "device_id": "old-a", "hostname": "A"},
+            {"id": "old-b", "device_id": "old-b", "hostname": "B"},
+            {"id": "current-a", "device_id": "current-a", "hostname": "A"},
+            {"id": "current-b", "device_id": "current-b", "hostname": "B"},
+        ],
+        [
+            {"source_device_id": "old-a", "target_device_id": "old-b", "source_type": "lldp"},
+            {"source_device_id": "current-a", "target_device_id": "current-b", "source_type": "lldp"},
+        ],
+    )
+    persist_graph(graph)
+
+    physical = get_graph(view="physical")
+    assert {node.get("device_id") for node in physical["nodes"] if node["node_type"] == "DEVICE"} == {
+        "current-a",
+        "current-b",
+    }
+    assert len(physical["edges"]) == 1
+    assert {
+        physical["edges"][0]["source_node_id"],
+        physical["edges"][0]["target_node_id"],
+    } == {"current-a", "current-b"}
 
 
 def test_persist_graph_preserves_manual_relation_and_writes_history(graph_db):

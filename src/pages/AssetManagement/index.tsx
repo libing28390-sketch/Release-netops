@@ -33,6 +33,9 @@ import {
   IMPORT_VALUE_MAP,
   NETWORK_IMPORT_PLATFORM_VALUES,
   NETWORK_IMPORT_VENDOR_VALUES,
+  NETWORK_TOPOLOGY_ROLE_OPTIONS,
+  TOPOLOGY_FUNCTION_OPTIONS,
+  TOPOLOGY_ZONE_OPTIONS,
 } from './constants';
 import { statusMeta, typeMeta, severityOf } from './helpers';
 
@@ -117,10 +120,7 @@ const FIXED_ASSET_COLUMNS = new Set<AssetColumnKey>([
   'hostname', 'category_role', 'site', 'status', 'created_at', 'updated_at',
 ]);
 
-const NETWORK_TEMPLATE_ROLES = new Set([
-  'core', 'distribution', 'access', 'edge', 'switch', 'router', 'firewall',
-  'wireless_controller', 'wireless_ap', 'load_balancer', 'vpn_gateway', 'sdwan_edge', 'other_network',
-]);
+const NETWORK_TEMPLATE_ROLES = new Set<string>(NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => option.value));
 const NETWORK_TEMPLATE_CATEGORIES = new Set([
   'switch', 'router', 'firewall', 'load_balancer', 'wireless_controller', 'wireless_ap', 'sdwan_edge', 'vpn_gateway', 'other_network',
 ]);
@@ -1114,8 +1114,8 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['绑定凭据', '可选', '普通/登录凭据名称或 ID，如：cred-cisco-core'],
       ['绑定特权凭据', '可选', '特权/管理员凭据名称或 ID，如：cred-cisco-admin'],
       ['标签代码', '可选', '多个标签代码用英文逗号分隔，例如：vendor.cisco,platform.cisco_ios'],
-      ['功能/区域', '可选', '拓扑语义字段；不会按固定设备层级决定拓扑位置。'],
-      ['用户名/密码', '网络设备必填', 'SSH 登录凭据；密码仅用于导入，不会在资产导出中回显。'],
+      ['拓扑角色', '网络设备必填', '使用统一下拉值；角色记录设备身份，拓扑层级仍由链路关系证据计算。'],
+      ['功能/区域', '推荐填写', '使用统一下拉值，便于拓扑筛选与语义展示。'],
     ] : [
       ['Asset Import Instructions'],
       ['Field', 'Required', 'Rule'],
@@ -1129,36 +1129,36 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Credential', 'Optional', 'Existing normal credential name or ID from the vault, e.g. cred-cisco-core'],
       ['Admin Credential', 'Optional', 'Existing admin credential name or ID from the vault, e.g. cred-cisco-admin'],
       ['Tags', 'Optional', 'Comma-separated stable tag codes, e.g. vendor.cisco,platform.cisco_ios'],
-      ['Function / Zone', 'Optional', 'Topology semantic fields; they do not hard-code a device layer.'],
-      ['Username / Password', 'Network devices', 'SSH login credentials; passwords are import-only and never included in asset exports.'],
+      ['Topology Role', 'Network devices', 'Use the unified list; hierarchy still comes from relationship evidence.'],
+      ['Function / Zone', 'Recommended', 'Use the unified lists for topology filtering and semantics.'],
     ];
     const wsGuide = XLSX.utils.aoa_to_sheet(guideRows);
     wsGuide['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 72 }];
     XLSX.utils.book_append_sheet(wb, wsGuide, zh ? '填写说明' : 'Instructions');
 
     const srvHeaders = zh
-      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '业务IP', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', '普通用户', '特权用户', '普通密码', '特权密码', '绑定凭据', '绑定特权凭据', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域', '用户名', '密码']
-      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Business IP', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Credential', 'Admin Credential', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone', 'Username', 'Password'];
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '业务IP', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', 'VLAN', '上联交换机', '上联端口', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', '普通用户', '特权用户', '普通密码', '特权密码', '绑定凭据', '绑定特权凭据', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Business IP', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'VLAN', 'Uplink Switch', 'Uplink Port', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Credential', 'Admin Credential', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
     const srvExample = zh
-      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '戴尔', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '22', '192.168.1.10', 'SSH（安全外壳）', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'user', 'admin', '', '', 'cred-cisco-core', '', 'platform.linux', 'IT部', '2024-01-15', '待投产', '', '2027-01-15', '服务器备注', 'Server Access', '生产区', 'user', '请填写SSH密码']
-      : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'web', 'server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'user', 'admin', '', '', 'cred-cisco-core', '', 'platform.linux,env.staging', 'IT Dept', '2024-01-15', 'staging', '', '2027-01-15', 'Production srv', 'Server Access', 'Production', 'user', 'enter-ssh-password'];
+      ? ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', '戴尔', 'PowerEdge R750', 'Linux（通用）', '10.0.1.10', '22', '192.168.1.10', 'SSH（安全外壳）', '在用', '业务服务器', '机架式服务器', '新设备', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'user', 'admin', '', '', 'cred-cisco-core', '', 'platform.linux', 'IT部', '2024-01-15', '待投产', '', '2027-01-15', '服务器备注', '服务器接入', '生产区']
+      : ['web-srv-01', 'SRV-BJ-001', 'CZJ2345G0HN', 'Dell', 'PowerEdge R750', 'linux', '10.0.1.10', '22', '192.168.1.10', 'ssh', 'active', 'application_server', 'server', 'new', 'VLAN100', 'core-sw-01', 'Gi0/1', 'BJ-DC1', 'A-01', '12', '1', '12', '200', 'user', 'admin', '', '', 'cred-cisco-core', '', 'platform.linux,env.staging', 'IT Dept', '2024-01-15', 'staging', '', '2027-01-15', 'Production srv', 'Server Access', 'Production'];
     const wsSrv = XLSX.utils.aoa_to_sheet([srvHeaders, srvExample]);
     wsSrv['!cols'] = srvHeaders.map(() => ({ wch: 16 }));
     XLSX.utils.book_append_sheet(wb, wsSrv, zh ? '服务器模板' : 'Server Template');
 
     const netHeaders = zh
-      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '连接方式', '状态', '角色', '设备分类', '录入来源（必填：新设备或存量设备）', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域', '用户名', '密码']
-      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection', 'Status', 'Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone', 'Username', 'Password'];
+      ? ['主机名', '资产编号', '序列号', '厂商', '型号', '平台', '管理IP', '管理端口', '连接方式', '状态', '拓扑角色', '设备分类', '录入来源（必填：新设备或存量设备）', '站点', '机柜', 'U位', 'U高度', '规划起始U', '功耗(W)', 'SNMP社区名', 'SNMP端口', '普通用户', '特权用户', '普通密码', '特权密码', 'Enable密码', '绑定凭据', '绑定特权凭据', '标签代码', '部门', '购买日期', '投产状态', '免上收投产原因', '保修到期', '备注', '功能', '区域']
+      : ['Hostname', 'Asset Tag', 'Serial Number', 'Vendor', 'Model', 'Platform', 'Mgmt IP', 'Mgmt Port', 'Connection', 'Status', 'Topology Role', 'Device Category', 'Asset Origin (Required: new or legacy)', 'Site', 'Rack', 'Rack Unit', 'U Height', 'Planned Start U', 'Power(W)', 'SNMP Community', 'SNMP Port', 'Normal User', 'Admin User', 'Normal Password', 'Admin Password', 'Enable Secret', 'Credential', 'Admin Credential', 'Tags', 'Department', 'Purchase Date', 'Lifecycle', 'Takeover Exemption Reason', 'Warranty Expiry', 'Notes', 'Function', 'Zone'];
     const netExamples = zh
       ? [
-          ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '思科', 'C9300-48P', '思科 IOS', '10.0.0.1', '22', 'SSH（安全外壳）', '在用', '核心交换机', '交换机', '存量设备', 'BJ-DC1', 'A-02', '40', '1', '40', '', '161', 'user', 'admin', '普通账号密码', '特权账号密码', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2026-06-01', '核心交换机', 'Campus Core', '生产区', 'user', '请填写SSH密码'],
-          ['dp-sw-01', 'NET-BJ-002', 'DP20260730A1', '迪普', 'DP-LSW6000', 'DPTech Conplat (Switch)', '10.0.0.2', '22', 'SSH（安全外壳）', '在用', '汇聚交换机', '交换机', '新设备', 'BJ-DC1', 'A-02', '38', '1', '38', '', '161', 'admin', 'admin', '普通密码', '特权密码', '', '', '', 'vendor.dptech,platform.dptech_conplat', 'IT部', '2024-03-01', '待投产', '', '2027-03-01', '迪普交换机', 'Business Aggregation', '生产区', 'admin', '请填写SSH密码'],
-          ['dp-fw-01', 'NET-BJ-003', 'DP20260730F1', '迪普', 'DP-FW8000', 'DPTech Conplat FW (Firewall)', '10.0.0.3', '22', 'SSH（安全外壳）', '在用', '防火墙', '防火墙', '存量设备', 'BJ-DC1', 'A-02', '36', '2', '36', '', '161', 'admin', 'admin', '普通密码', '特权密码', '', '', '', 'vendor.dptech,platform.dptech_conplat_fw', 'IT部', '2024-03-01', '已投产', '存量迪普防火墙已上线运行', '2027-03-01', '迪普防火墙', 'Internet Edge', 'DMZ', 'admin', '请填写SSH密码'],
+          ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', '思科', 'C9300-48P', '思科 IOS', '10.0.0.1', '22', 'SSH（安全外壳）', '在用', '核心层', '交换机', '存量设备', 'BJ-DC1', 'A-02', '40', '1', '40', '', '161', 'user', 'admin', '普通账号密码', '特权账号密码', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT部', '2023-06-01', '已投产', '存量设备已在线运行', '2026-06-01', '核心交换机', '园区核心', '生产区'],
+          ['dp-sw-01', 'NET-BJ-002', 'DP20260730A1', '迪普', 'DP-LSW6000', 'DPTech Conplat (Switch)', '10.0.0.2', '22', 'SSH（安全外壳）', '在用', '汇聚层', '交换机', '新设备', 'BJ-DC1', 'A-02', '38', '1', '38', '', '161', 'admin', 'admin', '普通密码', '特权密码', '', '', '', 'vendor.dptech,platform.dptech_conplat', 'IT部', '2024-03-01', '待投产', '', '2027-03-01', '迪普交换机', '业务汇聚', '生产区'],
+          ['dp-fw-01', 'NET-BJ-003', 'DP20260730F1', '迪普', 'DP-FW8000', 'DPTech Conplat FW (Firewall)', '10.0.0.3', '22', 'SSH（安全外壳）', '在用', '防火墙', '防火墙', '存量设备', 'BJ-DC1', 'A-02', '36', '2', '36', '', '161', 'admin', 'admin', '普通密码', '特权密码', '', '', '', 'vendor.dptech,platform.dptech_conplat_fw', 'IT部', '2024-03-01', '已投产', '存量迪普防火墙已上线运行', '2027-03-01', '迪普防火墙', '互联网边界', 'DMZ 区'],
         ]
       : [
-          ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'switch', 'switch', 'legacy', 'BJ-DC1', 'A-02', '40', '1', '40', '', '161', 'user', 'admin', 'normal-password', 'admin-password', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2026-06-01', 'Core switch', 'Campus Core', 'Production', 'user', 'enter-ssh-password'],
-          ['dp-sw-01', 'NET-BJ-002', 'DP20260730A1', 'DPtech', 'DP-LSW6000', 'dptech_conplat', '10.0.0.2', '22', 'ssh', 'active', 'switch', 'switch', 'new', 'BJ-DC1', 'A-02', '38', '1', '38', '', '161', 'admin', 'admin', 'normal-password', 'admin-password', '', '', '', 'vendor.dptech,platform.dptech_conplat', 'IT Dept', '2024-03-01', 'staging', '', '2027-03-01', 'DPtech Switch', 'Business Aggregation', 'Production', 'admin', 'enter-ssh-password'],
-          ['dp-fw-01', 'NET-BJ-003', 'DP20260730F1', 'DPtech', 'DP-FW8000', 'dptech_conplat_fw', '10.0.0.3', '22', 'ssh', 'active', 'firewall', 'firewall', 'legacy', 'BJ-DC1', 'A-02', '36', '2', '36', '', '161', 'admin', 'admin', 'normal-password', 'admin-password', '', '', '', 'vendor.dptech,platform.dptech_conplat_fw', 'IT Dept', '2024-03-01', 'production', 'Legacy DPtech FW in production', '2027-03-01', 'DPtech Firewall', 'Internet Edge', 'DMZ', 'admin', 'enter-ssh-password'],
+          ['core-sw-01', 'NET-BJ-001', 'FCW2345L0AB', 'Cisco', 'C9300-48P', 'cisco_ios', '10.0.0.1', '22', 'ssh', 'active', 'core', 'switch', 'legacy', 'BJ-DC1', 'A-02', '40', '1', '40', '', '161', 'user', 'admin', 'normal-password', 'admin-password', '', 'cred-cisco-core', 'cred-cisco-admin', 'vendor.cisco,platform.cisco_ios', 'IT Dept', '2023-06-01', 'production', 'Existing production device', '2026-06-01', 'Core switch', 'Campus Core', 'Production'],
+          ['dp-sw-01', 'NET-BJ-002', 'DP20260730A1', 'DPtech', 'DP-LSW6000', 'dptech_conplat', '10.0.0.2', '22', 'ssh', 'active', 'distribution', 'switch', 'new', 'BJ-DC1', 'A-02', '38', '1', '38', '', '161', 'admin', 'admin', 'normal-password', 'admin-password', '', '', '', 'vendor.dptech,platform.dptech_conplat', 'IT Dept', '2024-03-01', 'staging', '', '2027-03-01', 'DPtech Switch', 'Business Aggregation', 'Production'],
+          ['dp-fw-01', 'NET-BJ-003', 'DP20260730F1', 'DPtech', 'DP-FW8000', 'dptech_conplat_fw', '10.0.0.3', '22', 'ssh', 'active', 'firewall', 'firewall', 'legacy', 'BJ-DC1', 'A-02', '36', '2', '36', '', '161', 'admin', 'admin', 'normal-password', 'admin-password', '', '', '', 'vendor.dptech,platform.dptech_conplat_fw', 'IT Dept', '2024-03-01', 'production', 'Legacy DPtech FW in production', '2027-03-01', 'DPtech Firewall', 'Internet Edge', 'DMZ'],
         ];
     const wsNet = XLSX.utils.aoa_to_sheet([netHeaders, ...netExamples]);
     wsNet['!cols'] = netHeaders.map(() => ({ wch: 16 }));
@@ -1217,6 +1217,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['服务器', '平台 (Platform)', 'esxi', 'VMware ESXi'],
       ...networkVendorRowsZh,
       ...networkPlatformRowsZh,
+      ...NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => ['网络/安全设备', '拓扑角色', option.label.zh, option.value]),
+      ...TOPOLOGY_FUNCTION_OPTIONS.map(option => ['通用', '功能', option.label.zh, option.value]),
+      ...TOPOLOGY_ZONE_OPTIONS.map(option => ['通用', '区域', option.label.zh, option.value]),
       ['服务器', '设备分类', '机架式服务器', '标准机架式服务器'],
       ['服务器', '设备分类', '刀片服务器', '刀片式服务器'],
       ['服务器', '设备分类', '塔式服务器', '塔式服务器'],
@@ -1245,6 +1248,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Server', 'Platform', 'esxi', 'VMware ESXi'],
       ...networkVendorRowsEn,
       ...networkPlatformRowsEn,
+      ...NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => ['Network/Security', 'Topology Role', option.value, option.label.en]),
+      ...TOPOLOGY_FUNCTION_OPTIONS.map(option => ['Common', 'Function', option.value, option.label.en]),
+      ...TOPOLOGY_ZONE_OPTIONS.map(option => ['Common', 'Zone', option.value, option.label.en]),
       ['Server', 'Device Category', 'server', 'Server'],
       ['Network/Security', 'Device Category', 'network_device', 'Network Device'],
     ];

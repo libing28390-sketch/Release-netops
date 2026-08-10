@@ -2436,6 +2436,7 @@ def _sync_evidence_graph_from_observations() -> None:
                 FROM devices
                 """
             ).fetchall()
+            current_device_ids = {str(row['id']) for row in device_rows}
             nodes = [
                 {
                     'id': f"device:{row['id']}",
@@ -2463,6 +2464,12 @@ def _sync_evidence_graph_from_observations() -> None:
             ).fetchall()
             observations = []
             for row in observation_rows:
+                source_device_id = str(row['source_device_id'] or '').strip()
+                target_device_id = str(row['target_device_id'] or '').strip()
+                if source_device_id not in current_device_ids:
+                    continue
+                if target_device_id and target_device_id not in current_device_ids:
+                    continue
                 target = row['target_device_id'] or row['neighbor_ip_address'] or row['neighbor_name_normalized']
                 if not target:
                     continue
@@ -2498,6 +2505,12 @@ def _sync_evidence_graph_from_observations() -> None:
             except Exception:
                 protocol_rows = []
             for row in protocol_rows:
+                source_device_id = str(row['source_device_id'] or '').strip()
+                target_device_id = str(row['target_device_id'] or '').strip()
+                if source_device_id not in current_device_ids:
+                    continue
+                if target_device_id and target_device_id not in current_device_ids:
+                    continue
                 observation = {}
                 try:
                     observation = json.loads(row['observation_json'] or '{}')
@@ -2544,15 +2557,20 @@ def get_topology_node_metadata(site_id: str | None = None) -> dict[str, dict[str
     """
     conn = get_db_connection()
     try:
-        clauses = ["status = 'active'", "device_id IS NOT NULL", "device_id <> ''"]
+        clauses = [
+            "n.status = 'active'",
+            "n.device_id IS NOT NULL",
+            "n.device_id <> ''",
+            "EXISTS (SELECT 1 FROM devices d WHERE d.id = n.device_id)",
+        ]
         params: list[Any] = []
         if site_id:
-            clauses.append("(site_id = ? OR node_type = 'SITE')")
+            clauses.append("(n.site_id = ? OR n.node_type = 'SITE')")
             params.append(site_id)
         rows = conn.execute(
             """
-            SELECT device_id, rank, layout_override_json, role_identity, node_type
-            FROM topology_nodes
+            SELECT n.device_id, n.rank, n.layout_override_json, n.role_identity, n.node_type
+            FROM topology_nodes n
             WHERE """ + " AND ".join(clauses),
             tuple(params),
         ).fetchall()

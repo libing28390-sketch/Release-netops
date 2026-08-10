@@ -43,6 +43,43 @@ export const EMPTY_FORM = {
   tag_ids: [] as string[],
 };
 
+export {
+  NETWORK_TOPOLOGY_ROLE_OPTIONS,
+  NETWORK_TOPOLOGY_ROLE_VALUES,
+  topologyRoleLabel,
+} from '../../domain/topologyRoles';
+
+export const TOPOLOGY_FUNCTION_OPTIONS = [
+  { value: 'Internet Edge', label: { zh: '互联网边界', en: 'Internet Edge' } },
+  { value: 'Campus Core', label: { zh: '园区核心', en: 'Campus Core' } },
+  { value: 'Business Aggregation', label: { zh: '业务汇聚', en: 'Business Aggregation' } },
+  { value: 'Terminal Access', label: { zh: '终端接入', en: 'Terminal Access' } },
+  { value: 'DMZ Security', label: { zh: 'DMZ 安全', en: 'DMZ Security' } },
+  { value: 'Server Access', label: { zh: '服务器接入', en: 'Server Access' } },
+  { value: 'Business Application', label: { zh: '业务应用', en: 'Business Application' } },
+  { value: 'OOB Management', label: { zh: '带外管理', en: 'OOB Management' } },
+  { value: 'Wireless Controller', label: { zh: '无线控制', en: 'Wireless Controller' } },
+  { value: 'WAN Edge', label: { zh: 'WAN 边界', en: 'WAN Edge' } },
+  { value: 'Site Interconnect', label: { zh: '站点互联', en: 'Site Interconnect' } },
+  { value: 'Other', label: { zh: '其他', en: 'Other' } },
+  { value: 'Unknown', label: { zh: '未知', en: 'Unknown' } },
+] as const;
+
+export const TOPOLOGY_ZONE_OPTIONS = [
+  { value: 'Production', label: { zh: '生产区', en: 'Production' } },
+  { value: 'Management', label: { zh: '管理区', en: 'Management' } },
+  { value: 'OOB', label: { zh: '带外管理区', en: 'OOB' } },
+  { value: 'LAN', label: { zh: '内网区', en: 'LAN' } },
+  { value: 'WAN', label: { zh: '广域网区', en: 'WAN' } },
+  { value: 'DMZ', label: { zh: 'DMZ 区', en: 'DMZ' } },
+  { value: 'Internet', label: { zh: '互联网区', en: 'Internet' } },
+  { value: 'Wireless', label: { zh: '无线区', en: 'Wireless' } },
+  { value: 'Server', label: { zh: '服务器区', en: 'Server' } },
+  { value: 'Office', label: { zh: '办公区', en: 'Office' } },
+  { value: 'Other', label: { zh: '其他', en: 'Other' } },
+  { value: 'Unknown', label: { zh: '未知', en: 'Unknown' } },
+] as const;
+
 /**
  * Canonical asset vendor catalog.  Keep this list broader than the current
  * driver registry: selecting a vendor records the asset identity, while the
@@ -193,7 +230,7 @@ export const COL_MAP: Record<string, string> = {
   '管理IP': 'management_ip', 'Mgmt IP': 'management_ip', 'management_ip': 'management_ip',
   '业务IP': 'business_ip', 'Business IP': 'business_ip', 'business_ip': 'business_ip',
   '状态': 'status', 'Status': 'status', 'status': 'status',
-  '角色': 'device_role', 'Role': 'device_role', 'role': 'device_role', 'device_role': 'device_role',
+  '角色': 'device_role', '拓扑角色': 'device_role', 'Role': 'device_role', 'Topology Role': 'device_role', 'role': 'device_role', 'device_role': 'device_role',
   '功能': 'function', 'Function': 'function', 'function': 'function',
   '区域': 'zone', 'Zone': 'zone', 'zone': 'zone', '网络区域': 'zone', 'Network Zone': 'zone',
   '站点': 'site_id', 'Site': 'site_id', 'site_id': 'site_id',
@@ -250,9 +287,10 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     '浪潮': 'Inspur', '通用服务器': 'Generic Server',
   },
   device_role: {
-    '核心交换机': 'core', '汇聚交换机': 'distribution', '接入交换机': 'access', '边缘设备': 'edge',
+    '核心层': 'core', '汇聚层': 'distribution', '接入层': 'access', '边缘设备': 'edge',
     '交换机': 'switch', '路由器': 'router', '防火墙': 'firewall', '无线控制器': 'wireless_controller',
-    '无线接入点': 'wireless_ap', '负载均衡': 'load_balancer', 'VPN网关': 'vpn_gateway', 'SD-WAN边缘': 'sdwan_edge', '其他网络设备': 'other_network',
+    '无线接入点': 'wireless_ap', '负载均衡': 'load_balancer', 'VPN 网关': 'vpn_gateway', 'SD-WAN 边缘': 'sdwan_edge', '其他网络设备': 'other_network',
+    'WAF': 'waf', 'OOB 管理交换机': 'oob_switch', '未知': 'unknown',
     '业务服务器': 'application_server', '应用服务器': 'application_server', '数据库服务器': 'database_server', 'Web服务器': 'web_server',
     '文件服务器': 'file_server', '中间件服务器': 'middleware_server', '虚拟化宿主机': 'virtual_host', '存储服务器': 'storage',
     '备份服务器': 'backup_server', '其他服务器': 'other_server', '服务器': 'server', '存储设备': 'storage', '其他': 'other',
@@ -262,6 +300,21 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     application_server: 'application_server', database_server: 'database_server', web_server: 'web_server', file_server: 'file_server',
     middleware_server: 'middleware_server', virtual_host: 'virtual_host', backup_server: 'backup_server', other_server: 'other_server',
     server: 'server', storage: 'storage', other: 'other',
+  },
+  function: {
+    '核心路由/交换': 'Campus Core', '园区核心': 'Campus Core',
+    '汇聚路由/交换': 'Business Aggregation', '业务汇聚': 'Business Aggregation',
+    '接入交换': 'Terminal Access', '终端接入': 'Terminal Access',
+    '互联网边界': 'Internet Edge', 'DMZ 安全': 'DMZ Security',
+    '服务器接入': 'Server Access', '业务应用': 'Business Application',
+    '带外管理': 'OOB Management', '无线控制': 'Wireless Controller',
+    'WAN 边界': 'WAN Edge', '站点互联': 'Site Interconnect', '其他': 'Other', '未知': 'Unknown',
+  },
+  zone: {
+    '生产区': 'Production', '管理区': 'Management', '带外管理区': 'OOB',
+    '内网区': 'LAN', '广域网区': 'WAN', 'DMZ 区': 'DMZ',
+    '互联网区': 'Internet', '无线区': 'Wireless', '服务器区': 'Server',
+    '办公区': 'Office', '其他': 'Other', '未知': 'Unknown',
   },
   asset_origin: {
     '新设备': 'new', '新设备录入': 'new', new: 'new',

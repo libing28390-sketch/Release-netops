@@ -9,27 +9,12 @@ import TopologyInspectorPanel from '../components/TopologyInspectorPanel';
 import PageHero from '../components/PageHero';
 import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatus';
 import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices';
+import { topologyRoleLabel } from '../domain/topologyRoles';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
 type TopologyProtocolFilter = 'all' | 'lldp';
 type TopologyGraphView = 'all' | 'physical' | 'l2' | 'l3' | 'logical' | 'site' | 'external' | 'oob';
-
-const TOPOLOGY_ROLE_LABELS: Record<string, { zh: string; en: string }> = {
-  access: { zh: '接入层', en: 'Access' },
-  core: { zh: '核心层', en: 'Core' },
-  distribution: { zh: '汇聚层', en: 'Distribution' },
-  firewall: { zh: '防火墙', en: 'Firewall' },
-  router: { zh: '路由器', en: 'Router' },
-  load_balancer: { zh: '负载均衡', en: 'Load Balancer' },
-  waf: { zh: 'WAF', en: 'WAF' },
-  vpn_gateway: { zh: 'VPN 网关', en: 'VPN Gateway' },
-};
-
-const topologyRoleLabel = (role: string, language: string): string => {
-  const labels = TOPOLOGY_ROLE_LABELS[role];
-  return labels ? (language === 'zh' ? labels.zh : labels.en) : role;
-};
 
 interface TopologyStats {
   nodeCount: number;
@@ -114,7 +99,10 @@ const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, s
       siteMap.set(id, {
         id,
         name: String(site.site_name || site.site_code || id),
-        deviceCount: Number(site.device_count || 0),
+        // The API summary is retained for links/orphans, but visible device
+        // counts must be rebuilt from the current filtered inventory. The old
+        // code seeded this value and then added the same devices again.
+        deviceCount: 0,
         linkCount: Number(site.link_count || 0),
         orphanCount: Number(site.orphan_devices || 0),
         offlineCount: Number(site.offline_devices || 0),

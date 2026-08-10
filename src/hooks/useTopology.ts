@@ -241,37 +241,14 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
       const graphNodes = Array.isArray(graphPayload?.nodes) ? graphPayload.nodes : [];
       const graphEdges = Array.isArray(graphPayload?.edges) ? graphPayload.edges : [];
       const nodeMap = new Map<string, any>(graphNodes.map((node: any) => [String(node.id), node]));
-      const graphOnlyDevices: Device[] = [];
       graphNodes.forEach((node: any) => {
         const nodeId = String(node.id || '').trim();
-        const deviceId = String(node.device_id || nodeId).trim();
+        // SITE/GROUP/EXTERNAL/UNKNOWN nodes are graph bookkeeping objects,
+        // not CMDB assets. Do not merge them into the device inventory: doing
+        // so duplicates site counts and creates a false “unassigned site”.
+        if (!node.device_id) return;
+        const deviceId = String(node.device_id).trim();
         if (!deviceId) return;
-        if (!node.device_id) {
-          graphOnlyDevices.push({
-            id: deviceId,
-            hostname: String(node.display_name || node.canonical_key || deviceId),
-            ip_address: String(node.metadata?.ip_address || ''),
-            platform: 'topology-graph',
-            // SITE/GROUP/EXTERNAL/UNKNOWN are graph objects, not monitored
-            // assets.  Keep them visible without reporting a false online
-            // state in the device counters and details.
-            status: 'pending',
-            compliance: 'unknown',
-            sn: '',
-            model: '',
-            version: '',
-            role: String(node.role_identity || 'Unknown'),
-            site: String(node.site_id || ''),
-            site_id: node.site_id || undefined,
-            uptime: '',
-            connection_method: 'ssh',
-            config_history: [],
-            device_category: String(node.node_type || 'UNKNOWN'),
-            function: node.function || '',
-            zone: node.zone || 'Unknown',
-            topology_node_type: node.node_type,
-          });
-        }
         graphNodeMetadata[deviceId] = {
           topology_node_id: nodeId,
           topology_rank: Number(node.rank || 0),
@@ -323,7 +300,9 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
           };
         })
         .filter(Boolean);
-      setTopologyGraphNodeDevices(graphOnlyDevices);
+      // Graph-only bookkeeping nodes are intentionally excluded from the
+      // primary asset canvas and its site/device counters.
+      setTopologyGraphNodeDevices([]);
       // During a rolling upgrade the legacy physical table can be populated
       // before the evidence projection catches up. Keep that safe fallback
       // only for the physical view; logical/OOB views must not be polluted by

@@ -150,6 +150,7 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
   const zh = language === 'zh';
   const [relationDraft, setRelationDraft] = useState('UNKNOWN');
   const [relationSaving, setRelationSaving] = useState(false);
+  const [relationError, setRelationError] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyItems, setHistoryItems] = useState<Array<{
@@ -166,6 +167,7 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
 
   React.useEffect(() => {
     setRelationDraft(String(selectedTopologyLink?.relation_type || 'UNKNOWN').toUpperCase());
+    setRelationError('');
     setHistoryOpen(false);
     setHistoryItems([]);
   }, [selectedTopologyLink?.id, selectedTopologyLink?.relation_type]);
@@ -176,6 +178,9 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
     setRelationSaving(true);
     try {
       await onConfirmTopologyRelation(edgeId, relationDraft);
+      setRelationError('');
+    } catch (error) {
+      setRelationError(error instanceof Error ? error.message : (zh ? '关系保存失败' : 'Failed to save relation'));
     } finally {
       setRelationSaving(false);
     }
@@ -196,6 +201,17 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
       setHistoryLoading(false);
     }
   };
+
+  const selectedRelationType = String(selectedTopologyLink?.relation_type || 'UNKNOWN').toUpperCase();
+  const showRelationConfirmation = Boolean(
+    selectedTopologyLink
+    && (
+      !['PHYSICAL', 'UNKNOWN'].includes(selectedRelationType)
+      || selectedTopologyLink.manual_confirmed
+      || selectedTopologyLink.is_manual
+      || selectedTopologyLink.semantic_relation
+    ),
+  );
 
   /* ── empty state ── */
   if (!selectedTopologyDevice) {
@@ -362,6 +378,7 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
                 · {formatTopologyLastSeen(selectedTopologyLink.last_seen)}
               </span>
             </div>
+            {showRelationConfirmation && (
             <div className="mt-3 rounded-lg bg-white/70 p-2.5 ring-1 ring-slate-200/70">
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                 <ShieldCheck size={13} className="text-cyan-600" />
@@ -395,6 +412,7 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
                 <span>{zh ? '关系判断可信度' : 'Semantic'}: {Math.round(Number(selectedTopologyLink.semantic_confidence || 0) * 100)}%</span>
                 {selectedTopologyLink.semantic_relation && <span>{zh ? '语义' : 'Meaning'}: {selectedTopologyLink.semantic_relation}</span>}
               </div>
+              {relationError && <p className="mt-2 text-[10px] font-semibold text-rose-600">{relationError}</p>}
               <button
                 type="button"
                 onClick={() => { void toggleHistory(); }}
@@ -419,6 +437,7 @@ const TopologyInspectorPanel: React.FC<TopologyInspectorPanelProps> = ({
                 </div>
               )}
             </div>
+            )}
           </div>
         )}
 
