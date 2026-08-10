@@ -172,7 +172,7 @@ bash scripts/deploy-docker.sh save-images /tmp/nexora-images-$(date +%Y%m%d-%H%M
 ```
 nexora-netops:latest
 nexora-nginx:latest
-postgres:17-alpine
+nexora-postgres:latest
 ```
 
 将镜像包、校验文件以及部署目录中的以下文件传到离线服务器：
@@ -362,7 +362,7 @@ bash scripts/deploy-docker.sh load-images /data/packages/nexora-images-20260728.
 bash scripts/deploy-docker.sh start-offline
 ```
 
-如果导入失败，先检查镜像包的 SHA-256 校验值、磁盘空间和 CPU 架构；如果提示镜像标签缺失，重新导入包含 `nexora-netops:latest`、`nexora-nginx:latest` 和 `postgres:17-alpine` 的完整归档。
+如果导入失败，先检查镜像包的 SHA-256 校验值、磁盘空间和 CPU 架构；如果提示镜像标签缺失，重新导入包含 `nexora-netops:latest`、`nexora-nginx:latest` 和 `nexora-postgres:latest` 的完整归档。
 
 ### 5. 页面正常，但设备连接失败
 

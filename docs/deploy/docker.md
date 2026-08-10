@@ -6,10 +6,15 @@
 
 | 文件 | 作用 |
 |------|------|
-| `docker-compose.yml` | 编排 PostgreSQL 17 + 后端 + Nginx |
+| `docker-compose.yml` | 编排带 pgvector/pg_trgm 的 PostgreSQL 17 + 后端 + Nginx |
+| `docker/postgres/Dockerfile` | 基于 pgvector 的 PostgreSQL 镜像（包含 pg_trgm） |
 | `Dockerfile` | 后端镜像构建（含前端容器内编译） |
 | `.dockerignore` | 构建上下文忽略规则（必须在根目录才生效） |
 | `nginx/` | Nginx 配置与 SSL 证书目录 |
+
+数据库镜像固定基于 `pgvector/pgvector:0.8.6-pg17-bookworm`，并额外安装
+`postgresql-contrib-17`，因此迁移 `0104_ai_pgvector_rag` 所需的 `vector` 和
+`pg_trgm` 都能在数据库启动前使用。
 
 > 这些文件**保持在根目录**，所以下面所有命令都直接在仓库根目录执行，无需 `-f` 指定路径。
 
@@ -54,7 +59,7 @@ bash scripts/deploy-docker.sh save-images /tmp/nexora-images-$(date +%Y%m%d-%H%M
 ```text
 nexora-netops:latest
 nexora-nginx:latest
-postgres:17-alpine
+nexora-postgres:latest
 ```
 
 将以下文件以及部署目录中的 `docker-compose.yml`、`.env` 和 `nginx/ssl/` 传到离线服务器：
@@ -90,7 +95,7 @@ docker compose up -d --no-build --pull never --remove-orphans
 
 | 容器 | 镜像 / 来源 | 端口 |
 |------|-----------|------|
-| `db` | `postgres:17-alpine` | 内部 5432 |
+| `db` | 本地 `docker/postgres/Dockerfile` 构建的 `nexora-postgres:latest`（pgvector + pg_trgm） | 内部 5432 |
 | `netops` | 本地 `Dockerfile` 构建 | 内部 8003 |
 | `nginx` | `nginx:1.27-alpine` | 对外 80 / 443 |
 

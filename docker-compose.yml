@@ -2,7 +2,10 @@ name: nexora
 
 services:
   db:
-    image: postgres:17-alpine
+    image: nexora-postgres:latest
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
     container_name: nexora-db
     environment:
       # These variables can be overridden in the .env file

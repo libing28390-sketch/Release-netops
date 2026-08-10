@@ -187,8 +187,9 @@ validate_compose() {
 
 build_and_start() {
     validate_compose
-    docker compose pull db
-    docker compose build --pull netops nginx
+    # Build the database image first so pgvector and pg_trgm are present before
+    # the application container starts its migrations.
+    docker compose build --pull db netops nginx
     docker compose up -d --force-recreate --remove-orphans
     docker compose ps
 }
@@ -197,7 +198,7 @@ required_images() {
     printf '%s\n' \
         "nexora-netops:latest" \
         "nexora-nginx:latest" \
-        "postgres:17-alpine"
+        "nexora-postgres:latest"
 }
 
 verify_required_images() {
@@ -257,7 +258,7 @@ reset_data() {
     fi
     docker compose down -v --remove-orphans --rmi local
     # Explicit image tags are not always covered by --rmi local.
-    docker image rm -f nexora-netops nexora-nginx >/dev/null 2>&1 || true
+    docker image rm -f nexora-netops nexora-nginx nexora-postgres >/dev/null 2>&1 || true
     rm -f nginx/ssl/netops.crt nginx/ssl/netops.key
     log "NetOps Docker data reset complete"
 }

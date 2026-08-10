@@ -28,7 +28,7 @@
 
 | 容器服务 | 镜像与来源 | 内部/对外端口 | 挂载卷（Volume）与作用 |
 | :--- | :--- | :--- | :--- |
-| **`db`** | `postgres:17-alpine` | 内部 `5432` | `nexora-pgdata`：生产级关系数据库持久化存储 |
+| **`db`** | 本地 `docker/postgres/Dockerfile` 构建的 `nexora-postgres:latest`（pgvector + pg_trgm） | 内部 `5432` | `nexora-pgdata`：生产级关系数据库持久化存储 |
 | **`netops`** | 本地 `Dockerfile` 编译构建 | 内部 `8003` | `nexora-data`（运行数据）、`nexora-backup`（配置备份）、`nexora-dist`（构建产物导出） |
 | **`nginx`** | `nginx:1.27-alpine` | 对外 `80` / `443` | 挂载 `nexora-dist` 静态网页与 `./nginx/ssl` 证书目录，提供反向代理与 HTTPS |
 
@@ -89,7 +89,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-> 💡 **构建提示**：首次启动会拉取 PostgreSQL 和 Nginx 基础镜像，并在后端镜像构建阶段编译 React 前端代码。如果生产服务器无法访问镜像仓库，请先在联网构建机执行 `bash scripts/deploy-docker.sh save-images <archive-path>`，再在目标服务器执行 `load-images` 和 `start-offline`。
+> 💡 **构建提示**：首次启动会拉取 pgvector/PostgreSQL 和 Nginx 基础镜像，并在后端镜像构建阶段编译 React 前端代码。如果生产服务器无法访问镜像仓库，请先在联网构建机执行 `bash scripts/deploy-docker.sh save-images <archive-path>`，再在目标服务器执行 `load-images` 和 `start-offline`。
 
 ---
 

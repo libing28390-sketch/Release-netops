@@ -133,7 +133,7 @@ NetOps 在 Docker 编排中采用三容器解耦架构：
 
 | 容器名称 | 镜像来源 | 对外/对内端口 | 挂载卷/说明 |
 | :--- | :--- | :--- | :--- |
-| **`db`** | `postgres:17-alpine` | 内网监听 `5432` | 挂载 `nexora-pgdata` 卷，存储核心关系数据库数据。 |
+| **`db`** | 本地 `docker/postgres/Dockerfile` 构建的 `nexora-postgres:latest`（pgvector + pg_trgm） | 内网监听 `5432` | 挂载 `nexora-pgdata` 卷，存储核心关系数据库数据。 |
 | **`netops`** | 本地 `Dockerfile` 编译镜像 | 内部 `8003` | 挂载本地 `data/` 目录；运行基于 FastAPI 的后端业务逻辑。 |
 | **`nginx`** | `nginx:1.27-alpine` | 宿主机映射 `80` (HTTP) / `443` (HTTPS) | 挂载 `nginx/nginx.conf` 及 SSL 目录，负责反向代理、WebSocket 代理和前端 React 静态资源分发。 |
 
