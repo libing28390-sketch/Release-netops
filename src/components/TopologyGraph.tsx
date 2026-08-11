@@ -9,7 +9,10 @@ import {
 } from '../utils/topologyAggregation';
 import { buildTopologyExportFilename, getTopologyExportPixelRatio } from '../utils/topologyExport';
 import { buildFoldedChainPositions, buildRingGroupPositions, repairTopologyLayout } from '../utils/topologyLayout';
-import { buildTopologyRoleLayeredPositions } from '../utils/topologyRoleLayout';
+import {
+  buildTopologyRoleLayeredPositions,
+  repairTopologyRoleLayeredPositions,
+} from '../utils/topologyRoleLayout';
 import { canonicalTopologyRole, topologyRoleLabel } from '../domain/topologyRoles';
 
 const topologyIconAssets = import.meta.glob('../assets/topology/devices/**/*.svg', {
@@ -379,12 +382,15 @@ type TopologyLayoutMode = 'hierarchy' | 'horizontal' | 'force' | 'radial';
 type PortLabelMode = 'auto' | 'visible' | 'hidden';
 
 const getLayerTone = (device: Device) => {
-  const roleValue = device.role_identity || device.role || device.device_category;
-  const roleKey = canonicalTopologyRole(roleValue);
+  const roleCandidates = [device.role_identity, device.role, device.device_category];
+  const roleKey = roleCandidates
+    .map((value) => canonicalTopologyRole(value))
+    .find((value) => value && value !== 'unknown') || canonicalTopologyRole(roleCandidates[0]);
   const roleLabel = roleKey ? topologyRoleLabel(roleKey, 'zh') : '';
   const layer = getDeviceTopologyLayer(device);
-  // Keep the imported topology role readable beside the node. Evidence ranks
-  // still control placement, but must not replace the role identity.
+  // Keep the imported topology role readable beside the node. Role tiers
+  // control the visual hierarchy when they are available; evidence ranks are
+  // still retained for semantic topology data and fallback layouts.
   if (roleLabel) {
     const roleTone = roleKey === 'firewall'
       ? { color: '#b91c1c', soft: 'rgba(185,28,28,0.14)' }
@@ -855,7 +861,7 @@ const calculateAutoLayoutPositions = (
 
 const clampPosition = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const TOPOLOGY_LAYOUT_STORAGE_KEY = 'nexora.topology.layout.v6';
-const TOPOLOGY_LAYOUT_SCHEMA = 'evidence-relationship-v5';
+const TOPOLOGY_LAYOUT_SCHEMA = 'topology-role-hierarchy-v6';
 
 type PersistedTopologyLayout = {
   schema?: string;
@@ -1870,7 +1876,16 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const layeredPositions = layoutMode === 'hierarchy' ? buildLayeredPositions(graphDevices, width, height) : null;
     const linearPositions = layoutMode === 'horizontal' ? buildLinearPositions(graphDevices, graphLinks, width, height) : null;
     const radialPositions = layoutMode === 'radial' ? buildRadialPositions(graphDevices, width, height) : null;
-    const structuredPositions = layeredPositions || linearPositions || radialPositions;
+    const baseStructuredPositions = layeredPositions || linearPositions || radialPositions;
+    const structuredPositions = layeredPositions
+      ? repairTopologyRoleLayeredPositions(
+        graphDevices,
+        layeredPositions,
+        persistedPositionsRef.current,
+        width,
+        height,
+      )
+      : baseStructuredPositions;
     const hasCompletePersistedPositions = graphDevices.length > 0 && graphDevices.every((device) => {
       const position = persistedPositionsRef.current[device.id];
       return Number.isFinite(position?.x) && Number.isFinite(position?.y);
@@ -1899,6 +1914,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         x = ringPositions[device.id].x;
         y = ringPositions[device.id].y;
       } else if (layoutMode === 'hierarchy' && structuredPositions?.[device.id]) {
+        x = structuredPositions[device.id].x;
         y = structuredPositions[device.id].y;
       } else if (layoutMode === 'horizontal' && structuredPositions?.[device.id]) {
         x = structuredPositions[device.id].x;
@@ -2703,6 +2719,15 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('stroke-width', 1)
       .attr('filter', 'none');
 
+    const getDeviceLabelMaxWidth = (device: any): number => {
+      const sameRowDistances = nodes
+        .filter((other: any) => other.id !== device.id && Math.abs(Number(other.y) - Number(device.y)) <= 4)
+        .map((other: any) => Math.abs(Number(other.x) - Number(device.x)))
+        .filter((distance: number) => Number.isFinite(distance) && distance > 0);
+      const nearest = sameRowDistances.length > 0 ? Math.min(...sameRowDistances) : 220;
+      return Math.max(56, Math.min(220, nearest - 18));
+    };
+
     const nodeHostnameText = nodeLabelGroup.append('text')
       .attr('y', 7.5)
       .attr('text-anchor', 'middle')
@@ -2711,7 +2736,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .attr('font-family', '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif')
       .attr('font-size', '12.5px')
       .attr('font-weight', '800')
-      .text((d: any) => String(d.hostname || '').toUpperCase());
+      .text((d: any) => {
+        const hostname = String(d.hostname || '').toUpperCase();
+        return hostname ? fitTopologyLabelText(hostname, getDeviceLabelMaxWidth(d) * 0.78) : '';
+      });
 
     // Fit each device name background to its rendered text instead of using
     // a large fixed box that leaves excessive whitespace around short names.

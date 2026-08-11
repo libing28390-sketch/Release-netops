@@ -20,9 +20,10 @@ export const NETWORK_TOPOLOGY_ROLE_OPTIONS = [
 export const NETWORK_TOPOLOGY_ROLE_VALUES: string[] = NETWORK_TOPOLOGY_ROLE_OPTIONS.map(option => option.value);
 
 /**
- * Visual tiers are a presentation fallback for physical graphs whose links
- * do not carry a directed hierarchy relation. They must not be written back
- * as evidence-derived `topology_rank` values.
+ * Visual tiers define the presentation order for imported topology roles.
+ * They must not be written back as evidence-derived `topology_rank` values;
+ * relationship ranks remain semantic data and the layout can fall back to
+ * them when role information is unavailable.
  *
  * The import/API contract uses the canonical English keys, but accepting the
  * previous Chinese labels and legacy keys here keeps already imported assets

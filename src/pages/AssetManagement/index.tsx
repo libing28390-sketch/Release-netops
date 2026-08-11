@@ -1114,7 +1114,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['绑定凭据', '可选', '普通/登录凭据名称或 ID，如：cred-cisco-core'],
       ['绑定特权凭据', '可选', '特权/管理员凭据名称或 ID，如：cred-cisco-admin'],
       ['标签代码', '可选', '多个标签代码用英文逗号分隔，例如：vendor.cisco,platform.cisco_ios'],
-      ['拓扑角色', '网络设备必填', '使用统一下拉值；角色记录设备身份，拓扑层级仍由链路关系证据计算。'],
+      ['拓扑角色', '网络设备必填', '使用统一下拉值；核心/汇聚/接入用于拓扑视觉分层，链路关系证据仍保留用于关系语义。'],
       ['功能/区域', '推荐填写', '使用统一下拉值，便于拓扑筛选与语义展示。'],
     ] : [
       ['Asset Import Instructions'],
@@ -1129,7 +1129,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       ['Credential', 'Optional', 'Existing normal credential name or ID from the vault, e.g. cred-cisco-core'],
       ['Admin Credential', 'Optional', 'Existing admin credential name or ID from the vault, e.g. cred-cisco-admin'],
       ['Tags', 'Optional', 'Comma-separated stable tag codes, e.g. vendor.cisco,platform.cisco_ios'],
-      ['Topology Role', 'Network devices', 'Use the unified list; hierarchy still comes from relationship evidence.'],
+      ['Topology Role', 'Network devices', 'Use the unified list; Core/Distribution/Access drive the visual tiers while relationship evidence remains semantic.'],
       ['Function / Zone', 'Recommended', 'Use the unified lists for topology filtering and semantics.'],
     ];
     const wsGuide = XLSX.utils.aoa_to_sheet(guideRows);
