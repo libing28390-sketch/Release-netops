@@ -90,6 +90,7 @@ interface Link {
   source_port_normalized?: string;
   target_port_normalized?: string;
   discovery_source?: string;
+  discovery_sources?: string[];
   operational_state?: 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
   bandwidth_mbps?: number | null;
   link_kind?: 'physical' | 'aggregation' | string;
@@ -771,8 +772,8 @@ const fitTopologyLabelText = (label: string, maxWidth: number): string => {
   return `${result || Array.from(label)[0] || ''}${suffix}`;
 };
 
-const buildLayeredPositions = (devices: Device[], width: number, height: number) =>
-  buildTopologyRoleLayeredPositions(devices, width, height);
+const buildLayeredPositions = (devices: Device[], width: number, height: number, links: Link[] = []) =>
+  buildTopologyRoleLayeredPositions(devices, width, height, links);
 
 const buildLinearPositions = (devices: Device[], links: Link[], width: number, height: number) => {
   const order = getLinearChainOrder(devices, links);
@@ -1586,10 +1587,10 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
   useEffect(() => {
     const persistedLayout = readPersistedLayout();
-    // The canvas intentionally has one supported layout: evidence hierarchy
-    // with a role-tier fallback for undirected physical graphs.
-    // Bump the schema so positions saved by the old force-layout fallback do
-    // not keep a newly imported role hierarchy in its previous arrangement.
+    // The canvas intentionally has one supported layout: role-tier hierarchy
+    // with LLDP-aware horizontal ordering and evidence-rank fallback.
+    // Keep the schema check so incompatible saved coordinates do not override
+    // a newly imported role hierarchy.
     setLayoutMode('hierarchy');
     // Keep the default topology presentation on direct links.  An older
     // saved `orthogonal` preference must not unexpectedly turn diagonal
@@ -1873,7 +1874,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     });
 
     const { positions: seededPositions, siteAnchors } = buildSeedPositions(graphDevices, width, height);
-    const layeredPositions = layoutMode === 'hierarchy' ? buildLayeredPositions(graphDevices, width, height) : null;
+    const layeredPositions = layoutMode === 'hierarchy' ? buildLayeredPositions(graphDevices, width, height, graphLinks) : null;
     const linearPositions = layoutMode === 'horizontal' ? buildLinearPositions(graphDevices, graphLinks, width, height) : null;
     const radialPositions = layoutMode === 'radial' ? buildRadialPositions(graphDevices, width, height) : null;
     const baseStructuredPositions = layeredPositions || linearPositions || radialPositions;
@@ -1884,6 +1885,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         persistedPositionsRef.current,
         width,
         height,
+        graphLinks,
       )
       : baseStructuredPositions;
     const hasCompletePersistedPositions = graphDevices.length > 0 && graphDevices.every((device) => {

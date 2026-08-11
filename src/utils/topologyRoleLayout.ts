@@ -15,6 +15,15 @@ export type TopologyRoleLayoutPoint = {
   y: number;
 };
 
+export type TopologyRoleLayoutLink = {
+  source_device_id?: unknown;
+  target_device_id?: unknown;
+  relation_type?: unknown;
+  discovery_source?: unknown;
+  discovery_sources?: unknown;
+  inferred?: unknown;
+};
+
 export type TopologyLayerSource = 'evidence' | 'role';
 
 export type TopologyLayerSelection = {
@@ -96,6 +105,217 @@ const compareDevices = (left: TopologyRoleLayoutDevice, right: TopologyRoleLayou
   })
 );
 
+type TopologyLayoutEdge = {
+  sourceId: string;
+  targetId: string;
+};
+
+const normalizeLinkEndpoint = (value: unknown): string => String(value ?? '').trim();
+
+const normalizeLinkSources = (link: TopologyRoleLayoutLink): string[] => {
+  const values = [
+    ...(Array.isArray(link.discovery_sources) ? link.discovery_sources : [link.discovery_sources]),
+    link.discovery_source,
+  ];
+  return values
+    .flatMap((value) => String(value || '').split(/[+,\s]+/u))
+    .map((value) => value.trim().toUpperCase())
+    .filter(Boolean);
+};
+
+const isPhysicalLayoutLink = (link: TopologyRoleLayoutLink): boolean => {
+  if (link.inferred === true || Number(link.inferred) === 1) return false;
+  const relation = String(link.relation_type || '').trim().toUpperCase();
+  const sources = normalizeLinkSources(link);
+  const hasDiscoveryEvidence = sources.some((source) => source === 'LLDP' || source === 'CDP');
+  if (relation === 'PHYSICAL' || hasDiscoveryEvidence) return true;
+  // Legacy physical-link responses may not expose relation_type, but they are
+  // still safe to use when they are explicitly marked as non-inferred.
+  return !relation;
+};
+
+const collectPhysicalLayoutEdges = (links: TopologyRoleLayoutLink[]): TopologyLayoutEdge[] => {
+  const seen = new Set<string>();
+  const edges: TopologyLayoutEdge[] = [];
+  links.forEach((link) => {
+    if (!isPhysicalLayoutLink(link)) return;
+    const sourceId = normalizeLinkEndpoint(link.source_device_id);
+    const targetId = normalizeLinkEndpoint(link.target_device_id);
+    if (!sourceId || !targetId || sourceId === targetId) return;
+    const [left, right] = [sourceId, targetId].sort();
+    const key = `${left}::${right}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push({ sourceId: left, targetId: right });
+  });
+  return edges;
+};
+
+const cloneLayerOrder = (order: Map<number, string[]>): Map<number, string[]> => (
+  new Map(Array.from(order.entries()).map(([layer, ids]) => [layer, [...ids]]))
+);
+
+const buildOrderIndexes = (order: Map<number, string[]>): Map<string, number> => {
+  const result = new Map<string, number>();
+  order.forEach((ids) => ids.forEach((id, index) => result.set(id, index)));
+  return result;
+};
+
+const countCrossingsForLayerOrder = (
+  order: Map<number, string[]>,
+  layerById: Map<string, number>,
+  edges: TopologyLayoutEdge[],
+): number => {
+  const layerOrder = Array.from(order.keys()).sort((left, right) => left - right);
+  const rowIndexByLayer = new Map(layerOrder.map((layer, index) => [layer, index]));
+  const positionById = buildOrderIndexes(order);
+  const edgePairs = new Map<string, Array<[number, number]>>();
+
+  edges.forEach(({ sourceId, targetId }) => {
+    const sourceLayer = layerById.get(sourceId);
+    const targetLayer = layerById.get(targetId);
+    if (sourceLayer === undefined || targetLayer === undefined || sourceLayer === targetLayer) return;
+    const sourceRow = rowIndexByLayer.get(sourceLayer);
+    const targetRow = rowIndexByLayer.get(targetLayer);
+    const sourcePosition = positionById.get(sourceId);
+    const targetPosition = positionById.get(targetId);
+    if (sourceRow === undefined || targetRow === undefined || sourcePosition === undefined || targetPosition === undefined) return;
+
+    const isSourceAbove = sourceRow < targetRow;
+    const upperRow = isSourceAbove ? sourceRow : targetRow;
+    const lowerRow = isSourceAbove ? targetRow : sourceRow;
+    const upperPosition = isSourceAbove ? sourcePosition : targetPosition;
+    const lowerPosition = isSourceAbove ? targetPosition : sourcePosition;
+    const key = `${upperRow}:${lowerRow}`;
+    const pairs = edgePairs.get(key) || [];
+    pairs.push([upperPosition, lowerPosition]);
+    edgePairs.set(key, pairs);
+  });
+
+  let crossings = 0;
+  edgePairs.forEach((pairs) => {
+    for (let leftIndex = 0; leftIndex < pairs.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < pairs.length; rightIndex += 1) {
+        const [leftUpper, leftLower] = pairs[leftIndex];
+        const [rightUpper, rightLower] = pairs[rightIndex];
+        if (leftUpper === rightUpper || leftLower === rightLower) continue;
+        if ((leftUpper - rightUpper) * (leftLower - rightLower) < 0) crossings += 1;
+      }
+    }
+  });
+  return crossings;
+};
+
+const orderLayeredRowsByLinks = (
+  grouped: Map<number, TopologyRoleLayoutDevice[]>,
+  devices: TopologyRoleLayoutDevice[],
+  selection: TopologyLayerSelection,
+  links: TopologyRoleLayoutLink[],
+): Map<number, string[]> => {
+  const deviceById = new Map(devices.map((device) => [device.id, device]));
+  const layerById = new Map<string, number>();
+  devices.forEach((device, index) => {
+    const layer = selection.layers[index];
+    if (layer !== null) layerById.set(device.id, layer);
+  });
+  const edges = collectPhysicalLayoutEdges(links)
+    .filter(({ sourceId, targetId }) => deviceById.has(sourceId) && deviceById.has(targetId));
+  const neighbors = new Map<string, Set<string>>();
+  edges.forEach(({ sourceId, targetId }) => {
+    if (!neighbors.has(sourceId)) neighbors.set(sourceId, new Set());
+    if (!neighbors.has(targetId)) neighbors.set(targetId, new Set());
+    neighbors.get(sourceId)?.add(targetId);
+    neighbors.get(targetId)?.add(sourceId);
+  });
+
+  const order = new Map<number, string[]>();
+  grouped.forEach((rowDevices, layer) => {
+    order.set(layer, [...rowDevices].sort(compareDevices).map((device) => device.id));
+  });
+  if (edges.length === 0 || order.size < 2) return order;
+
+  const layerKeys = Array.from(order.keys()).sort((left, right) => left - right);
+  const stableIndexById = buildOrderIndexes(order);
+  let bestOrder = cloneLayerOrder(order);
+  let bestCrossings = countCrossingsForLayerOrder(order, layerById, edges);
+
+  for (let pass = 0; pass < 8; pass += 1) {
+    const rowIndexes = layerKeys.map((_, index) => index);
+    if (pass % 2 === 1) rowIndexes.reverse();
+    rowIndexes.forEach((rowIndex) => {
+      const layer = layerKeys[rowIndex];
+      const row = order.get(layer) || [];
+      if (row.length < 2) return;
+      const currentIndexes = buildOrderIndexes(order);
+      const currentRowLength = Math.max(row.length - 1, 1);
+      const scored = row.map((id, currentIndex) => {
+        const neighborPositions = Array.from(neighbors.get(id) || [])
+          .filter((neighborId) => layerById.get(neighborId) !== layer)
+          .map((neighborId) => {
+            const neighborLayer = layerById.get(neighborId);
+            const neighborIndex = currentIndexes.get(neighborId);
+            const neighborRow = neighborLayer === undefined ? undefined : order.get(neighborLayer);
+            if (neighborIndex === undefined || !neighborRow) return null;
+            return neighborRow.length > 1
+              ? (neighborIndex / (neighborRow.length - 1)) * currentRowLength
+              : currentRowLength / 2;
+          })
+          .filter((value): value is number => value !== null);
+        const barycenter = neighborPositions.length > 0
+          ? neighborPositions.reduce((sum, value) => sum + value, 0) / neighborPositions.length
+          : currentIndex;
+        return {
+          id,
+          barycenter,
+          currentIndex,
+          stableIndex: stableIndexById.get(id) ?? currentIndex,
+        };
+      });
+      scored.sort((left, right) => (
+        left.barycenter - right.barycenter
+        || left.currentIndex - right.currentIndex
+        || left.stableIndex - right.stableIndex
+        || compareDevices(deviceById.get(left.id) || { id: left.id }, deviceById.get(right.id) || { id: right.id })
+      ));
+      order.set(layer, scored.map((entry) => entry.id));
+    });
+
+    const crossings = countCrossingsForLayerOrder(order, layerById, edges);
+    if (crossings < bestCrossings) {
+      bestCrossings = crossings;
+      bestOrder = cloneLayerOrder(order);
+    }
+    if (bestCrossings === 0) break;
+  }
+  return bestOrder;
+};
+
+/** Count physical-link crossings for a rendered role-layer position map. */
+export const countTopologyLayerCrossings = (
+  devices: TopologyRoleLayoutDevice[],
+  links: TopologyRoleLayoutLink[],
+  positions: Record<string, TopologyRoleLayoutPoint>,
+): number => {
+  const selection = selectTopologyLayoutLayers(devices);
+  if (!selection) return 0;
+  const layerById = new Map<string, number>();
+  const grouped = new Map<number, TopologyRoleLayoutDevice[]>();
+  devices.forEach((device, index) => {
+    const layer = selection.layers[index];
+    if (layer === null || !isFinitePoint(positions[device.id])) return;
+    layerById.set(device.id, layer);
+    grouped.set(layer, [...(grouped.get(layer) || []), device]);
+  });
+  const order = new Map<number, string[]>();
+  grouped.forEach((rowDevices, layer) => {
+    order.set(layer, [...rowDevices].sort((left, right) => (
+      positions[left.id].x - positions[right.id].x
+      || compareDevices(left, right)
+    )).map((device) => device.id));
+  });
+  return countCrossingsForLayerOrder(order, layerById, collectPhysicalLayoutEdges(links));
+};
+
 const buildHorizontalRowPositions = (
   ids: string[],
   width: number,
@@ -117,14 +337,17 @@ const buildHorizontalRowPositions = (
 };
 
 /**
- * Build the deterministic top-to-bottom layout used by the hierarchy mode.
- * The returned null means that this graph has no usable hierarchy signal and
- * should continue through the existing force/chain fallback.
+ * Build the deterministic role-tier layout used by hierarchy mode. When
+ * physical LLDP/CDP links are available, their adjacency orders each row to
+ * reduce crossings; the returned null means that this graph has no usable
+ * hierarchy signal and should continue through the existing force/chain
+ * fallback.
  */
 export const buildTopologyRoleLayeredPositions = (
   devices: TopologyRoleLayoutDevice[],
   width: number,
   height: number,
+  links: TopologyRoleLayoutLink[] = [],
 ): Record<string, TopologyRoleLayoutPoint> | null => {
   if (devices.length === 0) return null;
   const selection = selectTopologyLayoutLayers(devices);
@@ -149,11 +372,10 @@ export const buildTopologyRoleLayeredPositions = (
   const layerGap = Math.min(170, Math.max(82, availableLayerHeight / layerCount));
   const totalLayerHeight = layerGap * Math.max(layerKeys.length - 1, 0);
   const firstLayerY = topInset + Math.max(0, (availableLayerHeight - totalLayerHeight) / 2);
+  const orderedRows = orderLayeredRowsByLinks(grouped, devices, selection, links);
 
   layerKeys.forEach((layer, index) => {
-    const rowIds = (grouped.get(layer) || [])
-      .sort(compareDevices)
-      .map((device) => device.id);
+    const rowIds = orderedRows.get(layer) || [];
     Object.assign(
       positions,
       buildHorizontalRowPositions(rowIds, width, height, firstLayerY + layerGap * index),
@@ -174,6 +396,7 @@ export const repairTopologyRoleLayeredPositions = (
   preferredPositions: Record<string, Partial<TopologyRoleLayoutPoint>> = {},
   width: number,
   height: number,
+  links: TopologyRoleLayoutLink[] = [],
 ): Record<string, TopologyRoleLayoutPoint> => {
   const repaired: Record<string, TopologyRoleLayoutPoint> = {};
   const rows = new Map<number, TopologyRoleLayoutDevice[]>();
@@ -185,11 +408,30 @@ export const repairTopologyRoleLayeredPositions = (
     rows.set(rowKey, [...(rows.get(rowKey) || []), device]);
   });
 
+  const structuredDevices = devices.filter((device) => isFinitePoint(structuredPositions[device.id]));
+  const hasCompletePreferredPositions = structuredDevices.length > 0 && structuredDevices.every((device) => (
+    Number.isFinite(Number(preferredPositions[device.id]?.x))
+  ));
+  const preferredLayeredPositions = hasCompletePreferredPositions
+    ? Object.fromEntries(structuredDevices.map((device) => [device.id, {
+      x: Number(preferredPositions[device.id].x),
+      y: structuredPositions[device.id].y,
+    }]))
+    : {};
+  const structuredCrossings = countTopologyLayerCrossings(devices, links, structuredPositions);
+  const preferredCrossings = hasCompletePreferredPositions
+    ? countTopologyLayerCrossings(devices, links, preferredLayeredPositions)
+    : Number.POSITIVE_INFINITY;
+  // Keep a valid manual layout when it is at least as clear as the generated
+  // LLDP order. If old/saved coordinates introduce more crossings, use the
+  // relationship-aware order instead of preserving a bad automatic layout.
+  const usePreferredPositions = hasCompletePreferredPositions && preferredCrossings <= structuredCrossings;
+
   rows.forEach((rowDevices, rowKey) => {
     const candidates = rowDevices.map((device) => {
       const base = structuredPositions[device.id];
       const preferred = preferredPositions[device.id];
-      const preferredX = Number(preferred?.x);
+      const preferredX = usePreferredPositions ? Number(preferred?.x) : Number.NaN;
       return {
         device,
         point: {

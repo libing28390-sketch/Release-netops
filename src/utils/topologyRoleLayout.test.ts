@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTopologyRoleLayeredPositions,
+  countTopologyLayerCrossings,
   repairTopologyRoleLayeredPositions,
   selectTopologyLayoutLayers,
   type TopologyRoleLayoutDevice,
+  type TopologyRoleLayoutLink,
 } from './topologyRoleLayout';
 
 const whDc02Devices: TopologyRoleLayoutDevice[] = [
@@ -85,5 +87,61 @@ describe('topology role-tier layout', () => {
     expect(repaired['dist-3'].y).toBe(structured?.['dist-3'].y);
     expect(repaired['access-5'].y).toBe(structured?.['access-5'].y);
     expect(accessX[0]).not.toBe(accessX[1]);
+  });
+
+  it('orders rows from LLDP adjacency to remove a crossing edge pair', () => {
+    const devices: TopologyRoleLayoutDevice[] = [
+      { id: 'core-a', hostname: 'CORE-A', role: 'core' },
+      { id: 'core-b', hostname: 'CORE-B', role: 'core' },
+      { id: 'access-a', hostname: 'ACCESS-A', role: 'access' },
+      { id: 'access-b', hostname: 'ACCESS-B', role: 'access' },
+    ];
+    const links: TopologyRoleLayoutLink[] = [
+      { source_device_id: 'core-a', target_device_id: 'access-b', relation_type: 'PHYSICAL', discovery_source: 'lldp' },
+      { source_device_id: 'core-b', target_device_id: 'access-a', relation_type: 'PHYSICAL', discovery_source: 'lldp' },
+    ];
+    const hostnameOrder = buildTopologyRoleLayeredPositions(devices, 1000, 480);
+    const lldpOrder = buildTopologyRoleLayeredPositions(devices, 1000, 480, links);
+
+    expect(hostnameOrder).not.toBeNull();
+    expect(lldpOrder).not.toBeNull();
+    expect(countTopologyLayerCrossings(devices, links, hostnameOrder || {})).toBe(1);
+    expect(countTopologyLayerCrossings(devices, links, lldpOrder || {})).toBe(0);
+    expect(lldpOrder?.['core-a'].x).toBeGreaterThan(lldpOrder?.['core-b'].x ?? 0);
+  });
+
+  it('does not use inferred logical links to reorder physical layers', () => {
+    const devices: TopologyRoleLayoutDevice[] = [
+      { id: 'core-a', hostname: 'CORE-A', role: 'core' },
+      { id: 'core-b', hostname: 'CORE-B', role: 'core' },
+      { id: 'access-a', hostname: 'ACCESS-A', role: 'access' },
+      { id: 'access-b', hostname: 'ACCESS-B', role: 'access' },
+    ];
+    const logicalLinks: TopologyRoleLayoutLink[] = [
+      { source_device_id: 'core-a', target_device_id: 'access-b', relation_type: 'L3_NEIGHBOR', discovery_source: 'ospf', inferred: true },
+      { source_device_id: 'core-b', target_device_id: 'access-a', relation_type: 'L3_NEIGHBOR', discovery_source: 'ospf', inferred: true },
+    ];
+    const baseline = buildTopologyRoleLayeredPositions(devices, 1000, 480);
+    const actual = buildTopologyRoleLayeredPositions(devices, 1000, 480, logicalLinks);
+
+    expect(actual).toEqual(baseline);
+  });
+
+  it('replaces saved positions when they create more crossings than LLDP order', () => {
+    const devices: TopologyRoleLayoutDevice[] = [
+      { id: 'core-a', hostname: 'CORE-A', role: 'core' },
+      { id: 'core-b', hostname: 'CORE-B', role: 'core' },
+      { id: 'access-a', hostname: 'ACCESS-A', role: 'access' },
+      { id: 'access-b', hostname: 'ACCESS-B', role: 'access' },
+    ];
+    const links: TopologyRoleLayoutLink[] = [
+      { source_device_id: 'core-a', target_device_id: 'access-b', relation_type: 'PHYSICAL', discovery_source: 'lldp' },
+      { source_device_id: 'core-b', target_device_id: 'access-a', relation_type: 'PHYSICAL', discovery_source: 'lldp' },
+    ];
+    const structured = buildTopologyRoleLayeredPositions(devices, 1000, 480, links) || {};
+    const savedCrossing = buildTopologyRoleLayeredPositions(devices, 1000, 480) || {};
+    const repaired = repairTopologyRoleLayeredPositions(devices, structured, savedCrossing, 1000, 480, links);
+
+    expect(countTopologyLayerCrossings(devices, links, repaired)).toBe(0);
   });
 });
