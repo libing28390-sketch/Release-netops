@@ -352,7 +352,10 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     Ubuntu: 'ubuntu', CentOS: 'centos', Debian: 'debian',
     'Cisco IOS': 'cisco_ios', 'Cisco NX-OS': 'cisco_nxos', 'Cisco IOS-XE': 'cisco_xe',
     'Huawei VRPv5': 'huawei_vrp', 'Huawei VRPv8': 'huawei_vrpv8',
-    'H3C Comware': 'hp_comware', 'H3C Comware V5': 'hp_comware', 'H3C Comware V7': 'h3c_comware', 'H3C Comware V9': 'h3c_comware9',
+    // An unversioned H3C value follows the current/default Comware V7
+    // identity. Keep the explicit V5 label mapped to hp_comware for legacy
+    // hardware.
+    'H3C Comware': 'h3c_comware', 'H3C Comware V5': 'hp_comware', 'H3C Comware V7': 'h3c_comware', 'H3C Comware V9': 'h3c_comware9',
     'Juniper JunOS': 'juniper_junos', 'Arista EOS': 'arista_eos', 'Ruijie RGOS': 'ruijie_rgos',
     FortiOS: 'fortinet', 'ZTE ZXROS': 'zte_zxros', 'Maipu Network OS': 'maipu',
     'Windows Server': 'windows', 'VMware ESXi': 'esxi',

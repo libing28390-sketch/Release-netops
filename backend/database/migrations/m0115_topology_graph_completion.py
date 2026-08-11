@@ -179,7 +179,12 @@ def _create_graph_tables(cursor) -> None:
 
 
 def _seed_protocol_actions(cursor) -> None:
-    """Backfill read-only ISIS/STP actions into published system releases."""
+    """Backfill topology actions into published system releases.
+
+    Aggregation is part of the topology read model. Including it here also
+    repairs installations that stopped at this migration before the registry
+    action was persisted for a concrete H3C profile.
+    """
     try:
         from services.platform_registry_service import (
             SYSTEM_PROFILES,
@@ -202,7 +207,7 @@ def _seed_protocol_actions(cursor) -> None:
     actions = {
         item.get("action_code"): item
         for item in iter_action_definitions()
-        if item.get("action_code") in {"get_stp", "get_isis_neighbors"}
+        if item.get("action_code") in {"get_link_aggregation", "get_stp", "get_isis_neighbors"}
     }
     for action_code, action in actions.items():
         cursor.execute(

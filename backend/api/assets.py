@@ -77,14 +77,19 @@ def _utc_now() -> str:
 # ── helpers: devices ↔ physical_assets sync ──────────────────────────
 
 def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> str:
-    """Map asset vendor string to a best-guess Scrapli/Netmiko platform."""
+    """Map an asset vendor to the canonical persisted platform identity.
+
+    ``hp_comware`` is retained as the explicit Comware V5 profile and as the
+    Netmiko/TextFSM driver family. A vendor-only H3C fallback must use the
+    current Comware V7 identity instead of silently creating a V5 record.
+    """
     v = (vendor or '').lower()
     if 'cisco' in v:
         return 'cisco_iosxe'
     if 'huawei' in v:
         return 'huawei_vrp'
     if 'h3c' in v or 'comware' in v:
-        return 'hp_comware'
+        return 'h3c_comware'
     if 'arista' in v:
         return 'arista_eos'
     if 'juniper' in v:
