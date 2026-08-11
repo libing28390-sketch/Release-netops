@@ -648,6 +648,222 @@ def _interface_is_up(row: dict[str, Any]) -> bool:
     }
 
 
+def _is_logical_aggregation_interface(row: dict[str, Any]) -> bool:
+    """Recognise a logical LAG row without requiring a prior DB binding.
+
+    Older interface collectors persisted the vendor-native aggregation rows
+    as ``physical`` and left ``parent_interface_id`` empty.  The name is still
+    authoritative for the read path; membership is resolved separately from
+    the parallel link group and capacity below.
+    """
+    interface_type = str(row.get('interface_type') or '').strip().lower()
+    if interface_type in {'port_channel', 'port-channel', 'lag', 'aggregation'}:
+        return True
+    compact = re.sub(r'[^a-z0-9-]', '', str(row.get('interface_name') or '').strip().lower())
+    return bool(re.match(
+        r'^(?:bridge-aggregation|route-aggregation|eth-trunk|port-channel|portchannel|bagg|ragg|po|be)\d+$',
+        compact,
+    ))
+
+
+def _aggregation_family_key(value: Any) -> tuple[str, str] | None:
+    """Return a stable family/number key for common LAG display aliases."""
+    compact = re.sub(r'[^a-z0-9]', '', str(value or '').strip().lower())
+    match = re.match(
+        r'^(bridgeaggregation|bagg|routeaggregation|ragg|ethtrunk|portchannel|po|be)(\d+)$',
+        compact,
+    )
+    if not match:
+        return None
+    prefix, number = match.groups()
+    if prefix in {'bridgeaggregation', 'bagg'}:
+        family = 'bridge'
+    elif prefix in {'routeaggregation', 'ragg'}:
+        family = 'route'
+    else:
+        family = 'trunk'
+    return family, number
+
+
+def _load_runtime_aggregation_candidates(conn) -> dict[str, list[dict[str, Any]]]:
+    """Load logical LAG candidates for read-time contract synthesis.
+
+    This function is deliberately read-only.  It exists for rolling upgrades
+    where the interface table has logical rows but member parent bindings have
+    not been written yet; no inventory backfill or mutation is performed.
+    """
+    rows = [dict(row) for row in conn.execute(
+        '''
+        SELECT id, device_id, interface_name, interface_type,
+               aggregation_protocol, speed, bandwidth, oper_status
+        FROM interfaces
+        '''
+    ).fetchall()]
+    candidates: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if not _is_logical_aggregation_interface(row):
+            continue
+        name = str(row.get('interface_name') or '').strip()
+        device_id = str(row.get('device_id') or '').strip()
+        if not name or not device_id:
+            continue
+        candidates.setdefault(device_id, []).append({
+            'id': str(row.get('id') or ''),
+            'name': name,
+            'family_key': _aggregation_family_key(name),
+            'capacity_mbps': _interface_speed_mbps(row),
+            'protocol': str(row.get('aggregation_protocol') or '').strip(),
+            'is_up': _interface_is_up(row),
+        })
+    return candidates
+
+
+def _choose_runtime_aggregation_candidate(
+    candidates: list[dict[str, Any]],
+    member_capacity_mbps: float,
+) -> dict[str, Any] | None:
+    """Choose a parent whose advertised capacity matches a member bundle."""
+    if not candidates or member_capacity_mbps <= 0:
+        return None
+    usable = [item for item in candidates if float(item.get('capacity_mbps') or 0) > 0]
+    if not usable:
+        return None
+    tolerance = max(member_capacity_mbps * 0.2, 1.0)
+    matched = [
+        item for item in usable
+        if abs(float(item.get('capacity_mbps') or 0) - member_capacity_mbps) <= tolerance
+    ]
+    # A logical interface with an unrelated capacity is not evidence that the
+    # parallel links form a bundle.  Keep those links physical instead of
+    # falling back to an arbitrary parent.
+    if not matched:
+        return None
+    pool = matched
+    return min(
+        pool,
+        key=lambda item: (
+            abs(float(item.get('capacity_mbps') or 0) - member_capacity_mbps),
+            0 if item.get('is_up') else 1,
+            str(item.get('name') or ''),
+        ),
+    )
+
+
+def _synthesise_runtime_aggregation_links(
+    items: list[dict[str, Any]],
+    conn,
+) -> list[dict[str, Any]]:
+    """Collapse verified parallel members into logical links at read time.
+
+    A bundle is emitted only when both endpoints have a logical aggregation
+    candidate whose advertised capacity matches the sum of the parallel
+    member links and whose family/number agrees.  This avoids treating every
+    pair of parallel LLDP observations as a LAG while still rendering legacy
+    inventories correctly.
+    """
+    candidates_by_device = _load_runtime_aggregation_candidates(conn)
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in items:
+        if str(item.get('link_kind') or '').lower() == 'aggregation':
+            continue
+        source_id = str(item.get('source_device_id') or '').strip()
+        target_id = str(item.get('target_device_id') or '').strip()
+        if not source_id or not target_id or source_id == target_id:
+            continue
+        pair = tuple(sorted((source_id, target_id)))
+        groups.setdefault(pair, []).append(item)
+
+    replacements: dict[int, dict[str, Any]] = {}
+    consumed: set[int] = set()
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        first = group[0]
+        source_id = str(first.get('source_device_id') or '')
+        target_id = str(first.get('target_device_id') or '')
+        member_capacity = sum(
+            float(item.get('bandwidth_mbps') or item.get('aggregation_bandwidth_mbps') or 0)
+            for item in group
+        )
+        source_parent = _choose_runtime_aggregation_candidate(
+            candidates_by_device.get(source_id, []), member_capacity,
+        )
+        target_parent = _choose_runtime_aggregation_candidate(
+            candidates_by_device.get(target_id, []), member_capacity,
+        )
+        if not source_parent or not target_parent:
+            continue
+        source_family = source_parent.get('family_key')
+        target_family = target_parent.get('family_key')
+        if source_family and target_family and source_family != target_family:
+            continue
+        if source_family and target_family and source_family[1] != target_family[1]:
+            continue
+
+        members: list[dict[str, Any]] = []
+        for item in group:
+            item_source_id = str(item.get('source_device_id') or '')
+            item_target_id = str(item.get('target_device_id') or '')
+            source_endpoint = {
+                'name': item.get('source_port') or item.get('source_port_normalized') or '',
+                'normalized': item.get('source_port_normalized') or '',
+                'device_id': item_source_id,
+                'speed_mbps': float(item.get('bandwidth_mbps') or item.get('aggregation_bandwidth_mbps') or 0),
+                'up': str(item.get('operational_state') or '').lower() not in {'down', 'stale'},
+            }
+            target_endpoint = {
+                'name': item.get('target_port') or item.get('target_port_normalized') or '',
+                'normalized': item.get('target_port_normalized') or '',
+                'device_id': item_target_id,
+                'speed_mbps': float(item.get('bandwidth_mbps') or item.get('aggregation_bandwidth_mbps') or 0),
+                'up': str(item.get('operational_state') or '').lower() not in {'down', 'stale'},
+            }
+            if item_source_id == target_id and item_target_id == source_id:
+                source_endpoint, target_endpoint = target_endpoint, source_endpoint
+            members.append({
+                'source': source_endpoint,
+                'target': target_endpoint,
+                'protocol': item.get('discovery_source') or item.get('protocol') or 'lldp',
+            })
+
+        aggregation = dict(first)
+        aggregation.update({
+            'link_kind': 'aggregation',
+            'source_aggregation_name': source_parent['name'],
+            'target_aggregation_name': target_parent['name'],
+            'source_aggregation_id': source_parent.get('id') or '',
+            'target_aggregation_id': target_parent.get('id') or '',
+            'aggregation_protocol': source_parent.get('protocol') or target_parent.get('protocol') or '',
+            'member_count': len(members),
+            'active_member_count': sum(
+                1 for member in members if member['source'].get('up') and member['target'].get('up')
+            ),
+            'aggregation_bandwidth_mbps': member_capacity,
+            'members': members,
+            'members_json': json.dumps(members, ensure_ascii=False),
+        })
+        if aggregation['active_member_count'] == aggregation['member_count']:
+            aggregation['operational_state'] = 'up'
+            aggregation['status'] = 'up'
+        elif aggregation['active_member_count']:
+            aggregation['operational_state'] = 'degraded'
+            aggregation['status'] = 'degraded'
+        else:
+            aggregation['operational_state'] = 'unknown'
+            aggregation['status'] = 'unknown'
+        replacements[id(first)] = aggregation
+        consumed.update(id(item) for item in group)
+
+    output: list[dict[str, Any]] = []
+    for item in items:
+        item_id = id(item)
+        if item_id in replacements:
+            output.append(replacements[item_id])
+        elif item_id not in consumed:
+            output.append(item)
+    return output
+
+
 def _clean_interface_display_name(value: Any) -> str:
     """Remove parser presentation suffixes while retaining vendor spelling."""
     text = str(value or '').strip()
@@ -2397,6 +2613,7 @@ def get_current_links(
             tuple(params),
         ).fetchall()
         now = datetime.now(timezone.utc)
+        aggregation_map = _load_interface_aggregation_map(conn)
         result = []
         for row in rows:
             item = dict(row)
@@ -2405,12 +2622,55 @@ def get_current_links(
             except (TypeError, ValueError):
                 item['members'] = []
             item['link_kind'] = str(item.get('link_kind') or 'physical')
+            source_key = (
+                str(item.get('source_device_id') or ''),
+                normalize_interface_name(item.get('source_port_normalized') or item.get('source_port') or '').lower(),
+            )
+            target_key = (
+                str(item.get('target_device_id') or ''),
+                normalize_interface_name(item.get('target_port_normalized') or item.get('target_port') or '').lower(),
+            )
+            source_aggregation = aggregation_map.get(source_key) or {}
+            target_aggregation = aggregation_map.get(target_key) or {}
+            if not source_aggregation and item.get('source_interface_id'):
+                parent_row = conn.execute(
+                    '''
+                    SELECT parent.interface_name
+                    FROM interfaces member
+                    JOIN interfaces parent ON parent.id = member.parent_interface_id
+                    WHERE member.id = ?
+                    ''',
+                    (item.get('source_interface_id'),),
+                ).fetchone()
+                if parent_row:
+                    source_aggregation = {'aggregation_name': parent_row['interface_name']}
+            if not target_aggregation and item.get('target_interface_id'):
+                parent_row = conn.execute(
+                    '''
+                    SELECT parent.interface_name
+                    FROM interfaces member
+                    JOIN interfaces parent ON parent.id = member.parent_interface_id
+                    WHERE member.id = ?
+                    ''',
+                    (item.get('target_interface_id'),),
+                ).fetchone()
+                if parent_row:
+                    target_aggregation = {'aggregation_name': parent_row['interface_name']}
+            if source_aggregation:
+                item['source_aggregation_name'] = item.get('source_aggregation_name') or source_aggregation.get('aggregation_name') or ''
+            if target_aggregation:
+                item['target_aggregation_name'] = item.get('target_aggregation_name') or target_aggregation.get('aggregation_name') or ''
             effective_state, stale_reason = _link_operational_state(item, now)
             item['operational_state'] = effective_state
             item['stale_reason'] = stale_reason
             item['ttl_seconds'] = TOPOLOGY_LINK_TTL_SECONDS
             result.append(item)
-        return result
+        # Keep the database untouched during rolling upgrades.  If the
+        # legacy interface inventory still has logical aggregation rows but
+        # no parent bindings, synthesize the aggregation contract only for
+        # this read response so the canvas can render one LAG edge and retain
+        # every physical member for hover details.
+        return _synthesise_runtime_aggregation_links(result, conn)
     finally:
         conn.close()
 
@@ -2533,6 +2793,60 @@ def _sync_evidence_graph_from_observations() -> None:
                     'confidence': float(row['confidence'] or 0),
                     'observed_at': row['last_seen'],
                     'metadata': metadata,
+                })
+            # Routing neighbors are collected by the operational inventory
+            # job into ``routing_neighbors``.  They used to stop at that
+            # table, so the topology graph never received the OSPF/ISIS/BGP
+            # adjacency even though the routing page showed it.  Project the
+            # normalized rows into the same evidence stream used by the
+            # protocol collector.  Resolve the peer by IP/hostname only;
+            # never guess a device from a router-id alone.
+            try:
+                routing_rows = conn.execute(
+                    """
+                    SELECT rn.device_id, rn.protocol, rn.neighbor_id, rn.neighbor_ip,
+                           rn.local_interface, rn.state, rn.area_id, rn.last_updated,
+                           peer.id AS peer_device_id
+                    FROM routing_neighbors rn
+                    LEFT JOIN devices peer
+                      ON peer.ip_address = rn.neighbor_ip
+                      OR LOWER(peer.hostname) = LOWER(rn.neighbor_id)
+                      OR EXISTS (
+                          SELECT 1 FROM interfaces peer_intf
+                          WHERE peer_intf.device_id = peer.id
+                            AND (peer_intf.ip_address = rn.neighbor_ip
+                                 OR peer_intf.primary_ip = rn.neighbor_ip)
+                      )
+                      OR EXISTS (
+                          SELECT 1 FROM ip_inventory peer_ip
+                          WHERE peer_ip.device_id = peer.id
+                            AND peer_ip.ip = rn.neighbor_ip
+                      )
+                    WHERE LOWER(COALESCE(rn.protocol, '')) IN
+                          ('ospf', 'isis', 'eigrp', 'rip', 'bgp')
+                    """
+                ).fetchall()
+            except Exception:
+                routing_rows = []
+            for row in routing_rows:
+                source_device_id = str(row['device_id'] or '').strip()
+                target_device_id = str(row['peer_device_id'] or '').strip()
+                if source_device_id not in current_device_ids or not target_device_id:
+                    continue
+                protocol = str(row['protocol'] or 'routing').lower()
+                observations.append({
+                    'source_device_id': source_device_id,
+                    'target_device_id': target_device_id,
+                    'target_ip': row['neighbor_ip'] or '',
+                    'source_interface': row['local_interface'] or '',
+                    'target_interface': '',
+                    'source_type': protocol,
+                    'protocol': protocol,
+                    'relation_type': 'L3_NEIGHBOR',
+                    'semantic_relation': 'L3_NEIGHBOR',
+                    'confidence': 0.9 if str(row['state'] or '').lower() in {'full', 'up'} else 0.6,
+                    'observed_at': row['last_updated'],
+                    'metadata': {'area_id': row['area_id'] or '', 'state': row['state'] or ''},
                 })
         graph = build_graph(nodes, observations, tenant_id='tenant-default')
         persist_graph(graph)
@@ -2716,7 +3030,7 @@ def get_topology_site_summaries() -> list[dict[str, Any]]:
         ).fetchall()
         link_rows = conn.execute(
             '''
-            SELECT l.link_key,
+            SELECT l.link_key, l.source_device_id, l.target_device_id,
                    COALESCE(NULLIF(sd.site_id, ''), NULLIF(l.source_site_id, ''), '') AS source_site_id,
                    COALESCE(NULLIF(td.site_id, ''), NULLIF(l.target_site_id, ''), '') AS target_site_id,
                    l.status, l.last_seen
@@ -2801,11 +3115,22 @@ def get_topology_site_summaries() -> list[dict[str, Any]]:
             summary['offline_devices'] += 1
 
     now = datetime.now(timezone.utc)
+    # Site cards follow the canvas' logical-link contract: multiple physical
+    # member rows between the same two devices count as one link.  The raw
+    # topology_links table may still contain those members while a rolling
+    # upgrade is in progress, so fold them here as well.
+    link_groups: dict[tuple[str, str], list[Any]] = {}
     for row in link_rows:
+        endpoints = sorted([str(row['source_device_id'] or ''), str(row['target_device_id'] or '')])
+        link_groups.setdefault((endpoints[0], endpoints[1]), []).append(row)
+
+    for grouped_rows in link_groups.values():
+        active_rows = [row for row in grouped_rows if _link_operational_state(dict(row), now)[0] != 'stale']
+        row = active_rows[0] if active_rows else grouped_rows[0]
         source_site = _canonical_site_id(row['source_site_id'], site_aliases)
         target_site = _canonical_site_id(row['target_site_id'], site_aliases)
         site_ids = {source_site, target_site}
-        effective_state, _ = _link_operational_state(dict(row), now)
+        effective_state = 'unknown' if active_rows else 'stale'
         for site_id in site_ids:
             summary = ensure_site(site_id)
             if effective_state == 'stale':

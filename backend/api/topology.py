@@ -157,24 +157,29 @@ def get_links(
     canvas asks explicitly for stale links when the historical-evidence toggle
     is enabled. Current topology must not silently render expired neighbors.
     """
-    cache_key = f'links:{limit}:{site_id or ""}:{int(include_stale)}'
+    # v3 invalidates responses generated before the physical-link read model
+    # started carrying aggregation parent/member fields.
+    cache_key = f'links:v3:{limit}:{site_id or ""}:{int(include_stale)}'
     cache_hit, cached = read_cache.get('topology', cache_key)
     if cache_hit:
         return cached
 
-    # The evidence graph is now the primary physical-link read model. Keep
-    # the legacy table as a rolling-upgrade fallback only.
+    # Physical links must come from the read model that carries the LAG
+    # contract (aggregation name, member count and member pairs).  The
+    # evidence graph is authoritative for logical relations, but its physical
+    # edge projection intentionally contains only relation facts and would
+    # otherwise expand a four-member bundle back into four raw lines.
     try:
+        managed_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
+        graph_read_model = 'legacy_topology_links_aggregation'
+    except Exception:
         managed_links = get_physical_links(
             tenant_id='tenant-default',
             site_id=site_id,
             limit=limit,
             include_stale=include_stale,
         )
-        graph_read_model = 'evidence_graph'
-    except Exception:
-        managed_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
-        graph_read_model = 'legacy_topology_links'
+        graph_read_model = 'evidence_graph_fallback'
     if not managed_links:
         legacy_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
         if legacy_links:
@@ -196,11 +201,11 @@ def get_links(
 
 @router.get('/topology/sites')
 def get_topology_sites():
-    cache_hit, cached = read_cache.get('topology', 'sites')
+    cache_hit, cached = read_cache.get('topology', 'sites:v2')
     if cache_hit:
         return cached
     response = {'items': get_topology_site_summaries()}
-    read_cache.set('topology', 'sites', response, TOPOLOGY_CACHE_TTL_SECONDS)
+    read_cache.set('topology', 'sites:v2', response, TOPOLOGY_CACHE_TTL_SECONDS)
     return response
 
 
@@ -318,6 +323,15 @@ def get_evidence_graph(
     """Return a paged graph read model with evidence-derived layout ranks."""
     session = _get_authenticated_session(request)
     tenant_id = _resolve_graph_tenant(session, tenant_id)
+    # Routing neighbors are collected by a separate inventory job.  Project
+    # the current routing table before every graph read so the L3/logical view
+    # reflects already-collected data immediately instead of waiting for the
+    # next LLDP discovery cycle.
+    try:
+        from services.topology_service import _sync_evidence_graph_from_observations
+        _sync_evidence_graph_from_observations()
+    except Exception:
+        pass
     return get_graph(
         tenant_id=tenant_id, view=view, site_id=site_id, limit=limit,
         include_stale=include_stale,

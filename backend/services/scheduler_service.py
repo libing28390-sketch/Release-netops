@@ -1765,6 +1765,14 @@ def sync_routing_neighbors_job():
             ))
         db_conn.commit()
         logger.info(f"Successfully synced {len(all_neighbors)} routing neighbors to DB.")
+        # Keep the topology evidence graph in sync with the routing inventory.
+        # Routing collection is scheduled independently from LLDP discovery,
+        # so waiting for the next topology run leaves the L3 view stale.
+        try:
+            from services.topology_service import _sync_evidence_graph_from_observations
+            _sync_evidence_graph_from_observations()
+        except Exception:
+            logger.debug("Failed to project routing neighbors into topology graph", exc_info=True)
     except Exception as db_err:
         logger.error("Failed to write routing neighbors to DB: %s", db_err)
     finally:

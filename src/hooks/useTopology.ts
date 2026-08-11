@@ -303,11 +303,54 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
       // Graph-only bookkeeping nodes are intentionally excluded from the
       // primary asset canvas and its site/device counters.
       setTopologyGraphNodeDevices([]);
-      // During a rolling upgrade the legacy physical table can be populated
-      // before the evidence projection catches up. Keep that safe fallback
-      // only for the physical view; logical/OOB views must not be polluted by
-      // physical links when their graph family is empty.
-      nextLinks = graphLinks.length > 0 || topologyGraphView !== 'physical' ? graphLinks : legacyLinks;
+      // The legacy physical read model contains the authoritative LAG
+      // collapse contract (link_kind, member_count and members).  The newer
+      // evidence graph intentionally stores relation facts, but its edge
+      // projection does not carry those interface-inventory fields yet. Use
+      // the legacy rows for physical edges so a four-member bundle remains a
+      // single rendered aggregation edge. For the composite view, combine
+      // those physical rows with non-physical evidence edges; logical views
+      // must never be polluted by the physical fallback.
+      const physicalLinks = legacyLinks.filter((link: any) => {
+        const relation = String(link.relation_type || '').toUpperCase();
+        return !relation || relation === 'PHYSICAL';
+      });
+      // Aggregation collapse and member construction happen in the backend
+      // read model.  Do not infer a LAG in the browser merely because two
+      // devices have parallel LLDP rows; the API now supplies an explicit
+      // link_kind/member contract when the inventory proves it.
+      const foldedPhysicalLinks = physicalLinks;
+      const collapseRelationLinks = (items: any[]) => {
+        const collapsed = new Map<string, any>();
+        items.forEach((link) => {
+          const source = String(link.source_device_id || '');
+          const target = String(link.target_device_id || '');
+          const relation = String(link.relation_type || link.semantic_relation || 'LOGICAL').toUpperCase();
+          const pair = [source, target].sort().join('::');
+          const key = `${relation}::${pair}`;
+          const existing = collapsed.get(key);
+          if (!existing) {
+            collapsed.set(key, { ...link, grouped_link_count: 1 });
+            return;
+          }
+          existing.grouped_link_count = Number(existing.grouped_link_count || 1) + 1;
+          existing.evidence_count = Math.max(Number(existing.evidence_count || 0), Number(link.evidence_count || 0));
+          existing.confidence = Math.max(Number(existing.confidence || 0), Number(link.confidence || 0));
+          existing.discovery_sources = Array.from(new Set([
+            ...(Array.isArray(existing.discovery_sources) ? existing.discovery_sources : []),
+            ...(Array.isArray(link.discovery_sources) ? link.discovery_sources : []),
+          ]));
+        });
+        return Array.from(collapsed.values());
+      };
+      if (topologyGraphView === 'physical') {
+        nextLinks = foldedPhysicalLinks.length > 0 ? foldedPhysicalLinks : graphLinks;
+      } else if (topologyGraphView === 'all') {
+        const logicalLinks = collapseRelationLinks(graphLinks.filter((link: any) => String(link.relation_type || '').toUpperCase() !== 'PHYSICAL'));
+        nextLinks = [...foldedPhysicalLinks, ...logicalLinks];
+      } else {
+        nextLinks = collapseRelationLinks(graphLinks.filter((link: any) => String(link.relation_type || '').toUpperCase() !== 'PHYSICAL'));
+      }
     } else {
       setTopologyGraphNodeDevices([]);
     }

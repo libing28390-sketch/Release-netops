@@ -387,8 +387,13 @@ _COMPATIBLE_PLATFORMS = {
     'huawei_smartax': ['huawei_vrp'],
     'huawei_ont': ['huawei_vrp'],
     'huawei_usg': ['huawei_vrp'],
-    # H3C generations are selected by the concrete profile/template variant;
-    # do not silently try another Comware grammar here.
+    # H3C generations are selected by a concrete profile/template variant.
+    # During the profile migration, however, existing devices can still carry
+    # the public ``h3c_comware`` value without a bound profile.  Keep the
+    # shipped V9/V5 grammars available for that legacy identity so commands
+    # such as ``display link-aggregation verbose`` do not fall through to the
+    # generic ntc parser (which loses the parent/member fields).
+    'h3c_comware': ['h3c_comware_v9', 'h3c_comware_v5'],
     'ruijie_os': ['ruijie_rgos'],
     'dptech': ['dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'],
     'dptech_conplat': ['dptech_ios', 'dptech_conplat_fw'],

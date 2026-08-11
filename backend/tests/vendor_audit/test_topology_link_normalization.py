@@ -4,6 +4,7 @@ from services.topology_service import (
     _group_link_observations,
     _interface_display_score,
     _prefer_lldp_rows,
+    _synthesise_runtime_aggregation_links,
 )
 from services.operational_data_service import _parse_aggregation_raw
 
@@ -128,3 +129,106 @@ def test_cisco_etherchannel_raw_parser_keeps_parent_and_members() -> None:
     records = _parse_aggregation_raw(output, 'cisco_ios')
     assert [item['PORT_CHANNEL'] for item in records] == ['Port-channel1', 'Port-channel1']
     assert [item['INTERFACE'] for item in records] == ['Gi1/0/1', 'Gi1/0/2']
+
+
+class _InterfaceInventoryConnection:
+    def __init__(self, rows: list[dict]) -> None:
+        self.rows = rows
+
+    def execute(self, _query: str):
+        return self
+
+    def fetchall(self):
+        return self.rows
+
+
+def test_runtime_aggregation_contract_is_read_only_and_capacity_verified() -> None:
+    inventory = _InterfaceInventoryConnection([
+        {
+            'id': 'agg-a', 'device_id': 'dev-a', 'interface_name': 'Bridge-Aggregation12',
+            'interface_type': 'physical', 'aggregation_protocol': '',
+            'speed': 40_000_000_000, 'bandwidth': 40_000_000_000, 'oper_status': 'up',
+        },
+        {
+            'id': 'agg-b', 'device_id': 'dev-b', 'interface_name': 'Bridge-Aggregation12',
+            'interface_type': 'physical', 'aggregation_protocol': '',
+            'speed': 40_000_000_000, 'bandwidth': 40_000_000_000, 'oper_status': 'up',
+        },
+    ])
+    items = [
+        {
+            'source_device_id': 'dev-a', 'target_device_id': 'dev-b',
+            'source_port': f'Ten-GigabitEthernet1/0/{port}',
+            'target_port': f'Ten-GigabitEthernet1/0/{port}',
+            'source_port_normalized': f'te1/0/{port}',
+            'target_port_normalized': f'te1/0/{port}',
+            'link_kind': 'physical', 'operational_state': 'up',
+            'aggregation_bandwidth_mbps': 10_000,
+        }
+        for port in range(49, 53)
+    ]
+
+    result = _synthesise_runtime_aggregation_links(items, inventory)
+
+    assert len(result) == 1
+    assert result[0]['link_kind'] == 'aggregation'
+    assert result[0]['source_aggregation_name'] == 'Bridge-Aggregation12'
+    assert result[0]['target_aggregation_name'] == 'Bridge-Aggregation12'
+    assert result[0]['member_count'] == 4
+    assert result[0]['active_member_count'] == 4
+    assert result[0]['aggregation_bandwidth_mbps'] == 40_000
+    assert [member['source']['name'] for member in result[0]['members']] == [
+        'Ten-GigabitEthernet1/0/49',
+        'Ten-GigabitEthernet1/0/50',
+        'Ten-GigabitEthernet1/0/51',
+        'Ten-GigabitEthernet1/0/52',
+    ]
+    assert all('parent_interface_id' not in row for row in inventory.rows)
+
+
+def test_runtime_aggregation_does_not_infer_parallel_links_without_parents() -> None:
+    inventory = _InterfaceInventoryConnection([])
+    items = [
+        {
+            'source_device_id': 'dev-a', 'target_device_id': 'dev-b',
+            'source_port': f'GE1/0/{port}', 'target_port': f'GE1/0/{port}',
+            'link_kind': 'physical', 'operational_state': 'up',
+            'aggregation_bandwidth_mbps': 1_000,
+        }
+        for port in range(1, 3)
+    ]
+
+    result = _synthesise_runtime_aggregation_links(items, inventory)
+
+    assert len(result) == 2
+    assert all(item['link_kind'] == 'physical' for item in result)
+
+
+def test_runtime_aggregation_rejects_capacity_mismatch() -> None:
+    inventory = _InterfaceInventoryConnection([
+        {
+            'id': 'agg-a', 'device_id': 'dev-a', 'interface_name': 'Bridge-Aggregation12',
+            'interface_type': 'physical', 'aggregation_protocol': '',
+            'speed': 20_000_000_000, 'bandwidth': 20_000_000_000, 'oper_status': 'up',
+        },
+        {
+            'id': 'agg-b', 'device_id': 'dev-b', 'interface_name': 'Bridge-Aggregation12',
+            'interface_type': 'physical', 'aggregation_protocol': '',
+            'speed': 20_000_000_000, 'bandwidth': 20_000_000_000, 'oper_status': 'up',
+        },
+    ])
+    items = [
+        {
+            'source_device_id': 'dev-a', 'target_device_id': 'dev-b',
+            'source_port': f'Ten-GigabitEthernet1/0/{port}',
+            'target_port': f'Ten-GigabitEthernet1/0/{port}',
+            'link_kind': 'physical', 'operational_state': 'up',
+            'aggregation_bandwidth_mbps': 10_000,
+        }
+        for port in range(49, 53)
+    ]
+
+    result = _synthesise_runtime_aggregation_links(items, inventory)
+
+    assert len(result) == 4
+    assert all(item['link_kind'] == 'physical' for item in result)

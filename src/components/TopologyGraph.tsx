@@ -2343,11 +2343,15 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const getPortDisplayLabel = (item: any, endpoint: 'source' | 'target') => {
       const baseLabel = getLinkEndpointShortLabel(item, endpoint);
       if (!isRealAggregationLink(item)) return baseLabel;
+      const aggregationName = endpoint === 'source'
+        ? String(item.source_aggregation_name || '').trim()
+        : String(item.target_aggregation_name || '').trim();
       const memberCount = Number(item.member_count || (Array.isArray(item.members) ? item.members.length : 0));
       const bandwidth = getBandwidthTier(getAggregationMemberBandwidthMbps(item)).label;
+      const parentLabel = aggregationName ? abbreviateInterface(getFullInterfaceLabel(aggregationName)) : baseLabel;
       return memberCount > 0 && bandwidth !== '未知'
-        ? `${baseLabel} · ${memberCount}×${bandwidth}`
-        : baseLabel;
+        ? `${parentLabel} · ${memberCount}×${bandwidth}`
+        : parentLabel;
     };
 
     const getPortDisplayTitle = (item: any) => {
@@ -3039,7 +3043,6 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       targetPortLabel.each(function (d: any) {
         updatePortLabel(this);
       });
-
       linkLabelBg.each(function () {
         const textNode = d3.select(this.nextSibling as SVGTextElement).node();
         if (!textNode) return;
@@ -3563,10 +3566,16 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
                 {hoveredLink.target_hostname || (hoveredLink.target as any)?.hostname || '-'} · {getLinkEndpointLabel(hoveredLink, 'target') || '-'}
               </dd>
             </div>
-            {hoveredLinkMembers.length > 1 && (
+            {isRealAggregationLink(hoveredLink) && (
               <div>
-                <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">聚合成员接口</dt>
-                <dd className="mt-1 max-h-24 space-y-1 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50 p-2 font-mono text-[9px] font-semibold leading-4 text-slate-600">
+                <dt className="font-semibold uppercase tracking-[0.12em] text-slate-400">聚合口编号</dt>
+                <dd className="mt-0.5 font-mono font-bold text-slate-700">
+                  {getFullInterfaceLabel(hoveredLink.source_aggregation_name) || getLinkEndpointLabel(hoveredLink, 'source') || '-'}
+                  {' ↔ '}
+                  {getFullInterfaceLabel(hoveredLink.target_aggregation_name) || getLinkEndpointLabel(hoveredLink, 'target') || '-'}
+                </dd>
+                <dt className="mt-2 font-semibold uppercase tracking-[0.12em] text-slate-400">成员口（全部）</dt>
+                <dd className="mt-1 space-y-1 rounded-lg border border-slate-100 bg-slate-50 p-2 font-mono text-[9px] font-semibold leading-4 text-slate-600">
                   {hoveredLinkMembers.map((member: any, index) => (
                     <div key={`${member?.source?.device_id || 'source'}-${member?.source?.name || index}-${member?.target?.name || index}`}>
                       {(member?.source?.name || member?.source?.normalized || '-')}
