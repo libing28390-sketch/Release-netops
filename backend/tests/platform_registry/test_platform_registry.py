@@ -125,7 +125,7 @@ def test_migration_seeds_registry_and_action_catalog(isolated_db):
                WHERE p.platform_code = 'h3c_comware' AND a.action_code = 'get_bgp_neighbors'"""
         ).fetchone()
         assert h3c_version["command"] == "display bgp peer ipv4 unicast"
-        assert h3c_version["source_filename"] == "h3c_comware__hp_comware_display_bgp_peer_ipv4_unicast.textfsm"
+        assert h3c_version["source_filename"] == "h3c_comware__h3c_comware_display_bgp_peer_ipv4_unicast.textfsm"
         assert h3c_version["template_command"] == "display bgp peer ipv4 unicast"
     finally:
         conn.close()
@@ -388,7 +388,7 @@ def test_compatible_parser_versions_use_profile_parser_and_scope_rules(isolated_
     try:
         _insert_published_parser(conn, version_id="compatible_version", tenant_id="tenant-1", profile_id=profile["id"])
         _insert_published_parser(conn, version_id="other_profile_version", tenant_id="tenant-1", profile_id=other_profile["id"])
-        _insert_published_parser(conn, version_id="wrong_platform_version", tenant_id="tenant-1", profile_id=profile["id"], platform_code="hp_comware")
+        _insert_published_parser(conn, version_id="wrong_platform_version", tenant_id="tenant-1", profile_id=profile["id"], platform_code="h3c_comware")
         conn.execute(
             """INSERT INTO parser_templates
                (id, tenant_id, platform_profile_id, platform_code, template_code, source_filename,

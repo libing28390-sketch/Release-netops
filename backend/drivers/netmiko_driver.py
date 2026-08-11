@@ -32,7 +32,7 @@ _CLI_ERROR_PATTERNS = re.compile(
 )
 
 # 慢速平台（Huawei/H3C）不适合 fast_cli，需要保守的时序参数
-_SLOW_PLATFORMS = {'huawei_vrp', 'h3c_comware', 'h3c_comware9', 'hp_comware', 'ruijie_rgos', 'zte_zxros', 'maipu', 'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'}
+_SLOW_PLATFORMS = {'huawei_vrp', 'h3c_comware', 'ruijie_rgos', 'zte_zxros', 'maipu', 'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'}
 
 # ── IP 地址前缀长度 → 点分十进制子网掩码 自动归一化 ─────────────────────────
 # 华为 VRP / H3C Comware 支持 `ip address X.X.X.X 24` 写法；
@@ -197,8 +197,6 @@ class NetmikoDriver(BaseDriver):
             'nexus': 'cisco_nxos',
             'h3c': 'h3c_comware',
             'comware': 'h3c_comware',
-            'hp_comware': 'h3c_comware',
-            'h3c_comware9': 'h3c_comware',
             'huawei': 'huawei_vrp',
             'huawei_vrpv8': 'huawei_vrp',
             'vrp': 'huawei_vrp',

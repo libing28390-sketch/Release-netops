@@ -341,7 +341,7 @@ POST /api/topology/graph/rebuild
 | STP | Cisco show 命令族 | Huawei display 命令族 | H3C display 命令族 |
 | Stack/IRF | StackWise | CSS/iStack | IRF |
 
-H3C TextFSM 必须使用 `hp_comware` 作为解析平台；接口比较必须使用共享接口规范化器。
+H3C TextFSM 统一使用 `h3c_comware` 作为解析平台；只有 Netmiko 连接边界使用 `hp_comware`；接口比较必须使用共享接口规范化器。
 
 ### 7.6 第六层：规模与稳定性测试
 

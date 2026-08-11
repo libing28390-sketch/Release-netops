@@ -40,17 +40,7 @@ COMMAND_PROFILES = {
         'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor verbose',
         'normalizer': 'huawei_vrp',
     },
-    'hp_comware': {
-        'version': 'display version', 'interfaces': 'display interface',
-        'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor-information verbose',
-        'normalizer': 'h3c_comware',
-    },
     'h3c_comware': {
-        'version': 'display version', 'interfaces': 'display interface',
-        'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor-information verbose',
-        'normalizer': 'h3c_comware',
-    },
-    'h3c_comware9': {
         'version': 'display version', 'interfaces': 'display interface',
         'brief': 'display ip interface brief', 'neighbors': 'display lldp neighbor-information verbose',
         'normalizer': 'h3c_comware',
@@ -79,7 +69,7 @@ COMMAND_PROFILES = {
 
 PLATFORM_ALIASES = {
     'huawei': 'huawei_vrp', 'vrp': 'huawei_vrp', 'huawei_v8': 'huawei_vrpv8',
-    'h3c': 'h3c_comware', 'comware': 'h3c_comware', 'comware9': 'h3c_comware9',
+    'h3c': 'h3c_comware', 'comware': 'h3c_comware',
     'cisco': 'cisco_ios', 'ios': 'cisco_ios',
     'juniper': 'juniper_junos', 'junos': 'juniper_junos',
     'arista': 'arista_eos', 'eos': 'arista_eos',
@@ -99,7 +89,7 @@ def resolve_discovery_profile(platform: str) -> tuple[str, dict]:
         canonical = normalize_platform_code(key)
         seeded = next((item for item in SYSTEM_PROFILES if item['platform_code'] == canonical), None)
         if seeded:
-            normalizer = 'h3c_comware' if seeded['parser_platform'] == 'hp_comware' else seeded['parser_platform']
+            normalizer = seeded['parser_platform']
             return canonical, {
                 'version': '', 'interfaces': '', 'brief': '', 'neighbors': '',
                 'normalizer': normalizer,

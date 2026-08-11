@@ -25,7 +25,6 @@ IDENTIFICATION_COMMANDS: dict[str, tuple[str, ...]] = {
     "arista_eos": ("show version",),
     "juniper_junos": ("show version",),
     "huawei_vrp": ("display version",),
-    "hp_comware": ("display version",),
     "h3c_comware": ("display version",),
     "zte_zxros": ("show version",),
     "ruijie_os": ("show version",),
@@ -34,9 +33,7 @@ IDENTIFICATION_COMMANDS: dict[str, tuple[str, ...]] = {
 }
 
 _IDENTIFICATION_DRIVER_ALIASES = {
-    "h3c": "hp_comware",
     "h3c_comware": "hp_comware",
-    "h3c_comware9": "hp_comware",
     "huawei": "huawei_vrp",
     "huawei_vrpv8": "huawei_vrp",
     "ruijie_rgos": "ruijie_os",
@@ -153,7 +150,11 @@ def _assert_device_profile_platform(device: dict[str, Any], profile: dict[str, A
     device_platform = str(device.get("platform") or "").strip().lower()
     if device_platform in {"", "unknown", "generic"}:
         return
-    if not platform_codes_match(device_platform, profile.get("platform_code")):
+    if not platform_codes_match(
+        device_platform,
+        profile.get("platform_code"),
+        profile.get("parser_platform"),
+    ):
         raise PlatformRegistryError(
             "PLATFORM_PROFILE_MISMATCH",
             "设备当前平台与目标平台注册表不一致，请选择同一平台后再绑定",
@@ -495,7 +496,13 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
         conn.execute(
             """UPDATE devices SET platform_profile_id = ?, platform = ?, platform_source = ?,
                       platform_locked = ? WHERE id = ?""",
-            (platform_profile_id, profile["platform_code"], "MANUAL", 1 if lock else 0, device_id),
+            (
+                platform_profile_id,
+                profile.get("parser_platform") or profile["platform_code"],
+                "MANUAL",
+                1 if lock else 0,
+                device_id,
+            ),
         )
         conn.execute(
             """UPDATE platform_identification_conflicts
@@ -566,7 +573,13 @@ def bind_devices_batch(
             conn.execute(
                 """UPDATE devices SET platform_profile_id = ?, platform = ?, platform_source = ?,
                           platform_locked = ? WHERE id = ?""",
-                (platform_profile_id, profile["platform_code"], "MANUAL", 1 if lock else 0, device["id"]),
+                (
+                    platform_profile_id,
+                    profile.get("parser_platform") or profile["platform_code"],
+                    "MANUAL",
+                    1 if lock else 0,
+                    device["id"],
+                ),
             )
             conn.execute(
                 """UPDATE platform_identification_conflicts

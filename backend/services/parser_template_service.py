@@ -34,6 +34,23 @@ def _checksum(value: str) -> str:
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
+def _validate_parser_platform(value: Any) -> str:
+    """Normalize a template platform and reject non-public H3C selectors.
+
+    V5/V7/V9 are selected by the bound Profile and its template filename
+    variant. They must not become separate values in ``parser_templates``.
+    """
+    raw = str(value or "").strip().lower()
+    normalized = normalize_platform_code(raw)
+    if raw in {"hp_comware", "h3c_comware9", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"}:
+        raise PlatformRegistryError(
+            "INVALID_PARSER_PLATFORM",
+            "H3C TextFSM 模板平台必须使用 h3c_comware；V5/V7/V9 请通过 Profile 和模板变体区分",
+            status_code=400,
+        )
+    return validate_platform_code(normalized)
+
+
 def _actor_key(user: dict[str, Any]) -> str:
     return str(user.get("id") or user.get("username") or "")
 
@@ -251,7 +268,7 @@ def list_templates_page(
 
 
 def create_template(payload: dict[str, Any], user: dict[str, Any], *, _source: str = "CUSTOM") -> dict[str, Any]:
-    platform_code = validate_platform_code(payload.get("platform_code"))
+    platform_code = _validate_parser_platform(payload.get("platform_code"))
     template_code = validate_template_code(payload.get("template_code"))
     command = normalize_parser_command(payload.get("command"))
     tenant_id = str(user.get("tenant_id") or "")
@@ -303,7 +320,7 @@ def create_template(payload: dict[str, Any], user: dict[str, Any], *, _source: s
 
 def update_template(template_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     """Update the identity/scope of a tenant-owned draft template."""
-    platform_code = validate_platform_code(payload.get("platform_code"))
+    platform_code = _validate_parser_platform(payload.get("platform_code"))
     template_code = validate_template_code(payload.get("template_code"))
     name = str(payload.get("name") or template_code).strip() or template_code
     profile_id = payload.get("platform_profile_id") or None

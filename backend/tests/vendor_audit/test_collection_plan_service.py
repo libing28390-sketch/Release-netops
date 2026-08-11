@@ -7,7 +7,7 @@ def _device(role: str, **extra):
     return {"id": role, "hostname": role, "platform": "cisco_ios", "role": role, **extra}
 
 
-def test_network_device_collects_basic_inventory_only_by_default():
+def test_l3_network_device_collects_route_table_by_default():
     device = _device("router")
     assert should_collect(device, "reachability") is True
     assert should_collect(device, "health_metrics") is True
@@ -15,7 +15,8 @@ def test_network_device_collects_basic_inventory_only_by_default():
     assert should_collect(device, "interface_ip") is True
     assert should_collect(device, "arp") is False
     assert should_collect(device, "lldp") is False
-    assert should_collect(device, "routes") is False
+    assert should_collect(device, "routes") is True
+    assert should_collect(device, "bgp") is True
     assert should_collect(device, "mac_table") is False
     assert should_collect(device, "vlan") is False
     assert should_collect(device, "endpoint_location") is False
@@ -30,6 +31,21 @@ def test_access_switch_also_uses_basic_inventory_only_by_default():
     assert should_collect(device, "lldp") is False
     assert should_collect(device, "arp") is False
     assert should_collect(device, "routes") is False
+    assert should_collect(device, "bgp") is False
+
+
+def test_server_does_not_collect_route_table_by_default():
+    device = _device("server", platform="linux")
+    assert should_collect(device, "routes") is False
+    assert should_collect(device, "bgp") is False
+
+
+def test_l3_device_can_explicitly_disable_bgp_discovery():
+    device = _device(
+        "distribution",
+        collection_policy_json='{"collectors":{"bgp":false}}',
+    )
+    assert should_collect(device, "routes") is True
     assert should_collect(device, "bgp") is False
 
 

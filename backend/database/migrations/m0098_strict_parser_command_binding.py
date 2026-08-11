@@ -52,11 +52,11 @@ def _derive_template_command(platform_code: str, source_filename: str) -> str:
 
 
 def _ensure_h3c_unicast_template(cursor, now: str) -> str | None:
-    path = Path(__file__).resolve().parents[3] / "data" / "textfsm_templates" / "hp_comware_display_bgp_peer_ipv4_unicast.textfsm"
+    path = Path(__file__).resolve().parents[3] / "data" / "textfsm_templates" / "h3c_comware_display_bgp_peer_ipv4_unicast.textfsm"
     if not path.exists():
         return None
     profile = cursor.execute(
-        "SELECT id FROM platform_profiles WHERE source = 'SYSTEM' AND parser_platform = 'hp_comware' ORDER BY id LIMIT 1"
+        "SELECT id FROM platform_profiles WHERE source = 'SYSTEM' AND parser_platform = 'h3c_comware' ORDER BY id LIMIT 1"
     ).fetchone()
     if not profile:
         return None
@@ -71,7 +71,7 @@ def _ensure_h3c_unicast_template(cursor, now: str) -> str | None:
            (id, tenant_id, platform_profile_id, platform_code, template_code,
             source_filename, command, name, source, status, created_by,
             created_at, updated_at, lock_version)
-           VALUES (?, NULL, ?, 'hp_comware', ?, ?, ?, ?, 'SYSTEM', 'ACTIVE',
+           VALUES (?, NULL, ?, 'h3c_comware', ?, ?, ?, ?, 'SYSTEM', 'ACTIVE',
                    'system', ?, ?, 1)
            ON CONFLICT(id) DO UPDATE SET
              platform_profile_id=excluded.platform_profile_id,
@@ -83,7 +83,7 @@ def _ensure_h3c_unicast_template(cursor, now: str) -> str | None:
         (
             template_id,
             profile[0],
-            "HP_COMWARE_DISPLAY_BGP_PEER_IPV4_UNICAST",
+            "H3C_COMWARE_DISPLAY_BGP_PEER_IPV4_UNICAST",
             filename,
             "display bgp peer ipv4 unicast",
             path.stem,
@@ -145,7 +145,7 @@ def upgrade(cursor, use_pg: bool) -> None:
         """SELECT r.id
            FROM platform_releases r
            JOIN platform_profiles p ON p.id = r.profile_id
-           WHERE p.source = 'SYSTEM' AND p.parser_platform = 'hp_comware'"""
+           WHERE p.source = 'SYSTEM' AND p.parser_platform = 'h3c_comware'"""
     ).fetchall()
     for release_row in releases:
         release_id = release_row[0]

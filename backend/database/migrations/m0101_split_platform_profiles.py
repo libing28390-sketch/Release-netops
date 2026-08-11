@@ -130,11 +130,16 @@ def _ensure_system_profiles(cursor, now: str) -> dict[str, str]:
 
 def _profile_for_template(profile_defs: list[dict], filename: str) -> dict | None:
     stem = Path(filename).stem.lower()
-    # The unicast template was added under the historical hp_comware filename
-    # but belongs to the V7 command grammar.  Keep the file name for backward
-    # compatibility while moving its registry scope to the V7 Profile.
-    if stem == "hp_comware_display_bgp_peer_ipv4_unicast":
-        return next((item for item in profile_defs if item["platform_code"] == "h3c_comware"), None)
+    variant_profiles = {
+        "h3c_comware_v5": "hp_comware",
+        "h3c_comware_v9": "h3c_comware9",
+    }
+    for prefix, profile_code in variant_profiles.items():
+        if stem.startswith(f"{prefix}_"):
+            return next(
+                (item for item in profile_defs if item["platform_code"] == profile_code),
+                None,
+            )
     return next(
         (item for item in sorted(profile_defs, key=lambda item: len(str(item["platform_code"])), reverse=True)
          if stem.startswith(f"{str(item['platform_code']).lower()}_")),
@@ -178,7 +183,13 @@ def _import_scoped_file_templates(cursor, profile_ids: dict[str, str], now: str)
         if not profile_id:
             continue
         filename_stem = path.stem
-        source_prefix = "hp_comware" if filename_stem.lower().startswith("hp_comware_") else profile_code
+        source_prefix = next(
+            (
+                prefix for prefix in ("h3c_comware_v5", "h3c_comware_v9", profile_code)
+                if filename_stem.lower().startswith(f"{prefix.lower()}_")
+            ),
+            profile_code,
+        )
         command_part = filename_stem[len(source_prefix) + 1:].replace("_", " ")
         command = str(_canonical_template_command(parser_platform, command_part) or command_part).strip()
         template_code = re.sub(r"[^A-Z0-9_]", "_", filename_stem.upper())[:64]

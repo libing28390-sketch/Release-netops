@@ -58,12 +58,12 @@ def test_cat016_platform_mapping_matches_h3c_driver_and_parser_boundary():
     mapping = data["os_family"]["generations"][0]["explicit_platform_mappings"][0]
     assert binding["platform_code"] == "h3c_comware"
     assert binding["connection_driver"] == "hp_comware"
-    assert binding["parser_platform"] == "hp_comware"
+    assert binding["parser_platform"] == "h3c_comware"
     assert binding["driver_authority"] is False
     assert binding["execution_write_authority"] is False
     assert mapping["cli_platform"] == "h3c_comware"
     assert mapping["connection_driver"] == "hp_comware"
-    assert mapping["parser_platform"] == "hp_comware"
+    assert mapping["parser_platform"] == "h3c_comware"
     assert mapping["driver_authority"] is False
     assert "parser_from_version" in binding["forbidden_inference"]
 

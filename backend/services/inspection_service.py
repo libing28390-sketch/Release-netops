@@ -53,7 +53,7 @@ _CORR_RULES_TTL = 60.0        # 缓存有效期（秒）
 _NETWORK_PLATFORMS = {
     'cisco_ios', 'cisco_xe', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd',
     'huawei_vrp', 'huawei_vrpv8', 'huawei',
-    'h3c_comware', 'h3c_comware9', 'hp_comware',
+    'h3c_comware',
     'juniper_junos', 'juniper',
     'arista_eos',
     'paloalto_panos', 'fortinet', 'checkpoint_gaia',
@@ -185,8 +185,6 @@ def _netmiko_platform_type(platform: str) -> str:
         'huawei_vrpv8': 'huawei_vrpv8',
         'huawei': 'huawei',
         'h3c_comware': 'hp_comware',
-        'h3c_comware9': 'hp_comware',
-        'hp_comware': 'hp_comware',
         'juniper_junos': 'juniper_junos',
         'juniper': 'juniper_junos',
         'arista_eos': 'arista_eos',
@@ -252,7 +250,7 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_cred
         return registry_outputs
 
     platform = (device.get('platform') or 'cisco_ios').lower()
-    is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware', 'h3c_comware9', 'hp_comware'}
+    is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware'}
 
     # 统一使用 Vault 凭据解析服务
     creds = resolve_device_credentials(device)

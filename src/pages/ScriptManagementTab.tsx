@@ -171,7 +171,7 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
     'Linux': ['Linux', 'linux', 'ubuntu', 'centos', 'debian', 'redhat'],
     'Cisco': ['cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd', 'Cisco'],
     'Huawei': ['huawei_vrp', 'huawei_vrpv8', 'huawei', 'Huawei'],
-    'H3C': ['h3c_comware', 'hp_comware', 'H3C'],
+    'H3C': ['h3c_comware', 'H3C'],
     'Juniper': ['juniper_junos', 'juniper', 'Juniper'],
     'Arista': ['arista_eos', 'Arista'],
   };

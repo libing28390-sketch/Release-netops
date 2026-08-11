@@ -290,11 +290,11 @@ describe('ParserRegistryTab', () => {
   it('filters templates by the Netmiko connection driver platform', async () => {
     vi.unstubAllGlobals();
     const fetchMock = installFetchMock({
-      templates: [{ ...template, platform_code: 'hp_comware', template_code: 'H3C_DISPLAY_INTERFACE_BRIEF' }],
+      templates: [{ ...template, platform_code: 'h3c_comware', template_code: 'H3C_DISPLAY_INTERFACE_BRIEF' }],
       profiles: [{
         id: 'profile-h3c',
         platform_code: 'h3c_comware',
-        parser_platform: 'hp_comware',
+        parser_platform: 'h3c_comware',
         connection_driver: 'hp_comware',
         name_zh: 'H3C Comware',
         name_en: 'H3C Comware',

@@ -19,7 +19,7 @@ from services.normalizers.common import (
 
 
 class H3CNormalizer(BaseNormalizer):
-    _PLATFORMS = ("h3c_comware", "hp_comware", "h3c_comware9")
+    _PLATFORMS = ("h3c_comware",)
 
     def parse_device_info(self, device_id: str, raw_version: str) -> Device:
         records = textfsm_records(self._PLATFORMS, "display version", raw_version)

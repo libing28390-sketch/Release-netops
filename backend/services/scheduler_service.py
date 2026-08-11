@@ -1507,13 +1507,31 @@ def _routing_record_value(record: dict, *names: str):
     return ''
 
 
+def _bgp_route_identity(item: dict) -> tuple[str, ...]:
+    """Return the stable identity of one BGP path in the fact table.
+
+    A device can expose more than one path for the same prefix and next hop.
+    The previous key omitted path-selection fields, so a best and a backup
+    path with identical attributes collided and rolled back the entire batch.
+    Keep the path flags in the identity while collapsing exact duplicates.
+    """
+    values = []
+    for field in (
+        'device_id', 'vrf_name', 'prefix', 'next_hop', 'metric',
+        'loc_pref', 'weight', 'as_path', 'local_as', 'is_best', 'is_active',
+    ):
+        value = item.get(field)
+        values.append('' if value is None else str(value))
+    return tuple(values)
+
+
 def sync_routing_neighbors_job():
     """Collect dynamic routing neighbors using policy plus route evidence.
 
     Route collection runs immediately before this job in the unified refresh.
-    Routing is disabled in the lightweight default collection plan, so route
-    evidence can only promote protocol discovery when the operator explicitly
-    enables the ``routes`` collector for that device.
+    Route tables and BGP state are enabled by default for L3 routing roles.
+    Route evidence can then promote the other dynamic protocols unless the
+    operator explicitly disables that protocol.
     """
     logger.info("[Scheduler Job] Starting sync_routing_neighbors_job...")
     conn = get_db_connection()
@@ -2007,12 +2025,20 @@ def sync_bgp_routes_job():
             except Exception as e:
                 logger.debug(f"[Scheduler Job] ThreadPool error during BGP routes collection: {e}")
 
+    # Multiple valid paths can share prefix/next-hop/AS path. Preserve paths
+    # whose best/active state differs, but avoid duplicate records returned by
+    # overlapping global/VRF collection paths.
+    unique_routes: dict[tuple[str, ...], dict] = {}
+    for item in all_routes:
+        unique_routes.setdefault(_bgp_route_identity(item), item)
+    all_routes = list(unique_routes.values())
+
     db_conn = get_db_connection()
     try:
         db_conn.execute("DELETE FROM bgp_route_table")
         last_update = _beijing_now_iso()
         for item in all_routes:
-            uid = f"{item['device_id']}_{item['vrf_name']}_{item['prefix']}_{item['next_hop']}_{item['as_path']}"
+            uid = '_'.join(_bgp_route_identity(item))
             db_conn.execute('''
                 INSERT INTO bgp_route_table (
                     id, device_id, vrf_name, prefix, next_hop, metric, loc_pref, weight, as_path, local_as, is_best, is_active, last_updated

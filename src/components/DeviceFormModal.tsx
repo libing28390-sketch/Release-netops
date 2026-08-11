@@ -24,6 +24,7 @@ interface RegistryPlatformOption {
   name_zh?: string;
   name_en?: string;
   vendor?: string;
+  parser_platform?: string;
   source?: string;
   status?: string;
 }
@@ -37,9 +38,7 @@ const PLATFORM_OPTIONS = [
   { value: 'fortinet_fortios', label: 'Fortinet FortiOS' },
   { value: 'huawei_vrp', label: 'Huawei VRPv5' },
   { value: 'huawei_vrpv8', label: 'Huawei VRPv8' },
-  { value: 'hp_comware', label: 'H3C Comware V5' },
-  { value: 'h3c_comware', label: 'H3C Comware V7' },
-  { value: 'h3c_comware9', label: 'H3C Comware V9' },
+  { value: 'h3c_comware', label: 'H3C Comware' },
   { value: 'ruijie_rgos', label: 'Ruijie RGOS' },
   { value: 'zte_zxros', label: 'ZTE ZXROS' },
   { value: 'maipu', label: 'Maipu Network OS' },
@@ -140,7 +139,11 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   const platformOptions = [
     ...PLATFORM_OPTIONS,
     ...registryPlatforms
-      .filter((profile) => !PLATFORM_OPTIONS.some((option) => option.value === profile.platform_code))
+      .filter((profile) => {
+        const isH3cProfile = String(profile.vendor || '').trim().toLowerCase() === 'h3c'
+          && String(profile.parser_platform || '').trim().toLowerCase() === 'h3c_comware';
+        return !isH3cProfile && !PLATFORM_OPTIONS.some((option) => option.value === profile.platform_code);
+      })
       .map((profile) => ({
         value: profile.platform_code,
         label: `${profile.name_en || profile.platform_code}${profile.vendor ? ` (${profile.vendor})` : ''}`,

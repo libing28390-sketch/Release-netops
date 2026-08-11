@@ -15,8 +15,8 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "cli"
 
 def fixture_platform(path: Path) -> str:
     for platform in (
-        "hp_comware",
-        "h3c_comware9",
+        "h3c_comware_v5",
+        "h3c_comware_v9",
         "h3c_comware",
         "cisco_nxos",
         "cisco_ios",
@@ -75,11 +75,11 @@ def test_every_official_h3c_and_cisco_fixture_has_a_working_parser(metadata_path
 
 
 def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
-    assert _resolve_commands("hp_comware", ["bgp", "bgp_routes"]) == {
+    assert _resolve_commands("h3c_comware_v5", ["bgp", "bgp_routes"]) == {
         "bgp": ["display bgp peer ipv4"],
         "bgp_routes": ["display bgp routing-table ipv4"],
     }
-    assert _resolve_commands("hp_comware", ["interface_description"]) == {
+    assert _resolve_commands("h3c_comware_v5", ["interface_description"]) == {
         "interface_description": ["display interface brief description"],
     }
     assert _resolve_commands("h3c_comware", ["bgp", "bgp_routes"]) == {
@@ -89,11 +89,11 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
     assert _resolve_commands("h3c_comware", ["interface_description"]) == {
         "interface_description": ["display interface brief description"],
     }
-    assert _resolve_commands("h3c_comware9", ["bgp", "bgp_routes"]) == {
+    assert _resolve_commands("h3c_comware_v9", ["bgp", "bgp_routes"]) == {
         "bgp": ["display bgp peer ipv4 unicast"],
         "bgp_routes": ["display bgp routing-table ipv4"],
     }
-    assert _resolve_commands("h3c_comware9", ["interface_description"]) == {
+    assert _resolve_commands("h3c_comware_v9", ["interface_description"]) == {
         "interface_description": ["display interface brief description"],
     }
 
@@ -121,7 +121,7 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
     }
 
     assert NTC_PLATFORM_MAP["cisco_xe"] == "cisco_ios"
-    assert NTC_PLATFORM_MAP["h3c_comware9"] == "hp_comware"
+    assert NTC_PLATFORM_MAP["h3c_comware_v9"] == "h3c_comware"
 
 
 def test_h3c_bgp_unicast_and_no_suffix_use_distinct_textfsm_templates():
@@ -134,8 +134,8 @@ def test_h3c_bgp_unicast_and_no_suffix_use_distinct_textfsm_templates():
     unicast = smart_parse_cli(output, "display bgp peer ipv4 unicast", platform="h3c_comware")
     no_suffix = smart_parse_cli(output, "display bgp peer ipv4", platform="h3c_comware")
 
-    assert unicast["template"] == "hp_comware_display_bgp_peer_ipv4_unicast.textfsm"
-    assert no_suffix["template"] == "hp_comware_display_bgp_peer_ipv4.textfsm"
+    assert unicast["template"] == "h3c_comware_display_bgp_peer_ipv4_unicast.textfsm"
+    assert no_suffix["template"] == "h3c_comware_display_bgp_peer_ipv4.textfsm"
 
 
 def test_cisco_neighbor_collection_uses_lldp_only():
@@ -151,129 +151,129 @@ def test_cisco_neighbor_collection_uses_lldp_only():
     ("platform", "parts", "name", "expected_template", "expected_rows"),
     [
         (
-            "hp_comware",
-            ("h3c", "hp_comware", "display_bgp_routing_table"),
+            "h3c_comware_v5",
+            ("h3c", "h3c_comware_v5", "display_bgp_routing_table"),
             "comware_v5_s7500e",
-            "hp_comware_display_bgp_routing_table.textfsm",
+            "h3c_comware_v5_display_bgp_routing_table.textfsm",
             1,
         ),
         (
-            "hp_comware",
-            ("h3c", "hp_comware", "display_logbuffer"),
+            "h3c_comware_v5",
+            ("h3c", "h3c_comware_v5", "display_logbuffer"),
             "comware_v5_s7500e",
-            "hp_comware_display_logbuffer.textfsm",
+            "h3c_comware_v5_display_logbuffer.textfsm",
             2,
         ),
         (
-            "hp_comware",
-            ("h3c", "hp_comware", "display_environment"),
+            "h3c_comware_v5",
+            ("h3c", "h3c_comware_v5", "display_environment"),
             "comware_v5_s5500",
-            "hp_comware_display_environment.textfsm",
+            "h3c_comware_v5_display_environment.textfsm",
             1,
         ),
         (
-            "hp_comware",
-            ("h3c", "hp_comware", "display_power"),
+            "h3c_comware_v5",
+            ("h3c", "h3c_comware_v5", "display_power"),
             "comware_v5_s3610",
-            "hp_comware_display_power.textfsm",
+            "h3c_comware_v5_display_power.textfsm",
             2,
         ),
         (
-            "hp_comware",
-            ("h3c", "hp_comware", "display_irf"),
+            "h3c_comware_v5",
+            ("h3c", "h3c_comware_v5", "display_irf"),
             "comware_v5_s9500e",
-            "hp_comware_display_irf.textfsm",
+            "h3c_comware_v5_display_irf.textfsm",
             2,
         ),
         (
-            "hp_comware",
-            ("h3c", "hp_comware", "display_transceiver_interface"),
+            "h3c_comware_v5",
+            ("h3c", "h3c_comware_v5", "display_transceiver_interface"),
             "comware_v5_s3610",
-            "hp_comware_display_transceiver_interface.textfsm",
+            "h3c_comware_v5_display_transceiver_interface.textfsm",
             1,
         ),
         (
-            "hp_comware",
-            ("h3c", "hp_comware", "display_fan"),
+            "h3c_comware_v5",
+            ("h3c", "h3c_comware_v5", "display_fan"),
             "comware_v5_s3610",
-            "hp_comware_display_fan.textfsm",
+            "h3c_comware_v5_display_fan.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_bgp_peer_ipv4"),
             "comware_v7_s5560",
-            "hp_comware_display_bgp_peer_ipv4_unicast.textfsm",
+            "h3c_comware_display_bgp_peer_ipv4_unicast.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_bgp_routing_table_ipv4"),
             "comware_v7_router_b",
-            "hp_comware_display_bgp_routing_table_ipv4.textfsm",
+            "h3c_comware_display_bgp_routing_table_ipv4.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_logbuffer"),
             "comware_v7_s5130",
-            "hp_comware_display_logbuffer.textfsm",
+            "h3c_comware_display_logbuffer.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_interface_brief"),
             "comware_v7",
-            "hp_comware_display_interface_brief.textfsm",
+            "h3c_comware_display_interface_brief.textfsm",
             3,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_lldp_neighbor_information_list"),
             "comware_v7_s5130",
-            "hp_comware_display_lldp_neighbor-information_list.textfsm",
+            "h3c_comware_display_lldp_neighbor_information_list.textfsm",
             3,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_vlan_brief"),
             "comware_v7_msr",
-            "hp_comware_display_vlan_brief.textfsm",
+            "h3c_comware_display_vlan_brief.textfsm",
             1,
         ),
         (
-            "h3c_comware9",
-            ("h3c", "h3c_comware9", "display_bgp_peer_ipv4"),
+            "h3c_comware_v9",
+            ("h3c", "h3c_comware_v9", "display_bgp_peer_ipv4"),
             "comware_v9_cr16000",
-            "hp_comware_display_bgp_peer_ipv4_unicast.textfsm",
+            "h3c_comware_v9_display_bgp_peer_ipv4_unicast.textfsm",
             1,
         ),
         (
-            "h3c_comware9",
-            ("h3c", "h3c_comware9", "display_bgp_routing_table_ipv4"),
+            "h3c_comware_v9",
+            ("h3c", "h3c_comware_v9", "display_bgp_routing_table_ipv4"),
             "comware_v9_cr16000",
-            "hp_comware_display_bgp_routing_table_ipv4.textfsm",
+            "h3c_comware_v9_display_bgp_routing_table_ipv4.textfsm",
             2,
         ),
         (
-            "h3c_comware9",
-            ("h3c", "h3c_comware9", "display_interface_brief"),
+            "h3c_comware_v9",
+            ("h3c", "h3c_comware_v9", "display_interface_brief"),
             "comware_v9_cr16000",
-            "hp_comware_display_interface_brief.textfsm",
+            "h3c_comware_v9_display_interface_brief.textfsm",
             5,
         ),
         (
-            "h3c_comware9",
-            ("h3c", "h3c_comware9", "display_link_aggregation_verbose"),
+            "h3c_comware_v9",
+            ("h3c", "h3c_comware_v9", "display_link_aggregation_verbose"),
             "comware_v9_msr5680",
-            "hp_comware_display_link_aggregation_verbose.textfsm",
+            "h3c_comware_v9_display_link_aggregation_verbose.textfsm",
             3,
         ),
         (
-            "h3c_comware9",
-            ("h3c", "h3c_comware9", "display_vlan_brief"),
+            "h3c_comware_v9",
+            ("h3c", "h3c_comware_v9", "display_vlan_brief"),
             "comware_v9_cr16000",
-            "hp_comware_display_vlan_brief.textfsm",
+            "h3c_comware_v9_display_vlan_brief.textfsm",
             3,
         ),
         (
@@ -338,9 +338,9 @@ def test_official_h3c_and_cisco_outputs_parse_by_platform(
 
 def test_comware9_does_not_collapse_to_comware7_before_dedicated_templates():
     output, metadata = load_official_fixture(
-        "h3c", "h3c_comware9", "display_bgp_peer_ipv4", name="comware_v9_cr16000"
+        "h3c", "h3c_comware_v9", "display_bgp_peer_ipv4", name="comware_v9_cr16000"
     )
-    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware9")
+    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware_v9")
 
     assert result["template_source"] == "custom"
     assert result["data"][0]["PEER"] == "10.2.1.2"
@@ -350,9 +350,9 @@ def test_comware9_does_not_collapse_to_comware7_before_dedicated_templates():
 @pytest.mark.parametrize(
     ("platform", "expected_template"),
     [
-        ("hp_comware", "hp_comware_display_interface_brief.textfsm"),
-        ("h3c_comware", "hp_comware_display_interface_brief.textfsm"),
-        ("h3c_comware9", "hp_comware_display_interface_brief.textfsm"),
+        ("h3c_comware_v5", "h3c_comware_v5_display_interface_brief.textfsm"),
+        ("h3c_comware", "h3c_comware_display_interface_brief.textfsm"),
+        ("h3c_comware_v9", "h3c_comware_v9_display_interface_brief.textfsm"),
     ],
 )
 def test_h3c_interface_description_command_reuses_verified_brief_grammar(
@@ -378,9 +378,9 @@ def test_h3c_interface_description_command_reuses_verified_brief_grammar(
 
 def test_comware9_interface_parser_does_not_turn_headers_into_records():
     output, metadata = load_official_fixture(
-        "h3c", "h3c_comware9", "display_interface_brief", name="comware_v9_cr16000"
+        "h3c", "h3c_comware_v9", "display_interface_brief", name="comware_v9_cr16000"
     )
-    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware9")
+    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware_v9")
 
     assert {item["INTERFACE"] for item in result["data"]} == {
         "InLoop0",
@@ -393,9 +393,9 @@ def test_comware9_interface_parser_does_not_turn_headers_into_records():
 
 def test_comware_vlan_parser_keeps_the_complete_vlan_name():
     output, metadata = load_official_fixture(
-        "h3c", "h3c_comware9", "display_vlan_brief", name="comware_v9_cr16000"
+        "h3c", "h3c_comware_v9", "display_vlan_brief", name="comware_v9_cr16000"
     )
-    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware9")
+    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware_v9")
 
     assert [item["VLAN_NAME"] for item in result["data"]] == [
         "VLAN 0001",
@@ -407,11 +407,11 @@ def test_comware_vlan_parser_keeps_the_complete_vlan_name():
 def test_comware9_link_aggregation_keeps_parent_context_on_every_member():
     output, metadata = load_official_fixture(
         "h3c",
-        "h3c_comware9",
+        "h3c_comware_v9",
         "display_link_aggregation_verbose",
         name="comware_v9_msr5680",
     )
-    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware9")
+    result = smart_parse_cli(output, metadata["command"], platform="h3c_comware_v9")
 
     assert {item["AGGREGATE_INTERFACE"] for item in result["data"]} == {
         "Route-Aggregation1"
@@ -419,7 +419,7 @@ def test_comware9_link_aggregation_keeps_parent_context_on_every_member():
     assert {item["AGGREGATION_MODE"] for item in result["data"]} == {"Dynamic"}
 
 
-@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+@pytest.mark.parametrize("platform", ["h3c_comware_v5", "h3c_comware"])
 def test_comware7_real_world_transceiver_blocks_are_not_collapsed(platform):
     output = """Ten-GigabitEthernet1/0/50 transceiver information:
   Transceiver Type              : SFP-GE-LX-SM1310
@@ -455,7 +455,7 @@ Ten-GigabitEthernet1/0/52 transceiver information:
     assert {item["TRANSFER_DISTANCE"] for item in result["data"]} == {"10(9um)"}
 
 
-@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+@pytest.mark.parametrize("platform", ["h3c_comware_v5", "h3c_comware"])
 def test_comware7_real_world_version_is_one_complete_record(platform):
     output = """H3C Comware Software, Version 7.1.070, Alpha 7170
 Copyright (c) 2004-2022 New H3C Technologies Co., Ltd. All rights reserved.
@@ -483,7 +483,7 @@ S6850 with 2 Processors
     assert record["LAST_REBOOT_REASON"] == "User reboot"
 
 
-@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+@pytest.mark.parametrize("platform", ["h3c_comware_v5", "h3c_comware"])
 def test_comware7_real_world_environment_table_is_structured(platform):
     output = """System temperature information (degree centigrade):
 -------------------------------------
@@ -502,7 +502,7 @@ Slot  Sensor    Temperature LowerLimit WarningLimit AlarmLimit
     assert [item["TEMPERATURE"] for item in result["data"]] == ["30", "33", "37", "39", "42", "44"]
 
 
-@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+@pytest.mark.parametrize("platform", ["h3c_comware_v5", "h3c_comware"])
 def test_comware7_real_world_power_table_is_structured(platform):
     output = """Device Info on Slot 1:
 Device ID.  Status
@@ -517,7 +517,7 @@ Device ID.  Status
     assert {item["STATUS"] for item in result["data"]} == {"Normal"}
 
 
-@pytest.mark.parametrize("platform", ["hp_comware", "h3c_comware"])
+@pytest.mark.parametrize("platform", ["h3c_comware_v5", "h3c_comware"])
 def test_comware7_real_world_ntp_status_is_structured(platform):
     output = """--- H3C-SW1 ---
 [display ntp-service status]
@@ -547,16 +547,16 @@ def test_comware7_real_world_ntp_status_is_structured(platform):
     ("platform", "category_fixtures", "expected_commands"),
     [
         (
-            "hp_comware",
+            "h3c_comware_v5",
             {
-                "bgp_routes": ("h3c", "hp_comware", "display_bgp_routing_table", "comware_v5_s7500e"),
-                "ntp": ("h3c", "hp_comware", "display_ntp_service_status", "comware_v5_s5500"),
-                "environment": ("h3c", "hp_comware", "display_environment", "comware_v5_s5500"),
-                "fan": ("h3c", "hp_comware", "display_fan", "comware_v5_s3610"),
-                "power": ("h3c", "hp_comware", "display_power", "comware_v5_s3610"),
-                "stack": ("h3c", "hp_comware", "display_irf", "comware_v5_s9500e"),
-                "version": ("h3c", "hp_comware", "display_version", "comware_v5_wx3010e"),
-                "logs": ("h3c", "hp_comware", "display_logbuffer", "comware_v5_s7500e"),
+                "bgp_routes": ("h3c", "h3c_comware_v5", "display_bgp_routing_table", "comware_v5_s7500e"),
+                "ntp": ("h3c", "h3c_comware_v5", "display_ntp_service_status", "comware_v5_s5500"),
+                "environment": ("h3c", "h3c_comware_v5", "display_environment", "comware_v5_s5500"),
+                "fan": ("h3c", "h3c_comware_v5", "display_fan", "comware_v5_s3610"),
+                "power": ("h3c", "h3c_comware_v5", "display_power", "comware_v5_s3610"),
+                "stack": ("h3c", "h3c_comware_v5", "display_irf", "comware_v5_s9500e"),
+                "version": ("h3c", "h3c_comware_v5", "display_version", "comware_v5_wx3010e"),
+                "logs": ("h3c", "h3c_comware_v5", "display_logbuffer", "comware_v5_s7500e"),
             },
             {
                 "bgp_routes": ["display bgp routing-table ipv4"],
@@ -615,30 +615,30 @@ def test_comware7_real_world_ntp_status_is_structured(platform):
             },
         ),
         (
-            "h3c_comware9",
+            "h3c_comware_v9",
             {
-                "bgp": ("h3c", "h3c_comware9", "display_bgp_peer_ipv4", "comware_v9_cr16000"),
+                "bgp": ("h3c", "h3c_comware_v9", "display_bgp_peer_ipv4", "comware_v9_cr16000"),
                 "bgp_routes": (
                     "h3c",
-                    "h3c_comware9",
+                    "h3c_comware_v9",
                     "display_bgp_routing_table_ipv4",
                     "comware_v9_cr16000",
                 ),
                 "eth_trunk": (
                     "h3c",
-                    "h3c_comware9",
+                    "h3c_comware_v9",
                     "display_link_aggregation_verbose",
                     "comware_v9_msr5680",
                 ),
                 "interfaces": (
                     "h3c",
-                    "h3c_comware9",
+                    "h3c_comware_v9",
                     "display_interface_brief",
                     "comware_v9_cr16000",
                 ),
                 "vlan": (
                     "h3c",
-                    "h3c_comware9",
+                    "h3c_comware_v9",
                     "display_vlan_brief",
                     "comware_v9_cr16000",
                 ),

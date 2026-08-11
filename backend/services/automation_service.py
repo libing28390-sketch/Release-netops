@@ -53,7 +53,7 @@ class AutomationService:
             dummy_cmd = "echo 1"
         elif 'huawei' in normalized_platform or 'vrp' in normalized_platform:
             dummy_cmd = "display clock"
-        elif 'h3c' in normalized_platform or 'comware' in normalized_platform or 'hp_comware' in normalized_platform:
+        elif 'h3c' in normalized_platform or 'comware' in normalized_platform:
             dummy_cmd = "display clock"
         else:
             dummy_cmd = "show clock"
@@ -84,7 +84,7 @@ class AutomationService:
             dummy_cmd = "echo 1"
         elif 'huawei' in platform or 'vrp' in platform:
             dummy_cmd = "display clock"
-        elif 'h3c' in platform or 'comware' in platform or 'hp_comware' in platform:
+        elif 'h3c' in platform or 'comware' in platform:
             dummy_cmd = "display clock"
         else:
             dummy_cmd = "show clock"

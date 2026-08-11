@@ -10,5 +10,4 @@
 
 ## 厂商兼容
 
-H3C 默认平台使用 `h3c_comware`；明确配置为 V5 的旧设备可使用 `hp_comware` 解析器命名空间。导入后建议执行一次接口和路由同步验证。
-
+H3C/Comware 统一使用 `h3c_comware` 作为设备和解析平台。V5/V7/V9 的命令、输出和模板差异由 `platform_profile_id`、Release 和模板变体区分；`hp_comware` 只在 Netmiko 连接适配层出现。导入后建议执行一次接口和路由同步验证。

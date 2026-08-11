@@ -19,7 +19,7 @@ _PLATFORM_ALIASES = {
     "junos": "juniper_junos", "juniper": "juniper_junos",
     "arista": "arista_eos", "eos": "arista_eos",
     "huawei": "huawei_vrp", "huawei_vrpv8": "huawei_vrp", "vrp": "huawei_vrp", "ce": "huawei_vrp",
-    "h3c": "h3c_comware", "h3c_comware9": "h3c_comware", "comware": "h3c_comware", "hp_comware": "h3c_comware",
+    "h3c": "h3c_comware", "comware": "h3c_comware",
     "ruijie": "ruijie_rgos", "ruijie_os": "ruijie_rgos", "rgos": "ruijie_rgos",
     "zte": "zte_zxros", "zxros": "zte_zxros",
     "dptech": "dptech_ios", "dptech_ios": "dptech_ios", "dptech_conplat": "dptech_ios", "dptech_conplat_fw": "dptech_ios",

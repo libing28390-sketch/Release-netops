@@ -48,6 +48,15 @@ _NETWORK_ROLES = {
 }
 _SERVER_ROLES = {"server", "host", "vm", "virtual-machine", "hypervisor", "storage"}
 _SERVER_PLATFORMS = {"linux", "ubuntu", "centos", "debian", "redhat", "windows", "vmware", "esxi"}
+_ROUTING_ROLES = {
+    "router",
+    "gateway",
+    "core",
+    "dist",
+    "distribution",
+    "aggregation",
+    "l3switch",
+}
 
 
 def _as_bool(value: Any) -> bool | None:
@@ -93,8 +102,10 @@ def _default_plan(device: dict[str, Any]) -> dict[str, bool]:
     """Return the lightweight default plan used for ordinary device inventory.
 
     The default scheduler run is intentionally limited to reachability,
-    health, interface state, and interface IPs.  Topology, L2 tables, route
-    tables, and routing protocols are opt-in per device through
+    health, interface state, and interface IPs.  L3 routing roles also collect
+    the main route table and BGP state by default because BGP may be configured
+    without installing a BGP route into the main RIB.  Other topology, L2
+    tables, and dynamic routing protocols remain opt-in through
     ``collection_policy_json``.
     """
     if _is_server(device):
@@ -119,7 +130,13 @@ def _default_plan(device: dict[str, Any]) -> dict[str, bool]:
         }
 
     return {
-        collector: collector in {"reachability", "health_metrics", "interface_status", "interface_ip"}
+        collector: (
+            collector in {"reachability", "health_metrics", "interface_status", "interface_ip"}
+            or (
+                collector in {"routes", "bgp"}
+                and _role(device) in _ROUTING_ROLES
+            )
+        )
         for collector in COLLECTORS
     }
 

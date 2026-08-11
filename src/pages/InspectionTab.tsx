@@ -439,7 +439,7 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
             <p className="text-sm font-bold text-[#0b2340]">{isZh ? '设备采集计划' : 'Device Collection Plan'}</p>
-            <p className="text-[11px] text-black/40 mt-1">{isZh ? '默认只采集设备基本信息（可达性、健康指标、接口状态和接口 IP）；路由、拓扑和表项需按设备单独开启。' : 'The default plan collects device basics only (reachability, health, interface state, and interface IP). Routes, topology, and tables are opt-in per device.'}</p>
+            <p className="text-[11px] text-black/40 mt-1">{isZh ? '默认采集基本信息；L3 设备额外采集路由表和 BGP 状态，其他拓扑、表项和动态协议可按设备单独开启。' : 'The default plan collects device basics; L3 devices also collect the main route table and BGP state. Other topology, tables, and dynamic protocols are opt-in per device.'}</p>
           </div>
           <div className="flex items-center gap-2">
             <select

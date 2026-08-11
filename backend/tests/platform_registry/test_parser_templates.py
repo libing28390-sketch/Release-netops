@@ -54,7 +54,7 @@ def test_profile_scoped_template_uses_canonical_parser_platform(isolated_db):
     owner = {"id": "owner-1", "username": "owner", "role": "Operator", "tenant_id": "tenant-1"}
     template = create_template(
         {
-            "platform_code": "hp_comware",
+            "platform_code": "h3c_comware",
             "platform_profile_id": "system-profile-h3c_comware",
             "template_code": "H3C_PROFILE_SCOPED",
             "name": "H3C profile scoped",
@@ -62,7 +62,7 @@ def test_profile_scoped_template_uses_canonical_parser_platform(isolated_db):
         owner,
     )
     assert template["platform_profile_id"] == "system-profile-h3c_comware"
-    assert template["platform_code"] == "hp_comware"
+    assert template["platform_code"] == "h3c_comware"
 
 
 def test_parser_template_list_can_filter_by_netmiko_driver_platform(isolated_db):
@@ -72,7 +72,7 @@ def test_parser_template_list_can_filter_by_netmiko_driver_platform(isolated_db)
         owner,
     )
     h3c = create_template(
-        {"platform_code": "hp_comware", "template_code": "DRIVER_H3C", "name": "H3C driver template"},
+        {"platform_code": "h3c_comware", "template_code": "DRIVER_H3C", "name": "H3C driver template"},
         owner,
     )
 

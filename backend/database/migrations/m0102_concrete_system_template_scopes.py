@@ -36,10 +36,16 @@ def _normalize(value: str | None) -> str:
 
 def _profile_for_template(profile_defs: list[dict], filename: str) -> dict | None:
     stem = Path(filename).stem.lower()
-    # The historical unicast file is the V7 grammar despite its hp_comware
-    # parser-family filename.
-    if stem == "hp_comware_display_bgp_peer_ipv4_unicast":
-        return next((item for item in profile_defs if item["platform_code"] == "h3c_comware"), None)
+    variant_profiles = {
+        "h3c_comware_v5": "hp_comware",
+        "h3c_comware_v9": "h3c_comware9",
+    }
+    for prefix, profile_code in variant_profiles.items():
+        if stem.startswith(f"{prefix}_"):
+            return next(
+                (item for item in profile_defs if item["platform_code"] == profile_code),
+                None,
+            )
     return next(
         (
             item

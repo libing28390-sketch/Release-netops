@@ -37,8 +37,6 @@ class NetmikoDriver(BaseDriver):
             'nexus': 'cisco_nxos',
             'h3c': 'h3c_comware',
             'comware': 'h3c_comware',
-            'hp_comware': 'h3c_comware',
-            'h3c_comware9': 'h3c_comware',
             'huawei': 'huawei_vrp',
             'huawei_vrpv8': 'huawei_vrp',
             'vrp': 'huawei_vrp',

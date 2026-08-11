@@ -237,9 +237,7 @@ const CONFIG_VENDOR_PLATFORM_OPTIONS: Record<string, Array<{ value: string; labe
     { value: 'huawei_usg', label: 'Huawei USG' },
   ],
   H3C: [
-    { value: 'hp_comware', label: 'H3C Comware V5' },
-    { value: 'h3c_comware', label: 'H3C Comware V7' },
-    { value: 'h3c_comware9', label: 'H3C Comware V9' },
+    { value: 'h3c_comware', label: 'H3C Comware' },
   ],
   Ruijie: [{ value: 'ruijie_rgos', label: 'Ruijie RGOS' }, { value: 'ruijie_os', label: 'Ruijie OS (alias)' }],
   ZTE: [{ value: 'zte_zxros', label: 'ZTE ZXROS' }],

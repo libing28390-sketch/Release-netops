@@ -69,7 +69,12 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'eos': 'arista_eos',
     'huawei_vrp': 'huawei',
     'huawei_vrpv8': 'huawei',
-    'h3c_comware9': 'hp_comware',
+    # These are private Profile-release selectors used only when a collector
+    # already knows the concrete V5/V7/V9 grammar. Persisted devices still use
+    # the public ``h3c_comware`` platform plus a concrete Platform Profile.
+    'h3c_comware_v5': 'hp_comware',
+    'h3c_comware_v7': 'hp_comware',
+    'h3c_comware_v9': 'hp_comware',
     'huawei': 'huawei',
     'vrp': 'huawei',
     'ce': 'huawei',
@@ -77,9 +82,6 @@ PLATFORM_DEVICE_TYPE_MAP = {
     'ne': 'huawei',
     '\u534e\u4e3avrp': 'huawei',
     'h3c_comware': 'hp_comware',
-    'h3c': 'hp_comware',
-    'comware': 'hp_comware',
-    'hp_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
     'ruijie_os': 'ruijie_os',
     'ruijie': 'ruijie_os',
@@ -117,19 +119,20 @@ NTC_PLATFORM_MAP = {
     'eos': 'arista_eos',
     'huawei_vrp': 'huawei_vrp',
     'huawei_vrpv8': 'huawei_vrp',
-    # Comware 9 keeps a dedicated custom-template identity, then falls back to
-    # the hp_comware NTC family for commands whose grammar is unchanged.
-    'h3c_comware9': 'hp_comware',
+    # H3C/Comware is one parser family.  V5/V7/V9 grammar selection is owned
+    # by the platform profile and its registered template version.
+    'h3c_comware_v5': 'h3c_comware',
+    'h3c_comware_v7': 'h3c_comware',
+    'h3c_comware_v9': 'h3c_comware',
     'huawei': 'huawei_vrp',
     'vrp': 'huawei_vrp',
     'ce': 'huawei_vrp',
     'ce_vrp': 'huawei_vrp',
     'ne': 'huawei_vrp',
     '\u534e\u4e3avrp': 'huawei_vrp',
-    'h3c_comware': 'hp_comware',
-    'h3c': 'hp_comware',
-    'comware': 'hp_comware',
-    'hp_comware': 'hp_comware',
+    'h3c_comware': 'h3c_comware',
+    'h3c': 'h3c_comware',
+    'comware': 'h3c_comware',
     # ntc-templates 当前没有 ruijie_os 平台索引，临时回退 to Cisco 语法族做有限复用。
     'ruijie_rgos': 'ruijie_rgos',
     'ruijie_os': 'ruijie_rgos',
@@ -157,6 +160,7 @@ _PLATFORM_ALIAS: dict[str, str] = {
     'eos': 'arista_eos',
     'h3c': 'h3c_comware',
     'comware': 'h3c_comware',
+    'h3c_comware_v7': 'h3c_comware',
     'huawei': 'huawei_vrp',
     'vrp': 'huawei_vrp',
     'ce': 'huawei_vrp',
@@ -371,9 +375,10 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'interface_description': ['display interface brief description'],
         'uptime': ['display version'],
     },
-    # Comware5 remains a separate catalog because its output grammar and
-    # template family differ from Comware7/9.
-    'hp_comware': {
+    # Profile-specific Comware V5 commands remain separate because the CLI
+    # grammar differs from the shared V7/V9 family; this is not a public
+    # platform namespace.
+    'h3c_comware_v5': {
         'interfaces': ['display interface brief'],
         'neighbors': ['display lldp neighbor-information list'],
         'arp': ['display arp'],
@@ -398,7 +403,7 @@ COMMAND_CATALOG: dict[str, dict[str, list[str]]] = {
         'interface_description': ['display interface brief description'],
         'uptime': ['display version'],
     },
-    'h3c_comware9': {
+    'h3c_comware_v9': {
         'interfaces': ['display interface brief'],
         'neighbors': ['display lldp neighbor-information list'],
         'arp': ['display arp all'],
@@ -494,8 +499,9 @@ _STP_COMMANDS = {
     'huawei_vrp': ['display stp brief'],
     'huawei_vrpv8': ['display stp brief'],
     'h3c_comware': ['display stp brief'],
-    'h3c_comware9': ['display stp brief'],
-    'hp_comware': ['display stp brief'],
+    'h3c_comware_v5': ['display stp brief'],
+    'h3c_comware_v7': ['display stp brief'],
+    'h3c_comware_v9': ['display stp brief'],
     'ruijie_rgos': ['show spanning-tree'],
     'zte_zxros': ['show spanning-tree'],
     'dptech_ios': ['show spanning-tree'],
@@ -871,7 +877,10 @@ def _normalize_command_for_template_match(command: str) -> str:
 def _parse_with_ntc(platform: str, command: str, output: str) -> list[dict[str, Any]]:
     from core.textfsm import resolve_textfsm_platform, smart_parse_cli
     parser_platform = resolve_textfsm_platform(platform) or platform
-    res = smart_parse_cli(output=output, command=command, platform=parser_platform)
+    # Pass the selected profile/variant through the parser.  The parser
+    # returns the canonical public family in its result, but needs the
+    # concrete variant while choosing V5/V7/V9 template files.
+    res = smart_parse_cli(output=output, command=command, platform=platform)
     if res.get('success') and res.get('data'):
         return _normalize_records(res['data'])
     # IOS-XE and legacy platform aliases keep their asset/platform identity,
@@ -888,14 +897,14 @@ def _parse_with_ntc(platform: str, command: str, output: str) -> list[dict[str, 
     # canonical alternate TextFSM grammar only when the first grammar did
     # not match; never replace a successful standard parse.
     if (
-        resolve_textfsm_platform(platform) == 'hp_comware'
+        resolve_textfsm_platform(platform) == 'h3c_comware'
         and _normalize_command_for_template_match(command) == 'display interface brief'
         and re.search(r'interface\s+physical', str(output or ''), re.IGNORECASE)
     ):
         alternate = smart_parse_cli(
             output=output,
             command='display ip interface brief',
-            platform='hp_comware',
+            platform=platform,
         )
         if alternate.get('success') and alternate.get('data'):
             return _normalize_records(alternate['data'])
@@ -1549,8 +1558,18 @@ def collect_operational_data(
         policy_override_categories=policy_override_categories,
     )
     from core.platform_utils import normalize_device_platform
-    platform = normalize_device_platform(device_info.get('vendor'), device_info.get('platform') or 'cisco_ios')
-    commands_by_category = _resolve_commands(platform, selected_categories)
+    raw_platform = str(device_info.get('platform') or 'cisco_ios').strip().lower()
+    platform = normalize_device_platform(device_info.get('vendor'), raw_platform)
+    # Persisted devices expose only the public ``h3c_comware`` platform.  A
+    # direct caller may still pass an explicit release grammar selector for an
+    # unbound collection/fixture path; keep that selector private to command
+    # and parser lookup while the returned device identity stays canonical.
+    parser_platform = (
+        raw_platform
+        if raw_platform in {'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}
+        else platform
+    )
+    commands_by_category = _resolve_commands(parser_platform, selected_categories)
     conn_params = _build_connection_params(device_info, auth_role=auth_role)
 
 
@@ -1652,7 +1671,7 @@ def collect_operational_data(
                     )
                     category_result['raw_outputs'].append({'command': command, 'output': output})
                     try:
-                        records = _parse_command_output(platform, category, command, output)
+                        records = _parse_command_output(parser_platform, category, command, output)
                         if records:
                             category_result['records'].extend(records)
                             category_result['count'] = len(category_result['records'])

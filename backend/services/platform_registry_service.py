@@ -99,9 +99,12 @@ def iter_action_definitions() -> tuple[dict[str, Any], ...]:
 SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
     {"platform_code": "cisco_ios", "name_zh": "Cisco IOS", "name_en": "Cisco IOS", "vendor": "Cisco", "connection_driver": "cisco_ios", "parser_platform": "cisco_ios"},
     {"platform_code": "huawei_vrp", "name_zh": "Huawei VRP", "name_en": "Huawei VRP", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrp"},
-    {"platform_code": "hp_comware", "name_zh": "H3C Comware V5", "name_en": "H3C Comware V5", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "hp_comware"},
-    {"platform_code": "h3c_comware", "name_zh": "H3C Comware V7", "name_en": "H3C Comware V7", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "hp_comware"},
-    {"platform_code": "h3c_comware9", "name_zh": "H3C Comware V9", "name_en": "H3C Comware V9", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "hp_comware"},
+    # The profile IDs/codes remain concrete so V5/V7/V9 can carry different
+    # commands and template releases.  Their public parser family is one
+    # canonical H3C key; ``hp_comware`` remains only the Netmiko driver name.
+    {"platform_code": "hp_comware", "name_zh": "H3C Comware V5", "name_en": "H3C Comware V5", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
+    {"platform_code": "h3c_comware", "name_zh": "H3C Comware V7", "name_en": "H3C Comware V7", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
+    {"platform_code": "h3c_comware9", "name_zh": "H3C Comware V9", "name_en": "H3C Comware V9", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
     {"platform_code": "juniper_junos", "name_zh": "Juniper Junos", "name_en": "Juniper Junos", "vendor": "Juniper", "connection_driver": "juniper_junos", "parser_platform": "juniper_junos"},
     {"platform_code": "arista_eos", "name_zh": "Arista EOS", "name_en": "Arista EOS", "vendor": "Arista", "connection_driver": "arista_eos", "parser_platform": "arista_eos"},
     {"platform_code": "zte_5900_v6", "name_zh": "中兴 5900 V6", "name_en": "ZTE 5900 V6", "vendor": "ZTE", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},
@@ -115,8 +118,7 @@ SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
 PLATFORM_ALIASES = {
     "cisco": "cisco_ios", "ios": "cisco_ios", "huawei": "huawei_vrp", "vrp": "huawei_vrp",
     "huawei_vrpv8": "huawei_vrp", "h3c": "h3c_comware", "comware": "h3c_comware",
-    "comware5": "hp_comware", "comware7": "h3c_comware", "comware9": "h3c_comware9",
-    "hp_comware": "hp_comware", "h3c_comware": "h3c_comware", "h3c_comware9": "h3c_comware9",
+    "h3c_comware": "h3c_comware",
     "juniper": "juniper_junos",
     "junos": "juniper_junos", "arista": "arista_eos", "eos": "arista_eos", "zte": "zte_5900_v6",
     "zte_zxros": "zte_5900_v6", "ruijie": "ruijie_s6k_rgos12", "ruijie_os": "ruijie_s6k_rgos12",
@@ -129,7 +131,7 @@ PLATFORM_ALIASES = {
 PLATFORM_ACTION_COMMANDS: dict[str, dict[str, str]] = {
     "cisco_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show etherchannel summary", "get_arp_table": "show ip arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan brief", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes cpu", "get_memory": "show processes memory", "get_fans": "show environment fan", "get_power": "show environment power", "get_temperature": "show environment temperature", "get_clock": "show clock", "get_running_config": "show running-config"},
     "huawei_vrp": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor brief", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display eth-trunk", "get_arp_table": "display arp", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer", "get_ospf_neighbors": "display ospf peer brief", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory-usage", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display temperature", "get_clock": "display clock", "get_running_config": "display current-configuration"},
-    "hp_comware": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor-information list", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display link-aggregation verbose", "get_arp_table": "display arp all", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan brief", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer ipv4 unicast", "get_ospf_neighbors": "display ospf peer", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display environment", "get_clock": "display clock", "get_running_config": "display current-configuration"},
+  "h3c_comware": {"get_version": "display version", "get_lldp_neighbors": "display lldp neighbor-information list", "get_interface_brief": "display interface brief", "get_interfaces": "display interface", "get_ip_interfaces": "display ip interface brief", "get_link_aggregation": "display link-aggregation verbose", "get_arp_table": "display arp all", "get_mac_table": "display mac-address", "get_vlan_table": "display vlan brief", "get_route_table": "display ip routing-table", "get_bgp_neighbors": "display bgp peer ipv4 unicast", "get_ospf_neighbors": "display ospf peer", "get_isis_neighbors": "display isis peer", "get_stp": "display stp brief", "get_transceivers": "display transceiver interface", "get_cpu": "display cpu-usage", "get_memory": "display memory", "get_fans": "display fan", "get_power": "display power", "get_temperature": "display environment", "get_clock": "display clock", "get_running_config": "display current-configuration"},
     "juniper_junos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interfaces": "show interfaces detail", "get_interface_brief": "show interfaces terse", "get_ip_interfaces": "show interfaces terse", "get_route_table": "show route", "get_isis_neighbors": "show isis adjacency", "get_stp": "show spanning-tree bridge", "get_clock": "show system uptime", "get_running_config": "show configuration"},
     "arista_eos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show port-channel summary", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes top once", "get_memory": "show version", "get_clock": "show clock", "get_running_config": "show running-config"},
     "ruijie_rgos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show interfaces transceiver", "get_cpu": "show cpu", "get_memory": "show memory", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature", "get_clock": "show clock"},
@@ -150,7 +152,7 @@ PLATFORM_ACTION_COMMANDS["huawei_vrp"].update({
     "get_mac_table_vrf": "display mac-address vpn-instance {{vrf}}",
     "get_bgp_neighbors_vrf": "display bgp vpnv4 vpn-instance {{vrf}} peer",
 })
-PLATFORM_ACTION_COMMANDS["hp_comware"].update({
+PLATFORM_ACTION_COMMANDS["h3c_comware"].update({
     "get_route_table_vrf": "display ip routing-table vpn-instance {{vrf}}",
     "get_arp_table_vrf": "display arp vpn-instance {{vrf}}",
     "get_mac_table_vrf": "display mac-address vpn-instance {{vrf}}",
@@ -166,7 +168,7 @@ PLATFORM_ACTION_COMMANDS["arista_eos"].update({
 })
 PLATFORM_ACTION_COMMANDS["cisco_ios"].update({"get_bgp_routes": "show ip bgp", "get_bgp_routes_vrf": "show ip bgp vrf {{vrf}}"})
 PLATFORM_ACTION_COMMANDS["huawei_vrp"].update({"get_bgp_routes": "display bgp routing-table", "get_bgp_routes_vrf": "display bgp vpnv4 vpn-instance {{vrf}} routing-table"})
-PLATFORM_ACTION_COMMANDS["hp_comware"].update({"get_bgp_routes": "display bgp routing-table ipv4 unicast", "get_bgp_routes_vrf": "display bgp vpnv4 vpn-instance {{vrf}} routing-table"})
+PLATFORM_ACTION_COMMANDS["h3c_comware"].update({"get_bgp_routes": "display bgp routing-table ipv4 unicast", "get_bgp_routes_vrf": "display bgp vpnv4 vpn-instance {{vrf}} routing-table"})
 PLATFORM_ACTION_COMMANDS["ruijie_rgos"].update({"get_bgp_routes": "show ip bgp", "get_bgp_routes_vrf": "show ip bgp vrf {{vrf}}"})
 
 # A parser platform describes the parser/driver family.  A platform profile
@@ -176,12 +178,12 @@ PLATFORM_ACTION_COMMANDS["ruijie_rgos"].update({"get_bgp_routes": "show ip bgp",
 # family (for example Comware V5 versus V7).
 PROFILE_ACTION_COMMANDS: dict[str, dict[str, str]] = {
     "hp_comware": {
-        **PLATFORM_ACTION_COMMANDS["hp_comware"],
+        **PLATFORM_ACTION_COMMANDS["h3c_comware"],
         "get_arp_table": "display arp",
         "get_bgp_neighbors": "display bgp peer ipv4",
     },
-    "h3c_comware": dict(PLATFORM_ACTION_COMMANDS["hp_comware"]),
-    "h3c_comware9": dict(PLATFORM_ACTION_COMMANDS["hp_comware"]),
+    "h3c_comware": dict(PLATFORM_ACTION_COMMANDS["h3c_comware"]),
+    "h3c_comware9": dict(PLATFORM_ACTION_COMMANDS["h3c_comware"]),
 }
 
 
@@ -311,18 +313,30 @@ def normalize_platform_code(value: str) -> str:
     return PLATFORM_ALIASES.get(code, code)
 
 
-def platform_codes_match(device_platform: Any, profile_platform: Any) -> bool:
-    """Compare a device identity with a concrete platform Profile.
+def platform_codes_match(device_platform: Any, profile_platform: Any, parser_platform: Any = None) -> bool:
+    """Compare a public device platform with a Profile's parser platform.
 
-    Exact codes win, while only the explicitly declared legacy aliases are
-    accepted.  This keeps custom platform codes isolated and prevents one
-    versioned profile from silently accepting another version's device.
+    ``platform_code`` identifies a concrete Profile and may therefore differ
+    between Comware generations.  It is not the value stored on the device.
+    Callers that have the full Profile should pass ``parser_platform``;
+    accepting the concrete system code as a fallback keeps this helper useful
+    for small registry/import callers without exposing that code as a public
+    platform alias.
     """
     device_code = str(device_platform or "").strip().lower()
-    profile_code = str(profile_platform or "").strip().lower()
-    if not device_code or not profile_code:
+    target_code = str(parser_platform or profile_platform or "").strip().lower()
+    if not device_code or not target_code:
         return False
-    return device_code == profile_code or normalize_platform_code(device_code) == profile_code
+    profile_parser_codes = {
+        str(item.get("platform_code") or "").strip().lower(): str(item.get("parser_platform") or "").strip().lower()
+        for item in SYSTEM_PROFILES
+    }
+    target_code = profile_parser_codes.get(target_code, target_code)
+    if device_code in {"h3c", "comware", "h3c_comware", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"}:
+        device_code = "h3c_comware"
+    if target_code in {"h3c", "comware", "h3c_comware", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"}:
+        target_code = "h3c_comware"
+    return device_code == target_code or normalize_platform_code(device_code) == target_code
 
 
 def validate_platform_code(value: str) -> str:
@@ -410,8 +424,15 @@ def derive_template_command(platform_code: str, source_filename: str) -> str:
     if not filename.lower().endswith(".textfsm"):
         return ""
     stem = filename[:-len(".textfsm")]
-    prefix = f"{str(platform_code or '').strip().lower()}_"
-    if not stem.lower().startswith(prefix):
+    normalized_platform = str(platform_code or '').strip().lower()
+    prefix_candidates = [
+        "h3c_comware_v5_",
+        "h3c_comware_v9_",
+        "h3c_comware_",
+        f"{normalized_platform}_",
+    ]
+    prefix = next((candidate for candidate in prefix_candidates if stem.lower().startswith(candidate)), "")
+    if not prefix:
         return ""
     raw_command = stem[len(prefix):].replace("_", " ")
     try:
@@ -509,7 +530,7 @@ class PlatformActionSession:
                 device_group_id=device.get("device_group_id"),
             ):
                 raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
-            if not platform_codes_match(device.get("platform"), device.get("platform_code")):
+            if not platform_codes_match(device.get("platform"), device.get("platform_code"), device.get("parser_platform")):
                 raise PlatformRegistryError(
                     "PLATFORM_PROFILE_MISMATCH",
                     "Device platform does not match its bound platform Profile",
@@ -1184,7 +1205,7 @@ def preview_platform_migration(user: dict[str, Any]) -> dict[str, Any]:
         ).fetchone()
         return {
             "read_only": True,
-            "legacy_compatibility_unchanged": True,
+            "canonical_platform": "h3c_comware",
             "devices": counts,
             "device_conflicts": device_conflicts,
             "file_templates": {
@@ -1281,7 +1302,7 @@ def preview_platform_action(
             device_group_id=device.get("device_group_id"),
         ):
             raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
-        if not platform_codes_match(device.get("platform"), device.get("platform_code")):
+        if not platform_codes_match(device.get("platform"), device.get("platform_code"), device.get("parser_platform")):
             raise PlatformRegistryError(
                 "PLATFORM_PROFILE_MISMATCH",
                 "Device platform does not match its bound platform Profile",
@@ -1895,7 +1916,7 @@ def execute_platform_action(
             device_group_id=device.get("device_group_id"),
         ):
             raise PlatformRegistryError("DEVICE_SCOPE_DENIED", "Device is outside the current resource scope", status_code=403)
-        if not platform_codes_match(device.get("platform"), device.get("platform_code")):
+        if not platform_codes_match(device.get("platform"), device.get("platform_code"), device.get("parser_platform")):
             raise PlatformRegistryError(
                 "PLATFORM_PROFILE_MISMATCH",
                 "Device platform does not match its bound platform Profile",
@@ -1984,7 +2005,11 @@ def execute_platform_action(
                     max_records=int(device.get("max_records") or 1000),
                 ) if template else []
             else:
-                parsed = smart_parse_cli(output=output, command=resolved_command, platform=device.get("parser_platform"))
+                # The public parser family is shared, but an unbound action
+                # still needs the concrete Profile selector to choose a V5 or
+                # V9 grammar when no registry template version is attached.
+                parser_selector = device.get("platform_code") or device.get("parser_platform")
+                parsed = smart_parse_cli(output=output, command=resolved_command, platform=parser_selector)
                 records = parsed.get("data") or [] if parsed.get("success") else []
             contract = _field_contract(device.get("field_contract_json"))
             if not contract and template:

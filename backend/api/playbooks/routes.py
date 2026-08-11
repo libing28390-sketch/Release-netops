@@ -919,7 +919,6 @@ async def parse_device_output(execution_id: str, device_id: str, request: Reques
         _find_template,
         _template_platform_candidates,
         parse_with_textfsm,
-        resolve_textfsm_platform,
     )
 
     # Bind parser selection to the actual asset.  The old endpoint trusted a
@@ -986,8 +985,7 @@ async def parse_device_output(execution_id: str, device_id: str, request: Reques
         return {'success': False, 'message': '需要提供 platform 和 command 参数', 'data': None}
 
     # 检查是否有对应模板
-    parser_platform = resolve_textfsm_platform(platform) or platform
-    template_path = _find_template(parser_platform, command)
+    template_path = _find_template(platform, command)
     if not template_path:
         return {
             'success': False,
@@ -996,7 +994,7 @@ async def parse_device_output(execution_id: str, device_id: str, request: Reques
             'has_template': False,
         }
 
-    records = parse_with_textfsm(parser_platform, command, raw_output)
+    records = parse_with_textfsm(platform, command, raw_output)
     if not records:
         return {
             'success': True,

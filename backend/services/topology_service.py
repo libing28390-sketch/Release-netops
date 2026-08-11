@@ -15,7 +15,7 @@ from netmiko import ConnectHandler
 
 from core.crypto import decrypt_credential
 from core.interface_utils import interface_nominal_speed_mbps, normalize_interface_name
-from core.textfsm import configure_ntc_templates, resolve_textfsm_platform, smart_parse_cli
+from core.textfsm import configure_ntc_templates, smart_parse_cli
 from core.read_cache import invalidate_read_cache
 from database import get_db_connection
 from services.vault_service import resolve_collector_credentials
@@ -61,9 +61,6 @@ PLATFORM_MAP = {
     'huawei': 'huawei_vrp',
     '\u534e\u4e3avrp': 'huawei_vrp',
     'h3c_comware': 'hp_comware',
-    'h3c_comware9': 'hp_comware',
-    'comware': 'hp_comware',
-    'hp_comware': 'hp_comware',
     'ruijie_rgos': 'ruijie_os',
 }
 
@@ -78,7 +75,6 @@ DISCOVERY_COMMANDS = {
     'arista_eos': [('lldp', 'show lldp neighbors detail')],
     'huawei_vrp': [('lldp', 'display lldp neighbor brief')],
     'h3c_comware': [('lldp', 'display lldp neighbor-information list')],
-    'h3c_comware9': [('lldp', 'display lldp neighbor-information list')],
     'ruijie_rgos': [('lldp', 'show lldp neighbors detail')],
     'zte_zxros': [('lldp', 'show lldp neighbor')],
     'dptech_ios': [('lldp', 'show lldp neighbors')],
@@ -93,7 +89,6 @@ def normalize_topology_platform(platform: str | None) -> str:
         'cisco_xe': 'cisco_ios',
         'huawei_vrpv8': 'huawei_vrp',
         'huawei': 'huawei_vrp',
-        'hp_comware': 'h3c_comware',
         'comware': 'h3c_comware',
         'ruijie_os': 'ruijie_rgos',
         'dptech': 'dptech_ios',
@@ -431,7 +426,10 @@ def _parse_shared_lldp_output(platform: str, command: str, raw_text: str) -> lis
         result = smart_parse_cli(
             str(raw_text),
             command,
-            platform=resolve_textfsm_platform(platform) or platform,
+            # Keep a concrete H3C Profile code long enough for the parser to
+            # select its explicit v5/v9 template variant.  The parser response
+            # itself still reports the canonical h3c_comware family.
+            platform=platform,
         )
         if result.get('success') and isinstance(result.get('data'), list):
             return result['data']

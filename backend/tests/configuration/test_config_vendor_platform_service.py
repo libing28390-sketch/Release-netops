@@ -18,7 +18,7 @@ def test_model_series_is_a_profile_not_a_new_platform() -> None:
 def test_known_vendor_platforms_are_catalogued() -> None:
     assert "cisco_iosxe" in allowed_platforms("Cisco")
     assert "huawei_vrpv8" in allowed_platforms("Huawei")
-    assert "h3c_comware9" in allowed_platforms("H3C")
+    assert allowed_platforms("H3C") == ("h3c_comware",)
     assert "paloalto_panos" in allowed_platforms("Palo Alto")
     assert "fiberhome_fengine" in allowed_platforms("FiberHome")
 

@@ -18,7 +18,7 @@ def test_validated_vendor_commands_are_allowlisted() -> None:
     assert assert_lldp_command('cisco_ios', 'show lldp neighbors') == 'show lldp neighbors'
     assert assert_lldp_command('zte_zxros', 'show lldp neighbor') == 'show lldp neighbor'
     assert assert_lldp_command('huawei_vrpv8', 'display lldp neighbor brief') == 'display lldp neighbor brief'
-    assert assert_lldp_command('h3c_comware9', 'display lldp neighbor-information list') == 'display lldp neighbor-information list'
+    assert assert_lldp_command('h3c_comware', 'display lldp neighbor-information list') == 'display lldp neighbor-information list'
     assert assert_lldp_command('dptech_ios', 'show lldp neighbors') == 'show lldp neighbors'
     assert assert_lldp_command('maipu', 'show lldp neighbors') == 'show lldp neighbors'
 
@@ -29,7 +29,7 @@ def test_zte_brief_command_is_not_a_supported_collection_command() -> None:
 
 
 def test_operational_neighbor_catalog_is_lldp_only() -> None:
-    for platform in ('cisco_ios', 'cisco_nxos', 'huawei_vrpv8', 'h3c_comware9', 'dptech_ios', 'maipu'):
+    for platform in ('cisco_ios', 'cisco_nxos', 'huawei_vrpv8', 'h3c_comware', 'dptech_ios', 'maipu'):
         commands = _resolve_commands(platform, ['neighbors'])['neighbors']
         assert commands
         assert all('cdp' not in command.lower() for command in commands)

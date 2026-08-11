@@ -88,13 +88,34 @@ def _iter_builtin_templates(profile_defs):
             seen_filenames.add(path.name)
             filename = path.name
             stem = path.stem.lower()
+            # H3C's public parser family is shared, but variant filenames must
+            # be assigned to their concrete grammar Profile before the generic
+            # ``h3c_comware_`` prefix is considered.
+            variant_profile_code = None
+            command_prefix = ""
+            for variant_prefix, profile_code in (
+                ("h3c_comware_v5", "hp_comware"),
+                ("h3c_comware_v9", "h3c_comware9"),
+            ):
+                if stem.startswith(f"{variant_prefix}_"):
+                    variant_profile_code = profile_code
+                    command_prefix = variant_prefix
+                    break
             profile = next(
                 (candidate for candidate in profile_defs
-                 if stem.startswith(f"{str(candidate['platform_code']).lower()}_")),
+                 if variant_profile_code
+                 and str(candidate["platform_code"]).lower() == variant_profile_code),
                 None,
             )
+            if not profile:
+                profile = next(
+                    (candidate for candidate in profile_defs
+                     if stem.startswith(f"{str(candidate['platform_code']).lower()}_")),
+                    None,
+                )
             if profile:
-                command_prefix = str(profile["platform_code"])
+                if not command_prefix:
+                    command_prefix = str(profile["platform_code"])
             else:
                 # Several concrete Profiles may intentionally share one
                 # parser family (for example Ruijie or ZTE).  Family-prefixed
@@ -111,17 +132,6 @@ def _iter_builtin_templates(profile_defs):
                     continue
                 profile = {"platform_code": "", "parser_platform": parser_platform}
                 command_prefix = parser_platform
-            # This legacy NTC filename predates the concrete Profile split.
-            # Its command grammar is the Comware V7 form, so keep it scoped to
-            # that Profile even though the filename starts with the shared
-            # ``hp_comware`` parser family.
-            if stem == "hp_comware_display_bgp_peer_ipv4_unicast":
-                profile = next(
-                    (candidate for candidate in profile_defs
-                     if str(candidate["platform_code"]).lower() == "h3c_comware"),
-                    profile,
-                )
-                command_prefix = "hp_comware"
             profile_code = str(profile["platform_code"])
             parser_platform = str(profile["parser_platform"])
             command_part = path.stem[len(command_prefix) + 1:].replace("_", " ")

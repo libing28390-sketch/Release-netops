@@ -23,8 +23,6 @@ class ScrapliDriver(BaseDriver):
             'huawei_vrp': 'huawei_vrp',
             'huawei_vrpv8': 'huawei_vrp',
             'h3c_comware': 'hp_comware',
-            'h3c_comware9': 'hp_comware',
-            'hp_comware': 'hp_comware',
             'ruijie_os': 'ruijie_os',
             'ruijie_rgos': 'ruijie_os',
             'zte_zxros': 'zte_zxros',

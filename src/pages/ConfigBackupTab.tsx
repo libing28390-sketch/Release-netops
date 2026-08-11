@@ -432,7 +432,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
         if (zh) return normalized === 'completed' ? '已完成' : normalized === 'partial' ? '部分成功' : normalized === 'running' ? '执行中' : normalized === 'failed' ? '失败' : (status || '未知');
         return normalized === 'completed' ? 'Completed' : normalized === 'partial' ? 'Partial' : normalized === 'running' ? 'Running' : normalized === 'failed' ? 'Failed' : (status || 'Unknown');
       };
-      const parserPlatform = (platform: string) => /(?:h3c|comware|hp_comware)/i.test(String(platform || '')) ? 'hp_comware' : (platform || '');
+      const parserPlatform = (platform: string) => /(?:h3c|comware)/i.test(String(platform || '')) ? 'h3c_comware' : (platform || '');
       const batchHeader = zh
         ? ['批次ID', '开始时间', '结束时间', '耗时(ms)', '触发方式', '执行人', '状态', '设备总数', '成功', '失败', '未知', '跳过', '成功率', 'Site汇总', '错误信息']
         : ['Batch ID', 'Started', 'Finished', 'Duration(ms)', 'Trigger', 'Author', 'Status', 'Total Devices', 'Success', 'Failed', 'Unknown', 'Skipped', 'Success Rate', 'Site Summary', 'Error'];

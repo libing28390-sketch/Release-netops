@@ -11,7 +11,7 @@ VENDOR_PLATFORM_CATALOG: dict[str, tuple[str, ...]] = {
     "Huawei": (
         "huawei_vrp", "huawei_vrpv8", "huawei_smartax", "huawei_usg",
     ),
-    "H3C": ("hp_comware", "h3c_comware", "h3c_comware9"),
+    "H3C": ("h3c_comware",),
     "Arista": ("arista_eos",),
     "Juniper": ("juniper_junos",),
     "Ruijie": ("ruijie_rgos", "ruijie_os"),
@@ -110,8 +110,6 @@ _PLATFORM_ALIASES = {
 
 _CANONICAL_PLATFORM = {
     "ruijie_os": "ruijie_rgos",
-    "h3c_comware9": "h3c_comware",
-    "hp_comware": "h3c_comware",
     "maipu_network": "maipu",
     "maipu_mypower": "maipu",
     "dptech": "dptech_conplat",

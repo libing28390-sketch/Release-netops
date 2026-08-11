@@ -37,9 +37,10 @@ const SAMPLE_PLATFORMS = [
   { value: 'cisco_asa', label: 'Cisco ASA' },
   { value: 'huawei_vrp', label: '华为 VRPv5' },
   { value: 'huawei_vrpv8', label: '华为 VRPv8' },
-  { value: 'hp_comware', label: 'H3C Comware V5', labelEn: 'H3C Comware V5' },
-  { value: 'h3c_comware', label: 'H3C Comware V7', labelEn: 'H3C Comware V7' },
-  { value: 'h3c_comware9', label: 'H3C Comware V9', labelEn: 'H3C Comware V9' },
+  // H3C is one public TextFSM family.  Comware generation/product
+  // differences are selected by the device Platform Profile and its
+  // registered template variant.
+  { value: 'h3c_comware', label: 'H3C Comware', labelEn: 'H3C Comware' },
   { value: 'juniper_junos', label: 'Juniper JunOS' },
   { value: 'arista_eos', label: 'Arista EOS' },
   { value: 'ruijie_rgos', label: '锐捷 RGOS', labelEn: 'Ruijie RGOS' },
@@ -104,8 +105,8 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       const params = new URLSearchParams();
       if (platformFilter) {
         params.set('platform', platformFilter);
-        // Keep the old file registry understandable: selecting a Netmiko
-        // driver shows its own templates instead of every compatible alias.
+        // The backend returns the canonical H3C family; v5/v9 differences are
+        // represented by the concrete template filename/profile binding.
         params.set('exact_platform', 'true');
       }
       if (search) params.set('search', search);

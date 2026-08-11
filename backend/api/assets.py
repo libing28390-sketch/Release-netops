@@ -79,9 +79,8 @@ def _utc_now() -> str:
 def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> str:
     """Map an asset vendor to the canonical persisted platform identity.
 
-    ``hp_comware`` is retained as the explicit Comware V5 profile and as the
-    Netmiko/TextFSM driver family. A vendor-only H3C fallback must use the
-    current Comware V7 identity instead of silently creating a V5 record.
+    H3C is persisted as the single public ``h3c_comware`` platform.  The
+    concrete Comware release is selected by ``platform_profile_id``.
     """
     v = (vendor or '').lower()
     if 'cisco' in v:
@@ -115,14 +114,8 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
 _VENDOR_PLATFORM_RULES: tuple[tuple[str, set[str], str], ...] = (
     ('cisco', {'cisco', 'ios', 'iosxe', 'cisco_ios', 'cisco_iosxe', 'cisco_xe', 'cisco_nxos', 'nxos', 'nexus'}, 'cisco_ios'),
     ('huawei', {'huawei', 'huawei_vrp', 'huawei_vrpv8', 'vrp', 'ce', 'ce_vrp', 'ne'}, 'huawei_vrp'),
-    ('h3c', {
-        'h3c', 'h3c_comware', 'h3c_comware9', 'hp_comware',
-        'comware', 'comware5', 'comware7', 'comware9',
-    }, 'h3c_comware'),
-    ('comware', {
-        'h3c', 'h3c_comware', 'h3c_comware9', 'hp_comware',
-        'comware', 'comware5', 'comware7', 'comware9',
-    }, 'h3c_comware'),
+    ('h3c', {'h3c_comware'}, 'h3c_comware'),
+    ('comware', {'h3c_comware'}, 'h3c_comware'),
     ('arista', {'arista', 'arista_eos', 'eos'}, 'arista_eos'),
     ('juniper', {'juniper', 'juniper_junos', 'junos'}, 'juniper_junos'),
     ('ruijie', {'ruijie', 'ruijie_os', 'ruijie_rgos', 'rgos'}, 'ruijie_rgos'),
@@ -140,6 +133,7 @@ def _normalize_asset_platform(vendor: str, platform: str, asset_type: str = 'net
     """Keep the persisted platform compatible with the selected asset vendor/type."""
     raw = str(platform or '').strip()
     normalized = raw.lower()
+    normalized = {'h3c': 'h3c_comware', 'comware': 'h3c_comware'}.get(normalized, normalized)
     if asset_type == 'server':
         return raw if normalized in _SERVER_PLATFORMS else 'linux'
 

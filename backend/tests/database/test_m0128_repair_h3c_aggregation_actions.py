@@ -34,7 +34,7 @@ def test_repairs_h3c_aggregation_action_idempotently(monkeypatch):
         );
         INSERT INTO platform_profiles
             (id, tenant_id, platform_code, parser_platform, source, current_release_id)
-            VALUES ('system-profile-h3c_comware', NULL, 'h3c_comware', 'hp_comware',
+            VALUES ('system-profile-h3c_comware', NULL, 'h3c_comware', 'h3c_comware',
                     'SYSTEM', 'system-release-h3c_comware-v1');
         INSERT INTO platform_releases
             (id, profile_id, status, checksum, updated_at)
@@ -48,7 +48,7 @@ def test_repairs_h3c_aggregation_action_idempotently(monkeypatch):
     monkeypatch.setattr(
         registry,
         "SYSTEM_PROFILES",
-        [{"platform_code": "h3c_comware", "parser_platform": "hp_comware"}],
+        [{"platform_code": "h3c_comware", "parser_platform": "h3c_comware"}],
     )
     monkeypatch.setattr(
         registry,

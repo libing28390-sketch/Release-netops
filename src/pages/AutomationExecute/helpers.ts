@@ -19,8 +19,6 @@ export const normalizeAutomationPlatform = (platform?: string | null): string =>
     ne: 'huawei_vrp',
     h3c: 'h3c_comware',
     comware: 'h3c_comware',
-    hp_comware: 'hp_comware',
-    h3c_comware9: 'h3c_comware9',
     juniper: 'juniper_junos',
     junos: 'juniper_junos',
     arista: 'arista_eos',
@@ -34,8 +32,6 @@ export const normalizeAutomationPlatform = (platform?: string | null): string =>
 const platformFallbacks: Record<string, string[]> = {
   cisco_xe: ['cisco_ios'],
   huawei_vrpv8: ['huawei_vrp'],
-  hp_comware: ['h3c_comware'],
-  h3c_comware9: ['h3c_comware'],
 };
 
 /** A scenario may define a family phase while assets keep a precise parser key. */

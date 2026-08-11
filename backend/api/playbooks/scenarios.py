@@ -37,9 +37,6 @@ _PLAYBOOK_PLATFORM_ALIASES: dict[str, str] = {
     'ne': 'huawei_vrp',
     'h3c': 'h3c_comware',
     'comware': 'h3c_comware',
-    'comware5': 'hp_comware',
-    'comware7': 'h3c_comware',
-    'comware9': 'h3c_comware9',
     'juniper': 'juniper_junos',
     'junos': 'juniper_junos',
     'arista': 'arista_eos',
@@ -342,8 +339,6 @@ def select_controlled_steps(
 _PLAYBOOK_PLATFORM_FALLBACKS: dict[str, tuple[str, ...]] = {
     'cisco_xe': ('cisco_ios',),
     'huawei_vrpv8': ('huawei_vrp',),
-    'hp_comware': ('h3c_comware',),
-    'h3c_comware9': ('h3c_comware',),
 }
 
 _PLAYBOOK_PHASE_KEYS = {'pre_check', 'execute', 'post_check', 'rollback'}

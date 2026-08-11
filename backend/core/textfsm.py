@@ -27,19 +27,18 @@ _CUSTOM_TEMPLATES_DIR = _PROJECT_ROOT / "data" / "textfsm_templates"
 # templates edited or created by users in data/textfsm_templates.
 _PACKAGED_TEMPLATES_DIR = _PROJECT_ROOT / "release-textfsm-templates"
 
-# TextFSM/NTC Templates uses ``hp_comware`` for the shared HPE/H3C Comware
-# grammar family.  Device records and command catalogs may still use the more
-# precise ``h3c_comware``/``h3c_comware9`` values, but parser entry points must
-# converge on this one namespace.
+# Nexora exposes one H3C/Comware parser family.  Concrete Comware generations
+# are selected by the Platform Profile and, where the grammar really differs,
+# by an explicit template variant such as ``h3c_comware_v5`` or
+# ``h3c_comware_v9``.  ``hp_comware`` is deliberately not a TextFSM alias: it
+# is only the literal Netmiko device_type at the transport adapter boundary.
 TEXTFSM_PLATFORM_MAP = {
-    'h3c': 'hp_comware',
-    'comware': 'hp_comware',
-    'comware5': 'hp_comware',
-    'comware7': 'hp_comware',
-    'comware9': 'hp_comware',
-    'h3c_comware': 'hp_comware',
-    'h3c_comware9': 'hp_comware',
-    'hp_comware': 'hp_comware',
+    'h3c': 'h3c_comware',
+    'comware': 'h3c_comware',
+    'h3c_comware': 'h3c_comware',
+    'h3c_comware_v5': 'h3c_comware',
+    'h3c_comware_v7': 'h3c_comware',
+    'h3c_comware_v9': 'h3c_comware',
     'ruijie': 'ruijie_rgos',
     'ruijie_os': 'ruijie_rgos',
     'ruijie_rgos': 'ruijie_rgos',
@@ -56,7 +55,6 @@ TEXTFSM_PLATFORM_MAP = {
     'zte_zxros': 'zte_zxros',
 }
 
-
 def resolve_textfsm_platform(platform: str | None) -> str | None:
     """Return the canonical parser platform without changing device identity."""
     raw = str(platform or '').strip().lower()
@@ -64,10 +62,17 @@ def resolve_textfsm_platform(platform: str | None) -> str | None:
 
 
 def _canonical_template_filename(filename: str) -> str:
-    """Normalize newly saved H3C template names to the NTC Comware family."""
-    for legacy_prefix in ('h3c_comware9_', 'h3c_comware_'):
-        if filename.startswith(legacy_prefix):
-            return f"hp_comware_{filename[len(legacy_prefix):]}"
+    """Validate the canonical on-disk TextFSM namespace.
+
+    H3C templates must be named with ``h3c_comware`` (or an explicit
+    ``h3c_comware_vN`` variant).  Old HP/H3C9 prefixes are not silently
+    rewritten because that hides a wrong profile selection.
+    """
+    lowered = str(filename or '').strip().lower()
+    if lowered.startswith(('hp_comware_', 'h3c_comware9_')):
+        raise ValueError(
+            'H3C TextFSM 模板必须使用 h3c_comware[_v5|_v7|_v9] 文件名前缀'
+        )
     return filename
 
 # ── 默认命令采集样本映射 ───────────────────────────────────────────
@@ -84,21 +89,21 @@ TEMPLATE_DEFAULT_SAMPLES = {
         "one minute: 12.0%\n"
         "five minutes: 12.0%"
     ),
-    'hp_comware_display_memory.textfsm': (
+    'h3c_comware_v5_display_memory.textfsm': (
         "System Total Memory(bytes): 431869088\n"
         "Total Used Memory(bytes): 71963156\n"
         "Used Rate: 16%"
     ),
-    'hp_comware_display_cpu_usage.textfsm': (
+    'h3c_comware_v5_display_cpu_usage.textfsm': (
         "Unit CPU usage:\n"
         "      Slot 1 CPU 0: 14%\n"
         "      Slot 2 CPU 0:  8%"
     ),
-    'hp_comware_display_device.textfsm': (
+    'h3c_comware_v5_display_device.textfsm': (
         "Slot No. Brd Type             Brd Status   Subslot Num  Sft Ver           Patch Ver\n"
         "1        LSW1GT24PSC0         Normal       0            V700R001C01       None"
     ),
-    'hp_comware_display_fan.textfsm': (
+    'h3c_comware_v5_display_fan.textfsm': (
         "Fan 1 State: Normal\n"
         "Fan 2 State: Absent"
     ),
@@ -382,11 +387,8 @@ _COMPATIBLE_PLATFORMS = {
     'huawei_smartax': ['huawei_vrp'],
     'huawei_ont': ['huawei_vrp'],
     'huawei_usg': ['huawei_vrp'],
-    'h3c_comware': ['hp_comware', 'h3c_comware9'],
-    'hp_comware': ['h3c_comware', 'h3c_comware9'],
-    # Prefer dedicated Comware 9 templates, then Comware 7 custom templates,
-    # and finally the hp_comware NTC family for stable legacy grammars.
-    'h3c_comware9': ['h3c_comware', 'hp_comware'],
+    # H3C generations are selected by the concrete profile/template variant;
+    # do not silently try another Comware grammar here.
     'ruijie_os': ['ruijie_rgos'],
     'dptech': ['dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'],
     'dptech_conplat': ['dptech_ios', 'dptech_conplat_fw'],
@@ -486,7 +488,6 @@ def smart_parse_cli(
         if platform and (
             'huawei' in platform.lower()
             or 'comware' in platform.lower()
-            or 'hp_comware' in platform.lower()
             or 'cisco' in platform.lower()
         ):
             prompt_prefix = re.match(
@@ -642,7 +643,10 @@ def smart_parse_cli(
     if parser_platform:
         packaged_dir = _get_packaged_templates_dir()
         builtin_dir = _get_builtin_templates_dir()
-        for template_platform in _template_platform_candidates(parser_platform):
+        # Keep the original profile selection for H3C variant routing.  Using
+        # only the canonical parser family here would make V5/V9 devices use
+        # the V7 baseline whenever the same command exists in several files.
+        for template_platform in _template_platform_candidates(platform or parser_platform):
             for filename in _template_filename_variants(template_platform, normalized_command):
                 custom_path = _CUSTOM_TEMPLATES_DIR / filename
                 if custom_path.exists():
@@ -755,7 +759,12 @@ def smart_parse_cli(
 
     try:
         from ntc_templates.parse import parse_output
-        parsed = parse_output(platform=parser_platform, command=normalized_command, data=clean_output)
+        ntc_platform = (
+            'hp_comware'
+            if parser_platform == 'h3c_comware'
+            else parser_platform
+        )
+        parsed = parse_output(platform=ntc_platform, command=normalized_command, data=clean_output)
         if isinstance(parsed, list):
             return {
                 'success': True,
@@ -893,10 +902,9 @@ def list_templates(
     if platform_filter:
         requested_raw = platform_filter.strip().lower()
         if exact_platform:
-            # The registry page exposes driver/platform variants separately.
-            # Do not collapse aliases here: ``h3c_comware9`` and
-            # ``hp_comware`` are different template namespaces even though
-            # the parser can use the same compatibility grammar at runtime.
+            # Exact filtering means exact public parser family.  H3C variant
+            # files already report ``h3c_comware`` from the filename parser;
+            # there is no hidden hp_comware/h3c_comware9 aggregation layer.
             result = [t for t in result if str(t.get('platform', '')).strip().lower() == requested_raw]
         else:
             requested_platform = resolve_textfsm_platform(platform_filter) or requested_raw
@@ -941,20 +949,6 @@ _TEMPLATE_COMMAND_CANONICAL: dict[str, dict[str, str]] = {
         'display mac address': 'display mac-address',
         'display lldp neighbor information list': 'display lldp neighbor-information list',
     },
-    'hp_comware': {
-        'display ip routing table statistics': 'display ip routing-table statistics',
-        'display ntp service status': 'display ntp-service status',
-        'display link aggregation verbose': 'display link-aggregation verbose',
-        'display mac address': 'display mac-address',
-        'display lldp neighbor information list': 'display lldp neighbor-information list',
-    },
-    'h3c_comware9': {
-        'display ip routing table statistics': 'display ip routing-table statistics',
-        'display ntp service status': 'display ntp-service status',
-        'display link aggregation verbose': 'display link-aggregation verbose',
-        'display mac address': 'display mac-address',
-        'display lldp neighbor information list': 'display lldp neighbor-information list',
-    },
     'cisco_ios': {
         # The NTC filename uses the singular spelling, while IOS/IOS-XE exposes
         # the verified operational command with the plural ``interfaces`` form.
@@ -970,11 +964,19 @@ def _canonical_template_command(platform: str, command: str) -> str:
     """Return the real CLI spelling represented by a template filename."""
     raw = re.sub(r'\s+', ' ', str(command or '').strip().lower())
     comparison_key = raw.replace('-', ' ')
-    return _TEMPLATE_COMMAND_CANONICAL.get(str(platform or '').lower(), {}).get(comparison_key, command)
+    platform_key = str(platform or '').lower()
+    if platform_key.startswith('h3c_comware_v'):
+        platform_key = 'h3c_comware'
+    return _TEMPLATE_COMMAND_CANONICAL.get(platform_key, {}).get(comparison_key, command)
 
 
 def _template_platform_candidates(platform: str) -> list[str]:
-    """Return the exact template platform and safe parser-compatible fallbacks."""
+    """Return the exact H3C family/variant template namespace to inspect.
+
+    ``h3c_comware`` is the public parser family.  Concrete system Profile
+    codes select grammars that are materially different, so this mapping is
+    explicit and one-way rather than a public compatibility alias list.
+    """
     raw = str(platform or '').strip().lower()
     aliases = {
         'huawei': 'huawei_vrp',
@@ -983,9 +985,14 @@ def _template_platform_candidates(platform: str) -> list[str]:
         'vrp8': 'huawei_vrpv8',
         'h3c': 'h3c_comware',
         'comware': 'h3c_comware',
-        'comware5': 'hp_comware',
-        'comware7': 'h3c_comware',
-        'comware9': 'h3c_comware9',
+        # These are stable internal Profile selectors, not public parser
+        # platform values.  They route directly to the explicit grammar
+        # variants used by the current built-in Profiles.
+        'hp_comware': 'h3c_comware_v5',
+        'h3c_comware9': 'h3c_comware_v9',
+        'h3c_comware_v5': 'h3c_comware_v5',
+        'h3c_comware_v7': 'h3c_comware_v7',
+        'h3c_comware_v9': 'h3c_comware_v9',
         'cisco': 'cisco_ios',
         'ios': 'cisco_ios',
         'iosxe': 'cisco_xe',
@@ -994,13 +1001,18 @@ def _template_platform_candidates(platform: str) -> list[str]:
         'dptech_conplat_fw': 'dptech_ios',
     }
     normalized = resolve_textfsm_platform(aliases.get(raw, raw)) or ''
+    selected = aliases.get(raw, normalized)
+    if selected.startswith('h3c_comware_v5'):
+        # V5 has its own command grammars.  Do not downgrade it to the V7
+        # grammar when a V5 template is missing.
+        return ['h3c_comware_v5']
+    if selected.startswith('h3c_comware_v9'):
+        # V9 currently shares a few stable grammars with the family baseline;
+        # the explicit fallback is to the canonical H3C family, never to an
+        # HP/legacy parser namespace.
+        return ['h3c_comware_v9', 'h3c_comware']
     candidates = [normalized] if normalized else []
-    # Comware 9 may use hp_comware only as a last-resort parser fallback.
-    # Do not expose Comware 5 commands as selectable Comware 9 suggestions.
-    if normalized == 'h3c_comware9':
-        candidates.append('h3c_comware')
-    else:
-        candidates.extend(_COMPATIBLE_PLATFORMS.get(normalized, []))
+    candidates.extend(_COMPATIBLE_PLATFORMS.get(normalized, []))
     return list(dict.fromkeys(candidates))
 
 
@@ -1047,7 +1059,7 @@ def list_template_suggestions(platform: str, query: str, limit: int = 8) -> list
     platform_rank = {item: index for index, item in enumerate(platform_candidates)}
     templates = [
         item for item in list_templates()
-        if item.get('platform', '').lower() in platform_rank
+        if str(item.get('platform') or '').lower() in platform_rank
     ]
 
     ranked: list[tuple[int, int, dict[str, Any]]] = []
@@ -1055,7 +1067,11 @@ def list_template_suggestions(platform: str, query: str, limit: int = 8) -> list
         command = str(item.get('command') or '').strip()
         score = _fuzzy_command_score(normalized_query, command)
         if score:
-            ranked.append((score, platform_rank.get(item.get('platform', '').lower(), 99), item))
+            ranked.append((
+                score,
+                platform_rank.get(str(item.get('platform') or '').lower(), 99),
+                item,
+            ))
 
     best_by_command: dict[str, tuple[int, int, dict[str, Any]]] = {}
     for entry in ranked:
@@ -1098,13 +1114,20 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
     if not filename.endswith('.textfsm'):
         return None
     stem = filename[:-len('.textfsm')]
+    # The external ntc-templates package still ships an HP-prefixed Comware
+    # grammar.  It remains an adapter-only fallback for parse_output, but it
+    # must not leak into Nexora's template catalog as a second H3C platform.
+    if stem.lower().startswith(('hp_comware_', 'h3c_comware9_')):
+        return None
 
     # 已知平台前缀列表（按长度降序匹配，避免 cisco_ios 被 cisco 截断）
     known_platforms = [
         'cisco_ios', 'cisco_xe', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd', 'cisco_fxos',
         'cisco_wlc', 'cisco_viptela', 'cisco_s300', 'cisco_s200', 'cisco_apic',
         'huawei_vrp', 'huawei_vrpv8', 'huawei_smartax', 'huawei_ont',
-        'hp_comware', 'h3c_comware', 'h3c_comware9',
+        # H3C uses one public parser family.  Variant prefixes are explicit
+        # grammar selectors and are checked before the family prefix.
+        'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9', 'h3c_comware',
         'juniper_junos', 'juniper_screenos',
         'arista_eos',
         'paloalto_panos',
@@ -1137,10 +1160,15 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
         if stem.startswith(platform + '_'):
             command_part = stem[len(platform) + 1:]
             command = command_part.replace('_', ' ')
+            public_platform = 'h3c_comware' if platform.startswith('h3c_comware') else platform
+            template_variant = None
+            if platform.startswith('h3c_comware_v'):
+                template_variant = platform.rsplit('_', 1)[-1]
             return {
-                'platform': platform,
+                'platform': public_platform,
                 'command': _canonical_template_command(platform, command),
                 'stem': stem,
+                **({'template_variant': template_variant} if template_variant else {}),
             }
 
     # 未知平台：取第一段作为 platform

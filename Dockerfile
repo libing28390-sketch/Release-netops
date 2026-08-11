@@ -44,6 +44,8 @@ COPY .env.example /app/.env.example
 # backend container.
 COPY scripts/terminal_agent.py /app/scripts/terminal_agent.py
 COPY scripts/install-terminal-agent.sh /app/scripts/install-terminal-agent.sh
+COPY scripts/sync-frontend-dist.sh /app/scripts/sync-frontend-dist.sh
+RUN chmod +x /app/scripts/sync-frontend-dist.sh
 # This Windows binary is a download-only artifact. It is never executed in
 # the Linux container; the browser workstation downloads it as an attachment.
 COPY NexoraTerminalAgent.exe /app/NexoraTerminalAgent.exe
@@ -54,8 +56,8 @@ COPY NexoraTerminalAgent.exe /app/NexoraTerminalAgent.exe
 COPY data/textfsm_templates/ /app/release-textfsm-templates/
 
 # Keep an immutable copy in the image, then seed the shared frontend volume.
-# The runtime command refreshes /app/dist on every container start so upgrades
-# cannot keep serving stale assets from an existing named volume.
+# The runtime sync copies hashed assets before publishing index.html and keeps
+# old assets available for browsers that still have a previous HTML snapshot.
 COPY --from=frontend-build /app/dist /app/frontend-dist
 RUN mkdir -p /app/dist && cp -a /app/frontend-dist/. /app/dist/
 
@@ -86,4 +88,4 @@ VOLUME ["/app/data", "/app/backup"]
 # Keep one worker by default because the lifespan-owned telemetry loops must
 # run once per deployment, not once per Uvicorn worker process. Set WORKERS to
 # override this deliberately for API-only scaling scenarios.
-CMD ["sh", "-c", "rm -rf /app/dist/* && cp -a /app/frontend-dist/. /app/dist/ && exec uvicorn backend.main:app --host 0.0.0.0 --port 8003 --workers ${WORKERS:-1} --timeout-graceful-shutdown 20"]
+CMD ["/app/scripts/sync-frontend-dist.sh"]

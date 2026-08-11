@@ -88,7 +88,7 @@ async def read_scripts(
                 'linux': ['linux', 'ubuntu', 'centos', 'debian', 'redhat'],
                 'cisco': ['cisco_ios', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco'],
                 'huawei': ['huawei_vrp', 'huawei_vrpv8', 'huawei'],
-                'h3c': ['h3c_comware', 'hp_comware', 'h3c'],
+                'h3c': ['h3c_comware', 'h3c'],
                 'juniper': ['juniper_junos', 'juniper'],
                 'arista': ['arista_eos', 'arista'],
             }

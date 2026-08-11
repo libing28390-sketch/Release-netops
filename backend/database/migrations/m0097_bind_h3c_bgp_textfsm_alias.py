@@ -27,7 +27,7 @@ def upgrade(cursor, use_pg: bool) -> None:
            FROM platform_releases r
            JOIN platform_profiles p ON p.id = r.profile_id
            WHERE p.source = 'SYSTEM'
-             AND p.parser_platform = 'hp_comware'
+             AND p.parser_platform = 'h3c_comware'
              AND r.status IN ('PUBLISHED', 'DEPRECATED')"""
     ).fetchall()
     parser_version = cursor.execute(
@@ -35,8 +35,8 @@ def upgrade(cursor, use_pg: bool) -> None:
            FROM parser_template_versions v
            JOIN parser_templates t ON t.id = v.template_id
            WHERE t.source = 'SYSTEM'
-             AND t.platform_code = 'hp_comware'
-             AND lower(t.source_filename) = 'hp_comware_display_bgp_peer_ipv4_unicast.textfsm'
+             AND t.platform_code = 'h3c_comware'
+             AND lower(t.source_filename) = 'h3c_comware_display_bgp_peer_ipv4_unicast.textfsm'
              AND v.status = 'PUBLISHED'
            ORDER BY v.version_number DESC, v.id
            LIMIT 1"""

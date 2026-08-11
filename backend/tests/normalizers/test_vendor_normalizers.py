@@ -28,8 +28,7 @@ class NormalizerFactoryTests(unittest.TestCase):
         expected = {
             "cisco_ios": "CiscoNormalizer",
             "huawei_vrpv8": "HuaweiNormalizer",
-            "hp_comware": "H3CNormalizer",
-            "h3c_comware9": "H3CNormalizer",
+            "h3c_comware": "H3CNormalizer",
             "juniper_junos": "JuniperNormalizer",
             "arista_eos": "AristaNormalizer",
             "ruijie_os": "RuijieNormalizer",
@@ -48,9 +47,7 @@ class NormalizerFactoryTests(unittest.TestCase):
             "cisco_ios": "cisco_ios",
             "huawei_vrp": "huawei_vrp",
             "huawei_vrpv8": "huawei_vrp",
-            "hp_comware": "h3c_comware",
             "h3c_comware": "h3c_comware",
-            "h3c_comware9": "h3c_comware",
             "juniper_junos": "juniper_junos",
             "arista_eos": "arista_eos",
             "ruijie_rgos": "ruijie_rgos",
@@ -63,7 +60,7 @@ class NormalizerFactoryTests(unittest.TestCase):
         aliases = _literal_assignment("PLATFORM_ALIASES")
         expected = {
             "h3c": "h3c_comware",
-            "comware9": "h3c_comware9",
+            "comware": "h3c_comware",
             "juniper": "juniper_junos",
             "eos": "arista_eos",
             "ruijie_os": "ruijie_rgos",

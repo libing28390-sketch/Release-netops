@@ -83,7 +83,7 @@ os_family:
         - os_generation: comware7
           cli_platform: h3c_comware
           connection_driver: hp_comware
-          parser_platform: hp_comware
+          parser_platform: h3c_comware
           driver_authority: false
       release_trains:
         - code: cmw710
@@ -113,13 +113,13 @@ os_family:
 platform_binding_advisory:
   platform_code: h3c_comware
   connection_driver: hp_comware
-  parser_platform: hp_comware
+  parser_platform: h3c_comware
   driver_authority: false
   execution_write_authority: false
   parser_boundary: >-
-    hp_comware is the canonical TextFSM/parser namespace; h3c_comware is the
-    catalog/device identity and command-catalog namespace. No parser filename
-    may be inferred from a model or version string.
+    h3c_comware is the canonical TextFSM/parser namespace. hp_comware is used
+    only at the Netmiko connection adapter boundary. No parser filename may be
+    inferred from a model or version string.
   forbidden_inference: [vendor_from_model, driver_from_alias, parser_from_version]
 
 identity_rules:

@@ -4477,10 +4477,16 @@ def parse_routing_table(output: str, platform: str) -> list[dict]:
             else:
                 destination = current_destination
                 fields = tokens
-            if not destination or len(fields) < 6:
+            # Comware versions differ here: VRP-style output includes a Flags
+            # column (6 fields after the destination), while H3C/HP output
+            # commonly omits it (5 fields after the destination).
+            if not destination or len(fields) < 5:
                 continue
 
-            proto, preference, cost, _flags, next_hop, interface = fields[:6]
+            if len(fields) >= 6:
+                proto, preference, cost, _flags, next_hop, interface = fields[:6]
+            else:
+                proto, preference, cost, next_hop, interface = fields[:5]
             if not preference.isdigit() or not cost.isdigit():
                 continue
             dest, mask_len_str = destination.split('/', 1)
@@ -4716,8 +4722,10 @@ def run_route_collector():
 
     workers = min(5, len(route_devices))
     all_routes_to_save = []
+    successful_device_ids: set[str] = set()
+    failed_device_ids: set[str] = set()
 
-    def collect_device_routes(dev: dict) -> list[dict]:
+    def collect_device_routes(dev: dict) -> tuple[list[dict], bool]:
         if dev.get('platform_profile_id'):
             from services.platform_registry_service import execute_platform_action
             registry_user = {
@@ -4728,6 +4736,7 @@ def run_route_collector():
             }
             vrfs = [str(dev.get('vrf') or 'default')]
             all_device_routes: list[dict] = []
+            collection_succeeded = True
             for vrf in vrfs:
                 action_code = 'get_route_table_vrf' if vrf != 'default' else 'get_route_table'
                 try:
@@ -4736,7 +4745,10 @@ def run_route_collector():
                         user=registry_user,
                         parameters={'vrf': vrf} if vrf != 'default' else None,
                     )
-                    for record in result.get('records') or [] if result.get('success') else []:
+                    if not result.get('success'):
+                        collection_succeeded = False
+                        continue
+                    for record in result.get('records') or []:
                         prefix = str(record.get('prefix') or record.get('destination') or '').strip()
                         if not prefix:
                             continue
@@ -4752,22 +4764,27 @@ def run_route_collector():
                             'preference': record.get('preference'),
                         })
                 except Exception as exc:
+                    collection_succeeded = False
                     logger.debug(
                         "[Route Collector] Registry route collection failed for %s/%s: %s",
                         dev.get('hostname') or dev.get('ip_address'), vrf, exc,
                     )
-            return all_device_routes
+            return all_device_routes, collection_succeeded
 
         ip = dev.get('ip_address')
         port = int(dev.get('port') or dev.get('management_port') or 22)
         from drivers.ssh_compat import is_ssh_port_open
         if not is_ssh_port_open(ip, port):
             logger.warning("[Route Collector] SSH port %s is closed/unreachable for %s", port, dev.get('hostname') or ip)
-            return []
+            return [], False
 
         platform = str(dev.get('platform') or 'cisco_ios').lower()
         vrfs = _collect_device_vrfs(dev)
+        if not vrfs:
+            logger.warning("[Route Collector] No VRF was discovered for %s", dev.get('hostname') or ip)
+            return [], False
         all_device_routes = []
+        collection_succeeded = True
         
         for vrf in vrfs:
             if vrf == 'default':
@@ -4787,32 +4804,57 @@ def run_route_collector():
                     
             try:
                 output = _send_command(dev, cmd)
+                if not output or not output.strip():
+                    collection_succeeded = False
+                    logger.debug(
+                        "[Route Collector] Empty route output for %s/%s; preserving its previous facts.",
+                        dev.get('hostname') or dev.get('ip_address'),
+                        vrf,
+                    )
+                    continue
                 parsed = parse_routing_table(output, platform)
                 for r in parsed:
                     r['device_id'] = dev['id']
                     r['vrf_name'] = vrf
                 all_device_routes.extend(parsed)
             except Exception as e:
+                collection_succeeded = False
                 logger.debug(f"[Route Collector] Failed to collect routes for VRF {vrf} from {dev.get('hostname') or dev.get('ip_address')}: {e}")
                 
-        return all_device_routes
+        return all_device_routes, collection_succeeded
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_map = {executor.submit(collect_device_routes, dev): dev for dev in route_devices}
         for future in as_completed(future_map):
             dev = future_map[future]
             try:
-                device_routes = future.result()
-                all_routes_to_save.extend(device_routes)
+                device_routes, collection_succeeded = future.result()
+                device_id = str(dev.get('id') or '')
+                if collection_succeeded and device_id:
+                    successful_device_ids.add(device_id)
+                    all_routes_to_save.extend(device_routes)
+                elif device_id:
+                    failed_device_ids.add(device_id)
             except Exception as exc:
+                device_id = str(dev.get('id') or '')
+                if device_id:
+                    failed_device_ids.add(device_id)
                 logger.debug(f"[Route Collector] Error from {dev.get('ip_address')}: {exc}")
 
-    if all_routes_to_save:
+    if successful_device_ids:
         try:
             conn = get_db_connection()
             try:
-                conn.execute("DELETE FROM route_cache")
-                conn.execute("DELETE FROM route_table")
+                device_placeholders = ','.join('?' for _ in successful_device_ids)
+                device_params = tuple(successful_device_ids)
+                conn.execute(
+                    f"DELETE FROM route_cache WHERE device_id IN ({device_placeholders})",
+                    device_params,
+                )
+                conn.execute(
+                    f"DELETE FROM route_table WHERE device_id IN ({device_placeholders})",
+                    device_params,
+                )
                 last_update = _beijing_now_iso()
                 for r in all_routes_to_save:
                     vrf_val = r.get('vrf_name') or 'default'
@@ -4867,11 +4909,21 @@ def run_route_collector():
                         (rid, r['device_id'], vrf_val, dest, r['next_hop'], r['interface'], r['protocol'], r['metric'], pref_val, last_update)
                     )
                 conn.commit()
-                logger.info(f"[Route Collector] Successfully synced {len(all_routes_to_save)} routes to route_cache and route_table.")
+                logger.info(
+                    "[Route Collector] Synced %s routes from %s/%s devices; preserved existing facts for %s failed devices.",
+                    len(all_routes_to_save),
+                    len(successful_device_ids),
+                    len(route_devices),
+                    len(failed_device_ids),
+                )
             finally:
                 conn.close()
         except Exception as e:
             logger.error(f"[Route Collector] Error writing routes: {e}")
+    else:
+        logger.warning(
+            "[Route Collector] No device completed route collection; existing route facts were preserved."
+        )
 
     elapsed = round(time.time() - t0, 1)
     logger.info(f"[Route Collector] Finished route cache sync in {elapsed}s.")

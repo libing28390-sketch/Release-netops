@@ -31,11 +31,12 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
     else:
         v_key = ''
 
-    # Preserve explicit platform variants for command catalogs and parsers.
-    # Generic vendor values still use the historical defaults below.
+    # The persisted parser/transport family is one H3C Comware key.  Concrete
+    # V5/V7/V9 command differences belong to Platform Profile releases, not to
+    # another device platform string.
     explicit_platforms = {
         'huawei_vrp', 'huawei_vrpv8', 'vrp5', 'vrpv5', 'vrp8', 'vrpv8',
-        'h3c_comware', 'h3c_comware9', 'hp_comware', 'comware5', 'comware7', 'comware9',
+        'h3c_comware', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9',
         'ruijie_rgos', 'ruijie_os', 'zte_zxros', 'maipu', 'maipu_network', 'maipu_mypower',
         'dptech_ios', 'dptech', 'dptech_conplat', 'dptech_conplat_fw',
     }
@@ -44,12 +45,8 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
             return 'huawei_vrpv8'
         if p in {'vrp5', 'vrpv5'}:
             return 'huawei_vrp'
-        if p == 'comware5':
-            return 'hp_comware'
-        if p == 'comware7':
+        if p in {'h3c_comware', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}:
             return 'h3c_comware'
-        if p == 'comware9':
-            return 'h3c_comware9'
         if p in {'ruijie_os', 'ruijie_rgos'}:
             return 'ruijie_rgos'
         if p in {'maipu_network', 'maipu_mypower'}:

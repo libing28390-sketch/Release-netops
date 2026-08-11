@@ -347,8 +347,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const isCisco = platform === 'cisco_ios' || platform === 'cisco_xe' || platform === 'cisco';
   const isNxos = platform === 'cisco_nxos';
   const isHuawei = platform === 'huawei_vrp' || platform === 'huawei_vrpv8';
-  const isH3c = platform === 'h3c_comware' || platform === 'hp_comware' || platform === 'h3c_comware9';
-  const isComware5 = platform === 'hp_comware';
+  const isH3c = platform === 'h3c_comware';
   const isJuniper = platform === 'juniper_junos';
   const isArista = platform === 'arista_eos';
   const isRuijie = platform === 'ruijie_rgos';
@@ -409,9 +408,7 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
           cmds: isHuawei
             ? 'display arp all'
             : isH3c
-              ? isComware5
-                ? 'display arp'
-                : 'display arp all'
+              ? 'display arp all'
               : isNxos
                 ? 'show ip arp'
                 : isJuniper
@@ -755,12 +752,11 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
     }
 
     return all.filter((p) => {
-      if (isComware5 && p.operationalCategory === 'bfd') return false;
       if (p.excludeRoles && p.excludeRoles.includes(deviceRole)) return false;
       if (deviceCategory !== 'all' && p.scope !== 'all' && p.scope !== deviceCategory) return false;
       return true;
     });
-  }, [isCisco, isHuawei, isH3c, isComware5, isNxos, isJuniper, isRuijie, deviceRole, savedQueries, batchMode, batchDeviceIds, devices, selectedDevice]);
+  }, [isCisco, isHuawei, isH3c, isNxos, isJuniper, isRuijie, deviceRole, savedQueries, batchMode, batchDeviceIds, devices, selectedDevice]);
 
   const handleNewTask = () => {
     onResetExecutionState();
