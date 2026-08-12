@@ -20,7 +20,7 @@ const ToastNotification: React.FC<ToastNotificationProps> = ({ toast, onClose })
       initial={{ y: 50, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 50, opacity: 0 }}
-      className={`fixed bottom-14 left-1/2 z-[100] max-w-[calc(100vw-2rem)] -translate-x-1/2 px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border ${
+      className={`fixed bottom-14 left-1/2 z-[1000] max-w-[calc(100vw-2rem)] -translate-x-1/2 px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border ${
         toast.type === 'success' ? 'bg-emerald-600 border-emerald-500 text-white' :
         toast.type === 'error' ? 'bg-red-600 border-red-500 text-white' :
         'bg-black border-black/10 text-white'

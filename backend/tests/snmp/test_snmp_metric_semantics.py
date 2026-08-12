@@ -8,9 +8,10 @@ from services.snmp_counter_service import calculate_counter_delta
 from services.snmp_metric_profile_service import (
     _collector_status,
     get_model_metric_profile_mapping,
+    normalize_interface_config,
     normalize_metric_config,
 )
-from services.snmp_service import SnmpTypedValue, probe_metric_definition
+from services.snmp_service import SnmpTypedValue, collect_interface_data, probe_interface_definition, probe_metric_definition
 
 
 def test_counter32_wrap_is_accepted_only_as_a_plausible_single_wrap() -> None:
@@ -174,6 +175,97 @@ def test_counter_profile_requires_explicit_width_and_capacity() -> None:
         assert "counter_bits" in str(exc)
     else:  # pragma: no cover - assertion guard
         raise AssertionError("counter profile without width must be rejected")
+
+
+def test_interface_profile_normalizes_defaults_and_explicit_width() -> None:
+    config = normalize_interface_config({"counter_mode": "counter64"})
+    assert config["counter_mode"] == "64"
+    assert config["if_name_oid"] == "1.3.6.1.2.1.31.1.1.1.1"
+    assert config["if_hc_in_octets_oid"].endswith(".6")
+
+
+def test_selector_probes_exact_table_instance_before_walk(monkeypatch) -> None:
+    requested: list[str] = []
+
+    async def fake_get(_ip, _community, oid, _port):
+        requested.append(oid)
+        return SnmpTypedValue(7, "gauge", 32) if oid.endswith(".67108873") else None
+
+    async def fake_walk(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr("services.snmp_service._snmp_get_typed", fake_get)
+    monkeypatch.setattr("services.snmp_service._snmp_walk_typed", fake_walk)
+    from services.snmp_service import _read_typed_points
+
+    points = asyncio.run(_read_typed_points("192.0.2.1", "public", "1.3.6.1.4.1.1", 161, "67108873"))
+    assert points[0][1].number == 7
+    assert requested == ["1.3.6.1.4.1.1.67108873"]
+
+
+def test_interface_probe_requires_paired_counter_width(monkeypatch) -> None:
+    async def fake_bulk(_ip, _community, oid, _port):
+        if oid == "1.3.6.1.2.1.31.1.1.1.1":
+            return [("1", "GigabitEthernet1/0/1")]
+        return [("1", "1")]
+
+    async def fake_typed(_ip, _community, oid, _port):
+        if oid.endswith(".6") or oid.endswith(".10"):
+            return [("1", SnmpTypedValue(100, "counter", 64))]
+        return [("1", SnmpTypedValue(100, "counter", 32))]
+
+    monkeypatch.setattr("services.snmp_service._snmp_bulk_walk", fake_bulk)
+    monkeypatch.setattr("services.snmp_service._snmp_bulk_walk_typed", fake_typed)
+    result = asyncio.run(
+        probe_interface_definition(
+            "192.0.2.1",
+            "public",
+            normalize_interface_config({"counter_mode": "64"}),
+        )
+    )
+    assert result["passed"] is True
+    assert result["selected_counter_bits"] == 64
+    assert result["counter_supported"] == 1
+
+
+def test_interface_collector_honors_forced_counter_width(monkeypatch) -> None:
+    async def fake_bulk(_ip, _community, oid, _port):
+        if oid.endswith(".1.1.1.1"):
+            return [("1", "GigabitEthernet1/0/1")]
+        if oid.endswith(".8"):
+            return [("1", "1")]
+        if oid.endswith(".15"):
+            return [("1", "1000")]
+        if oid.endswith(".5"):
+            return [("1", "1000000000")]
+        return []
+
+    async def fake_typed(_ip, _community, oid, _port):
+        bits = 64 if oid.endswith(".31.1.1.1.6") or oid.endswith(".31.1.1.1.10") else 32
+        return [("1", SnmpTypedValue(123, "counter", bits))]
+
+    async def fake_get(*_args, **_kwargs):
+        return "1000"
+
+    monkeypatch.setattr("services.snmp_service._snmp_bulk_walk", fake_bulk)
+    monkeypatch.setattr("services.snmp_service._snmp_bulk_walk_typed", fake_typed)
+    monkeypatch.setattr("services.snmp_service._snmp_get", fake_get)
+    result32 = asyncio.run(
+        collect_interface_data(
+            "192.0.2.32",
+            "public",
+            interface_config=normalize_interface_config({"counter_mode": "32"}),
+        )
+    )
+    result64 = asyncio.run(
+        collect_interface_data(
+            "192.0.2.64",
+            "public",
+            interface_config=normalize_interface_config({"counter_mode": "64"}),
+        )
+    )
+    assert result32[0]["counter_width"] == 32
+    assert result64[0]["counter_width"] == 64
 
 
 def test_saved_profile_status_distinguishes_match_and_activation() -> None:

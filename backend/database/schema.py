@@ -196,6 +196,11 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('snmp_metric_profiles', 'cpu_config_json', "TEXT NOT NULL DEFAULT '{}'")
     ensure_column('snmp_metric_profiles', 'memory_config_json', "TEXT NOT NULL DEFAULT '{}'")
     ensure_column('snmp_metric_profiles', 'metric_definitions_json', "TEXT NOT NULL DEFAULT '{}'")
+    ensure_column('snmp_metric_profiles', 'interface_config_json', "TEXT NOT NULL DEFAULT '{}'")
+    ensure_column('snmp_metric_profiles', 'interface_verification_status', "TEXT NOT NULL DEFAULT 'unverified'")
+    ensure_column('snmp_metric_profiles', 'interface_last_test_at', 'TEXT')
+    ensure_column('snmp_metric_profiles', 'interface_last_test_device_id', "TEXT NOT NULL DEFAULT ''")
+    ensure_column('snmp_metric_profiles', 'interface_last_test_message', "TEXT NOT NULL DEFAULT ''")
 
     # Durable baseline for model-defined SNMP counters.  A process-local cache
     # is not sufficient: a worker restart, multiple workers, or a long poll
@@ -219,6 +224,27 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     cursor.execute(
         'CREATE INDEX IF NOT EXISTS idx_snmp_counter_samples_ts '
         'ON snmp_metric_counter_samples(sampled_at)'
+    )
+
+    # Durable per-device IF-MIB baseline.  Values are keyed by ifIndex and
+    # tagged with the profile/config hash so a template edit cannot reuse an
+    # incompatible counter sample.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS snmp_interface_counter_samples (
+        device_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        config_hash TEXT NOT NULL DEFAULT '',
+        values_json TEXT NOT NULL DEFAULT '{}',
+        sampled_at TEXT NOT NULL,
+        device_uptime_cs BIGINT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (device_id, profile_id),
+        FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+    )
+    ''')
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_snmp_interface_counter_samples_ts '
+        'ON snmp_interface_counter_samples(sampled_at)'
     )
 
     cursor.execute('''

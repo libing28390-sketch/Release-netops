@@ -19,6 +19,7 @@ from typing import Any
 
 from database import _USE_PG, get_db_connection
 from services.snmp_counter_service import calculate_counter_delta
+from services.snmp_metric_profile_service import resolve_metric_profiles
 from services.snmp_service import collect_interface_data_detailed
 from services.vault_service import resolve_collector_credentials
 
@@ -157,13 +158,25 @@ def _calculate_rates(link: dict[str, Any], current: dict[str, Any], previous: di
             old_counter,
             elapsed,
             counter_width,
-            max_rate_per_sec=speed_bps / 8 if speed_bps else None,
+            # WAN telemetry keeps measured rates above the reported IF-MIB
+            # speed and records that mismatch below as a quality flag.  A
+            # stale/virtual speed must not erase otherwise valid counters.
+            max_rate_per_sec=None,
             current_uptime_cs=int(_num(current.get("device_uptime_cs")) or 0) or None,
             previous_uptime_cs=int(_num(previous.get("device_uptime_cs")) or 0) or None,
         )
         counter_status = str(delta_result.get("status") or "invalid")
         if counter_status == "wrapped":
             flags[f"{direction}_counter_wrap"] = True
+        elif counter_status in {"ambiguous_wrap_or_reset", "device_restart"}:
+            # Keep the WAN contract stable: a reset/reboot is a quality flag,
+            # never a synthetic zero-rate sample.  The shared counter helper
+            # uses a more precise status internally, while the WAN API has
+            # historically exposed the compact *_counter_reset key.
+            flags[f"{direction}_counter_reset"] = True
+            values[f"{direction}_bps"] = None
+            values[f"{direction}_util_pct"] = None
+            continue
         elif counter_status != "ok":
             flags[f"{direction}_counter_{counter_status}"] = True
             values[f"{direction}_bps"] = None
@@ -315,6 +328,7 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
         snmp_ip = str(snmp.get("server") or device.get("ip_address") or "").strip()
         community = str(snmp.get("community") or "").strip()
         port = int(snmp.get("port") or device.get("snmp_port") or 161)
+        interface_config = resolve_metric_profiles(device).get('interface') or None
         previous_row = conn.execute(f"SELECT * FROM {_sample_table()} WHERE link_id = ? ORDER BY sampled_at DESC LIMIT 1", (link["id"],)).fetchone()
         previous = _row_dict(previous_row)
         item: dict[str, Any] | None = None
@@ -326,7 +340,12 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
         else:
             detail = collected
             if detail is None:
-                detail = await collect_interface_data_detailed(snmp_ip, community, port)
+                detail = await collect_interface_data_detailed(
+                    snmp_ip,
+                    community,
+                    port,
+                    interface_config,
+                )
             collection_status = str(detail.get("status") or "timeout")
             items = detail.get("items") or []
             item = _match_interface(link, items)
@@ -734,7 +753,8 @@ async def test_wan_link_collection(link_id: str) -> dict[str, Any] | None:
     port = int(snmp.get("port") or device.get("snmp_port") or 161)
     if not ip or not community:
         return {"link_id": link_id, "status": "not_configured", "error_code": "not_configured", "items": []}
-    detail = await collect_interface_data_detailed(ip, community, port)
+    interface_config = resolve_metric_profiles(device).get('interface') or None
+    detail = await collect_interface_data_detailed(ip, community, port, interface_config)
     matched = _match_interface(link, detail.get("items") or [])
     if detail.get("status") == "success" and not matched:
         return {"link_id": link_id, "status": "interface_not_found", "error_code": "interface_not_found", "items": []}
@@ -876,9 +896,10 @@ def run_wan_collection_once() -> dict[str, Any]:
             ip = str(snmp.get("server") or device.get("ip_address") or "").strip()
             community = str(snmp.get("community") or "").strip()
             port = int(snmp.get("port") or device.get("snmp_port") or 161)
+            interface_config = resolve_metric_profiles(device).get('interface') or None
             detail = {"status": "not_configured", "items": [], "error_code": "not_configured", "error_message": "SNMP credentials are not configured"}
             if ip and community:
-                detail = await collect_interface_data_detailed(ip, community, port)
+                detail = await collect_interface_data_detailed(ip, community, port, interface_config)
             return await asyncio.gather(*[_collect_link(link, detail) for link in group])
 
         grouped_results = await asyncio.gather(*[collect_group(group) for group in grouped.values()])

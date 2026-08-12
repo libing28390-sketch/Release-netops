@@ -20,7 +20,7 @@ from typing import Any
 
 from database import get_db_connection
 from services.snmp_counter_service import validate_counter_bits
-from services.snmp_service import normalize_metric_oid
+from services.snmp_service import normalize_interface_config, normalize_metric_oid
 
 
 _PROFILE_CACHE_TTL = 60.0
@@ -359,6 +359,24 @@ def profile_metric_definitions(row: Any) -> dict[str, dict[str, Any]]:
     return _profile_metric_definitions(row)
 
 
+def _profile_interface_config(row: Any) -> dict[str, Any]:
+    raw = _decode_config(_row_value(row, 'interface_config_json', ''))
+    if not raw:
+        return {}
+    try:
+        normalized = normalize_interface_config(raw)
+        return normalized if normalized.get('enabled', True) else {}
+    except ValueError:
+        # Keep the list endpoint resilient to a legacy/manual row.  Save/test
+        # paths still validate and surface the exact field error to the user.
+        return {}
+
+
+def profile_interface_config(row: Any) -> dict[str, Any]:
+    """Public row adapter for the optional interface OID override."""
+    return _profile_interface_config(row)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -381,12 +399,17 @@ def _load_profile_cache() -> dict[tuple[str, str], dict[str, Any]]:
         conn = get_db_connection()
         try:
             rows = conn.execute(
-                "SELECT * FROM snmp_metric_profiles WHERE verification_status = 'verified'"
+                "SELECT * FROM snmp_metric_profiles "
+                "WHERE verification_status = 'verified' "
+                "OR interface_verification_status = 'verified'"
             ).fetchall()
             for row in rows:
+                hardware = _profile_metric_definitions(row) if str(_row_value(row, 'verification_status', '')).casefold() == 'verified' else {}
+                interface = _profile_interface_config(row) if str(_row_value(row, 'interface_verification_status', '')).casefold() == 'verified' else {}
                 profiles[(str(_row_value(row, "vendor_key", "")), str(_row_value(row, "model_key", "")))] = {
                     "profile_id": str(_row_value(row, "id", "")),
-                    "metrics": _profile_metric_definitions(row),
+                    "metrics": hardware,
+                    "interface": interface,
                 }
         except Exception:
             # A collector may briefly start before an additive migration has
@@ -409,6 +432,7 @@ def resolve_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
     """
     metrics: dict[str, dict[str, Any]] = {}
     sources: dict[str, str] = {}
+    interface: dict[str, Any] = {}
     for metric, field in (("cpu", "snmp_cpu_oid"), ("memory", "snmp_memory_oid")):
         oid = _safe_oid(device.get(field))
         if oid:
@@ -427,11 +451,15 @@ def resolve_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
             if metric not in metrics and config:
                 metrics[metric] = dict(config)
                 sources[metric] = "verified_model_profile"
+        if profile.get('interface'):
+            interface = dict(profile['interface'])
 
     return {
         "profile_id": profile_id,
         "metrics": metrics,
         "sources": sources,
+        "interface": interface,
+        "interface_source": "verified_model_profile" if interface else "builtin_if_mib",
     }
 
 
@@ -447,6 +475,7 @@ def resolve_metric_oids(device: Mapping[str, Any]) -> dict[str, str]:
 
 def _profile_to_dict(row: Any) -> dict[str, Any]:
     metric_definitions = _profile_metric_definitions(row)
+    interface_config = _profile_interface_config(row)
     cpu_config = metric_definitions.get("cpu", {})
     memory_config = metric_definitions.get("memory", {})
     return {
@@ -461,6 +490,12 @@ def _profile_to_dict(row: Any) -> dict[str, Any]:
         "metric_keys": sorted(metric_definitions),
         "configured": bool(metric_definitions),
         "verification_status": str(_row_value(row, "verification_status", "unverified") or "unverified"),
+        "interface_config": interface_config,
+        "interface_configured": bool(interface_config),
+        "interface_verification_status": str(_row_value(row, "interface_verification_status", "unverified") or "unverified"),
+        "interface_last_test_at": _row_value(row, "interface_last_test_at"),
+        "interface_last_test_device_id": str(_row_value(row, "interface_last_test_device_id", "") or ""),
+        "interface_last_test_message": str(_row_value(row, "interface_last_test_message", "") or ""),
         "last_test_at": _row_value(row, "last_test_at"),
         "last_test_device_id": str(_row_value(row, "last_test_device_id", "") or ""),
         "last_test_message": str(_row_value(row, "last_test_message", "") or ""),
@@ -512,6 +547,12 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
                 "metric_keys": [],
                 "configured": False,
                 "verification_status": "unverified",
+                "interface_config": {},
+                "interface_configured": False,
+                "interface_verification_status": "unverified",
+                "interface_last_test_at": None,
+                "interface_last_test_device_id": "",
+                "interface_last_test_message": "",
                 "last_test_at": None,
                 "last_test_device_id": "",
                 "last_test_message": "",
@@ -552,11 +593,26 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
         item["platforms"] = sorted(item["platforms"])
         matched_device_count = int(item.get("device_count") or 0)
         item["matched_device_count"] = matched_device_count
-        item["collector_status"] = _collector_status(
+        hardware_status = _collector_status(
             bool(item.get("configured")),
             item.get("verification_status"),
             matched_device_count,
         )
+        interface_status = _collector_status(
+            bool(item.get("interface_configured")),
+            item.get("interface_verification_status"),
+            matched_device_count,
+        )
+        item["interface_collector_status"] = interface_status
+        item["hardware_collector_status"] = hardware_status
+        if hardware_status == "active" or interface_status == "active":
+            item["collector_status"] = "active"
+        elif item.get("configured"):
+            item["collector_status"] = hardware_status
+        elif item.get("interface_configured"):
+            item["collector_status"] = interface_status
+        else:
+            item["collector_status"] = "builtin_only"
         item["profile_applied_device_count"] = (
             matched_device_count if item["collector_status"] == "active" else 0
         )
@@ -651,15 +707,32 @@ def get_model_metric_profile_mapping(conn, profile_id: str) -> dict[str, Any]:
         })
 
     status = str(_row_value(row, "verification_status", "unverified") or "unverified")
+    interface_status = str(_row_value(row, "interface_verification_status", "unverified") or "unverified")
     metric_definitions = _profile_metric_definitions(row)
+    interface_config = _profile_interface_config(row)
     configured = bool(metric_definitions)
-    collector_status = _collector_status(configured, status, len(matching))
+    interface_configured = bool(interface_config)
+    hardware_collector_status = _collector_status(configured, status, len(matching))
+    interface_collector_status = _collector_status(interface_configured, interface_status, len(matching))
+    if hardware_collector_status == 'active' or interface_collector_status == 'active':
+        collector_status = 'active'
+    elif configured:
+        collector_status = hardware_collector_status
+    elif interface_configured:
+        collector_status = interface_collector_status
+    else:
+        collector_status = 'builtin_only'
     return {
         "profile_id": profile_id,
         "vendor": str(_row_value(row, "vendor_name", "")),
         "model": str(_row_value(row, "model_name", "")),
         "verification_status": status,
         "collector_status": collector_status,
+        "hardware_collector_status": hardware_collector_status,
+        "interface_verification_status": interface_status,
+        "interface_collector_status": interface_collector_status,
+        "interface_configured": interface_configured,
+        "interface_config": interface_config,
         "matched_device_count": len(matching),
         "profile_applied_device_count": len(matching) if collector_status == "active" else 0,
         "blocked_device_count": len(matching) if collector_status in {"blocked_unverified", "blocked_failed"} else 0,
@@ -673,7 +746,11 @@ def get_model_metric_profile_mapping(conn, profile_id: str) -> dict[str, Any]:
     }
 
 
-def _validated_profile_values(payload: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def _validated_profile_values(
+    payload: Mapping[str, Any],
+    *,
+    allow_empty: bool = False,
+) -> dict[str, dict[str, Any]]:
     """Validate the full hardware metric map with legacy CPU/memory fallback."""
     submitted = payload.get("metric_definitions")
     if not isinstance(submitted, Mapping):
@@ -700,9 +777,24 @@ def _validated_profile_values(payload: Mapping[str, Any]) -> dict[str, dict[str,
             )
         if config:
             definitions[metric_key] = config
-    if not definitions:
+    if not definitions and not allow_empty:
         raise ValueError("at least one hardware metric definition is required")
     return definitions
+
+
+def _validated_interface_values(payload: Mapping[str, Any]) -> dict[str, Any]:
+    submitted = payload.get('interface_config')
+    if submitted is None:
+        submitted = payload.get('interface')
+    if submitted in (None, ''):
+        return {}
+    try:
+        normalized = normalize_interface_config(submitted)
+    except ValueError as exc:
+        raise ValueError(f'interface_config: {exc}') from exc
+    if not normalized or not normalized.get('enabled', True):
+        return {}
+    return normalized
 
 
 def _profile_identity(conn, payload: Mapping[str, Any], existing: Any = None) -> tuple[str, str, str, str]:
@@ -720,7 +812,10 @@ def _profile_identity(conn, payload: Mapping[str, Any], existing: Any = None) ->
 
 def create_model_metric_profile(conn, payload: Mapping[str, Any], updated_by: str = "") -> dict[str, Any]:
     vendor, model, vendor_key, model_key = _profile_identity(conn, payload)
-    metric_definitions = _validated_profile_values(payload)
+    interface_config = _validated_interface_values(payload)
+    metric_definitions = _validated_profile_values(payload, allow_empty=bool(interface_config))
+    if not metric_definitions and not interface_config:
+        raise ValueError("at least one hardware metric or an interface OID definition is required")
     cpu_config = metric_definitions.get("cpu", {})
     memory_config = metric_definitions.get("memory", {})
     if conn.execute(
@@ -736,8 +831,9 @@ def create_model_metric_profile(conn, payload: Mapping[str, Any], updated_by: st
         INSERT INTO snmp_metric_profiles
             (id, vendor_key, vendor_name, model_key, model_name,
              cpu_oid, memory_oid, cpu_config_json, memory_config_json,
-             metric_definitions_json, created_at, updated_at, updated_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             metric_definitions_json, interface_config_json,
+             created_at, updated_at, updated_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             profile_id,
@@ -750,6 +846,7 @@ def create_model_metric_profile(conn, payload: Mapping[str, Any], updated_by: st
             _config_json(cpu_config),
             _config_json(memory_config),
             _config_json(metric_definitions),
+            _config_json(interface_config),
             now,
             now,
             updated_by,
@@ -764,7 +861,10 @@ def update_model_metric_profile(conn, profile_id: str, payload: Mapping[str, Any
     if not row:
         raise ValueError("Model metric profile not found")
     vendor, model, vendor_key, model_key = _profile_identity(conn, payload, row)
-    metric_definitions = _validated_profile_values(payload)
+    interface_config = _validated_interface_values(payload)
+    metric_definitions = _validated_profile_values(payload, allow_empty=bool(interface_config))
+    if not metric_definitions and not interface_config:
+        raise ValueError("at least one hardware metric or an interface OID definition is required")
     cpu_config = metric_definitions.get("cpu", {})
     memory_config = metric_definitions.get("memory", {})
     conflict = conn.execute(
@@ -780,10 +880,13 @@ def update_model_metric_profile(conn, profile_id: str, payload: Mapping[str, Any
         UPDATE snmp_metric_profiles
         SET vendor_key = ?, vendor_name = ?, model_key = ?, model_name = ?,
             cpu_oid = ?, memory_oid = ?, cpu_config_json = ?, memory_config_json = ?,
-            metric_definitions_json = ?,
+            metric_definitions_json = ?, interface_config_json = ?,
             verification_status = 'unverified', last_test_at = NULL,
             last_test_device_id = '',
             last_test_message = 'Metric definition changed; live verification required',
+            interface_verification_status = 'unverified', interface_last_test_at = NULL,
+            interface_last_test_device_id = '',
+            interface_last_test_message = 'Interface definition changed; live verification required',
             updated_at = ?, updated_by = ?
         WHERE id = ?
         """,
@@ -797,6 +900,7 @@ def update_model_metric_profile(conn, profile_id: str, payload: Mapping[str, Any
             _config_json(cpu_config),
             _config_json(memory_config),
             _config_json(metric_definitions),
+            _config_json(interface_config),
             now,
             updated_by,
             profile_id,
@@ -810,21 +914,37 @@ def mark_model_metric_profile_test(
     conn,
     profile_id: str,
     device_id: str,
-    passed: bool,
-    message: str,
+    passed: bool | None = None,
+    message: str = '',
+    *,
+    hardware_passed: bool | None = None,
+    interface_passed: bool | None = None,
+    interface_message: str = '',
 ) -> dict[str, Any]:
     if not conn.execute("SELECT id FROM snmp_metric_profiles WHERE id = ?", (profile_id,)).fetchone():
         raise ValueError("Model metric profile not found")
+    if hardware_passed is None and passed is not None:
+        hardware_passed = bool(passed)
     now = _utc_now()
-    conn.execute(
-        """
-        UPDATE snmp_metric_profiles
-        SET verification_status = ?, last_test_at = ?,
-            last_test_device_id = ?, last_test_message = ?
-        WHERE id = ?
-        """,
-        ("verified" if passed else "failed", now, device_id, _clean_text(message, 500), profile_id),
-    )
+    assignments: list[str] = []
+    values: list[Any] = []
+    if hardware_passed is not None:
+        assignments.extend(('verification_status = ?', 'last_test_at = ?', 'last_test_device_id = ?', 'last_test_message = ?'))
+        values.extend(('verified' if hardware_passed else 'failed', now, device_id, _clean_text(message, 500)))
+    if interface_passed is not None:
+        assignments.extend((
+            'interface_verification_status = ?',
+            'interface_last_test_at = ?',
+            'interface_last_test_device_id = ?',
+            'interface_last_test_message = ?',
+        ))
+        values.extend(('verified' if interface_passed else 'failed', now, device_id, _clean_text(interface_message, 500)))
+    if assignments:
+        values.append(profile_id)
+        conn.execute(
+            f"UPDATE snmp_metric_profiles SET {', '.join(assignments)} WHERE id = ?",
+            tuple(values),
+        )
     invalidate_metric_profile_cache()
     return dict(conn.execute("SELECT * FROM snmp_metric_profiles WHERE id = ?", (profile_id,)).fetchone())
 
@@ -851,11 +971,13 @@ __all__ = [
     "mark_model_metric_profile_test",
     "metric_config_hash",
     "normalize_metric_config",
+    "normalize_interface_config",
     "normalize_model_key",
     "normalize_vendor_key",
     "normalize_vendor_name",
     "profile_metric_config",
     "profile_metric_definitions",
+    "profile_interface_config",
     "resolve_metric_oids",
     "resolve_metric_profiles",
     "update_model_metric_profile",

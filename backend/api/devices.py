@@ -3,10 +3,11 @@ from fastapi.responses import JSONResponse
 import os
 import uuid
 import json
+import re
 import socket
 import time
 import logging
-from typing import Optional
+from typing import Any, Optional
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health
@@ -25,6 +26,7 @@ from services.snmp_metric_profile_service import (
     mark_model_metric_profile_test,
     normalize_model_key,
     normalize_vendor_key,
+    profile_interface_config,
     profile_metric_definitions,
     resolve_metric_profiles,
     update_model_metric_profile,
@@ -818,6 +820,320 @@ def list_snmp_metric_profiles(
         conn.close()
 
 
+def _prepare_snmp_walk_target(row: dict[str, Any], *, asset_only: bool = False) -> dict[str, Any]:
+    """Normalize a device/asset row for the SNMP walk credential resolver.
+
+    Asset management stores the management address as ``management_ip`` while
+    the collector contract expects ``ip_address``.  Keep that translation
+    server-side so the UI never has to read or submit SNMP credentials.
+    """
+    target = dict(row)
+    if asset_only:
+        target['ip_address'] = str(target.get('management_ip') or '').strip()
+    elif str(target.get('_asset_management_ip') or '').strip():
+        target['ip_address'] = str(target.get('_asset_management_ip') or '').strip()
+    elif not str(target.get('ip_address') or '').strip():
+        target['ip_address'] = str(target.get('_asset_management_ip') or '').strip()
+    if not str(target.get('hostname') or '').strip():
+        target['hostname'] = str(target.get('_asset_hostname') or '').strip()
+    return target
+
+
+def _find_snmp_walk_targets(*, device_id: str = '', target_query: str = '') -> list[dict[str, Any]]:
+    """Find SNMP test targets from the asset/device registry.
+
+    Exact matching is attempted first.  If it does not identify a single
+    target, a case-insensitive SQL ``LIKE`` search provides the requested
+    fuzzy/regex-style input behavior while remaining compatible with both the
+    PostgreSQL and SQLite database adapters used by the project.
+    """
+    conn = get_db_connection()
+    try:
+        if device_id:
+            device_row = conn.execute(
+                '''SELECT d.*, pa.management_ip AS _asset_management_ip,
+                          pa.hostname AS _asset_hostname
+                   FROM devices d
+                   LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                   WHERE d.id = ? LIMIT 1''',
+                (device_id,),
+            ).fetchone()
+            if device_row:
+                return [_prepare_snmp_walk_target(dict(device_row))]
+            asset_row = conn.execute('SELECT * FROM physical_assets WHERE id = ? LIMIT 1', (device_id,)).fetchone()
+            if asset_row:
+                return [_prepare_snmp_walk_target(dict(asset_row), asset_only=True)]
+            return []
+
+        query = target_query.strip()
+        if not query:
+            return []
+
+        exact_sql = '''
+            SELECT d.*, pa.management_ip AS _asset_management_ip,
+                   pa.hostname AS _asset_hostname
+            FROM devices d
+            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+            WHERE LOWER(COALESCE(d.ip_address, '')) = LOWER(?)
+               OR LOWER(COALESCE(d.hostname, '')) = LOWER(?)
+               OR LOWER(COALESCE(pa.management_ip, '')) = LOWER(?)
+               OR LOWER(COALESCE(pa.hostname, '')) = LOWER(?)
+            ORDER BY COALESCE(NULLIF(d.hostname, ''), pa.hostname, ''), d.id
+            LIMIT 20
+        '''
+        exact_rows = [
+            _prepare_snmp_walk_target(dict(row))
+            for row in conn.execute(exact_sql, (query, query, query, query)).fetchall()
+        ]
+        if exact_rows:
+            return exact_rows
+
+        pattern = f'%{query}%'
+        fuzzy_sql = '''
+            SELECT d.*, pa.management_ip AS _asset_management_ip,
+                   pa.hostname AS _asset_hostname
+            FROM devices d
+            LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+            WHERE LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?)
+               OR LOWER(COALESCE(d.hostname, '')) LIKE LOWER(?)
+               OR LOWER(COALESCE(pa.management_ip, '')) LIKE LOWER(?)
+               OR LOWER(COALESCE(pa.hostname, '')) LIKE LOWER(?)
+            ORDER BY COALESCE(NULLIF(d.hostname, ''), pa.hostname, ''), d.id
+            LIMIT 20
+        '''
+        targets = [
+            _prepare_snmp_walk_target(dict(row))
+            for row in conn.execute(fuzzy_sql, (pattern, pattern, pattern, pattern)).fetchall()
+        ]
+
+        # An asset may exist before a network-device row is linked.  It is
+        # still a valid source of SNMP credentials and management IP.
+        if not targets:
+            asset_sql = '''
+                SELECT pa.*
+                FROM physical_assets pa
+                WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.asset_id = pa.id)
+                  AND (LOWER(COALESCE(pa.management_ip, '')) LIKE LOWER(?)
+                    OR LOWER(COALESCE(pa.hostname, '')) LIKE LOWER(?)
+                    OR LOWER(COALESCE(pa.asset_tag, '')) LIKE LOWER(?))
+                ORDER BY COALESCE(NULLIF(pa.hostname, ''), pa.management_ip, ''), pa.id
+                LIMIT 20
+            '''
+            targets = [
+                _prepare_snmp_walk_target(dict(row), asset_only=True)
+                for row in conn.execute(asset_sql, (pattern, pattern, pattern)).fetchall()
+            ]
+
+        # If the input contains regular-expression syntax (for example
+        # ``10\\.254\\.\\d+\\.\\d+``), apply it to the same registry fields.
+        # Invalid expressions fall back to a literal, case-insensitive search;
+        # this keeps a typo from turning into an unsafe database expression.
+        if not targets and len(query) <= 128:
+            try:
+                matcher = re.compile(query, re.IGNORECASE)
+            except re.error:
+                matcher = re.compile(re.escape(query), re.IGNORECASE)
+
+            candidate_sql = '''
+                SELECT d.*, pa.management_ip AS _asset_management_ip,
+                       pa.hostname AS _asset_hostname
+                FROM devices d
+                LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+                ORDER BY COALESCE(NULLIF(d.hostname, ''), pa.hostname, ''), d.id
+                LIMIT 5000
+            '''
+            for row in conn.execute(candidate_sql).fetchall():
+                item = _prepare_snmp_walk_target(dict(row))
+                values = (item.get('ip_address'), item.get('hostname'), item.get('_asset_management_ip'), item.get('_asset_hostname'))
+                if any(matcher.search(str(value or '')) for value in values):
+                    targets.append(item)
+            if not targets:
+                asset_candidates = conn.execute('SELECT * FROM physical_assets LIMIT 5000').fetchall()
+                for row in asset_candidates:
+                    item = _prepare_snmp_walk_target(dict(row), asset_only=True)
+                    values = (item.get('management_ip'), item.get('hostname'), item.get('asset_tag'))
+                    if any(matcher.search(str(value or '')) for value in values):
+                        targets.append(item)
+        return targets
+    finally:
+        conn.close()
+
+
+def _find_exact_snmp_walk_target(ip: str) -> dict[str, Any] | None:
+    """Resolve one exact management IP from asset management.
+
+    The confirmation field is deliberately exact: it must not use the broad
+    inventory search endpoint, whose result count can include related asset
+    rows.  Returning the first deterministic row also keeps legacy databases
+    with duplicate device records usable while the browser only receives the
+    confirmed address and identifiers.
+    """
+    query = ip.strip()
+    if not query:
+        return None
+    conn = get_db_connection()
+    try:
+        linked_row = conn.execute(
+            '''SELECT d.*, pa.management_ip AS _asset_management_ip,
+                      pa.hostname AS _asset_hostname
+               FROM devices d
+               LEFT JOIN physical_assets pa ON pa.id = d.asset_id
+               WHERE COALESCE(pa.asset_type, 'network_device') = 'network_device'
+                 AND (LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?))
+                   OR LOWER(TRIM(COALESCE(d.ip_address, ''))) = LOWER(TRIM(?)))
+               ORDER BY CASE WHEN LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?)) THEN 0 ELSE 1 END,
+                        d.id
+               LIMIT 1''',
+            (query, query, query),
+        ).fetchone()
+        if linked_row:
+            return _prepare_snmp_walk_target(dict(linked_row))
+
+        asset_row = conn.execute(
+            '''SELECT pa.*
+               FROM physical_assets pa
+               WHERE pa.asset_type = 'network_device'
+                 AND LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?))
+                 AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.asset_id = pa.id)
+               ORDER BY pa.id
+               LIMIT 1''',
+            (query,),
+        ).fetchone()
+        if asset_row:
+            return _prepare_snmp_walk_target(dict(asset_row), asset_only=True)
+        return None
+    finally:
+        conn.close()
+
+
+@router.get("/platform-registry/snmp-walk-target")
+def resolve_snmp_walk_target(
+    ip: str = Query(..., min_length=1, max_length=255),
+    user=require_role("Operator"),
+):
+    """Confirm an exact asset-management IP before running SNMP WALK."""
+    target = _find_exact_snmp_walk_target(ip)
+    if not target:
+        raise HTTPException(status_code=404, detail='IP not found in asset management')
+    resolved_ip = str(target.get('_asset_management_ip') or target.get('management_ip') or target.get('ip_address') or '').strip()
+    if not resolved_ip:
+        raise HTTPException(status_code=404, detail='The matched asset has no management IP')
+    return {
+        'success': True,
+        'data': {
+            'ip': resolved_ip,
+            'device_id': str(target.get('id') or ''),
+            'hostname': str(target.get('hostname') or ''),
+        },
+    }
+
+
+@router.post("/platform-registry/snmp-walk-test")
+async def test_snmp_walk(payload: dict = Body(default={}), user=require_role("Operator")):
+    """Run one read-only SNMP WALK for the template editor.
+
+    The endpoint deliberately accepts structured values instead of an
+    arbitrary shell command.  This keeps the test path independent of
+    ``snmpwalk.exe`` and prevents command injection while still matching the
+    common ``snmpwalk -v2c -c COMMUNITY HOST OID`` workflow (v1 is also
+    accepted for legacy devices).
+    """
+    host = str(payload.get('ip') or payload.get('host') or '').strip()
+    community = str(payload.get('community') or '').strip()
+    requested_device_id = str(payload.get('device_id') or '').strip()
+    target_query = str(payload.get('target_query') or '').strip()
+    matched_device: dict[str, Any] | None = None
+    target_source = 'manual'
+
+    # A template test normally supplies target_query/device_id.  Resolve the
+    # actual host and community from asset-management credentials on the
+    # server; the browser never receives the secret.  The legacy structured
+    # ip+community form remains available for API compatibility.
+    if requested_device_id or target_query:
+        targets = _find_snmp_walk_targets(device_id=requested_device_id, target_query=target_query)
+        if not targets:
+            raise HTTPException(status_code=404, detail='No matching managed asset was found')
+        if len(targets) > 1:
+            raise HTTPException(status_code=409, detail='Target matches multiple assets; enter a more specific IP or hostname')
+        matched_device = targets[0]
+        collector_credentials = resolve_collector_credentials(matched_device)
+        snmp_credentials = collector_credentials.get('snmp') or {}
+        host = str(snmp_credentials.get('server') or matched_device.get('ip_address') or '').strip()
+        community = str(snmp_credentials.get('community') or '').strip()
+        port = snmp_credentials.get('port') or 161
+        target_source = 'asset'
+
+    raw_oid = payload.get('oid')
+    if not host:
+        raise HTTPException(status_code=400, detail='SNMP address is required')
+    if not community:
+        detail = 'Matched asset has no SNMP community configured' if matched_device else 'SNMP community is required'
+        raise HTTPException(status_code=400, detail=detail)
+    try:
+        oid = normalize_metric_oid(raw_oid)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f'oid: {exc}') from exc
+    if not oid:
+        raise HTTPException(status_code=400, detail='OID is required')
+
+    version = str(payload.get('version') or payload.get('snmp_version') or '2c').strip().lower()
+    if version in {'v1', '1'}:
+        version = '1'
+    elif version in {'v2c', '2c', '2'}:
+        version = '2c'
+    else:
+        raise HTTPException(status_code=400, detail='SNMP version must be 1 or 2c')
+
+    try:
+        port = int(port if matched_device else (payload.get('port') or 161))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='SNMP port must be an integer') from exc
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=400, detail='SNMP port must be between 1 and 65535')
+    try:
+        timeout = float(payload.get('timeout') or 5)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='SNMP timeout must be a number') from exc
+    if timeout <= 0 or timeout > 60:
+        raise HTTPException(status_code=400, detail='SNMP timeout must be between 0 and 60 seconds')
+    try:
+        max_rows = int(payload.get('max_rows') or 2000)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='max_rows must be an integer') from exc
+    if not 1 <= max_rows <= 10000:
+        raise HTTPException(status_code=400, detail='max_rows must be between 1 and 10000')
+
+    from services.snmp_service import _snmp_walk
+
+    try:
+        rows = await _snmp_walk(host, community, oid, port=port, timeout=timeout, max_rows=max_rows, version=version)
+    except Exception as exc:
+        logger.warning('SNMP WALK test failed for %s %s: %s', host, oid, type(exc).__name__)
+        raise HTTPException(status_code=502, detail='SNMP WALK request failed') from exc
+
+    formatted_rows = [
+        {'oid': f"{oid}.{suffix}" if str(suffix).strip('.') else oid, 'value': value}
+        for suffix, value in rows
+    ]
+    return {
+        'success': bool(formatted_rows),
+        'data': {
+            'host': host,
+            'oid': oid,
+            'version': version,
+            'port': port,
+            'status': 'ok' if formatted_rows else 'no_data',
+            'message': 'SNMP WALK succeeded' if formatted_rows else 'No rows returned; check OID, view permissions, and reachability',
+            'row_count': len(formatted_rows),
+            'truncated': len(formatted_rows) >= max_rows,
+            'rows': formatted_rows,
+            'target_source': target_source,
+            'matched_device_id': str(matched_device.get('id')) if matched_device else None,
+            'matched_hostname': str(matched_device.get('hostname') or '') if matched_device else '',
+        },
+    }
+
+
 @router.post("/platform-registry/snmp-metric-profiles")
 def create_snmp_metric_profile(payload: dict = Body(...), user=require_role("Operator")):
     conn = get_db_connection()
@@ -933,10 +1249,10 @@ async def test_snmp_metric_profile(
 ):
     """Live-test a model profile against one matching device.
 
-    A profile is only marked ``verified`` when every configured metric returns
-    a valid typed result (percentage, unit-bearing value, or status boolean).
-    Unverified/failed profiles are deliberately ignored by the background
-    collector.
+    Hardware and interface definitions are verified independently.  A custom
+    interface mapping is activated only after its identity table and selected
+    paired counter width pass; an unverified/failed section falls back to its
+    built-in collector without disabling the other section.
     """
     conn = get_db_connection()
     try:
@@ -977,13 +1293,30 @@ async def test_snmp_metric_profile(
     community = snmp_credentials.get('community') or ''
     port = snmp_credentials.get('port') or 161
     configured = profile_metric_definitions(profile)
-
+    interface_config = profile_interface_config(profile)
+    hardware_configured = bool(configured)
+    interface_configured = bool(interface_config)
     test_results: dict[str, dict] = {}
+    interface_result: dict[str, Any] = {}
+    hardware_passed: bool | None = None if not hardware_configured else False
+    interface_passed: bool | None = None if not interface_configured else False
     if not ip or not community:
-        passed = False
         message = 'SNMP address or community is not configured on the sample device'
+        if hardware_configured:
+            hardware_passed = False
+        if interface_configured:
+            interface_passed = False
+            interface_result = {
+                'passed': False,
+                'status': 'credentials_missing',
+                'message': message,
+                'checks': {},
+                'counter_mode': interface_config.get('counter_mode', 'auto'),
+                'interfaces': 0,
+                'counter_supported': 0,
+            }
     else:
-        from services.snmp_service import probe_metric_definition
+        from services.snmp_service import probe_interface_definition, probe_metric_definition
         import asyncio as _aio
 
         async def _test_metric(metric: str, config: dict) -> tuple[str, dict]:
@@ -999,14 +1332,30 @@ async def test_snmp_metric_profile(
                     'message': type(exc).__name__,
                 }
 
-        pairs = await _aio.gather(*[_test_metric(metric, config) for metric, config in configured.items()])
-        test_results = dict(pairs)
-        passed = bool(test_results) and all(item.get('passed') for item in test_results.values())
-        message = (
-            'All configured metrics passed typed SNMP validation'
-            if passed
-            else 'One or more metric definitions failed typed SNMP validation'
-        )
+        tasks = []
+        if hardware_configured:
+            tasks.append(_aio.gather(*[_test_metric(metric, config) for metric, config in configured.items()]))
+        if interface_configured:
+            tasks.append(probe_interface_definition(ip, community, interface_config, int(port)))
+        task_results = await _aio.gather(*tasks) if tasks else []
+        task_index = 0
+        if hardware_configured:
+            test_results = dict(task_results[task_index])
+            task_index += 1
+            hardware_passed = bool(test_results) and all(item.get('passed') for item in test_results.values())
+        if interface_configured:
+            interface_result = dict(task_results[task_index] or {})
+            interface_passed = bool(interface_result.get('passed'))
+
+        message_parts = []
+        if hardware_configured:
+            message_parts.append('hardware metrics passed' if hardware_passed else 'hardware metrics failed')
+        if interface_configured:
+            message_parts.append('interface OIDs passed' if interface_passed else 'interface OIDs failed')
+        message = '; '.join(message_parts) or 'No configured definitions to test'
+
+    configured_results = [value for value in (hardware_passed, interface_passed) if value is not None]
+    passed = bool(configured_results) and all(configured_results)
 
     conn = get_db_connection()
     try:
@@ -1014,8 +1363,11 @@ async def test_snmp_metric_profile(
             conn,
             profile_id,
             str(device['id']),
-            passed,
+            passed if hardware_configured else None,
             message,
+            hardware_passed=hardware_passed,
+            interface_passed=interface_passed,
+            interface_message=str(interface_result.get('message') or message),
         )
         conn.commit()
     finally:
@@ -1025,12 +1377,16 @@ async def test_snmp_metric_profile(
         'success': True,
         'data': {
             'passed': passed,
+            'hardware_passed': hardware_passed,
+            'interface_passed': interface_passed,
             'message': message,
             'profile_id': profile_id,
             'verification_status': updated_profile.get('verification_status'),
+            'interface_verification_status': updated_profile.get('interface_verification_status'),
             'sample_device_id': str(device['id']),
             'sample_hostname': device.get('hostname') or device.get('ip_address') or str(device['id']),
             'metrics': test_results,
+            'interface': interface_result,
         },
     }
 
@@ -2133,7 +2489,12 @@ async def snmp_test(device_id: str):
                 resolved_metrics = resolve_metric_profiles(device_data)
                 dev_info, intf_data, metrics = await _aio.gather(
                     collect_device_info(snmp_ip, community, port),
-                    collect_interface_data(snmp_ip, community, port),
+                    collect_interface_data(
+                        snmp_ip,
+                        community,
+                        port,
+                        resolved_metrics.get('interface') or None,
+                    ),
                     collect_device_metrics(
                         snmp_ip,
                         platform,

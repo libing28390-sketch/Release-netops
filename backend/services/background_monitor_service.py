@@ -2,6 +2,7 @@ import sys
 import os
 import asyncio
 import json
+import hashlib
 import uuid
 import logging
 from datetime import datetime, timedelta, timezone
@@ -17,6 +18,11 @@ from services import alert_rule_service
 import re as _re
 import time as _time
 from services.snmp_service import collect_device_metrics, collect_device_info, collect_interface_data
+from services.snmp_counter_service import (
+    calculate_counter_delta,
+    load_interface_counter_sample,
+    save_interface_counter_sample,
+)
 from services.snmp_metric_profile_service import resolve_metric_profiles
 from services.operational_data_service import collect_operational_data
 from services.network_access_limiter import get_network_access_limiter
@@ -74,6 +80,16 @@ def _as_dict(row):
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _iso_epoch(value: Any) -> float | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 _CST = timezone(timedelta(hours=8))
 
@@ -305,6 +321,7 @@ protocol_flap_silence_secs = 1800
 snmp_failure_streak = {}
 intf_flap_history = {}
 prev_intf_octets = {}
+prev_intf_config_hash: dict[str, str] = {}
 webhook_last_sent = {}
 current_alert_rules = []
 role_poll_profiles = {
@@ -333,8 +350,6 @@ FLAP_WINDOW_SECS = 600
 FLAP_THRESHOLD = 4
 protocol_aggregate_threshold = 3
 protocol_aggregate_sample_size = 3
-COUNTER32_MAX = 2**32
-COUNTER64_MAX = 2**64
 monitor_concurrency = 20 if sys.platform != "win32" else 2
 _sem = None
 def _get_semaphore():
@@ -1099,6 +1114,7 @@ async def _process_device_raw(device, cycle_tick: int):
             ''', ('offline', 0, 0, dev_id))
             _sync_device_status_tag(dev_id, 'offline')
             prev_intf_octets.pop(dev_id, None)
+            prev_intf_config_hash.pop(dev_id, None)
 
         if not ip or ip == '0.0.0.0':
             mark_offline_and_clear_cache()
@@ -1166,6 +1182,7 @@ async def _process_device_raw(device, cycle_tick: int):
         snmp_error_code = ''
         snmp_error_message = ''
         metric_details: dict[str, Any] = {}
+        resolved_metrics: dict[str, Any] = {}
 
         # Try real SNMP collection (no DB lock held during await)
         cpu_usage = None
@@ -1354,7 +1371,17 @@ async def _process_device_raw(device, cycle_tick: int):
             try:
                 now_ts = _time.monotonic()
                 now_iso = _utc_now_iso()
-                intf_data = await collect_interface_data(snmp_ip, snmp_community, snmp_port)
+                interface_config = resolved_metrics.get('interface') or None
+                interface_profile_id = str(resolved_metrics.get('profile_id') or 'builtin-if-mib')
+                interface_config_hash = hashlib.sha256(
+                    json.dumps(interface_config or {}, sort_keys=True, separators=(',', ':'), default=str).encode('utf-8')
+                ).hexdigest()[:32]
+                intf_data = await collect_interface_data(
+                    snmp_ip,
+                    snmp_community,
+                    snmp_port,
+                    interface_config,
+                )
                 if not intf_data:
                     record_collection_result(
                         dev_id,
@@ -1374,21 +1401,57 @@ async def _process_device_raw(device, cycle_tick: int):
                         transport='udp',
                         source='snmp',
                         coverage_total=len(intf_data),
-                        coverage_supported=len(intf_data),
-                        metadata={'counter_mode': 'ifHC-preferred'},
+                        coverage_supported=sum(
+                            1 for row in intf_data
+                            if row.get('counter_width') in (32, 64)
+                            and row.get('in_octets') is not None
+                            and row.get('out_octets') is not None
+                        ),
+                        metadata={
+                            'counter_mode': (interface_config or {}).get('counter_mode', 'auto'),
+                            'counter_widths': sorted({row.get('counter_width') for row in intf_data if row.get('counter_width') in (32, 64)}),
+                        },
                     )
                     topology_ports = load_topology_ports(dev_id)
                     # Calculate real-time throughput and bandwidth utilization from previous snapshot.
+                    previous_config_hash = prev_intf_config_hash.get(str(dev_id))
+                    if previous_config_hash and previous_config_hash != interface_config_hash:
+                        # A template edit changes the meaning of the stored
+                        # counters.  Start a fresh baseline instead of
+                        # calculating a rate across two different OID maps.
+                        prev_intf_octets.pop(dev_id, None)
                     prev = prev_intf_octets.get(dev_id, {})
+                    durable = load_interface_counter_sample(dev_id, interface_profile_id) if not prev else None
+                    if durable and str(durable.get('config_hash') or '') == interface_config_hash:
+                        durable_epoch = _iso_epoch(durable.get('sampled_at'))
+                        elapsed_since_durable = max(0.0, _time.time() - durable_epoch) if durable_epoch is not None else None
+                        if elapsed_since_durable is not None:
+                            prev = {
+                                str(index): {
+                                    **dict(snapshot),
+                                    'ts': now_ts - elapsed_since_durable,
+                                }
+                                for index, snapshot in (durable.get('values') or {}).items()
+                                if isinstance(snapshot, dict)
+                            }
                     persisted_statuses = load_persisted_interface_statuses(dev_id) if not prev else {}
                     cur_snapshot = {}
                     raw_rows = []
                     for iface in intf_data:
                         iname = iface['name']
-                        effective_prev_status = str(prev.get(iname, {}).get('status', '') or persisted_statuses.get(iname, '')).lower()
-                        cur_snapshot[iname] = {
+                        # ifIndex is stable across an ifName rename; use it as
+                        # the counter key and retain the name for display/
+                        # alerting.  Name-only fallback keeps legacy rows
+                        # usable when an agent omits a numeric index.
+                        interface_key = str(iface.get('if_index') or iname)
+                        effective_prev_status = str(prev.get(interface_key, {}).get('status', '') or persisted_statuses.get(iname, '')).lower()
+                        cur_snapshot[interface_key] = {
+                            'name': iname,
                             'in_octets': iface['in_octets'],
                             'out_octets': iface['out_octets'],
+                            'counter_width': iface.get('counter_width'),
+                            'speed_mbps': iface.get('speed_mbps', 0),
+                            'device_uptime_cs': iface.get('device_uptime_cs'),
                             'in_ucast_pkts': iface.get('in_ucast_pkts', 0),
                             'out_ucast_pkts': iface.get('out_ucast_pkts', 0),
                             'in_errors': iface.get('in_errors', 0),
@@ -1425,40 +1488,53 @@ async def _process_device_raw(device, cycle_tick: int):
                             rule=flap_rule,
                         )
 
-                        if iname in prev:
-                            dt = now_ts - prev[iname]['ts']
-                            if dt > 0:
-                                # Counter overflow compensation (32-bit wrap-around)
-                                raw_delta_in = iface['in_octets'] - prev[iname]['in_octets']
-                                raw_delta_out = iface['out_octets'] - prev[iname]['out_octets']
-                                delta_in = raw_delta_in if raw_delta_in >= 0 else raw_delta_in + COUNTER32_MAX
-                                delta_out = raw_delta_out if raw_delta_out >= 0 else raw_delta_out + COUNTER32_MAX
-                                # Sanity: if delta implies >100 Gbps, likely a reset - discard
-                                max_reasonable = 100_000_000_000 * dt / 8  # 100Gbps in bytes
-                                if delta_in > max_reasonable:
-                                    delta_in = 0
-                                if delta_out > max_reasonable:
-                                    delta_out = 0
-                                in_bps = (delta_in * 8) / dt
-                                out_bps = (delta_out * 8) / dt
-                                iface['in_bps'] = round(in_bps, 1)
-                                iface['out_bps'] = round(out_bps, 1)
+                        if interface_key in prev:
+                            previous = prev[interface_key]
+                            dt = now_ts - float(previous.get('ts') or now_ts)
+                            width = iface.get('counter_width')
+                            previous_width = previous.get('counter_width')
+                            if dt > 0 and width in (32, 64) and previous_width == width:
+                                speed_bps = float(iface.get('speed_mbps') or 0) * 1_000_000
+                                max_rate = speed_bps / 8 if speed_bps > 0 else None
+                                in_delta = calculate_counter_delta(
+                                    iface.get('in_octets'),
+                                    previous.get('in_octets'),
+                                    dt,
+                                    width,
+                                    max_rate_per_sec=max_rate,
+                                    current_uptime_cs=iface.get('device_uptime_cs'),
+                                    previous_uptime_cs=previous.get('device_uptime_cs'),
+                                )
+                                out_delta = calculate_counter_delta(
+                                    iface.get('out_octets'),
+                                    previous.get('out_octets'),
+                                    dt,
+                                    width,
+                                    max_rate_per_sec=max_rate,
+                                    current_uptime_cs=iface.get('device_uptime_cs'),
+                                    previous_uptime_cs=previous.get('device_uptime_cs'),
+                                )
+                                if in_delta.get('rate_per_sec') is not None and out_delta.get('rate_per_sec') is not None:
+                                    iface['in_bps'] = round(float(in_delta['rate_per_sec']) * 8, 1)
+                                    iface['out_bps'] = round(float(out_delta['rate_per_sec']) * 8, 1)
+                                    iface['counter_delta_status'] = {
+                                        'in': in_delta.get('status'),
+                                        'out': out_delta.get('status'),
+                                    }
+                                    if speed_bps > 0:
+                                        bw_in = round((float(in_delta['rate_per_sec']) / speed_bps) * 800, 1)
+                                        bw_out = round((float(out_delta['rate_per_sec']) / speed_bps) * 800, 1)
+                                        iface['bw_in_pct'] = min(bw_in, 100.0)
+                                        iface['bw_out_pct'] = min(bw_out, 100.0)
 
-                                speed_bps = iface.get('speed_mbps', 0) * 1_000_000
-                                if speed_bps > 0:
-                                    bw_in = round((in_bps / speed_bps) * 100, 1)
-                                    bw_out = round((out_bps / speed_bps) * 100, 1)
-                                    iface['bw_in_pct'] = min(bw_in, 100.0)
-                                    iface['bw_out_pct'] = min(bw_out, 100.0)
-
-                                delta_error_events = max(0, iface.get('in_errors', 0) - prev[iname].get('in_errors', 0))
-                                delta_error_events += max(0, iface.get('out_errors', 0) - prev[iname].get('out_errors', 0))
-                                delta_error_events += max(0, iface.get('in_discards', 0) - prev[iname].get('in_discards', 0))
-                                delta_error_events += max(0, iface.get('out_discards', 0) - prev[iname].get('out_discards', 0))
-                                delta_packets = max(0, iface.get('in_ucast_pkts', 0) - prev[iname].get('in_ucast_pkts', 0))
-                                delta_packets += max(0, iface.get('out_ucast_pkts', 0) - prev[iname].get('out_ucast_pkts', 0))
-                                if delta_packets > 0:
-                                    iface['error_rate_pct'] = round((delta_error_events / delta_packets) * 100, 3)
+                                    delta_error_events = max(0, iface.get('in_errors', 0) - previous.get('in_errors', 0))
+                                    delta_error_events += max(0, iface.get('out_errors', 0) - previous.get('out_errors', 0))
+                                    delta_error_events += max(0, iface.get('in_discards', 0) - previous.get('in_discards', 0))
+                                    delta_error_events += max(0, iface.get('out_discards', 0) - previous.get('out_discards', 0))
+                                    delta_packets = max(0, iface.get('in_ucast_pkts', 0) - previous.get('in_ucast_pkts', 0))
+                                    delta_packets += max(0, iface.get('out_ucast_pkts', 0) - previous.get('out_ucast_pkts', 0))
+                                    if delta_packets > 0:
+                                        iface['error_rate_pct'] = round((delta_error_events / delta_packets) * 100, 3)
 
                         # Persist high-frequency telemetry for short-term tracing.
                         raw_rows.append((
@@ -1574,6 +1650,18 @@ async def _process_device_raw(device, cycle_tick: int):
                             )
 
                     prev_intf_octets[dev_id] = cur_snapshot
+                    prev_intf_config_hash[str(dev_id)] = interface_config_hash
+                    save_interface_counter_sample(
+                        device_id=str(dev_id),
+                        profile_id=interface_profile_id,
+                        config_hash=interface_config_hash,
+                        values=cur_snapshot,
+                        sampled_at=now_iso,
+                        device_uptime_cs=next(
+                            (row.get('device_uptime_cs') for row in intf_data if row.get('device_uptime_cs') is not None),
+                            None,
+                        ),
+                    )
                     _db_many('''
                         INSERT INTO interface_telemetry_raw (
                             ts, device_id, interface_name, status, speed_mbps,
@@ -1714,6 +1802,7 @@ async def process_device_fast(device):
         """, ('offline', 0, 0, dev_id))
         _sync_device_status_tag(dev_id, 'offline')
         prev_intf_octets.pop(dev_id, None)
+        prev_intf_config_hash.pop(str(dev_id), None)
 
     if not ip or ip == '0.0.0.0':
         mark_offline_and_clear_cache()

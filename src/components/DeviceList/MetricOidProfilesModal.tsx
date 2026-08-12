@@ -7,7 +7,30 @@ import Pagination from '../Pagination';
 
 type MetricMode = 'direct_percent' | 'direct_value' | 'used_total_percent' | 'used_free_percent' | 'counter_rate_percent' | 'status_code';
 type CounterBits = '' | '32' | '64';
+type InterfaceCounterMode = 'auto' | '32' | '64';
 type Aggregation = 'first' | 'average' | 'max' | 'min' | 'sum';
+
+interface InterfaceOidConfig {
+  enabled: boolean;
+  if_name_oid: string;
+  if_descr_oid: string;
+  if_alias_oid: string;
+  if_oper_status_oid: string;
+  if_high_speed_oid: string;
+  if_speed_oid: string;
+  if_last_change_oid: string;
+  if_in_octets_oid: string;
+  if_out_octets_oid: string;
+  if_hc_in_octets_oid: string;
+  if_hc_out_octets_oid: string;
+  if_in_errors_oid: string;
+  if_out_errors_oid: string;
+  if_in_discards_oid: string;
+  if_out_discards_oid: string;
+  if_in_ucast_oid: string;
+  if_out_ucast_oid: string;
+  counter_mode: InterfaceCounterMode;
+}
 
 interface MetricDefinition {
   mode: MetricMode;
@@ -50,6 +73,10 @@ interface MetricOidProfile {
   profile_applied_device_count?: number;
   blocked_device_count?: number;
   collector_status?: 'active' | 'blocked_unverified' | 'blocked_failed' | 'no_matching_device' | 'builtin_only' | string;
+  interface_config?: Partial<InterfaceOidConfig>;
+  interface_configured?: boolean;
+  interface_verification_status?: 'verified' | 'failed' | 'unverified' | string;
+  interface_collector_status?: string;
   sample_device_id?: string | null;
   platforms: string[];
 }
@@ -69,6 +96,9 @@ interface MetricProfileMapping {
   profile_applied_device_count: number;
   blocked_device_count: number;
   metric_keys?: string[];
+  interface_configured?: boolean;
+  interface_verification_status?: string;
+  interface_collector_status?: string;
   sample_device_id?: string | null;
 }
 
@@ -76,7 +106,35 @@ interface ProfileForm {
   vendor: string;
   model: string;
   metrics: MetricRow[];
+  interfaceConfig: InterfaceOidConfig;
 }
+
+interface InterfaceTestResult {
+  passed?: boolean;
+  status?: string;
+  message?: string;
+  counter_mode?: string;
+  selected_counter_bits?: number | null;
+  interfaces?: number;
+  counter_supported?: number;
+  checks?: Record<string, { oid?: string; passed?: boolean; rows?: number; message?: string; counter_bits?: number }>;
+}
+
+type SnmpWalkVersion = '1' | '2c';
+
+interface SnmpWalkResult {
+  host: string;
+  oid: string;
+  version: SnmpWalkVersion;
+  port: number;
+  status: 'ok' | 'no_data' | string;
+  message: string;
+  row_count: number;
+  truncated: boolean;
+  rows: Array<{ oid: string; value: string }>;
+}
+
+type SnmpWalkTargetStatus = 'idle' | 'loading' | 'matched' | 'multiple' | 'none' | 'error';
 
 interface MetricCatalogEntry {
   key: string;
@@ -116,6 +174,48 @@ const EMPTY_DEFINITION: MetricDefinition = {
   scale: '1',
   offset: '0',
 };
+
+const DEFAULT_INTERFACE_CONFIG: InterfaceOidConfig = {
+  enabled: false,
+  if_name_oid: '1.3.6.1.2.1.31.1.1.1.1',
+  if_descr_oid: '1.3.6.1.2.1.2.2.1.2',
+  if_alias_oid: '1.3.6.1.2.1.31.1.1.1.18',
+  if_oper_status_oid: '1.3.6.1.2.1.2.2.1.8',
+  if_high_speed_oid: '1.3.6.1.2.1.31.1.1.1.15',
+  if_speed_oid: '1.3.6.1.2.1.2.2.1.5',
+  if_last_change_oid: '1.3.6.1.2.1.2.2.1.9',
+  if_in_octets_oid: '1.3.6.1.2.1.2.2.1.10',
+  if_out_octets_oid: '1.3.6.1.2.1.2.2.1.16',
+  if_hc_in_octets_oid: '1.3.6.1.2.1.31.1.1.1.6',
+  if_hc_out_octets_oid: '1.3.6.1.2.1.31.1.1.1.10',
+  if_in_errors_oid: '1.3.6.1.2.1.2.2.1.14',
+  if_out_errors_oid: '1.3.6.1.2.1.2.2.1.20',
+  if_in_discards_oid: '1.3.6.1.2.1.2.2.1.13',
+  if_out_discards_oid: '1.3.6.1.2.1.2.2.1.19',
+  if_in_ucast_oid: '1.3.6.1.2.1.2.2.1.11',
+  if_out_ucast_oid: '1.3.6.1.2.1.2.2.1.17',
+  counter_mode: 'auto',
+};
+
+const INTERFACE_OID_FIELDS: Array<{ key: Exclude<keyof InterfaceOidConfig, 'enabled' | 'counter_mode'>; labelZh: string; labelEn: string }> = [
+  { key: 'if_name_oid', labelZh: '接口名称', labelEn: 'ifName' },
+  { key: 'if_descr_oid', labelZh: '接口描述', labelEn: 'ifDescr' },
+  { key: 'if_alias_oid', labelZh: '接口别名', labelEn: 'ifAlias' },
+  { key: 'if_oper_status_oid', labelZh: '运行状态', labelEn: 'ifOperStatus' },
+  { key: 'if_high_speed_oid', labelZh: '高速速率', labelEn: 'ifHighSpeed' },
+  { key: 'if_speed_oid', labelZh: '接口速率', labelEn: 'ifSpeed' },
+  { key: 'if_last_change_oid', labelZh: '最后变更', labelEn: 'ifLastChange' },
+  { key: 'if_in_octets_oid', labelZh: '入方向 32 位', labelEn: 'ifInOctets (32)' },
+  { key: 'if_out_octets_oid', labelZh: '出方向 32 位', labelEn: 'ifOutOctets (32)' },
+  { key: 'if_hc_in_octets_oid', labelZh: '入方向 64 位', labelEn: 'ifHCInOctets (64)' },
+  { key: 'if_hc_out_octets_oid', labelZh: '出方向 64 位', labelEn: 'ifHCOutOctets (64)' },
+  { key: 'if_in_errors_oid', labelZh: '入方向错误', labelEn: 'ifInErrors' },
+  { key: 'if_out_errors_oid', labelZh: '出方向错误', labelEn: 'ifOutErrors' },
+  { key: 'if_in_discards_oid', labelZh: '入方向丢弃', labelEn: 'ifInDiscards' },
+  { key: 'if_out_discards_oid', labelZh: '出方向丢弃', labelEn: 'ifOutDiscards' },
+  { key: 'if_in_ucast_oid', labelZh: '入方向单播包', labelEn: 'ifInUcastPkts' },
+  { key: 'if_out_ucast_oid', labelZh: '出方向单播包', labelEn: 'ifOutUcastPkts' },
+];
 
 const AGGREGATIONS: Aggregation[] = ['average', 'first', 'max', 'min', 'sum'];
 const METRIC_MODES: MetricMode[] = ['direct_percent', 'direct_value', 'used_total_percent', 'used_free_percent', 'counter_rate_percent', 'status_code'];
@@ -215,6 +315,17 @@ const profileDefinitions = (profile: MetricOidProfile) => {
   if (!definitions.cpu && (profile.cpu_config || profile.cpu_oid)) definitions.cpu = profile.cpu_config || { mode: 'direct_percent', oid: profile.cpu_oid };
   if (!definitions.memory && (profile.memory_config || profile.memory_oid)) definitions.memory = profile.memory_config || { mode: 'direct_percent', oid: profile.memory_oid };
   return definitions;
+};
+
+const interfaceConfigFromProfile = (profile?: MetricOidProfile): InterfaceOidConfig => {
+  const raw = profile?.interface_config || {};
+  const mode = textValue(raw.counter_mode, 'auto');
+  return {
+    ...DEFAULT_INTERFACE_CONFIG,
+    ...raw,
+    enabled: raw.enabled === true || textValue(raw.enabled).toLowerCase() === 'true',
+    counter_mode: mode === '32' || mode === '64' ? mode : 'auto',
+  } as InterfaceOidConfig;
 };
 
 const rowsFromProfile = (profile: MetricOidProfile): MetricRow[] => {
@@ -430,8 +541,21 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
   const [total, setTotal] = useState(0);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [form, setForm] = useState<ProfileForm>({ vendor: '', model: '', metrics: createDefaultRows() });
+  const [form, setForm] = useState<ProfileForm>({ vendor: '', model: '', metrics: createDefaultRows(), interfaceConfig: { ...DEFAULT_INTERFACE_CONFIG } });
   const [addMetricKey, setAddMetricKey] = useState('');
+  const [lastTestDetails, setLastTestDetails] = useState<{ hardware?: Record<string, any>; interface?: InterfaceTestResult } | null>(null);
+  const [walkTesting, setWalkTesting] = useState(false);
+  const [walkIp, setWalkIp] = useState('');
+  const [walkDeviceId, setWalkDeviceId] = useState('');
+  const [walkTargetStatus, setWalkTargetStatus] = useState<SnmpWalkTargetStatus>('idle');
+  const [walkTargetCount, setWalkTargetCount] = useState(0);
+  const [walkTargetLabel, setWalkTargetLabel] = useState('');
+  const [walkTargetError, setWalkTargetError] = useState('');
+  const [walkVersion, setWalkVersion] = useState<SnmpWalkVersion>('2c');
+  const [walkOid, setWalkOid] = useState('');
+  const [walkMaxRows, setWalkMaxRows] = useState(2000);
+  const [walkResult, setWalkResult] = useState<SnmpWalkResult | null>(null);
+  const [walkActionNotice, setWalkActionNotice] = useState('');
 
   const loadProfiles = async (): Promise<MetricOidProfile[]> => {
     setLoading(true);
@@ -456,6 +580,102 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
     if (open) void loadProfiles();
   }, [open, page, pageSize, searchInput]);
 
+  /*
+  useEffect(() => {
+    const query = walkIp.trim();
+    setWalkDeviceId('');
+    setWalkTargetCount(0);
+    setWalkTargetLabel('');
+    setWalkTargetError('');
+    if (!editorOpen || !query) {
+      setWalkTargetStatus('idle');
+      return;
+    }
+
+    // Target lookup is intentionally confirmed by Enter; do not issue a
+    // fuzzy search on every keystroke.
+    return;
+
+    //
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setWalkTargetStatus('loading');
+      try {
+        const params = new URLSearchParams({
+          mode: 'light',
+          search: query,
+          page: '1',
+          page_size: '10',
+          asset_type: 'network_device',
+        });
+        const response = await apiRequest<{ items?: Array<{ id: string; hostname?: string; ip_address?: string }>; total?: number } | Array<{ id: string; hostname?: string; ip_address?: string }>>(`/api/devices?${params.toString()}`, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        const items = Array.isArray(response) ? response : (Array.isArray(response.items) ? response.items : []);
+        const total = Math.max(Number(Array.isArray(response) ? items.length : response.total) || 0, items.length);
+        setWalkTargetCount(total);
+        if (total === 1 && items[0]) {
+          setWalkDeviceId(String(items[0].id || ''));
+          setWalkTargetLabel([items[0].hostname, items[0].ip_address].filter(Boolean).join(' / '));
+          setWalkTargetStatus('matched');
+        } else if (total > 1) {
+          setWalkTargetStatus('multiple');
+        } else {
+          setWalkTargetStatus('none');
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setWalkTargetStatus('error');
+        setWalkTargetError(error instanceof Error ? error.message : (zh ? '资产匹配失败' : 'Asset matching failed'));
+      }
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+    //
+  }, [editorOpen, walkIp, zh]);
+  */
+
+  const clearWalkTargetConfirmation = (value: string) => {
+    setWalkIp(value);
+    setWalkDeviceId('');
+    setWalkTargetStatus('idle');
+    setWalkTargetCount(0);
+    setWalkTargetLabel('');
+    setWalkTargetError('');
+    setWalkResult(null);
+  };
+
+  const confirmSnmpWalkTarget = async () => {
+    const query = walkIp.trim();
+    if (!query) {
+      showToast(zh ? '请输入设备 IP 后按回车确认' : 'Enter a device IP and press Enter to confirm', 'error');
+      return;
+    }
+    setWalkTargetStatus('loading');
+    setWalkTargetError('');
+    try {
+      const response = await apiRequest<{ success: boolean; data: { ip: string; device_id: string; hostname?: string } }>(`/api/platform-registry/snmp-walk-target?ip=${encodeURIComponent(query)}`);
+      const targetIp = String(response.data?.ip || '').trim();
+      if (!targetIp) throw new Error(zh ? '资产未返回有效 IP' : 'The asset did not return a valid IP');
+      setWalkIp(targetIp);
+      setWalkDeviceId(String(response.data.device_id || ''));
+      setWalkTargetCount(1);
+      setWalkTargetLabel([response.data.hostname, targetIp].filter(Boolean).join(' / '));
+      setWalkTargetStatus('matched');
+      showToast(zh ? `已确认 IP：${targetIp}` : `IP confirmed: ${targetIp}`, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : (zh ? '未找到该 IP' : 'IP not found in asset management');
+      setWalkDeviceId('');
+      setWalkTargetCount(0);
+      setWalkTargetLabel('');
+      setWalkTargetStatus('none');
+      setWalkTargetError(message);
+      showToast(zh ? '未找到该 IP，请先在资产管理中录入' : 'IP not found; add it in asset management first', 'error');
+    }
+  };
+
   const vendorOptions = useMemo(() => {
     const values = new Set<string>(ALL_VENDOR_NAMES as readonly string[]);
     profiles.forEach(profile => {
@@ -466,8 +686,17 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
 
   const resetForm = () => {
     setEditingId(null);
-    setForm({ vendor: '', model: '', metrics: createDefaultRows() });
+    setForm({ vendor: '', model: '', metrics: createDefaultRows(), interfaceConfig: { ...DEFAULT_INTERFACE_CONFIG } });
     setAddMetricKey('');
+    setLastTestDetails(null);
+    setWalkIp('');
+    setWalkDeviceId('');
+    setWalkTargetStatus('idle');
+    setWalkTargetCount(0);
+    setWalkTargetLabel('');
+    setWalkTargetError('');
+    setWalkOid('');
+    setWalkResult(null);
   };
 
   const openCreate = () => {
@@ -494,7 +723,8 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
     const rows = rowsFromProfile(profile);
     const missing = METRIC_CATALOG.find(item => !rows.some(row => row.key === item.key));
     setAddMetricKey(missing?.key || '');
-    setForm({ vendor: profile.vendor, model: profile.model, metrics: rows });
+    setForm({ vendor: profile.vendor, model: profile.model, metrics: rows, interfaceConfig: interfaceConfigFromProfile(profile) });
+    setLastTestDetails(null);
     setEditorOpen(true);
   };
 
@@ -515,8 +745,8 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
       const payload = toPayload(row.definition);
       if (Object.keys(payload).length) metricDefinitions[row.key] = payload;
     }
-    if (!Object.keys(metricDefinitions).length) {
-      showToast(zh ? '至少配置一项硬件指标' : 'Configure at least one hardware metric', 'error');
+    if (!Object.keys(metricDefinitions).length && !form.interfaceConfig.enabled) {
+      showToast(zh ? '请至少配置一项硬件指标或启用接口模板' : 'Configure a hardware metric or enable the interface template', 'error');
       return;
     }
     const invalidCounter = form.metrics.find(row => row.definition.mode === 'counter_rate_percent' && hasDefinition(row.definition) && !row.definition.counter_bits);
@@ -539,6 +769,9 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
     }
     const cpuConfig = metricDefinitions.cpu || {};
     const memoryConfig = metricDefinitions.memory || {};
+    const interfacePayload = form.interfaceConfig.enabled
+      ? { ...form.interfaceConfig }
+      : {};
     setSaving(true);
     try {
       const isEdit = Boolean(editingId);
@@ -553,6 +786,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
           memory_config: memoryConfig,
           cpu_oid: String(cpuConfig.oid || ''),
           memory_oid: String(memoryConfig.oid || ''),
+          interface_config: interfacePayload,
         }),
       });
       const savedProfileId = String(saved.data?.profile_id || saved.data?.id || editingId || '');
@@ -612,14 +846,15 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
     setTestingId(profile.profile_id);
     try {
       const endpoint = '/api/platform-registry/snmp-metric-profiles/' + profile.profile_id + '/test';
-      const response = await apiRequest<{ success: boolean; data: { passed: boolean; message?: string; sample_hostname?: string } }>(endpoint, {
+      const response = await apiRequest<{ success: boolean; data: { passed: boolean; hardware_passed?: boolean | null; interface_passed?: boolean | null; message?: string; sample_hostname?: string; metrics?: Record<string, any>; interface?: InterfaceTestResult } }>(endpoint, {
         method: 'POST',
         body: JSON.stringify({ device_id: profile.sample_device_id }),
       });
       const result = response.data;
+      setLastTestDetails({ hardware: result.metrics, interface: result.interface });
       const message = result.passed
         ? (zh ? '验证通过：' + (result.sample_hostname || '样例设备') : 'Verification passed: ' + (result.sample_hostname || 'sample device'))
-        : (zh ? '验证失败：' + (result.message || '请检查类型、位宽和公式') : 'Verification failed: ' + (result.message || 'Check type, width, and formula'));
+        : (zh ? '验证失败：' + (result.message || '请检查接口 OID、计数器位宽和权限') : 'Verification failed: ' + (result.message || 'Check interface OIDs, counter width, and SNMP view'));
       showToast(message, result.passed ? 'success' : 'error');
       await loadProfiles();
       onChanged?.();
@@ -628,6 +863,121 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
     } finally {
       setTestingId(null);
     }
+  };
+
+  const testSnmpWalk = async () => {
+    const fallbackOid = form.metrics
+      .map(row => String(toPayload(row.definition).oid || '').trim())
+      .find(Boolean)
+      || (form.interfaceConfig.enabled ? form.interfaceConfig.if_name_oid : '');
+    const oid = walkOid.trim() || fallbackOid;
+    if (!walkIp.trim()) {
+      showToast(zh ? '璇峰厛杈撳叆璁惧 IP' : 'Enter a device IP or hostname first', 'error');
+      return;
+    }
+    if (walkTargetStatus === 'multiple') {
+      showToast(zh ? '匹配到多台资产，请输入更完整的 IP 或主机名' : 'Multiple assets matched; enter a more specific IP or hostname', 'error');
+      return;
+    }
+    if (walkTargetStatus === 'none') {
+      showToast(zh ? '资产管理中没有匹配的设备，请先录入并配置 SNMP' : 'No matching managed asset; add the device and configure SNMP first', 'error');
+      return;
+    }
+    if (walkTargetStatus === 'error') {
+      showToast(walkTargetError || (zh ? '资产匹配失败' : 'Asset matching failed'), 'error');
+      return;
+    }
+    if (walkTargetStatus === 'loading') {
+      showToast(zh ? '正在匹配资产，请稍候再测试' : 'Asset matching is still in progress', 'info');
+      return;
+    }
+    if (!walkDeviceId) {
+      showToast(zh ? '请输入资产管理中的设备 IP 或主机名' : 'Enter an IP or hostname from asset management', 'error');
+      return;
+    }
+    if (!oid) {
+      showToast(zh ? '璇疯緭鍏ユ垨閰嶇疆 OID' : 'Enter an OID or configure one in the template', 'error');
+      return;
+    }
+    if (!walkOid.trim()) setWalkOid(oid);
+    setWalkTesting(true);
+    setWalkResult(null);
+    setWalkActionNotice('');
+    try {
+      const response = await apiRequest<{ success: boolean; data: SnmpWalkResult }>('/api/platform-registry/snmp-walk-test', {
+        method: 'POST',
+        body: JSON.stringify({
+          device_id: walkDeviceId,
+          version: walkVersion,
+          oid,
+          timeout: 5,
+          max_rows: walkMaxRows,
+        }),
+      });
+      setWalkResult(response.data);
+      showToast(
+        response.data.status === 'ok'
+          ? (zh ? `WALK 成功，返回 ${response.data.row_count} 行` : `WALK succeeded with ${response.data.row_count} rows`)
+          : (response.data.message || (zh ? 'WALK 没有返回数据' : 'WALK returned no data')),
+        response.data.status === 'ok' ? 'success' : 'error',
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? 'SNMP WALK 测试失败' : 'SNMP WALK test failed'), 'error');
+    } finally {
+      setWalkTesting(false);
+    }
+  };
+
+  const walkText = walkResult?.rows.map(row => `${row.oid} = ${row.value}`).join('\n') || '';
+  const walkJson = walkResult ? JSON.stringify(walkResult, null, 2) : '';
+
+  const copyWalkOutput = async (format: 'text' | 'json') => {
+    const content = format === 'json' ? walkJson : walkText;
+    if (!content) return;
+    try {
+      const fallbackCopy = () => {
+        const helper = document.createElement('textarea');
+        helper.value = content;
+        helper.setAttribute('readonly', 'true');
+        helper.style.position = 'fixed';
+        helper.style.opacity = '0';
+        document.body.appendChild(helper);
+        helper.select();
+        const copied = document.execCommand('copy');
+        helper.remove();
+        if (!copied) throw new Error('clipboard_unavailable');
+      };
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(content);
+        } catch {
+          fallbackCopy();
+        }
+      } else {
+        fallbackCopy();
+      }
+      setWalkActionNotice(zh ? '复制成功' : 'Copied successfully');
+      window.setTimeout(() => setWalkActionNotice(''), 3000);
+      showToast(zh ? 'WALK 结果已复制' : 'WALK output copied', 'success');
+    } catch {
+      showToast(zh ? '复制失败，请手动选择结果文本' : 'Copy failed; select the output and copy it manually', 'error');
+    }
+  };
+
+  const downloadWalkOutput = (format: 'text' | 'json') => {
+    const content = format === 'json' ? walkJson : walkText;
+    if (!content) return;
+    const blob = new Blob([content], { type: format === 'json' ? 'application/json;charset=utf-8' : 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `snmpwalk-${walkResult?.host || 'result'}-${walkResult?.oid || 'oid'}.${format === 'json' ? 'json' : 'txt'}`.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    setWalkActionNotice(format === 'json' ? (zh ? 'JSON 下载已开始' : 'JSON download started') : (zh ? 'TXT 下载已开始' : 'TXT download started'));
+    window.setTimeout(() => setWalkActionNotice(''), 3000);
   };
 
   const validateMapping = async (profile: MetricOidProfile) => {
@@ -682,7 +1032,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
                   const collectorStatus = profile.collector_status || (profile.configured ? 'blocked_unverified' : 'builtin_only');
                   const matchedDeviceCount = Number(profile.matched_device_count ?? profile.device_count ?? 0);
                   const appliedDeviceCount = Number(profile.profile_applied_device_count ?? (collectorStatus === 'active' ? matchedDeviceCount : 0));
-                  return <tr key={profile.vendor + ':' + profile.model} className="border-t border-black/5 dark:border-white/6"><td className="max-w-[220px] px-3 py-2.5"><div className="truncate font-medium text-black/75 dark:text-white/80">{profile.vendor}</div><div className="truncate text-black/45 dark:text-white/45">{profile.model}</div></td><td className="max-w-[260px] px-3 py-2.5 text-black/55 dark:text-white/55"><div className="flex flex-wrap gap-1">{(profile.metric_keys || Object.keys(profile.metric_definitions || {})).map(key => <span key={key} className="rounded bg-black/[.04] px-1.5 py-0.5 text-[9px] dark:bg-white/[.06]">{metricLabel(key, zh)}</span>)}</div></td><td className="px-3 py-2.5 tabular-nums text-black/55 dark:text-white/55">{profile.device_count}</td><td className="px-3 py-2.5"><div className="flex flex-wrap gap-1"><span className={(profile.configured ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400') + ' rounded-full px-2 py-1 text-[10px]'}>{profile.configured ? (zh ? '已配置' : 'Configured') : (zh ? '使用默认' : 'Default')}</span>{profile.configured && <span className={(profile.verification_status === 'verified' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : profile.verification_status === 'failed' ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400') + ' inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px]'}>{profile.verification_status === 'verified' && <CheckCircle2 size={10} />}{profile.verification_status === 'verified' ? (zh ? '已验证' : 'Verified') : profile.verification_status === 'failed' ? (zh ? '验证失败' : 'Failed') : (zh ? '待验证' : 'Unverified')}</span>}<span className={collectorStatusClass(collectorStatus) + ' rounded-full px-2 py-1 text-[10px]'}>{collectorStatusLabel(collectorStatus, zh)}</span></div><div className="mt-1 text-[9px] text-black/40 dark:text-white/40">{zh ? `匹配 ${matchedDeviceCount} 台 · 已应用 ${appliedDeviceCount} 台` : `${matchedDeviceCount} matched · ${appliedDeviceCount} applied`}</div></td><td className="px-3 py-2.5 text-right"><div className="flex items-center justify-end gap-1">{profile.profile_id && <button type="button" onClick={() => void validateMapping(profile)} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-[#008aad] hover:bg-[#00bceb]/10"><GitBranch size={11} />{zh ? '映射' : 'Map'}</button>}{profile.profile_id && profile.sample_device_id && <button type="button" onClick={() => void testProfile(profile)} disabled={testingId === profile.profile_id} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-40 dark:text-emerald-400"><Activity size={11} className={testingId === profile.profile_id ? 'animate-pulse' : ''} />{testingId === profile.profile_id ? (zh ? '测试中' : 'Testing') : (zh ? '验证' : 'Test')}</button>}<button type="button" onClick={() => startEdit(profile)} className="rounded-md px-2 py-1 text-[10px] font-medium text-[#008aad] hover:bg-[#00bceb]/10">{zh ? '编辑' : 'Edit'}</button></div></td></tr>;
+                  return <tr key={profile.vendor + ':' + profile.model} className="border-t border-black/5 dark:border-white/6"><td className="max-w-[220px] px-3 py-2.5"><div className="truncate font-medium text-black/75 dark:text-white/80">{profile.vendor}</div><div className="truncate text-black/45 dark:text-white/45">{profile.model}</div></td><td className="max-w-[260px] px-3 py-2.5 text-black/55 dark:text-white/55"><div className="flex flex-wrap gap-1">{(profile.metric_keys || Object.keys(profile.metric_definitions || {})).map(key => <span key={key} className="rounded bg-black/[.04] px-1.5 py-0.5 text-[9px] dark:bg-white/[.06]">{metricLabel(key, zh)}</span>)}{profile.interface_configured && <span className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[9px] text-[#008aad]">{zh ? '接口' : 'Interfaces'}</span>}</div></td><td className="px-3 py-2.5 tabular-nums text-black/55 dark:text-white/55">{profile.device_count}</td><td className="px-3 py-2.5"><div className="flex flex-wrap gap-1"><span className={(profile.configured || profile.interface_configured ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400') + ' rounded-full px-2 py-1 text-[10px]'}>{profile.configured || profile.interface_configured ? (zh ? '已配置' : 'Configured') : (zh ? '使用默认' : 'Default')}</span>{profile.configured && <span className={(profile.verification_status === 'verified' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : profile.verification_status === 'failed' ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400') + ' inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px]'}>{profile.verification_status === 'verified' && <CheckCircle2 size={10} />}{profile.verification_status === 'verified' ? (zh ? '硬件已验证' : 'Hardware verified') : profile.verification_status === 'failed' ? (zh ? '硬件失败' : 'Hardware failed') : (zh ? '硬件待验证' : 'Hardware unverified')}</span>}{profile.interface_configured && <span className={(profile.interface_verification_status === 'verified' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : profile.interface_verification_status === 'failed' ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400') + ' rounded-full px-2 py-1 text-[10px]'}>{profile.interface_verification_status === 'verified' ? (zh ? '接口已验证' : 'Interface verified') : profile.interface_verification_status === 'failed' ? (zh ? '接口失败' : 'Interface failed') : (zh ? '接口待验证' : 'Interface unverified')}</span>}<span className={collectorStatusClass(collectorStatus) + ' rounded-full px-2 py-1 text-[10px]'}>{collectorStatusLabel(collectorStatus, zh)}</span></div><div className="mt-1 text-[9px] text-black/40 dark:text-white/40">{zh ? `匹配 ${matchedDeviceCount} 台 · 已应用 ${appliedDeviceCount} 台` : `${matchedDeviceCount} matched · ${appliedDeviceCount} applied`}</div></td><td className="px-3 py-2.5 text-right"><div className="flex items-center justify-end gap-1">{profile.profile_id && <button type="button" onClick={() => void validateMapping(profile)} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-[#008aad] hover:bg-[#00bceb]/10"><GitBranch size={11} />{zh ? '映射' : 'Map'}</button>}{profile.profile_id && profile.sample_device_id && <button type="button" onClick={() => void testProfile(profile)} disabled={testingId === profile.profile_id} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-40 dark:text-emerald-400"><Activity size={11} className={testingId === profile.profile_id ? 'animate-pulse' : ''} />{testingId === profile.profile_id ? (zh ? '测试中' : 'Testing') : (zh ? '验证' : 'Test')}</button>}<button type="button" onClick={() => startEdit(profile)} className="rounded-md px-2 py-1 text-[10px] font-medium text-[#008aad] hover:bg-[#00bceb]/10">{zh ? '编辑' : 'Edit'}</button></div></td></tr>;
                 })}</tbody></table>
               )}
             </div>
@@ -695,6 +1045,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
               language={language}
               alwaysVisible
             />
+            {lastTestDetails?.interface && <div className="mx-3 mb-3 rounded-lg border border-black/8 bg-black/[.02] p-3 text-[10px] dark:border-white/10 dark:bg-white/[.03]"><div className="font-medium text-black/65 dark:text-white/70">{zh ? '最近一次接口校验' : 'Latest interface verification'}</div><div className="mt-1 flex flex-wrap items-center gap-2"><span className={lastTestDetails.interface.passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{lastTestDetails.interface.passed ? '✓' : '✕'}</span><span className="text-black/55 dark:text-white/55">{lastTestDetails.interface.message}</span><span className="text-black/40 dark:text-white/40">{zh ? `接口 ${lastTestDetails.interface.interfaces || 0}，支持计数器 ${lastTestDetails.interface.counter_supported || 0}，位宽 ${lastTestDetails.interface.selected_counter_bits || '-'}` : `${lastTestDetails.interface.interfaces || 0} interfaces · ${lastTestDetails.interface.counter_supported || 0} counters · width ${lastTestDetails.interface.selected_counter_bits || '-'}`}</span></div>{lastTestDetails.interface.checks && <div className="mt-2 flex flex-wrap gap-1">{Object.entries(lastTestDetails.interface.checks).map(([key, check]) => <span key={key} className={(check.passed ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-red-500/10 text-red-700 dark:text-red-400') + ' rounded px-1.5 py-0.5 text-[9px]'}>{check.passed ? '✓' : '✕'} {key} {check.rows !== undefined ? `(${check.rows})` : ''}</span>)}</div>}</div>}
           </section>
 
           {editorOpen && (
@@ -706,6 +1057,39 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
           <aside className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-[#00bceb]/20 bg-[#00bceb]/[.04] dark:bg-[#00bceb]/[.06]">
             <div className="border-b border-black/6 p-4 dark:border-white/8"><div className="text-xs font-semibold text-black/75 dark:text-white/80">{editingId ? (zh ? '编辑型号模板' : 'Edit model profile') : (zh ? '新增型号模板' : 'New model profile')}</div><div className="mt-1 text-[10px] text-black/40 dark:text-white/40">{zh ? '先填写厂商、精确型号和需要采集的 OID；默认仅显示 CPU、内存，其他指标按需添加。' : 'Start with vendor, exact model, and the OIDs you need; CPU and memory are shown by default, while other metrics are optional.'}</div></div>
             <div className="min-h-0 flex-1 overflow-auto p-4">
+              <section className="mb-3 rounded-lg border border-emerald-500/25 bg-emerald-500/[.035] p-3 dark:bg-emerald-500/[.06]">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-semibold text-black/70 dark:text-white/75">{zh ? 'SNMP WALK 测试（只读）' : 'SNMP WALK test (read-only)'}</div>
+                    <div className="mt-1 text-[9px] leading-4 text-black/45 dark:text-white/45">{zh ? '默认 v2c，可切换 v1；结果支持复制和下载，不会保存模板。' : 'v2c is the default; switch to v1 when needed. Results can be copied or downloaded and are not saved to the profile.'}</div>
+                  </div>
+                  <div className="flex items-center gap-2"><span className="text-[9px] text-black/40 dark:text-white/40">{zh ? '从资产管理读取凭据后执行 snmpwalk' : 'Runs snmpwalk with credentials loaded from asset management'}</span><button type="button" onClick={() => void testSnmpWalk()} disabled={walkTesting || saving} className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1.5 text-[10px] font-medium text-white hover:bg-emerald-700 disabled:opacity-45"><Activity size={12} />{walkTesting ? (zh ? '测试中...' : 'Testing...') : (zh ? '测试 WALK' : 'Test WALK')}</button></div>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 [&>div]:hidden">
+                  <label className="block"><span className={tinyLabelClass}>{zh ? '执行对象 IP（按回车确认）' : 'Target IP (press Enter to confirm)'}</span><input value={walkIp} onChange={event => clearWalkTargetConfirmation(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void confirmSnmpWalkTarget(); } }} className={inputClass} placeholder="10.254.0.1" /></label>
+                  <label className="block"><span className={tinyLabelClass}>{zh ? 'SNMP 版本' : 'SNMP version'}</span><select value={walkVersion} onChange={event => setWalkVersion(event.target.value as SnmpWalkVersion)} className={selectClass}><option value="2c">SNMPv2c</option><option value="1">SNMPv1</option></select></label>
+                  <div className="rounded-md border border-black/6 bg-black/[.02] px-2 py-2 text-[9px] leading-4 text-black/50 dark:border-white/8 dark:bg-white/[.03] dark:text-white/50">{zh ? 'Community、端口由资产管理凭据自动读取，不在此处展示。' : 'Community and port are read from asset-management credentials and are not shown here.'}</div>
+                  <label className="block"><span className={tinyLabelClass}>OID</span><input value={walkOid} onChange={event => setWalkOid(event.target.value)} className={inputClass} placeholder="1.3.6.1.2.1..." /></label>
+                 </div>
+                 <div className={(walkTargetStatus === 'matched' ? 'text-emerald-700 dark:text-emerald-400' : walkTargetStatus === 'multiple' || walkTargetStatus === 'none' || walkTargetStatus === 'error' ? 'text-amber-700 dark:text-amber-400' : 'text-black/45 dark:text-white/45') + ' mt-2 text-[9px] leading-4'} role="status" aria-live="polite">
+                   {walkTargetStatus === 'idle' && (zh ? '输入资产管理中的 IP 或主机名，系统会自动读取 SNMP 配置。' : 'Enter an IP or hostname from asset management; SNMP settings will be read automatically.')}
+                   {walkTargetStatus === 'loading' && (zh ? '正在匹配资产…' : 'Matching managed assets…')}
+                   {walkTargetStatus === 'matched' && (zh ? `已匹配：${walkTargetLabel || '设备'}（SNMP 配置自动读取）` : `Matched: ${walkTargetLabel || 'device'} (SNMP settings loaded automatically)`)}
+                   {walkTargetStatus === 'multiple' && (zh ? `匹配到 ${walkTargetCount} 台资产，请输入更完整的 IP 或主机名；不展示下拉列表。` : `${walkTargetCount} assets matched; enter a more specific IP or hostname. No dropdown is shown.`)}
+                   {walkTargetStatus === 'none' && (zh ? '未匹配到资产，请确认设备已在资产管理中录入。' : 'No managed asset matched; confirm the device is in asset management.')}
+                   {walkTargetStatus === 'error' && (walkTargetError || (zh ? '资产匹配失败' : 'Asset matching failed'))}
+                 </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2"><label className="flex items-center gap-2 text-[9px] text-black/55 dark:text-white/55"><span>{zh ? '最大返回行数' : 'Max rows'}</span><select value={walkMaxRows} onChange={event => setWalkMaxRows(Number(event.target.value))} className="rounded border border-black/10 bg-transparent px-2 py-1 text-[10px] outline-none dark:border-white/10"><option value={200}>200</option><option value={500}>500</option><option value={1000}>1,000</option><option value={2000}>2,000</option><option value={5000}>5,000</option><option value={10000}>10,000</option></select></label><span className="text-[9px] text-black/40 dark:text-white/40">{zh ? '超过所选数量才会截断' : 'Only results above this limit are truncated'}</span></div>
+                {walkActionNotice && <div className="mt-2 rounded border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400" role="status" aria-live="polite">{walkActionNotice}</div>}
+                {walkResult && <div className="mt-3 rounded-md border border-black/8 bg-white/60 p-2 dark:border-white/10 dark:bg-white/[.04]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                    <span className={walkResult.status === 'ok' ? 'font-medium text-emerald-700 dark:text-emerald-400' : 'font-medium text-red-700 dark:text-red-400'}>{walkResult.status === 'ok' ? '✓' : '✕'} {walkResult.message} ({walkResult.row_count})</span>
+                    <div className="flex flex-wrap gap-1"><button type="button" onClick={() => void copyWalkOutput('text')} disabled={!walkText} className="rounded border border-black/10 px-2 py-1 text-[9px] text-black/60 hover:bg-black/5 disabled:opacity-40 dark:border-white/10 dark:text-white/60">{zh ? '复制文本' : 'Copy text'}</button><button type="button" onClick={() => void copyWalkOutput('json')} disabled={!walkJson} className="rounded border border-black/10 px-2 py-1 text-[9px] text-black/60 hover:bg-black/5 disabled:opacity-40 dark:border-white/10 dark:text-white/60">{zh ? '复制 JSON' : 'Copy JSON'}</button><button type="button" onClick={() => downloadWalkOutput('text')} disabled={!walkText} className="rounded border border-black/10 px-2 py-1 text-[9px] text-black/60 hover:bg-black/5 disabled:opacity-40 dark:border-white/10 dark:text-white/60">{zh ? '下载 TXT' : 'Download TXT'}</button><button type="button" onClick={() => downloadWalkOutput('json')} disabled={!walkJson} className="rounded border border-black/10 px-2 py-1 text-[9px] text-black/60 hover:bg-black/5 disabled:opacity-40 dark:border-white/10 dark:text-white/60">{zh ? '下载 JSON' : 'Download JSON'}</button></div>
+                  </div>
+                  <textarea readOnly value={walkText || walkResult.message} onFocus={event => event.currentTarget.select()} className="mt-2 h-32 w-full resize-y rounded border border-black/8 bg-black/[.025] p-2 font-mono text-[10px] leading-4 outline-none dark:border-white/10 dark:bg-black/20" aria-label={zh ? 'SNMP WALK 输出' : 'SNMP WALK output'} />
+                  {walkResult.truncated && <div className="mt-1 text-[9px] text-amber-700 dark:text-amber-400">{zh ? `结果已达到最大行数 ${walkMaxRows}，已截断；提高“最大返回行数”后重新测试。` : `Output reached the ${walkMaxRows}-row limit and was truncated; increase Max rows and test again.`}</div>}
+                </div>}
+              </section>
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <label className="block text-[11px] text-black/55 dark:text-white/55">{zh ? '厂商（同步资产管理）' : 'Vendor (shared with assets)'}<select value={form.vendor} onChange={event => setForm(prev => ({ ...prev, vendor: event.target.value }))} className="mt-1 w-full rounded-lg border border-black/8 bg-white/40 px-2.5 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.03]"><option value="">{zh ? '选择设备厂商...' : 'Select device vendor...'}</option>{NETWORK_VENDOR_GROUPS.map(group => <optgroup key={group.key} label={zh ? group.labelZh : group.labelEn}>{group.vendors.map(vendor => <option key={vendor} value={vendor}>{vendor}</option>)}</optgroup>)}{customVendorOptions.length > 0 && <optgroup label={zh ? '历史/自定义厂商' : 'Legacy / custom vendors'}>{customVendorOptions.map(vendor => <option key={vendor} value={vendor}>{vendor}</option>)}</optgroup>}</select></label>
                 <label className="block text-[11px] text-black/55 dark:text-white/55">{zh ? '精确型号' : 'Exact model'}<input value={form.model} onChange={event => setForm(prev => ({ ...prev, model: event.target.value }))} className="mt-1 w-full rounded-lg border border-black/8 bg-white/40 px-2.5 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.03]" placeholder="C9300-48P" /></label>
@@ -714,6 +1098,23 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
               <div className="overflow-x-auto rounded-lg border border-black/7 bg-white/35 dark:border-white/8 dark:bg-white/[.03]">
                 <table className="min-w-[1030px] w-full text-left"><thead className="sticky top-0 z-10 bg-[var(--card-bg)] text-[9px] text-black/45 dark:text-white/45"><tr><th className="px-3 py-2 font-medium">{zh ? '指标' : 'Metric'}</th><th className="px-2 py-2 font-medium">{zh ? '采集方式' : 'Mode'}</th><th className="px-2 py-2 font-medium">{zh ? 'OID / 公式' : 'OID / formula'}</th><th className="px-2 py-2 font-medium">{zh ? '结果类型' : 'Output'}</th><th className="px-2 py-2 font-medium">{zh ? '计算与计数器' : 'Calculation / counter'}</th><th className="px-2 py-2" /></tr></thead><tbody>{form.metrics.map(row => <MetricTableRow key={row.key} row={row} zh={zh} onChange={definition => setForm(prev => ({ ...prev, metrics: prev.metrics.map(item => item.key === row.key ? { ...item, definition } : item) }))} onRemove={() => setForm(prev => ({ ...prev, metrics: prev.metrics.filter(item => item.key !== row.key) }))} />)}</tbody></table>
               </div>
+              <section className="mt-4 rounded-lg border border-[#00bceb]/25 bg-[#00bceb]/[.035] p-3 dark:bg-[#00bceb]/[.06]">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-semibold text-black/70 dark:text-white/75">{zh ? '接口流量模板（可选覆盖默认 IF-MIB）' : 'Interface template (optional IF-MIB override)'}</div>
+                    <div className="mt-1 text-[9px] leading-4 text-black/45 dark:text-white/45">{zh ? '启用后，接口表、状态、速率、错误和流量计数器都从这里读取；不启用时继续使用内置 IF-MIB。' : 'When enabled, the interface table, status, speed, errors, and traffic counters use these OIDs; disabled keeps the built-in IF-MIB.'}</div>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-[10px] font-medium text-[#008aad]"><input type="checkbox" checked={form.interfaceConfig.enabled} onChange={event => setForm(prev => ({ ...prev, interfaceConfig: { ...prev.interfaceConfig, enabled: event.target.checked } }))} />{zh ? '启用接口模板' : 'Enable interface template'}</label>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {INTERFACE_OID_FIELDS.map(field => <label key={field.key} className="block"><span className={tinyLabelClass}>{zh ? field.labelZh : field.labelEn}</span><input value={form.interfaceConfig[field.key]} onChange={event => setForm(prev => ({ ...prev, interfaceConfig: { ...prev.interfaceConfig, [field.key]: event.target.value } }))} disabled={!form.interfaceConfig.enabled} className={inputClass + ' disabled:cursor-not-allowed disabled:opacity-45'} placeholder="1.3.6.1.2.1..." /></label>)}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <label className="block"><span className={tinyLabelClass}>{zh ? '流量计数器位宽' : 'Traffic counter width'}</span><select value={form.interfaceConfig.counter_mode} onChange={event => setForm(prev => ({ ...prev, interfaceConfig: { ...prev.interfaceConfig, counter_mode: event.target.value as InterfaceCounterMode } }))} disabled={!form.interfaceConfig.enabled} className={selectClass + ' disabled:cursor-not-allowed disabled:opacity-45'}><option value="auto">{zh ? '自动：优先 64 位，缺失时成对回退 32 位' : 'Auto: prefer paired 64-bit, fall back to paired 32-bit'}</option><option value="32">Counter32（仅 32 位）</option><option value="64">Counter64（仅 64 位）</option></select></label>
+                  <div className="rounded-md bg-white/50 px-2 py-2 text-[9px] leading-4 text-black/50 dark:bg-white/[.04] dark:text-white/50">{zh ? '入、出方向必须使用同一位宽；采集器不会把一侧 64 位与另一侧 32 位混算。' : 'Ingress and egress must use the same width; the collector never mixes 64-bit and 32-bit directions.'}</div>
+                </div>
+              </section>
+              {lastTestDetails && <div className="mt-3 rounded-lg border border-black/8 bg-black/[.02] p-3 text-[10px] dark:border-white/10 dark:bg-white/[.03]"><div className="font-medium text-black/65 dark:text-white/70">{zh ? '最近一次校验明细' : 'Latest verification details'}</div>{lastTestDetails.interface && <div className="mt-2 flex flex-wrap items-center gap-2"><span className={lastTestDetails.interface.passed ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{lastTestDetails.interface.passed ? '✓' : '✕'} {zh ? '接口' : 'Interfaces'}</span><span className="text-black/50 dark:text-white/50">{lastTestDetails.interface.message}</span><span className="text-black/40 dark:text-white/40">{zh ? `接口 ${lastTestDetails.interface.interfaces || 0}，支持计数器 ${lastTestDetails.interface.counter_supported || 0}，位宽 ${lastTestDetails.interface.selected_counter_bits || '-'}` : `${lastTestDetails.interface.interfaces || 0} interfaces · ${lastTestDetails.interface.counter_supported || 0} counters · width ${lastTestDetails.interface.selected_counter_bits || '-'}`}</span></div>}{lastTestDetails.hardware && <div className="mt-1 text-black/45 dark:text-white/45">{zh ? '硬件指标：' : 'Hardware: '}{Object.entries(lastTestDetails.hardware).map(([key, detail]) => `${key} ${detail?.passed ? '✓' : '✕'}`).join(' · ')}</div>}</div>}
               <div className="mt-3 rounded-lg border border-dashed border-[#00bceb]/25 px-3 py-2 text-[10px] leading-4 text-black/45 dark:text-white/45">{zh ? '输出约定：CPU、内存、存储为 0–100 百分比；温度/电压/功耗为带单位数值；风扇和电源状态为 true=正常、false=异常、null=未知。计数器必须明确选择 Counter32 或 Counter64，首个采样只建立基线。' : 'Output contract: CPU, memory, and storage are 0–100 percentages; temperature, voltage, and power are unit-bearing values; fan and PSU are true=normal, false=abnormal, null=unknown. Counters require an explicit 32/64-bit width and the first sample only establishes a baseline.'}</div>
             </div>
             <div className="flex items-center justify-between gap-2 border-t border-black/6 p-4 dark:border-white/8">{editingId ? <button type="button" onClick={() => void deleteProfile()} disabled={saving} className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[10px] text-red-600 hover:bg-red-500/10 disabled:opacity-40 dark:text-red-400"><Trash2 size={12} />{zh ? '删除并回退默认' : 'Delete / use default'}</button> : <span />}<button type="button" onClick={() => void saveProfile()} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-[#00a9ce] px-3 py-2 text-[11px] font-medium text-white hover:bg-[#008fb1] disabled:opacity-50"><Save size={13} />{saving ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存模板' : 'Save profile')}</button></div>

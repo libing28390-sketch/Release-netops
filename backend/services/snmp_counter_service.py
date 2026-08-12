@@ -207,10 +207,84 @@ def save_counter_sample(
         conn.close()
 
 
+def load_interface_counter_sample(device_id: str, profile_id: str) -> dict[str, Any] | None:
+    """Load the last IF-MIB snapshot for one device/template pair."""
+    if not device_id or not profile_id:
+        return None
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM snmp_interface_counter_samples "
+            "WHERE device_id = ? AND profile_id = ?",
+            (device_id, profile_id),
+        ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        try:
+            item['values'] = json.loads(item.get('values_json') or '{}')
+        except (TypeError, ValueError):
+            item['values'] = {}
+        return item
+    except Exception:
+        # Older databases can start before the additive migration is applied;
+        # the process-local baseline remains a safe fallback in that case.
+        return None
+    finally:
+        conn.close()
+
+
+def save_interface_counter_sample(
+    *,
+    device_id: str,
+    profile_id: str,
+    config_hash: str,
+    values: dict[str, Any],
+    sampled_at: str,
+    device_uptime_cs: int | None = None,
+) -> None:
+    """Persist a complete interface snapshot without storing credentials."""
+    if not device_id or not profile_id or not values:
+        return
+    now = _utc_now()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO snmp_interface_counter_samples
+                (device_id, profile_id, config_hash, values_json, sampled_at,
+                 device_uptime_cs, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(device_id, profile_id) DO UPDATE SET
+                config_hash = excluded.config_hash,
+                values_json = excluded.values_json,
+                sampled_at = excluded.sampled_at,
+                device_uptime_cs = excluded.device_uptime_cs,
+                updated_at = excluded.updated_at
+            """,
+            (
+                device_id,
+                profile_id,
+                config_hash,
+                json.dumps(values, separators=(',', ':'), ensure_ascii=False),
+                sampled_at,
+                device_uptime_cs,
+                now,
+            ),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+
+
 __all__ = [
     "VALID_COUNTER_BITS",
     "calculate_counter_delta",
+    "load_interface_counter_sample",
     "load_counter_sample",
+    "save_interface_counter_sample",
     "save_counter_sample",
     "validate_counter_bits",
 ]

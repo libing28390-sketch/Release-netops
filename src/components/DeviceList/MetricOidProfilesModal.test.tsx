@@ -78,4 +78,71 @@ describe('MetricOidProfilesModal editor', () => {
     expect(screen.getByText('Scale')).toBeTruthy();
     expect(screen.getByText('Offset')).toBeTruthy();
   });
+
+  it('confirms the target IP only after Enter and does not render a community field', async () => {
+    const user = userEvent.setup();
+    mockedApiRequest.mockImplementation(async (url) => {
+      if (String(url).startsWith('/api/platform-registry/snmp-walk-target')) {
+        return { success: true, data: { ip: '10.254.0.1', device_id: 'device-1', hostname: 'edge-01' } } as never;
+      }
+      return { success: true, data: [], total: 0, page: 1, page_size: 20, total_pages: 0 } as never;
+    });
+    render(
+      <MetricOidProfilesModal
+        open
+        language="en"
+        onClose={vi.fn()}
+        showToast={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalled());
+    await user.click(screen.getByRole('button', { name: 'New' }));
+    const targetInput = screen.getByPlaceholderText('10.254.0.1');
+    await user.type(targetInput, '10.254.0.1');
+    expect(mockedApiRequest).not.toHaveBeenCalledWith(expect.stringContaining('/api/platform-registry/snmp-walk-target'), expect.anything());
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(mockedApiRequest.mock.calls.some(([url]) => url === '/api/platform-registry/snmp-walk-target?ip=10.254.0.1')).toBe(true));
+    expect(screen.queryByRole('textbox', { name: /community/i })).toBeNull();
+    expect(screen.getByText(/Matched: edge-01/)).toBeTruthy();
+  });
+
+  it('saves only the enabled interface template with the selected counter width', async () => {
+    const user = userEvent.setup();
+    mockedApiRequest.mockImplementation(async (url, options) => {
+      if (String(url).includes('/snmp-metric-profiles') && options?.method === 'POST') {
+        return { success: true, data: { id: 'profile-1' } } as never;
+      }
+      if (String(url).includes('/mapping-validation')) {
+        return { success: true, data: { matched_device_count: 0, profile_applied_device_count: 0, blocked_device_count: 0, collector_status: 'no_matching_device' } } as never;
+      }
+      return { success: true, data: [], total: 0, page: 1, page_size: 20, total_pages: 0 } as never;
+    });
+    render(
+      <MetricOidProfilesModal
+        open
+        language="en"
+        onClose={vi.fn()}
+        onChanged={vi.fn()}
+        showToast={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalled());
+    await user.click(screen.getByRole('button', { name: 'New' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Vendor (shared with assets)' }), 'Cisco');
+    await user.type(screen.getByPlaceholderText('C9300-48P'), 'C9300-48P');
+    await user.click(screen.getByRole('checkbox', { name: 'Enable interface template' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Traffic counter width' }), '64');
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledWith(
+      '/api/platform-registry/snmp-metric-profiles',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"counter_mode":"64"'),
+      }),
+    ));
+  });
 });

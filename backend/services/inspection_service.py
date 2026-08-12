@@ -660,7 +660,12 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
             snmp_metrics = {}
         try:
             snmp_interfaces = loop.run_until_complete(
-                collect_interface_data(ip, community, port)
+                collect_interface_data(
+                    ip,
+                    community,
+                    port,
+                    resolved_metrics.get('interface') or None,
+                )
             )
         except Exception as e:
             logger.warning(f"SNMP interface collection failed for {ip}: {e}")
