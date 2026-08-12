@@ -217,7 +217,9 @@ async def exchange_token(token: str) -> Dict[str, Any]:
     conn = get_db_connection()
     try:
         res = conn.execute(
-            "SELECT * FROM pam_sessions WHERE session_token = ? LIMIT 1", (token,)
+            "SELECT * FROM pam_sessions WHERE session_token = ? "
+            "AND COALESCE(session_kind, 'ssh_terminal') != 'device_web' LIMIT 1",
+            (token,),
         ).fetchone()
 
         if not res:

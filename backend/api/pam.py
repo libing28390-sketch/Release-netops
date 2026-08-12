@@ -23,6 +23,7 @@ import threading
 import re
 import csv
 import io
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -531,9 +532,11 @@ def list_sessions(
         rows = conn.execute(
             f'''
             SELECT id, asset_id, device_id, requester_username, access_level,
-                   login_username, connect_method, target_ip, target_port, status,
+                   session_kind, web_profile_id, login_username, connect_method,
+                   target_ip, target_port, target_scheme, target_path, status,
                    connected_at, closed_at, close_reason, duration_seconds,
-                   command_count, recording_path, risk_level, risk_summary,
+                   command_count, recording_path, recording_status, agent_id,
+                   last_heartbeat_at, risk_level, risk_summary,
                    target_hostname, archived,
                    created_at, updated_at
             FROM pam_sessions {where}
@@ -612,7 +615,7 @@ def export_sessions_csv(
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        'session_id', 'status', 'device', 'target_ip', 'requester',
+        'session_id', 'session_kind', 'status', 'device', 'target_ip', 'requester',
         'login_account', 'access_level', 'connect_method', 'risk_level',
         'risk_summary', 'connected_at', 'closed_at', 'duration_seconds',
         'command_count', 'close_reason', 'recording_available',
@@ -620,6 +623,7 @@ def export_sessions_csv(
     for item in items:
         writer.writerow([
             item.get('id', ''),
+            item.get('session_kind', 'ssh_terminal'),
             item.get('status', ''),
             item.get('asset_hostname', ''),
             item.get('target_ip', ''),
@@ -713,12 +717,25 @@ def get_session_recording(session_id: str, user=require_permission('pam', 'view'
                 if user_tenant != 'tenant-default' and row_tenant not in {user_tenant, 'tenant-default'}:
                     raise HTTPException(status_code=404, detail='Recording not found')
         
-        import os
         path = row['recording_path']
         if not os.path.exists(path):
             raise HTTPException(status_code=404, detail='File not found on disk')
-            
-        return FileResponse(path, media_type='application/octet-stream', filename=f"recording_{session_id}.cast")
+
+        suffix = Path(str(path)).suffix.lower()
+        media_types = {
+            '.cast': 'application/octet-stream',
+            '.gif': 'image/gif',
+            '.apng': 'image/apng',
+            '.mp4': 'video/mp4',
+            '.zip': 'application/zip',
+        }
+        extension = suffix if suffix in media_types else '.bin'
+        safe_session_id = ''.join(char for char in str(session_id) if char.isalnum() or char in {'-', '_'})[:100] or 'session'
+        return FileResponse(
+            path,
+            media_type=media_types.get(suffix, 'application/octet-stream'),
+            filename=f"recording_{safe_session_id}{extension}",
+        )
     finally:
         conn.close()
 

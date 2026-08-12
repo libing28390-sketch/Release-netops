@@ -421,6 +421,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       credential_id: (a as any).credential_id || '',
       admin_credential_id: (a as any).admin_credential_id || '',
       tag_ids: (a.tags || []).filter(tag => tag.category !== 'system_auto').map(tag => tag.id),
+      web_profiles: (a.web_profiles || []).map(profile => ({ ...profile, port: String(profile.port) })),
     });
     setShowModal(true);
   };
@@ -491,6 +492,14 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         planned_start_u,
         power_watts: parseInt(String(form.power_watts), 10) || 0,
         enable_password: (form.enable_password || '').trim(),
+        web_profiles: (form.web_profiles || []).map((profile: any) => ({
+          ...(profile.id ? { id: profile.id } : {}),
+          profile_name: String(profile.profile_name || '').trim() || (form.asset_type === 'server' ? 'BMC' : 'Web管理'),
+          scheme: profile.scheme === 'http' ? 'http' : 'https',
+          port: parseInt(String(profile.port), 10) || (profile.scheme === 'http' ? 80 : 443),
+          path: String(profile.path || '/').trim() || '/',
+          enabled: profile.enabled !== false,
+        })),
       };
       const r = await fetch(url, { method: editingAsset ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (r.ok) {
@@ -570,6 +579,13 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
       credential_id: (a as any).credential_id || '',
       admin_credential_id: (a as any).admin_credential_id || '',
       tag_ids: (a.tags || []).filter(tag => tag.category !== 'system_auto').map(tag => tag.id),
+      web_profiles: (a.web_profiles || []).map(profile => ({
+        profile_name: profile.profile_name,
+        scheme: profile.scheme,
+        port: String(profile.port),
+        path: profile.path,
+        enabled: profile.enabled,
+      })),
     });
     setModalError(null);
     setShowModal(true);

@@ -178,7 +178,11 @@ jobs:
       - name: Build NexoraTerminalAgent.exe
         shell: bash
         run: |
-          pyinstaller --onefile --noconsole --name NexoraTerminalAgent scripts/terminal_agent.py
+          # The Agent only uses the Python standard library.  Keep the
+          # browser launcher/recorder small; Qt/Pillow belong to NetOps.exe,
+          # not to the workstation Agent.
+          pyinstaller --onefile --noconsole --name NexoraTerminalAgent \
+            scripts/terminal_agent.py
           cp dist/NexoraTerminalAgent.exe ./NexoraTerminalAgent.exe
           rm -rf build/ dist/
 

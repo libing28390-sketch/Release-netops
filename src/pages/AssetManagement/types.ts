@@ -1,5 +1,17 @@
 import type { SessionUser } from '../../types';
 
+export interface WebAccessProfile {
+  id?: string;
+  asset_id?: string;
+  profile_name: string;
+  scheme: 'http' | 'https';
+  port: number | string;
+  path: string;
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Asset {
   id: string;
   asset_type: string;
@@ -58,6 +70,7 @@ export interface Asset {
   function?: string;
   zone?: string;
   power_watts?: number | string;
+  web_profiles?: WebAccessProfile[];
 }
 
 export interface AssetSummary {

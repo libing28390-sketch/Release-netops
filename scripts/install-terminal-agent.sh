@@ -12,6 +12,12 @@ if [[ -z "$PYTHON_BIN" || ! -x "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
+if [[ "${NEXORA_INSTALL_WEB_RUNTIME:-0}" == "1" ]]; then
+  # Kept for backwards compatibility with older deployment commands.  The
+  # current Web PAM flow uses the installed system browser and Python stdlib.
+  echo "Web PAM uses the installed system browser; no extra runtime is required."
+fi
+
 mkdir -p "$SERVICE_DIR"
 cat > "$SERVICE_FILE" <<EOF
 [Unit]

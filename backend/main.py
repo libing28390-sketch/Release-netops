@@ -59,6 +59,7 @@ from api.reports import router as reports_router
 from api.ipam import router as ipam_router
 from api.assets import router as assets_router
 from api.pam import router as pam_router, ws_router as pam_ws_router
+from api.pam_web import router as pam_web_router
 from api.change_orders import router as change_orders_router
 from api.setup import router as setup_router
 from api.ip_locator import router as ip_locator_router
@@ -576,6 +577,7 @@ app.include_router(knowledge_ingestion_router, prefix="/api")
 app.include_router(device_registry_router, prefix="/api")
 app.include_router(change_orders_router,  prefix="/api")
 app.include_router(pam_router,            prefix="/api")
+app.include_router(pam_web_router,        prefix="/api")
 app.include_router(audit_router,          prefix="/api")
 app.include_router(ai_router,             prefix="/api")
 # Versioned contract used by API clients; its prefix already contains /api/v1.

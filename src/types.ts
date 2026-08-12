@@ -77,6 +77,12 @@ export interface Device {
   snmp_cpu_oid?: string;
   snmp_memory_oid?: string;
   management_port?: number;
+  /** True when the linked asset has at least one enabled HTTP(S) entry. */
+  web_access_enabled?: boolean;
+  /** True when the linked asset has an enabled HTTP Web entry. */
+  web_http_enabled?: boolean;
+  /** True when the linked asset has an enabled HTTPS Web entry. */
+  web_https_enabled?: boolean;
   sys_name?: string;
   sys_location?: string;
   sys_contact?: string;

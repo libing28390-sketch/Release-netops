@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Eye, EyeOff, X } from 'lucide-react';
+import { Terminal, Shield, Lock, Wifi, Network, Building2, AlertCircle, AlertTriangle, Eye, EyeOff, Globe2, Plus, Trash2, X } from 'lucide-react';
 import DateTimePicker from '../../../components/DateTimePicker';
 import { Asset } from '../types';
 import type { TagDefinition } from '../../../types';
@@ -349,6 +349,93 @@ export const AssetModal: React.FC<AssetModalProps> = ({
               )}
               <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" />
               <Field label={zh ? '端口 (SSH/Mgmt)' : 'Mgmt Port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder="22" />
+
+              <div className="col-span-2 rounded-xl border border-cyan-100 bg-cyan-50/30 p-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Globe2 size={14} className="text-cyan-600" />
+                    <div>
+                      <p className="text-[11px] font-bold text-slate-700">{zh ? 'Web 管理入口' : 'Web management entries'}</p>
+                      <p className="text-[9px] text-slate-400">{zh ? '适用于网络设备以及 iDRAC、iLO、iBMC 等服务器带外管理。' : 'For network appliances and server BMC interfaces such as iDRAC, iLO and iBMC.'}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({
+                      ...f,
+                      web_profiles: [
+                        ...(Array.isArray(f.web_profiles) ? f.web_profiles : []),
+                        { profile_name: f.asset_type === 'server' ? 'BMC' : 'Web管理', scheme: 'https', port: '443', path: '/', enabled: true },
+                      ],
+                    }))}
+                    className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-white px-2 py-1 text-[9px] font-bold text-cyan-700 hover:bg-cyan-50"
+                  >
+                    <Plus size={10} />{zh ? '添加入口' : 'Add entry'}
+                  </button>
+                </div>
+
+                <div className="mb-2 rounded-lg border border-cyan-100 bg-white/70 px-2.5 py-2 text-[10px] leading-4 text-slate-500">
+                  {zh ? (
+                    <>
+                      管理 IP 请填写在上方的“管理IP”字段；这里的“路径”只是登录页面的 URL 后缀，通常填写 <code className="rounded bg-cyan-50 px-1 text-cyan-700">/</code>。
+                      例如管理 IP 为 <code className="rounded bg-cyan-50 px-1 text-cyan-700">192.168.56.11</code>、HTTPS/443、路径 <code className="rounded bg-cyan-50 px-1 text-cyan-700">/login</code>，最终地址就是 <code className="rounded bg-cyan-50 px-1 text-cyan-700">https://192.168.56.11:443/login</code>。
+                    </>
+                  ) : (
+                    <>Enter the device address in the “Mgmt IP” field above. “Path” is only the Web login URL suffix; normally use <code className="rounded bg-cyan-50 px-1 text-cyan-700">/</code>, or a vendor path such as <code className="rounded bg-cyan-50 px-1 text-cyan-700">/login</code>.</>
+                  )}
+                </div>
+                <p className="mb-2 text-[10px] text-cyan-700/80">
+                  {zh ? '这里只配置 Web 入口；实际登录请到“操作工作台 → WEB”，再选择 HTTP 或 HTTPS 发起 PAM 会话。' : 'This section only configures the Web entry. Start the PAM session from Operation Workspace → WEB, then choose HTTP or HTTPS.'}
+                </p>
+
+                {(form.web_profiles || []).length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-cyan-200 px-3 py-3 text-center text-[10px] text-slate-400">
+                    {zh ? '尚未配置 Web 入口；保存后请到操作工作台 → WEB，选择 HTTP 或 HTTPS 发起 PAM 会话。' : 'No Web entry configured. After saving, start Web PAM from Operation Workspace → WEB, then choose HTTP or HTTPS.'}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {(form.web_profiles || []).map((profile: any, index: number) => (
+                      <div key={profile.id || index} className="grid grid-cols-[1.2fr_86px_72px_1fr_30px] items-end gap-1.5 rounded-lg border border-cyan-100 bg-white p-2">
+                        <Field label={zh ? '入口名称' : 'Name'} value={profile.profile_name || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, profile_name: value } : item) }))} placeholder={form.asset_type === 'server' ? 'iDRAC / iLO' : 'Web管理'} />
+                        <div>
+                          <label className="mb-0.5 block text-[9px] text-black/30">{zh ? '协议' : 'Protocol'}</label>
+                          <select
+                            value={profile.scheme || 'https'}
+                            onChange={event => {
+                              const scheme = event.target.value as 'http' | 'https';
+                              setForm(f => ({
+                                ...f,
+                                web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index
+                                  ? { ...item, scheme, port: String(item.port) === (scheme === 'https' ? '80' : '443') ? (scheme === 'https' ? '443' : '80') : item.port }
+                                  : item),
+                              }));
+                            }}
+                            className="w-full rounded-lg border border-black/8 bg-white px-2 py-1.5 text-xs text-black/65 outline-none focus:border-cyan-300"
+                          >
+                            <option value="https">HTTPS</option>
+                            <option value="http">HTTP</option>
+                          </select>
+                        </div>
+                        <Field label={zh ? '端口' : 'Port'} value={String(profile.port || '')} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, port: value } : item) }))} placeholder={profile.scheme === 'http' ? '80' : '443'} />
+                        <Field label={zh ? '登录路径（可选）' : 'Login path (optional)'} value={profile.path || '/'} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, path: value } : item) }))} placeholder="/" />
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).filter((_: any, itemIndex: number) => itemIndex !== index) }))}
+                          className="mb-0.5 flex h-7 w-7 items-center justify-center rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500"
+                          title={zh ? '删除入口' : 'Remove entry'}
+                        ><Trash2 size={12} /></button>
+                        <div className="col-span-5 truncate px-0.5 text-[9px] text-cyan-700/70">
+                          {zh ? '最终地址：' : 'Final URL: '}
+                          {`${profile.scheme || 'https'}://${form.management_ip || (zh ? '管理IP' : '<mgmt-ip>')}:${profile.port || (profile.scheme === 'http' ? '80' : '443')}${String(profile.path || '/').startsWith('/') ? (profile.path || '/') : `/${profile.path || ''}`}`}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {(form.web_profiles || []).some((profile: any) => profile.scheme === 'http') && (
+                  <p className="mt-2 text-[9px] text-amber-600">{zh ? 'HTTP 会明文传输页面内容和用户输入，请仅用于不支持 HTTPS 的旧设备。' : 'HTTP transmits page content and user input in clear text; use it only for legacy devices.'}</p>
+                )}
+              </div>
               
               <div>
                 <label className="block text-[10px] text-black/30 mb-0.5">{zh ? '设备子类' : 'Device Sub-category'}</label>

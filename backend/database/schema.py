@@ -2943,6 +2943,26 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('physical_assets', 'zone', "TEXT DEFAULT 'Unknown'")
     ensure_column('physical_assets', 'power_watts', "INTEGER DEFAULT 0")
 
+    # Generic Web management entry points.  These belong to physical assets
+    # rather than only linked network-device rows so server BMC/iLO/iDRAC
+    # assets can use the same PAM Web workflow.
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS asset_web_access_profiles (
+        id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL,
+        profile_name TEXT NOT NULL DEFAULT 'Web management',
+        scheme TEXT NOT NULL DEFAULT 'https',
+        port INTEGER NOT NULL DEFAULT 443,
+        path TEXT NOT NULL DEFAULT '/',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (asset_id) REFERENCES physical_assets(id) ON DELETE CASCADE,
+        UNIQUE (asset_id, scheme, port, path)
+    )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_asset_web_profiles_asset ON asset_web_access_profiles(asset_id, enabled)')
+
     ensure_column('devices', 'credential_id', 'TEXT')
     ensure_column('devices', 'admin_credential_id', "TEXT DEFAULT ''")
     ensure_column('devices', 'snmp_credential_id', "TEXT DEFAULT ''")
@@ -2998,6 +3018,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         requester_user_id TEXT DEFAULT '',
         requester_username TEXT DEFAULT '',
         access_level TEXT NOT NULL DEFAULT 'normal',
+        session_kind TEXT DEFAULT 'ssh_terminal',
+        web_profile_id TEXT DEFAULT '',
         reason TEXT DEFAULT '',
         status TEXT NOT NULL DEFAULT 'pending',
         reviewer_username TEXT DEFAULT '',
@@ -3046,10 +3068,18 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         device_id TEXT DEFAULT '',
         requester_username TEXT NOT NULL,
         access_level TEXT NOT NULL DEFAULT 'normal',
+        session_kind TEXT DEFAULT 'ssh_terminal',
         login_username TEXT DEFAULT '',
         connect_method TEXT DEFAULT 'web',
         target_ip TEXT DEFAULT '',
         target_port INTEGER DEFAULT 22,
+        target_scheme TEXT DEFAULT '',
+        target_path TEXT DEFAULT '/',
+        web_profile_id TEXT DEFAULT '',
+        agent_id TEXT DEFAULT '',
+        agent_token_hash TEXT DEFAULT '',
+        last_heartbeat_at TEXT,
+        recording_status TEXT DEFAULT 'not_started',
         status TEXT NOT NULL DEFAULT 'connecting',
         connected_at TEXT,
         closed_at TEXT,
@@ -3077,8 +3107,28 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     pam_req_cols = _table_columns(cursor, 'pam_access_requests')
     if pam_req_cols and 'session_id' not in pam_req_cols:
         cursor.execute("ALTER TABLE pam_access_requests ADD COLUMN session_id TEXT DEFAULT ''")
+    if pam_req_cols and 'session_kind' not in pam_req_cols:
+        cursor.execute("ALTER TABLE pam_access_requests ADD COLUMN session_kind TEXT DEFAULT 'ssh_terminal'")
+    if pam_req_cols and 'web_profile_id' not in pam_req_cols:
+        cursor.execute("ALTER TABLE pam_access_requests ADD COLUMN web_profile_id TEXT DEFAULT ''")
 
     pam_ses_cols = _table_columns(cursor, 'pam_sessions')
+    if pam_ses_cols and 'session_kind' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN session_kind TEXT DEFAULT 'ssh_terminal'")
+    if pam_ses_cols and 'target_scheme' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN target_scheme TEXT DEFAULT ''")
+    if pam_ses_cols and 'target_path' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN target_path TEXT DEFAULT '/' ")
+    if pam_ses_cols and 'web_profile_id' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN web_profile_id TEXT DEFAULT ''")
+    if pam_ses_cols and 'agent_id' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN agent_id TEXT DEFAULT ''")
+    if pam_ses_cols and 'agent_token_hash' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN agent_token_hash TEXT DEFAULT ''")
+    if pam_ses_cols and 'last_heartbeat_at' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN last_heartbeat_at TEXT")
+    if pam_ses_cols and 'recording_status' not in pam_ses_cols:
+        cursor.execute("ALTER TABLE pam_sessions ADD COLUMN recording_status TEXT DEFAULT 'not_started'")
     if pam_ses_cols and 'risk_level' not in pam_ses_cols:
         cursor.execute("ALTER TABLE pam_sessions ADD COLUMN risk_level TEXT DEFAULT 'low'")
     if pam_ses_cols and 'risk_summary' not in pam_ses_cols:

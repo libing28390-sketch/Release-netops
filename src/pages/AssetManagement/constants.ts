@@ -41,6 +41,14 @@ export const EMPTY_FORM = {
   admin_credential_id: '',
   snmp_credential_id: '',
   tag_ids: [] as string[],
+  web_profiles: [] as Array<{
+    id?: string;
+    profile_name: string;
+    scheme: 'http' | 'https';
+    port: string;
+    path: string;
+    enabled: boolean;
+  }>,
 };
 
 export {

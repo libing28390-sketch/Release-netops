@@ -10,6 +10,9 @@ import { DataTable } from '../components/DataTable';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import DeviceMfaModal from './AccessCenterTab/components/DeviceMfaModal';
+import { createPamWebSession, enabledWebProfiles, ensurePamWebAgent, launchPamWebSession, type WebAccessLevel } from '../api/pamWeb';
+import type { WebAccessProfile } from './AssetManagement/types';
+import { WebAccessRequestModal } from './AssetManagement/components/WebAccessRequestModal';
 
 interface Device {
   id: string;
@@ -27,7 +30,15 @@ interface Device {
   device_category?: string;
   role?: string;
   vendor?: string;
+  /** True when the linked asset has at least one enabled HTTP(S) entry. */
+  web_access_enabled?: boolean;
+  web_http_enabled?: boolean;
+  web_https_enabled?: boolean;
 }
+
+type WebScheme = 'http' | 'https';
+type AccessCategory = 'ALL' | 'SSH' | 'RDP' | 'WEB';
+type AllAccessMethod = 'ssh-terminal' | 'ssh-web' | 'rdp' | 'http' | 'https';
 
 type AccessTreeKind = 'root' | 'site' | 'type' | 'role';
 interface AccessTreeNode {
@@ -111,7 +122,8 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       if (q) setSearchQuery(q);
     } catch { /* ignore */ }
   }, []);
-  const [activeProtocol, setActiveProtocol] = useState('ALL');
+  const [activeCategory, setActiveCategory] = useState<AccessCategory>('ALL');
+  const [allAccessMethods, setAllAccessMethods] = useState<Record<string, AllAccessMethod>>({});
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selectedTreeKey, setSelectedTreeKey] = useState('root');
@@ -133,6 +145,15 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   const [countdown, setCountdown] = useState(0);
   const [approvers] = useState<Array<{ id: string; username: string }>>([]);
   const [selectedApproverId, setSelectedApproverId] = useState('');
+
+  // Web PAM uses the asset's configured HTTP(S) entries. Credentials are
+  // entered by the user inside the workstation system browser.
+  const [webAccessTarget, setWebAccessTarget] = useState<Device | null>(null);
+  const [webAccessProfiles, setWebAccessProfiles] = useState<WebAccessProfile[]>([]);
+  const [webAccessProfileId, setWebAccessProfileId] = useState('');
+  const [webAccessLevel, setWebAccessLevel] = useState<WebAccessLevel>('normal');
+  const [webAccessReason, setWebAccessReason] = useState('');
+  const [webAccessRequesting, setWebAccessRequesting] = useState(false);
 
   // Real current username from session
   const [currentUsername, setCurrentUsername] = useState<string>('');
@@ -165,10 +186,55 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     fetchCurrentUser();
   }, []);
 
-  const getProtocol = (dev: Device) => {
+  const getTerminalProtocol = (dev: Device): 'SSH' | 'RDP' => {
     const platform = (dev.platform || '').toLowerCase();
     if (platform.includes('windows')) return 'RDP';
     return 'SSH'; 
+  };
+
+  // HTTP(S) management-page access is independent from the SSH terminal
+  // transport.  A device can be SSH-capable without having an HTTP(S)
+  // profile, and it must still expose the Web SSH terminal action.
+  const hasHttpWebAccess = (dev: Device) => Boolean(
+    dev.web_access_enabled || dev.web_http_enabled || dev.web_https_enabled,
+  );
+
+  const getSupportedProtocols = (dev: Device) => {
+    const protocols: Array<'SSH' | 'RDP' | 'HTTP' | 'HTTPS'> = [getTerminalProtocol(dev)];
+    if (dev.web_http_enabled) protocols.push('HTTP');
+    if (dev.web_https_enabled) protocols.push('HTTPS');
+    return protocols;
+  };
+
+  const getAllAccessMethods = (dev: Device): AllAccessMethod[] => {
+    const methods: AllAccessMethod[] = [];
+    if (getTerminalProtocol(dev) === 'SSH') {
+      methods.push('ssh-terminal', 'ssh-web');
+    } else {
+      methods.push('rdp');
+    }
+    if (dev.web_http_enabled) methods.push('http');
+    if (dev.web_https_enabled) methods.push('https');
+    return methods;
+  };
+
+  const getAllAccessMethodLabel = (method: AllAccessMethod) => {
+    if (isZh) {
+      return {
+        'ssh-terminal': 'SSH 终端',
+        'ssh-web': 'Web SSH',
+        rdp: 'RDP',
+        http: 'HTTP',
+        https: 'HTTPS',
+      }[method];
+    }
+    return {
+      'ssh-terminal': 'SSH terminal',
+      'ssh-web': 'Web SSH',
+      rdp: 'RDP',
+      http: 'HTTP',
+      https: 'HTTPS',
+    }[method];
   };
 
   const baseFilteredDevices = useMemo(() => {
@@ -176,14 +242,15 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     const query = (searchQuery || '').toLowerCase();
     
     return list.filter(d => {
-      const proto = getProtocol(d);
-      const matchesProtocol = activeProtocol === 'ALL' || proto === activeProtocol;
+      const terminalProtocol = getTerminalProtocol(d);
+      const matchesCategory = activeCategory === 'ALL'
+        || (activeCategory === 'WEB' ? hasHttpWebAccess(d) : terminalProtocol === activeCategory);
       const name = (d?.hostname || '').toLowerCase();
       const ip = (d?.ip_address || '').toLowerCase();
       const matchesSearch = name.includes(query) || ip.includes(query);
-      return matchesProtocol && matchesSearch;
+      return matchesCategory && matchesSearch;
     });
-  }, [devices, searchQuery, activeProtocol]);
+  }, [devices, searchQuery, activeCategory]);
 
   const accessTree = useMemo(
     () => buildAccessTree(baseFilteredDevices, isZh),
@@ -274,13 +341,85 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     setShowMFAModal(true);
   };
 
+  const openWebAccess = async (dev: Device, level: WebAccessLevel = 'normal', preferredScheme?: WebScheme) => {
+    const assetId = String(dev.asset_id || '').trim();
+    if (!assetId) {
+      showToast(isZh ? '\u8be5\u8bbe\u5907\u5c1a\u672a\u5173\u8054\u7269\u7406\u8d44\u4ea7' : 'This device is not linked to a physical asset', 'info');
+      return;
+    }
+    try {
+      const token = localStorage.getItem('netops_token') || '';
+      const response = await fetch(`/api/assets/${encodeURIComponent(assetId)}/web-profiles`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store',
+      });
+      const payload = await response.json().catch(() => ({}));
+      const profiles = enabledWebProfiles(Array.isArray(payload?.items) ? payload.items : []);
+      const matchingProfiles = preferredScheme
+        ? profiles.filter(profile => profile.scheme.toLowerCase() === preferredScheme)
+        : profiles;
+      if (!response.ok || matchingProfiles.length === 0) {
+        const protocolLabel = preferredScheme ? preferredScheme.toUpperCase() : 'HTTP/HTTPS';
+        showToast(isZh ? `请先在资产中配置 ${protocolLabel} Web 入口` : `Configure a ${protocolLabel} Web entry for this asset first`, 'info');
+        return;
+      }
+      setWebAccessTarget(dev);
+      setWebAccessProfiles(matchingProfiles);
+      setWebAccessProfileId(String(matchingProfiles[0].id || ''));
+      setWebAccessLevel(level);
+      setWebAccessReason('');
+    } catch {
+      showToast(isZh ? '\u65e0\u6cd5\u52a0\u8f7d Web \u5165\u53e3' : 'Unable to load Web entries', 'error');
+    }
+  };
+
+  const requestWebAccess = async () => {
+    const target = webAccessTarget;
+    const assetId = String(target?.asset_id || '').trim();
+    if (!target || !assetId || !webAccessProfileId) return;
+    setWebAccessRequesting(true);
+    try {
+      await ensurePamWebAgent();
+      const session = await createPamWebSession({
+        assetId,
+        profileId: webAccessProfileId,
+        accessLevel: webAccessLevel,
+        reason: webAccessReason,
+      });
+      await launchPamWebSession(session.session_token);
+      showToast(isZh ? 'Web PAM \u4f1a\u8bdd\u5df2\u4ea4\u7531\u672c\u5730 Agent \u6253\u5f00' : 'Web PAM session opened by the local Agent', 'success');
+      setWebAccessTarget(null);
+      setWebAccessProfiles([]);
+      setWebAccessProfileId('');
+      setWebAccessReason('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || '');
+      showToast(
+        message === 'WEB_AGENT_UPGRADE_REQUIRED'
+          ? (isZh ? '\u5f53\u524d Agent \u6682\u4e0d\u652f\u6301 Web \u4f1a\u8bdd' : 'The current Agent does not support Web sessions yet')
+          : (isZh ? `Web PAM \u4f1a\u8bdd\u542f\u52a8\u5931\u8d25\uff1a${message}` : `Unable to start Web PAM session: ${message}`),
+        'error',
+      );
+    } finally {
+      setWebAccessRequesting(false);
+    }
+  };
+
+  const closeWebAccess = () => {
+    if (webAccessRequesting) return;
+    setWebAccessTarget(null);
+    setWebAccessProfiles([]);
+    setWebAccessProfileId('');
+    setWebAccessReason('');
+  };
+
   const closeMFAModal = () => {
     setShowMFAModal(false);
     setMfaTarget(null);
     resetMFAState();
   };
 
-  const handleAccessRequest = async (dev: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged') => {
+  const handleAccessRequest = async (dev: Device, appType: 'xshell' | 'web', identity: 'normal' | 'privileged', webScheme?: WebScheme) => {
     if (appType === 'xshell') {
       // 1. Get saved path from Profile Settings (localStorage keys: local_terminal_path, terminal_app)
       let terminalPath = localStorage.getItem('local_terminal_path');
@@ -302,13 +441,9 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       return;
     }
 
-    if (identity === 'normal') {
-      requestSession(dev, 'normal');
-      return;
-    }
-
-    // Privileged web: require MFA
-    openMFAModal({ device: dev, appType: 'web', identity });
+    // Web access is a user-operated browser session. Normal/privileged are
+    // audit labels only for now; the device page itself owns authentication.
+    openWebAccess(dev, identity === 'privileged' ? 'admin' : 'normal', webScheme);
   };
 
   const launchLocalTerminal = async (
@@ -606,6 +741,293 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     window.history.replaceState(window.history.state, '', nextUrl);
   }, [devices]);
 
+  const tableHeader = (label: string, align: 'left' | 'center' | 'right' = 'left') => (
+    <th
+      className="px-8 py-5 text-[10px] font-black uppercase tracking-[0.15em] text-slate-400"
+      style={{ textAlign: align }}
+    >
+      {label}
+    </th>
+  );
+
+  const renderAssetCell = (dev: Device) => (
+    <td className="px-8 py-5">
+      <div className="flex items-center gap-4">
+        <div className="rounded-xl bg-slate-50 p-2.5 transition-colors group-hover:bg-cyan-100">
+          <Server className="h-4 w-4 text-slate-400 group-hover:text-[#00bceb]" />
+        </div>
+        <div>
+          <div className="text-sm font-bold text-slate-800">{dev.hostname}</div>
+          <div className="mt-0.5 text-[10px] font-bold uppercase tracking-tighter text-slate-400">{dev.platform || 'General Linux'}</div>
+        </div>
+      </div>
+    </td>
+  );
+
+  const renderAddressCell = (dev: Device) => (
+    <td className="px-8 py-5">
+      <span className="rounded-md bg-slate-50 px-2 py-1 font-mono text-xs font-bold text-slate-500">{dev.ip_address}</span>
+    </td>
+  );
+
+  const renderCapabilityBadges = (dev: Device) => (
+    <div className="flex flex-wrap items-center justify-center gap-1.5">
+      {getSupportedProtocols(dev).map((protocol) => (
+        <span
+          key={protocol}
+          className={`rounded-lg px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${protocol === 'SSH' ? 'bg-emerald-50 text-emerald-700' : protocol === 'RDP' ? 'bg-violet-50 text-violet-700' : 'bg-cyan-50 text-cyan-700'}`}
+        >
+          {protocol}
+        </span>
+      ))}
+    </div>
+  );
+
+  const renderWebEntryBadges = (dev: Device) => (
+    <div className="flex flex-wrap items-center justify-center gap-1.5">
+      {dev.web_http_enabled && <span className="rounded-lg bg-orange-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-orange-700">HTTP</span>}
+      {dev.web_https_enabled && <span className="rounded-lg bg-cyan-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-cyan-700">HTTPS</span>}
+      {!hasHttpWebAccess(dev) && <span className="text-[10px] font-semibold text-slate-300">—</span>}
+    </div>
+  );
+
+  const renderTerminalActions = (dev: Device, protocol: 'SSH' | 'RDP') => (
+    <div className="flex flex-nowrap items-center justify-center gap-2.5 whitespace-nowrap">
+      <button
+        onClick={() => handleAccessRequest(dev, 'xshell', 'normal')}
+        className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-emerald-500 hover:bg-emerald-50 hover:text-emerald-600"
+        title={protocol === 'RDP' ? (isZh ? '使用当前本地终端配置发起 RDP 访问' : 'Launch RDP access with the configured local client') : undefined}
+      >
+        {protocol === 'RDP' ? <Monitor className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}
+        {dev.normal_username || (isZh ? '普通' : 'user')}
+      </button>
+      <button
+        onClick={() => handleAccessRequest(dev, 'xshell', 'privileged')}
+        className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
+        title={protocol === 'RDP' ? (isZh ? '使用当前本地终端配置发起 RDP 特权访问' : 'Launch privileged RDP access with the configured local client') : undefined}
+      >
+        <Lock className="h-3.5 w-3.5" />
+        {dev.admin_username || (isZh ? '特权' : 'admin')}
+      </button>
+    </div>
+  );
+
+  // HTTP/HTTPS management-page login. This is used by the WEB category and
+  // by the corresponding method selected in ALL.
+  const renderHttpWebActions = (dev: Device, scheme?: WebScheme) => {
+    const enabled = scheme === 'http' ? dev.web_http_enabled : scheme === 'https' ? dev.web_https_enabled : hasHttpWebAccess(dev);
+    if (!enabled) {
+      return <span className="text-[10px] font-semibold text-slate-300">—</span>;
+    }
+    return (
+      <div className="flex flex-nowrap items-center justify-center gap-2.5 whitespace-nowrap">
+        <button
+          onClick={() => handleAccessRequest(dev, 'web', 'normal', scheme)}
+          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-[#00bceb] hover:bg-cyan-50 hover:text-[#00bceb]"
+        >
+          <Globe className="h-3.5 w-3.5" />
+          {dev.normal_username || (isZh ? '普通' : 'user')}
+        </button>
+        <button
+          onClick={() => handleAccessRequest(dev, 'web', 'privileged', scheme)}
+          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
+        >
+          <Lock className="h-3.5 w-3.5" />
+          {dev.admin_username || (isZh ? '特权' : 'admin')}
+        </button>
+      </div>
+    );
+  };
+
+  // Web SSH terminal login. The browser is only the terminal surface; the
+  // backend session still connects to the device over SSH. This must not be
+  // gated by HTTP(S) Web profiles.
+  const renderSshWebActions = (dev: Device) => (
+    <div className="flex flex-nowrap items-center justify-center gap-2.5 whitespace-nowrap">
+      <button
+        onClick={() => { void requestSession(dev, 'normal'); }}
+        className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-[#00bceb] hover:bg-cyan-50 hover:text-[#00bceb]"
+        title={isZh ? '在网页终端中通过 SSH 登录' : 'Open a browser terminal over SSH'}
+      >
+        <Globe className="h-3.5 w-3.5" />
+        {dev.normal_username || (isZh ? '普通' : 'user')}
+      </button>
+      <button
+        onClick={() => { void requestSession(dev, 'admin'); }}
+        className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-[10px] font-black text-slate-600 transition-all hover:border-orange-500 hover:bg-orange-50 hover:text-orange-600"
+        title={isZh ? '在网页终端中通过 SSH 发起特权登录' : 'Open a privileged browser terminal over SSH'}
+      >
+        <Lock className="h-3.5 w-3.5" />
+        {dev.admin_username || (isZh ? '特权' : 'admin')}
+      </button>
+    </div>
+  );
+
+  // ALL is an aggregate view, so the selected access method is kept per row.
+  // This prevents an HTTP/HTTPS-capable SSH asset from losing either its Web
+  // SSH or management-page entry just because the user is viewing ALL.
+  const renderAllAccessActions = (dev: Device) => {
+    const methods = getAllAccessMethods(dev);
+    const selectedMethod = methods.includes(allAccessMethods[dev.id])
+      ? allAccessMethods[dev.id]
+      : methods[0];
+
+    if (!selectedMethod) return null;
+
+    const renderSelectedActions = () => {
+      switch (selectedMethod) {
+        case 'ssh-terminal':
+          return renderTerminalActions(dev, 'SSH');
+        case 'ssh-web':
+          return renderSshWebActions(dev);
+        case 'rdp':
+          return renderTerminalActions(dev, 'RDP');
+        case 'http':
+          return renderHttpWebActions(dev, 'http');
+        case 'https':
+          return renderHttpWebActions(dev, 'https');
+        default:
+          return null;
+      }
+    };
+
+    return (
+      <div className="flex min-w-[420px] flex-nowrap items-center justify-center gap-2 whitespace-nowrap">
+        <select
+          aria-label={isZh ? `${dev.hostname} 登录方式` : `${dev.hostname} access method`}
+          value={selectedMethod}
+          onChange={(event) => {
+            const nextMethod = event.target.value as AllAccessMethod;
+            setAllAccessMethods((current) => ({ ...current, [dev.id]: nextMethod }));
+          }}
+          className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-600 outline-none transition-colors focus:border-[#00bceb] focus:ring-2 focus:ring-[#00bceb]/10"
+        >
+          {methods.map((method) => (
+            <option key={method} value={method}>{getAllAccessMethodLabel(method)}</option>
+          ))}
+        </select>
+        {renderSelectedActions()}
+      </div>
+    );
+  };
+
+  const renderAccessTable = () => {
+    const emptyRow = (colSpan: number) => (
+      <tr>
+        <td colSpan={colSpan} className="py-16 text-center text-sm text-slate-400">
+          {isZh ? '当前分类暂无可访问设备' : 'No accessible devices in this category'}
+        </td>
+      </tr>
+    );
+    const rows = (renderRow: (dev: Device) => React.ReactNode, colSpan: number) => (
+      currentData.length ? currentData.map(renderRow) : emptyRow(colSpan)
+    );
+
+    if (activeCategory === 'WEB') {
+      return (
+        <DataTable className="text-left">
+          <thead>
+            <tr className="border-b border-slate-200 bg-cyan-50/40">
+              {tableHeader(isZh ? '资产信息' : 'Asset')}
+              {tableHeader(isZh ? '连接地址' : 'Address')}
+              {tableHeader(isZh ? 'Web 入口' : 'Web entries', 'center')}
+              {tableHeader(isZh ? 'HTTP 登录' : 'HTTP login', 'center')}
+              {tableHeader(isZh ? 'HTTPS 登录' : 'HTTPS login', 'center')}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows((dev) => (
+              <tr key={dev.id} className="group transition-colors hover:bg-cyan-50/30">
+                {renderAssetCell(dev)}
+                {renderAddressCell(dev)}
+                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderWebEntryBadges(dev)}</td>
+                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderHttpWebActions(dev, 'http')}</td>
+                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderHttpWebActions(dev, 'https')}</td>
+              </tr>
+            ), 5)}
+          </tbody>
+        </DataTable>
+      );
+    }
+
+    if (activeCategory === 'RDP') {
+      return (
+        <DataTable className="text-left">
+          <thead>
+            <tr className="border-b border-slate-200 bg-violet-50/40">
+              {tableHeader(isZh ? '资产信息' : 'Asset')}
+              {tableHeader(isZh ? '连接地址' : 'Address')}
+              {tableHeader(isZh ? '协议' : 'Protocol')}
+              {tableHeader(isZh ? 'RDP 登录' : 'RDP login', 'center')}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows((dev) => (
+              <tr key={dev.id} className="group transition-colors hover:bg-violet-50/30">
+                {renderAssetCell(dev)}
+                {renderAddressCell(dev)}
+                <td className="px-8 py-5"><span className="rounded-lg bg-violet-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-violet-700">RDP</span></td>
+                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderTerminalActions(dev, 'RDP')}</td>
+              </tr>
+            ), 4)}
+          </tbody>
+        </DataTable>
+      );
+    }
+
+    if (activeCategory === 'SSH') {
+      return (
+        <DataTable className="text-left">
+          <thead>
+            <tr className="border-b border-slate-200 bg-emerald-50/40">
+              {tableHeader(isZh ? '资产信息' : 'Asset')}
+              {tableHeader(isZh ? '连接地址' : 'Address')}
+              {tableHeader(isZh ? '协议' : 'Protocol')}
+              {tableHeader(isZh ? '终端登录（本地）' : 'Terminal login', 'center')}
+              {tableHeader(isZh ? 'Web 终端登录' : 'Web terminal login', 'center')}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows((dev) => (
+              <tr key={dev.id} className="group transition-colors hover:bg-emerald-50/30">
+                {renderAssetCell(dev)}
+                {renderAddressCell(dev)}
+                <td className="px-8 py-5"><span className="rounded-lg bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-emerald-700">SSH</span></td>
+                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderTerminalActions(dev, 'SSH')}</td>
+                <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderSshWebActions(dev)}</td>
+              </tr>
+            ), 5)}
+          </tbody>
+        </DataTable>
+      );
+    }
+
+    return (
+      <DataTable className="text-left">
+        <thead>
+          <tr className="border-b border-slate-200 bg-slate-50/70">
+            {tableHeader(isZh ? '资产信息' : 'Asset')}
+            {tableHeader(isZh ? '连接地址' : 'Address')}
+            {tableHeader(isZh ? '接入能力' : 'Capabilities', 'center')}
+            {tableHeader(isZh ? '登录方式' : 'Access method', 'center')}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows((dev) => (
+            <tr key={dev.id} className="group transition-colors hover:bg-slate-50">
+              {renderAssetCell(dev)}
+              {renderAddressCell(dev)}
+              <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>{renderCapabilityBadges(dev)}</td>
+              <td className="px-8 py-5 text-center" style={{ textAlign: 'center' }}>
+                {renderAllAccessActions(dev)}
+              </td>
+            </tr>
+          ), 4)}
+        </tbody>
+      </DataTable>
+    );
+  };
+
   if (autoLoginInProgress) {
     return (
       <div className="flex h-full min-h-[320px] items-center justify-center bg-slate-950 text-white">
@@ -638,17 +1060,17 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
         }
         extras={
           <div className="flex items-center gap-2">
-            {['ALL', 'SSH', 'RDP'].map((proto) => (
+            {(['ALL', 'SSH', 'RDP', 'WEB'] as AccessCategory[]).map((category) => (
               <button
-                key={proto}
-                onClick={() => { setActiveProtocol(proto); setCurrentPage(1); }}
+                key={category}
+                onClick={() => { setActiveCategory(category); setCurrentPage(1); }}
                 className={`px-5 py-2 rounded-xl text-[10px] font-black tracking-widest transition-all uppercase ${
-                  activeProtocol === proto
+                  activeCategory === category
                   ? 'bg-[#00bceb] text-white shadow-lg shadow-[#00bceb]/20'
                   : 'bg-white text-slate-400 border border-slate-200 hover:border-[#00bceb] hover:text-[#00bceb]'
                 }`}
               >
-                {proto}
+                {category}
               </button>
             ))}
           </div>
@@ -684,84 +1106,7 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
               <span className="ml-auto tabular-nums">{totalCount} {isZh ? '台设备' : 'devices'}</span>
             </div>
             <div className="min-h-0 overflow-auto">
-              <DataTable className="text-left">
-            <thead>
-              <tr className="bg-slate-50/50 border-b border-slate-200">
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">资产信息</th>
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">连接地址</th>
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em]">协议</th>
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-right">终端登录（本地）</th>
-                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-[0.15em] text-right">Web 登录</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {currentData.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="py-16 text-center text-sm text-slate-400">
-                    {isZh ? '当前分类暂无可访问设备' : 'No accessible devices in this branch'}
-                  </td>
-                </tr>
-              ) : currentData.map((dev) => (
-                <tr key={dev.id} className="hover:bg-cyan-50/30 transition-colors group">
-                  <td className="px-8 py-5">
-                    <div className="flex items-center gap-4">
-                      <div className="p-2.5 bg-slate-50 rounded-xl group-hover:bg-cyan-100 transition-colors">
-                        <Server className="w-4 h-4 text-slate-400 group-hover:text-[#00bceb]" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-bold text-slate-800">{dev.hostname}</div>
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter mt-0.5">{dev.platform || 'General Linux'}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-8 py-5">
-                    <span className="font-mono text-xs font-bold text-slate-500 bg-slate-50 px-2 py-1 rounded-md">{dev.ip_address}</span>
-                  </td>
-                  <td className="px-8 py-5">
-                    <span className="px-2.5 py-1 bg-slate-100 text-slate-500 text-[10px] font-black rounded-lg uppercase tracking-wider">
-                      {getProtocol(dev)}
-                    </span>
-                  </td>
-                  <td className="px-8 py-5 text-right">
-                    <div className="flex items-center justify-end gap-2.5">
-                      <button 
-                        onClick={() => handleAccessRequest(dev, 'xshell', 'normal')}
-                        className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 text-slate-600 text-[10px] font-black rounded-xl transition-all"
-                      >
-                        <Terminal className="w-3.5 h-3.5" />
-                        {dev.normal_username || 'user'}
-                      </button>
-                      <button 
-                        onClick={() => handleAccessRequest(dev, 'xshell', 'privileged')}
-                        className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-orange-500 hover:text-orange-600 hover:bg-orange-50 text-slate-600 text-[10px] font-black rounded-xl transition-all"
-                      >
-                        <Lock className="w-3.5 h-3.5" />
-                        {dev.admin_username || 'root'}
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-8 py-5 text-right">
-                    <div className="flex items-center justify-end gap-2.5">
-                      <button 
-                        onClick={() => handleAccessRequest(dev, 'web', 'normal')}
-                        className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-[#00bceb] hover:text-[#00bceb] hover:bg-cyan-50 text-slate-600 text-[10px] font-black rounded-xl transition-all"
-                      >
-                        <Globe className="w-3.5 h-3.5" />
-                        {dev.normal_username || 'user'}
-                      </button>
-                      <button 
-                        onClick={() => handleAccessRequest(dev, 'web', 'privileged')}
-                        className="flex items-center gap-2 px-3.5 py-2 bg-white border border-slate-200 hover:border-orange-500 hover:text-orange-600 hover:bg-orange-50 text-slate-600 text-[10px] font-black rounded-xl transition-all"
-                      >
-                        <Lock className="w-3.5 h-3.5" />
-                        {dev.admin_username || 'root'}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-              </DataTable>
+              {renderAccessTable()}
             </div>
         </div>
       </div>
@@ -792,6 +1137,22 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
           onVerify={handleMFAVerify}
         />
       )}
+
+      <WebAccessRequestModal
+        isOpen={Boolean(webAccessTarget)}
+        asset={webAccessTarget ? { hostname: webAccessTarget.hostname, management_ip: webAccessTarget.ip_address } : null}
+        profiles={webAccessProfiles}
+        accessLevel={webAccessLevel}
+        profileId={webAccessProfileId}
+        reason={webAccessReason}
+        requesting={webAccessRequesting}
+        language={language}
+        onAccessLevelChange={setWebAccessLevel}
+        onProfileChange={setWebAccessProfileId}
+        onReasonChange={setWebAccessReason}
+        onClose={closeWebAccess}
+        onSubmit={() => void requestWebAccess()}
+      />
 
       {/* Legacy webhook approval dialog kept unreachable for old state recovery. */}
       <AnimatePresence>

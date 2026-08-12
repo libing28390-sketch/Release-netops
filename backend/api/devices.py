@@ -276,6 +276,11 @@ def _build_probe_stage(stage: str, ok: bool, summary: str, detail: str, latency_
 
 def _sanitize_device_item(item: dict) -> dict:
     sanitized = dict(item)
+    if 'web_access_enabled' in sanitized:
+        sanitized['web_access_enabled'] = bool(sanitized.get('web_access_enabled'))
+    for scheme_key in ('web_http_enabled', 'web_https_enabled'):
+        if scheme_key in sanitized:
+            sanitized[scheme_key] = bool(sanitized.get(scheme_key))
     display_site_name = canonical_site_name(sanitized)
     canonical_site_id = str(sanitized.get('canonical_site_id') or '').strip()
     # All device consumers use ``site`` as their display field. Keep the
@@ -703,7 +708,13 @@ def read_devices(
             'COALESCE(NULLIF(r.datacenter, \'\'), NULLIF(r_legacy.datacenter, \'\'), \'\') AS rack_datacenter, '
             'COALESCE(NULLIF(r.floor, \'\'), NULLIF(r_legacy.floor, \'\'), \'\') AS rack_floor, '
             'COALESCE(NULLIF(r.room, \'\'), NULLIF(r_legacy.room, \'\'), \'\') AS rack_room, '
-            'COALESCE(NULLIF(r.row, \'\'), NULLIF(r_legacy.row, \'\'), \'\') AS rack_row'
+            'COALESCE(NULLIF(r.row, \'\'), NULLIF(r_legacy.row, \'\'), \'\') AS rack_row, '
+            'EXISTS (SELECT 1 FROM asset_web_access_profiles awp '
+            '        WHERE awp.asset_id = pa.id AND awp.enabled = 1) AS web_access_enabled, '
+            'EXISTS (SELECT 1 FROM asset_web_access_profiles awp '
+            '        WHERE awp.asset_id = pa.id AND awp.enabled = 1 AND LOWER(awp.scheme) = \'http\') AS web_http_enabled, '
+            'EXISTS (SELECT 1 FROM asset_web_access_profiles awp '
+            '        WHERE awp.asset_id = pa.id AND awp.enabled = 1 AND LOWER(awp.scheme) = \'https\') AS web_https_enabled'
         )
         from_clause = (
             'FROM devices d '

@@ -13,13 +13,15 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from database import get_db_connection
 from core.crypto import encrypt_credential, decrypt_credential
 from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
 from services import tag_service
 from services.vault_service import credential_is_shared, resolve_collector_credentials
 from services.site_identity_service import resolve_canonical_site_id
+from services.pam_web_service import replace_asset_web_profiles
+from schemas.web import WebAccessProfileInput
 
 import ping3
 import socket
@@ -72,6 +74,19 @@ def _identity_duplicate_detail(duplicates: list[dict]) -> str:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
+
+
+def _get_asset_web_profiles(conn, asset_id: str) -> list[dict]:
+    rows = conn.execute(
+        """SELECT id, asset_id, profile_name, scheme, port, path, enabled, created_at, updated_at
+           FROM asset_web_access_profiles WHERE asset_id = ?
+           ORDER BY enabled DESC, profile_name, scheme, port""",
+        (asset_id,),
+    ).fetchall()
+    items = [dict(row) for row in rows]
+    for item in items:
+        item['enabled'] = bool(item.get('enabled'))
+    return items
 
 
 # ── helpers: devices ↔ physical_assets sync ──────────────────────────
@@ -903,6 +918,7 @@ class AssetCreate(BaseModel):
     snmp_credential_id: Optional[str] = ''
     tag_ids: list[str] = []
     tag_codes: str = ''
+    web_profiles: list[WebAccessProfileInput] = Field(default_factory=list)
 
     @field_validator('u_height', mode='before')
     @classmethod
@@ -1009,6 +1025,7 @@ class AssetUpdate(BaseModel):
     snmp_credential_id: Optional[str] = None
     tag_ids: Optional[list[str]] = None
     tag_codes: Optional[str] = None
+    web_profiles: Optional[list[WebAccessProfileInput]] = None
 
     @field_validator('power_watts', mode='before')
     @classmethod
@@ -1226,6 +1243,24 @@ def list_assets(
         for item in items:
             item['tags'] = tag_map.get(str(item.get('device_id') or ''), [])
 
+        asset_ids = [str(item.get('id') or '') for item in items if item.get('id')]
+        web_profile_map: dict[str, list[dict]] = {}
+        if asset_ids:
+            placeholders = ','.join('?' for _ in asset_ids)
+            web_rows = conn.execute(
+                f'''SELECT id, asset_id, profile_name, scheme, port, path, enabled, created_at, updated_at
+                    FROM asset_web_access_profiles
+                    WHERE asset_id IN ({placeholders})
+                    ORDER BY profile_name, scheme, port''',
+                asset_ids,
+            ).fetchall()
+            for web_row in web_rows:
+                profile = dict(web_row)
+                profile['enabled'] = bool(profile.get('enabled'))
+                web_profile_map.setdefault(str(profile['asset_id']), []).append(profile)
+        for item in items:
+            item['web_profiles'] = web_profile_map.get(str(item.get('id') or ''), [])
+
         return {
             'items': items,
             'total': total,
@@ -1294,7 +1329,80 @@ def get_asset(asset_id: str):
         if 'snmp_community' in item:
             item['snmp_community_set'] = bool(item.get('snmp_community'))
             item['snmp_community'] = ''
+        item['web_profiles'] = _get_asset_web_profiles(conn, asset_id)
         return item
+    finally:
+        conn.close()
+
+
+@router.get('/assets/{asset_id}/web-profiles')
+def list_asset_web_profiles(asset_id: str):
+    conn = get_db_connection()
+    try:
+        asset = conn.execute('SELECT id FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        if not asset:
+            raise HTTPException(status_code=404, detail='Asset not found')
+        return {'items': _get_asset_web_profiles(conn, asset_id)}
+    finally:
+        conn.close()
+
+
+@router.post('/assets/{asset_id}/web-profiles')
+def create_asset_web_profile(asset_id: str, body: WebAccessProfileInput):
+    conn = get_db_connection()
+    try:
+        asset = conn.execute('SELECT id FROM physical_assets WHERE id = ?', (asset_id,)).fetchone()
+        if not asset:
+            raise HTTPException(status_code=404, detail='Asset not found')
+        existing = _get_asset_web_profiles(conn, asset_id)
+        body.id = None
+        try:
+            profiles = replace_asset_web_profiles(conn, asset_id, [*existing, body])
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        conn.commit()
+        return profiles[-1]
+    finally:
+        conn.close()
+
+
+@router.put('/assets/{asset_id}/web-profiles/{profile_id}')
+def update_asset_web_profile(asset_id: str, profile_id: str, body: WebAccessProfileInput):
+    conn = get_db_connection()
+    try:
+        existing = _get_asset_web_profiles(conn, asset_id)
+        if not any(str(item['id']) == profile_id for item in existing):
+            raise HTTPException(status_code=404, detail='Web profile not found')
+        body.id = profile_id
+        replacement = [body if str(item['id']) == profile_id else item for item in existing]
+        try:
+            profiles = replace_asset_web_profiles(conn, asset_id, replacement)
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        conn.commit()
+        return next(item for item in profiles if item['id'] == profile_id)
+    finally:
+        conn.close()
+
+
+@router.delete('/assets/{asset_id}/web-profiles/{profile_id}')
+def delete_asset_web_profile(asset_id: str, profile_id: str):
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            'SELECT id FROM asset_web_access_profiles WHERE id = ? AND asset_id = ?',
+            (profile_id, asset_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Web profile not found')
+        conn.execute(
+            'DELETE FROM asset_web_access_profiles WHERE id = ? AND asset_id = ?',
+            (profile_id, asset_id),
+        )
+        conn.commit()
+        return {'ok': True}
     finally:
         conn.close()
 
@@ -1399,6 +1507,12 @@ def create_asset(body: AssetCreate):
             raise HTTPException(status_code=400, detail=str(e))
 
         _sync_device_type_power(conn, body.vendor, body.model, body.power_watts, body.device_role, body.u_height)
+
+        try:
+            replace_asset_web_profiles(conn, asset_id, body.web_profiles)
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         conn.commit()
         return {'id': asset_id, 'device_id': device_id, 'legacy_exempt': legacy_production}
@@ -1603,6 +1717,12 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
                 "is_managed = 0, takeover_error = '' WHERE asset_id = ?",
                 (asset_id,),
             )
+            if body.web_profiles is not None:
+                try:
+                    replace_asset_web_profiles(conn, asset_id, body.web_profiles)
+                except ValueError as exc:
+                    conn.rollback()
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
             _sync_asset_tags(conn, asset_id, requested_tag_ids)
             conn.commit()
             return {
@@ -1741,6 +1861,14 @@ def update_asset(asset_id: str, body: AssetUpdate, run_bg_rotate: bool = True):
 
         if requested_tag_ids is not None:
             _sync_asset_tags(conn, asset_id, requested_tag_ids)
+            conn.commit()
+
+        if body.web_profiles is not None:
+            try:
+                replace_asset_web_profiles(conn, asset_id, body.web_profiles)
+            except ValueError as exc:
+                conn.rollback()
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             conn.commit()
 
         return {
