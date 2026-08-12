@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
 
 from services.snmp_counter_service import calculate_counter_delta
-from services.snmp_metric_profile_service import normalize_metric_config
+from services.snmp_metric_profile_service import (
+    _collector_status,
+    get_model_metric_profile_mapping,
+    normalize_metric_config,
+)
 from services.snmp_service import SnmpTypedValue, probe_metric_definition
 
 
@@ -168,3 +174,77 @@ def test_counter_profile_requires_explicit_width_and_capacity() -> None:
         assert "counter_bits" in str(exc)
     else:  # pragma: no cover - assertion guard
         raise AssertionError("counter profile without width must be rejected")
+
+
+def test_saved_profile_status_distinguishes_match_and_activation() -> None:
+    assert _collector_status(False, "unverified", 3) == "builtin_only"
+    assert _collector_status(True, "unverified", 3) == "blocked_unverified"
+    assert _collector_status(True, "failed", 3) == "blocked_failed"
+    assert _collector_status(True, "verified", 3) == "active"
+    assert _collector_status(True, "verified", 0) == "no_matching_device"
+
+
+def test_profile_mapping_uses_canonical_vendor_and_exact_model() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE snmp_metric_profiles (
+            id TEXT, vendor_key TEXT, vendor_name TEXT, model_key TEXT,
+            model_name TEXT, cpu_oid TEXT, memory_oid TEXT,
+            cpu_config_json TEXT, memory_config_json TEXT,
+            metric_definitions_json TEXT, verification_status TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE devices (
+            id TEXT, hostname TEXT, ip_address TEXT, vendor TEXT,
+            platform TEXT, model TEXT, snmp_cpu_oid TEXT, snmp_memory_oid TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO snmp_metric_profiles
+            (id, vendor_key, vendor_name, model_key, model_name,
+             cpu_oid, memory_oid, cpu_config_json, memory_config_json,
+             metric_definitions_json, verification_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "profile-1",
+            "cisco",
+            "Cisco",
+            "c9300-48p",
+            "C9300-48P",
+            "1.3.6.1.4.1.1",
+            "",
+            json.dumps({"mode": "direct_percent", "oid": "1.3.6.1.4.1.1"}),
+            "{}",
+            json.dumps({"cpu": {"mode": "direct_percent", "oid": "1.3.6.1.4.1.1"}}),
+            "unverified",
+        ),
+    )
+    conn.executemany(
+        """
+        INSERT INTO devices
+            (id, hostname, ip_address, vendor, platform, model,
+             snmp_cpu_oid, snmp_memory_oid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("device-1", "core-sw-01", "192.0.2.10", "Cisco", "cisco_ios", "C9300-48P", "", ""),
+            ("device-2", "other-vendor", "192.0.2.11", "H3C", "h3c_comware", "C9300-48P", "", ""),
+            ("device-3", "other-model", "192.0.2.12", "Cisco", "cisco_ios", "C9300-49P", "", ""),
+        ],
+    )
+
+    mapping = get_model_metric_profile_mapping(conn, "profile-1")
+
+    assert mapping["matched_device_count"] == 1
+    assert mapping["sample_device_id"] == "device-1"
+    assert mapping["same_model_other_vendor_count"] == 1
+    assert mapping["collector_status"] == "blocked_unverified"
+    assert mapping["devices"][0]["device_id"] == "device-1"

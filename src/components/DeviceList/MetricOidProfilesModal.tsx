@@ -1,6 +1,6 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, CheckCircle2, Cpu, GitBranch, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
+import { Activity, CheckCircle2, ChevronDown, ChevronUp, Cpu, GitBranch, Plus, RefreshCw, Save, Search, Settings2, Trash2, X } from 'lucide-react';
 import { apiRequest } from '../../api/http';
 import { ALL_VENDOR_NAMES, NETWORK_VENDOR_GROUPS } from '../../pages/AssetManagement/constants';
 import Pagination from '../Pagination';
@@ -46,6 +46,10 @@ interface MetricOidProfile {
   configured: boolean;
   verification_status: 'verified' | 'failed' | 'unverified' | string;
   device_count: number;
+  matched_device_count?: number;
+  profile_applied_device_count?: number;
+  blocked_device_count?: number;
+  collector_status?: 'active' | 'blocked_unverified' | 'blocked_failed' | 'no_matching_device' | 'builtin_only' | string;
   sample_device_id?: string | null;
   platforms: string[];
 }
@@ -57,6 +61,15 @@ interface MetricProfileListResponse {
   page: number;
   page_size: number;
   total_pages: number;
+}
+
+interface MetricProfileMapping {
+  collector_status: string;
+  matched_device_count: number;
+  profile_applied_device_count: number;
+  blocked_device_count: number;
+  metric_keys?: string[];
+  sample_device_id?: string | null;
 }
 
 interface ProfileForm {
@@ -190,7 +203,12 @@ const definitionFromProfile = (
   };
 };
 
-const createDefaultRows = () => METRIC_CATALOG.map(item => ({ key: item.key, definition: createDefinition(item.key) }));
+const DEFAULT_METRIC_KEYS = ['cpu', 'memory'];
+
+const createDefaultRows = (keys = DEFAULT_METRIC_KEYS) => keys
+  .map(key => catalogEntry(key))
+  .filter((item): item is MetricCatalogEntry => Boolean(item))
+  .map(item => ({ key: item.key, definition: createDefinition(item.key) }));
 
 const profileDefinitions = (profile: MetricOidProfile) => {
   const definitions = { ...(profile.metric_definitions || {}) };
@@ -201,11 +219,24 @@ const profileDefinitions = (profile: MetricOidProfile) => {
 
 const rowsFromProfile = (profile: MetricOidProfile): MetricRow[] => {
   const definitions = profileDefinitions(profile);
-  const keys = [...METRIC_CATALOG.map(item => item.key), ...Object.keys(definitions).filter(key => !catalogEntry(key))];
+  const configuredKeys = Object.keys(definitions);
+  const keys = configuredKeys.length ? configuredKeys : DEFAULT_METRIC_KEYS;
   return Array.from(new Set(keys)).map(key => ({
     key,
     definition: definitionFromProfile(key, definitions[key], key === 'cpu' ? profile.cpu_oid : key === 'memory' ? profile.memory_oid : ''),
   }));
+};
+
+const hasAdvancedSettings = (key: string, definition: MetricDefinition) => {
+  const defaults = createDefinition(key);
+  return Boolean(
+    definition.selector.trim()
+    || definition.aggregation !== defaults.aggregation
+    || definition.scale.trim() !== defaults.scale
+    || definition.offset.trim() !== defaults.offset
+    || definition.status_warning_values.trim() !== defaults.status_warning_values.trim()
+    || definition.status_fail_values.trim() !== defaults.status_fail_values.trim(),
+  );
 };
 
 const hasDefinition = (definition: MetricDefinition) => {
@@ -248,6 +279,22 @@ const outputContract = (definition: MetricDefinition, zh: boolean) => {
   return definition.unit.trim() || (zh ? '数值' : 'value');
 };
 
+const collectorStatusLabel = (status: string | undefined, zh: boolean) => {
+  if (status === 'active') return zh ? '已应用' : 'Active';
+  if (status === 'blocked_failed') return zh ? '验证失败，未应用' : 'Failed, not applied';
+  if (status === 'no_matching_device') return zh ? '无匹配设备' : 'No matching device';
+  if (status === 'blocked_unverified') return zh ? '待验证，未应用' : 'Unverified, not applied';
+  return zh ? '使用默认逻辑' : 'Built-in fallback';
+};
+
+const collectorStatusClass = (status: string | undefined) => {
+  if (status === 'active') return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+  if (status === 'blocked_failed') return 'bg-red-500/10 text-red-600 dark:text-red-400';
+  if (status === 'no_matching_device') return 'bg-slate-500/10 text-slate-600 dark:text-slate-300';
+  if (status === 'blocked_unverified') return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
+  return 'bg-slate-500/10 text-slate-600 dark:text-slate-300';
+};
+
 const inputClass = 'w-full rounded-md border border-black/8 bg-transparent px-2 py-1.5 font-mono text-[10px] outline-none focus:border-[#00bceb]/55 dark:border-white/10';
 const selectClass = 'w-full rounded-md border border-black/8 bg-transparent px-2 py-1.5 text-[10px] outline-none focus:border-[#00bceb]/55 dark:border-white/10';
 const tinyLabelClass = 'mb-1 block text-[9px] text-black/45 dark:text-white/45';
@@ -261,12 +308,27 @@ const MetricTableRow: React.FC<{
   const item = catalogEntry(row.key);
   const definition = row.definition;
   const modes = allowedModes(row.key);
+  const [advancedOpen, setAdvancedOpen] = useState(() => hasAdvancedSettings(row.key, definition));
   const set = (patch: Partial<MetricDefinition>) => onChange({ ...definition, ...patch });
+  const advancedConfigured = hasAdvancedSettings(row.key, definition);
   const sourceLabel = (label: string, value: string, field: 'oid' | 'used_oid' | 'total_oid' | 'free_oid' | 'capacity_oid', placeholder = '1.3.6.1.4.1...') => (
     <label className="block">
       <span className={tinyLabelClass}>{label}</span>
       <input value={value} onChange={event => set({ [field]: event.target.value })} className={inputClass} placeholder={placeholder} />
     </label>
+  );
+  const advancedToggle = (
+    <button
+      type="button"
+      onClick={() => setAdvancedOpen(value => !value)}
+      aria-expanded={advancedOpen}
+      className="inline-flex items-center gap-1 text-[9px] font-medium text-[#008aad] hover:text-[#006f89]"
+    >
+      <Settings2 size={11} />
+      {zh ? '高级设置' : 'Advanced settings'}
+      {advancedConfigured && !advancedOpen && <span className="h-1.5 w-1.5 rounded-full bg-[#00a9ce]" aria-label={zh ? '已配置高级设置' : 'Advanced settings configured'} />}
+      {advancedOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+    </button>
   );
 
   return (
@@ -308,18 +370,10 @@ const MetricTableRow: React.FC<{
             {definition.mode === 'counter_rate_percent' && sourceLabel(zh ? '容量 OID（单位/秒）' : 'Capacity OID (units/sec)', definition.capacity_oid, 'capacity_oid')}
           </div>
         )}
-        <label className="mt-2 block">
-          <span className={tinyLabelClass}>{zh ? '表项索引（可选）' : 'Table row selector (optional)'}</span>
-          <input value={definition.selector} onChange={event => set({ selector: event.target.value })} className={inputClass} placeholder="1 or 1.2" />
-        </label>
       </td>
       <td className="min-w-[190px] px-2 py-3">
         {definition.mode === 'status_code' ? (
-          <div className="space-y-2">
-            <label className="block"><span className={tinyLabelClass}>{zh ? '正常码 → true' : 'Normal codes → true'}</span><input value={definition.status_ok_values} onChange={event => set({ status_ok_values: event.target.value })} className={inputClass} placeholder="1" /></label>
-            <label className="block"><span className={tinyLabelClass}>{zh ? '告警码 → false' : 'Warning codes → false'}</span><input value={definition.status_warning_values} onChange={event => set({ status_warning_values: event.target.value })} className={inputClass} placeholder="4" /></label>
-            <label className="block"><span className={tinyLabelClass}>{zh ? '故障码 → false' : 'Failure codes → false'}</span><input value={definition.status_fail_values} onChange={event => set({ status_fail_values: event.target.value })} className={inputClass} placeholder="2,3" /></label>
-          </div>
+          <label className="block"><span className={tinyLabelClass}>{zh ? '正常码 → true' : 'Normal codes → true'}</span><input value={definition.status_ok_values} onChange={event => set({ status_ok_values: event.target.value })} className={inputClass} placeholder="1" /></label>
         ) : definition.mode === 'direct_value' ? (
           <label className="block"><span className={tinyLabelClass}>{zh ? '结果单位' : 'Output unit'}</span><input value={definition.unit} onChange={event => set({ unit: event.target.value })} className={inputClass} placeholder="°C / V / W" /></label>
         ) : (
@@ -327,20 +381,34 @@ const MetricTableRow: React.FC<{
         )}
       </td>
       <td className="min-w-[205px] px-2 py-3">
-        {definition.mode === 'status_code' ? (
-          <div className="rounded-md bg-black/[.025] px-2 py-2 text-[10px] leading-4 text-black/50 dark:bg-white/[.04] dark:text-white/50">{zh ? '布尔输出：true = 正常，false = 异常，null = 未知码/无数据' : 'Boolean output: true normal, false abnormal, null unknown/no data'}</div>
-        ) : definition.mode === 'counter_rate_percent' ? (
-          <div className="space-y-2">
-            <label className="block"><span className={tinyLabelClass}>{zh ? '计数器位宽（必选）' : 'Counter width (required)'}</span><select value={definition.counter_bits} onChange={event => set({ counter_bits: event.target.value as CounterBits })} className={selectClass}><option value="">{zh ? '选择 32 / 64 位' : 'Select 32 / 64 bits'}</option><option value="32">Counter32</option><option value="64">Counter64</option></select></label>
-            <label className="block"><span className={tinyLabelClass}>{zh ? '计数单位' : 'Counter unit'}</span><select value={definition.counter_unit} onChange={event => set({ counter_unit: event.target.value as 'bits' | 'octets' })} className={selectClass}><option value="bits">bits</option><option value="octets">octets × 8</option></select></label>
-          </div>
-        ) : (
-          <div className="grid gap-2 sm:grid-cols-3">
-            <label className="block sm:col-span-3"><span className={tinyLabelClass}>{zh ? '聚合方式' : 'Aggregation'}</span><select value={definition.aggregation} onChange={event => set({ aggregation: event.target.value as Aggregation })} className={selectClass}>{AGGREGATIONS.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-            <label className="block"><span className={tinyLabelClass}>{zh ? '缩放' : 'Scale'}</span><input value={definition.scale} onChange={event => set({ scale: event.target.value })} className={inputClass} /></label>
-            <label className="block"><span className={tinyLabelClass}>{zh ? '偏移' : 'Offset'}</span><input value={definition.offset} onChange={event => set({ offset: event.target.value })} className={inputClass} /></label>
-          </div>
-        )}
+        <div className="space-y-2">
+          {definition.mode === 'status_code' && (
+            <div className="rounded-md bg-black/[.025] px-2 py-2 text-[10px] leading-4 text-black/50 dark:bg-white/[.04] dark:text-white/50">{zh ? '布尔输出：true = 正常，false = 异常，null = 未知码/无数据' : 'Boolean output: true normal, false abnormal, null unknown/no data'}</div>
+          )}
+          {definition.mode === 'counter_rate_percent' && (
+            <>
+              <label className="block"><span className={tinyLabelClass}>{zh ? '计数器位宽（必选）' : 'Counter width (required)'}</span><select value={definition.counter_bits} onChange={event => set({ counter_bits: event.target.value as CounterBits })} className={selectClass}><option value="">{zh ? '选择 32 / 64 位' : 'Select 32 / 64 bits'}</option><option value="32">Counter32</option><option value="64">Counter64</option></select></label>
+              <label className="block"><span className={tinyLabelClass}>{zh ? '计数单位' : 'Counter unit'}</span><select value={definition.counter_unit} onChange={event => set({ counter_unit: event.target.value as 'bits' | 'octets' })} className={selectClass}><option value="bits">bits</option><option value="octets">octets × 8</option></select></label>
+            </>
+          )}
+          {advancedToggle}
+          {advancedOpen && (
+            <div className="space-y-2 rounded-md border border-[#00bceb]/15 bg-[#00bceb]/[.035] p-2 dark:bg-[#00bceb]/[.06]">
+              {definition.mode === 'status_code' && (
+                <>
+                  <label className="block"><span className={tinyLabelClass}>{zh ? '告警码 → false' : 'Warning codes → false'}</span><input value={definition.status_warning_values} onChange={event => set({ status_warning_values: event.target.value })} className={inputClass} placeholder="4" /></label>
+                  <label className="block"><span className={tinyLabelClass}>{zh ? '故障码 → false' : 'Failure codes → false'}</span><input value={definition.status_fail_values} onChange={event => set({ status_fail_values: event.target.value })} className={inputClass} placeholder="2,3" /></label>
+                </>
+              )}
+              <label className="block"><span className={tinyLabelClass}>{zh ? '表项索引（可选）' : 'Table row selector (optional)'}</span><input value={definition.selector} onChange={event => set({ selector: event.target.value })} className={inputClass} placeholder="1 or 1.2" /></label>
+              <label className="block"><span className={tinyLabelClass}>{zh ? '聚合方式' : 'Aggregation'}</span><select value={definition.aggregation} onChange={event => set({ aggregation: event.target.value as Aggregation })} className={selectClass}>{AGGREGATIONS.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="block"><span className={tinyLabelClass}>{zh ? '缩放' : 'Scale'}</span><input value={definition.scale} onChange={event => set({ scale: event.target.value })} className={inputClass} /></label>
+                <label className="block"><span className={tinyLabelClass}>{zh ? '偏移' : 'Offset'}</span><input value={definition.offset} onChange={event => set({ offset: event.target.value })} className={inputClass} /></label>
+              </div>
+            </div>
+          )}
+        </div>
       </td>
       <td className="w-[52px] px-2 py-3 text-right">
         <button type="button" onClick={onRemove} title={zh ? '移除指标行' : 'Remove metric'} className="rounded-md p-1.5 text-black/35 hover:bg-red-500/10 hover:text-red-600 dark:text-white/35 dark:hover:text-red-400"><Trash2 size={13} /></button>
@@ -365,17 +433,20 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
   const [form, setForm] = useState<ProfileForm>({ vendor: '', model: '', metrics: createDefaultRows() });
   const [addMetricKey, setAddMetricKey] = useState('');
 
-  const loadProfiles = async () => {
+  const loadProfiles = async (): Promise<MetricOidProfile[]> => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
       if (searchInput.trim()) params.set('search', searchInput.trim());
       const response = await apiRequest<MetricProfileListResponse>('/api/platform-registry/snmp-metric-profiles?' + params.toString());
-      setProfiles(Array.isArray(response.data) ? response.data : []);
+      const items = Array.isArray(response.data) ? response.data : [];
+      setProfiles(items);
       setTotal(Number(response.total) || 0);
       if (Number.isFinite(response.page) && response.page >= 1 && response.page !== page) setPage(response.page);
+      return items;
     } catch (error) {
       showToast(error instanceof Error ? error.message : (zh ? '型号指标模板加载失败' : 'Failed to load model metric profiles'), 'error');
+      return [];
     } finally {
       setLoading(false);
     }
@@ -472,7 +543,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
     try {
       const isEdit = Boolean(editingId);
       const endpoint = isEdit ? '/api/platform-registry/snmp-metric-profiles/' + editingId : '/api/platform-registry/snmp-metric-profiles';
-      await apiRequest(endpoint, {
+      const saved = await apiRequest<{ success: boolean; data?: { id?: string; profile_id?: string } }>(endpoint, {
         method: isEdit ? 'PUT' : 'POST',
         body: JSON.stringify({
           vendor: form.vendor.trim(),
@@ -484,13 +555,32 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
           memory_oid: String(memoryConfig.oid || ''),
         }),
       });
-      showToast(zh ? '指标模板已保存，请执行真实设备验证' : 'Metric profile saved; live verification is required', 'success');
+      const savedProfileId = String(saved.data?.profile_id || saved.data?.id || editingId || '');
       await loadProfiles();
-      onChanged?.();
       setEditorOpen(false);
       resetForm();
+      if (!savedProfileId) {
+        showToast(zh ? '模板已保存，但无法确定模板编号，请刷新后检查映射状态' : 'Profile saved, but its identifier was not returned; refresh and check mapping status.', 'error');
+        onChanged?.();
+        return;
+      }
+      const mappingEndpoint = '/api/platform-registry/snmp-metric-profiles/' + savedProfileId + '/mapping-validation';
+      const mappingResponse = await apiRequest<{ success: boolean; data: MetricProfileMapping }>(mappingEndpoint);
+      const mapping = mappingResponse.data;
+      if (mapping.sample_device_id) {
+        showToast(zh ? '模板已保存，正在用匹配设备验证 OID…' : 'Profile saved; validating the OIDs on a matching device…', 'info');
+        await testProfile({ profile_id: savedProfileId, sample_device_id: mapping.sample_device_id });
+      } else {
+        showToast(
+          zh
+            ? '模板已保存，但没有匹配的样例设备，当前仍未应用；请检查厂商/精确型号。'
+            : 'Profile saved, but no matching sample device was found; it is not applied yet. Check vendor and exact model.',
+          'info',
+        );
+        onChanged?.();
+      }
     } catch (error) {
-      showToast(error instanceof Error ? error.message : (zh ? '保存失败' : 'Save failed'), 'error');
+      showToast(error instanceof Error ? error.message : (zh ? '保存或自动映射校验失败' : 'Save or automatic mapping validation failed'), 'error');
     } finally {
       setSaving(false);
     }
@@ -514,7 +604,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
     }
   };
 
-  const testProfile = async (profile: MetricOidProfile) => {
+  const testProfile = async (profile: Pick<MetricOidProfile, 'profile_id' | 'sample_device_id'>) => {
     if (!profile.profile_id || !profile.sample_device_id) {
       showToast(zh ? '该型号没有可验证的样例设备' : 'No sample device is available for this model', 'error');
       return;
@@ -544,12 +634,17 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
     if (!profile.profile_id) return;
     try {
       const endpoint = '/api/platform-registry/snmp-metric-profiles/' + profile.profile_id + '/mapping-validation';
-      const response = await apiRequest<{ success: boolean; data: { collector_status: string; matched_device_count: number; profile_applied_device_count: number; blocked_device_count: number; metric_keys?: string[] } }>(endpoint);
+      const response = await apiRequest<{ success: boolean; data: MetricProfileMapping }>(endpoint);
       const mapping = response.data;
       const message = zh
         ? '映射范围：' + mapping.matched_device_count + ' 台；生效 ' + mapping.profile_applied_device_count + ' 台；阻断 ' + mapping.blocked_device_count + ' 台；指标 ' + ((mapping.metric_keys || []).map(key => metricLabel(key, true)).join('、') || '无') + '。'
         : 'Mapping: ' + mapping.matched_device_count + ' matched; ' + mapping.profile_applied_device_count + ' active; ' + mapping.blocked_device_count + ' blocked; metrics ' + ((mapping.metric_keys || []).join(', ') || 'none') + '.';
-      showToast(message, mapping.collector_status === 'active' || mapping.collector_status === 'builtin_only' ? 'info' : 'error');
+      showToast(
+        message,
+        mapping.collector_status === 'active' || mapping.collector_status === 'builtin_only' || mapping.collector_status === 'no_matching_device'
+          ? 'info'
+          : 'error',
+      );
     } catch (error) {
       showToast(error instanceof Error ? error.message : (zh ? '映射校验失败' : 'Mapping validation failed'), 'error');
     }
@@ -583,7 +678,12 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
             </div>
             <div className="min-h-0 flex-1 overflow-auto">
               {loading ? <div className="p-8 text-center text-xs text-black/40 dark:text-white/40">{zh ? '加载中…' : 'Loading…'}</div> : visibleProfiles.length === 0 ? <div className="p-8 text-center text-xs text-black/40 dark:text-white/40">{zh ? '没有发现型号或搜索无结果。' : 'No model groups found.'}</div> : (
-                <table className="w-full text-left text-[11px]"><thead className="sticky top-0 bg-[var(--card-bg)] text-black/40 dark:text-white/40"><tr><th className="px-3 py-2 font-medium">{zh ? '厂商 / 型号' : 'Vendor / Model'}</th><th className="px-3 py-2 font-medium">{zh ? '采集指标' : 'Metrics'}</th><th className="px-3 py-2 font-medium">{zh ? '设备数' : 'Devices'}</th><th className="px-3 py-2 font-medium">{zh ? '状态' : 'Status'}</th><th className="px-3 py-2" /></tr></thead><tbody>{visibleProfiles.map(profile => <tr key={profile.vendor + ':' + profile.model} className="border-t border-black/5 dark:border-white/6"><td className="max-w-[220px] px-3 py-2.5"><div className="truncate font-medium text-black/75 dark:text-white/80">{profile.vendor}</div><div className="truncate text-black/45 dark:text-white/45">{profile.model}</div></td><td className="max-w-[260px] px-3 py-2.5 text-black/55 dark:text-white/55"><div className="flex flex-wrap gap-1">{(profile.metric_keys || Object.keys(profile.metric_definitions || {})).map(key => <span key={key} className="rounded bg-black/[.04] px-1.5 py-0.5 text-[9px] dark:bg-white/[.06]">{metricLabel(key, zh)}</span>)}</div></td><td className="px-3 py-2.5 tabular-nums text-black/55 dark:text-white/55">{profile.device_count}</td><td className="px-3 py-2.5"><div className="flex flex-wrap gap-1"><span className={(profile.configured ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400') + ' rounded-full px-2 py-1 text-[10px]'}>{profile.configured ? (zh ? '已配置' : 'Configured') : (zh ? '使用默认' : 'Default')}</span>{profile.configured && <span className={(profile.verification_status === 'verified' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : profile.verification_status === 'failed' ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400') + ' inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px]'}>{profile.verification_status === 'verified' && <CheckCircle2 size={10} />}{profile.verification_status === 'verified' ? (zh ? '已验证' : 'Verified') : profile.verification_status === 'failed' ? (zh ? '验证失败' : 'Failed') : (zh ? '待验证' : 'Unverified')}</span>}</div></td><td className="px-3 py-2.5 text-right"><div className="flex items-center justify-end gap-1">{profile.profile_id && <button type="button" onClick={() => void validateMapping(profile)} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-[#008aad] hover:bg-[#00bceb]/10"><GitBranch size={11} />{zh ? '映射' : 'Map'}</button>}{profile.profile_id && profile.sample_device_id && <button type="button" onClick={() => void testProfile(profile)} disabled={testingId === profile.profile_id} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-40 dark:text-emerald-400"><Activity size={11} className={testingId === profile.profile_id ? 'animate-pulse' : ''} />{testingId === profile.profile_id ? (zh ? '测试中' : 'Testing') : (zh ? '验证' : 'Test')}</button>}<button type="button" onClick={() => startEdit(profile)} className="rounded-md px-2 py-1 text-[10px] font-medium text-[#008aad] hover:bg-[#00bceb]/10">{zh ? '编辑' : 'Edit'}</button></div></td></tr>)}</tbody></table>
+                <table className="w-full text-left text-[11px]"><thead className="sticky top-0 bg-[var(--card-bg)] text-black/40 dark:text-white/40"><tr><th className="px-3 py-2 font-medium">{zh ? '厂商 / 型号' : 'Vendor / Model'}</th><th className="px-3 py-2 font-medium">{zh ? '采集指标' : 'Metrics'}</th><th className="px-3 py-2 font-medium">{zh ? '设备数' : 'Devices'}</th><th className="px-3 py-2 font-medium">{zh ? '状态' : 'Status'}</th><th className="px-3 py-2" /></tr></thead><tbody>{visibleProfiles.map(profile => {
+                  const collectorStatus = profile.collector_status || (profile.configured ? 'blocked_unverified' : 'builtin_only');
+                  const matchedDeviceCount = Number(profile.matched_device_count ?? profile.device_count ?? 0);
+                  const appliedDeviceCount = Number(profile.profile_applied_device_count ?? (collectorStatus === 'active' ? matchedDeviceCount : 0));
+                  return <tr key={profile.vendor + ':' + profile.model} className="border-t border-black/5 dark:border-white/6"><td className="max-w-[220px] px-3 py-2.5"><div className="truncate font-medium text-black/75 dark:text-white/80">{profile.vendor}</div><div className="truncate text-black/45 dark:text-white/45">{profile.model}</div></td><td className="max-w-[260px] px-3 py-2.5 text-black/55 dark:text-white/55"><div className="flex flex-wrap gap-1">{(profile.metric_keys || Object.keys(profile.metric_definitions || {})).map(key => <span key={key} className="rounded bg-black/[.04] px-1.5 py-0.5 text-[9px] dark:bg-white/[.06]">{metricLabel(key, zh)}</span>)}</div></td><td className="px-3 py-2.5 tabular-nums text-black/55 dark:text-white/55">{profile.device_count}</td><td className="px-3 py-2.5"><div className="flex flex-wrap gap-1"><span className={(profile.configured ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400') + ' rounded-full px-2 py-1 text-[10px]'}>{profile.configured ? (zh ? '已配置' : 'Configured') : (zh ? '使用默认' : 'Default')}</span>{profile.configured && <span className={(profile.verification_status === 'verified' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : profile.verification_status === 'failed' ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400') + ' inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px]'}>{profile.verification_status === 'verified' && <CheckCircle2 size={10} />}{profile.verification_status === 'verified' ? (zh ? '已验证' : 'Verified') : profile.verification_status === 'failed' ? (zh ? '验证失败' : 'Failed') : (zh ? '待验证' : 'Unverified')}</span>}<span className={collectorStatusClass(collectorStatus) + ' rounded-full px-2 py-1 text-[10px]'}>{collectorStatusLabel(collectorStatus, zh)}</span></div><div className="mt-1 text-[9px] text-black/40 dark:text-white/40">{zh ? `匹配 ${matchedDeviceCount} 台 · 已应用 ${appliedDeviceCount} 台` : `${matchedDeviceCount} matched · ${appliedDeviceCount} applied`}</div></td><td className="px-3 py-2.5 text-right"><div className="flex items-center justify-end gap-1">{profile.profile_id && <button type="button" onClick={() => void validateMapping(profile)} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-[#008aad] hover:bg-[#00bceb]/10"><GitBranch size={11} />{zh ? '映射' : 'Map'}</button>}{profile.profile_id && profile.sample_device_id && <button type="button" onClick={() => void testProfile(profile)} disabled={testingId === profile.profile_id} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-emerald-700 hover:bg-emerald-500/10 disabled:opacity-40 dark:text-emerald-400"><Activity size={11} className={testingId === profile.profile_id ? 'animate-pulse' : ''} />{testingId === profile.profile_id ? (zh ? '测试中' : 'Testing') : (zh ? '验证' : 'Test')}</button>}<button type="button" onClick={() => startEdit(profile)} className="rounded-md px-2 py-1 text-[10px] font-medium text-[#008aad] hover:bg-[#00bceb]/10">{zh ? '编辑' : 'Edit'}</button></div></td></tr>;
+                })}</tbody></table>
               )}
             </div>
             <Pagination
@@ -604,13 +704,13 @@ const MetricOidProfilesModal: React.FC<Props> = ({ open, onClose, onChanged, lan
                   <button type="button" onClick={closeEditor} className="rounded-lg p-1.5 text-black/40 hover:bg-black/5 dark:text-white/45 dark:hover:bg-white/8" aria-label={zh ? '关闭' : 'Close'}><X size={16} /></button>
                 </div>
           <aside className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-[#00bceb]/20 bg-[#00bceb]/[.04] dark:bg-[#00bceb]/[.06]">
-            <div className="flex items-center justify-between gap-3 border-b border-black/6 p-4 dark:border-white/8"><div><div className="text-xs font-semibold text-black/75 dark:text-white/80">{editingId ? (zh ? '编辑型号模板' : 'Edit model profile') : (zh ? '新增型号模板' : 'New model profile')}</div><div className="mt-1 text-[10px] text-black/40 dark:text-white/40">{zh ? '每一行是一个硬件指标，结果类型由指标类别约束。' : 'One row per hardware metric; the output type is constrained by metric category.'}</div></div><button type="button" onClick={resetForm} className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] text-[#008aad] hover:bg-[#00bceb]/10"><Plus size={12} />{zh ? '新建' : 'New'}</button></div>
+            <div className="border-b border-black/6 p-4 dark:border-white/8"><div className="text-xs font-semibold text-black/75 dark:text-white/80">{editingId ? (zh ? '编辑型号模板' : 'Edit model profile') : (zh ? '新增型号模板' : 'New model profile')}</div><div className="mt-1 text-[10px] text-black/40 dark:text-white/40">{zh ? '先填写厂商、精确型号和需要采集的 OID；默认仅显示 CPU、内存，其他指标按需添加。' : 'Start with vendor, exact model, and the OIDs you need; CPU and memory are shown by default, while other metrics are optional.'}</div></div>
             <div className="min-h-0 flex-1 overflow-auto p-4">
               <div className="mb-3 grid gap-2 sm:grid-cols-2">
                 <label className="block text-[11px] text-black/55 dark:text-white/55">{zh ? '厂商（同步资产管理）' : 'Vendor (shared with assets)'}<select value={form.vendor} onChange={event => setForm(prev => ({ ...prev, vendor: event.target.value }))} className="mt-1 w-full rounded-lg border border-black/8 bg-white/40 px-2.5 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.03]"><option value="">{zh ? '选择设备厂商...' : 'Select device vendor...'}</option>{NETWORK_VENDOR_GROUPS.map(group => <optgroup key={group.key} label={zh ? group.labelZh : group.labelEn}>{group.vendors.map(vendor => <option key={vendor} value={vendor}>{vendor}</option>)}</optgroup>)}{customVendorOptions.length > 0 && <optgroup label={zh ? '历史/自定义厂商' : 'Legacy / custom vendors'}>{customVendorOptions.map(vendor => <option key={vendor} value={vendor}>{vendor}</option>)}</optgroup>}</select></label>
                 <label className="block text-[11px] text-black/55 dark:text-white/55">{zh ? '精确型号' : 'Exact model'}<input value={form.model} onChange={event => setForm(prev => ({ ...prev, model: event.target.value }))} className="mt-1 w-full rounded-lg border border-black/8 bg-white/40 px-2.5 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.03]" placeholder="C9300-48P" /></label>
               </div>
-              <div className="mb-3 flex items-center justify-between gap-2"><div className="text-[10px] font-medium text-black/55 dark:text-white/55">{zh ? '硬件指标明细' : 'Hardware metric definitions'}</div><div className="flex min-w-0 items-center gap-1"><select value={addMetricKey} onChange={event => setAddMetricKey(event.target.value)} className="max-w-[170px] rounded-md border border-black/8 bg-transparent px-2 py-1.5 text-[10px] outline-none dark:border-white/10"><option value="">{zh ? '选择指标...' : 'Select metric...'}</option>{addableMetrics.map(item => <option key={item.key} value={item.key}>{zh ? item.labelZh : item.labelEn}</option>)}</select><button type="button" onClick={addMetric} disabled={!addMetricKey} className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[#00a9ce] px-2 py-1.5 text-[10px] font-medium text-white hover:bg-[#008fb1] disabled:opacity-40"><Plus size={12} />{zh ? '添加行' : 'Add row'}</button></div></div>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><div className="text-[10px] font-medium text-black/55 dark:text-white/55">{zh ? '采集指标' : 'Metrics to collect'}</div><div className="mt-0.5 text-[9px] text-black/40 dark:text-white/40">{zh ? '默认带有 CPU、内存；只添加设备实际提供的指标。' : 'CPU and memory are included by default; add only metrics exposed by the device.'}</div></div><div className="flex min-w-0 items-center gap-1"><select aria-label={zh ? '选择要添加的指标' : 'Metric to add'} value={addMetricKey} onChange={event => setAddMetricKey(event.target.value)} className="max-w-[170px] rounded-md border border-black/8 bg-transparent px-2 py-1.5 text-[10px] outline-none dark:border-white/10"><option value="">{zh ? '按需添加指标...' : 'Add optional metric...'}</option>{addableMetrics.map(item => <option key={item.key} value={item.key}>{zh ? item.labelZh : item.labelEn}</option>)}</select><button type="button" onClick={addMetric} disabled={!addMetricKey} className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[#00a9ce] px-2 py-1.5 text-[10px] font-medium text-white hover:bg-[#008fb1] disabled:opacity-40"><Plus size={12} />{zh ? '添加指标' : 'Add metric'}</button></div></div>
               <div className="overflow-x-auto rounded-lg border border-black/7 bg-white/35 dark:border-white/8 dark:bg-white/[.03]">
                 <table className="min-w-[1030px] w-full text-left"><thead className="sticky top-0 z-10 bg-[var(--card-bg)] text-[9px] text-black/45 dark:text-white/45"><tr><th className="px-3 py-2 font-medium">{zh ? '指标' : 'Metric'}</th><th className="px-2 py-2 font-medium">{zh ? '采集方式' : 'Mode'}</th><th className="px-2 py-2 font-medium">{zh ? 'OID / 公式' : 'OID / formula'}</th><th className="px-2 py-2 font-medium">{zh ? '结果类型' : 'Output'}</th><th className="px-2 py-2 font-medium">{zh ? '计算与计数器' : 'Calculation / counter'}</th><th className="px-2 py-2" /></tr></thead><tbody>{form.metrics.map(row => <MetricTableRow key={row.key} row={row} zh={zh} onChange={definition => setForm(prev => ({ ...prev, metrics: prev.metrics.map(item => item.key === row.key ? { ...item, definition } : item) }))} onRemove={() => setForm(prev => ({ ...prev, metrics: prev.metrics.filter(item => item.key !== row.key) }))} />)}</tbody></table>
               </div>

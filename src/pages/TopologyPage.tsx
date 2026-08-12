@@ -10,6 +10,7 @@ import PageHero from '../components/PageHero';
 import { useTopologyGenerationStatus } from '../hooks/useTopologyGenerationStatus';
 import { matchesTopologyTagConditions } from '../hooks/useTopologyVisibleDevices';
 import { topologyRoleLabel } from '../domain/topologyRoles';
+import { buildTopologySiteOverview } from '../utils/topologySiteOverview';
 
 type TopologyStatusFilter = 'all' | 'online' | 'offline' | 'pending';
 type TopologyLinkStatusFilter = 'all' | 'up' | 'degraded' | 'down' | 'stale' | 'unknown';
@@ -80,77 +81,11 @@ interface TopologySiteOverviewProps {
   onSelectSite: (siteId: string) => void;
 }
 
-const getTopologySiteKey = (device: Partial<Device>) =>
-  String((device as any).site_id || (device as any).site || (device as any).site_name || '').trim() || 'unassigned';
-
 const TopologySiteOverview: React.FC<TopologySiteOverviewProps> = ({ language, sites, devices, links, onSelectSite }) => {
-  const overview = React.useMemo(() => {
-    const siteMap = new Map<string, {
-      id: string;
-      name: string;
-      deviceCount: number;
-      linkCount: number;
-      orphanCount: number;
-      offlineCount: number;
-      staleCount: number;
-    }>();
-    sites.forEach((site: any) => {
-      const id = String(site.site_id || site.site_code || site.site_name || 'unassigned');
-      siteMap.set(id, {
-        id,
-        name: String(site.site_name || site.site_code || id),
-        // The API summary is retained for links/orphans, but visible device
-        // counts must be rebuilt from the current filtered inventory. The old
-        // code seeded this value and then added the same devices again.
-        deviceCount: 0,
-        linkCount: Number(site.link_count || 0),
-        orphanCount: Number(site.orphan_devices || 0),
-        offlineCount: Number(site.offline_devices || 0),
-        staleCount: Number(site.stale_links || 0),
-      });
-    });
-    const deviceSite = new Map<string, string>();
-    devices.forEach((device) => {
-      const id = getTopologySiteKey(device);
-      deviceSite.set(device.id, id);
-      const current = siteMap.get(id) || {
-        id,
-        name: id === 'unassigned' ? (language === 'zh' ? '未分配站点' : 'Unassigned site') : id,
-        deviceCount: 0,
-        linkCount: 0,
-        orphanCount: 0,
-        offlineCount: 0,
-        staleCount: 0,
-      };
-      current.deviceCount += 1;
-      if (String(device.status || '').toLowerCase() === 'offline') current.offlineCount += 1;
-      siteMap.set(id, current);
-    });
-    const connectionMap = new Map<string, { source: string; target: string; count: number; down: number }>();
-    links.forEach((link) => {
-      const source = deviceSite.get(link.source_device_id);
-      const target = deviceSite.get(link.target_device_id);
-      if (!source || !target || source === target) return;
-      const [left, right] = [source, target].sort();
-      const key = `${left}::${right}`;
-      const current = connectionMap.get(key) || { source: left, target: right, count: 0, down: 0 };
-      current.count += 1;
-      if (link.operational_state === 'down' || link.operational_state === 'degraded') current.down += 1;
-      connectionMap.set(key, current);
-      if (sites.length === 0) {
-        const sourceSite = siteMap.get(source);
-        const targetSite = siteMap.get(target);
-        if (sourceSite) sourceSite.linkCount += 1;
-        if (targetSite) targetSite.linkCount += 1;
-      }
-    });
-    const sitesById = new Map(siteMap);
-    return {
-      sites: Array.from(sitesById.values()).sort((left, right) => right.deviceCount - left.deviceCount || left.name.localeCompare(right.name)),
-      connections: Array.from(connectionMap.values()).sort((left, right) => right.count - left.count),
-      siteName: (id: string) => sitesById.get(id)?.name || id,
-    };
-  }, [devices, language, links, sites]);
+  const overview = React.useMemo(
+    () => buildTopologySiteOverview(sites, devices, links, language === 'zh' ? '未分配站点' : 'Unassigned site'),
+    [devices, language, links, sites],
+  );
 
   return (
     <div className="h-full overflow-auto bg-slate-50/70 p-5">

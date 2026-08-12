@@ -43,6 +43,16 @@ describe('topology role-tier layout', () => {
     expect(selection).toEqual({ layers: [1, 2, 3], source: 'role' });
   });
 
+  it('puts devices without a role in a separate fallback tier', () => {
+    const selection = selectTopologyLayoutLayers([
+      { id: 'core', role: 'core' },
+      { id: 'access', role: 'access' },
+      { id: 'unknown' },
+    ]);
+
+    expect(selection).toEqual({ layers: [1, 3, 4], source: 'role' });
+  });
+
   it('prefers the canonical topology identity over a generic device role', () => {
     const selection = selectTopologyLayoutLayers([
       { id: 'a', role_identity: 'CORE_SWITCH', role: 'switch' },
@@ -65,6 +75,17 @@ describe('topology role-tier layout', () => {
       { id: 'a', hostname: 'S1', role: 'access' },
       { id: 'b', hostname: 'S2', role: 'access' },
     ], 1000, 480)).toBeNull();
+  });
+
+  it('keeps semantic rows separate when the viewport is shorter than the hierarchy', () => {
+    const positions = buildTopologyRoleLayeredPositions(whDc02Devices, 1000, 180);
+    expect(positions).not.toBeNull();
+
+    const rowYs = whDc02Devices.map((device) => positions?.[device.id]?.y);
+    expect(new Set(rowYs).size).toBe(4);
+    expect(positions?.['fw-10'].y).toBeLessThan(positions?.['core-1'].y ?? 0);
+    expect(positions?.['core-1'].y).toBeLessThan(positions?.['dist-3'].y ?? 0);
+    expect(positions?.['dist-3'].y).toBeLessThan(positions?.['access-5'].y ?? 0);
   });
 
   it('repairs collapsed saved x coordinates while keeping the role rows', () => {

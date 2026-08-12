@@ -62,7 +62,11 @@ export const selectTopologyLayoutLayers = (
   const roleLayers = devices.map(getRoleLayer);
   const roleValues = roleLayers.filter((layer): layer is number => layer !== null);
   if (roleValues.length > 0 && new Set(roleValues).size > 1) {
-    const fallbackLayer = Math.max(...roleValues);
+    // A missing role is not evidence that the device belongs to the highest
+    // known tier. Putting it there makes blank/UNKNOWN assets share a row with
+    // access devices and causes the row separator labels to overlap. Reserve
+    // the next visual tier for those devices instead.
+    const fallbackLayer = Math.max(4, Math.max(...roleValues) + 1);
     return {
       layers: roleLayers.map((layer) => layer ?? fallbackLayer),
       source: 'role',
@@ -332,7 +336,10 @@ const buildHorizontalRowPositions = (
   const startX = Math.max(sideInset, (width - totalWidth) / 2);
   return Object.fromEntries(ids.map((id, index) => [id, {
     x: clampPosition(startX + index * spacing, 48, Math.max(48, width - 48)),
-    y: clampPosition(y, 56, Math.max(56, height - 56)),
+    // A short viewport must not collapse multiple semantic layers onto the
+    // same row. The SVG zoom-to-fit step can scale this virtual height back
+    // into the available viewport; clamping here loses the layer separation.
+    y: Math.max(56, y),
   }]));
 };
 
@@ -467,7 +474,7 @@ export const repairTopologyRoleLayeredPositions = (
     candidates.forEach(({ device, point }) => {
       repaired[device.id] = {
         x: clampPosition(point.x, 48, Math.max(48, width - 48)),
-        y: clampPosition(rowKey, 56, Math.max(56, height - 56)),
+        y: Math.max(56, rowKey),
       };
     });
   });

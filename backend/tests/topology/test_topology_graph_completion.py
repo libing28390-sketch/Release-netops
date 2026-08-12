@@ -303,3 +303,34 @@ def test_persisted_graph_returns_special_views_groups_members_and_evidence_count
     assert {"HA_PEER", "CONTROL"}.issubset(relations)
     assert {member["node_id"] for member in logical["group_members"]} == {"fw-a", "fw-b"}
     assert all(edge["evidence_count"] >= 1 for edge in logical["edges"])
+
+
+def test_route_evidence_is_visible_in_l3_but_never_in_physical_view(graph_db):
+    graph = build_graph(
+        [{"id": "router-a"}, {"id": "router-b"}],
+        [
+            {
+                "source_device_id": "router-a",
+                "target_device_id": "router-b",
+                "source_type": "lldp",
+                "source_interface": "Gi0/0",
+                "target_interface": "Gi0/1",
+            },
+            {
+                "source_device_id": "router-a",
+                "target_device_id": "router-b",
+                "source_type": "ospf",
+                "protocol": "ospf",
+                "relation_type": "LOGICAL",
+                "semantic_relation": "ROUTE_NEXT_HOP",
+                "direction": "directed",
+            },
+        ],
+    )
+    persist_graph(graph)
+
+    physical_relations = {edge["relation_type"] for edge in get_graph(view="physical")["edges"]}
+    l3_relations = {edge["relation_type"] for edge in get_graph(view="l3")["edges"]}
+
+    assert physical_relations == {"PHYSICAL"}
+    assert "LOGICAL" in l3_relations

@@ -1525,6 +1525,69 @@ def _bgp_route_identity(item: dict) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _persist_routing_neighbor_results(db_conn, results: list[dict], last_update: str) -> dict[str, int]:
+    """Replace only protocol facts collected successfully in this run.
+
+    A failed device collection must not erase the last known neighbors for
+    every device.  Successful empty protocol results still replace that
+    device/protocol, because an explicit empty adjacency is a valid fact.
+    """
+    updated_devices: set[str] = set()
+    updated_protocols: set[tuple[str, str]] = set()
+    inserted = 0
+    for result in results:
+        if not result.get('success'):
+            continue
+        device_id = str(result.get('device_id') or '').strip()
+        protocols = {
+            str(protocol or '').strip().lower()
+            for protocol in (result.get('protocols') or [])
+            if str(protocol or '').strip()
+        }
+        if not device_id or not protocols:
+            continue
+        updated_devices.add(device_id)
+        for protocol in protocols:
+            updated_protocols.add((device_id, protocol))
+            db_conn.execute(
+                "DELETE FROM routing_neighbors WHERE device_id = ? AND LOWER(protocol) = ?",
+                (device_id, protocol),
+            )
+        for item in result.get('neighbors') or []:
+            neighbor_ip = str(item.get('neighbor_ip') or '').strip()
+            neighbor_id = str(item.get('neighbor_id') or '').strip()
+            local_interface = str(item.get('local_interface') or '').strip()
+            protocol = str(item.get('protocol') or '').strip().lower()
+            if not protocol:
+                continue
+            uid = f"{device_id}_{protocol}_{neighbor_ip or neighbor_id}_{local_interface}"
+            db_conn.execute('''
+                INSERT INTO routing_neighbors (
+                    id, device_id, protocol, neighbor_id, neighbor_ip, local_interface, state, uptime, local_as, remote_as, area_id, last_updated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                uid,
+                device_id,
+                protocol,
+                neighbor_id,
+                neighbor_ip,
+                local_interface,
+                item.get('state') or '',
+                item.get('uptime') or '',
+                item.get('local_as', 0),
+                item.get('remote_as', 0),
+                item.get('area_id') or '',
+                last_update,
+            ))
+            inserted += 1
+    db_conn.commit()
+    return {
+        'updated_devices': len(updated_devices),
+        'updated_protocols': len(updated_protocols),
+        'inserted_neighbors': inserted,
+    }
+
+
 def sync_routing_neighbors_job():
     """Collect dynamic routing neighbors using policy plus route evidence.
 
@@ -1616,22 +1679,30 @@ def sync_routing_neighbors_job():
     from services.operational_data_service import collect_operational_data
 
     workers = min(5, len(l3_devices))
-    all_neighbors = []
+    collection_results: list[dict] = []
 
-    def collect_neighbors(dev: dict) -> list[dict]:
+    def collect_neighbors(dev: dict) -> dict:
+        dev_id = str(dev.get('id') or '')
+        categories = enabled_categories.get(dev_id, [])
+        base_result = {
+            'device_id': dev_id,
+            'success': False,
+            'protocols': [],
+            'neighbors': [],
+        }
+        if not categories:
+            return base_result
+
         ip = dev.get('ip_address')
         port = int(dev.get('management_port') or dev.get('port') or 22)
         from drivers.ssh_compat import is_ssh_port_open
         if not is_ssh_port_open(ip, port):
             logger.warning("Failed to collect routing neighbors for device %s: SSH port %s is closed/unreachable", dev.get('hostname'), port)
-            return []
+            return base_result
 
-        dev_id = dev['id']
         res = []
+        successful_protocols: set[str] = set()
         try:
-            categories = enabled_categories.get(str(dev_id), [])
-            if not categories:
-                return res
             payload = collect_operational_data(
                 dev,
                 categories=categories,
@@ -1639,6 +1710,13 @@ def sync_routing_neighbors_job():
             )
             for cat_res in payload.get('categories', []):
                 key = cat_res.get('key')
+                parse_status = str(cat_res.get('parse_status') or '').strip().lower()
+                if (
+                    cat_res.get('success')
+                    and parse_status not in {'failed', 'unsupported_by_platform'}
+                    and key in {'bgp', 'ospf', 'eigrp', 'isis', 'rip'}
+                ):
+                    successful_protocols.add(str(key).lower())
                 records = cat_res.get('records', [])
                 if key == 'bgp':
                     for r in records:
@@ -1728,43 +1806,44 @@ def sync_routing_neighbors_job():
                         })
         except Exception as e:
             logger.debug(f"[Scheduler Job] Failed to collect routing neighbors from {dev.get('hostname') or dev.get('ip_address')}: {e}")
-        return res
+            return base_result
+        return {
+            'device_id': dev_id,
+            'success': bool(successful_protocols),
+            'protocols': sorted(successful_protocols),
+            'neighbors': res,
+        }
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         future_map = {executor.submit(collect_neighbors, dev): dev for dev in l3_devices}
         for future in as_completed(future_map):
             try:
-                res = future.result()
-                all_neighbors.extend(res)
+                collection_results.append(future.result())
             except Exception as e:
                 logger.debug(f"[Scheduler Job] ThreadPool error during neighbor collection: {e}")
+                device = future_map[future]
+                collection_results.append({
+                    'device_id': str(device.get('id') or ''),
+                    'success': False,
+                    'protocols': [],
+                    'neighbors': [],
+                })
 
     db_conn = get_db_connection()
     try:
-        db_conn.execute("DELETE FROM routing_neighbors")
         last_update = _beijing_now_iso()
-        for item in all_neighbors:
-            uid = f"{item['device_id']}_{item['protocol']}_{item['neighbor_ip']}_{item['local_interface']}"
-            db_conn.execute('''
-                INSERT INTO routing_neighbors (
-                    id, device_id, protocol, neighbor_id, neighbor_ip, local_interface, state, uptime, local_as, remote_as, area_id, last_updated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                uid,
-                item['device_id'],
-                item['protocol'],
-                item['neighbor_id'],
-                item['neighbor_ip'],
-                item['local_interface'],
-                item['state'],
-                item['uptime'],
-                item.get('local_as', 0),
-                item['remote_as'],
-                item['area_id'],
-                last_update
-            ))
-        db_conn.commit()
-        logger.info(f"Successfully synced {len(all_neighbors)} routing neighbors to DB.")
+        summary = _persist_routing_neighbor_results(db_conn, collection_results, last_update)
+        if summary['updated_protocols']:
+            logger.info(
+                "Successfully synced %s routing neighbors to DB across %s device(s) and %s protocol(s).",
+                summary['inserted_neighbors'],
+                summary['updated_devices'],
+                summary['updated_protocols'],
+            )
+        else:
+            logger.warning(
+                "No routing-neighbor protocol collection succeeded; preserving existing routing facts."
+            )
         # Keep the topology evidence graph in sync with the routing inventory.
         # Routing collection is scheduled independently from LLDP discovery,
         # so waiting for the next topology run leaves the L3 view stale.

@@ -2675,6 +2675,94 @@ def get_current_links(
         conn.close()
 
 
+def _route_table_graph_observations(conn: Any, current_device_ids: set[str]) -> list[dict[str, Any]]:
+    """Convert route next-hop facts into non-physical graph evidence.
+
+    A route learned through OSPF/BGP is not proof of a cable-level adjacency,
+    so these observations are deliberately classified as ``LOGICAL``.  The
+    physical LLDP/CDP read model is not involved here.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT rt.device_id, rt.next_hop, rt.outgoing_interface,
+                   rt.protocol, rt.destination, rt.vrf_name, rt.metric,
+                   rt.preference, rt.last_updated,
+                   peer.id AS peer_device_id
+            FROM route_table rt
+            LEFT JOIN devices peer
+              ON peer.ip_address = rt.next_hop
+              OR LOWER(peer.hostname) = LOWER(rt.next_hop)
+              OR EXISTS (
+                  SELECT 1 FROM interfaces peer_intf
+                  WHERE peer_intf.device_id = peer.id
+                    AND (peer_intf.ip_address = rt.next_hop
+                         OR peer_intf.primary_ip = rt.next_hop)
+              )
+              OR EXISTS (
+                  SELECT 1 FROM ip_inventory peer_ip
+                  WHERE peer_ip.device_id = peer.id
+                    AND peer_ip.ip = rt.next_hop
+              )
+            WHERE TRIM(COALESCE(rt.next_hop, '')) NOT IN ('', '0.0.0.0', '::')
+              AND COALESCE(rt.active, 1) = 1
+              AND LOWER(COALESCE(rt.protocol, '')) NOT IN
+                  ('connected', 'local', 'direct', 'c')
+            """
+        ).fetchall()
+    except Exception:
+        logger.debug('Route-table graph projection skipped', exc_info=True)
+        return []
+
+    protocol_aliases = {
+        'o': 'ospf',
+        'b': 'bgp',
+        'ebgp': 'bgp',
+        'ibgp': 'bgp',
+        'd': 'eigrp',
+        'i': 'isis',
+        'r': 'rip',
+    }
+    observations: list[dict[str, Any]] = []
+    for row in rows:
+        source_device_id = str(row['device_id'] or '').strip()
+        next_hop = str(row['next_hop'] or '').strip()
+        if source_device_id not in current_device_ids or not next_hop:
+            continue
+        protocol_raw = str(row['protocol'] or 'routing').strip().lower()
+        protocol = protocol_aliases.get(protocol_raw, protocol_raw or 'routing')
+        target_device_id = str(row['peer_device_id'] or '').strip()
+        if target_device_id not in current_device_ids:
+            target_device_id = ''
+        target = target_device_id or next_hop
+        if target == source_device_id:
+            continue
+        observations.append({
+            'source_device_id': source_device_id,
+            'target_device_id': target,
+            'target_ip': next_hop,
+            'source_interface': row['outgoing_interface'] or '',
+            'target_interface': '',
+            'source_type': protocol,
+            'protocol': protocol,
+            'relation_type': 'LOGICAL',
+            'semantic_relation': 'ROUTE_NEXT_HOP',
+            'direction': 'directed',
+            'confidence': 0.55,
+            'observed_at': row['last_updated'] or datetime.now(timezone.utc).isoformat(),
+            'metadata': {
+                'category': 'routing_table',
+                'route_protocol': protocol,
+                'destination': row['destination'] or '',
+                'vrf_name': row['vrf_name'] or 'default',
+                'metric': row['metric'],
+                'preference': row['preference'],
+                'next_hop': next_hop,
+            },
+        })
+    return observations
+
+
 def _sync_evidence_graph_from_observations() -> None:
     """Project safe discovery metadata into the evidence graph after rebuild.
 
@@ -2831,12 +2919,17 @@ def _sync_evidence_graph_from_observations() -> None:
             for row in routing_rows:
                 source_device_id = str(row['device_id'] or '').strip()
                 target_device_id = str(row['peer_device_id'] or '').strip()
-                if source_device_id not in current_device_ids or not target_device_id:
+                if source_device_id not in current_device_ids:
+                    continue
+                if target_device_id not in current_device_ids:
+                    target_device_id = ''
+                target = target_device_id or str(row['neighbor_id'] or row['neighbor_ip'] or '').strip()
+                if not target:
                     continue
                 protocol = str(row['protocol'] or 'routing').lower()
                 observations.append({
                     'source_device_id': source_device_id,
-                    'target_device_id': target_device_id,
+                    'target_device_id': target,
                     'target_ip': row['neighbor_ip'] or '',
                     'source_interface': row['local_interface'] or '',
                     'target_interface': '',
@@ -2846,8 +2939,19 @@ def _sync_evidence_graph_from_observations() -> None:
                     'semantic_relation': 'L3_NEIGHBOR',
                     'confidence': 0.9 if str(row['state'] or '').lower() in {'full', 'up'} else 0.6,
                     'observed_at': row['last_updated'],
-                    'metadata': {'area_id': row['area_id'] or '', 'state': row['state'] or ''},
+                    'metadata': {
+                        'area_id': row['area_id'] or '',
+                        'state': row['state'] or '',
+                        'evidence_scope': 'routing_neighbor',
+                        'unresolved_target': not bool(target_device_id),
+                    },
                 })
+            # Route-table facts are weaker than a directly observed protocol
+            # neighbor, but they are still valid logical next-hop evidence.
+            # This keeps the L3/logical views useful when a protocol-specific
+            # neighbor collector has not produced a row yet, without ever
+            # promoting the fact into a PHYSICAL edge.
+            observations.extend(_route_table_graph_observations(conn, current_device_ids))
         graph = build_graph(nodes, observations, tenant_id='tenant-default')
         persist_graph(graph)
     except Exception:

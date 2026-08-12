@@ -13,6 +13,7 @@ import {
   buildTopologyRoleLayeredPositions,
   repairTopologyRoleLayeredPositions,
 } from '../utils/topologyRoleLayout';
+import { resolveTopologyPortLabelPlacements } from '../utils/topologyLabelLayout';
 import { canonicalTopologyRole, topologyRoleLabel } from '../domain/topologyRoles';
 
 const topologyIconAssets = import.meta.glob('../assets/topology/devices/**/*.svg', {
@@ -932,7 +933,10 @@ const createDefaultTransform = (width: number, height: number, nodes?: { x: numb
   const targetHeight = height * (1 - paddingPercent);
 
   let scale = Math.min(targetWidth / dx, targetHeight / dy);
-  scale = Math.max(0.45, Math.min(scale, 1.8));
+  // Dense role hierarchies can be taller than the current split-pane
+  // viewport. Allow fit-to-view to zoom out far enough to keep every layer
+  // visible instead of leaving the lower rows clipped or collapsed.
+  scale = Math.max(0.3, Math.min(scale, 1.8));
 
   const tx = width / 2 - cx * scale;
   const ty = height / 2 - cy * scale;
@@ -1943,7 +1947,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     nodes.forEach((node: any) => {
       node.x = clampPosition(node.x || width / 2, 48, width - 48);
-      node.y = clampPosition(node.y || height / 2, 56, height - 56);
+      const hasVirtualHierarchyY = layoutMode === 'hierarchy'
+        && Boolean(structuredPositions?.[node.id])
+        && !ringPositions[node.id];
+      node.y = hasVirtualHierarchyY
+        ? Math.max(56, Number(node.y) || height / 2)
+        : clampPosition(node.y || height / 2, 56, height - 56);
       persistedPositionsRef.current[node.id] = { x: node.x, y: node.y };
     });
 
@@ -2009,7 +2018,11 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         right = Math.min(width - 8, right);
 
         const top = Math.max(28, minY - 108);
-        const bottom = Math.min(height - 14, maxY + 108);
+        // Structured rows may intentionally extend beyond the raw viewport
+        // height. The zoom transform fits this virtual canvas back into view;
+        // clamping the frame here would make the lower row appear outside or
+        // overlap the site boundary.
+        const bottom = Math.max(height - 14, maxY + 108);
 
         siteGuide.append('rect')
           .attr('x', left)
@@ -2367,6 +2380,59 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       });
       return `${getPortDisplayLabel(item, 'source')} / ${getPortDisplayLabel(item, 'target')}\n${memberLines.join('\n')}`;
     };
+
+    const getPortLabelIdentity = (item: any, endpoint: 'source' | 'target', fallbackIndex?: number) => (
+      `${getLinkIdentity(item, fallbackIndex)}:${endpoint}`
+    );
+
+    const getPortLabelAnchor = (item: any, endpoint: 'source' | 'target', offset: number) => {
+      const source = item.source as { x: number; y: number };
+      const target = item.target as { x: number; y: number };
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const uX = dx / distance;
+      const uY = dy / distance;
+      const perpX = -uY;
+      const perpY = uX;
+      const point = endpoint === 'source' ? source : target;
+      const direction = endpoint === 'source' ? 1 : -1;
+
+      if (isRealAggregationLink(item)) {
+        return {
+          x: (source.x + target.x) / 2 + perpX * 13 * direction,
+          y: (source.y + target.y) / 2 + perpY * 13 * direction,
+          normal: { x: perpX, y: perpY },
+          tangent: { x: uX * direction, y: uY * direction },
+        };
+      }
+
+      if (Math.abs(uY) < 0.4) {
+        return {
+          x: point.x + uX * 58 * direction + perpX * offset,
+          y: point.y + perpY * offset + (offset > 0 ? 10 : -10),
+          normal: { x: perpX, y: perpY },
+          tangent: { x: uX * direction, y: uY * direction },
+        };
+      }
+
+      if (Math.abs(dx) < 12) {
+        const outside = point.x < width / 2 ? -1 : 1;
+        return {
+          x: point.x + outside * 62,
+          y: point.y + (endpoint === 'source' ? 1 : -1) * (uY > 0 ? 18 : -18) + perpY * offset,
+          normal: { x: outside, y: 0 },
+          tangent: { x: 0, y: uY * direction },
+        };
+      }
+
+      return {
+        x: point.x + uX * 68 * direction + perpX * offset,
+        y: point.y + uY * 68 * direction + perpY * offset,
+        normal: { x: perpX, y: perpY },
+        tangent: { x: uX * direction, y: uY * direction },
+      };
+    };
     const linkLabelGroup = g.append('g')
       .selectAll('g')
       .data(labelledLinks)
@@ -2714,6 +2780,7 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
       .style('display', (d: any) => (d.is_group ? 'none' : null));
 
     const boxHeight = 20;
+    const deviceLabelObstacles = new Map<string, { x: number; y: number; width: number; height: number }>();
     nodeLabelGroup.append('rect')
       .attr('x', -30)
       .attr('y', -3)
@@ -2749,13 +2816,22 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     // Fit each device name background to its rendered text instead of using
     // a large fixed box that leaves excessive whitespace around short names.
-    nodeHostnameText.each(function () {
+    nodeHostnameText.each(function (d: any) {
       const bbox = this.getBBox();
       const boxWidth = Math.max(56, Math.ceil(bbox.width + 16));
       d3.select(this.parentNode as SVGGElement)
         .select('rect')
         .attr('x', -boxWidth / 2)
         .attr('width', boxWidth);
+      if (!d.is_group && String(d.hostname || '').trim()) {
+        const obstacleHeight = showNodeRoleLabels ? 43 : boxHeight;
+        deviceLabelObstacles.set(String(d.id), {
+          x: Number(d.x),
+          y: Number(d.y) + 39 + (showNodeRoleLabels ? 17 : 7),
+          width: boxWidth,
+          height: obstacleHeight,
+        });
+      }
     });
 
     nodeLabelGroup.append('text')
@@ -2862,8 +2938,91 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
     const renderGraph = () => {
       nodes.forEach((node: any) => {
         node.x = clampPosition(node.x || width / 2, 48, width - 48);
-        node.y = clampPosition(node.y || height / 2, 56, height - 56);
+        const hasVirtualHierarchyY = layoutMode === 'hierarchy'
+          && Boolean(structuredPositions?.[node.id])
+          && !ringPositions[node.id];
+        node.y = hasVirtualHierarchyY
+          ? Math.max(56, Number(node.y) || height / 2)
+          : clampPosition(node.y || height / 2, 56, height - 56);
       });
+
+      const readPortLabelSize = (labelNode: SVGTextElement, fallbackText: string) => {
+        try {
+          const bbox = labelNode.getBBox();
+          return {
+            width: Math.max(1, bbox.width),
+            height: Math.max(1, bbox.height),
+          };
+        } catch {
+          return {
+            width: Math.max(1, estimateTopologyTextWidth(fallbackText)),
+            height: 12,
+          };
+        }
+      };
+      const sourceLabelSizes = new Map<string, { width: number; height: number }>();
+      const targetLabelSizes = new Map<string, { width: number; height: number }>();
+      sourcePortLabel.each(function (item: any, index: number) {
+        const key = getLinkIdentity(item, index);
+        const text = String(this.textContent || '').trim();
+        if (text) sourceLabelSizes.set(key, readPortLabelSize(this, text));
+      });
+      targetPortLabel.each(function (item: any, index: number) {
+        const key = getLinkIdentity(item, index);
+        const text = String(this.textContent || '').trim();
+        if (text) targetLabelSizes.set(key, readPortLabelSize(this, text));
+      });
+      const topologyLabelObstacles = [
+        ...nodes
+          .filter((item: any) => !item.is_group)
+          .map((item: any) => ({ x: item.x, y: item.y, width: 52, height: 52 })),
+        ...Array.from(deviceLabelObstacles.values()),
+      ];
+      const visiblePortLabelCandidates = labelledLinks.flatMap((item: any, index: number) => {
+        if (!shouldDisplayPortLabels(item)) return [];
+        const key = getLinkIdentity(item, index);
+        const offset = getParallelOffset(item, index);
+        const priority = item.link_key === selectedLinkKey || item.id === selectedLinkKey
+          ? 200
+          : item.link_key === hoveredLinkId || item.id === hoveredLinkId
+            ? 150
+            : 10;
+        const candidates = [];
+        const sourceText = getPortDisplayLabel(item, 'source');
+        const targetText = getPortDisplayLabel(item, 'target');
+        const sourceSize = sourceLabelSizes.get(key);
+        const targetSize = targetLabelSizes.get(key);
+        if (sourceText && sourceSize) {
+          const anchor = getPortLabelAnchor(item, 'source', offset);
+          candidates.push({
+            id: getPortLabelIdentity(item, 'source', index),
+            ...anchor,
+            width: sourceSize.width,
+            height: sourceSize.height,
+            priority,
+          });
+        }
+        if (targetText && targetSize) {
+          const anchor = getPortLabelAnchor(item, 'target', offset);
+          candidates.push({
+            id: getPortLabelIdentity(item, 'target', index),
+            ...anchor,
+            width: targetSize.width,
+            height: targetSize.height,
+            priority,
+          });
+        }
+        return candidates;
+      });
+      const portLabelPlacements = resolveTopologyPortLabelPlacements(
+        visiblePortLabelCandidates,
+        topologyLabelObstacles,
+        {
+          bounds: { minX: 8, maxX: Math.max(8, width - 8), minY: 18, maxY: Math.max(18, height - 18) },
+          gap: 5,
+          hideOnCollision: true,
+        },
+      );
 
       link
         .attr('d', (d: any, i: number) => {
@@ -2957,74 +3116,24 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
         .attr('opacity', 1);
       sourcePortLabelGroup
         .attr('transform', (d: any, i: number) => {
-          const offset = getParallelOffset(d);
-          const dx = d.target.x - d.source.x;
-          const dy = d.target.y - d.source.y;
-          const distance = Math.max(1, Math.hypot(dx, dy));
-          const uX = dx / distance;
-          const uY = dy / distance;
-          const perpX = -dy / distance;
-          const perpY = dx / distance;
-
-          let x: number;
-          let y: number;
-          if (isRealAggregationLink(d)) {
-            // Logical aggregation labels belong near the link midpoint while
-            // preserving the real name from each endpoint.
-            x = (d.source.x + d.target.x) / 2 + perpX * 13;
-            y = (d.source.y + d.target.y) / 2 + perpY * 13;
-          } else if (Math.abs(uY) < 0.4) {
-            // Parallel horizontal links use their route offset to create an
-            // upper/lower pair. The source label stays on the source side.
-            x = d.source.x + uX * 58 + perpX * offset;
-            y = d.source.y + perpY * offset + (offset > 0 ? 10 : -10);
-          } else if (Math.abs(dx) < 12) {
-            // Vertical links use the outside edge of the device column.
-            const outside = d.source.x < width / 2 ? -1 : 1;
-            // Leave a clear gap from the glyph/status badge before the label.
-            x = d.source.x + outside * 62;
-            y = d.source.y + (uY > 0 ? 18 : -18) + perpY * offset;
-          } else {
-            // Diagonal links keep the label at the source endpoint in the
-            // direction of travel. Text remains horizontal and never moves
-            // toward the crossing point.
-            x = d.source.x + uX * 68 + perpX * offset;
-            y = d.source.y + uY * 68 + perpY * offset;
-          }
-          return `translate(${x},${y})`;
+          const placement = portLabelPlacements[getPortLabelIdentity(d, 'source', i)];
+          const anchor = getPortLabelAnchor(d, 'source', getParallelOffset(d, i));
+          return `translate(${placement?.x ?? anchor.x},${placement?.y ?? anchor.y})`;
         });
+      sourcePortLabelGroup
+        .style('display', (d: any, i: number) => (
+          portLabelPlacements[getPortLabelIdentity(d, 'source', i)]?.hidden ? 'none' : null
+        ));
       targetPortLabelGroup
         .attr('transform', (d: any, i: number) => {
-          const offset = getParallelOffset(d);
-          const dx = d.target.x - d.source.x;
-          const dy = d.target.y - d.source.y;
-          const distance = Math.max(1, Math.hypot(dx, dy));
-          const uX = dx / distance;
-          const uY = dy / distance;
-          const perpX = -dy / distance;
-          const perpY = dx / distance;
-
-          let x: number;
-          let y: number;
-          if (isRealAggregationLink(d)) {
-            x = (d.source.x + d.target.x) / 2 - perpX * 13;
-            y = (d.source.y + d.target.y) / 2 - perpY * 13;
-          } else if (Math.abs(uY) < 0.4) {
-            // Parallel horizontal links use their route offset to create an
-            // upper/lower pair. The target label stays on the target side.
-            x = d.target.x - uX * 58 + perpX * offset;
-            y = d.target.y + perpY * offset + (offset > 0 ? 10 : -10);
-          } else if (Math.abs(dx) < 12) {
-            const outside = d.target.x < width / 2 ? -1 : 1;
-            x = d.target.x + outside * 62;
-            y = d.target.y - (uY > 0 ? 18 : -18) + perpY * offset;
-          } else {
-            // Diagonal target labels point back toward the source endpoint.
-            x = d.target.x - uX * 68 + perpX * offset;
-            y = d.target.y - uY * 68 + perpY * offset;
-          }
-          return `translate(${x},${y})`;
+          const placement = portLabelPlacements[getPortLabelIdentity(d, 'target', i)];
+          const anchor = getPortLabelAnchor(d, 'target', getParallelOffset(d, i));
+          return `translate(${placement?.x ?? anchor.x},${placement?.y ?? anchor.y})`;
         });
+      targetPortLabelGroup
+        .style('display', (d: any, i: number) => (
+          portLabelPlacements[getPortLabelIdentity(d, 'target', i)]?.hidden ? 'none' : null
+        ));
 
       const updatePortLabel = (labelNode: SVGTextElement) => {
         const bbox = labelNode.getBBox();
@@ -3068,12 +3177,12 @@ const TopologyGraph: React.FC<TopologyGraphProps> = ({ devices, links, onNodeCli
 
     const fitTransform = createDefaultTransform(width, height, nodes);
     const savedTransform = zoomTransformRef.current;
-    const savedTransformShowsGraph = Boolean(savedTransform && nodes.some((node: any) => {
+    const savedTransformShowsGraph = Boolean(savedTransform && nodes.every((node: any) => {
       const [screenX, screenY] = savedTransform.apply([Number(node.x || 0), Number(node.y || 0)]);
-      // A small margin allows labels to sit just outside the viewport while
-      // still rejecting the stale off-screen transforms that caused a blank
-      // canvas until the navigator was clicked.
-      return screenX >= -160 && screenX <= width + 160 && screenY >= -160 && screenY <= height + 160;
+      // A modest margin allows labels to sit just outside the viewport while
+      // still rejecting stale transforms that leave an entire lower layer
+      // outside the visible canvas.
+      return screenX >= -80 && screenX <= width + 80 && screenY >= -80 && screenY <= height + 80;
     }));
     const forceFitAfterFullscreen = refitOnFullscreenChangeRef.current;
     const initialTransform = forceFitAfterFullscreen || !savedTransformShowsGraph ? fitTransform : savedTransform;

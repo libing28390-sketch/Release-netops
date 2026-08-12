@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Device, TagDefinition } from '../types';
 import type { TagExpressionGroup, TagFilterConfig } from '../components/TagConditionPicker';
 import { NETWORK_TOPOLOGY_ROLE_VALUES } from '../domain/topologyRoles';
+import { getTopologySiteKey } from '../utils/topologySiteOverview';
 
 interface UseTopologyVisibleDevicesParams {
   devices: Device[];
@@ -11,6 +12,15 @@ interface UseTopologyVisibleDevicesParams {
   topologySiteFilter: string;
   topologyTagFilter: TagFilterConfig;
 }
+
+export type TopologyDeviceStatusFilter = 'all' | 'online' | 'offline' | 'pending';
+
+export const matchesTopologyStatusFilter = (
+  device: Pick<Device, 'status'>,
+  filter: TopologyDeviceStatusFilter,
+): boolean => (
+  filter === 'all' || String(device.status || '').trim().toLowerCase() === filter
+);
 
 const hasExpressionTerms = (group: TagExpressionGroup): boolean => (
   group.tag_ids.length > 0 || group.groups.some(hasExpressionTerms)
@@ -105,8 +115,10 @@ export const useTopologyVisibleDevices = ({
   const topologySiteOptions = useMemo(() => {
     const sites = new Map<string, string>();
     devices.forEach((device) => {
-      const id = String(device.site_id || device.site || '').trim();
-      if (id) sites.set(id, String(device.site || id));
+      const id = getTopologySiteKey(device);
+      if (id !== 'unassigned') {
+        sites.set(id, String(device.site_name || device.site || device.site_code || id));
+      }
     });
     return Array.from(sites.entries())
       .map(([id, name]) => ({ id, name }))
@@ -139,9 +151,9 @@ export const useTopologyVisibleDevices = ({
     const query = topologySearch.trim().toLowerCase();
     const managed = devices.filter((device) => {
       const matchesQuery = !query || [device.hostname, device.ip_address, device.site, device.role].some((value) => String(value || '').toLowerCase().includes(query));
-      const matchesStatus = topologyStatusFilter === 'all' || device.status === topologyStatusFilter;
+      const matchesStatus = matchesTopologyStatusFilter(device, topologyStatusFilter);
       const matchesRole = topologyRoleFilter === 'all' || getTopologyRoleKey(device) === topologyRoleFilter;
-      const matchesSite = topologySiteFilter === 'all' || String(device.site_id || device.site || '') === topologySiteFilter;
+      const matchesSite = topologySiteFilter === 'all' || getTopologySiteKey(device) === topologySiteFilter;
       return matchesQuery && matchesStatus && matchesRole && matchesSite;
     });
 

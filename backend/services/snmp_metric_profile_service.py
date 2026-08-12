@@ -469,6 +469,20 @@ def _profile_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+def _collector_status(configured: bool, verification_status: Any, matched_device_count: int) -> str:
+    """Describe whether a saved profile can actually be consumed by collectors."""
+    if not configured:
+        return "builtin_only"
+    if matched_device_count <= 0:
+        return "no_matching_device"
+    status = str(verification_status or "unverified").casefold()
+    if status == "verified":
+        return "active"
+    if status == "failed":
+        return "blocked_failed"
+    return "blocked_unverified"
+
+
 def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any]]:
     """Collect discovered model groups and configured definitions for the UI."""
     groups: dict[tuple[str, str], dict[str, Any]] = {}
@@ -536,6 +550,21 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
         ]
     for item in items:
         item["platforms"] = sorted(item["platforms"])
+        matched_device_count = int(item.get("device_count") or 0)
+        item["matched_device_count"] = matched_device_count
+        item["collector_status"] = _collector_status(
+            bool(item.get("configured")),
+            item.get("verification_status"),
+            matched_device_count,
+        )
+        item["profile_applied_device_count"] = (
+            matched_device_count if item["collector_status"] == "active" else 0
+        )
+        item["blocked_device_count"] = (
+            matched_device_count
+            if item["collector_status"] in {"blocked_unverified", "blocked_failed"}
+            else 0
+        )
     return sorted(items, key=lambda item: (str(item["vendor"]).casefold(), str(item["model"]).casefold()))
 
 
@@ -624,7 +653,7 @@ def get_model_metric_profile_mapping(conn, profile_id: str) -> dict[str, Any]:
     status = str(_row_value(row, "verification_status", "unverified") or "unverified")
     metric_definitions = _profile_metric_definitions(row)
     configured = bool(metric_definitions)
-    collector_status = "active" if configured and status == "verified" else "blocked_unverified" if configured else "builtin_only"
+    collector_status = _collector_status(configured, status, len(matching))
     return {
         "profile_id": profile_id,
         "vendor": str(_row_value(row, "vendor_name", "")),
@@ -633,7 +662,7 @@ def get_model_metric_profile_mapping(conn, profile_id: str) -> dict[str, Any]:
         "collector_status": collector_status,
         "matched_device_count": len(matching),
         "profile_applied_device_count": len(matching) if collector_status == "active" else 0,
-        "blocked_device_count": len(matching) if collector_status == "blocked_unverified" else 0,
+        "blocked_device_count": len(matching) if collector_status in {"blocked_unverified", "blocked_failed"} else 0,
         "cpu_device_override_count": cpu_overrides,
         "memory_device_override_count": memory_overrides,
         "metric_keys": sorted(metric_definitions),
