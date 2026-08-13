@@ -44,6 +44,26 @@ describe('asset management method import', () => {
     expect(merged.assets[2].web_profiles.find((item: any) => item.scheme === 'http').enabled).toBe(false);
   });
 
+  it('accepts the manual-entry headers used by the downloadable template', () => {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ['资产编号（手工填写）', '主机名（手工填写/核对）', '管理协议（每行一个）', '入口显示名称（仅展示）', '端口（可留空自动默认）', '登录路径（Web填写，如 /login）', '是否启用', '凭据模式（默认继承资产）', '普通用户（可选）', '普通密码（不建议填写）', '特权用户（可选）', '特权密码（不建议填写）', '绑定凭据（推荐）', '绑定特权凭据（推荐）'],
+      ['WEB-001', 'web-01', 'HTTPS', 'HTTPS管理', 443, '/login', '是', '继承资产凭据', '', '', '', '', 'cred-web', 'cred-web-admin'],
+    ]);
+
+    const parsed = parseManagementMethodSheet(sheet);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.rows[0]).toMatchObject({
+      assetTag: 'WEB-001',
+      hostname: 'web-01',
+      method: 'https',
+      profileName: 'HTTPS管理',
+      port: '443',
+      path: '/login',
+      credentialId: 'cred-web',
+      adminCredentialId: 'cred-web-admin',
+    });
+  });
+
   it('requires an explicit management entry for every asset in the unified template', () => {
     const assets: Record<string, any>[] = [
       { asset_tag: 'A-001', hostname: 'a' },

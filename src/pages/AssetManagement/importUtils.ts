@@ -24,20 +24,20 @@ export const MANAGEMENT_ENTRY_SHEET_RE = /^(管理入口|管理方式|management
 export const MANAGEMENT_METHOD_SHEET_RE = MANAGEMENT_ENTRY_SHEET_RE;
 
 const HEADER_ALIASES: Record<string, string[]> = {
-  assetTag: ['资产编号', 'Asset Tag', 'asset_tag'],
-  hostname: ['主机名', '主机名（核对）', 'Hostname', 'Hostname (check)', 'hostname'],
-  method: ['管理方式', '协议', 'Management Method', 'Method', 'Protocol'],
-  profileName: ['入口名称', '名称', 'Entry Name', 'Profile Name', 'Name'],
-  port: ['端口', 'Port'],
-  path: ['登录路径', '路径', 'Login Path', 'Path'],
+  assetTag: ['资产编号（手工填写）', '资产编号（关联键）', '资产编号', 'Asset Tag (manual)', 'Asset Tag (link key)', 'Asset Tag', 'asset_tag'],
+  hostname: ['主机名（手工填写/核对）', '主机名（自动带出/仅核对）', '主机名（仅核对）', '主机名（核对）', '主机名', 'Hostname (manual/check)', 'Hostname (auto/check)', 'Hostname (check)', 'Hostname', 'hostname'],
+  method: ['管理协议（每行一个）', '管理方式', '协议', 'Management Protocol (one per row)', 'Management Method', 'Method', 'Protocol'],
+  profileName: ['入口显示名称（仅展示）', '入口名称', '名称', 'Entry Display Name (label only)', 'Entry Name', 'Profile Name', 'Name'],
+  port: ['端口（可留空自动默认）', '端口', 'Port (blank = default)', 'Port'],
+  path: ['登录路径（Web填写，如 /login）', '登录路径', '路径', 'Login Path (Web only)', 'Login Path', 'Path'],
   enabled: ['是否启用', '启用', 'Enabled'],
-  credentialMode: ['凭据模式', 'Credential Mode'],
-  normalUsername: ['普通用户', 'Normal User', 'normal_username'],
-  normalPassword: ['普通密码', 'Normal Password', 'normal_password'],
-  adminUsername: ['特权用户', 'Admin User', 'admin_username'],
-  adminPassword: ['特权密码', 'Admin Password', 'admin_password'],
-  credentialId: ['绑定凭据', 'Credential', 'credential_id'],
-  adminCredentialId: ['绑定特权凭据', 'Admin Credential', 'admin_credential_id'],
+  credentialMode: ['凭据模式（默认继承资产）', '凭据模式', 'Credential Mode (default: inherit asset)', 'Credential Mode'],
+  normalUsername: ['普通用户（可选）', '普通用户', 'Normal User (optional)', 'Normal User', 'normal_username'],
+  normalPassword: ['普通密码（不建议填写）', '普通密码', 'Normal Password (avoid)', 'Normal Password', 'normal_password'],
+  adminUsername: ['特权用户（可选）', '特权用户', 'Admin User (optional)', 'Admin User', 'admin_username'],
+  adminPassword: ['特权密码（不建议填写）', '特权密码', 'Admin Password (avoid)', 'Admin Password', 'admin_password'],
+  credentialId: ['绑定凭据（推荐）', '绑定凭据', 'Credential ID (recommended)', 'Credential', 'credential_id'],
+  adminCredentialId: ['绑定特权凭据（推荐）', '绑定特权凭据', 'Admin Credential ID (recommended)', 'Admin Credential', 'admin_credential_id'],
 };
 
 const cellValue = (row: Record<string, unknown>, field: keyof typeof HEADER_ALIASES): string => {
