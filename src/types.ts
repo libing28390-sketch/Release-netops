@@ -42,7 +42,7 @@ export interface Device {
   layout_override?: { x?: number; y?: number; manual?: number };
   topology_node_id?: string;
   uptime: string;
-  connection_method: 'ssh' | 'netconf';
+  connection_method: 'ssh' | 'netconf' | 'web' | 'none';
   current_config?: string;
   config_history: ConfigVersion[];
   device_category?: string;

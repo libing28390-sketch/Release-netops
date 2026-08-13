@@ -21,6 +21,7 @@ interface Device {
   ip_address: string;
   status: 'online' | 'offline' | 'pending';
   platform?: string;
+  connection_method?: 'ssh' | 'netconf' | 'web' | 'none' | string;
   management_port?: number;
   normal_username?: string;
   admin_username?: string;
@@ -186,7 +187,8 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     fetchCurrentUser();
   }, []);
 
-  const getTerminalProtocol = (dev: Device): 'SSH' | 'RDP' => {
+  const getTerminalProtocol = (dev: Device): 'SSH' | 'RDP' | null => {
+    if (dev.connection_method === 'web' || dev.connection_method === 'none') return null;
     const platform = (dev.platform || '').toLowerCase();
     if (platform.includes('windows')) return 'RDP';
     return 'SSH'; 
@@ -200,7 +202,8 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   );
 
   const getSupportedProtocols = (dev: Device) => {
-    const protocols: Array<'SSH' | 'RDP' | 'HTTP' | 'HTTPS'> = [getTerminalProtocol(dev)];
+    const terminalProtocol = getTerminalProtocol(dev);
+    const protocols: Array<'SSH' | 'RDP' | 'HTTP' | 'HTTPS'> = terminalProtocol ? [terminalProtocol] : [];
     if (dev.web_http_enabled) protocols.push('HTTP');
     if (dev.web_https_enabled) protocols.push('HTTPS');
     return protocols;
@@ -208,9 +211,10 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
   const getAllAccessMethods = (dev: Device): AllAccessMethod[] => {
     const methods: AllAccessMethod[] = [];
-    if (getTerminalProtocol(dev) === 'SSH') {
+    const terminalProtocol = getTerminalProtocol(dev);
+    if (terminalProtocol === 'SSH') {
       methods.push('ssh-terminal', 'ssh-web');
-    } else {
+    } else if (terminalProtocol === 'RDP') {
       methods.push('rdp');
     }
     if (dev.web_http_enabled) methods.push('http');

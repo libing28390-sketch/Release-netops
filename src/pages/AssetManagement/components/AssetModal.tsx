@@ -348,7 +348,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                 </div>
               )}
               <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" />
-              <Field label={zh ? '端口 (SSH/Mgmt)' : 'Mgmt Port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder="22" />
+              <Field label={zh ? '主通道端口' : 'Primary channel port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder={form.connection_method === 'web' || form.connection_method === 'none' ? '-' : '22'} />
 
               <div className="col-span-2 rounded-xl border border-cyan-100 bg-cyan-50/30 p-3">
                 <div className="mb-2 flex items-center justify-between gap-3">
@@ -365,7 +365,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                       ...f,
                       web_profiles: [
                         ...(Array.isArray(f.web_profiles) ? f.web_profiles : []),
-                        { profile_name: f.asset_type === 'server' ? 'BMC' : 'Web管理', scheme: 'https', port: '443', path: '/', enabled: true },
+                        { profile_name: f.asset_type === 'server' ? 'BMC' : 'Web管理', scheme: 'https', port: '443', path: '/', enabled: true, credential_mode: 'inherit_asset' },
                       ],
                     }))}
                     className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-white px-2 py-1 text-[9px] font-bold text-cyan-700 hover:bg-cyan-50"
@@ -427,6 +427,41 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                         <div className="col-span-5 truncate px-0.5 text-[9px] text-cyan-700/70">
                           {zh ? '最终地址：' : 'Final URL: '}
                           {`${profile.scheme || 'https'}://${form.management_ip || (zh ? '管理IP' : '<mgmt-ip>')}:${profile.port || (profile.scheme === 'http' ? '80' : '443')}${String(profile.path || '/').startsWith('/') ? (profile.path || '/') : `/${profile.path || ''}`}`}
+                        </div>
+                        <div className="col-span-5 grid grid-cols-2 gap-2 rounded-lg bg-slate-50/70 p-2">
+                          <div className="col-span-2">
+                            <label className="mb-0.5 block text-[9px] text-black/30">{zh ? 'Web 凭据模式' : 'Web credential mode'}</label>
+                            <select
+                              value={profile.credential_mode || 'inherit_asset'}
+                              onChange={event => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, credential_mode: event.target.value } : item) }))}
+                              className="w-full rounded-lg border border-black/8 bg-white px-2 py-1.5 text-xs text-black/65 outline-none"
+                            >
+                              <option value="inherit_asset">{zh ? '继承资产凭据' : 'Inherit asset credentials'}</option>
+                              <option value="independent">{zh ? '独立 Web 凭据' : 'Independent Web credentials'}</option>
+                            </select>
+                          </div>
+                          {(profile.credential_mode || 'inherit_asset') === 'independent' && (
+                            <>
+                              <Field label={zh ? '普通用户' : 'Normal user'} value={profile.normal_username || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, normal_username: value } : item) }))} />
+                              <PasswordField label={zh ? '普通密码' : 'Normal password'} value={profile.normal_password || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, normal_password: value } : item) }))} placeholder={profile.normal_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
+                              <Field label={zh ? '特权用户' : 'Admin user'} value={profile.admin_username || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, admin_username: value } : item) }))} />
+                              <PasswordField label={zh ? '特权密码' : 'Admin password'} value={profile.admin_password || ''} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, admin_password: value } : item) }))} placeholder={profile.admin_password_set ? (zh ? '已配置，留空不变' : 'Configured; leave blank to keep') : ''} />
+                              <div>
+                                <label className="mb-0.5 block text-[9px] text-black/30">{zh ? '绑定普通凭据' : 'Normal credential'}</label>
+                                <select value={profile.credential_id || ''} onChange={event => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, credential_id: event.target.value } : item) }))} className="w-full rounded-lg border border-black/8 bg-white px-2 py-1.5 text-xs text-black/65 outline-none">
+                                  <option value="">{zh ? '不绑定' : 'Not bound'}</option>
+                                  {credentials.filter(c => !String(c.credential_type || '').toLowerCase().startsWith('snmp')).map(c => <option key={c.id} value={c.id}>{c.credential_name} ({c.username || '-'})</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="mb-0.5 block text-[9px] text-black/30">{zh ? '绑定特权凭据' : 'Admin credential'}</label>
+                                <select value={profile.admin_credential_id || ''} onChange={event => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, admin_credential_id: event.target.value } : item) }))} className="w-full rounded-lg border border-black/8 bg-white px-2 py-1.5 text-xs text-black/65 outline-none">
+                                  <option value="">{zh ? '不绑定' : 'Not bound'}</option>
+                                  {credentials.filter(c => !String(c.credential_type || '').toLowerCase().startsWith('snmp')).map(c => <option key={c.id} value={c.id}>{c.credential_name} ({c.username || '-'})</option>)}
+                                </select>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -543,6 +578,8 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                     >
                       <option value="ssh">SSH</option>
                       <option value="netconf">NETCONF</option>
+                      <option value="web">{zh ? '仅 Web（HTTP/HTTPS）' : 'Web only (HTTP/HTTPS)'}</option>
+                      <option value="none">{zh ? '无登录通道' : 'No login channel'}</option>
                     </select>
                   </div>
                 </div>

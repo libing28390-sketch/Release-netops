@@ -36,6 +36,9 @@ export interface AssetRecord {
   u_height?: number;
   planned_start_u?: number | null;
   management_ip: string;
+  connection_method?: string;
+  management_port?: number;
+  web_profiles?: Array<{ scheme: 'http' | 'https'; port: number | string; enabled: boolean }>;
   business_ip: string;
   device_role: string;
   vlan: string;
@@ -106,6 +109,12 @@ export function AssetReadonlyDetailInner({ asset: a, zh }: { asset: AssetRecord;
   const TypeIcon = a.asset_type === 'server' ? Server : Router;
   const typeLabel = a.asset_type === 'server' ? (zh ? '服务器' : 'Server') : (zh ? '网络设备' : 'Network');
   const typeCls = a.asset_type === 'server' ? 'bg-violet-50 text-violet-600 border-violet-200' : 'bg-cyan-50 text-cyan-600 border-cyan-200';
+  const managementMethods = [
+    ...(!['web', 'none'].includes(String(a.connection_method || 'ssh').toLowerCase())
+      ? [`${String(a.connection_method || 'ssh').toUpperCase()}:${a.management_port ?? 22}`]
+      : []),
+    ...(a.web_profiles || []).filter(profile => profile.enabled).map(profile => `${profile.scheme.toUpperCase()}:${profile.port}`),
+  ];
 
   return (
     <>
@@ -135,6 +144,7 @@ export function AssetReadonlyDetailInner({ asset: a, zh }: { asset: AssetRecord;
         <ReadonlyField label={zh ? '设备分类' : 'Category'} value={CATEGORY_MAP[a.device_category || '']?.[zh ? 'zh' : 'en'] || (a.device_category || '—')} />
         <ReadonlyField label={zh ? '额定功率' : 'Power (W)'} value={a.power_watts != null && String(a.power_watts) !== '0' && String(a.power_watts) !== '' ? `${a.power_watts} W` : '—'} />
         <ReadonlyField label={zh ? '管理IP' : 'Mgmt IP'} value={a.management_ip || '—'} mono />
+        <ReadonlyField label={zh ? '管理方式' : 'Management methods'} value={managementMethods.join('、') || (zh ? '无登录通道' : 'No login channel')} mono />
         {a.asset_type === 'server' && (
           <ReadonlyField label={zh ? '业务IP' : 'Biz IP'} value={a.business_ip || '—'} mono />
         )}
@@ -198,6 +208,9 @@ export function normalizeAssetApiRow(row: Record<string, unknown>): AssetRecord 
     u_height: n('u_height'),
     planned_start_u: ni('planned_start_u') as number | null | undefined,
     management_ip: s('management_ip'),
+    connection_method: s('connection_method', 'ssh'),
+    management_port: n('management_port'),
+    web_profiles: Array.isArray(row['web_profiles']) ? row['web_profiles'] as AssetRecord['web_profiles'] : [],
     business_ip: s('business_ip'),
     device_role: s('device_role'),
     vlan: s('vlan'),

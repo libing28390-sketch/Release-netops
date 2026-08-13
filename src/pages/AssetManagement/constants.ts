@@ -48,6 +48,13 @@ export const EMPTY_FORM = {
     port: string;
     path: string;
     enabled: boolean;
+    credential_mode?: 'inherit_asset' | 'independent';
+    normal_username?: string;
+    normal_password?: string;
+    admin_username?: string;
+    admin_password?: string;
+    credential_id?: string;
+    admin_credential_id?: string;
   }>,
 };
 
@@ -230,7 +237,7 @@ export const COL_MAP: Record<string, string> = {
   '主机名': 'hostname', 'Hostname': 'hostname', 'hostname': 'hostname',
   '资产编号': 'asset_tag', 'Asset Tag': 'asset_tag', 'asset_tag': 'asset_tag', 'Tag': 'asset_tag',
   '序列号': 'serial_number', 'Serial Number': 'serial_number', 'serial_number': 'serial_number',
-  '类型': 'asset_type', 'Type': 'asset_type', 'asset_type': 'asset_type',
+  '资产类型': 'asset_type', '类型': 'asset_type', 'Asset Type': 'asset_type', 'Type': 'asset_type', 'asset_type': 'asset_type',
   '厂商': 'vendor', 'Vendor': 'vendor', 'vendor': 'vendor',
   '型号': 'model', 'Model': 'model', 'model': 'model',
   '管理IP': 'management_ip', 'Mgmt IP': 'management_ip', 'management_ip': 'management_ip',
@@ -342,6 +349,8 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
   connection_method: {
     'SSH（安全外壳）': 'ssh', SSH: 'ssh', ssh: 'ssh',
     'NETCONF（网络配置协议）': 'netconf', NETCONF: 'netconf', netconf: 'netconf',
+    '仅 Web（HTTP/HTTPS）': 'web', 'Web only': 'web', web: 'web',
+    '无登录通道': 'none', 'No login channel': 'none', none: 'none',
   },
   platform: {
     '思科 IOS': 'cisco_ios', '思科 NX-OS': 'cisco_nxos', '思科 IOS-XE': 'cisco_xe',

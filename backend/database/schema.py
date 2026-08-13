@@ -2981,6 +2981,13 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         port INTEGER NOT NULL DEFAULT 443,
         path TEXT NOT NULL DEFAULT '/',
         enabled INTEGER NOT NULL DEFAULT 1,
+        credential_mode TEXT NOT NULL DEFAULT 'inherit_asset',
+        normal_username TEXT NOT NULL DEFAULT '',
+        normal_password TEXT NOT NULL DEFAULT '',
+        admin_username TEXT NOT NULL DEFAULT '',
+        admin_password TEXT NOT NULL DEFAULT '',
+        credential_id TEXT NOT NULL DEFAULT '',
+        admin_credential_id TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY (asset_id) REFERENCES physical_assets(id) ON DELETE CASCADE,
@@ -2988,6 +2995,16 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_asset_web_profiles_asset ON asset_web_access_profiles(asset_id, enabled)')
+    for col, dtype in [
+        ('credential_mode', "TEXT NOT NULL DEFAULT 'inherit_asset'"),
+        ('normal_username', "TEXT NOT NULL DEFAULT ''"),
+        ('normal_password', "TEXT NOT NULL DEFAULT ''"),
+        ('admin_username', "TEXT NOT NULL DEFAULT ''"),
+        ('admin_password', "TEXT NOT NULL DEFAULT ''"),
+        ('credential_id', "TEXT NOT NULL DEFAULT ''"),
+        ('admin_credential_id', "TEXT NOT NULL DEFAULT ''"),
+    ]:
+        ensure_column('asset_web_access_profiles', col, dtype)
 
     ensure_column('devices', 'credential_id', 'TEXT')
     ensure_column('devices', 'admin_credential_id', "TEXT DEFAULT ''")

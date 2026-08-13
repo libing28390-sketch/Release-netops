@@ -8,6 +8,15 @@ export interface WebAccessProfile {
   port: number | string;
   path: string;
   enabled: boolean;
+  credential_mode?: 'inherit_asset' | 'independent';
+  normal_username?: string;
+  normal_password?: string;
+  normal_password_set?: boolean;
+  admin_username?: string;
+  admin_password?: string;
+  admin_password_set?: boolean;
+  credential_id?: string;
+  admin_credential_id?: string;
   created_at?: string;
   updated_at?: string;
 }

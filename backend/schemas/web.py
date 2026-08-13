@@ -17,6 +17,13 @@ class WebAccessProfileInput(BaseModel):
     port: int = 443
     path: str = "/"
     enabled: bool = True
+    credential_mode: Literal["inherit_asset", "independent"] = "inherit_asset"
+    normal_username: str = ""
+    normal_password: Optional[str] = None
+    admin_username: str = ""
+    admin_password: Optional[str] = None
+    credential_id: str = ""
+    admin_credential_id: str = ""
 
     @field_validator("profile_name", mode="before")
     @classmethod
@@ -46,6 +53,14 @@ class WebAccessProfileInput(BaseModel):
         if any(ord(char) < 0x20 for char in path) or re.match(r"^//|^[a-z][a-z0-9+.-]*:", path, re.I):
             raise ValueError("Web path must be a relative path")
         return path[:512] or "/"
+
+    @field_validator(
+        "normal_username", "admin_username", "credential_id", "admin_credential_id",
+        mode="before",
+    )
+    @classmethod
+    def normalize_credential_text(cls, value):
+        return str(value or "").strip()[:255]
 
 
 class WebSessionCreateInput(BaseModel):

@@ -76,17 +76,33 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
 
+def _management_port_for_storage(body) -> int:
+    method = str(getattr(body, 'connection_method', '') or 'ssh').lower()
+    if method in {'web', 'none'}:
+        return 0
+    value = getattr(body, 'management_port', None)
+    return int(value or (830 if method == 'netconf' else 22))
+
+
 def _get_asset_web_profiles(conn, asset_id: str) -> list[dict]:
     rows = conn.execute(
-        """SELECT id, asset_id, profile_name, scheme, port, path, enabled, created_at, updated_at
+        """SELECT id, asset_id, profile_name, scheme, port, path, enabled,
+                  credential_mode, normal_username, normal_password,
+                  admin_username, admin_password, credential_id, admin_credential_id,
+                  created_at, updated_at
            FROM asset_web_access_profiles WHERE asset_id = ?
            ORDER BY enabled DESC, profile_name, scheme, port""",
         (asset_id,),
     ).fetchall()
-    items = [dict(row) for row in rows]
-    for item in items:
-        item['enabled'] = bool(item.get('enabled'))
-    return items
+    return [_sanitize_web_profile(dict(row)) for row in rows]
+
+
+def _sanitize_web_profile(item: dict) -> dict:
+    item['enabled'] = bool(item.get('enabled'))
+    for field in ('normal_password', 'admin_password'):
+        item[f'{field}_set'] = bool(item.get(field))
+        item[field] = ''
+    return item
 
 
 # ── helpers: devices ↔ physical_assets sync ──────────────────────────
@@ -336,7 +352,7 @@ def _create_linked_device(conn, asset_id: str, body) -> str:
     pwd = getattr(body, 'password', '') or ''
     community = getattr(body, 'snmp_community', '') or ''
     port = getattr(body, 'snmp_port', None) or 161
-    mgmt_port = getattr(body, 'management_port', None) or 22
+    mgmt_port = _management_port_for_storage(body)
 
     # PAM (dual-account) fields
     normal_user = getattr(body, 'normal_username', '') or ''
@@ -920,6 +936,14 @@ class AssetCreate(BaseModel):
     tag_codes: str = ''
     web_profiles: list[WebAccessProfileInput] = Field(default_factory=list)
 
+    @field_validator('connection_method', mode='before')
+    @classmethod
+    def validate_connection_method(cls, v):
+        method = str(v or 'ssh').strip().lower()
+        if method not in {'ssh', 'netconf', 'web', 'none'}:
+            raise ValueError('Connection method must be ssh, netconf, web or none')
+        return method
+
     @field_validator('u_height', mode='before')
     @classmethod
     def validate_u_height(cls, v):
@@ -969,7 +993,7 @@ class AssetCreate(BaseModel):
         if v is None or v == '':
             return 22
         try:
-            return int(v)
+            return max(0, min(65535, int(v)))
         except (ValueError, TypeError):
             return 22
 
@@ -1026,6 +1050,16 @@ class AssetUpdate(BaseModel):
     tag_ids: Optional[list[str]] = None
     tag_codes: Optional[str] = None
     web_profiles: Optional[list[WebAccessProfileInput]] = None
+
+    @field_validator('connection_method', mode='before')
+    @classmethod
+    def validate_connection_method(cls, v):
+        if v is None:
+            return None
+        method = str(v).strip().lower()
+        if method not in {'ssh', 'netconf', 'web', 'none'}:
+            raise ValueError('Connection method must be ssh, netconf, web or none')
+        return method
 
     @field_validator('power_watts', mode='before')
     @classmethod
@@ -1248,15 +1282,17 @@ def list_assets(
         if asset_ids:
             placeholders = ','.join('?' for _ in asset_ids)
             web_rows = conn.execute(
-                f'''SELECT id, asset_id, profile_name, scheme, port, path, enabled, created_at, updated_at
+                f'''SELECT id, asset_id, profile_name, scheme, port, path, enabled,
+                           credential_mode, normal_username, normal_password,
+                           admin_username, admin_password, credential_id, admin_credential_id,
+                           created_at, updated_at
                     FROM asset_web_access_profiles
                     WHERE asset_id IN ({placeholders})
                     ORDER BY profile_name, scheme, port''',
                 asset_ids,
             ).fetchall()
             for web_row in web_rows:
-                profile = dict(web_row)
-                profile['enabled'] = bool(profile.get('enabled'))
+                profile = _sanitize_web_profile(dict(web_row))
                 web_profile_map.setdefault(str(profile['asset_id']), []).append(profile)
         for item in items:
             item['web_profiles'] = web_profile_map.get(str(item.get('id') or ''), [])
@@ -1362,7 +1398,7 @@ def create_asset_web_profile(asset_id: str, body: WebAccessProfileInput):
             conn.rollback()
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         conn.commit()
-        return profiles[-1]
+        return _sanitize_web_profile(profiles[-1])
     finally:
         conn.close()
 
@@ -1382,7 +1418,7 @@ def update_asset_web_profile(asset_id: str, profile_id: str, body: WebAccessProf
             conn.rollback()
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         conn.commit()
-        return next(item for item in profiles if item['id'] == profile_id)
+        return _sanitize_web_profile(next(item for item in profiles if item['id'] == profile_id))
     finally:
         conn.close()
 
@@ -1478,7 +1514,10 @@ def create_asset(body: AssetCreate):
             body.admin_credential_id or '',
             now, now
         ))
-        conn.execute('UPDATE physical_assets SET snmp_credential_id = ? WHERE id = ?', (body.snmp_credential_id or '', asset_id))
+        conn.execute(
+            'UPDATE physical_assets SET snmp_credential_id = ?, management_port = ? WHERE id = ?',
+            (body.snmp_credential_id or '', _management_port_for_storage(body), asset_id),
+        )
 
         # Plan-A: auto-create linked device for managed assets
         device_id = None
@@ -2029,7 +2068,7 @@ def import_assets(items: list[AssetCreate]):
                 _safe_encrypt(getattr(body, 'enable_password', '') or ''),
                 getattr(body, 'auth_model', '') or 'single',
                 _safe_encrypt(body.snmp_community), body.snmp_port,
-                getattr(body, 'management_port', 22) or 22,
+                _management_port_for_storage(body),
                 body.device_category, getattr(body, 'function', '') or '', getattr(body, 'zone', 'Unknown') or 'Unknown', body.power_watts,
                 'legacy_exempt' if legacy_production else 'managed',
                 (body.takeover_exempt_reason or '').strip() if legacy_production else '',
@@ -2039,7 +2078,10 @@ def import_assets(items: list[AssetCreate]):
                 body.admin_credential_id or '',
                 now, now
             ))
-            conn.execute('UPDATE physical_assets SET snmp_credential_id = ? WHERE id = ?', (body.snmp_credential_id or '', asset_id))
+            conn.execute(
+                'UPDATE physical_assets SET snmp_credential_id = ?, management_port = ? WHERE id = ?',
+                (body.snmp_credential_id or '', _management_port_for_storage(body), asset_id),
+            )
             # Plan-A: auto-create linked device for managed assets
             if body.asset_type in ('network_device', 'server'):
                 device_id = _create_linked_device(conn, asset_id, body)
@@ -2054,6 +2096,12 @@ def import_assets(items: list[AssetCreate]):
                 _sync_rack_device_from_asset(conn, asset_id, body)
             except ValueError as e:
                 logger.warning("Failed to sync rack device during import for asset %s: %s", asset_id, e)
+
+            try:
+                replace_asset_web_profiles(conn, asset_id, body.web_profiles)
+            except ValueError as exc:
+                conn.rollback()
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
             created += 1
         conn.commit()
