@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Body, Query, Depends
+from fastapi import APIRouter, HTTPException, Body, Query, Depends, File, UploadFile, BackgroundTasks
 from fastapi.responses import JSONResponse
 import os
 import uuid
@@ -15,9 +15,25 @@ from services.site_identity_service import canonical_site_name
 from services.operational_data_service import collect_operational_data, collect_custom_command_data
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
+from core.config import settings
 from core.rbac import require_role
 from services.vault_service import resolve_device_credentials, resolve_collector_credentials, write_credentials as vault_write, vault_available
 from services.snmp_service import normalize_metric_oid
+from services.snmp_mib_service import (
+    list_mibs_page,
+    get_mib_repository_stats,
+    get_mib_detail,
+    delete_mib,
+    parse_and_store_mib,
+    parse_and_store_zip,
+    search_mib_nodes,
+)
+from services.snmp_preset_service import (
+    list_preset_profiles,
+    seed_builtin_mibs,
+    reset_builtin_mibs,
+    match_profile_for_model,
+)
 from services.snmp_metric_profile_service import (
     create_model_metric_profile,
     delete_model_metric_profile,
@@ -1389,6 +1405,281 @@ async def test_snmp_metric_profile(
             'interface': interface_result,
         },
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# SNMP MIB Repository & Official Presets API
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/platform-registry/mibs")
+def get_snmp_mibs(
+    search: str = Query("", max_length=128),
+    vendor: str = Query("", max_length=64),
+    page: int = Query(1, ge=1, le=100000),
+    page_size: int = Query(40, ge=10, le=100),
+    status: str = Query("", max_length=32),
+    user=require_role("Viewer"),
+):
+    """List one bounded page of imported and built-in SNMP MIB modules."""
+    conn = get_db_connection()
+    try:
+        # Seed built-in MIBs if repository is empty
+        count_row = conn.execute("SELECT COUNT(*) AS c FROM snmp_mibs").fetchone()
+        if not count_row or int(count_row[0] if isinstance(count_row, tuple) else count_row["c"]) == 0:
+            seed_builtin_mibs()
+        mibs, total = list_mibs_page(
+            conn,
+            search=search,
+            vendor=vendor,
+            page=page,
+            page_size=page_size,
+            status=status,
+        )
+        return {
+            "success": True,
+            "data": mibs,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "stats": get_mib_repository_stats(conn, search=search, vendor=vendor, status=status),
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/platform-registry/mibs/nodes/search")
+def search_snmp_mib_nodes(
+    query: str = Query(..., min_length=1, max_length=128),
+    vendor: str = Query("", max_length=64),
+    mib_id: str = Query("", max_length=64),
+    limit: int = Query(50, ge=1, le=200),
+    scope: str = Query("all", max_length=16),
+    user=require_role("Viewer"),
+):
+    """Fast search for OID symbol nodes across the MIB repository."""
+    conn = get_db_connection()
+    try:
+        # Seed built-in MIBs if empty
+        count_row = conn.execute("SELECT COUNT(*) AS c FROM snmp_mibs").fetchone()
+        if not count_row or int(count_row[0] if isinstance(count_row, tuple) else count_row["c"]) == 0:
+            seed_builtin_mibs()
+        nodes = search_mib_nodes(conn, query=query, vendor=vendor, mib_id=mib_id, limit=limit, scope=scope)
+        return {
+            "success": True,
+            "data": nodes,
+            "total": len(nodes),
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/platform-registry/mibs/presets/models")
+def get_official_model_presets(user=require_role("Viewer")):
+    """List official pre-built model metric profile templates."""
+    presets = list_preset_profiles()
+    return {
+        "success": True,
+        "data": presets,
+        "total": len(presets),
+    }
+
+
+@router.get("/platform-registry/mibs/auto-match")
+def auto_match_model_mibs(
+    vendor: str = Query("", max_length=64),
+    model: str = Query("", max_length=128),
+    user=require_role("Viewer"),
+):
+    """Auto-match and recommend optimal MIB metrics and OIDs for an asset model."""
+    match_result = match_profile_for_model(vendor=vendor, model=model)
+    if not match_result:
+        return {
+            "success": True,
+            "matched": False,
+            "message": "No matching pre-built series found for this model",
+            "data": None,
+        }
+    return {
+        "success": True,
+        "matched": True,
+        "data": match_result,
+    }
+
+
+_librenms_sync_state: dict[str, Any] = {
+    "running": False,
+    "progress": "idle",
+    "last_result": None,
+    "run_id": None,
+    "started_at": None,
+}
+
+
+@router.post("/platform-registry/mibs/sync-librenms")
+async def trigger_sync_librenms_mibs(
+    background_tasks: BackgroundTasks,
+    vendors: str = Query("", description="Comma-separated vendor keys or empty for all"),
+    user=require_role("Operator"),
+):
+    """Trigger background full synchronization of LibreNMS MIB repository."""
+    global _librenms_sync_state
+    if _librenms_sync_state["running"]:
+        return {
+            "success": True,
+            "message": "LibreNMS MIB synchronization is already running",
+            "state": _librenms_sync_state,
+        }
+
+    from scripts.sync_librenms_mibs import fetch_librenms_mibs, import_mibs_from_directory, MIBS_DIR, TARGET_DIR
+
+    def _sync_worker(target_vendors_list: list[str] | None):
+        global _librenms_sync_state
+        _librenms_sync_state["running"] = True
+        _librenms_sync_state["progress"] = "Fetching latest MIBs from LibreNMS repository..."
+        _librenms_sync_state["started_at"] = time.time()
+        try:
+            fetch_librenms_mibs(TARGET_DIR)
+            _librenms_sync_state["progress"] = "Parsing and indexing MIB definitions into database..."
+            result = import_mibs_from_directory(
+                mibs_dir=MIBS_DIR,
+                target_vendors=target_vendors_list,
+            )
+            _librenms_sync_state["last_result"] = result
+            _librenms_sync_state["run_id"] = result.get("run_id")
+            _librenms_sync_state["progress"] = f"Finished: {result.get('imported', 0)} MIBs imported, {result.get('nodes', 0)} OID nodes"
+        except Exception as exc:
+            logger.error("LibreNMS MIB sync worker failed: %s", exc)
+            _librenms_sync_state["progress"] = f"Error: {exc}"
+            _librenms_sync_state["last_result"] = {"success": False, "error": str(exc)}
+        finally:
+            _librenms_sync_state["running"] = False
+
+    vendor_list = [v.strip().lower() for v in vendors.split(",") if v.strip()] if vendors else None
+    background_tasks.add_task(_sync_worker, vendor_list)
+
+    return {
+        "success": True,
+        "message": "LibreNMS MIB full synchronization started in background",
+        "state": _librenms_sync_state,
+    }
+
+
+@router.get("/platform-registry/mibs/sync-librenms/status")
+def get_sync_librenms_mibs_status(user=require_role("Viewer")):
+    """Get the current progress status of LibreNMS MIB synchronization."""
+    conn = get_db_connection()
+    try:
+        return {
+            "success": True,
+            "data": {
+                **_librenms_sync_state,
+                "repository": get_mib_repository_stats(conn),
+            },
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/platform-registry/mibs/reset-builtin")
+def reset_builtin_snmp_mibs(user=require_role("Operator")):
+    """Reset and re-seed all built-in core vendor MIB definitions."""
+    count = reset_builtin_mibs()
+    return {
+        "success": True,
+        "message": f"Successfully reloaded {count} built-in MIB modules",
+        "count": count,
+    }
+
+
+@router.post("/platform-registry/mibs/upload")
+async def upload_snmp_mib_file(
+    file: UploadFile = File(...),
+    vendor: str = Query("", max_length=64),
+    description: str = Query("", max_length=500),
+    user=require_role("Operator"),
+):
+    """Upload and parse a .mib / .my / .txt file or a .zip MIB archive."""
+    if not settings.SNMP_MIB_MANUAL_UPLOAD_ENABLED:
+        raise HTTPException(
+            status_code=410,
+            detail="Manual MIB uploads are disabled; use the official LibreNMS synchronization or create an SNMP metric template.",
+        )
+
+    filename = file.filename or "unknown.mib"
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    conn = get_db_connection()
+    try:
+        if filename.lower().endswith(".zip"):
+            results = parse_and_store_zip(conn, content, vendor=vendor)
+            conn.commit()
+            if not results:
+                raise HTTPException(status_code=400, detail="No valid MIB files (.mib/.my/.txt) found in zip archive")
+            return {
+                "success": True,
+                "message": f"Successfully parsed and imported {len(results)} MIB modules from zip archive",
+                "data": results,
+            }
+        else:
+            raw_text = content.decode("utf-8", errors="replace")
+            res = parse_and_store_mib(
+                conn,
+                filename=filename,
+                raw_text=raw_text,
+                vendor=vendor,
+                source_type="user_upload",
+                description=description,
+            )
+            conn.commit()
+            return {
+                "success": True,
+                "message": f"Successfully parsed MIB module '{res['name']}' with {res['node_count']} OID nodes",
+                "data": res,
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        conn.rollback()
+        logger.warning("MIB upload parsing failed for %s: %s", filename, exc)
+        raise HTTPException(status_code=400, detail=f"Failed to parse MIB file: {exc}") from exc
+    finally:
+        conn.close()
+
+
+@router.get("/platform-registry/mibs/{mib_id}")
+def get_snmp_mib_detail(mib_id: str, user=require_role("Viewer")):
+    """Get MIB module detail and its parsed symbol node tree."""
+    conn = get_db_connection()
+    try:
+        detail = get_mib_detail(conn, mib_id)
+        if not detail:
+            raise HTTPException(status_code=404, detail="MIB module not found")
+        return {
+            "success": True,
+            "data": detail,
+        }
+    finally:
+        conn.close()
+
+
+@router.delete("/platform-registry/mibs/{mib_id}")
+def remove_snmp_mib(mib_id: str, user=require_role("Operator")):
+    """Delete an imported MIB module and all its associated symbol nodes."""
+    conn = get_db_connection()
+    try:
+        success = delete_mib(conn, mib_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="MIB module not found")
+        conn.commit()
+        return {
+            "success": True,
+            "message": "MIB module deleted",
+        }
+    finally:
+        conn.close()
+
 
 @router.post("/devices")
 def create_device(device: dict = Body(...)):
