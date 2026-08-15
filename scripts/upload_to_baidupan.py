@@ -104,6 +104,7 @@ def main():
     artifacts = [
         ("NetOps.exe", f"NetOps_{tag_name}_{date_str}.exe", "NetOps-Windows-Latest.exe"),
         ("NexoraTerminalAgent.exe", f"NexoraTerminalAgent_{tag_name}_{date_str}.exe", "NexoraTerminalAgent-Latest.exe"),
+        ("NetOps-Linux-Ubuntu-Docker.zip", f"NetOps-Linux-Ubuntu-Docker_{tag_name}_{date_str}.zip", "NetOps-Linux-Ubuntu-Docker-Latest.zip"),
     ]
 
     for local_src, versioned_name, latest_name in artifacts:
