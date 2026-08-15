@@ -113,7 +113,7 @@ def main():
             continue
 
         file_size_mb = round(src_path.stat().st_size / (1024 * 1024), 2)
-        print(f"\n[BaiduPan] === Uploading {local_src} ({file_size_mb} MB) ===")
+        print(f"\n[BaiduPan] === Uploading {local_src} ({file_size_mb} MB) ===", flush=True)
 
         latest_file = work_dir / latest_name
         versioned_file = work_dir / versioned_name
@@ -121,16 +121,18 @@ def main():
         shutil.copy2(src_path, versioned_file)
 
         # Upload to latest directory (use pure ASCII path)
-        print(f"[BaiduPan] -> NetOps_Release/latest/{latest_name}")
-        client.upload(str(latest_file), "NetOps_Release/latest/")
+        print(f"[BaiduPan] -> NetOps_Release/latest/{latest_name} ...", flush=True)
+        res1 = client.upload(str(latest_file), "NetOps_Release/latest/")
+        print(f"[BaiduPan] -> latest upload finished (code {res1})", flush=True)
 
         # Upload to archive directory
-        print(f"[BaiduPan] -> NetOps_Release/archive/{tag_name}/{versioned_name}")
-        client.upload(str(versioned_file), f"NetOps_Release/archive/{tag_name}/")
+        print(f"[BaiduPan] -> NetOps_Release/archive/{tag_name}/{versioned_name} ...", flush=True)
+        res2 = client.upload(str(versioned_file), f"NetOps_Release/archive/{tag_name}/")
+        print(f"[BaiduPan] -> archive upload finished (code {res2})", flush=True)
 
     # Clean up local temporary copies
     shutil.rmtree(work_dir, ignore_errors=True)
-    print("\n[BaiduPan] All available artifacts uploaded successfully to Baidu Netdisk!")
+    print("\n[BaiduPan] All available artifacts uploaded successfully to Baidu Netdisk!", flush=True)
 
 
 if __name__ == "__main__":

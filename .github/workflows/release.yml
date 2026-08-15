@@ -137,6 +137,7 @@ jobs:
         shell: bash
         env:
           BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}
+          PYTHONUNBUFFERED: "1"
         run: |
           if [ -z "$BYPY_TOKEN_CONTENT" ]; then
             echo "[INFO] 未配置 BAIDU_PAN_TOKEN Secret，跳过百度网盘上传。"
@@ -297,6 +298,7 @@ jobs:
         shell: bash
         env:
           BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}
+          PYTHONUNBUFFERED: "1"
         run: |
           if [ -z "$BYPY_TOKEN_CONTENT" ]; then
             echo "[INFO] 未配置 BAIDU_PAN_TOKEN Secret，跳过百度网盘上传。"
