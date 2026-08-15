@@ -1,0 +1,18 @@
+Value INTERFACE (\S+)
+Value PHY (\S+)
+Value PROTOCOL (\S+)
+Value IP_ADDRESS (\S+)
+Value VRF (\S+)
+Value DESCRIPTION (.*)
+
+Start
+  ^\s*\*down:.*$$
+  ^\s*\(s\):.*$$
+  ^\s*Interface\s+Physical\s+Protocol\s+IP\s+address/Mask\s+VPN\s+instance\s+Description\s*$$ -> Records
+  ^\s*$$
+  ^.*$$
+
+Records
+  ^\s*${INTERFACE}\s+${PHY}\s+${PROTOCOL}\s+${IP_ADDRESS}\s+${VRF}\s+${DESCRIPTION}\s*$$ -> Record
+  ^\s*$$
+  ^.*$$

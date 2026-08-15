@@ -1,0 +1,9 @@
+Value INTERFACE (\S+)
+Value PVID (\d+)
+Value VLAN_PASSING (.+)
+
+Start
+  ^\s*${INTERFACE}\s+${PVID}\s+${VLAN_PASSING} -> Record
+  # Skip headers and separator lines
+  ^Interface\s+PVID\s+VLAN\s+passing
+  ^-+

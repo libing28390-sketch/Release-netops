@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://info.support.huawei.com/network/ptmngsys/Web/tsrev_s/en/content/s/21_edesk_Fan_Failure/edesk_Fan_Failure_edesk002.html",
+  "vendor": "Huawei",
+  "platform": "VRP5",
+  "model_family": "S5700",
+  "command": "display environment",
+  "source_note": "Official troubleshooting example for switches earlier than V200R005; the page identifies the sample as VRP 5.130 / S5700 V200R003C00SPC300."
+}

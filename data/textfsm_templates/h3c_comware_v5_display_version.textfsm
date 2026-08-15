@@ -1,0 +1,17 @@
+Value SOFTWARE_VERSION (\S+)
+Value RELEASE (.+?)
+Value DEVICE (\S+)
+Value UPTIME (.+?)
+Value LAST_REBOOT_REASON (.+?)
+Value BOOT_IMAGE (\S+)
+
+Start
+  ^Comware\s+[Pp]latform\s+[Ss]oftware\s*$$
+  ^(?:H3C\s+)?Comware\s+[Ss]oftware,\s+Version\s+${SOFTWARE_VERSION},\s+${RELEASE}\s*$$
+  ^H3C\s+${DEVICE}\s+uptime\s+is\s+${UPTIME}\s*$$
+  ^Last\s+reboot\s+reason:\s*${LAST_REBOOT_REASON}\s*$$
+  ^Boot\s+image:\s+${BOOT_IMAGE}\s*$$
+  ^\s*Slot\s+\d+:\s*$$ -> Continue.Record
+  ^Copyright.*$$
+  ^\s*$$
+

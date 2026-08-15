@@ -1,0 +1,14 @@
+Value SYSTEM_DESCRIPTION (.+)
+Value SYSTEM_START_TIME (.+)
+Value SYSTEM_UPTIME (.+)
+Value SYSTEM_HARDWARE_VERSION (.+)
+Value SYSTEM_SOFTWARE_VERSION (.+)
+Value SYSTEM_BOOT_VERSION (.+)
+
+Start
+  ^System description\s+:\s+${SYSTEM_DESCRIPTION}
+  ^System start time\s+:\s+${SYSTEM_START_TIME}
+  ^System uptime\s+:\s+${SYSTEM_UPTIME}
+  ^System hardware version\s+:\s+${SYSTEM_HARDWARE_VERSION}
+  ^System software version\s+:\s+${SYSTEM_SOFTWARE_VERSION}
+  ^System BOOT version\s+:\s+${SYSTEM_BOOT_VERSION} -> Record

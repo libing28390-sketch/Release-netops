@@ -1,0 +1,10 @@
+Value INTERFACE (\S+)
+Value TRANSCEIVER_TYPE (.+)
+Value CONNECTOR_TYPE (.+)
+
+Start
+  ^${INTERFACE}\s+transceiver\s+information:
+  ^\s*Transceiver\s+Type\s*:\s*${TRANSCEIVER_TYPE}
+  ^\s*Connector\s+Type\s*:\s*${CONNECTOR_TYPE} -> Record
+  ^\s*-+
+  ^\s*Common\s+information:
