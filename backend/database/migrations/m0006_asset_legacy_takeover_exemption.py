@@ -1,5 +1,10 @@
 VERSION = 6
 NAME = "asset_legacy_takeover_exemption"
+# Some installations created migration version 6 before the versioned
+# migration package was consolidated and recorded this same marker as
+# ``interface_telemetry_and_history``.  Keep that historical marker explicit
+# so upgrades can continue without allowing arbitrary history drift.
+LEGACY_NAMES = ("interface_telemetry_and_history",)
 
 
 def _column_exists(cursor, table_name: str, column_name: str, use_pg: bool) -> bool:

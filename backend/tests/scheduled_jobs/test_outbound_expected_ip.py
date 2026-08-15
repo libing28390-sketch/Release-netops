@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import os
 import pytest
-from database import get_db_connection, init_db
-init_db()
+from database import get_db_connection
 
 from services.outbound_probe_service import (
     _check_ip_matches_expected,

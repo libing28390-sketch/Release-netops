@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import asyncio
+import sqlite3
+import zipfile
 from collections import Counter
 import pytest
 from fastapi import HTTPException, UploadFile
@@ -17,6 +19,15 @@ from services.snmp_mib_service import (
     delete_mib,
     search_mib_nodes,
 )
+import services.snmp_mib_service as snmp_mib_service
+import api.devices as devices_api
+from core.config import settings
+
+
+@pytest.fixture(autouse=True)
+def _isolated_snmp_database(isolated_db):
+    """Give repository tests the same fresh schema as the application."""
+    yield isolated_db
 from services.snmp_preset_service import (
     list_preset_profiles,
     seed_builtin_mibs,
@@ -236,7 +247,8 @@ def test_official_presets_service_and_api() -> None:
     assert api_res["total"] >= 5
 
 
-def test_manual_mib_upload_is_disabled_by_default() -> None:
+def test_manual_mib_upload_can_be_disabled_explicitly(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SNMP_MIB_MANUAL_UPLOAD_ENABLED", False)
     upload = UploadFile(filename="SAMPLE-TEST-MIB.mib", file=io.BytesIO(SAMPLE_TEST_MIB.encode()))
 
     with pytest.raises(HTTPException) as exc_info:
@@ -244,6 +256,120 @@ def test_manual_mib_upload_is_disabled_by_default() -> None:
 
     assert exc_info.value.status_code == 410
     assert "Manual MIB uploads are disabled" in str(exc_info.value.detail)
+
+
+def _create_upload_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE snmp_mibs (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, vendor TEXT NOT NULL,
+            filename TEXT NOT NULL, file_size INTEGER NOT NULL, node_count INTEGER NOT NULL,
+            source_type TEXT NOT NULL, description TEXT NOT NULL, content_text TEXT NOT NULL,
+            source_id TEXT NOT NULL DEFAULT '', source_commit TEXT NOT NULL DEFAULT '',
+            relative_path TEXT NOT NULL DEFAULT '', raw_file_path TEXT NOT NULL DEFAULT '',
+            sha256 TEXT NOT NULL DEFAULT '', parse_status TEXT NOT NULL DEFAULT 'legacy',
+            parse_error TEXT NOT NULL DEFAULT '', parser_version TEXT NOT NULL DEFAULT 'legacy',
+            module_oid TEXT NOT NULL DEFAULT '', import_run_id TEXT NOT NULL DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE snmp_mib_nodes (
+            id TEXT PRIMARY KEY, mib_id TEXT NOT NULL, node_name TEXT NOT NULL,
+            oid TEXT NOT NULL, parent_oid TEXT NOT NULL, syntax_type TEXT NOT NULL,
+            access_type TEXT NOT NULL, status TEXT NOT NULL, description TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        """
+    )
+
+
+def test_manual_mib_zip_upload_imports_supported_members(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "SNMP_MIB_MANUAL_UPLOAD_ENABLED", True)
+    conn = sqlite3.connect(":memory:")
+    _create_upload_schema(conn)
+    monkeypatch.setattr(devices_api, "get_db_connection", lambda: conn)
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zip_file:
+        zip_file.writestr("vendor/SAMPLE-TEST-MIB.mib", SAMPLE_TEST_MIB)
+        zip_file.writestr("README.md", "ignored")
+    archive.seek(0)
+
+    upload = UploadFile(filename="vendor-mibs.zip", file=archive)
+    response = asyncio.run(
+        upload_snmp_mib_file(
+            file=upload,
+            vendor="",
+            description="",
+            user={"role": "Operator"},
+        )
+    )
+
+    assert response["success"] is True
+    assert response["imported"] == 1
+    assert response["failed"] == 0
+    assert response["data"][0]["name"] == "SAMPLE-TEST-MIB"
+
+
+def test_manual_large_zip_archive_upload_triggers_background_indexing(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(settings, "SNMP_MIB_MANUAL_UPLOAD_ENABLED", True)
+
+    # Mock import_mibs_from_directory
+    mock_called = False
+    def mock_import(mibs_dir=None, target_vendors=None):
+        nonlocal mock_called
+        mock_called = True
+        return {"success": True, "imported": 12, "nodes": 100, "run_id": "test-run-123"}
+
+    import scripts.sync_librenms_mibs as sync_module
+    monkeypatch.setattr(sync_module, "import_mibs_from_directory", mock_import)
+    monkeypatch.setattr(sync_module, "MIBS_DIR", str(tmp_path / "mibs"))
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zip_file:
+        for i in range(12):
+            zip_file.writestr(f"cisco/TEST-MIB-{i}", f"TEST-MIB-{i} DEFINITIONS ::= BEGIN END")
+    archive.seek(0)
+
+    upload = UploadFile(filename="all-mibs.zip", file=archive)
+    response = asyncio.run(
+        upload_snmp_mib_file(
+            file=upload,
+            vendor="",
+            description="",
+            user={"role": "Operator"},
+        )
+    )
+
+    assert response["success"] is True
+    assert response["async"] is True
+    assert response["extracted"] == 12
+    assert "cisco" in response["vendors"]
+
+
+def test_zip_member_failure_does_not_abort_other_members(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE imported_files (filename TEXT PRIMARY KEY)")
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zip_file:
+        zip_file.writestr("good.mib", "good")
+        zip_file.writestr("broken.mib", "broken")
+    archive.seek(0)
+
+    def fake_parse_and_store_mib(connection, *, filename, **kwargs):
+        if filename == "broken.mib":
+            raise ValueError("invalid MIB")
+        connection.execute("INSERT INTO imported_files (filename) VALUES (?)", (filename,))
+        return {"filename": filename}
+
+    monkeypatch.setattr(snmp_mib_service, "parse_and_store_mib", fake_parse_and_store_mib)
+    errors: list[dict[str, str]] = []
+    results = snmp_mib_service.parse_and_store_zip(conn, archive.getvalue(), errors=errors)
+    conn.commit()
+
+    assert results == [{"filename": "good.mib"}]
+    assert errors == [{"filename": "broken.mib", "error": "invalid MIB"}]
+    assert conn.execute("SELECT filename FROM imported_files").fetchall() == [("good.mib",)]
+    conn.close()
 
 
 def test_reset_and_search_multi_vendor_mibs() -> None:

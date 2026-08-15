@@ -54,10 +54,13 @@ class Settings(BaseSettings):
     CONFIG_MANAGEMENT_URL: str = ""
     CONFIG_MANAGEMENT_TIMEOUT_SECONDS: float = 1.0
 
-    # MIBs are maintained from the versioned LibreNMS catalog and mapped into
-    # SNMP metric templates.  Keep ad-hoc uploads disabled by default so a
-    # vendor ZIP cannot silently introduce duplicate modules or OIDs.
-    SNMP_MIB_MANUAL_UPLOAD_ENABLED: bool = False
+    # MIBs can be maintained from the versioned LibreNMS catalog or uploaded
+    # by an Operator.  Keep the limits configurable so a large vendor archive
+    # cannot exhaust memory during parsing.
+    SNMP_MIB_MANUAL_UPLOAD_ENABLED: bool = True
+    SNMP_MIB_UPLOAD_MAX_BYTES: int = 150 * 1024 * 1024
+    SNMP_MIB_UPLOAD_MAX_FILES: int = 20000
+    SNMP_MIB_UPLOAD_MAX_UNCOMPRESSED_BYTES: int = 500 * 1024 * 1024
 
     # External AI is opt-in.  Security gateway failures, kill-switch state,
     # oversized payloads, and provider URL policy are all enforced before an

@@ -52,12 +52,25 @@ def init_db():
 
         # Apply versioned, tracked schema migrations on top of the baseline.
         try:
-            from .migrations import run_migrations
+            from .migrations import build_migration_plan, run_migrations
             applied = run_migrations(conn, _USE_PG, strict_history=True)
             if applied:
                 logger.info("Applied %d pending schema migration(s).", applied)
+            migration_plan = build_migration_plan(conn, _USE_PG)
+            if not migration_plan.safe_for(strict_history=True):
+                raise RuntimeError(
+                    "Database migration history is unsafe: "
+                    f"unknown={migration_plan.unknown_applied_versions}, "
+                    f"name_drift={migration_plan.name_drift}"
+                )
+            if migration_plan.pending_versions:
+                raise RuntimeError(
+                    "Database migrations are incomplete; pending versions: "
+                    f"{migration_plan.pending_versions}"
+                )
         except Exception as mig_exc:
             logger.error("Schema migration runner error: %s", mig_exc, exc_info=True)
+            raise
 
         _db_initialized = True
         logger.info("Database initialization completed successfully.")

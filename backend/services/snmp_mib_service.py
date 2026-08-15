@@ -10,16 +10,20 @@ from __future__ import annotations
 import io
 import hashlib
 import logging
+import os
 import re
 import uuid
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from database import get_db_connection
 from services.mib_repository_service import PARSER_VERSION
 
 logger = logging.getLogger(__name__)
+
+SUPPORTED_MIB_FILE_SUFFIXES = (".mib", ".my", ".txt", ".asn", ".smi")
 
 # Standard well-known root OID symbol mappings
 STANDARD_ROOT_OIDS: dict[str, str] = {
@@ -493,34 +497,174 @@ def parse_and_store_mib(
     }
 
 
+def is_valid_mib_zip_member(file_info: zipfile.ZipInfo) -> bool:
+    """Filter out OS metadata and non-text binary formats from ZIP members."""
+    if file_info.is_dir():
+        return False
+    norm_name = file_info.filename.replace("\\", "/").strip()
+    parts = [p for p in norm_name.split("/") if p]
+    if not parts or any(p.startswith(".") for p in parts) or "__MACOSX" in parts:
+        return False
+    ext = os.path.splitext(norm_name.lower())[1]
+    if ext in (
+        ".zip", ".tar", ".gz", ".bz2", ".rar", ".7z", ".exe", ".bin",
+        ".dll", ".so", ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".pyc", ".db", ".sqlite"
+    ):
+        return False
+    return ext in SUPPORTED_MIB_FILE_SUFFIXES or ext == ""
+
+
+def extract_mib_archive_to_repo(
+    zip_bytes: bytes,
+    target_mibs_dir: Path,
+    max_files: int = 50000,
+    max_uncompressed_bytes: int = 500 * 1024 * 1024,
+) -> tuple[int, set[str]]:
+    """Safely extract MIB files from a ZIP archive into the local repository directory.
+
+    Handles archives with or without wrapper folder prefixes (e.g. 'mibs/', 'librenms-master/mibs/'),
+    strips unsafe components (ZipSlip protection), cleans OS metadata (__MACOSX, .DS_Store),
+    and normalizes files directly under target_mibs_dir.
+    """
+    target_mibs_path = Path(target_mibs_dir).resolve()
+    target_mibs_path.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
+        members = [f for f in z.infolist() if not f.is_dir()]
+        if len(members) > max_files:
+            raise ValueError(f"ZIP archive contains too many files ({len(members)} > {max_files})")
+
+        total_size = sum(max(0, int(f.file_size)) for f in members)
+        if total_size > max_uncompressed_bytes:
+            raise ValueError(
+                f"ZIP archive is too large after decompression ({total_size} > {max_uncompressed_bytes} bytes)"
+            )
+
+        clean_members: list[tuple[zipfile.ZipInfo, str, list[str]]] = []
+        for f in members:
+            norm_name = f.filename.replace("\\", "/").strip()
+            parts = [p for p in norm_name.split("/") if p]
+            if not parts or any(p.startswith(".") for p in parts) or "__MACOSX" in parts:
+                continue
+            ext = os.path.splitext(norm_name.lower())[1]
+            if ext in (
+                ".zip", ".tar", ".gz", ".bz2", ".rar", ".7z", ".exe", ".bin",
+                ".dll", ".so", ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".pyc", ".db", ".sqlite"
+            ):
+                continue
+            clean_members.append((f, norm_name, parts))
+
+        if not clean_members:
+            return 0, set()
+
+        prefix_to_strip = ""
+        first_parts = clean_members[0][2]
+        if len(first_parts) > 1:
+            common_first = first_parts[0]
+            if all(parts[0] == common_first for _, _, parts in clean_members):
+                common_lower = common_first.lower()
+                known_vendors = (
+                    "cisco", "huawei", "h3c", "comware", "rfc", "net-snmp", "iana", "ietf",
+                    "juniper", "arista", "ruijie", "fortinet", "mikrotik", "zte", "dell", "hp", "hpe", "f5", "checkpoint"
+                )
+                if common_lower not in known_vendors:
+                    prefix_to_strip = common_first + "/"
+
+        extracted_count = 0
+        detected_vendors: set[str] = set()
+
+        for f, norm_name, _ in clean_members:
+            if "/mibs/" in f"/{norm_name}":
+                idx = norm_name.find("mibs/")
+                rel_path = norm_name[idx + len("mibs/"):]
+            elif prefix_to_strip and norm_name.startswith(prefix_to_strip):
+                rel_path = norm_name[len(prefix_to_strip):]
+            else:
+                rel_path = norm_name
+
+            rel_path = rel_path.strip("/")
+            if not rel_path:
+                continue
+
+            # Path traversal safety check (ZipSlip)
+            dest_file = (target_mibs_path / rel_path).resolve()
+            if not str(dest_file).startswith(str(target_mibs_path)):
+                continue
+
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            data = z.read(f)
+            dest_file.write_bytes(data)
+            extracted_count += 1
+
+            rel_parts = rel_path.split("/")
+            if len(rel_parts) > 1:
+                detected_vendors.add(rel_parts[0])
+
+        return extracted_count, detected_vendors
+
+
 def parse_and_store_zip(
     conn,
     zip_bytes: bytes,
     vendor: str = "",
     source_type: str = "user_upload",
+    description: str = "",
+    max_files: int = 20000,
+    max_uncompressed_bytes: int = 500 * 1024 * 1024,
+    errors: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Unzip and parse all .mib / .my / .txt files in a zip archive."""
+    """Unzip and parse supported MIB files without extracting to disk.
+
+    Each archive member is isolated by a database savepoint.  A malformed
+    vendor file therefore does not poison the PostgreSQL transaction for the
+    remaining valid files in the same ZIP.
+    """
     results = []
     with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as z:
-        for file_info in z.infolist():
-            if file_info.is_dir():
-                continue
-            lower_name = file_info.filename.lower()
-            if not (lower_name.endswith(".mib") or lower_name.endswith(".my") or lower_name.endswith(".txt") or lower_name.endswith(".asn")):
-                continue
+        members = [file_info for file_info in z.infolist() if not file_info.is_dir()]
+        if len(members) > max_files:
+            raise ValueError(f"ZIP archive contains too many files (maximum {max_files})")
+
+        supported_members = [
+            file_info
+            for file_info in members
+            if is_valid_mib_zip_member(file_info)
+        ]
+        total_uncompressed_bytes = sum(max(0, int(file_info.file_size)) for file_info in supported_members)
+        if total_uncompressed_bytes > max_uncompressed_bytes:
+            raise ValueError(
+                "ZIP archive is too large after decompression "
+                f"(maximum {max_uncompressed_bytes} bytes)"
+            )
+
+        for index, file_info in enumerate(supported_members):
+            savepoint = f"snmp_mib_zip_{index}"
+            conn.execute(f"SAVEPOINT {savepoint}")
             try:
                 content = z.read(file_info).decode("utf-8", errors="replace")
                 base_name = file_info.filename.split("/")[-1].split("\\")[-1]
+                inferred_vendor = vendor or detect_vendor_from_name(base_name, content)
                 res = parse_and_store_mib(
                     conn,
                     filename=base_name,
                     raw_text=content,
-                    vendor=vendor,
+                    vendor=inferred_vendor,
                     source_type=source_type,
+                    description=description,
                 )
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 results.append(res)
             except Exception as e:
-                logger.warning("Failed to parse MIB in zip %s: %s", file_info.filename, e)
+                try:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                except Exception:
+                    conn.rollback()
+                    raise
+                error_message = str(e)[:500] or type(e).__name__
+                logger.warning("Failed to parse MIB in zip %s: %s", file_info.filename, error_message)
+                if errors is not None:
+                    errors.append({"filename": file_info.filename, "error": error_message})
     return results
 
 

@@ -130,6 +130,33 @@ def test_db018_strict_history_rejects_unknown_versions_and_name_drift(monkeypatc
         conn.close()
 
 
+def test_db018_accepts_explicit_legacy_name_alias(monkeypatch):
+    modules = [
+        SimpleNamespace(VERSION=1, NAME="baseline", upgrade=lambda cursor, use_pg: None),
+        SimpleNamespace(
+            VERSION=2,
+            NAME="current_name",
+            LEGACY_NAMES=("historical_name",),
+            upgrade=lambda cursor, use_pg: None,
+        ),
+    ]
+    import database.migrations as migrations
+
+    monkeypatch.setattr(migrations, "discover_migrations", lambda: modules)
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute(f"CREATE TABLE {_TRACKING_TABLE} (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)")
+        conn.execute(f"INSERT INTO {_TRACKING_TABLE} VALUES (1, 'baseline', 'now')")
+        conn.execute(f"INSERT INTO {_TRACKING_TABLE} VALUES (2, 'historical_name', 'now')")
+        conn.commit()
+        plan = build_migration_plan(conn, use_pg=False)
+        assert plan.name_drift == ()
+        assert plan.safe_for(strict_history=True) is True
+        assert run_migrations(conn, use_pg=False, strict_history=True) == 0
+    finally:
+        conn.close()
+
+
 def test_db018_schema_init_uses_strict_production_history_and_report_markers():
     source = SCHEMA.read_text(encoding="utf-8")
     assert "run_migrations(conn, _USE_PG, strict_history=True)" in source

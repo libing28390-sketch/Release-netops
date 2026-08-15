@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { X, Trash2, Database, FileText, Search, RefreshCw, Layers, CheckCircle2, AlertCircle, ChevronDown, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
+import { X, Trash2, Database, FileText, Search, RefreshCw, Upload, Layers, CheckCircle2, AlertCircle, ChevronDown, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react';
 import { apiRequest } from '../../api/http';
 import { ALL_VENDOR_NAMES, NETWORK_VENDOR_GROUPS } from '../../pages/AssetManagement/constants';
 import type { MibNodeItem } from './OidPickerModal';
@@ -98,7 +98,10 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
   const [nodeSearchResults, setNodeSearchResults] = useState<MibNodeItem[] | null>(null);
   const [nodeSearchLoading, setNodeSearchLoading] = useState(false);
   const [mappingMetricKey, setMappingMetricKey] = useState('cpu');
+  const [uploading, setUploading] = useState(false);
 
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const prevSyncRunningRef = useRef(false);
   const vendorDropdownRef = useRef<HTMLDivElement>(null);
   const listAbortRef = useRef<AbortController | null>(null);
   const listRequestSeqRef = useRef(0);
@@ -307,6 +310,89 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
     return () => clearInterval(timer);
   }, [open]);
 
+  useEffect(() => {
+    if (prevSyncRunningRef.current && !syncState.running) {
+      void loadMibs(1, searchQuery);
+      if (syncState.last_result?.success) {
+        showToast(
+          zh
+            ? `MIB 全量同步完成：成功导入 ${syncState.last_result.imported ?? 0} 个 MIB 模块，共 ${syncState.last_result.nodes ?? 0} 个 OID 节点`
+            : `MIB sync complete: ${syncState.last_result.imported ?? 0} MIBs imported, ${syncState.last_result.nodes ?? 0} OID nodes`,
+          'success',
+        );
+      }
+    }
+    prevSyncRunningRef.current = syncState.running;
+  }, [syncState.running]);
+
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    const supported = /\.(zip|mib|my|txt|asn|smi)$/i.test(file.name);
+    if (!supported) {
+      showToast(
+        zh ? '仅支持 ZIP、MIB、MY、TXT、ASN 或 SMI 文件' : 'Only ZIP, MIB, MY, TXT, ASN, or SMI files are supported',
+        'error',
+      );
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    const params = new URLSearchParams();
+    if (vendorFilter.trim()) params.set('vendor', vendorFilter.trim());
+
+    setUploading(true);
+    try {
+      const result = await apiRequest<{
+        success: boolean;
+        async?: boolean;
+        message?: string;
+        data?: MibItem[];
+        imported?: number;
+        failed?: number;
+        extracted?: number;
+        errors?: Array<{ filename: string; error: string }>;
+      }>(`/api/platform-registry/mibs/upload${params.toString() ? `?${params.toString()}` : ''}`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (result.async) {
+        showToast(
+          result.message || (zh ? 'MIB 压缩包已接收，已自动启动后台全量解析与索引…' : 'MIB archive received; indexing started in background…'),
+          'info',
+        );
+        void checkSyncStatus();
+        return;
+      }
+
+      const imported = typeof result.imported === 'number'
+        ? result.imported
+        : (Array.isArray(result.data) ? result.data.length : 0);
+      const failed = typeof result.failed === 'number'
+        ? result.failed
+        : (Array.isArray(result.errors) ? result.errors.length : 0);
+      showToast(
+        zh
+          ? `MIB 导入完成：成功 ${imported} 个${failed ? `，失败 ${failed} 个` : ''}`
+          : `MIB import complete: ${imported} succeeded${failed ? `, ${failed} failed` : ''}`,
+        failed ? 'info' : 'success',
+      );
+      setSelectedMibId(null);
+      setMibDetail(null);
+      setMibPage(1);
+      await loadMibs(1, searchQuery);
+      void checkSyncStatus();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : (zh ? 'MIB/ZIP 导入失败' : 'MIB/ZIP import failed'), 'error');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleSyncLibreNMS = async () => {
     if (!window.confirm(zh ? '确定从 LibreNMS 官方仓库拉取并解析全量厂商 MIB 库吗？这将在后台异步执行。' : 'Fetch and index full multi-vendor MIB library from LibreNMS repository? This runs in the background.')) {
       return;
@@ -396,6 +482,14 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
         className="flex max-h-[90vh] w-full max-w-[1100px] flex-col overflow-hidden rounded-2xl border border-black/10 bg-[var(--card-bg)] shadow-2xl dark:border-white/10"
         onMouseDown={e => e.stopPropagation()}
       >
+        <input
+          ref={uploadInputRef}
+          type="file"
+          accept=".zip,.mib,.my,.txt,.asn,.smi"
+          className="hidden"
+          aria-label={zh ? '选择 MIB 或 ZIP 文件' : 'Choose MIB or ZIP file'}
+          onChange={handleUpload}
+        />
         {/* Header */}
         <div className="flex items-center justify-between border-b border-black/8 px-5 py-4 dark:border-white/8">
           <div className="flex items-center gap-2">
@@ -408,12 +502,22 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
               </div>
               <div className="mt-0.5 text-[11px] text-black/45 dark:text-white/45">
                 {zh
-                  ? '已内置 Standard RFC、Cisco、Huawei、H3C、Arista、Ruijie、Juniper、Fortinet 核心 MIB；通过 LibreNMS 官方目录统一维护'
-                  : 'Pre-loaded with Standard RFC, Cisco, Huawei, H3C, Arista, Ruijie, Juniper, Fortinet MIBs. Managed by the official LibreNMS catalog.'}
+                  ? '已内置 Standard RFC、Cisco、Huawei、H3C、Arista、Ruijie、Juniper、Fortinet 核心 MIB；支持上传 ZIP/MIB 自动索引或通过 LibreNMS 官方目录统一同步'
+                  : 'Pre-loaded with Standard RFC, Cisco, Huawei, H3C, Arista, Ruijie, Juniper, Fortinet MIBs. Supports ZIP/MIB uploads or official LibreNMS sync.'}
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={uploading || loading || syncState.running}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-500/20 disabled:opacity-50 dark:text-violet-300"
+              title={zh ? '上传 MIB 文件或全量 ZIP 压缩包' : 'Upload MIB file or full ZIP archive'}
+            >
+              <Upload size={12} className={uploading ? 'animate-pulse' : ''} />
+              {uploading ? (zh ? '导入中…' : 'Importing…') : (zh ? '上传 MIB / ZIP' : 'Upload MIB / ZIP')}
+            </button>
             <button
               type="button"
               onClick={() => void handleSyncLibreNMS()}
@@ -566,7 +670,7 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
 
           <div className="flex items-center justify-end bg-black/[.02] px-4 py-3 dark:bg-white/[.02] lg:col-span-6">
             <span className="text-[11px] text-black/45 dark:text-white/45">
-              {zh ? '仅保留系统内置 MIB 和 LibreNMS 官方同步' : 'Managed by built-in MIBs and official LibreNMS sync'}
+              {zh ? '支持直接上传 MIB/ZIP 自动解压索引，或一键同步 LibreNMS 官方全量库' : 'Supports uploading MIB/ZIP archives with auto-indexing, or syncing the official LibreNMS library'}
             </span>
           </div>
         </div>

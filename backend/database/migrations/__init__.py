@@ -109,11 +109,17 @@ def build_migration_plan(conn, use_pg: bool | None = None) -> MigrationPlan:
 
     records = get_applied_records(conn)
     unknown = tuple(sorted(set(records) - set(discovered)))
-    drift = tuple(
-        (version, records[version], str(getattr(discovered[version], "NAME", "")))
-        for version in sorted(set(records) & set(discovered))
-        if records[version] != str(getattr(discovered[version], "NAME", ""))
-    )
+    drift_entries = []
+    for version in sorted(set(records) & set(discovered)):
+        module = discovered[version]
+        expected_name = str(getattr(module, "NAME", ""))
+        legacy_names = getattr(module, "LEGACY_NAMES", ())
+        if isinstance(legacy_names, str):
+            legacy_names = (legacy_names,)
+        accepted_names = {expected_name, *(str(name) for name in legacy_names)}
+        if records[version] not in accepted_names:
+            drift_entries.append((version, records[version], expected_name))
+    drift = tuple(drift_entries)
     if records and 1 not in records:
         # A non-empty history without the immutable baseline marker is not a
         # fresh install and cannot be safely auto-repaired.

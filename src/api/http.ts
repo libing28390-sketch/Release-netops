@@ -21,9 +21,11 @@ export const authHeaders = (json = false): HeadersInit => {
 };
 
 export async function apiRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const bodyIsFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
   const response = await fetch(url, {
     ...init,
-    headers: { ...authHeaders(Boolean(init.body)), ...(init.headers || {}) },
+    // Let the browser set the multipart boundary for FormData uploads.
+    headers: { ...authHeaders(Boolean(init.body) && !bodyIsFormData), ...(init.headers || {}) },
   });
   const requestId = response.headers.get('X-Request-ID') || undefined;
   const payload = await response.json().catch(() => ({}));

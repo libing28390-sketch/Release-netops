@@ -1419,7 +1419,9 @@ def seed_builtin_mibs() -> int:
     conn = get_db_connection()
     count = 0
     try:
-        for item in BUILTIN_MIB_SEEDS:
+        for index, item in enumerate(BUILTIN_MIB_SEEDS):
+            savepoint = f"snmp_builtin_seed_{index}"
+            conn.execute(f"SAVEPOINT {savepoint}")
             try:
                 parse_and_store_mib(
                     conn,
@@ -1430,9 +1432,16 @@ def seed_builtin_mibs() -> int:
                     description=item["description"],
                     existing_id=_builtin_mib_id(item),
                 )
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 count += 1
             except Exception as exc:
-                logger.warning("Failed to seed builtin MIB %s: %s", item["filename"], exc)
+                try:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                except Exception:
+                    conn.rollback()
+                    raise
+                logger.warning("Failed to seed builtin MIB %s: %s", item["filename"], str(exc)[:500])
         deduplicate_builtin_mibs(conn)
         conn.commit()
     finally:
@@ -1447,7 +1456,9 @@ def reset_builtin_mibs() -> int:
     try:
         # Delete existing built-in MIBs to allow fresh seeding
         conn.execute("DELETE FROM snmp_mibs WHERE source_type = 'builtin'")
-        for item in BUILTIN_MIB_SEEDS:
+        for index, item in enumerate(BUILTIN_MIB_SEEDS):
+            savepoint = f"snmp_builtin_reset_{index}"
+            conn.execute(f"SAVEPOINT {savepoint}")
             try:
                 parse_and_store_mib(
                     conn,
@@ -1458,9 +1469,16 @@ def reset_builtin_mibs() -> int:
                     description=item["description"],
                     existing_id=_builtin_mib_id(item),
                 )
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 count += 1
             except Exception as exc:
-                logger.warning("Failed to reset builtin MIB %s: %s", item["filename"], exc)
+                try:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                except Exception:
+                    conn.rollback()
+                    raise
+                logger.warning("Failed to reset builtin MIB %s: %s", item["filename"], str(exc)[:500])
         deduplicate_builtin_mibs(conn)
         conn.commit()
     finally:
