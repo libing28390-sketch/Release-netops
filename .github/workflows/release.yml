@@ -185,6 +185,46 @@ jobs:
           cp dist/NexoraTerminalAgent.exe ./NexoraTerminalAgent.exe
           rm -rf build/ dist/
 
+      - name: Upload Windows Executables to Baidu Pan (百度网盘)
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}
+        run: |
+          if [ -z "$BYPY_TOKEN_CONTENT" ]; then
+            echo "[INFO] 未配置 BAIDU_PAN_TOKEN Secret，跳过百度网盘上传。"
+            exit 0
+          fi
+
+          echo "==== 1. 安装 bypy ===="
+          python -m pip install --no-cache-dir bypy
+
+          echo "==== 2. 配置 bypy 认证凭据 ===="
+          BYPY_DIR="$HOME/.bypy"
+          mkdir -p "$BYPY_DIR"
+          echo "$BYPY_TOKEN_CONTENT" > "$BYPY_DIR/bypy.json"
+          if [ -n "$USERPROFILE" ]; then
+            mkdir -p "$USERPROFILE/.bypy"
+            echo "$BYPY_TOKEN_CONTENT" > "$USERPROFILE/.bypy/bypy.json"
+          fi
+
+          TAG_NAME="${GITHUB_REF_NAME:-latest}"
+          DATE_STR=$(date +'%Y%m%d')
+          echo "==== 3. 准备上传版本: ${TAG_NAME} (${DATE_STR}) ===="
+
+          cp NetOps.exe "NetOps_${TAG_NAME}_${DATE_STR}.exe"
+          cp NexoraTerminalAgent.exe "NexoraTerminalAgent_${TAG_NAME}_${DATE_STR}.exe"
+
+          echo "==== 4. 上传至最新稳定版目录 (覆盖更新，固定分享) ===="
+          python -m bypy upload NetOps.exe "/NetOps_Release/最新稳定版/NetOps-Windows-Latest.exe"
+          python -m bypy upload NexoraTerminalAgent.exe "/NetOps_Release/最新稳定版/NexoraTerminalAgent-Latest.exe"
+
+          echo "==== 5. 上传至历史版本归档目录 ===="
+          python -m bypy upload "NetOps_${TAG_NAME}_${DATE_STR}.exe" "/NetOps_Release/历史版本归档/${TAG_NAME}/NetOps_${TAG_NAME}_${DATE_STR}.exe"
+          python -m bypy upload "NexoraTerminalAgent_${TAG_NAME}_${DATE_STR}.exe" "/NetOps_Release/历史版本归档/${TAG_NAME}/NexoraTerminalAgent_${TAG_NAME}_${DATE_STR}.exe"
+
+          echo "==== 百度网盘上传成功完成！ ===="
+
       - name: Remove private and Linux-only files
         shell: bash
         run: |
@@ -263,43 +303,5 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Upload Windows Executables to Baidu Pan (百度网盘)
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}
-        run: |
-          if [ -z "$BYPY_TOKEN_CONTENT" ]; then
-            echo "[INFO] 未配置 BAIDU_PAN_TOKEN Secret，跳过百度网盘上传。"
-            exit 0
-          fi
 
-          echo "==== 1. 安装 bypy ===="
-          python -m pip install --no-cache-dir bypy
-
-          echo "==== 2. 配置 bypy 认证凭据 ===="
-          BYPY_DIR="$HOME/.bypy"
-          mkdir -p "$BYPY_DIR"
-          echo "$BYPY_TOKEN_CONTENT" > "$BYPY_DIR/bypy.json"
-          if [ -n "$USERPROFILE" ]; then
-            mkdir -p "$USERPROFILE/.bypy"
-            echo "$BYPY_TOKEN_CONTENT" > "$USERPROFILE/.bypy/bypy.json"
-          fi
-
-          TAG_NAME="${GITHUB_REF_NAME:-latest}"
-          DATE_STR=$(date +'%Y%m%d')
-          echo "==== 3. 准备上传版本: ${TAG_NAME} (${DATE_STR}) ===="
-
-          cp NetOps.exe "NetOps_${TAG_NAME}_${DATE_STR}.exe"
-          cp NexoraTerminalAgent.exe "NexoraTerminalAgent_${TAG_NAME}_${DATE_STR}.exe"
-
-          echo "==== 4. 上传至最新稳定版目录 (覆盖更新，固定分享) ===="
-          python -m bypy upload NetOps.exe "/NetOps_Release/最新稳定版/NetOps-Windows-Latest.exe"
-          python -m bypy upload NexoraTerminalAgent.exe "/NetOps_Release/最新稳定版/NexoraTerminalAgent-Latest.exe"
-
-          echo "==== 5. 上传至历史版本归档目录 ===="
-          python -m bypy upload "NetOps_${TAG_NAME}_${DATE_STR}.exe" "/NetOps_Release/历史版本归档/${TAG_NAME}/NetOps_${TAG_NAME}_${DATE_STR}.exe"
-          python -m bypy upload "NexoraTerminalAgent_${TAG_NAME}_${DATE_STR}.exe" "/NetOps_Release/历史版本归档/${TAG_NAME}/NexoraTerminalAgent_${TAG_NAME}_${DATE_STR}.exe"
-
-          echo "==== 百度网盘上传成功完成！ ===="
 
