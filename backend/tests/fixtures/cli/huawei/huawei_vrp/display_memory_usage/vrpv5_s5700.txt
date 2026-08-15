@@ -1,0 +1,6 @@
+<HUAWEI> display memory-usage
+Memory utilization statistics at 2016-09-01 10:21:17-03:00
+System Total Memory Is: 867837916 bytes
+Total Memory Used Is: 203704524 bytes
+Memory Using Percentage Is: 23%
+

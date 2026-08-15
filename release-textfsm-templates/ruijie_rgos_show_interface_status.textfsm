@@ -1,0 +1,14 @@
+Value INTERFACE ([\w.-]+(?:\s+\d+(?:/\d+)*(?:\.\d+)?)?|\S+)
+Value STATUS (administratively down|admin down|up|down|\S+)
+Value VLAN (\d+|routed|\S+)
+Value DUPLEX (\S+)
+Value SPEED (\S+)
+Value TYPE (\S+)
+
+Start
+  ^Interface\s+Status\s+Vlan\s+Duplex\s+Speed\s+Type
+  ^-+
+  ^${INTERFACE}\s{2,}${STATUS}\s{2,}${VLAN}\s{2,}${DUPLEX}\s{2,}${SPEED}\s{2,}${TYPE}\s*$$ -> Record
+  ^${INTERFACE}\s{2,}${STATUS}\s{2,}${DUPLEX}\s{2,}${SPEED}\s{2,}${TYPE}\s*$$ -> Record
+  ^${INTERFACE}\s+${STATUS}\s+${VLAN}\s+${DUPLEX}\s+${SPEED}\s+${TYPE}\s*$$ -> Record
+  ^${INTERFACE}\s+${STATUS}\s+${DUPLEX}\s+${SPEED}\s+${TYPE}\s*$$ -> Record

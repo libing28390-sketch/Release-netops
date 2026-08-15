@@ -1,0 +1,8 @@
+<Sysname> display bgp routing-table
+ Total Number of Routes: 1
+ BGP Local router ID is 10.10.10.1
+ Status codes: * - valid, > - best, d - damped,
+               h - history, i - internal, s - suppressed, S - Stale
+               Origin : i - IGP, e - EGP, ? - incomplete
+     Network            NextHop         MED        LocPrf     PrefVal Path/Ogn
+ *>  40.40.40.0/24      20.20.20.1                            0       200 300i

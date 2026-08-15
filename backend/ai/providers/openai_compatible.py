@@ -1,0 +1,223 @@
+"""OpenAI-compatible provider with a constrained, non-redirecting egress."""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from typing import Any, AsyncIterator, Dict, List, Optional
+from urllib.parse import urlparse
+
+import httpx
+
+from ai.gateway.exceptions import (
+    AIAuthFailedException,
+    AIInvalidResponseException,
+    AINetworkException,
+    AIRateLimitException,
+    AIProviderTimeoutException,
+)
+from ai.providers.base import BaseLLMProvider
+
+logger = logging.getLogger(__name__)
+
+
+class OpenAICompatibleProvider(BaseLLMProvider):
+    """Universal OpenAI-compatible provider.
+
+    The gateway supplies already-protected messages. This class is transport
+    only: it never logs request bodies and never follows provider redirects.
+    """
+
+    def _get_endpoint(self) -> str:
+        base = (self.base_url or "https://api.openai.com/v1").rstrip("/")
+        if base.endswith("/chat/completions"):
+            return base
+        if base.endswith("/v1"):
+            return f"{base}/chat/completions"
+        return f"{base}/v1/chat/completions"
+
+    def _validate_endpoint(self, url: str) -> None:
+        parsed = urlparse(url)
+        if parsed.scheme == "https":
+            return
+        if parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}:
+            return
+        raise AINetworkException("AI provider endpoint must use HTTPS")
+
+    def _get_headers(self) -> Dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
+    async def chat(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        model: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        thinking: bool = False,
+        reasoning_effort: Optional[str] = None,
+        user_id: Optional[str] = None,
+        stream: bool = False,
+    ) -> Dict[str, Any]:
+        url = self._get_endpoint()
+        self._validate_endpoint(url)
+        payload: Dict[str, Any] = {"model": model, "messages": messages, "stream": bool(stream)}
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if response_format:
+            payload["response_format"] = response_format
+        if tools:
+            payload["tools"] = tools
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
+        if user_id:
+            payload["user"] = user_id
+        if thinking:
+            # DeepSeek accepts this OpenAI-compatible extension; providers
+            # that ignore unknown fields remain compatible.
+            payload["thinking"] = {"type": "enabled"}
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=float(self.timeout),
+                proxy=self.proxy_url,
+                follow_redirects=False,
+            ) as client:
+                response = await client.post(url, headers=self._get_headers(), json=payload)
+                if response.status_code == 401:
+                    raise AIAuthFailedException("AI provider authentication failed")
+                if response.status_code == 429:
+                    raise AIRateLimitException("AI provider rate limit exceeded")
+                if 300 <= response.status_code < 400:
+                    # Redirects are an egress boundary violation: do not
+                    # forward Authorization to a new host.
+                    raise AINetworkException("AI provider redirect refused")
+                if response.status_code >= 400:
+                    raise AINetworkException(f"AI provider returned HTTP {response.status_code}")
+                data = response.json()
+                choices = data.get("choices") or []
+                if not choices:
+                    raise AIInvalidResponseException("AI provider returned no choices")
+                first_choice = choices[0] or {}
+                message = first_choice.get("message") or {}
+                usage = data.get("usage") or {}
+                return {
+                    "content": message.get("content") or "",
+                    "reasoning_content": message.get("reasoning_content") or message.get("reasoning") or "",
+                    "input_tokens": int(usage.get("prompt_tokens") or 0),
+                    "output_tokens": int(usage.get("completion_tokens") or 0),
+                    "tool_calls": message.get("tool_calls"),
+                    "finish_reason": first_choice.get("finish_reason"),
+                    "provider_request_id": data.get("id"),
+                    # Internal-only compatibility field. LLMGateway removes
+                    # it before returning a response to an API/UI caller.
+                    "raw": data,
+                }
+        except httpx.TimeoutException as exc:
+            raise AIProviderTimeoutException("AI provider request timed out") from exc
+        except (AIAuthFailedException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIProviderTimeoutException):
+            raise
+        except Exception as exc:
+            raise AINetworkException("Network error calling AI provider") from exc
+
+    async def chat_stream(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        model: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Dict[str, Any]] = None,
+        thinking: bool = False,
+        reasoning_effort: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> AsyncIterator[str]:
+        url = self._get_endpoint()
+        self._validate_endpoint(url)
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if tools:
+            payload["tools"] = tools
+        if response_format:
+            payload["response_format"] = response_format
+        if thinking:
+            payload["thinking"] = {"type": "enabled"}
+        if reasoning_effort:
+            payload["reasoning_effort"] = reasoning_effort
+        if user_id:
+            payload["user"] = user_id
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=float(self.timeout),
+                proxy=self.proxy_url,
+                follow_redirects=False,
+            ) as client:
+                async with client.stream("POST", url, headers=self._get_headers(), json=payload) as response:
+                    if 300 <= response.status_code < 400:
+                        raise AINetworkException("AI provider redirect refused")
+                    if response.status_code >= 400:
+                        await response.aread()
+                        raise AINetworkException(f"AI provider returned HTTP {response.status_code}")
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_text = line[5:].strip()
+                        if data_text == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_text)
+                        except (TypeError, ValueError):
+                            continue
+                        choices = chunk.get("choices") or []
+                        if choices:
+                            delta = choices[0].get("delta") or {}
+                            content = delta.get("content")
+                            if content:
+                                yield str(content)
+        except (AIAuthFailedException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIProviderTimeoutException):
+            raise
+        except httpx.TimeoutException as exc:
+            raise AIProviderTimeoutException("AI provider stream timed out") from exc
+        except Exception as exc:
+            logger.error("AI provider stream failed provider=%s error=%s", self.name, type(exc).__name__)
+            raise AINetworkException("Streaming error calling AI provider") from exc
+
+    async def test_connection(self, test_model: Optional[str] = None) -> Dict[str, Any]:
+        start_time = time.perf_counter()
+        target_model = test_model or "deepseek-v4-flash"
+        test_messages = [{"role": "user", "content": "Reply with one short word: ok"}]
+        try:
+            result = await self.chat(test_messages, model=target_model, max_tokens=16)
+            return {
+                "success": True,
+                "latency_ms": int((time.perf_counter() - start_time) * 1000),
+                "message": "provider connection succeeded",
+                "model_tested": target_model,
+                "sample_response": str(result.get("content") or "")[:150],
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "latency_ms": int((time.perf_counter() - start_time) * 1000),
+                "message": "provider connection failed",
+                "model_tested": target_model,
+                "error_code": getattr(exc, "code", "UNKNOWN_ERROR"),
+            }

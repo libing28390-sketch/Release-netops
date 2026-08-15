@@ -1,0 +1,144 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+Thumbs.db
+*.log
+.env*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+# Database and session data
+data/netops.db
+data/netops.db-shm
+data/netops.db-wal
+backend/data/
+outputs/
+data/pam_recordings/
+data/pam_audit/
+data/change_order_attachments/
+
+# Scratch and temporary files
+.bypy/
+dist_baidupan/
+.codex-tmp/
+tmp/
+scratch/
+backup/
+data/logs/
+.vscode/
+zhihu*.md
+_out/
+backend/tests/_out/
+
+# Local DBs
+*.db
+*.db-shm
+*.db-wal
+
+# Root license
+license.json
+
+backend/tests/*.py
+
+tools/license_issuer/issued/registry.json
+
+# Video Presentation & TTS Generation
+azure_presentation/
+video_presentation/
+scripts/generate_azure_speech.py
+scripts/generate_video_audio.py
+test_dragon.mp3
+
+# Cython intermediate files
+tools/license_issuer/issued/registry.json
+
+# Agent / IDE Artifacts
+task.md
+task_progress.md
+task-progress-*.md
+docs/task-progress-*.md
+implementation_plan.md
+walkthrough.md
+refactor.cjs
+refactor2.cjs
+test_dragon.mp3
+patch-vmware.sh
+patch-*.sh
+hotfix-*.sh
+_check_*.py
+_regen_*.py
+
+# Keys and deployment certificates are never committed.
+*.pem
+
+# Deployment certificates and private keys are supplied out-of-band.
+nginx/ssl/*
+!nginx/ssl/.gitkeep
+docs/cleanup_docker.md
+docs/cleanup_script.md
+docs/tts_scripts/录音.md
+docs/tts_scripts/device_onboarding_and_rotation_20260524.srt
+docs/tts_scripts/device_onboarding_and_rotation.md
+docs/tts_scripts/device_onboarding_and_rotation.wav
+docs/tts_scripts/device_onboarding_and_rotation.mp3
+docs/tts_scripts/device_onboarding_and_rotation_20260524.wav
+docs/tts_scripts/device_onboarding_and_rotation_20260524.mp3
+docs/tts_scripts/device_onboarding_and_rotation.srt
+docs/tts_scripts/test_concat.mp3
+scripts/generate_device_onboarding_audio.py
+README.gitee.md
+deploy-ubuntu.gitee.sh
+
+# Local session links and codex-bridge cache
+artifacts_symlink/
+~/
+
+# Large executables and installers
+postgresql-installer.exe
+diagnostic_report.zip
+
+# Portable/bundled Node.js downloaded by the launcher (large, regenerable)
+tools/node/
+
+# Ignore all markdown files except README files, deploy files, agent configuration files, and task logs
+**/*.md
+!**/README.md
+!**/README_*.md
+!**/README.*.md
+!**/readme.md
+!**/README_gitee.md
+!**/DEPLOY.md
+!**/*DEPLOY*.md
+!**/deploy/**/*.md
+!**/*.github/**/*.md
+!.github/**/*.md
+!blog/user-manuals/
+!blog/user-manuals/**/*.md
+!blog/用户使用手册索引_20260801.md
+!**/.agents/AGENTS.md
+!**/.agents/skills/**/SKILL.md
+!**/.agents/skills/**/references/**/*.md
+!**/.agents/roles/*.md
+!**/docs/plans/plan_*.md
+!**/docs/architecture/*.md
+!**/docs/walkthrough_*.md
+!**/docs/walkthrough/**/*.md
+!**/docs/PROJECT_ANALYSIS.md
+!**/docs/TASK_REMEDIATION.md
+!**/docs/EXECUTION_LOG.md
+!**/docs/TEST_REPORT.md
+!**/docs/MODULES_OVERVIEW.md
+!**/docs/BROWSER_VALIDATION.md
+!**/docs/modules/**/*.md
+!**/docs/fixes/**/*.md
+!**/docs/introduction.md
+!**/docs/cmdb_development.md
+!**/docs/blog/**/*.md
+
+# Exclude compiled agent binaries and backup data
+scripts/nexora.exe
+backend/static/nexora.exe
+*.db.bak

@@ -1,0 +1,10 @@
+Value Required INTERFACE (\S+)
+Value IP_ADDRESS (\S+)
+Value MASK (\S+)
+Value ADMIN_STATUS (\S+)
+Value PHY_STATUS (\S+)
+Value PROTOCOL_STATUS (\S+)
+
+Start
+  ^Interface\s+IP-Address\s+Mask
+  ^${INTERFACE}\s+${IP_ADDRESS}\s+${MASK}\s+${ADMIN_STATUS}\s+${PHY_STATUS}\s+${PROTOCOL_STATUS}\s*$$ -> Record

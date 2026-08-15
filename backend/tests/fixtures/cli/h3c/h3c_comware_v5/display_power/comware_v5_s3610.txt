@@ -1,0 +1,7 @@
+<Sysname> display power
+      Power    1
+      State    : Normal
+      Type     : AC
+      Power    2
+      State    : Fault
+      Type     : DC
