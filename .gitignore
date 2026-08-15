@@ -21,6 +21,8 @@ data/pam_audit/
 data/change_order_attachments/
 
 # Scratch and temporary files
+.bypy/
+dist_baidupan/
 .codex-tmp/
 tmp/
 scratch/
