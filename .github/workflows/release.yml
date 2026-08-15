@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf tools/
+          rm -rf tools/ node_modules/
 
           # Keep only the operational scripts referenced by public deployment docs.
           if [ -d scripts ]; then
@@ -130,7 +130,7 @@ jobs:
       - name: Package Linux / Ubuntu / Docker Release Archive
         shell: bash
         run: |
-          zip -r NetOps-Linux-Ubuntu.zip . -x ".git/*" -x ".github/*"
+          git archive --format=zip HEAD -o NetOps-Linux-Ubuntu.zip
 
       - name: Upload Linux Release to Baidu Pan (百度网盘)
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
@@ -259,29 +259,6 @@ jobs:
           rm -f deploy-ubuntu.sh deploy-ubuntu.gitee.sh Dockerfile docker-compose.yml .dockerignore
           rm -rf nginx/ .github/
 
-      - name: Package Windows Release Archive (ZIP)
-        shell: bash
-        run: |
-          # Create full Windows deployment ZIP archive containing NetOps.exe and all dependencies
-          python -c "import shutil, pathlib; shutil.make_archive('NetOps-Windows', 'zip', '.')"
-
-      - name: Upload Windows Release to Baidu Pan (百度网盘)
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}
-        run: |
-          if [ -z "$BYPY_TOKEN_CONTENT" ]; then
-            echo "[INFO] 未配置 BAIDU_PAN_TOKEN Secret，跳过百度网盘上传。"
-            exit 0
-          fi
-
-          echo "==== 1. 安装 bypy 依赖 ===="
-          python -m pip install --no-cache-dir bypy
-
-          echo "==== 2. 运行百度网盘自动上传 ===="
-          python "$RUNNER_TEMP/upload_to_baidupan.py"
-
       - name: Commit sanitized Windows release tree
         shell: bash
         run: |
@@ -309,6 +286,28 @@ jobs:
             git tag "${{ github.ref_name }}-windows"
             git push origin "${{ github.ref_name }}-windows" --force
           fi
+
+      - name: Package Windows Release Archive (ZIP)
+        shell: bash
+        run: |
+          git archive --format=zip HEAD -o NetOps-Windows.zip
+
+      - name: Upload Windows Release to Baidu Pan (百度网盘)
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}
+        run: |
+          if [ -z "$BYPY_TOKEN_CONTENT" ]; then
+            echo "[INFO] 未配置 BAIDU_PAN_TOKEN Secret，跳过百度网盘上传。"
+            exit 0
+          fi
+
+          echo "==== 1. 安装 bypy 依赖 ===="
+          python -m pip install --no-cache-dir bypy
+
+          echo "==== 2. 运行百度网盘自动上传 ===="
+          python "$RUNNER_TEMP/upload_to_baidupan.py"
 
       - name: Publish Windows executable release asset
         if: startsWith(github.ref, 'refs/tags/')
