@@ -80,8 +80,8 @@ def main():
 
     print(f"[BaiduPan] Token loaded successfully (keys: {list(token_data.keys())})")
 
-    # 2. Initialize ByPy client
-    client = ByPy(configdir=str(home_bypy))
+    # 2. Initialize ByPy client with 500MB slice size to enable direct non-slicing stream upload
+    client = ByPy(configdir=str(home_bypy), slice_size=500 * 1024 * 1024, timeout=600, retry=3)
 
     # Test connection
     print("[BaiduPan] Testing quota & connection...")
