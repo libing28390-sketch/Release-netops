@@ -14,17 +14,11 @@ __pycache__/
 data/netops.db
 data/netops.db-shm
 data/netops.db-wal
-backend/data/*.db
-backend/data/librenms_repo/mibs/
+backend/data/
+outputs/
 data/pam_recordings/
 data/pam_audit/
 data/change_order_attachments/
-*.cast
-
-# License files
-data/license*.json
-tools/license_issuer/issued/
-tools/license_issuer/credentials.json
 
 # Scratch and temporary files
 .codex-tmp/

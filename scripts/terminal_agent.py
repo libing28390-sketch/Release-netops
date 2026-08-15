@@ -40,6 +40,9 @@ from urllib.request import Request, urlopen
 AGENT_VERSION = "1.2.0"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17890
+AUTOSTART_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_REGISTRY_VALUE = "NexoraTerminalAgent"
+MANAGED_START_FLAG = "--managed-start"
 MAX_BODY_BYTES = 64 * 1024
 AGENT_ID = os.environ.get("NEXORA_AGENT_ID", "").strip() or f"{socket.gethostname()}-{uuid.uuid4().hex[:12]}"
 MAX_WEB_RECORDING_BYTES = 50 * 1024 * 1024
@@ -48,6 +51,79 @@ WEB_HEARTBEAT_INTERVAL_SECONDS = 15.0
 WEB_RECORDING_MAX_FRAMES = 120
 WEB_SESSION_MAX_SECONDS = max(300, int(os.environ.get("NEXORA_WEB_SESSION_MAX_SECONDS", "43200")))
 _WEB_BROWSER_AVAILABLE: bool | None = None
+
+
+def _autostart_command(port: int) -> str:
+    """Build the command stored in the current user's Windows startup key."""
+    if getattr(sys, "frozen", False):
+        executable = str(Path(sys.executable).resolve())
+        command = [executable, MANAGED_START_FLAG, "--host", DEFAULT_HOST, "--port", str(port)]
+    else:
+        python_executable = Path(sys.executable).resolve()
+        if python_executable.name.lower() == "python.exe":
+            pythonw = python_executable.with_name("pythonw.exe")
+            if pythonw.is_file():
+                python_executable = pythonw
+        command = [
+            str(python_executable),
+            str(Path(__file__).resolve()),
+            MANAGED_START_FLAG,
+            "--host",
+            DEFAULT_HOST,
+            "--port",
+            str(port),
+        ]
+    return subprocess.list2cmdline(command)
+
+
+def _register_windows_autostart(port: int) -> None:
+    """Register the agent for the current user's logon without elevation."""
+    if sys.platform != "win32":
+        return
+    import winreg
+
+    command = _autostart_command(port)
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REGISTRY_KEY) as key:
+        winreg.SetValueEx(key, AUTOSTART_REGISTRY_VALUE, 0, winreg.REG_SZ, command)
+
+
+def _unregister_windows_autostart() -> None:
+    """Remove the agent's current-user startup entry when it exists."""
+    if sys.platform != "win32":
+        return
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REGISTRY_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, AUTOSTART_REGISTRY_VALUE)
+    except FileNotFoundError:
+        pass
+
+
+def _show_windows_warning(message: str) -> None:
+    if sys.platform != "win32":
+        print(message, file=sys.stderr, flush=True)
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, "Nexora Terminal Agent", 0x30)
+    except Exception:
+        print(message, file=sys.stderr, flush=True)
+
+
+def _ensure_windows_autostart(port: int) -> None:
+    """Keep direct launches convenient while preserving an explicit escape hatch."""
+    if sys.platform != "win32":
+        return
+    try:
+        _register_windows_autostart(port)
+    except Exception as exc:
+        _show_windows_warning(
+            "Agent 已启动，但无法设置 Windows 开机自启。\n\n"
+            f"原因：{exc}\n\n"
+            "可使用 --no-autostart 跳过，或检查当前用户的启动项权限。"
+        )
 
 
 def _json_bytes(value: dict[str, Any]) -> bytes:
@@ -737,9 +813,37 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Nexora local Terminal Agent")
     parser.add_argument("--host", default=os.environ.get("NEXORA_AGENT_HOST", DEFAULT_HOST))
     parser.add_argument("--port", type=int, default=int(os.environ.get("NEXORA_AGENT_PORT", DEFAULT_PORT)))
+    parser.add_argument(
+        MANAGED_START_FLAG,
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-autostart",
+        action="store_true",
+        help="Run once without registering Windows logon startup.",
+    )
+    parser.add_argument(
+        "--unregister-autostart",
+        action="store_true",
+        help="Remove the current user's Windows logon startup entry and exit.",
+    )
+    parser.add_argument(
+        "--register-autostart",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args()
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         parser.error("The Terminal Agent must listen on loopback only")
+    if args.unregister_autostart:
+        _unregister_windows_autostart()
+        return 0
+    if args.register_autostart:
+        _register_windows_autostart(args.port)
+        return 0
+    if sys.platform == "win32" and not args.managed_start and not args.no_autostart:
+        _ensure_windows_autostart(args.port)
     server = ThreadingHTTPServer((args.host, args.port), AgentHandler)
     print(f"Nexora Terminal Agent listening on http://{args.host}:{args.port}", flush=True)
     try:

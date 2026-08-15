@@ -546,7 +546,7 @@ server {
     # must come from the same origin or trusted CDNs.
     add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss: http://127.0.0.1:17890 http://localhost:17890; frame-ancestors 'self';" always;
 
-    client_max_body_size 20m;
+    client_max_body_size 150m;
 
     location /assets/ {
         alias _PLACEHOLDER_PROJECT_DIR_/dist/assets/;

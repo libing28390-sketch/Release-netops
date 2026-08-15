@@ -23,13 +23,20 @@ if ($InstallWebRuntime) {
     Write-Host 'Web PAM uses the installed system browser; no extra runtime is required.'
 }
 
-$taskName = 'NexoraTerminalAgent'
-$arguments = "`"$python`" `"$agent`" --host 127.0.0.1 --port $Port"
-$action = New-ScheduledTaskAction -Execute $python -Argument "`"$agent`" --host 127.0.0.1 --port $Port"
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
-Start-ScheduledTask -TaskName $taskName
+# Register a current-user startup entry.  It does not require administrator
+# privileges and works for the packaged EXE as well as source checkouts.
+& $python $agent --register-autostart --host 127.0.0.1 --port $Port
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to register Terminal Agent startup entry (exit code $LASTEXITCODE)."
+}
+
+$startArguments = @(
+    $agent,
+    '--managed-start',
+    '--host', '127.0.0.1',
+    '--port', [string]$Port
+)
+Start-Process -FilePath $python -ArgumentList $startArguments -WindowStyle Hidden
 
 Write-Host "Nexora Terminal Agent started on http://127.0.0.1:$Port"
 Write-Host "Health check: Invoke-WebRequest http://127.0.0.1:$Port/health"
