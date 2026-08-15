@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-import scripts.sync_librenms_mibs as sync_librenms_mibs
+import services.librenms_mib_service as sync_librenms_mibs
 from services.snmp_mib_service import MibParser
 
 

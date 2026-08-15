@@ -30,6 +30,12 @@ from services.snmp_mib_service import (
     search_mib_nodes,
     SUPPORTED_MIB_FILE_SUFFIXES,
 )
+from services.librenms_mib_service import (
+    fetch_librenms_mibs,
+    import_mibs_from_directory,
+    MIBS_DIR,
+    TARGET_DIR,
+)
 from services.snmp_preset_service import (
     list_preset_profiles,
     seed_builtin_mibs,
@@ -1511,39 +1517,9 @@ def auto_match_model_mibs(
 _librenms_sync_state: dict[str, Any] = {
     "running": False,
     "progress": "idle",
-    "last_result": None,
     "run_id": None,
     "started_at": None,
 }
-
-
-def _get_sync_librenms_module():
-    """Robustly load sync_librenms_mibs regardless of Docker, package, or sys.path configuration."""
-    try:
-        from backend.scripts import sync_librenms_mibs
-        return sync_librenms_mibs
-    except (ImportError, ModuleNotFoundError):
-        pass
-    try:
-        from scripts import sync_librenms_mibs
-        if hasattr(sync_librenms_mibs, "import_mibs_from_directory"):
-            return sync_librenms_mibs
-    except (ImportError, ModuleNotFoundError):
-        pass
-    import importlib.util
-    from pathlib import Path
-    for candidate in (
-        Path(__file__).resolve().parent.parent / "scripts" / "sync_librenms_mibs.py",
-        Path(__file__).resolve().parent / "scripts" / "sync_librenms_mibs.py",
-        Path("/app/backend/scripts/sync_librenms_mibs.py"),
-    ):
-        if candidate.exists():
-            spec = importlib.util.spec_from_file_location("sync_librenms_mibs_dynamic", str(candidate))
-            if spec and spec.loader:
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                return mod
-    raise RuntimeError("Cannot locate backend/scripts/sync_librenms_mibs.py module")
 
 
 @router.post("/platform-registry/mibs/sync-librenms")
@@ -1560,12 +1536,6 @@ async def trigger_sync_librenms_mibs(
             "message": "LibreNMS MIB synchronization is already running",
             "state": _librenms_sync_state,
         }
-
-    sync_mod = _get_sync_librenms_module()
-    fetch_librenms_mibs = sync_mod.fetch_librenms_mibs
-    import_mibs_from_directory = sync_mod.import_mibs_from_directory
-    MIBS_DIR = sync_mod.MIBS_DIR
-    TARGET_DIR = sync_mod.TARGET_DIR
 
     def _sync_worker(target_vendors_list: list[str] | None):
         global _librenms_sync_state
@@ -1681,10 +1651,6 @@ async def upload_snmp_mib_file(
         is_directory_or_large = len(valid_members) > 10
 
         if is_directory_or_large:
-            sync_mod = _get_sync_librenms_module()
-            MIBS_DIR = sync_mod.MIBS_DIR
-            import_mibs_from_directory = sync_mod.import_mibs_from_directory
-
             extracted_count, detected_vendors = extract_mib_archive_to_repo(
                 content,
                 target_mibs_dir=MIBS_DIR,

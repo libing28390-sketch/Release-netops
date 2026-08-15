@@ -320,7 +320,7 @@ def test_manual_large_zip_archive_upload_triggers_background_indexing(monkeypatc
         mock_called = True
         return {"success": True, "imported": 12, "nodes": 100, "run_id": "test-run-123"}
 
-    import scripts.sync_librenms_mibs as sync_module
+    import services.librenms_mib_service as sync_module
     monkeypatch.setattr(sync_module, "import_mibs_from_directory", mock_import)
     monkeypatch.setattr(sync_module, "MIBS_DIR", str(tmp_path / "mibs"))
 
