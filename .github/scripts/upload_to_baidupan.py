@@ -1,7 +1,7 @@
 """Baidu Netdisk (百度网盘) Automated Release Upload Script.
 
 Reads BYPY_TOKEN_CONTENT from environment, sets up bypy authentication,
-and uploads built binaries to Baidu Netdisk release directories.
+and uploads built zip packages (Windows and Linux) to Baidu Netdisk release directories.
 Supports raw JSON, base64-encoded JSON, and single-line JSON strings.
 """
 
@@ -53,7 +53,6 @@ def parse_token_data(raw_input: str) -> dict:
     except Exception:
         pass
 
-    # Diagnostic info without leaking credentials
     prefix = cleaned[:10] if len(cleaned) >= 10 else cleaned
     raise ValueError(
         f"Invalid token format (length={len(cleaned)}, prefix='{prefix}...'). "
@@ -102,15 +101,15 @@ def main():
     work_dir.mkdir(parents=True, exist_ok=True)
 
     artifacts = [
+        ("NetOps-Windows.zip", f"NetOps-Windows_{tag_name}_{date_str}.zip", "NetOps-Windows-Latest.zip"),
+        ("NetOps-Linux-Ubuntu.zip", f"NetOps-Linux-Ubuntu_{tag_name}_{date_str}.zip", "NetOps-Linux-Ubuntu-Latest.zip"),
         ("NetOps.exe", f"NetOps_{tag_name}_{date_str}.exe", "NetOps-Windows-Latest.exe"),
         ("NexoraTerminalAgent.exe", f"NexoraTerminalAgent_{tag_name}_{date_str}.exe", "NexoraTerminalAgent-Latest.exe"),
-        ("NetOps-Linux-Ubuntu-Docker.zip", f"NetOps-Linux-Ubuntu-Docker_{tag_name}_{date_str}.zip", "NetOps-Linux-Ubuntu-Docker-Latest.zip"),
     ]
 
     for local_src, versioned_name, latest_name in artifacts:
         src_path = Path(local_src)
         if not src_path.exists():
-            print(f"[WARN] Local artifact {local_src} not found, skipping.")
             continue
 
         file_size_mb = round(src_path.stat().st_size / (1024 * 1024), 2)
@@ -131,7 +130,7 @@ def main():
 
     # Clean up local temporary copies
     shutil.rmtree(work_dir, ignore_errors=True)
-    print("\n[BaiduPan] All artifacts uploaded successfully to Baidu Netdisk!")
+    print("\n[BaiduPan] All available artifacts uploaded successfully to Baidu Netdisk!")
 
 
 if __name__ == "__main__":

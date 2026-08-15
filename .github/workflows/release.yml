@@ -24,6 +24,11 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Cache uploader script
+        shell: bash
+        run: |
+          cp .github/scripts/upload_to_baidupan.py "$RUNNER_TEMP/upload_to_baidupan.py"
+
       - name: Validate core Docker inputs and build frontend
         shell: bash
         run: |
@@ -125,7 +130,7 @@ jobs:
       - name: Package Linux / Ubuntu / Docker Release Archive
         shell: bash
         run: |
-          zip -r NetOps-Linux-Ubuntu-Docker.zip . -x ".git/*" -x ".github/*"
+          zip -r NetOps-Linux-Ubuntu.zip . -x ".git/*" -x ".github/*"
 
       - name: Upload Linux Release to Baidu Pan (百度网盘)
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
@@ -140,7 +145,7 @@ jobs:
           echo "==== 1. 安装 bypy 依赖 ===="
           python -m pip install --no-cache-dir bypy
           echo "==== 2. 运行百度网盘自动上传 ===="
-          python scripts/upload_to_baidupan.py
+          python "$RUNNER_TEMP/upload_to_baidupan.py"
 
       - name: Generate release notes
         id: get_notes
@@ -170,7 +175,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           body: ${{ steps.get_notes.outputs.body }}
-          files: NetOps-Linux-Ubuntu-Docker.zip
+          files: NetOps-Linux-Ubuntu.zip
           draft: false
           prerelease: false
 
@@ -186,6 +191,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Cache uploader script
+        shell: bash
+        run: |
+          cp .github/scripts/upload_to_baidupan.py "$RUNNER_TEMP/upload_to_baidupan.py"
 
       - name: Install Windows packaging dependencies
         shell: bash
@@ -210,23 +220,6 @@ jobs:
             scripts/terminal_agent.py
           cp dist/NexoraTerminalAgent.exe ./NexoraTerminalAgent.exe
           rm -rf build/ dist/
-
-      - name: Upload Windows Executables to Baidu Pan (百度网盘)
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-        shell: bash
-        env:
-          BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}
-        run: |
-          if [ -z "$BYPY_TOKEN_CONTENT" ]; then
-            echo "[INFO] 未配置 BAIDU_PAN_TOKEN Secret，跳过百度网盘上传。"
-            exit 0
-          fi
-
-          echo "==== 1. 安装 bypy 依赖 ===="
-          python -m pip install --no-cache-dir bypy
-
-          echo "==== 2. 运行百度网盘自动上传 ===="
-          python scripts/upload_to_baidupan.py
 
       - name: Remove private and Linux-only files
         shell: bash
@@ -266,6 +259,29 @@ jobs:
           rm -f deploy-ubuntu.sh deploy-ubuntu.gitee.sh Dockerfile docker-compose.yml .dockerignore
           rm -rf nginx/ .github/
 
+      - name: Package Windows Release Archive (ZIP)
+        shell: bash
+        run: |
+          # Create full Windows deployment ZIP archive containing NetOps.exe and all dependencies
+          python -c "import shutil, pathlib; shutil.make_archive('NetOps-Windows', 'zip', '.')"
+
+      - name: Upload Windows Release to Baidu Pan (百度网盘)
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          BYPY_TOKEN_CONTENT: ${{ secrets.BAIDU_PAN_TOKEN }}
+        run: |
+          if [ -z "$BYPY_TOKEN_CONTENT" ]; then
+            echo "[INFO] 未配置 BAIDU_PAN_TOKEN Secret，跳过百度网盘上传。"
+            exit 0
+          fi
+
+          echo "==== 1. 安装 bypy 依赖 ===="
+          python -m pip install --no-cache-dir bypy
+
+          echo "==== 2. 运行百度网盘自动上传 ===="
+          python "$RUNNER_TEMP/upload_to_baidupan.py"
+
       - name: Commit sanitized Windows release tree
         shell: bash
         run: |
@@ -302,9 +318,8 @@ jobs:
           repository: libing28390-sketch/Release-netops
           tag_name: ${{ github.ref_name }}-windows
           name: Windows Release ${{ github.ref_name }}
-          files: NetOps.exe
+          files: |
+            NetOps.exe
+            NetOps-Windows.zip
           draft: false
           prerelease: false
-
-
-
