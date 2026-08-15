@@ -100,12 +100,14 @@ def main():
     work_dir = Path("dist_baidupan").resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    artifacts = [
-        ("NetOps-Windows.zip", f"NetOps-Windows_{tag_name}_{date_str}.zip", "NetOps-Windows-Latest.zip"),
-        ("NetOps-Linux-Ubuntu.zip", f"NetOps-Linux-Ubuntu_{tag_name}_{date_str}.zip", "NetOps-Linux-Ubuntu-Latest.zip"),
-        ("NetOps.exe", f"NetOps_{tag_name}_{date_str}.exe", "NetOps-Windows-Latest.exe"),
-        ("NexoraTerminalAgent.exe", f"NexoraTerminalAgent_{tag_name}_{date_str}.exe", "NexoraTerminalAgent-Latest.exe"),
-    ]
+    artifacts = []
+    if Path("NetOps-Windows.zip").exists():
+        artifacts.append(("NetOps-Windows.zip", f"NetOps-Windows_{tag_name}_{date_str}.zip", "NetOps-Windows-Latest.zip"))
+    elif Path("NetOps.exe").exists():
+        artifacts.append(("NetOps.exe", f"NetOps_{tag_name}_{date_str}.exe", "NetOps-Windows-Latest.exe"))
+
+    if Path("NetOps-Linux-Ubuntu.zip").exists():
+        artifacts.append(("NetOps-Linux-Ubuntu.zip", f"NetOps-Linux-Ubuntu_{tag_name}_{date_str}.zip", "NetOps-Linux-Ubuntu-Latest.zip"))
 
     for local_src, versioned_name, latest_name in artifacts:
         src_path = Path(local_src)
