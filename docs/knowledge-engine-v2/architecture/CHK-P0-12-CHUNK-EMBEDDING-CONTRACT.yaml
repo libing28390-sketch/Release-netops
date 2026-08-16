@@ -1,0 +1,84 @@
+id: CHK-P0-12
+title: network-knowledge-chunking-and-embedding-contract
+status: implemented_pending_release_gate
+scope:
+  - CHK-001
+  - CHK-002
+  - CHK-003
+  - CHK-004
+  - CHK-005
+  - CHK-006
+  - CHK-007
+  - CHK-008
+  - CHK-009
+  - CHK-010
+  - CHK-011
+  - CHK-012
+
+invariants:
+  structure_blocks: [heading, paragraph, cli, output, table, warning, prerequisite, example]
+  chunk_roles: [standalone, parent, child, heading]
+  parent_child:
+    child_requires_existing_parent: true
+    parent_is_not_retrieval_candidate: true
+  neighbours:
+    relation_is_explicit: true
+    persisted_projection: ai_document_chunk.neighbor_chunk_ids_json
+    self_edges: forbidden
+    symmetric_next_previous: required
+    ordinal_is_display_only: true
+  cli_and_output:
+    command_continuations_are_atomic: true
+    output_is_atomic_without_known_record_boundary: true
+    unbalanced_fences: reject
+  validation:
+    empty_chunks: reject
+    duplicate_content_hash: reject
+    invalid_role_or_structure: reject
+    oversize_requires_reason: required
+    min_tokens: recorded_by_engine_config
+    max_tokens: enforced_or_atomic_oversize
+    size_class: [normal, undersized, oversized]
+
+version_contract:
+  chunker_version: network-structure-v2
+  parser_version: markdown-network-parser-v2
+  document_version: source_version_or_content_hash_prefix
+  index_version: explicit_metadata_or_index-pending
+  embedding_contract: model_id_version_dimensions_mode
+  legacy_projection_migration: m0137_chunk_index_contract_projection
+
+embedding:
+  provider_interface: BaseEmbeddingProvider
+  local_provider: StableLocalEmbeddingProvider
+  external_provider: ExternalEmbeddingProvider
+  external_egress_gateway: AISecurityGateway.protect_embedding
+  external_controls: [classification, minimization, tokenization, dlp, redacted_audit]
+  dimension_policy:
+    vector_dimension_must_match_provider_contract: true
+    pgvector_typmod_probe: assert_pgvector_column_compatible
+    stored_dimension_must_match_query_dimension: true
+    silent_mismatch: reject_or_score_zero_and_count
+  batch_policy:
+    helper: embed_documents_batch
+    retries: bounded_exponential_backoff
+    idempotency_key: provider_contract_plus_content_sha256
+    rate_limit: caller_configurable
+    partial_persistence: forbidden
+
+database:
+  authority: PostgreSQL
+  v1_preservation: additive_columns_only
+  canonical_db010_graph_tables: deferred_to_later_migration
+  new_columns:
+    ai_document: [chunker_version, parser_version, document_version, index_version, embedding_mode, embedding_contract_version]
+    ai_document_chunk: [chunker_version, structure_types_json, neighbor_chunk_ids_json, parser_version, document_version, index_version, embedding_mode, embedding_contract_version]
+  rollback: retain_additive_projection_columns; stop_v2_writes_and_use_v1_read_path
+
+verification:
+  tests:
+    chunking: backend/tests/ai/test_chk_p0_chunking_contract.py
+    embedding: backend/tests/ai/test_chk_p0_embedding_contract.py
+    ingestion: backend/tests/ai/test_chk_p0_ingestion_contract.py
+    migration: backend/tests/database/test_m0137_chunk_index_contract_projection.py
+  regression: backend/tests/ai and backend/tests/database

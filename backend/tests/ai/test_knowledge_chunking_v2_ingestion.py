@@ -59,6 +59,7 @@ def _connection() -> sqlite3.Connection:
 def test_add_document_persists_v2_parent_child_metadata(monkeypatch):
     connection = _connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
+    monkeypatch.setattr(knowledge_service_module.embedding_provider, "dimensions", 2)
     monkeypatch.setattr(knowledge_service_module.embedding_provider, "embed_text", lambda text: [0.1, 0.2])
 
     service = knowledge_service_module.KnowledgeService()

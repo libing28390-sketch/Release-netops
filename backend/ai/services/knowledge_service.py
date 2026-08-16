@@ -13,7 +13,15 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from database.core import get_db_connection, _USE_PG
 from ai.chunking.engine import ChunkingEngine
-from ai.providers.embedding import embedding_provider, embedding_metadata
+from ai.providers.embedding import (
+    EmbeddingProviderError,
+    assert_pgvector_column_compatible,
+    embed_documents_batch,
+    embedding_contract,
+    embedding_provider,
+    embedding_metadata,
+)
+from ai.security.gateway import SecurityBlocked
 from ai.services.knowledge_metadata import (
     MetadataParseError,
     MetadataValidationError,
@@ -815,6 +823,9 @@ class KnowledgeService:
         merged.setdefault("exclude_from_rag", False)
         normalized_markdown = parsed_document.content.strip()
         content_hash = hashlib.sha256(normalized_markdown.encode("utf-8")).hexdigest()
+        merged.setdefault("document_version", str(merged.get("source_version") or content_hash[:16]))
+        merged.setdefault("parser_version", ChunkingEngine.parser_version)
+        merged.setdefault("index_version", ChunkingEngine.default_index_version)
         document_vendor = str(merged.get("vendor") or vendor or "all")
         document_platform = merged.get("cli_platform")
         if str(document_platform or "").strip().lower() == "all":
@@ -835,6 +846,20 @@ class KnowledgeService:
             },
             target_tokens_override=chunk_size,
         )
+        try:
+            embedding_vectors = embed_documents_batch(
+                [chk.embedding_content for chk in structured_chunks],
+                provider=embedding_provider,
+                tenant_id=tenant_id,
+                task_id=f"knowledge-ingestion:{doc_id}",
+                idempotency_namespace=f"knowledge:{tenant_id}",
+            )
+        except (EmbeddingProviderError, SecurityBlocked) as exc:
+            # Embeddings are computed before the document transaction starts;
+            # a provider/dimension failure therefore cannot leave partial rows.
+            raise ValueError(f"知识文档 Embedding 无法索引: {exc}") from exc
+        contract = embedding_contract(embedding_provider)
+        embedding_info = embedding_metadata()
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -859,14 +884,20 @@ class KnowledgeService:
                 "ingestion_status": "ready",
                 "metadata_parse_status": parsed_document.metadata_parse_status,
                 "metadata_parse_error": parsed_document.metadata_parse_error,
+                "chunker_version": ChunkingEngine.chunker_version,
+                "parser_version": merged.get("parser_version"),
+                "document_version": merged.get("document_version"),
+                "index_version": merged.get("index_version"),
+                "embedding_mode": contract.mode,
+                "embedding_contract_version": contract.contract_version,
                 "created_at": now_iso,
                 "updated_at": now_iso,
             }
             document_values.update(semantic_columns)
             document_values.update({
-                "embedding_model": embedding_metadata().get("embedding_model"),
-                "embedding_dimensions": embedding_metadata().get("embedding_dimensions"),
-                "embedding_version": embedding_metadata().get("embedding_version"),
+                "embedding_model": embedding_info.get("embedding_model"),
+                "embedding_dimensions": embedding_info.get("embedding_dimensions"),
+                "embedding_version": embedding_info.get("embedding_version"),
                 "exclude_from_rag": 1 if merged.get("exclude_from_rag") else 0,
             })
             document_values = {key: value for key, value in document_values.items() if key in document_columns}
@@ -878,7 +909,8 @@ class KnowledgeService:
             )
 
             chunk_columns = self._table_columns(cursor, "ai_document_chunk")
-            for idx, chk in enumerate(structured_chunks):
+            assert_pgvector_column_compatible(cursor, expected_dimensions=contract.dimensions)
+            for idx, (chk, vec) in enumerate(zip(structured_chunks, embedding_vectors)):
                 section_name = chk.to_dict()["section"]
                 # Every chunk carries the complete document metadata so a
                 # retriever can apply hard filters without reading the parent
@@ -895,7 +927,6 @@ class KnowledgeService:
                         "section": section_name,
                     }
                 )
-                vec = embedding_provider.embed_text(chk.embedding_content)
                 chunk_values = {
                     "id": chk.chunk_id,
                     "document_id": doc_id,
@@ -904,7 +935,7 @@ class KnowledgeService:
                     "embedding_content": chk.embedding_content,
                     "embedding": json.dumps(vec),
                     "metadata_json": _json_db_value(chunk_metadata),
-                    "page": int(chk.source_locator.get("line_start") or idx + 1),
+                    "page": int(chk.page or chk.source_locator.get("line_start") or idx + 1),
                     "section": section_name,
                     "created_at": now_iso,
                     "parent_chunk_id": chk.parent_chunk_id,
@@ -918,6 +949,14 @@ class KnowledgeService:
                     "chunking_version": "v2",
                     "is_retrieval_candidate": 1 if chk.is_retrieval_candidate else 0,
                     "oversize_reason": chk.oversize_reason,
+                    "chunker_version": ChunkingEngine.chunker_version,
+                    "structure_types_json": json.dumps(list(chk.structure_types), ensure_ascii=False),
+                    "neighbor_chunk_ids_json": json.dumps(list(chk.neighbor_chunk_ids), ensure_ascii=False),
+                    "parser_version": chk.parser_version,
+                    "document_version": chk.document_version,
+                    "index_version": chk.index_version,
+                    "embedding_mode": contract.mode,
+                    "embedding_contract_version": contract.contract_version,
                 }
                 chunk_values.update({
                     key: value for key, value in metadata_columns(merged).items()
@@ -925,9 +964,9 @@ class KnowledgeService:
                 })
                 chunk_values.update({
                     "chunk_index": idx,
-                    "embedding_model": embedding_metadata().get("embedding_model"),
+                    "embedding_model": embedding_info.get("embedding_model"),
                     "embedding_dimensions": len(vec),
-                    "embedding_version": embedding_metadata().get("embedding_version"),
+                    "embedding_version": embedding_info.get("embedding_version"),
                 })
                 chunk_values = {key: value for key, value in chunk_values.items() if key in chunk_columns}
                 chunk_columns_ordered = list(chunk_values)

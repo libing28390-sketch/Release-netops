@@ -11,6 +11,7 @@ to benefit from it.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass, field
@@ -40,6 +41,32 @@ _CLI_LANGUAGES = {
 _OUTPUT_LANGUAGES = {"output", "console", "terminal", "textfsm-output"}
 _WARNING_MARKERS = ("warning", "caution", "注意", "警告", "风险")
 _NOTE_MARKERS = ("note", "tip", "说明", "提示")
+_PREREQUISITE_MARKERS = (
+    "prerequisite",
+    "prerequisites",
+    "before you begin",
+    "requirements",
+    "requirement",
+    "前提",
+    "前置条件",
+    "准备工作",
+)
+_EXAMPLE_MARKERS = ("example", "examples", "sample", "示例", "样例", "案例")
+_ALLOWED_STRUCTURE_TYPES = frozenset(
+    {
+        "heading",
+        "paragraph",
+        "cli",
+        "output",
+        "table",
+        "warning",
+        "prerequisite",
+        "example",
+        "code",
+        "list",
+    }
+)
+_ALLOWED_CHUNK_ROLES = frozenset({"standalone", "parent", "child", "heading"})
 _TROUBLESHOOTING_MARKERS = (
     "troubleshoot",
     "故障",
@@ -158,6 +185,35 @@ class ChunkingConfig:
     overlap_ratio: float = 0.10
     parent_min_blocks: int = 2
 
+    def __post_init__(self) -> None:
+        if self.min_tokens <= 0:
+            raise ValueError("min_tokens must be positive")
+        if not 0 <= self.overlap_ratio < 0.5:
+            raise ValueError("overlap_ratio must be in [0, 0.5)")
+        if self.parent_min_blocks < 2:
+            raise ValueError("parent_min_blocks must be at least 2")
+        for name, value in self.target_tokens.items():
+            if value <= 0:
+                raise ValueError(f"target_tokens[{name}] must be positive")
+        for name, value in self.max_tokens.items():
+            if value <= 0:
+                raise ValueError(f"max_tokens[{name}] must be positive")
+            if value < self.target_tokens.get(name, value):
+                raise ValueError(f"max_tokens[{name}] cannot be below target_tokens")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "target_tokens": dict(sorted(self.target_tokens.items())),
+            "max_tokens": dict(sorted(self.max_tokens.items())),
+            "min_tokens": self.min_tokens,
+            "overlap_ratio": self.overlap_ratio,
+            "parent_min_blocks": self.parent_min_blocks,
+        }
+
+    def configuration_hash(self) -> str:
+        payload = json.dumps(self.as_dict(), ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     def target(self, chunk_type: str) -> int:
         return int(self.target_tokens.get(chunk_type, self.target_tokens.get("concept", 600)))
 
@@ -194,6 +250,13 @@ class Chunk:
     token_count: int
     content_hash: str
     ordinal: int
+    structure_types: tuple[str, ...] = ()
+    neighbor_chunk_ids: tuple[str, ...] = ()
+    page: int | None = None
+    parser_version: str = ""
+    document_version: str = ""
+    index_version: str = ""
+    size_class: str = "normal"
     parent_chunk_id: str | None = None
     source_locator: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -212,6 +275,8 @@ class Chunk:
             "chunk_id": self.chunk_id,
             "chunk_role": self.chunk_role,
             "chunk_type": self.chunk_type,
+            "structure_types": list(self.structure_types),
+            "neighbor_chunk_ids": list(self.neighbor_chunk_ids),
             "content": self.raw_content,
             "raw_content": self.raw_content,
             "embedding_content": self.embedding_content,
@@ -221,6 +286,11 @@ class Chunk:
             "ordinal": self.ordinal,
             "parent_chunk_id": self.parent_chunk_id,
             "source_locator": dict(self.source_locator),
+            "page": self.page,
+            "parser_version": self.parser_version,
+            "document_version": self.document_version,
+            "index_version": self.index_version,
+            "size_class": self.size_class,
             "metadata": dict(self.metadata),
             "is_retrieval_candidate": self.is_retrieval_candidate,
             "oversize_reason": self.oversize_reason,
@@ -235,6 +305,10 @@ class ChunkingValidationError(ValueError):
 
 class ChunkingEngine:
     """Build deterministic chunks from normalized Markdown or plain text."""
+
+    chunker_version = "network-structure-v2"
+    parser_version = "markdown-network-parser-v2"
+    default_index_version = "index-pending"
 
     def __init__(
         self,
@@ -306,11 +380,29 @@ class ChunkingEngine:
                 force_retrieval_candidate=False,
                 oversize_reason="parent_context" if group_tokens > maximum else None,
             )
+            child_blocks = self._split_oversized_blocks(group, chunk_type)
+            packs = self._pack_blocks(child_blocks, chunk_type, target_tokens_override)
+            # A semantic parent is useful only when it adds context to at
+            # least one distinct child.  Avoid producing a duplicate parent
+            # and child when a small table/CLI section fits in one atomic pack.
+            if len(packs) == 1 and _normalised_hash(self._render_blocks(packs[0], parent_path)) == parent.content_hash:
+                standalone = self._make_chunk(
+                    role="standalone",
+                    chunk_type=chunk_type,
+                    blocks=group,
+                    parent_chunk_id=None,
+                    ordinal=ordinal,
+                    document_identity=document_identity,
+                    document_metadata=document_metadata,
+                    target_tokens_override=target_tokens_override,
+                    oversize_reason=parent.oversize_reason,
+                )
+                result.append(standalone)
+                ordinal += 1
+                continue
             result.append(parent)
             ordinal += 1
 
-            child_blocks = self._split_oversized_blocks(group, chunk_type)
-            packs = self._pack_blocks(child_blocks, chunk_type, target_tokens_override)
             for pack in packs:
                 child = self._make_chunk(
                     role="child",
@@ -325,24 +417,66 @@ class ChunkingEngine:
                 result.append(child)
                 ordinal += 1
 
+        self._link_neighbors(result)
         self.validate(result)
         return result
+
+    @staticmethod
+    def _link_neighbors(chunks: Sequence[Chunk]) -> None:
+        """Materialize explicit next/previous relations for retrieval chunks.
+
+        Ordinal is useful for display but is not treated as a relationship.  The
+        relation is therefore written onto each chunk and later projected into
+        the compatibility JSON column by the ingestion service.
+        """
+
+        candidates = [chunk for chunk in chunks if chunk.is_retrieval_candidate]
+        for position, chunk in enumerate(candidates):
+            neighbours: list[str] = []
+            if position > 0:
+                neighbours.append(candidates[position - 1].chunk_id)
+            if position + 1 < len(candidates):
+                neighbours.append(candidates[position + 1].chunk_id)
+            chunk.neighbor_chunk_ids = tuple(neighbours)
 
     def validate(self, chunks: Sequence[Chunk]) -> None:
         ids = {chunk.chunk_id for chunk in chunks}
         if len(ids) != len(chunks):
             raise ChunkingValidationError("chunk ids must be unique")
+        hashes: set[str] = set()
         for chunk in chunks:
+            if chunk.chunk_role not in _ALLOWED_CHUNK_ROLES:
+                raise ChunkingValidationError(f"unsupported chunk role: {chunk.chunk_role}")
             if not chunk.raw_content.strip():
                 raise ChunkingValidationError("empty chunk content")
             if _HEADING_RE.fullmatch(chunk.raw_content.strip()):
                 raise ChunkingValidationError("heading-only chunk is not allowed")
             if chunk.token_count <= 0:
                 raise ChunkingValidationError("chunk token_count must be positive")
+            if chunk.content_hash in hashes:
+                raise ChunkingValidationError("duplicate chunk content hash")
+            hashes.add(chunk.content_hash)
+            if any(item not in _ALLOWED_STRUCTURE_TYPES for item in chunk.structure_types):
+                raise ChunkingValidationError("unsupported structure type")
+            if chunk.size_class not in {"normal", "undersized", "oversized"}:
+                raise ChunkingValidationError("unsupported chunk size class")
+            if chunk.token_count > self.config.maximum(chunk.chunk_type) and not chunk.oversize_reason:
+                raise ChunkingValidationError("oversized chunk must include a reason")
             if chunk.chunk_role == "child" and chunk.parent_chunk_id not in ids:
                 raise ChunkingValidationError("child chunk has no parent")
+            if chunk.chunk_role == "child" and chunk.parent_chunk_id == chunk.chunk_id:
+                raise ChunkingValidationError("chunk cannot be its own parent")
+            if any(neighbour == chunk.chunk_id for neighbour in chunk.neighbor_chunk_ids):
+                raise ChunkingValidationError("chunk cannot be its own neighbour")
+            if any(neighbour not in ids for neighbour in chunk.neighbor_chunk_ids):
+                raise ChunkingValidationError("neighbour chunk does not exist")
             if chunk.raw_content.count("```") % 2 != 0 or chunk.raw_content.count("~~~") % 2 != 0:
                 raise ChunkingValidationError("unclosed code fence")
+        for chunk in chunks:
+            for neighbour_id in chunk.neighbor_chunk_ids:
+                neighbour = next(item for item in chunks if item.chunk_id == neighbour_id)
+                if chunk.chunk_id not in neighbour.neighbor_chunk_ids:
+                    raise ChunkingValidationError("neighbour relation must be symmetric")
 
     def _parse_blocks(self, markdown_text: str) -> list[_Block]:
         lines = _clean_text(markdown_text).splitlines()
@@ -465,8 +599,14 @@ class ChunkingEngine:
             return _Block("warning", text, path, start, end, atomic=True)
         if any(marker in f"{path_title} {first}" for marker in _NOTE_MARKERS) and len(text) <= 1200:
             return _Block("note", text, path, start, end, atomic=True)
+        if any(marker in lowered for marker in _PREREQUISITE_MARKERS):
+            return _Block("prerequisite", text, path, start, end, atomic=True)
+        if any(marker in lowered for marker in _EXAMPLE_MARKERS):
+            return _Block("example", text, path, start, end, atomic=True)
         if re.match(r"^(?:\d+[.)]|[-*])\s+", text) and any(marker in lowered for marker in _CONFIG_MARKERS + ("步骤", "step", "procedure")):
             return _Block("procedure_step", text, path, start, end, atomic=True)
+        if re.match(r"^(?:\d+[.)]|[-*])\s+", text):
+            return _Block("list", text, path, start, end, atomic=True)
         return _Block("paragraph", text, path, start, end)
 
     def _classify_code_block(
@@ -485,7 +625,7 @@ class ChunkingEngine:
             kind = "cli_configuration" if len(lines) > 1 else "cli_command"
         else:
             kind = "code"
-        return _Block(kind, text, path, start, end, language=language, atomic=True)
+        return _Block(kind, text, path, start, end, language=language, atomic=True, metadata={"atomic_unit": True})
 
     @staticmethod
     def _looks_like_cli(lines: Sequence[str], lowered: str) -> bool:
@@ -550,10 +690,105 @@ class ChunkingEngine:
                 continue
             if block.block_type == "table":
                 result.extend(self._split_table_block(block, maximum))
-            elif block.block_type in {"cli_configuration", "command_output", "code"}:
+            elif block.block_type in {"cli_command", "cli_configuration"}:
+                result.extend(self._split_cli_block(block, maximum))
+            elif block.block_type == "command_output":
+                # Output is an evidence unit.  Splitting arbitrary lines can
+                # separate a header from the values it describes, so preserve
+                # it as one explicitly oversized block when no record boundary
+                # is known.
+                result.append(
+                    _Block(
+                        block.block_type,
+                        block.text,
+                        block.heading_path,
+                        block.start_line,
+                        block.end_line,
+                        language=block.language,
+                        atomic=True,
+                        metadata={"oversize_reason": "atomic_output"},
+                    )
+                )
+            elif block.block_type == "code":
                 result.extend(self._split_line_block(block, maximum))
             else:
                 result.extend(self._split_sentence_block(block, maximum))
+        return result
+
+    def _split_cli_block(self, block: _Block, maximum: int) -> list[_Block]:
+        """Split CLI only between complete command groups.
+
+        A continuation line (indented configuration, pipe arguments, or a
+        wrapped command) remains attached to the command that introduced it.
+        A group that is itself larger than the configured maximum is retained
+        as an atomic oversized unit rather than being corrupted.
+        """
+
+        lines = block.text.splitlines()
+        opening = lines[0] if lines and _FENCE_RE.match(lines[0]) else ""
+        closing = lines[-1] if len(lines) > 1 and _FENCE_RE.match(lines[-1]) else ""
+        body_lines = lines[1:-1] if opening and closing else lines
+        groups: list[list[str]] = []
+        current: list[str] = []
+        for raw_line in body_lines:
+            line = raw_line.rstrip()
+            stripped = line.strip()
+            # Network configuration grammars use many vendor-specific command
+            # verbs.  Treat every non-indented line as a command boundary and
+            # retain indented/pipe lines as continuations; this avoids a
+            # vendor allowlist that would silently split an unknown command.
+            starts_command = bool(
+                stripped
+                and not line.startswith((" ", "\t"))
+                and not stripped.startswith(("|", "#", "!"))
+            )
+            if starts_command and current:
+                groups.append(current)
+                current = []
+            current.append(line)
+        if current:
+            groups.append(current)
+        if not groups:
+            return [block]
+
+        result: list[_Block] = []
+        current_group: list[str] = []
+        start_line = block.start_line
+        for group in groups:
+            candidate_lines = ([opening] if opening else []) + current_group + group + ([closing] if closing else [])
+            candidate = "\n".join(candidate_lines)
+            if current_group and self._token_counter(candidate) > maximum:
+                packed = ([opening] if opening else []) + current_group + ([closing] if closing else [])
+                result.append(
+                    _Block(
+                        block.block_type,
+                        _clean_text("\n".join(packed)),
+                        block.heading_path,
+                        start_line,
+                        start_line + len(current_group) - 1,
+                        language=block.language,
+                        atomic=True,
+                        metadata={"atomic_unit": True, "oversize_reason": "command_boundary"},
+                    )
+                )
+                start_line += len(current_group)
+                current_group = []
+            current_group.extend(group)
+        if current_group:
+            packed = ([opening] if opening else []) + current_group + ([closing] if closing else [])
+            reason = "atomic_command" if self._token_counter("\n".join(packed)) > maximum else "command_boundary"
+            result.append(
+                _Block(
+                    block.block_type,
+                    _clean_text("\n".join(packed)),
+                    block.heading_path,
+                    start_line,
+                    block.end_line,
+                    language=block.language,
+                    atomic=True,
+                    metadata={"atomic_unit": True, "oversize_reason": reason},
+                )
+            )
         return result
 
     def _split_table_block(self, block: _Block, maximum: int) -> list[_Block]:
@@ -619,14 +854,16 @@ class ChunkingEngine:
     def _pack_blocks(self, blocks: Sequence[_Block], chunk_type: str, target_override: int | None) -> list[list[_Block]]:
         target = int(target_override or self.config.target(chunk_type))
         maximum = self.config.maximum(chunk_type)
+        if target <= 0:
+            raise ValueError("target_tokens_override must be positive")
+        target = min(target, maximum)
         packs: list[list[_Block]] = []
         current: list[_Block] = []
         for block in blocks:
             candidate_tokens = self._token_counter(self._render_blocks([*current, block], block.heading_path))
-            limit = maximum if not current else max(target, maximum)
             path_changed = bool(current and block.heading_path != current[-1].heading_path)
             parent_semantic = chunk_type in {"command_reference", "configuration", "procedure", "troubleshooting", "table"}
-            if current and (candidate_tokens > limit or (parent_semantic and path_changed)):
+            if current and (candidate_tokens > maximum or candidate_tokens > target or (parent_semantic and path_changed)):
                 packs.append(current)
                 current = []
             current.append(block)
@@ -678,11 +915,30 @@ class ChunkingEngine:
         )
         chunk_id = f"chk_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
         metadata = dict(document_metadata or {})
+        structure_types = self._structure_types(blocks, heading_path)
+        parser_version = str(metadata.get("parser_version") or self.parser_version)
+        document_version = str(metadata.get("document_version") or metadata.get("source_version") or "unversioned")
+        index_version = str(metadata.get("index_version") or self.default_index_version)
+        resolved_oversize_reason = oversize_reason or next(
+            (block.metadata.get("oversize_reason") for block in blocks if block.metadata.get("oversize_reason")),
+            None,
+        )
+        maximum = self.config.maximum(chunk_type)
+        size_class = "undersized" if token_count < self.config.min_tokens else "oversized" if token_count > maximum else "normal"
+        if size_class == "oversized" and not resolved_oversize_reason:
+            resolved_oversize_reason = "token_budget"
         metadata.update(
             {
                 "chunk_role": role,
                 "chunk_type": chunk_type,
                 "heading_path": list(heading_path),
+                "structure_types": list(structure_types),
+                "chunker_version": self.chunker_version,
+                "parser_version": parser_version,
+                "document_version": document_version,
+                "index_version": index_version,
+                "size_class": size_class,
+                "config_hash": self.config.configuration_hash(),
                 "language": blocks[0].language if blocks[0].language else metadata.get("language", "zh-CN"),
                 "commands": self._extract_commands(blocks),
             }
@@ -692,6 +948,13 @@ class ChunkingEngine:
             "line_start": min(block.start_line for block in blocks),
             "line_end": max(block.end_line for block in blocks),
         }
+        raw_page = next((block.metadata.get("page") for block in blocks if block.metadata.get("page") is not None), metadata.get("page"))
+        if raw_page is not None:
+            try:
+                source_locator["page"] = int(raw_page)
+            except (TypeError, ValueError):
+                pass
+        page = source_locator.get("page")
         retrieval_candidate = force_retrieval_candidate if force_retrieval_candidate is not None else True
         if role == "parent":
             retrieval_candidate = False
@@ -705,12 +968,44 @@ class ChunkingEngine:
             token_count=token_count,
             content_hash=content_hash,
             ordinal=ordinal,
+            structure_types=structure_types,
+            page=page,
+            parser_version=parser_version,
+            document_version=document_version,
+            index_version=index_version,
+            size_class=size_class,
             parent_chunk_id=parent_chunk_id,
             source_locator=source_locator,
             metadata=metadata,
             is_retrieval_candidate=retrieval_candidate,
-            oversize_reason=oversize_reason or next((block.metadata.get("oversize_reason") for block in blocks if block.metadata.get("oversize_reason")), None),
+            oversize_reason=resolved_oversize_reason,
         )
+
+    @staticmethod
+    def _structure_types(blocks: Sequence[_Block], heading_path: Sequence[str]) -> tuple[str, ...]:
+        values: set[str] = set()
+        if heading_path:
+            values.add("heading")
+        path_text = " ".join(heading_path).lower()
+        if any(marker in path_text for marker in _EXAMPLE_MARKERS):
+            values.add("example")
+        if any(marker in path_text for marker in _PREREQUISITE_MARKERS):
+            values.add("prerequisite")
+        for block in blocks:
+            kind = block.block_type
+            if kind in {"cli_command", "cli_configuration"}:
+                values.add("cli")
+            elif kind == "command_output":
+                values.add("output")
+            elif kind == "note":
+                values.add("paragraph")
+            elif kind == "procedure_step":
+                values.add("list")
+            elif kind in _ALLOWED_STRUCTURE_TYPES:
+                values.add(kind)
+            elif kind:
+                values.add("paragraph")
+        return tuple(sorted(values))
 
     @staticmethod
     def _extract_commands(blocks: Sequence[_Block]) -> list[str]:

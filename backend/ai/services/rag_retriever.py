@@ -294,6 +294,7 @@ class RAGRetriever:
             ordinal_expr = "COALESCE(c.ordinal, 0)" if "ordinal" in chunk_columns else "NULL"
             ordinal_order_expr = "COALESCE(c.ordinal, 0)" if "ordinal" in chunk_columns else "c.id"
             embedding_model_expr = "c.embedding_model" if "embedding_model" in chunk_columns else "NULL"
+            embedding_dimensions_expr = "c.embedding_dimensions" if "embedding_dimensions" in chunk_columns else "NULL"
             candidate_where = f"AND {candidate_expr} = 1"
             cursor.execute(
                 f"""SELECT c.id, c.content, c.embedding, c.metadata_json, c.section,
@@ -301,7 +302,7 @@ class RAGRetriever:
                            d.acl_json, d.source_trust_level,
                            {document_category_expr}, {cli_platform_expr}, {semantic_document_id_expr},
                            {candidate_expr}, {chunk_role_expr},
-                           {parent_expr}, {ordinal_expr}, {embedding_model_expr}
+                           {parent_expr}, {ordinal_expr}, {embedding_model_expr}, {embedding_dimensions_expr}
                     FROM ai_document_chunk c
                     JOIN ai_document d ON c.document_id = d.id
                     WHERE {where_sql}
@@ -376,7 +377,7 @@ class RAGRetriever:
                     doc_id, doc_name, d_vendor, d_platform, d_tenant,
                     acl_json, trust_level, document_category, cli_platform,
                     semantic_document_id, _is_candidate, chunk_role,
-                    parent_chunk_id, ordinal, stored_embedding_model,
+                    parent_chunk_id, ordinal, stored_embedding_model, stored_embedding_dimensions,
                 ) = row
                 document = {"id": doc_id, "tenant_id": d_tenant, "acl_json": acl_json}
                 if not document_is_visible(document, tenant_id=request.tenant_id, user_id=request.user_id, roles=request.roles, site_ids=request.site_ids):
@@ -395,7 +396,15 @@ class RAGRetriever:
                         chunk_vector = []
                 except (TypeError, ValueError):
                     chunk_vector = []
+                stored_dimensions = int(stored_embedding_dimensions or 0)
+                vector_incompatible = bool(
+                    stored_dimensions
+                    and (len(chunk_vector) != stored_dimensions or len(query_vector) != stored_dimensions)
+                )
                 if stored_embedding_model and current_model and str(stored_embedding_model) != current_model:
+                    vector_score = 0.0
+                    incompatible_vectors += 1
+                elif vector_incompatible:
                     vector_score = 0.0
                     incompatible_vectors += 1
                 else:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -57,6 +58,25 @@ class SecurePayload:
         )
 
 
+@dataclass
+class SecureEmbeddingPayload:
+    texts: list[str]
+    tenant_id: str
+    task_id: str
+    level: DataLevel
+    action: SecurityAction
+    findings: list[Finding] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def as_provider_json(self) -> str:
+        return json.dumps(
+            {"texts": self.texts, "tenant_id": self.tenant_id, "task_id": self.task_id, "metadata": self.metadata},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+
+
 def _walk_transform(value: Any, transform) -> Any:
     if isinstance(value, str):
         return transform(value)
@@ -79,6 +99,7 @@ def _tool_is_unsafe(tool: dict[str, Any]) -> bool:
 class AISecurityGateway:
     def __init__(self, *, vault: ScopedTokenVault | None = None, policy: SecurityPolicy | None = None):
         self.vault = vault or token_vault
+        self._egress_audit_events: list[dict[str, Any]] = []
         self.policy = policy or SecurityPolicy(
             external_ai_enabled=bool(getattr(settings, "EXTERNAL_AI_ENABLED", False)),
             kill_switch=bool(getattr(settings, "AI_KILL_SWITCH", False)),
@@ -159,6 +180,89 @@ class AISecurityGateway:
 
     def safe_tool_result(self, result: Any) -> dict[str, Any]:
         return minimize_tool_result(result)
+
+    def protect_embedding(
+        self,
+        texts: list[str] | tuple[str, ...],
+        *,
+        tenant_id: str = "tenant-default",
+        task_id: str = "embedding",
+        user_id: str | None = None,
+        provider_type: str = "deepseek",
+        idempotency_key: str | None = None,
+        policy: SecurityPolicy | None = None,
+    ) -> SecureEmbeddingPayload:
+        """Apply the same fail-closed controls to external embedding egress."""
+
+        active_policy = policy or self.policy
+        if active_policy.kill_switch:
+            raise SecurityBlocked("AI external egress is disabled by the kill switch")
+        if not active_policy.external_ai_enabled:
+            raise SecurityBlocked("external AI is disabled by policy")
+        if provider_type.lower() not in {item.lower() for item in active_policy.allowed_provider_types}:
+            raise SecurityBlocked("provider is not allowed by the AI egress policy")
+        values = [str(value or "") for value in texts]
+        if not values or any(not value.strip() for value in values):
+            raise SecurityBlocked("embedding input must not be empty")
+
+        combined = {"embedding_inputs": values, "provider_type": provider_type}
+        level, findings = self._classify(combined)
+        if level >= DataLevel.L4_PROHIBITED:
+            raise SecurityBlocked("prohibited data detected before external embedding", findings=findings)
+        has_injection = any(item.category == "prompt_injection" for item in findings)
+        action = action_for(level, has_prompt_injection=has_injection)
+        if level == DataLevel.L3_SENSITIVE and not active_policy.allow_sensitive_minimization:
+            raise SecurityBlocked("sensitive context is not eligible for external embedding", findings=findings)
+
+        safe_texts = minimize(values) if action == SecurityAction.MINIMIZE else values
+
+        def transform(text: str) -> str:
+            return tokenize_text(text, tenant_id=tenant_id, task_id=task_id, vault=self.vault)
+
+        safe_texts = [_walk_transform(value, transform) for value in safe_texts]
+        metadata = {
+            "egress_kind": "embedding",
+            "provider_type": provider_type,
+            "user_id": opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id),
+            "idempotency_key": idempotency_key or "",
+            "finding_categories": sorted({item.category for item in findings}),
+        }
+        payload = SecureEmbeddingPayload(
+            texts=safe_texts,
+            tenant_id=tenant_id,
+            task_id=task_id,
+            level=level,
+            action=action,
+            findings=findings,
+            metadata=metadata,
+        )
+        serialized = payload.as_provider_json()
+        if len(serialized.encode("utf-8")) > active_policy.max_payload_bytes:
+            raise SecurityBlocked("outbound embedding payload exceeds the configured size limit", findings=findings)
+        try:
+            assert_clean(serialized, identifiers_blocked=active_policy.identifiers_must_be_tokenized)
+        except ValueError as exc:
+            raise SecurityBlocked("final serialized embedding body failed DLP", findings=findings) from exc
+        self._egress_audit_events.append(
+            {
+                "egress_kind": "embedding",
+                "tenant_id": tenant_id,
+                "task_id": task_id,
+                "provider_type": provider_type,
+                "input_count": len(values),
+                "input_hashes": [hashlib.sha256(value.encode("utf-8")).hexdigest() for value in values],
+                "level": level.value,
+                "action": action.value,
+                "finding_categories": metadata["finding_categories"],
+                "idempotency_key": idempotency_key or "",
+            }
+        )
+        return payload
+
+    def embedding_audit_events(self) -> list[dict[str, Any]]:
+        """Return redacted egress evidence without the original embedding text."""
+
+        return [dict(event) for event in self._egress_audit_events]
 
     def resolve_output(self, value: Any, *, tenant_id: str, task_id: str) -> Any:
         from ai.security.output import sanitize_output

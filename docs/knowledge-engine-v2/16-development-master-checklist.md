@@ -238,18 +238,18 @@
 
 ## 8. Chunking V2 与 Embedding
 
-- [ ] `CHK-001` `P0/AI+NET/M`：定义网络知识结构块：标题、段落、CLI、输出、表格、警告、前提、示例。
-- [ ] `CHK-002` `P0/AI/M`：审计并补齐现有 ChunkingEngine 的配置与边界。
-- [ ] `CHK-003` `P0/AI/M`：保证单条命令、参数、输出和解释不被错误拆分。
-- [ ] `CHK-004` `P0/AI/M`：实现 Parent/Child Chunk 与 Neighbor 关系。
-- [ ] `CHK-005` `P0/AI/M`：实现 Chunk Role、Section Path、Page、Token Count、Content Hash。
-- [ ] `CHK-006` `P0/AI+NET/M`：验证 Huawei/Cisco CLI、表格和警告样本的结构完整性。
-- [ ] `CHK-007` `P0/AI/M`：实现超大 Chunk、过小 Chunk、空 Chunk 和重复 Chunk 校验。
-- [ ] `CHK-008` `P0/AI+BE/M`：记录 chunker_version、parser_version、document_version 和 index_version。
-- [ ] `CHK-009` `P0/AI+BE/M`：实现 Embedding Provider 抽象，区分本地与外部 Provider。
-- [ ] `CHK-010` `P0/AI+SEC/M`：外部 Embedding 前执行分类、最小化、DLP 和审计。
-- [ ] `CHK-011` `P0/AI+DBA/M`：验证 Embedding 维度与 pgvector 列兼容性，拒绝静默混用。
-- [ ] `CHK-012` `P0/AI+BE/M`：实现批量 Embedding、失败重试、幂等和限速。
+- [x] `CHK-001` `P0/AI+NET/M`：定义网络知识结构块：标题、段落、CLI、输出、表格、警告、前提、示例。
+- [x] `CHK-002` `P0/AI/M`：审计并补齐现有 ChunkingEngine 的配置与边界。
+- [x] `CHK-003` `P0/AI/M`：保证单条命令、参数、输出和解释不被错误拆分。
+- [x] `CHK-004` `P0/AI/M`：实现 Parent/Child Chunk 与 Neighbor 关系。
+- [x] `CHK-005` `P0/AI/M`：实现 Chunk Role、Section Path、Page、Token Count、Content Hash。
+- [x] `CHK-006` `P0/AI+NET/M`：验证 Huawei/Cisco CLI、表格和警告样本的结构完整性。
+- [x] `CHK-007` `P0/AI/M`：实现超大 Chunk、过小 Chunk、空 Chunk 和重复 Chunk 校验。
+- [x] `CHK-008` `P0/AI+BE/M`：记录 chunker_version、parser_version、document_version 和 index_version。
+- [x] `CHK-009` `P0/AI+BE/M`：实现 Embedding Provider 抽象，区分本地与外部 Provider。
+- [x] `CHK-010` `P0/AI+SEC/M`：外部 Embedding 前执行分类、最小化、DLP 和审计。
+- [x] `CHK-011` `P0/AI+DBA/M`：验证 Embedding 维度与 pgvector 列兼容性，拒绝静默混用。
+- [x] `CHK-012` `P0/AI+BE/M`：实现批量 Embedding、失败重试、幂等和限速。
 - [ ] `CHK-013` `P1/AI+BE/M`：实现 Document 修改后的精确 Rechunk/Reembed/Reindex。
 - [ ] `CHK-014` `P1/AI+BE/M`：实现双 Index、Shadow Index、切换和回滚。
 - [ ] `CHK-015` `P1/FE/M`：实现 Chunk 查看器，支持 Parent、Neighbor、Metadata 和来源定位。

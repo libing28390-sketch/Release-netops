@@ -17,7 +17,15 @@ from typing import Any, Dict, Iterable, Optional
 
 from database.core import _USE_PG, get_db_connection
 from ai.chunking.engine import ChunkingEngine
-from ai.providers.embedding import embedding_metadata, embedding_provider
+from ai.providers.embedding import (
+    EmbeddingProviderError,
+    assert_pgvector_column_compatible,
+    embed_documents_batch,
+    embedding_contract,
+    embedding_metadata,
+    embedding_provider,
+)
+from ai.security.gateway import SecurityBlocked
 from ai.services.knowledge_metadata import (
     MetadataParseError,
     MetadataValidationError,
@@ -370,42 +378,58 @@ class KnowledgeReindexService:
         merged.setdefault("document_id", document.get("document_id") or document.get("id"))
         merged.setdefault("status", document.get("status") or "active")
         merged.setdefault("exclude_from_rag", False)
+        content = parsed.content.strip()
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        merged.setdefault("document_version", str(merged.get("source_version") or content_hash[:16]))
+        merged.setdefault("parser_version", ChunkingEngine.parser_version)
+        merged.setdefault("index_version", ChunkingEngine.default_index_version)
         platform = merged.get("cli_platform")
         if str(platform or "").lower() == "all":
             platform = None
         vendor = merged.get("vendor") or document.get("vendor") or "all"
         chunks = ChunkingEngine().chunk(
-            parsed.content.strip(),
+            content,
             document_identity=str(document["id"]),
             document_metadata={**merged, "vendor": vendor, "platform": platform},
             target_tokens_override=800,
         )
-        vectors = []
-        for chunk in chunks:
-            vectors.append(embedding_provider.embed_text(chunk.embedding_content))
+        vectors = embed_documents_batch(
+            [chunk.embedding_content for chunk in chunks],
+            provider=embedding_provider,
+            tenant_id=str(document.get("tenant_id") or "tenant-default"),
+            task_id=f"knowledge-reindex:{document['id']}",
+            idempotency_namespace=f"knowledge:{document.get('tenant_id') or 'tenant-default'}",
+        )
+        contract = embedding_contract(embedding_provider)
+        embedding_info = embedding_metadata()
         counters = {"parsed": 1, "updated": 0, "rechunked": len(chunks), "embedding_success": len(vectors), "embedding_failed": 0}
         if dry_run:
             return counters
 
         now = _now()
-        content = parsed.content.strip()
         values = {
             "vendor": vendor,
             "platform": platform,
             "metadata_json": self._json_value(merged),
             "normalized_content": content,
             "original_content": parsed.original_content,
-            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "content_hash": content_hash,
             "chunking_version": "v2",
             "ingestion_status": "ready",
             "metadata_parse_status": parsed.metadata_parse_status,
             "metadata_parse_error": parsed.metadata_parse_error,
+            "chunker_version": ChunkingEngine.chunker_version,
+            "parser_version": merged.get("parser_version"),
+            "document_version": merged.get("document_version"),
+            "index_version": merged.get("index_version"),
+            "embedding_mode": contract.mode,
+            "embedding_contract_version": contract.contract_version,
             "updated_at": now,
             "exclude_from_rag": 1 if merged.get("exclude_from_rag") else 0,
             **metadata_columns(merged),
-            "embedding_model": embedding_metadata().get("embedding_model"),
-            "embedding_dimensions": embedding_metadata().get("embedding_dimensions"),
-            "embedding_version": embedding_metadata().get("embedding_version"),
+            "embedding_model": embedding_info.get("embedding_model"),
+            "embedding_dimensions": embedding_info.get("embedding_dimensions"),
+            "embedding_version": embedding_info.get("embedding_version"),
         }
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -417,6 +441,7 @@ class KnowledgeReindexService:
             )
             cursor.execute("DELETE FROM ai_document_chunk WHERE document_id = ?", (document["id"],))
             available_chunks = self._table_columns(cursor, "ai_document_chunk")
+            assert_pgvector_column_compatible(cursor, expected_dimensions=contract.dimensions)
             for index, (chunk, vector) in enumerate(zip(chunks, vectors)):
                 section = chunk.to_dict()["section"]
                 chunk_metadata = dict(merged)
@@ -430,7 +455,7 @@ class KnowledgeReindexService:
                     "embedding_content": chunk.embedding_content,
                     "embedding": json.dumps(vector),
                     "metadata_json": self._json_value(chunk_metadata),
-                    "page": int(chunk.source_locator.get("line_start") or index + 1),
+                    "page": int(chunk.page or chunk.source_locator.get("line_start") or index + 1),
                     "section": section,
                     "created_at": now,
                     "parent_chunk_id": chunk.parent_chunk_id,
@@ -444,10 +469,18 @@ class KnowledgeReindexService:
                     "chunking_version": "v2",
                     "is_retrieval_candidate": 1 if chunk.is_retrieval_candidate else 0,
                     "oversize_reason": chunk.oversize_reason,
+                    "chunker_version": ChunkingEngine.chunker_version,
+                    "structure_types_json": json.dumps(list(chunk.structure_types), ensure_ascii=False),
+                    "neighbor_chunk_ids_json": json.dumps(list(chunk.neighbor_chunk_ids), ensure_ascii=False),
+                    "parser_version": chunk.parser_version,
+                    "document_version": chunk.document_version,
+                    "index_version": chunk.index_version,
+                    "embedding_mode": contract.mode,
+                    "embedding_contract_version": contract.contract_version,
                     "chunk_index": index,
-                    "embedding_model": embedding_metadata().get("embedding_model"),
+                    "embedding_model": embedding_info.get("embedding_model"),
                     "embedding_dimensions": len(vector),
-                    "embedding_version": embedding_metadata().get("embedding_version"),
+                    "embedding_version": embedding_info.get("embedding_version"),
                     **{key: value for key, value in metadata_columns(merged).items() if key != "document_id"},
                 }
                 chunk_values = {key: value for key, value in chunk_values.items() if key in available_chunks}
@@ -525,7 +558,7 @@ class KnowledgeReindexService:
                         result = self._process_document(document, dry_run)
                         for key in ("parsed", "updated", "rechunked", "embedding_success", "embedding_failed"):
                             counters[key] += int(result.get(key) or 0)
-                    except (MetadataParseError, MetadataValidationError, ValueError) as exc:
+                    except (EmbeddingProviderError, SecurityBlocked, MetadataParseError, MetadataValidationError, ValueError) as exc:
                         error = str(exc)
                         self._record_failure(job_id, document, error)
                         self._mark_document_parse_error(document, error)
