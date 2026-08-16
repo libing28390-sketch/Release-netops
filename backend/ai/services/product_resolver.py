@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 from database.core import get_db_connection
 from ai.services.knowledge_metadata import parse_markdown_document
 from ai.services.document_entity_resolution import resolve_document_entities
+from ai.services.product_alias_service import normalize_alias, trigram_similarity
+from ai.services.query_normalizer import NormalizedQuery, normalize_query
 
 
 @dataclass
@@ -22,6 +24,9 @@ class EntityResolution:
     outcome: str = "legacy"
     retrieval_eligible: bool = True
     driver_selection_allowed: bool = False
+    match_method: str = "none"
+    match_score: float | None = None
+    normalized_query: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -34,6 +39,9 @@ class EntityResolution:
             "outcome": self.outcome,
             "retrieval_eligible": self.retrieval_eligible,
             "driver_selection_allowed": self.driver_selection_allowed,
+            "match_method": self.match_method,
+            "match_score": self.match_score,
+            "normalized_query": self.normalized_query,
         }
 
 
@@ -44,6 +52,13 @@ class ProductResolver:
         "ce68xx": "CloudEngine 6800",
         "cloudengine6800": "CloudEngine 6800",
         "cloudengine 6800": "CloudEngine 6800",
+    }
+
+    _MODEL_ALIASES = {
+        "ce6885": ("ce6885", "ce6885-48ys8cq", "ce6885 48ys8cq"),
+        "c9300": ("c9300", "catalyst93", "catalyst 9300", "catalyst9300"),
+        "s5735-l-v2": ("s5735-l-v2", "s5735 l v2"),
+        "s6520x": ("s6520x", "s6520 x"),
     }
 
     @classmethod
@@ -75,6 +90,116 @@ class ProductResolver:
             return parsed if isinstance(parsed, dict) else {}
         except (TypeError, ValueError):
             return {}
+
+    @classmethod
+    def _query_alias_candidates(cls, query: str, *, tenant_id: str) -> list[dict[str, Any]]:
+        """Resolve reviewed aliases without choosing across a conflict.
+
+        The physical DB-006 catalog remains release-gated.  This adapter uses
+        the reviewed alias map as a deterministic shadow resolver and returns
+        bounded candidates; it never authorizes a driver or a write action.
+        """
+        normalized = normalize_alias(query)
+        candidates: list[dict[str, Any]] = []
+        def series_for(model: str) -> str:
+            if model.lower().startswith("ce6"):
+                return "CloudEngine 6800"
+            if model.lower().startswith("c9300"):
+                return "Catalyst 9300"
+            return cls._canonical_series(model) or model
+        for model, aliases in cls._MODEL_ALIASES.items():
+            normalized_aliases = {normalize_alias(alias) for alias in aliases}
+            if normalized in normalized_aliases:
+                candidates.append({
+                    "tenant_id": tenant_id,
+                    "product_model": model,
+                    "product_series": series_for(model),
+                    "alias": query,
+                    "match_method": "exact" if normalized == normalize_alias(aliases[0]) else "canonical",
+                    "match_score": 1.0,
+                })
+                continue
+            if any(alias.startswith(normalized) or normalized.startswith(alias) for alias in normalized_aliases if len(normalized) >= 2):
+                candidates.append({
+                    "tenant_id": tenant_id,
+                    "product_model": model,
+                    "product_series": series_for(model),
+                    "alias": query,
+                    "match_method": "prefix",
+                    "match_score": 0.80,
+                })
+                continue
+            score = max((trigram_similarity(normalized, alias) for alias in normalized_aliases), default=0.0)
+            if score >= 0.58:
+                candidates.append({
+                    "tenant_id": tenant_id,
+                    "product_model": model,
+                    "product_series": series_for(model),
+                    "alias": query,
+                    "match_method": "trigram",
+                    "match_score": score,
+                })
+        return sorted(candidates, key=lambda item: (-float(item["match_score"]), str(item["product_model"])))[:20]
+
+    @classmethod
+    def _metadata_from_normalized(cls, normalized: NormalizedQuery) -> dict[str, Any]:
+        """Project the normalizer contract into RetrievalRequest metadata."""
+        return {
+            "vendor": normalized.vendor,
+            "product_series": normalized.product,
+            "product_model": normalized.model,
+            "os_family": normalized.os_family,
+            "os_generation": normalized.generation,
+            "software_train": normalized.version if (normalized.version or "").upper().startswith("V") else None,
+            "software_release": normalized.version if normalized.version and ("R" in normalized.version.upper() or "." in normalized.version) else None,
+            "feature": normalized.topic,
+            "feature_domain": "routing" if normalized.topic in {"ospf", "bgp", "arp"} else "switching" if normalized.topic in {"vlan", "stp", "evpn", "vxlan"} else None,
+            "document_category": normalized.document_category,
+            "cli_platform": None,
+        }
+
+    def resolve_query(
+        self,
+        query: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        *,
+        tenant_id: str = "tenant-default",
+    ) -> EntityResolution:
+        """Resolve an operator query with exact/canonical/prefix/trigram evidence."""
+        normalized = normalize_query(query, tenant_id=tenant_id)
+        projected = self._metadata_from_normalized(normalized)
+        merged = {key: value for key, value in projected.items() if value not in (None, "")}
+        merged.update({key: value for key, value in dict(metadata or {}).items() if value not in (None, "")})
+        identity_query = normalized.model or (
+            normalized.product
+            if normalized.product not in {"CloudEngine 6800", "Catalyst 9300"}
+            else None
+        )
+        candidates = self._query_alias_candidates(identity_query or query, tenant_id=tenant_id) if identity_query else []
+        identity_models = {str(item.get("product_model")) for item in candidates}
+        match_method = str(candidates[0].get("match_method") or "none") if candidates else "none"
+        match_score = float(candidates[0].get("match_score")) if candidates else None
+        ambiguous = len(identity_models) > 1 or match_method in {"prefix", "trigram"}
+        if len(identity_models) == 1 and match_method in {"exact", "canonical"} and not next(iter(identity_models), "").lower().startswith("s"):
+            winner = candidates[0]
+            merged["product_series"] = winner.get("product_series")
+            merged["product_model"] = winner.get("product_model")
+        if identity_models and next(iter(identity_models), "").lower().startswith("s") and match_method == "exact":
+            # S-series identifiers are hierarchy scopes in the reviewed
+            # catalog; an exact series alias is still candidate-only until a
+            # concrete model row is selected.
+            match_method = "prefix"
+            ambiguous = True
+        result = self.resolve(merged, tenant_id=tenant_id)
+        result.candidates = candidates[:20] or result.candidates
+        result.ambiguous = result.ambiguous or ambiguous
+        result.match_method = match_method if candidates else result.evidence
+        result.match_score = match_score
+        result.normalized_query = normalized.normalized_text
+        if candidates and match_method in {"prefix", "trigram"}:
+            result.outcome = "candidates"
+            result.retrieval_eligible = result.retrieval_eligible and len(identity_models) <= 1
+        return result
 
     def resolve(self, metadata: Dict[str, Any], *, tenant_id: str = "tenant-default") -> EntityResolution:
         v2_resolution = resolve_document_entities(metadata, tenant_id=tenant_id)

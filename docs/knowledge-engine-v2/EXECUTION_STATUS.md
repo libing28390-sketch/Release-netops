@@ -1,16 +1,17 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: RET-004 (PENDING; RET-001..003 PASS)
-Last Completed: RET-003
-Next Task: RET-004 Product Resolver 接入所有知识检索入口
+Current Task: RET-008 (PENDING; RET-001..007 PASS)
+Last Completed: RET-007
+Next Task: RET-008 pg_trgm Fuzzy Match 与阈值配置
 
-Completed: 124 / 359
-P0: 110 / 277
+Completed: 128 / 359
+P0: 114 / 277
 
 Blocked Tasks: none
 
 Recent Tests:
+- RET-004..007 focused and RAG regression: 15 passed; exact/canonical/prefix/hierarchy boundaries verified
 - RET-001..003 focused: 4 passed; RAG acceptance/retriever regression: 11 passed
 - RET-001..003 compile and contract YAML parse: PASS; secret redaction assertions: PASS
 - CHK-P0-12 M1 gate: **PASS**; focused 18 passed; AI suite: 151 passed; Catalog suite: 183 passed; Database suite: 186 passed, 1 documented SQLite-only boundary skip

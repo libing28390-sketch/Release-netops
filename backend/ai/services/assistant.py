@@ -70,7 +70,7 @@ class AIAssistantService:
         # matching variants and let the answer keep them separated by
         # platform.
         series = str(getattr(request, "product_series", "") or "").strip().upper()
-        if re.fullmatch(r"S\d{2,4}", series):
+        if re.fullmatch(r"S\d{2,5}(?:-[A-Z0-9-]+)?", series):
             return False
         identity_fields = (
             "product_family",
@@ -95,7 +95,8 @@ class AIAssistantService:
         site_ids: Optional[List[str]] = None,
     ) -> tuple[RetrievalRequest, EntityResolution]:
         metadata = intent_info.get("knowledge_intent") or intent_info.get("metadata") or intent_info.get("filters") or {}
-        resolution = product_resolver.resolve(
+        resolution = product_resolver.resolve_query(
+            message,
             dict(metadata),
             tenant_id=tenant_id or "tenant-default",
         )

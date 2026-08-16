@@ -183,8 +183,12 @@ def normalize_query(query: str, *, tenant_id: str = "tenant-default", access_sco
             if canonical != token and token not in {"CE6800", "CE68XX"}:
                 model = token
         elif token.upper().startswith(("S", "RG-")):
+            # Huawei S-series identifiers are product-series scopes in the
+            # catalog.  Even a concrete-looking S5735-L-V2 token must not be
+            # promoted to a model identity before the reviewed hierarchy
+            # resolver has selected a model.
             product = canonical if canonical != token else token
-            model = token if re.search(r"[-_]", token) else None
+            model = None
 
     os_family = _first_alias(text, dict(_OS_ALIASES))
     generation = None

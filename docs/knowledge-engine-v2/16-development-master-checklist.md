@@ -264,10 +264,10 @@
 - [x] `RET-001` `P0/AI+NET/M`：定义 Query Normalizer 输入输出契约。
 - [x] `RET-002` `P0/AI/M`：解析 vendor、product、model、os_family、generation、version、topic、command、error、intent。
 - [x] `RET-003` `P0/AI/M`：未出现的实体保持 null，不允许模型补造。
-- [ ] `RET-004` `P0/AI+BE/M`：将 Product Resolver 接入所有知识检索入口。
-- [ ] `RET-005` `P0/AI/M`：实现 Exact Product/Model Match。
-- [ ] `RET-006` `P0/AI/M`：实现 Canonical Alias Match。
-- [ ] `RET-007` `P0/AI/M`：实现 Prefix 与 Product Hierarchy Match。
+- [x] `RET-004` `P0/AI+BE/M`：将 Product Resolver 接入所有知识检索入口。
+- [x] `RET-005` `P0/AI/M`：实现 Exact Product/Model Match。
+- [x] `RET-006` `P0/AI/M`：实现 Canonical Alias Match。
+- [x] `RET-007` `P0/AI/M`：实现 Prefix 与 Product Hierarchy Match。
 - [ ] `RET-008` `P0/AI+DBA/M`：实现 pg_trgm Fuzzy Match 与阈值配置。
 - [ ] `RET-009` `P0/AI+DBA/M`：实现 PostgreSQL FTS，优化命令、错误字符串和关键词。
 - [ ] `RET-010` `P0/AI+DBA/M`：实现 pgvector Semantic Retrieval。

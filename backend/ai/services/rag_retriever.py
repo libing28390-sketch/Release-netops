@@ -18,6 +18,7 @@ from ai.providers.embedding import embedding_provider
 from ai.security.sanitizer import sanitize_text
 from ai.services.rag_policy import document_is_visible, trust_rank
 from ai.services.knowledge_metadata import canonical_vendor
+from ai.services.product_resolver import product_resolver
 
 
 @dataclass
@@ -47,6 +48,8 @@ class RetrievalRequest:
     roles: Optional[List[str]] = None
     site_ids: Optional[List[str]] = None
     include_debug: bool = False
+    normalized_query: Dict[str, Any] | None = None
+    resolution: Dict[str, Any] | None = None
 
     @classmethod
     def from_mapping(cls, query: str, values: Dict[str, Any] | None = None, **kwargs: Any) -> "RetrievalRequest":
@@ -505,6 +508,31 @@ class RAGRetriever:
         site_ids: Optional[List[str]] = None,
         **metadata_filters: Any,
     ) -> List[Dict[str, Any]]:
+        resolved_filters = dict(metadata_filters)
+        # Direct callers (CLI, tests and future APIs) use the same Product
+        # Resolver boundary as the Assistant path. Explicit caller filters
+        # always win; inferred values are only populated from query evidence.
+        try:
+            resolution = product_resolver.resolve_query(
+                query,
+                resolved_filters,
+                tenant_id=tenant_id or "tenant-default",
+            )
+            if not resolution.ambiguous:
+                resolved_filters.update({
+                    key: value
+                    for key, value in resolution.metadata.items()
+                    if key not in resolved_filters and value not in (None, "", [], {})
+                })
+            resolved_filters["normalized_query"] = {
+                "query": resolution.normalized_query,
+                "match_method": resolution.match_method,
+                "match_score": resolution.match_score,
+                "candidate_count": len(resolution.candidates),
+            }
+            resolved_filters["resolution"] = resolution.to_dict()
+        except Exception:
+            resolution = None
         request = RetrievalRequest.from_mapping(
             query,
             top_k=top_k,
@@ -514,7 +542,7 @@ class RAGRetriever:
             user_id=user_id,
             roles=roles,
             site_ids=site_ids,
-            **metadata_filters,
+            **resolved_filters,
         )
         return self.search(request, min_relevance=min_relevance)["results"]
 

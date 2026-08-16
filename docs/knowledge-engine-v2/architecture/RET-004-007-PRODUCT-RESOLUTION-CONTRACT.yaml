@@ -1,0 +1,15 @@
+tasks: [RET-004, RET-005, RET-006, RET-007]
+title: Product resolver integration and hierarchy matching
+resolution_order: [exact_model, canonical_alias, prefix_candidate, hierarchy_candidate]
+rules:
+  - every knowledge retrieval entry point uses the same resolver boundary
+  - exact_and_canonical_identity_may_project_a_single_model
+  - prefix_and_hierarchy_matches_are_candidate_only
+  - product_series_scope_does_not_infer_a_model_or_cli_driver
+  - vendor_conflict_and_unknown_are_fail_closed
+  - candidate_list_is_bounded_to_20
+security:
+  tenant_scope_is_server_owned
+  resolver_never_authorizes_driver_selection
+rollback:
+  disable_query_resolver_projection_and_retain_legacy_request_fields
