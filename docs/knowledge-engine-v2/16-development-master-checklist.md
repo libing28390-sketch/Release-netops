@@ -261,9 +261,9 @@
 
 ## 9. Query Understanding 与混合检索
 
-- [ ] `RET-001` `P0/AI+NET/M`：定义 Query Normalizer 输入输出契约。
-- [ ] `RET-002` `P0/AI/M`：解析 vendor、product、model、os_family、generation、version、topic、command、error、intent。
-- [ ] `RET-003` `P0/AI/M`：未出现的实体保持 null，不允许模型补造。
+- [x] `RET-001` `P0/AI+NET/M`：定义 Query Normalizer 输入输出契约。
+- [x] `RET-002` `P0/AI/M`：解析 vendor、product、model、os_family、generation、version、topic、command、error、intent。
+- [x] `RET-003` `P0/AI/M`：未出现的实体保持 null，不允许模型补造。
 - [ ] `RET-004` `P0/AI+BE/M`：将 Product Resolver 接入所有知识检索入口。
 - [ ] `RET-005` `P0/AI/M`：实现 Exact Product/Model Match。
 - [ ] `RET-006` `P0/AI/M`：实现 Canonical Alias Match。

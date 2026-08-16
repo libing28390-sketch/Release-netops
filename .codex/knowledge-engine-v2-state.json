@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "RET-001",
+  "current_task": "RET-004",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T00:15:00+08:00",
-  "last_completed_task": "CHK-012",
+  "updated_at": "2026-08-17T01:10:00+08:00",
+  "last_completed_task": "RET-003",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -126,7 +126,10 @@
     "CHK-009",
     "CHK-010",
     "CHK-011",
-    "CHK-012"
+    "CHK-012",
+    "RET-001",
+    "RET-002",
+    "RET-003"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -160,9 +163,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "RET-001",
-    "RET-002",
-    "RET-003",
     "RET-004",
     "RET-005",
     "RET-006",
@@ -596,5 +596,5 @@
   "chk_p0_12_contract": "docs/knowledge-engine-v2/architecture/CHK-P0-12-CHUNK-EMBEDDING-CONTRACT.yaml",
   "chk_p0_12_migration": "m0137_chunk_index_contract_projection",
   "chk_p0_12_gate_summary": "CHK focused 18; embedding 4; ingestion 2; migration 1; AI 151; Catalog 183; Database 186 + 1 SQLite boundary skip; npm lint/build PASS; git diff check PASS",
-  "resume_from": "RET-001"
+  "resume_from": "RET-004"
 }

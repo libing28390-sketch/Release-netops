@@ -9,6 +9,7 @@ import re
 from typing import Any, Dict, Optional
 from ai.gateway.llm_gateway import llm_gateway
 from ai.services.knowledge_metadata import canonical_vendor
+from ai.services.query_normalizer import normalize_query
 
 
 _ASSET_ANALYSIS_AGGREGATION_MARKERS = (
@@ -150,6 +151,7 @@ class IntentParser:
         """
 
         normalized = " ".join((query or "").strip().split())
+        normalized_query = normalize_query(normalized)
         lower = normalized.lower()
         result: Dict[str, Any] = {
             "request_type": "knowledge",
@@ -168,6 +170,7 @@ class IntentParser:
             "feature": None,
             "subfeature": None,
             "device_identifier": None,
+            "query_normalization": normalized_query.to_dict(),
         }
 
         for vendor, aliases in self._VENDOR_ALIASES.items():
@@ -227,6 +230,11 @@ class IntentParser:
             result["device_identifier"] = device_match.group(0)
         if any(token in lower for token in ("下发", "修改", "变更", "apply", "execute")):
             result["request_type"] = "configuration_change"
+        # Additive contract projection for RET-001..003.  The legacy fields
+        # above intentionally retain their established semantics; the
+        # normalizer is the authoritative evidence envelope and never fills a
+        # missing entity from model/context inference.
+        result["query_normalization"] = normalized_query.to_dict()
         return result
 
     def is_knowledge_query(self, query: str) -> bool:

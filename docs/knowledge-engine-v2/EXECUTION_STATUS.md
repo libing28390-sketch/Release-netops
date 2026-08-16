@@ -1,16 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: RET-001 (PENDING; M1 CHK-P0-12 gate PASS)
-Last Completed: CHK-012
-Next Task: RET-001 Query Normalizer 输入输出契约
+Current Task: RET-004 (PENDING; RET-001..003 PASS)
+Last Completed: RET-003
+Next Task: RET-004 Product Resolver 接入所有知识检索入口
 
-Completed: 121 / 359
-P0: 107 / 277
+Completed: 124 / 359
+P0: 110 / 277
 
 Blocked Tasks: none
 
 Recent Tests:
+- RET-001..003 focused: 4 passed; RAG acceptance/retriever regression: 11 passed
+- RET-001..003 compile and contract YAML parse: PASS; secret redaction assertions: PASS
 - CHK-P0-12 M1 gate: **PASS**; focused 18 passed; AI suite: 151 passed; Catalog suite: 183 passed; Database suite: 186 passed, 1 documented SQLite-only boundary skip
 - PostgreSQL m0137 temporary-transaction probe: PASS; confirmed additive version/neighbor projection columns and index, transaction rolled back
 - `npm.cmd run lint`: PASS; `npm.cmd run build`: PASS; existing large-chunk warning only
