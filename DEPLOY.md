@@ -1,4 +1,4 @@
-# NetOps Automation — Deployment Guide / 部署指南
+# Nexora — Deployment Guide / 部署指南
 
 [English](#english) | [中文](#中文)
 
@@ -13,7 +13,8 @@
 - ✅ CentOS Stream 8, 9 (x86_64)
 - ✅ Docker (any host OS, x86_64)
 - ❌ CentOS 7.x — glibc 2.17, not supported
-- ❌ ARM64 / Windows / macOS native — not supported
+- ✅ Windows 10/11 native (x86_64, Windows client)
+- ❌ ARM64 / macOS native — not supported
 
 ---
 
@@ -380,7 +381,7 @@ bash scripts/deploy-docker.sh update
 
 # Windows (GUI)
 # 1. Right-click the system tray icon and click "Exit" to stop the running service.
-# 2. Run the following command in the project root to fetch the latest changes (and NetOps.exe):
+# 2. Run the following command in the project root to fetch the latest changes (including the Nexora Windows client):
 git pull
 # 3. Double-click `start.bat` again. The graphical manager will automatically update dependencies and boot.
 ```
@@ -698,7 +699,7 @@ bash scripts/deploy-docker.sh update
 
 # Windows 本地部署 (GUI)
 # 1. 右键系统托盘图标，点击“退出 (Exit)”以完全关闭运行中的服务。
-# 2. 在项目根目录执行以下命令拉取最新代码（会自动下载最新 NetOps.exe）：
+# 2. 在项目根目录执行以下命令拉取最新代码（包括最新的 Nexora Windows 客户端）：
 git pull
 # 3. 重新双击运行根目录下的 `start.bat` 即可，图形化向导会自动处理后续的环境校验与启动。
 ```
@@ -707,85 +708,61 @@ git pull
 
 ### Windows Deployment & Desktop Integration
 
-You can run the application directly on Windows as a zero-configuration local server with a system tray controller.
+The Nexora Windows client runs the platform locally with a system-tray controller. The UI and product name are Nexora; `NetOps.exe` remains the backward-compatible launcher filename.
 
-#### 0. Get the Windows Release Code
-Before starting, clone the **Windows-specific release branch** (`windows`) to avoid downloading unnecessary Linux/Docker dependencies:
+#### 0. Requirements
+
+- Windows 10/11 x86_64 and a writable deployment directory.
+- PostgreSQL 17.x with pgvector and the `pg_trgm` extension; provide a target database or an account that can create it. The detailed setup is in [docs/deploy/windows.md](docs/deploy/windows.md).
+- Internet access and UAC permission for the first-time dependency setup.
+
+The launcher can reuse Python 3.10–3.12 or install Python 3.11.9, and can reuse Node.js 18+ or download a portable Node.js 20.12.2 when `dist/` is missing. It also creates `.venv` and installs the backend and tray dependencies.
+
+#### 1. Install and start
+
 ```powershell
 git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
 cd nexora-automation
 ```
 
-#### 1. Setup Environment & Dependencies
-1. **Prepare Python & Node.js**: Ensure Python 3.10+ and Node.js are installed on your machine.
-2. **Setup Virtualenv & Requirements**:
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   pip install -r backend/requirements.txt
-   ```
-3. **Build Frontend**:
-   ```powershell
-   npm install
-   npm run build
-   ```
-4. **Configure Database (SQLite)**: By default, if the `DATABASE_URL` environment variable is not defined or commented out in your `.env` file, the platform automatically initializes and uses a local SQLite database at `data/netops.db` (zero configuration needed).
+Prepare PostgreSQL 17, `pgvector`, and `pg_trgm` before starting the client. The Nexora wizard can create the `netops` database when the selected account can connect to `postgres` and has `CREATEDB`; otherwise create it first. Then double-click `NetOps.exe` or run `start.bat`, enter the database connection, and click “启动平台客户端” on the completion page.
 
-#### 2. Run & Integrate (Two Modes)
+Open `http://127.0.0.1:5010`. The default account is `admin / admin`; change it immediately. The backend binds to `0.0.0.0:5010`, so restrict Windows Firewall to localhost unless LAN access is intentional.
 
-##### Option A: Interactive Command Prompt (Foreground Mode)
-1. Double-click `start.bat` in the root folder.
-2. Select **[1] 启动 NetOps (在前台控制台运行)**.
-3. The server starts in the terminal and your default browser opens to `http://127.0.0.1:5010`. Keep the terminal window open to keep the service running.
+#### 2. Existing installations and upgrades
 
-##### Option B: System Tray & Background Mode (Recommended Desktop Experience)
-1. Double-click `start.bat` in the root folder.
-2. Select **[2] 创建桌面快捷方式 (后台无窗口运行)**. This will:
-   - Install desktop tray dependencies (`pystray`).
-   - Create a desktop shortcut named **NetOps 运维平台** with a custom network topology icon.
-3. Double-click the new desktop shortcut. The server starts silently in the background (no console windows). A network topology icon appears in your Windows system tray, and your browser opens to `http://127.0.0.1:5010`.
-4. To stop the service, right-click the system tray icon and choose **退出 (Exit)**.
+For a complete upgrade, stop the tray service, back up PostgreSQL with `pg_dump`, preserve `.env`, `data/`, `backup/`, and `desktop/desktop_settings.ini`, then run `git pull origin windows` or unpack the latest Windows ZIP into a new directory. Start `start.bat` again; backend startup runs pending migrations without resetting the database.
+
+The tray “Check for Updates” action currently replaces only `NetOps.exe` and restarts it. It does not synchronize backend sources, tray sources, frontend assets, or migration files, so use the full Windows package for platform upgrades. Existing `NetOps.exe` installations remain supported while the visible client branding is Nexora.
 
 ---
 
 ### Windows 本地部署与桌面集成指南
 
-您可以在 Windows 系统上直接将项目作为本地服务运行，并利用 Windows 系统托盘在后台进行静默管理。
+Nexora Windows 客户端在本机运行后端服务，并通过系统托盘管理服务。界面和平台名称统一为 Nexora；`NetOps.exe` 只是历史兼容启动文件名。
 
-#### 0. 获取 Windows 专属发布代码
-开始之前，请克隆 **Windows 专属发布分支** (`windows`)，以避免下载冗余的 Linux/Docker 依赖：
+#### 0. 新机器要求
+
+- Windows 10/11 64 位，以及可写的部署目录。
+- PostgreSQL 17.x、pgvector、`pg_trgm`，以及目标业务数据库或 `CREATEDB` 权限。
+- 首次运行需要网络下载依赖，并允许 PostgreSQL 安装时的 UAC 提权。
+
+向导可以自动准备兼容的 Python 3.10–3.12（无兼容版本时安装 3.11.9）、Node.js 18+ 或便携版 Node.js 20.12.2，并在 `.venv` 中安装后端和托盘依赖。详细的 PostgreSQL 初始化步骤见 [docs/deploy/windows.md](docs/deploy/windows.md)。
+
+#### 1. 安装与启动
+
 ```powershell
 git clone -b windows https://github.com/libing28390-sketch/Release-netops.git nexora-automation
 cd nexora-automation
 ```
 
-#### 1. 初始化依赖环境
-1. **安装环境要求**：确保本地已安装 Python 3.10+ 和 Node.js。
-2. **创建虚拟环境并安装 Python 依赖**：
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   pip install -r backend/requirements.txt
-   ```
-3. **构建前端静态资源**（只需构建一次，后续后端会自动托管）：
-   ```powershell
-   npm install
-   npm run build
-   ```
-4. **配置数据库（SQLite 零配置）**：默认情况下，如果 `.env` 配置文件中的 `DATABASE_URL` 被注释或未配置，系统会自动切换为轻量级 SQLite 数据库（存储于 `data/netops.db`），无需安装和运行 PostgreSQL。
+先准备 PostgreSQL 17、pgvector 和 `pg_trgm`。如果账号有连接维护库 `postgres` 和 `CREATEDB` 权限，Nexora 向导可以创建 `netops` 数据库；否则先手工创建，再双击 `NetOps.exe` 或运行 `start.bat`，填写数据库连接并点击“启动平台客户端”。
 
-#### 2. 启动与管理（两种运行模式）
+浏览器访问 `http://127.0.0.1:5010`。默认账号为 `admin / admin`，首次登录后必须立即修改密码。后端实际监听 `0.0.0.0:5010`，只允许本机使用时应限制 Windows 防火墙入站规则。
 
-##### 方式 A：前台命令行模式
-1. 双击运行根目录下的 `start.bat`。
-2. 输入选项 `1` 选择 **[1] 启动 NetOps (在前台控制台运行)**。
-3. 系统会在黑窗口中启动服务，并自动打开默认浏览器访问 `http://127.0.0.1:5010`。此命令行窗口必须保持开启，服务才会运行。
+#### 2. 已有安装升级
 
-##### 方式 B：后台系统托盘模式（推荐桌面体验）
-1. 双击运行根目录下的 `start.bat`。
-2. 输入选项 `2` 选择 **[2] 创建桌面快捷方式 (后台无窗口运行)**。该步骤将：
-   - 自动检测并安装托盘管理包（`pystray`）。
-   - 在您的 Windows 桌面上生成一个名为 **NetOps 运维平台** 的快捷方式，并绑定专属网络拓扑图标。
-3. 双击运行桌面上的 **NetOps 运维平台** 快捷方式。系统将以静默模式在后台启动（不弹出任何黑色控制台），并在右下角系统托盘生成专属图标，随后自动调起默认浏览器打开 `http://127.0.0.1:5010`。
-4. 若需停止服务，只需在系统托盘右键该图标并点击 **退出 (Exit)** 即可。
+完整升级前先退出系统托盘服务，使用 `pg_dump` 备份 PostgreSQL，并保留 `.env`、`data/`、`backup/` 和 `desktop/desktop_settings.ini`。Git 发布目录执行 `git pull origin windows`；ZIP 发布包建议解压到新目录后复制这些配置和数据文件，再运行 `start.bat`。后端启动时会执行未完成的数据库迁移，不会重置业务数据。
+
+托盘中的“检查更新”目前只下载并替换 `NetOps.exe` 后重启，不会同步后端源码、托盘源码、前端资源或数据库迁移文件，因此不能代替完整平台升级。现有 `NetOps.exe` 仍可使用，客户端界面和平台品牌已经统一为 Nexora。
 

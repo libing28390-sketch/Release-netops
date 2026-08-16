@@ -1,6 +1,7 @@
 """Online update helpers for the Windows desktop release.
 
-The public Windows release is published as a ``NetOps.exe`` asset on GitHub.
+The public Windows release is published as a ``NetOps.exe`` asset on GitHub for
+backward compatibility; the product name shown by the client is Nexora.
 This module deliberately contains no Qt code so it can be tested independently
 and reused by the desktop UI without blocking the GUI thread.
 """
@@ -22,7 +23,7 @@ RELEASES_API_URL = (
     "?per_page=30"
 )
 WINDOWS_ASSET_NAME = "NetOps.exe"
-USER_AGENT = "NetOps-Agent-Updater"
+USER_AGENT = "Nexora-Agent-Updater"
 
 
 class UpdateError(RuntimeError):
@@ -167,7 +168,7 @@ def create_windows_updater(
 
     target = str(Path(target_exe).resolve())
     downloaded = str(Path(downloaded_exe).resolve())
-    fd, script_name = tempfile.mkstemp(prefix="netops-update-", suffix=".cmd")
+    fd, script_name = tempfile.mkstemp(prefix="nexora-update-", suffix=".cmd")
     os.close(fd)
     script = f'''@echo off
 setlocal

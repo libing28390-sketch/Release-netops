@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-launcher.py - PySide6 NetOps Graphical Setup Initializer & Launcher.
-Provides a premium dark-mode multi-page setup wizard (compiled as NetOps.exe)
-to configure database settings (SQLite vs PostgreSQL), download and install PG16/Python/Node.js,
+launcher.py - PySide6 Nexora Graphical Setup Initializer & Launcher.
+Provides a premium dark-mode multi-page setup wizard (published as the
+backward-compatible NetOps.exe launcher) to configure PostgreSQL, download and
+install Python/Node.js,
 verify dependencies, compile frontend assets, and launch the platform.
 """
 
@@ -30,7 +31,8 @@ from desktop.ui.feedback import show_message
 from desktop.ui.launcher_theme import build_launcher_stylesheet
 
 if getattr(sys, 'frozen', False):
-    # Running as the bundled NetOps.exe, which lives at the repo root.
+    # Running as the bundled Nexora launcher (published as NetOps.exe for
+    # backward compatibility), which lives at the repo root.
     PROJECT_ROOT = os.path.dirname(os.path.abspath(sys.executable))
     DESKTOP_DIR = os.path.join(PROJECT_ROOT, "desktop")
 else:
@@ -44,7 +46,7 @@ LOG_FILE = os.path.join(PROJECT_ROOT, "launcher_setup.log")
 def sync_bundled_textfsm_templates():
     """Materialize release templates bundled by PyInstaller.
 
-    NetOps.exe launches the backend from the project directory rather than
+    The Windows launcher starts the backend from the project directory rather than
     inside the PyInstaller process. One-file resources live under _MEIPASS
     temporarily, so copy only release-owned templates before launching the
     backend. User templates remain in data/textfsm_templates and are untouched.
@@ -296,7 +298,7 @@ class SetupWorker(QObject):
 
     def run_setup_tasks(self):
         try:
-            self.write_log("=== NetOps Setup Pipeline Initiated ===\n")
+            self.write_log("=== Nexora Setup Pipeline Initiated ===\n")
             
             if self.bypassed_config:
                 self.progress_signal.emit("正在检查运行环境...", 0.1)
@@ -309,21 +311,20 @@ class SetupWorker(QObject):
                     self.progress_signal.emit("正在检查数据库状态...", 0.5)
                     time.sleep(0.1)
                     
-                    # Verify database
-                    db_type = self.db_config.get("db_type")
-                    if db_type == "postgresql":
-                        host = self.db_config.get("host", "127.0.0.1")
-                        port = int(self.db_config.get("port", "5432"))
-                        try:
-                            with socket.create_connection((host, port), timeout=2.0) as s:
-                                self.write_log(f"检测到 PostgreSQL 数据库服务正常且已开启在端口 {port}。\n")
-                        except Exception:
-                            self.write_log(f"[警告] 数据库连接失败: 无法连接至 {host}:{port}\n")
+                    # Verify the actual PostgreSQL credentials, database, and
+                    # extensions instead of treating an open TCP port as ready.
+                    if self.db_config.get("db_type") == "postgresql":
+                        self.ensure_postgres_ready()
+
+                    self.progress_signal.emit("同步 Nexora 桌面快捷方式...", 0.8)
+                    self.refresh_desktop_shortcut(
+                        os.path.join(venv_path, "Scripts", "python.exe")
+                    )
                     
                     self.progress_signal.emit("启动平台自愈服务...", 0.9)
                     time.sleep(0.1)
                     self.progress_signal.emit("部署完成！", 1.0)
-                    self.write_log("=== NetOps Setup Pipeline Completed Successfully ===\n")
+                    self.write_log("=== Nexora Setup Pipeline Completed Successfully ===\n")
                     self.success_signal.emit()
                     return
                 else:
@@ -478,6 +479,9 @@ class SetupWorker(QObject):
                     else:
                         self.write_log(f"[提示] 检测到配置了远程数据库 {host}:{port}。跳过本地静默安装。\n")
 
+                    self.progress_signal.emit("验证 PostgreSQL 数据库与 AI 扩展...", 0.78)
+                    self.ensure_postgres_ready()
+
             # 5. Compile Frontend static files if dist is missing
             dist_path = os.path.join(PROJECT_ROOT, "dist")
             if not os.path.exists(dist_path):
@@ -575,21 +579,168 @@ class SetupWorker(QObject):
 
             # 7. Create desktop shortcut
             self.progress_signal.emit("生成桌面快捷方式...", 0.98)
-            try:
-                shortcut_script = os.path.join(DESKTOP_DIR, "create_shortcut.py")
-                if os.path.exists(shortcut_script):
-                    self.run_command([python_exe, shortcut_script], cwd=PROJECT_ROOT)
-            except Exception as e:
-                self.write_log(f"[警告] 创建桌面快捷方式失败: {e}\n")
+            self.refresh_desktop_shortcut(python_exe)
 
             # Finalize
             self.progress_signal.emit("部署完成！", 1.0)
-            self.write_log("=== NetOps Setup Pipeline Completed Successfully ===\n")
+            self.write_log("=== Nexora Setup Pipeline Completed Successfully ===\n")
             self.success_signal.emit()
 
         except Exception as err:
             self.write_log(f"\n[ERROR] 部署过程中遭遇严重错误: {err}\n")
             self.error_signal.emit(str(err))
+
+    def ensure_postgres_ready(self):
+        """Authenticate to PostgreSQL and ensure the current migration contract.
+
+        The Windows installer can provision the PostgreSQL server binary, but it
+        cannot assume that the selected account or business database exists. Do
+        the same readiness checks the backend migration will require so the
+        wizard reports an actionable error before claiming success.
+        """
+        if self.db_config.get("db_type") != "postgresql":
+            return
+
+        host = self.db_config.get("host", "127.0.0.1")
+        port = int(self.db_config.get("port", "5432"))
+        user = str(self.db_config.get("user") or "postgres")
+        password = str(self.db_config.get("password") or "")
+        db_name = str(self.db_config.get("db_name") or "netops")
+        if not db_name:
+            raise RuntimeError("PostgreSQL 业务数据库名不能为空。")
+
+        try:
+            import psycopg2
+            from psycopg2 import sql
+        except ImportError as exc:
+            raise RuntimeError(
+                "当前虚拟环境缺少 psycopg2，请重新运行 Nexora 部署向导安装后端依赖。"
+            ) from exc
+
+        connect_kwargs = {
+            "host": host,
+            "port": port,
+            "user": user,
+            "password": password,
+            "connect_timeout": 5,
+        }
+
+        def connect(database):
+            return psycopg2.connect(dbname=database, **connect_kwargs)
+
+        target_conn = None
+        try:
+            try:
+                target_conn = connect(db_name)
+            except Exception as target_error:
+                # PostgreSQL SQLSTATE 3D000 means the target database is
+                # missing. Other errors are authentication/network failures
+                # and must not be hidden behind an automatic CREATE DATABASE.
+                if getattr(target_error, "pgcode", None) != "3D000":
+                    raise RuntimeError(
+                        f"无法登录 PostgreSQL 目标数据库 {db_name}。请确认主机、端口、用户名、密码和数据库名。"
+                    ) from target_error
+
+                try:
+                    maintenance_conn = connect("postgres")
+                except Exception as maintenance_error:
+                    raise RuntimeError(
+                        f"PostgreSQL 服务可达，但业务数据库 {db_name} 不存在，且无法连接维护库 postgres。"
+                        "请先创建数据库或使用具有 CREATEDB 权限的账号。"
+                    ) from maintenance_error
+
+                try:
+                    maintenance_conn.autocommit = True
+                    with maintenance_conn.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT 1 FROM pg_database WHERE datname = %s",
+                            (db_name,),
+                        )
+                        if cursor.fetchone() is None:
+                            cursor.execute(
+                                sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                                    sql.Identifier(db_name),
+                                    sql.Identifier(user),
+                                )
+                            )
+                            self.write_log(f"已创建 PostgreSQL 业务数据库 {db_name}。\n")
+                except Exception as create_error:
+                    raise RuntimeError(
+                        f"无法创建 PostgreSQL 业务数据库 {db_name}。请使用管理员或 CREATEDB 账号手工创建。"
+                    ) from create_error
+                finally:
+                    maintenance_conn.close()
+
+                target_conn = connect(db_name)
+
+            with target_conn.cursor() as cursor:
+                cursor.execute("SHOW server_version")
+                server_version = str(cursor.fetchone()[0])
+                cursor.execute("SHOW server_version_num")
+                server_version_num = int(cursor.fetchone()[0])
+                major_version = server_version_num // 10000
+                if major_version != 17:
+                    self.write_log(
+                        f"[警告] 当前 PostgreSQL 为 {server_version}，Docker 基线为 PostgreSQL 17；"
+                        "建议新 Windows 部署使用 PostgreSQL 17。\n"
+                    )
+
+                required_extensions = ("vector", "pg_trgm")
+                cursor.execute(
+                    "SELECT name FROM pg_available_extensions WHERE name IN (%s, %s)",
+                    required_extensions,
+                )
+                available = {row[0] for row in cursor.fetchall()}
+                unavailable = [name for name in required_extensions if name not in available]
+                if unavailable:
+                    missing = ", ".join(unavailable)
+                    raise RuntimeError(
+                        f"PostgreSQL 缺少扩展 {missing}。请安装与 PostgreSQL {major_version} 匹配的 "
+                        "pgvector，并确认 pg_trgm/contrib 可用后重试。"
+                    )
+
+                cursor.execute(
+                    "SELECT extname FROM pg_extension WHERE extname IN (%s, %s)",
+                    required_extensions,
+                )
+                installed = {row[0] for row in cursor.fetchall()}
+                for extension in required_extensions:
+                    if extension not in installed:
+                        cursor.execute(
+                            sql.SQL("CREATE EXTENSION IF NOT EXISTS {}").format(
+                                sql.Identifier(extension)
+                            )
+                        )
+                target_conn.commit()
+
+            self.write_log(
+                f"PostgreSQL 已验证：{server_version}，数据库 {db_name}，"
+                "vector 与 pg_trgm 均可用。\n"
+            )
+        except RuntimeError:
+            if target_conn is not None:
+                target_conn.rollback()
+            raise
+        except Exception as exc:
+            if target_conn is not None:
+                target_conn.rollback()
+            raise RuntimeError(
+                "PostgreSQL 扩展初始化失败。请确认当前账号拥有 CREATE EXTENSION 权限。"
+            ) from exc
+        finally:
+            if target_conn is not None:
+                target_conn.close()
+
+    def refresh_desktop_shortcut(self, python_exe):
+        """Create the Nexora shortcut and migrate the old NetOps shortcut name."""
+        try:
+            shortcut_script = os.path.join(DESKTOP_DIR, "create_shortcut.py")
+            if os.path.exists(shortcut_script):
+                self.run_command([python_exe, shortcut_script], cwd=PROJECT_ROOT)
+        except Exception as exc:
+            # A shortcut is convenient but not required for the platform to
+            # run, so keep deployment successful when Windows policy blocks it.
+            self.write_log(f"[警告] 创建 Nexora 桌面快捷方式失败: {exc}\n")
 
     def _python_version(self, exe):
         """Return (major, minor) for a python executable, or None on failure."""
@@ -880,7 +1031,7 @@ class LauncherUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.initial_config = load_database_config_from_env()
-        self.setWindowTitle("NetOps 部署与启动管理器")
+        self.setWindowTitle("Nexora 部署与启动管理器")
         self.setMinimumSize(700, 520)
         self.resize(760, 560)
         
@@ -945,7 +1096,7 @@ class LauncherUI(QMainWindow):
         header_layout.addWidget(accent_bar)
         
         title_vbox = QVBoxLayout()
-        lbl_title = QLabel("NetOps 部署与 PostgreSQL 配置向导", self)
+        lbl_title = QLabel("Nexora 部署与 PostgreSQL 配置向导", self)
         lbl_title.setObjectName("lbl_title")
         lbl_subtitle = QLabel("请配置您的 PostgreSQL 数据库连接参数，系统将自动配置并部署运行环境。", self)
         lbl_subtitle.setObjectName("lbl_subtitle")
@@ -1005,7 +1156,7 @@ class LauncherUI(QMainWindow):
         header_layout.addWidget(accent_bar)
         
         title_vbox = QVBoxLayout()
-        lbl_title = QLabel("正在部署 NetOps 系统组件", self)
+        lbl_title = QLabel("正在部署 Nexora 系统组件", self)
         lbl_title.setObjectName("lbl_title")
         title_vbox.addWidget(lbl_title)
         header_layout.addLayout(title_vbox)
@@ -1204,7 +1355,7 @@ class LauncherUI(QMainWindow):
                     creationflags=0x08000000,
                     env=clean_env
                 )
-                log_message("NetOps desktop tray process launched.")
+                log_message("Nexora desktop tray process launched.")
             else:
                 raise FileNotFoundError("无法找到 pythonw.exe 虚拟环境组件或 desktop_tray.py 主程序")
         except Exception as e:
@@ -1215,7 +1366,7 @@ class LauncherUI(QMainWindow):
 
 
 def main():
-    log_message("=== NetOps Setup GUI Session Started ===")
+    log_message("=== Nexora Setup GUI Session Started ===")
     sync_bundled_textfsm_templates()
     smoke_test = "--smoke-test" in sys.argv
     
@@ -1228,7 +1379,7 @@ def main():
             test_sock.connect(("127.0.0.1", 5019))
             test_sock.sendall("SHOW_GUI".encode("utf-8"))
             test_sock.close()
-            log_message("Another NetOps Agent is already running. Signal sent. Exiting launcher...")
+            log_message("Another Nexora Agent is already running. Signal sent. Exiting launcher...")
             sys.exit(0)
         except Exception:
             pass
@@ -1272,7 +1423,7 @@ def main():
                         creationflags=0x08000000,
                         env=clean_env
                     )
-                    log_message("Fast-start: NetOps desktop tray process launched directly.")
+                    log_message("Fast-start: Nexora desktop tray process launched directly.")
                     sys.exit(0)
                 except Exception as e:
                     log_message(f"Fast-start failed: {e}")

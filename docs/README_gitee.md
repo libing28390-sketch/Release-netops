@@ -28,7 +28,7 @@ Nexora 是一个面向网络运维场景的全栈平台，覆盖设备资产管�
 | Docker (any host OS) | Engine 20.10+ | x86_64 | ✅ Supported / 支持 |
 | **CentOS** | **7.x** | x86_64 | ❌ Not supported / 不支持 |
 | ARM64 / aarch64 | any | arm64 | ❌ Not supported / 不支持 |
-| Windows (native) | any | — | ❌ Not supported / 不支持 |
+| Windows (native client) | Windows 10/11 | x86_64 | ✅ Supported / 支持 |
 | macOS (native) | any | — | ❌ Not supported / 不支持 |
 
 > **Why CentOS 7 is not supported:** The compiled `.so` files require glibc ≥ 2.28. CentOS 7 ships glibc 2.17 and reached End-of-Life in June 2024. Migrate to Rocky Linux 8+ or AlmaLinux 8+.

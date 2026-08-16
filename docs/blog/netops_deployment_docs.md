@@ -6,7 +6,7 @@
 
 ## 一、 系统架构与部署方案总览
 
-在正式开始之前，我们需要了解 NetOps 的基本服务构成：
+在正式开始之前，我们需要了解 Nexora 的基本服务构成：
 
 ```
                     ┌──────────────────────────┐
@@ -36,7 +36,7 @@
 
 | 部署方式 | 适合场景 | 关键入口文件/目录 | 数据库选项 | 特点 |
 | :--- | :--- | :--- | :--- | :--- |
-| **Windows 图形化/一键部署** | 个人电脑、本地实验、Windows 裸机、小团队，希望零门槛一键双击运行。 | `NetOps.exe`, `start.bat`, `desktop/` | PostgreSQL 17 | **PySide6 premium 托盘及暗黑模式向导**。自动安装依赖及检测环境，未安装数据库时自动静默配置 PostgreSQL 17。 |
+| **Windows 图形化/一键部署** | 个人电脑、本地实验、Windows 裸机、小团队，希望零门槛一键双击运行。 | `NetOps.exe`（兼容入口）, `start.bat`, `desktop/` | PostgreSQL 17 + `pgvector` + `pg_trgm` | **Nexora PySide6 托盘及暗黑模式向导**。自动安装/检测运行依赖；PostgreSQL 扩展需要预先安装，向导负责登录、建库并校验扩展。 |
 | **Docker Compose 容器部署** | Linux 服务器、生产环境、云原生部署，希望隔离服务且易于维护。 | `docker-compose.yml`, `Dockerfile`, `scripts/deploy-docker.sh` | PostgreSQL 17 | **三容器架构一键拉起**。支持在线构建，也支持镜像归档后离线导入，内置 HTTPS 加密和卷级持久化。 |
 | **Ubuntu 一键脚本部署** | Ubuntu 裸机服务器，想要以 Nginx 反向代理 + systemd 原生服务运行。 | `deploy-ubuntu.sh` | PostgreSQL | **Shell 脚本交互式向导**。自动化配置系统包、虚拟环境、SSL、systemd 服务以及 logrotate 等。 |
 
@@ -64,15 +64,15 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
 ### 2. 模式 A：Windows 一键图形化向导（推荐）
 
 #### ① 运行入口
-双击项目根目录下的 **`NetOps.exe`** （或双击运行 `start.bat`，其会自动拉起 `NetOps.exe`）。
+双击项目根目录下的 **`NetOps.exe`** （历史兼容文件名，界面品牌为 Nexora），或双击运行 `start.bat`。
 
 #### ② 自动向导流程（Dark-Mode Setup Wizard）
 如果是首次启动，`NetOps.exe` 将会弹出基于 **PySide6 编写的 premium 精美暗黑风格图形部署向导**：
 1. **运行环境检测**：向导会自动校验本地环境，支持兼容的 Python 版本范围（`3.10` ~ `3.12`，含两端）以及 Node.js 版本（`18+`）。如果检测到未安装，向导会提供一键下载并静默部署 Fallback 包（如 Python 3.11.9）。
-2. **数据库配置**：平台强制绑定 **PostgreSQL**。若检测到本地未安装 PostgreSQL，向导会自动下载并进行 PostgreSQL 17 的静默安装与账户初始化。
+2. **数据库配置**：平台强制绑定 **PostgreSQL 17.x**。若本地 `5432` 未响应，向导可以下载并静默安装官方 PostgreSQL 17.2；该安装包不包含 `pgvector`。用户需要另外安装与 PG17 匹配的 `pgvector`，并确保 `pg_trgm` 可用。向导会实际登录数据库，缺库时尝试建库，再创建/校验这两个扩展。
 3. **依赖构建**：自动在本地创建 Python 虚拟环境（`.venv`），利用虚拟环境的 `pip` 安装 `backend/requirements.txt`；同时自动调用 `npm install` 并运行前端编译流程（`npm run build`）。
-4. **服务启动与浏览器拉起**：向导环境验证完成，直接开启系统后台托盘并自动打开默认浏览器访问 `http://127.0.0.1:5010`。
-5. **后续使用**：下次再次启动 `NetOps.exe` 时，系统将检测到环境已就绪，自动跳过安装向导，直接最小化至系统托盘并拉起服务。
+4. **服务启动与浏览器拉起**：向导环境验证完成后，在完成页点击“启动平台客户端”，系统开启后台托盘并打开默认浏览器访问 `http://127.0.0.1:5010`。
+5. **后续使用**：下次启动 `NetOps.exe` 时，系统会复用已存在的 `.venv` 和 `.env`，重新验证数据库并同步 Nexora 桌面快捷方式，然后启动客户端。
 
 ---
 
@@ -81,7 +81,7 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
 如果您是技术栈人员，希望以命令行前台或注册本地托盘运行，可以按照以下步骤手动操作：
 
 #### ① 依赖环境初始化
-1. 确保安装了 Python 3.10+、Node.js 以及 PostgreSQL 17 数据库。
+1. 确保安装了 Python 3.10-3.12、Node.js 18+、PostgreSQL 17.x，以及与 PG17 匹配的 `pgvector` 和 `pg_trgm`。
 2. 创建虚拟环境并安装 Python 包：
    ```powershell
    python -m venv .venv
@@ -98,14 +98,10 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
    DATABASE_URL=postgresql://netops:your-password@localhost:5432/netops
    ```
 
-#### ② 运行模式切换（`start.bat`）
-双击 `start.bat` 后，可以通过向导选择不同的运行模式：
-* **[1] 启动 NetOps (在前台控制台运行)**：
-  以前台命令行运行 backend 和前端静态文件托管，黑色命令行窗口会打印实时 Uvicorn 日志。需保持窗口不关闭。默认浏览器将自动打开 `http://127.0.0.1:5010`。
-* **[2] 创建桌面快捷方式 (后台无窗口运行)**：
-  * 系统会自动配置桌面托盘依赖包（`pystray` 等）。
-  * 自动在桌面创建一个名为 **"NetOps 运维平台"** 并包含专属拓扑网络图标的 Windows 快捷方式。
-  * 以后只需双击该快捷方式，服务即在后台静默运行（无命令行窗口），并在系统右下角托盘生成专属图标。
+#### ② 启动方式
+当前 `start.bat` 不再提供旧版的 `[1]/[2]` 交互菜单：它优先启动根目录的 `NetOps.exe`，不存在时再回退到 `.venv` 或系统 Python 执行 `desktop/launcher.py`。首次完成配置后，向导会尝试创建 **“Nexora 运维平台”** 桌面快捷方式。
+
+如果需要前台查看日志，可直接使用兼容的 `NetOps.exe` 启动器并查看向导日志；不要把旧文档中的 `[1]/[2]` 选择当作当前流程。
 
 ---
 
@@ -123,13 +119,22 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
 
 ---
 
+### 4. Windows 用户升级与网络同步
+
+Windows 有两种升级路径，范围不同：
+
+* **完整升级（推荐）**：退出托盘程序并备份 PostgreSQL 后，使用 `git pull origin windows` 或最新 `NetOps-Windows.zip`。保留 `.env`、`data/`、`backup/` 和 `desktop/desktop_settings.ini`，让新包覆盖 `backend/`、`desktop/`、`src/` 和 `NetOps.exe`；有效的 `.venv` 可以复用，但如果 `backend/requirements.txt` 发生变化，需要重新安装依赖；后端启动时会执行未完成的数据库迁移。
+* **托盘“检查更新”**：当前直接访问 GitHub Releases API，下载 GitHub Release 中的 `NetOps.exe`，只替换启动器。它不会同步后端、前端、托盘脚本或数据库迁移，不能代替完整升级。
+
+GitHub 在线更新在国内网络环境下可能因 DNS、连接超时、代理或 TLS 拦截失败。更新失败时不会替换当前客户端，建议改用可访问的 Windows ZIP/内部制品包；若所在环境维护了同步的 Gitee `windows` 分支，也可以在该来源执行 `git pull origin windows`。当前发布工作流不会自动把 Release 同步到 Gitee，Gitee 是否有最新 Windows 分支需要发布人员单独确认。构建流程在配置了 `BAIDU_PAN_TOKEN` 时还会把 Windows ZIP 上传到百度网盘，可作为离线分发来源。
+
 ## 三、 Linux Docker Compose 生产部署
 
 对于需要多厂商适配、大规模资产巡检、自动化诊断和高稳定性的生产环境，推荐采用 Docker Compose 方案。
 
 ### 1. 容器服务构成
 
-NetOps 在 Docker 编排中采用三容器解耦架构：
+Nexora 在 Docker 编排中采用三容器解耦架构：
 
 | 容器名称 | 镜像来源 | 对外/对内端口 | 挂载卷/说明 |
 | :--- | :--- | :--- | :--- |

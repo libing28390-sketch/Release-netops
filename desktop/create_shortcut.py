@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-create_shortcut.py - Creates a Windows Desktop Shortcut for NetOps.
+create_shortcut.py - Creates a Windows Desktop Shortcut for Nexora.
 Generates a custom .ico file and sets up a desktop shortcut using PowerShell.
 """
 
@@ -64,7 +64,7 @@ def create_desktop_shortcut():
     
     # Get user desktop path
     desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
-    shortcut_path = os.path.join(desktop_path, "NetOps 运维平台.lnk")
+    shortcut_path = os.path.join(desktop_path, "Nexora 运维平台.lnk")
     
     # Use temporary VBScript to create the shortcut (more reliable/lightweight than PowerShell on Windows)
     vbs_path = os.path.join(PROJECT_ROOT, "temp_create_shortcut.vbs")
@@ -76,7 +76,7 @@ Shortcut.TargetPath = "{PYTHONW_PATH}"
 Shortcut.Arguments = """ + '"' + f'""{TRAY_SCRIPT}""' + '"' + f"""
 Shortcut.WorkingDirectory = "{PROJECT_ROOT}"
 Shortcut.IconLocation = "{ICO_PATH}"
-Shortcut.Description = "NetOps 自动化运维平台"
+Shortcut.Description = "Nexora 自动化运维平台"
 Shortcut.Save()
 """
     
@@ -102,8 +102,8 @@ Shortcut.Save()
             # Clean up old corrupted shortcuts if they exist
             try:
                 for filename in os.listdir(desktop_path):
-                    if filename.endswith(".lnk") and "NetOps" in filename:
-                        if filename != "NetOps 运维平台.lnk":
+                    if filename.endswith(".lnk") and ("NetOps" in filename or "Nexora" in filename):
+                        if filename != "Nexora 运维平台.lnk":
                             os.remove(os.path.join(desktop_path, filename))
                             print(f"[Cleaned] Removed corrupted shortcut: {filename}")
             except Exception:

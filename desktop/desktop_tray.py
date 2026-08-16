@@ -125,13 +125,13 @@ try:
     from PySide6.QtCore import Qt, Signal, Slot, QThread, QTimer, QSettings, QPropertyAnimation, QEasingCurve, Property, QRectF
     from PySide6.QtGui import QIcon, QColor, QAction, QPainter, QBrush, QPen, QPixmap
 except ImportError as e:
-    error_msg = f"Failed to import PySide6: {e}\n\nPlease run 'NetOps.exe' to verify and repair the installation environment."
+    error_msg = f"Failed to import PySide6: {e}\n\nPlease run the Nexora launcher ('NetOps.exe') to verify and repair the installation environment."
     print(error_msg)
     try:
         ctypes.windll.user32.MessageBoxW(
             0,
-            f"程序启动失败：由于移到新电脑或环境损坏，缺少运行所需的依赖项。\n\n具体报错：{e}\n\n请双击运行根目录下的 'NetOps.exe' 自动修复运行环境。",
-            "NetOps 启动错误",
+            f"程序启动失败：由于移到新电脑或环境损坏，缺少运行所需的依赖项。\n\n具体报错：{e}\n\n请双击运行根目录下的 Nexora 启动器 ('NetOps.exe') 自动修复运行环境。",
+            "Nexora 启动错误",
             0x10 | 0x0
         )
     except Exception:
@@ -286,7 +286,7 @@ def create_nav_icon(icon_name, color, size=16):
 # Translation resources
 TRANSLATIONS = {
     "zh": {
-        "title": "NetOps Agent",
+        "title": "Nexora Agent",
         "subtitle": "开源社区版",
         "nav_dashboard": "仪表盘",
         "nav_service": "服务管理",
@@ -296,7 +296,7 @@ TRANSLATIONS = {
         "btn_copy": "复制",
         "btn_copied": "已复制!",
         
-        "agent_title": "NetOps Agent",
+        "agent_title": "Nexora Agent",
         "agent_ver": f"版本: v{CLIENT_VERSION}",
         "agent_license": "许可: 免费开源版 (Free & Open Source)",
         "dashboard_page_desc": "查看本地服务、平台连接与诊断状态",
@@ -304,7 +304,7 @@ TRANSLATIONS = {
         "service_page_desc": "启动或停止本地服务，并查看运行路径",
         "logs_page_title": "实时日志",
         "logs_page_desc": "筛选、暂停和导出本地运行日志",
-        "about_page_title": "关于 NetOps Agent",
+        "about_page_title": "关于 Nexora Agent",
         "about_page_desc": "版本信息、项目地址与技术支持",
 
         "status_card_title": "后台服务状态",
@@ -406,20 +406,20 @@ TRANSLATIONS = {
         "sys_python": "Python 运行环境",
         "sys_ip": "网络地址",
         
-        "about_name": "NetOps 智能自动化网络运维平台",
-        "about_desc": "NetOps Agent 是一款轻量级、开源社区版的网络设备监测与自动化管理客户端，支持后台自愈和多端同步调度。",
-        "about_build": "构建编号: 20260622.1082",
+        "about_name": "Nexora 智能自动化网络运维平台",
+        "about_desc": "Nexora Agent 是一款轻量级、开源社区版的网络设备监测与自动化管理客户端，支持后台自愈和多端同步调度。",
+        "about_build": f"构建编号: {CLIENT_BUILD}",
         "about_site": "官方网站: ",
         "about_support": "技术支持: ",
         "about_check_updates": "检查更新",
         "about_checking_updates": "正在检查更新...",
         "about_up_to_date": "当前已是最新版本",
         "about_no_windows_release": "暂未找到可用的 Windows Release，请稍后再试。",
-        "about_update_available": "发现新版本 v%s，是否立即下载并更新？",
+        "about_update_available": "发现启动器新版本 v%s，是否立即下载并更新？完整平台升级请使用 Windows 发布包。",
         "about_update_downloading": "正在下载 v%s：%s%%",
         "about_update_ready": "更新已下载，程序将关闭并自动重启完成更新。",
         "about_update_failed": "更新失败: %s",
-        "about_update_not_supported": "在线更新仅支持 Windows 版 NetOps.exe。",
+        "about_update_not_supported": "在线更新仅替换 Windows 启动器 NetOps.exe；完整 Nexora 平台升级请使用最新 Windows 发布包。",
         
         "tray_show": "显示控制面板 (Open Panel)",
         "tray_web": "打开网页系统 (Open Web)",
@@ -429,13 +429,13 @@ TRANSLATIONS = {
         "tray_settings": "偏好设置 (Settings)",
         "tray_exit": "完全退出 (Exit)",
         
-        "notify_minimized": "NetOps 控制面板已最小化至系统托盘。",
-        "notify_started": "NetOps 后端服务启动成功。",
-        "notify_stopped": "NetOps 后端服务已停止。",
-        "notify_title": "NetOps 运维助手"
+        "notify_minimized": "Nexora 控制面板已最小化至系统托盘。",
+        "notify_started": "Nexora 后端服务启动成功。",
+        "notify_stopped": "Nexora 后端服务已停止。",
+        "notify_title": "Nexora 运维助手"
     },
     "en": {
-        "title": "NetOps Agent",
+        "title": "Nexora Agent",
         "subtitle": "Community",
         "nav_dashboard": "Dashboard",
         "nav_service": "Service",
@@ -445,7 +445,7 @@ TRANSLATIONS = {
         "btn_copy": "Copy",
         "btn_copied": "Copied!",
         
-        "agent_title": "NetOps Agent Community",
+        "agent_title": "Nexora Agent Community",
         "agent_ver": f"Version: v{CLIENT_VERSION}",
         "agent_license": "License: Free & Open Source",
         "dashboard_page_desc": "Review local service, platform connection, and diagnostics",
@@ -453,7 +453,7 @@ TRANSLATIONS = {
         "service_page_desc": "Control the local service and inspect runtime paths",
         "logs_page_title": "Logs",
         "logs_page_desc": "Filter, pause, and export local runtime logs",
-        "about_page_title": "About NetOps Agent",
+        "about_page_title": "About Nexora Agent",
         "about_page_desc": "Version details, project links, and support",
         
         "status_card_title": "Backend Service Status",
@@ -555,20 +555,20 @@ TRANSLATIONS = {
         "sys_python": "Python Version",
         "sys_ip": "Local IP Address",
         
-        "about_name": "NetOps Intelligent Network Automation Platform",
-        "about_desc": "NetOps Agent is a lightweight, open-source community device monitoring and orchestration client, supporting background healing and central remote scheduling.",
-        "about_build": "Build Number: 20260622.1082",
+        "about_name": "Nexora Intelligent Network Automation Platform",
+        "about_desc": "Nexora Agent is a lightweight, open-source community device monitoring and orchestration client, supporting background healing and central remote scheduling.",
+        "about_build": f"Build Number: {CLIENT_BUILD}",
         "about_site": "Official Website: ",
         "about_support": "Technical Support: ",
         "about_check_updates": "Check for Updates",
         "about_checking_updates": "Checking for updates...",
         "about_up_to_date": "You are using the latest version",
         "about_no_windows_release": "No Windows release is available yet. Please try again later.",
-        "about_update_available": "Version v%s is available. Download and install it now?",
+        "about_update_available": "Launcher version v%s is available. Download it now? Use the full Windows package for a complete platform upgrade.",
         "about_update_downloading": "Downloading v%s: %s%%",
         "about_update_ready": "The update is ready. The app will close and restart to finish.",
         "about_update_failed": "Update failed: %s",
-        "about_update_not_supported": "Online updates are available only for the Windows NetOps.exe build.",
+        "about_update_not_supported": "Online update replaces only the Windows NetOps.exe launcher; use the latest Windows package for a complete Nexora upgrade.",
         
         "tray_show": "Open Panel",
         "tray_web": "Open Web GUI",
@@ -578,10 +578,10 @@ TRANSLATIONS = {
         "tray_settings": "Settings",
         "tray_exit": "Exit",
         
-        "notify_minimized": "NetOps Control Panel minimized to system tray.",
-        "notify_started": "NetOps backend server started.",
-        "notify_stopped": "NetOps backend server stopped.",
-        "notify_title": "NetOps Agent"
+        "notify_minimized": "Nexora Control Panel minimized to system tray.",
+        "notify_started": "Nexora backend server started.",
+        "notify_stopped": "Nexora backend server stopped.",
+        "notify_title": "Nexora Agent"
     }
 }
 
@@ -1118,7 +1118,7 @@ class NetOpsAgentUI(QMainWindow):
         self.db_reset_finished_signal.connect(self.on_db_reset_finished)
         
         # Main Window configuration
-        self.setWindowTitle("NetOps Agent Manager")
+        self.setWindowTitle("Nexora Agent Manager")
         self.setMinimumSize(920, 640)
         self.resize(1180, 760)
         
@@ -1250,7 +1250,7 @@ class NetOpsAgentUI(QMainWindow):
         release = self.pending_windows_release
         if release is None:
             return
-        fd, destination = tempfile.mkstemp(prefix="NetOps-update-", suffix=".exe")
+        fd, destination = tempfile.mkstemp(prefix="nexora-update-", suffix=".exe")
         os.close(fd)
         tr = TRANSLATIONS[self.lang]
         self.btn_check_update.setEnabled(False)
@@ -1560,7 +1560,7 @@ class NetOpsAgentUI(QMainWindow):
         self.brand_icon.setAlignment(Qt.AlignCenter)
             
         brand_text_vbox = QVBoxLayout()
-        self.lbl_sidebar_title = QLabel("NetOps Agent", self.sidebar)
+        self.lbl_sidebar_title = QLabel("Nexora Agent", self.sidebar)
         self.lbl_sidebar_title.setObjectName("lbl_sidebar_title")
         self.lbl_sidebar_ver = QLabel("Enterprise Edition", self.sidebar)
         self.lbl_sidebar_ver.setObjectName("lbl_sidebar_ver")
@@ -1719,7 +1719,7 @@ class NetOpsAgentUI(QMainWindow):
         
         # Title Greeting Banner
         greeting_layout = QVBoxLayout()
-        self.lbl_greet_title = QLabel("NetOps Agent Enterprise", self)
+        self.lbl_greet_title = QLabel("Nexora Agent Enterprise", self)
         self.lbl_greet_title.setObjectName("page_title")
         self.lbl_greet_desc = QLabel(f"Version v{CLIENT_VERSION} | License: Enterprise Commercial", self)
         self.lbl_greet_desc.setObjectName("page_description")
@@ -2752,7 +2752,7 @@ class NetOpsAgentUI(QMainWindow):
         layout.setSpacing(14)
 
         self.lbl_about_page_title, self.lbl_about_page_desc = self._add_page_header(
-            layout, "关于 NetOps Agent", "版本信息、项目地址与技术支持"
+            layout, "关于 Nexora Agent", "版本信息、项目地址与技术支持"
         )
         
         card_about = QFrame(self)
@@ -2778,7 +2778,7 @@ class NetOpsAgentUI(QMainWindow):
             self.lbl_about_logo.setObjectName("about_logo_fallback")
         left_layout.addWidget(self.lbl_about_logo, 0, Qt.AlignLeft)
         
-        self.lbl_about_name = QLabel("NetOps 智能自动化网络运维平台", self)
+        self.lbl_about_name = QLabel("Nexora 智能自动化网络运维平台", self)
         self.lbl_about_name.setObjectName("about_name")
         left_layout.addWidget(self.lbl_about_name, 0, Qt.AlignLeft)
         
@@ -3053,7 +3053,7 @@ class NetOpsAgentUI(QMainWindow):
         if not self.update_check_worker or not self.update_check_worker.isRunning():
             self.lbl_update_status.setText("")
         self.lbl_qr_desc.setText("扫码关注微信公众号" if self.lang == "zh" else "Scan to Follow WeChat")
-        self.lbl_about_copyright.setText("版权所有 © 2026 NetOps 社区。保留所有权利。" if self.lang == "zh" else "Copyright © 2026 NetOps Community. All rights reserved.")
+        self.lbl_about_copyright.setText("版权所有 © 2026 Nexora 社区。保留所有权利。" if self.lang == "zh" else "Copyright © 2026 Nexora Community. All rights reserved.")
         
         # System Tray Menu Actions
         if hasattr(self, 'tray_menu_actions'):
@@ -3427,7 +3427,7 @@ class NetOpsAgentUI(QMainWindow):
         self.btn_run_diagnose.setEnabled(False)
         self.txt_diagnose_log.clear()
         self.append_diagnose_log("=========================================")
-        self.append_diagnose_log(f"[{datetime.now().strftime('%H:%M:%S')}] NetOps Agent 一键诊断开启...")
+        self.append_diagnose_log(f"[{datetime.now().strftime('%H:%M:%S')}] Nexora Agent 一键诊断开启...")
         self.append_diagnose_log("=========================================")
         threading.Thread(target=self.diagnose_worker, daemon=True).start()
 
@@ -3536,7 +3536,7 @@ class NetOpsAgentUI(QMainWindow):
             summary_path = os.path.join(PROJECT_ROOT, "diagnose_summary.txt")
             with open(summary_path, "w", encoding="utf-8") as f:
                 f.write(f"==================================================\n")
-                f.write(f"           NetOps Agent Audit Report              \n")
+                f.write(f"           Nexora Agent Audit Report              \n")
                 f.write(f"==================================================\n")
                 f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"Hostname: {socket.gethostname()}\n")
@@ -3609,7 +3609,7 @@ class NetOpsAgentUI(QMainWindow):
             self.lbl_recent_events.setText("\n".join(self.recent_events))
 
     # Tray notifications
-    def show_tray_notification(self, message, title="NetOps"):
+    def show_tray_notification(self, message, title="Nexora"):
         # Disabled as requested by the user to avoid startup, stop, and minimization popups
         pass
 
@@ -3635,7 +3635,7 @@ def cleanup():
                 pass
 
 def main():
-    logger.info("Initializing Enterprise PySide6 NetOps Agent Manager GUI")
+    logger.info("Initializing Enterprise PySide6 Nexora Agent Manager GUI")
     
     # Add Qt library path to ensure image formats (like ICO) can be loaded
     from PySide6.QtCore import QCoreApplication
@@ -3656,7 +3656,7 @@ def main():
     window = NetOpsAgentUI()
     
     if not check_single_instance(window.show_window_signal):
-        logger.info("Another NetOps Agent instance is already running. Signals sent. Exiting...")
+        logger.info("Another Nexora Agent instance is already running. Signals sent. Exiting...")
         sys.exit(0)
         
     # Setup System Tray Icon
