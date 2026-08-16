@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -324,6 +325,94 @@ class RAGRetriever:
             }
             return rows, document_count, debug
 
+    def _native_accelerator_scores(
+        self,
+        request: RetrievalRequest,
+        chunk_ids: Sequence[Any],
+    ) -> tuple[dict[str, dict[str, float]], dict[str, Any]]:
+        """Run bounded PostgreSQL FTS/trigram/vector shadow scores.
+
+        The tenant/status/ACL eligibility query has already produced the IDs;
+        every accelerator query is therefore bounded to that candidate set.
+        SQLite deliberately returns an explicit compatibility/degraded marker.
+        """
+        debug: dict[str, Any] = {
+            "fts_stage": "not_applicable" if not _USE_PG else "disabled",
+            "trgm_stage": "not_applicable" if not _USE_PG else "disabled",
+            "vector_stage": "not_applicable" if not _USE_PG else "disabled",
+            "fts_candidates": 0,
+            "trgm_candidates": 0,
+            "vector_candidates": 0,
+            "capability_degraded": [],
+        }
+        if not _USE_PG or not chunk_ids:
+            if not _USE_PG:
+                debug["capability_degraded"] = ["POSTGRES_ACCELERATORS_NOT_APPLICABLE"]
+            return {}, debug
+        scores: dict[str, dict[str, float]] = {}
+        placeholders = ", ".join("?" for _ in chunk_ids)
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                columns = self._table_columns(cursor, "ai_document_chunk")
+                if "search_text" in columns:
+                    query_text = str(request.query or "")[:20000]
+                    try:
+                        rows = cursor.execute(
+                            "SELECT id, LEAST(1.0, ts_rank_cd(to_tsvector('simple', COALESCE(search_text, '')), "
+                            "websearch_to_tsquery('simple', ?))) "
+                            f"FROM ai_document_chunk WHERE id IN ({placeholders}) "
+                            "AND to_tsvector('simple', COALESCE(search_text, '')) @@ websearch_to_tsquery('simple', ?)",
+                            [query_text, *chunk_ids, query_text],
+                        ).fetchall()
+                        for row in rows:
+                            scores.setdefault(str(row[0]), {})["fts"] = max(0.0, min(1.0, float(row[1] or 0.0)))
+                        debug["fts_stage"] = "native_postgresql"
+                        debug["fts_candidates"] = len(rows)
+                    except Exception:
+                        debug["fts_stage"] = "degraded_missing_or_invalid_contract"
+                        debug["capability_degraded"].append("FTS_QUERY_FAILED")
+                    threshold = max(0.0, min(1.0, float(os.environ.get("AI_RETRIEVAL_TRGM_THRESHOLD", "0.35"))))
+                    try:
+                        rows = cursor.execute(
+                            "SELECT id, similarity(COALESCE(search_text, ''), ?) "
+                            f"FROM ai_document_chunk WHERE id IN ({placeholders}) "
+                            "AND similarity(COALESCE(search_text, ''), ?) >= ?",
+                            [query_text, *chunk_ids, query_text, threshold],
+                        ).fetchall()
+                        for row in rows:
+                            scores.setdefault(str(row[0]), {})["trgm"] = max(0.0, min(1.0, float(row[1] or 0.0)))
+                        debug["trgm_stage"] = "native_postgresql"
+                        debug["trgm_threshold"] = threshold
+                        debug["trgm_candidates"] = len(rows)
+                    except Exception:
+                        debug["trgm_stage"] = "degraded_missing_or_invalid_contract"
+                        debug["capability_degraded"].append("TRGM_QUERY_FAILED")
+                else:
+                    debug["capability_degraded"].append("SEARCH_TEXT_COLUMN_MISSING")
+
+                if "embedding_vector" in columns:
+                    try:
+                        query_vector = embedding_provider.embed_query(request.query)
+                        vector_literal = "[" + ",".join(str(float(value)) for value in query_vector) + "]"
+                        rows = cursor.execute(
+                            "SELECT id, GREATEST(0.0, LEAST(1.0, 1 - (embedding_vector <=> CAST(? AS vector)))) "
+                            f"FROM ai_document_chunk WHERE id IN ({placeholders}) AND embedding_vector IS NOT NULL",
+                            [vector_literal, *chunk_ids],
+                        ).fetchall()
+                        for row in rows:
+                            scores.setdefault(str(row[0]), {})["vector"] = max(0.0, min(1.0, float(row[1] or 0.0)))
+                        debug["vector_stage"] = "native_pgvector"
+                        debug["vector_candidates"] = len(rows)
+                    except Exception:
+                        debug["vector_stage"] = "degraded_missing_or_incompatible_contract"
+                        debug["capability_degraded"].append("VECTOR_QUERY_FAILED")
+                else:
+                    debug["capability_degraded"].append("EMBEDDING_VECTOR_COLUMN_MISSING")
+        except Exception:
+            debug["capability_degraded"].append("POSTGRES_ACCELERATOR_CONNECTION_FAILED")
+        return scores, debug
+
     @staticmethod
     def _expand_document_context(primary: Dict[str, Any], chunks: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         """Attach ordered sibling chunks so a hit is not reduced to one heading."""
@@ -365,6 +454,11 @@ class RAGRetriever:
         candidate_hint = max(top_k * 30, 100)
         try:
             rows, _document_count, debug = self._query_rows(request, candidate_hint)
+            accelerator_scores, accelerator_debug = self._native_accelerator_scores(
+                request,
+                [row[0] for row in rows],
+            )
+            debug.update(accelerator_debug)
             try:
                 query_vector = embedding_provider.embed_text(request.query)
             except Exception:
@@ -393,6 +487,12 @@ class RAGRetriever:
                     section=str(section or ""),
                     metadata=metadata,
                 )
+                native_scores = accelerator_scores.get(str(c_id), {})
+                keyword_score = max(
+                    keyword_score,
+                    float(native_scores.get("fts", 0.0)),
+                    float(native_scores.get("trgm", 0.0)),
+                )
                 try:
                     chunk_vector = embedding_json if isinstance(embedding_json, list) else json.loads(str(embedding_json or "[]"))
                     if not isinstance(chunk_vector, list):
@@ -411,7 +511,7 @@ class RAGRetriever:
                     vector_score = 0.0
                     incompatible_vectors += 1
                 else:
-                    vector_score = self._cosine(query_vector, chunk_vector)
+                    vector_score = float(native_scores.get("vector", self._cosine(query_vector, chunk_vector)))
                 specificity_fields = ("vendor", "document_category", "product_series", "product_model", "cli_platform", "feature_domain", "feature")
                 requested_count = sum(1 for field_name in specificity_fields if getattr(request, field_name, None))
                 matched_count = 0

@@ -1,16 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: RET-008 (PENDING; RET-001..007 PASS)
-Last Completed: RET-007
-Next Task: RET-008 pg_trgm Fuzzy Match 与阈值配置
+Current Task: RET-011 (PENDING; RET-001..010 PASS)
+Last Completed: RET-010
+Next Task: RET-011 Metadata Filter（租户、知识域、厂商、产品、OS、版本、状态、权限）
 
-Completed: 128 / 359
-P0: 114 / 277
+Completed: 131 / 359
+P0: 117 / 277
 
 Blocked Tasks: none
 
 Recent Tests:
+- RET-008..010 PostgreSQL authoritative probe: PASS; PostgreSQL 18.4, vector 0.8.6, pg_trgm 1.6; m0138/index/FTS/trigram/vector/tenant boundary and rollback verified; compatibility suite 19 passed
+- RET PostgreSQL test plan: PASS; SQLite explicitly compatibility-only and never a RET database gate
 - RET-004..007 focused and RAG regression: 15 passed; exact/canonical/prefix/hierarchy boundaries verified
 - RET-001..003 focused: 4 passed; RAG acceptance/retriever regression: 11 passed
 - RET-001..003 compile and contract YAML parse: PASS; secret redaction assertions: PASS

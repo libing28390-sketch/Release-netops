@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "RET-008",
+  "current_task": "RET-011",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T01:45:00+08:00",
-  "last_completed_task": "RET-007",
+  "updated_at": "2026-08-17T02:10:00+08:00",
+  "last_completed_task": "RET-010",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -133,7 +133,10 @@
     "RET-004",
     "RET-005",
     "RET-006",
-    "RET-007"
+    "RET-007",
+    "RET-008",
+    "RET-009",
+    "RET-010"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -167,9 +170,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "RET-008",
-    "RET-009",
-    "RET-010",
     "RET-011",
     "RET-012",
     "RET-013",
@@ -391,7 +391,7 @@
     "DOC-010"
   ],
   "last_verified_commit": "ce1e9d93be374f9f2da7e4ca4c2d8c75788eb686",
-  "resume_from": "ING-020",
+  "resume_from": "RET-011",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -596,5 +596,16 @@
   "chk_p0_12_contract": "docs/knowledge-engine-v2/architecture/CHK-P0-12-CHUNK-EMBEDDING-CONTRACT.yaml",
   "chk_p0_12_migration": "m0137_chunk_index_contract_projection",
   "chk_p0_12_gate_summary": "CHK focused 18; embedding 4; ingestion 2; migration 1; AI 151; Catalog 183; Database 186 + 1 SQLite boundary skip; npm lint/build PASS; git diff check PASS",
-  "resume_from": "RET-008"
+  "ret008_status": "DONE_PASS",
+  "ret008_final_verified_at": "2026-08-17T02:10:00+08:00",
+  "ret008_evidence": "docs/knowledge-engine-v2/evidence/RET-008.md",
+  "ret009_status": "DONE_PASS",
+  "ret009_final_verified_at": "2026-08-17T02:10:00+08:00",
+  "ret009_evidence": "docs/knowledge-engine-v2/evidence/RET-009.md",
+  "ret010_status": "DONE_PASS",
+  "ret010_final_verified_at": "2026-08-17T02:10:00+08:00",
+  "ret010_evidence": "docs/knowledge-engine-v2/evidence/RET-010.md",
+  "ret_postgres_test_plan": "docs/knowledge-engine-v2/architecture/RET-008-022-POSTGRES-TEST-PLAN.yaml",
+  "ret_postgres_probe": "scripts/knowledge_engine_v2_ret_pg_probe.py",
+  "resume_from": "RET-011"
 }

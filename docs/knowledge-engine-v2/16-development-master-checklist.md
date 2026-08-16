@@ -268,9 +268,9 @@
 - [x] `RET-005` `P0/AI/M`：实现 Exact Product/Model Match。
 - [x] `RET-006` `P0/AI/M`：实现 Canonical Alias Match。
 - [x] `RET-007` `P0/AI/M`：实现 Prefix 与 Product Hierarchy Match。
-- [ ] `RET-008` `P0/AI+DBA/M`：实现 pg_trgm Fuzzy Match 与阈值配置。
-- [ ] `RET-009` `P0/AI+DBA/M`：实现 PostgreSQL FTS，优化命令、错误字符串和关键词。
-- [ ] `RET-010` `P0/AI+DBA/M`：实现 pgvector Semantic Retrieval。
+- [x] `RET-008` `P0/AI+DBA/M`：实现 pg_trgm Fuzzy Match 与阈值配置。
+- [x] `RET-009` `P0/AI+DBA/M`：实现 PostgreSQL FTS，优化命令、错误字符串和关键词。
+- [x] `RET-010` `P0/AI+DBA/M`：实现 pgvector Semantic Retrieval。
 - [ ] `RET-011` `P0/AI/M`：实现 Metadata Filter，至少覆盖租户、知识域、厂商、产品、OS、版本、状态和权限。
 - [ ] `RET-012` `P0/AI/M`：实现 Lexical、Vector、Metadata、Trust、Version 的融合评分。
 - [ ] `RET-013` `P0/AI/M`：实现 Reranker 接口、超时、降级和成本限制。
@@ -285,6 +285,8 @@
 - [ ] `RET-022` `P1/AI+QA/L`：为 10k/100k/1m 规模完成检索与索引 Benchmark。
 
 **退出标准**：CE68/CE688/Catalyst93 等真实写法可正确识别；错误厂商和版本不被静默混用。
+
+**RET 验收环境强制规则**：RET-008 至 RET-022 的数据库、索引、检索、租户/权限和性能证据必须以真实 PostgreSQL 为准；必须验证 `vector` 与 `pg_trgm` 扩展、事务回滚和必要的 EXPLAIN 计划。SQLite 仅可用于纯函数或旧版兼容性回归，不能替代 PostgreSQL 通过，也不能作为 RET 任务完成证据。详见 `docs/knowledge-engine-v2/architecture/RET-008-022-POSTGRES-TEST-PLAN.yaml`。
 
 ---
 

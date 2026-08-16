@@ -1,0 +1,57 @@
+title: RET-008..RET-022 PostgreSQL authoritative verification plan
+scope:
+  tasks: [RET-008, RET-009, RET-010, RET-011, RET-012, RET-013, RET-014, RET-015, RET-016, RET-017, RET-018, RET-019, RET-020, RET-021, RET-022]
+  production_database: PostgreSQL
+  authority: PostgreSQL 18 with vector and pg_trgm extensions
+  v1_preservation: true
+policy:
+  primary_evidence:
+    - every P0 database/retrieval claim is verified against a real PostgreSQL connection
+    - extension versions, column types, indexes, SQL predicates, EXPLAIN plans and tenant/ACL boundaries are asserted
+    - migration and retrieval probes use a transaction or session-local temporary fixtures and finish with rollback
+    - a skipped PostgreSQL probe is not a pass and cannot advance a RET task
+  sqlite:
+    role: compatibility_only
+    allowed_for:
+      - parser and pure-function unit tests
+      - legacy adapter syntax checks where no PostgreSQL behavior is under test
+    forbidden_as:
+      - evidence for pg_trgm, PostgreSQL FTS, pgvector, JSONB containment, HNSW/GiST/GiN behavior, tenant SQL plans, or RET milestone gates
+      - a substitute for an unavailable PostgreSQL run
+  environment_failure: mark the affected task BLOCKED with the missing DATABASE_URL/extension/permission and continue only with independent non-DB work
+required_probes:
+  - name: ret_pg_migration_probe
+    command: py -3.13 scripts/knowledge_engine_v2_ret_pg_probe.py
+    checks: [real_connection, vector_version, pg_trgm_version, m0138_idempotency, rollback, v1_columns_unchanged]
+  - name: ret_pg_retrieval_probe
+    command: py -3.13 scripts/knowledge_engine_v2_ret_pg_probe.py --retrieval
+    checks: [tenant_filter, status_filter, acl_filter, fts, trgm_threshold, vector_cosine, bounded_candidate_set, no_secret_output]
+  - name: ret_pg_explain_probe
+    command: py -3.13 scripts/knowledge_engine_v2_ret_pg_probe.py --explain
+    checks: [required_index, no_unbounded_scan, bounded_top_k, plan_recorded]
+  - name: ret_v1_baseline
+    command: py -3.13 docs/knowledge-engine-v2/eval/run_v1_baseline.py
+    checks: [retrieval_accuracy, wrong_vendor_rate, version_conflict_rate, citation_accuracy, citation_recall, latency]
+task_gate:
+  RET-008: [pg_trgm_extension, trgm_index, configurable_threshold, threshold_boundary, tenant_and_status_sql, pg_probe]
+  RET-009: [simple_tsvector, command_and_error_tokens, fts_index, ranking, empty_query_safety, pg_probe]
+  RET-010: [vector_column_dimension, embedding_model_contract, cosine_operator, hnsw_index, incompatible_vector_rejection, pg_probe]
+  RET-011: [tenant, domain, vendor, product, os, version, status, permission, postgres_predicate_test]
+  RET-012: [lexical, vector, metadata, trust, version_scores, deterministic_weights, score_trace, postgres_regression]
+  RET-013: [interface, timeout, bounded_cost, provider_failure_degrade, no_answer_invention, regression]
+  RET-014: [compatible_version, conflict_evidence, fail_closed, source_version_trace, postgres_regression]
+  RET-015: [candidate_list, ambiguity_state, high_risk_block, no_silent_choice, audit_trace]
+  RET-016: [no_match_state, grounded_only, model_memory_block, explicit_user_guidance]
+  RET-017: [parent, neighbor, minimal_context, token_budget, tenant_boundary]
+  RET-018: [document_version, metadata_version, index_version, access_scope, deterministic_key]
+  RET-019: [disable_invalidation, update_invalidation, permission_invalidation, no_stale_hit, tenant_boundary]
+  RET-020: [explanation_contract, evidence_ids, score_components, filters, degradation_reason, redaction]
+  RET-021: [admin_permission, entity_view, filter_view, candidate_view, final_chunk_view, no_secret_data]
+  RET-022: [10k, 100k, 1m_or_reasoned_projection, p50, p95, recall_at_k, index_size, repeatable_fixture]
+rollback:
+  application: disable_native_accelerator_flags_and_use_reviewed_legacy_projection
+  database: rollback_transaction_for_probes; additive_m0138_columns_and_indexes_are_retained_until_release_rollback_window
+  data_loss: forbidden
+reporting:
+  every_task_evidence_must_include: [postgres_command, connection_database, extension_versions, test_result, plan_or_sql_evidence, rollback_result, v1_result, known_limits]
+  final_gate: no_ret_task_is_done_when_only_sqlite_evidence_exists
