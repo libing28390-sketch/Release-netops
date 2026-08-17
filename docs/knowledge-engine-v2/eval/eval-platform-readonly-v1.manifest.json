@@ -1,0 +1,93 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-016",
+  "database": "postgresql",
+  "sqlite": "not_used",
+  "fixture_database": "none",
+  "coverage": {
+    "huawei": true,
+    "cisco": true,
+    "h3c": true,
+    "read_only_commands": true,
+    "unknown_boundary": true
+  },
+  "pure_targets": [
+    "D:/netops/netsops-main/backend/tests/vendor_audit/test_huawei_vrp5_cli_output.py",
+    "D:/netops/netsops-main/backend/tests/vendor_audit/test_h3c_cisco_quick_queries.py",
+    "D:/netops/netsops-main/backend/tests/vendor_audit/test_h3c_textfsm_contract.py",
+    "D:/netops/netsops-main/backend/tests/vendor_audit/test_platform_parser_boundary.py",
+    "D:/netops/netsops-main/backend/tests/vendor_audit/test_netmiko_driver_security.py",
+    "D:/netops/netsops-main/backend/tests/platform_registry/test_platform_registry.py::test_read_command_guard_rejects_config_and_shell_chaining",
+    "D:/netops/netsops-main/backend/tests/platform_registry/test_platform_registry_api.py::test_registry_write_and_execution_gate_is_closed_by_default",
+    "D:/netops/netsops-main/backend/tests/platform_registry/test_platform_registry_api.py::test_registry_write_and_execution_gate_can_be_enabled",
+    "D:/netops/netsops-main/backend/tests/platform_registry/test_platform_registry_api.py::test_platform_write_request_models_reject_unknown_fields_and_bound_values",
+    "D:/netops/netsops-main/backend/tests/platform_registry/test_platform_registry_api.py::test_platform_binding_request_models_normalize_and_reject_duplicate_batches",
+    "D:/netops/netsops-main/backend/tests/platform_registry/test_platform_registry_api.py::test_operator_cannot_approve_publish_or_rollback_resources"
+  ],
+  "production_database_write": false,
+  "source_sha256": {
+    "contract": "6c04b199de5cfcd43c553028107f132ac9e82d0f21adf2c433018489ed62a3e5",
+    "test_huawei_vrp5_cli_output.py": "0ff7bebaec965f02df6729995a9b787110bd0f5214a45ad7e72941f7b5e67e8f",
+    "test_h3c_cisco_quick_queries.py": "ab6dfba9b1e0c53dcfe982be940d1489f04e8664172d03fee810b78c05d21acb",
+    "test_h3c_textfsm_contract.py": "e3c4f5945701cf8a07c77c973e93cfdd9f48e59e1429a4516e5ba876f0ec0e01",
+    "test_platform_parser_boundary.py": "900aaf2ce21639700133c89cf021fc861afb12af250efeae48dc1fd8fac4f86a",
+    "test_netmiko_driver_security.py": "834452ad273d2f94813df7d909a707c2f49efeb0eb751e35c96e500275fff830",
+    "test_platform_registry.py": "90f6cdd8a389bbc89d46009c0ff4eca3c7dbe33cfab8fd1739a83517e6409d37",
+    "test_platform_registry_api.py": "25cf2f0f6d75b20fc70195ffae01c9e5a429119dc108f32f69111a31415f975e"
+  },
+  "matrix": {
+    "status": "PASS",
+    "task_id": "EVAL-016",
+    "database": "postgresql",
+    "sqlite": "not_used",
+    "fixture_tests": {
+      "status": "PASS",
+      "database": "none",
+      "sqlite": "not_used",
+      "passed": 123
+    },
+    "v1_postgresql": {
+      "status": "PASS",
+      "database": "postgresql",
+      "case_count": 10,
+      "metrics": {
+        "retrieval_accuracy": 1.0,
+        "wrong_vendor_rate": 0.0,
+        "version_conflict_rate": 0.0,
+        "citation_accuracy": 1.0,
+        "latency_ms": {
+          "average": 3.1283,
+          "p50": 2.465,
+          "p95": 5.9025,
+          "max": 8.1121
+        }
+      },
+      "rollback": "transaction_rollback",
+      "production_database_write": false
+    },
+    "huawei": {
+      "status": "PASS",
+      "fixture": "Huawei VRP5"
+    },
+    "cisco": {
+      "status": "PASS",
+      "fixture": "Cisco IOS/IOS-XE/NX-OS"
+    },
+    "h3c": {
+      "status": "PASS",
+      "fixture": "H3C Comware v5/v7/v9"
+    },
+    "read_only_commands": {
+      "status": "PASS",
+      "config_and_shell_chain_blocked": true,
+      "enable_secret_explicit": true
+    },
+    "unknown_boundary": {
+      "status": "PASS",
+      "no_cisco_default": true
+    },
+    "production_database_write": false,
+    "rollback_or_cleanup": true
+  },
+  "rollback_or_cleanup": true
+}
