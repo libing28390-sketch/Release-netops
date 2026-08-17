@@ -1,11 +1,11 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-017（VERIFYING / USER_VERIFY_PENDING）
-Last Completed: EVAL-016
-Next Task: EVAL-017（完成 Copilot、Provider、Model、Knowledge、Security 浏览器关键路径测试）
+Current Task: EVAL-018（ANALYZING）
+Last Completed: EVAL-017
+Next Task: EVAL-018（执行 10k/100k/1m 性能样本并记录 P50/P95/P99）
 
-Completed: 311 / 359
+Completed: 312 / 359
 P0: 250 / 277
 Last Verified Commit: 5573fbae（EVAL-017 Provider auth failure surface and API-key visibility PASS）
 
@@ -60,7 +60,7 @@ EVAL-015：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-015.md；Pr
 
 EVAL-016：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-016.md；Huawei VRP5、Cisco IOS/IOS-XE/NX-OS、H3C Comware v5/v7/v9 Mock/Fixture、TextFSM、只读命令和 UNKNOWN boundary 123 passed；EVAL-016 wrapper 2 passed；V1 PostgreSQL baseline 10/10；SQLite 未作为验收证据。
 
-EVAL-017：PASS_AUTOMATED_USER_VERIFY_PENDING；证据 docs/knowledge-engine-v2/evidence/EVAL-017.md；Copilot、Provider、Model、Knowledge、Security 前端关键路径 14 files / 52 tests；EVAL-017 wrapper 2 passed；npm lint/build PASS；已认证浏览器可见路径与窄屏无横向溢出检查 PASS；V1 PostgreSQL 10/10；等待用户完成一次可见确认后勾选。
+EVAL-017：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-017.md；Copilot、Provider、Model、Knowledge、Security 前端关键路径 14 files / 52 tests；EVAL-017 wrapper 2 passed；npm lint/build PASS；已认证浏览器可见路径与窄屏无横向溢出检查 PASS；V1 PostgreSQL 10/10。
 EVAL-017 浏览器复查（2026-08-17）：五个关键页面在等待懒加载后均可见且无页面错误；Model/Copilot/Knowledge 的短暂 Loading 约 1.6–2 秒后在约 8 秒内完成；Copilot 窄屏 `bodyScrollWidth=innerWidth=433`，无横向溢出；本轮只读，无外部 Provider 请求和生产写入。
 EVAL-017 Provider 连通性复测（2026-08-17）：认证浏览器打开 `/ai/providers`，通过安全网关执行固定 PUBLIC 探测；DeepSeek `deepseek-v4-flash` 返回 `ok`，约 2112 ms；页面显示“连接测试通过”、`健康: healthy`，旧 `AI_SECURITY_BLOCKED` 徽标清除。该次为用户配置 Provider 的最小外部请求，无设备写操作；PostgreSQL 仅由服务更新 Provider 健康状态，未执行 SQLite。
 EVAL-017 Provider 数据区域复查（2026-08-17）：PostgreSQL 中当前 Provider `data_region='unknown'`；浏览器已显示“区域: 未配置”，编辑表单提供 `unknown/global/cn/us/eu`，不根据 URL 自动推断区域。

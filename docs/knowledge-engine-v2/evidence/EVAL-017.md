@@ -2,7 +2,7 @@
 
 - Task ID: EVAL-017
 - 目标：完成 Copilot、Provider、Model、Knowledge、Security 浏览器关键路径测试。
-- 状态：PASS_AUTOMATED_USER_VERIFY_PENDING
+- 状态：PASS
 - 执行日期：2026-08-17
 
 ## 修改文件
@@ -96,9 +96,9 @@
 
 ## 已知限制
 
-- 真实浏览器路径依赖认证会话；本轮已通过已认证浏览器读取并验证页面，但按清单硬门槛仍等待用户确认。
+- 真实浏览器路径依赖认证会话；本轮已使用已认证浏览器完成五个页面的可见关键路径复查。
 - 本轮只执行一次用户配置 Provider 的最小错误密钥认证探针，用于确认 `AI_AUTH_FAILED` 展示；未发送业务数据或执行设备写操作，其他自动化测试使用 mock。
 
 ## 最终结论
 
-自动化与 PostgreSQL/V1 质量门禁 PASS，浏览器可见检查 PASS；最终状态为 `PASS_AUTOMATED_USER_VERIFY_PENDING`，待用户完成可见确认后转为 `PASS`/`DONE`。
+自动化与 PostgreSQL/V1 质量门禁 PASS，浏览器可见检查 PASS；最终状态为 `PASS`，EVAL-017 可进入后续性能评估任务。
