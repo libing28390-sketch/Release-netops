@@ -281,7 +281,10 @@ class TaskCreateRequest(BaseModel):
 
 @router.post("/tasks")
 def create_task_api(payload: TaskCreateRequest, user=Depends(require_ai_permission("ai.assistant"))):
-    return create_task(tenant_id=str(user.get("tenant_id") or "tenant-default"), user_id=str(user.get("username") or "anonymous"), scene=payload.scene, conversation_id=payload.conversation_id, max_steps=payload.max_steps, max_tool_calls=payload.max_tool_calls, timeout_seconds=payload.timeout_seconds)
+    try:
+        return create_task(tenant_id=str(user.get("tenant_id") or "tenant-default"), user_id=str(user.get("username") or "anonymous"), scene=payload.scene, conversation_id=payload.conversation_id, max_steps=payload.max_steps, max_tool_calls=payload.max_tool_calls, timeout_seconds=payload.timeout_seconds)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
 
 
 @router.get("/tasks/{task_id}")

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from database.core import get_db_connection
 from ai.security.permissions import require_ai_permission
-from ai.security.security_service import persist_diagnostic_run
+from ai.security.security_service import ensure_diagnostic_case_access, persist_diagnostic_run
 from services.diagnostic_orchestrator import (
     DiagnosticOrchestrationError,
     diagnostic_orchestrator,
@@ -96,11 +96,18 @@ def create_diagnostic_plan(payload: DiagnosticPlanRequest, user=Depends(require_
 async def run_diagnostic_plan(payload: DiagnosticRunRequest, user=Depends(require_ai_permission("ai.diagnostics.run"))):
     plan = payload.plan.model_dump(exclude_none=True)
     plan["tenant_id"] = str(user.get("tenant_id") or "tenant-default")
+    user_id = str(user.get("username") or "anonymous")
     context = payload.context.model_dump(exclude_none=True)
+    if context.get("case_id"):
+        try:
+            ensure_diagnostic_case_access(tenant_id=plan["tenant_id"], case_id=str(context["case_id"]), user_id=user_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="diagnostic case not found") from exc
     result = await diagnostic_orchestrator.run(plan=plan, authorized_steps=payload.authorized_steps, context=context)
     try:
         persist_diagnostic_run(
             tenant_id=plan["tenant_id"],
+            user_id=user_id,
             case_id=payload.context.case_id,
             result=result,
             playbook_code=str(plan.get("playbook") or "unknown"),

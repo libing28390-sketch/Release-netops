@@ -1,0 +1,74 @@
+task_id: API-008
+title: Session, message, task, tool-call, and evidence isolation
+status: verified
+contract_version: nxa.ai.scope.v1
+authority:
+  database: PostgreSQL
+  production_migration: release-gated
+  migration: m0146_ai_session_scope_hardening
+scope:
+  principal:
+    tenant_id: authenticated server-owned tenant
+    user_id: authenticated server-owned user; never accepted from request body
+    opaque_projection: tenant-bound deterministic token with task-specific purpose
+  entities:
+    - ai_conversations
+    - ai_messages
+    - ai_tasks
+    - ai_agent_run
+    - ai_agent_step
+    - ai_tool_calls
+    - ai_evidence
+    - ai_diagnostic_cases
+    - ai_diagnostic_runs
+    - ai_diagnostic_steps
+rules:
+  - every conversation read/write filters tenant_id and conversation-owner opaque user
+  - every message operation first resolves an owned conversation; message ids are never sufficient for access
+  - task creation rejects a conversation belonging to another tenant or user
+  - task reads and cancellation filter tenant_id and task-bound opaque user
+  - agent run creation, cancellation, finalization, trace, steps, tool calls, and evidence filter one tenant and agent-owner opaque user
+  - diagnostic case creation rejects foreign conversation links; handoff and run execution require diagnostic-owner opaque user
+  - trace responses expose bounded metadata projections only; raw tool input/output and evidence content are not returned
+  - unknown or missing scope fails closed rather than falling back to a global lookup
+migration:
+  additive_columns:
+    - ai_agent_run.tenant_id
+    - ai_agent_run.user_id_opaque
+    - ai_agent_step.tenant_id
+    - ai_agent_step.user_id_opaque
+    - ai_tool_calls.tenant_id
+    - ai_tool_calls.user_id_opaque
+    - ai_evidence.tenant_id
+    - ai_evidence.user_id_opaque
+    - ai_diagnostic_cases.created_by_opaque
+    - ai_diagnostic_runs.user_id_opaque
+    - ai_diagnostic_steps.user_id_opaque
+  backfill:
+    - legacy agent owner is re-projected from tenant_id and legacy user_id
+    - child agent/tool/evidence rows inherit scope from their parent where available
+    - diagnostic run and step scope inherits case/run owner where available
+  indexes:
+    - ix_ai_agent_run_scope
+    - ix_ai_agent_step_scope
+    - ix_ai_tool_calls_scope
+    - ix_ai_evidence_scope
+    - ix_ai_diagnostic_case_scope
+    - ix_ai_diagnostic_run_scope
+    - ix_ai_diagnostic_step_scope
+compatibility:
+  - V1 conversation/message fields and existing routes remain available
+  - old rows without a valid opaque scope are not exposed by new scoped readers
+  - migration is additive and does not execute against production during verification
+security:
+  - no raw user identity is written by new API-008 paths
+  - tool/evidence persistence stores bounded key and citation metadata, never raw tool payloads
+  - foreign tenant/user requests return not-found semantics
+rollback:
+  - release rollback disables the new scoped reader/writer path; scope columns are retained for audit evidence
+  - verification uses an isolated PostgreSQL transaction and rolls it back
+verification:
+  probe: scripts/knowledge_engine_v2_api008_pg_probe.py
+  backend_regression: backend/tests/ai
+  frontend_regression: src/api/ai.test.ts
+  result: PASS

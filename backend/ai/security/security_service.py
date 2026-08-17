@@ -293,7 +293,17 @@ def record_feedback(*, tenant_id: str, conversation_id: str, message_id: str, us
     allowed_reasons = {"model_wrong", "version_wrong", "command_wrong", "insufficient_evidence", "stale", "irrelevant"}
     selected = sorted({str(item) for item in reasons if str(item) in allowed_reasons})[:8]
     feedback_id = f"fb_{uuid.uuid4().hex[:20]}"
+    owner_opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner")
     with get_db_connection() as conn:
+        owned = conn.execute(
+            """SELECT c.id
+               FROM ai_conversations c
+               JOIN ai_messages m ON m.conversation_id = c.id
+               WHERE c.id = ? AND m.id = ? AND c.tenant_id = ? AND c.user_id_opaque = ?""",
+            (str(conversation_id), str(message_id), str(tenant_id), owner_opaque),
+        ).fetchone()
+        if not owned:
+            raise LookupError("conversation message not found")
         conn.execute(
             """
             INSERT INTO ai_conversation_feedback
@@ -315,16 +325,37 @@ def record_feedback(*, tenant_id: str, conversation_id: str, message_id: str, us
 def create_diagnostic_case(*, tenant_id: str, user_id: str, title: str, symptom: str = "", conversation_id: str | None = None, scope: dict[str, Any] | None = None, plan: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     case_id = f"case_{uuid.uuid4().hex[:20]}"
     now = _now()
+    owner_opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id="diagnostic-owner")
     with get_db_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO ai_diagnostic_cases
-                (id, tenant_id, conversation_id, title, status, symptom_safe,
-                 scope_json, plan_json, created_by, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)
-            """,
-            (case_id, tenant_id, conversation_id, _safe_comment(title, 160), _safe_comment(symptom, 2000), _json(scope, {}), _json(plan, []), user_id, now, now),
-        )
+        if conversation_id:
+            conversation_owner = opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner")
+            linked_conversation = conn.execute(
+                "SELECT id FROM ai_conversations WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?",
+                (str(conversation_id), str(tenant_id), conversation_owner),
+            ).fetchone()
+            if not linked_conversation:
+                raise LookupError("conversation not found")
+        try:
+            conn.execute(
+                """
+                INSERT INTO ai_diagnostic_cases
+                    (id, tenant_id, conversation_id, title, status, symptom_safe,
+                     scope_json, plan_json, created_by, created_by_opaque, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (case_id, tenant_id, conversation_id, _safe_comment(title, 160), _safe_comment(symptom, 2000), _json(scope, {}), _json(plan, []), owner_opaque, owner_opaque, now, now),
+            )
+        except Exception:
+            conn.rollback()
+            conn.execute(
+                """
+                INSERT INTO ai_diagnostic_cases
+                    (id, tenant_id, conversation_id, title, status, symptom_safe,
+                     scope_json, plan_json, created_by, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)
+                """,
+                (case_id, tenant_id, conversation_id, _safe_comment(title, 160), _safe_comment(symptom, 2000), _json(scope, {}), _json(plan, []), owner_opaque, now, now),
+            )
         conn.commit()
     return {"id": case_id, "tenant_id": tenant_id, "title": _safe_comment(title, 160), "status": "open", "created_at": now}
 
@@ -336,8 +367,9 @@ def handoff_case(*, tenant_id: str, case_id: str, user_id: str, handoff: dict[st
         "ticket_draft": _safe_comment(handoff.get("ticket_draft"), 3000),
     }
     now = _now()
+    owner_opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id="diagnostic-owner")
     with get_db_connection() as conn:
-        row = conn.execute("SELECT id FROM ai_diagnostic_cases WHERE id = ? AND tenant_id = ?", (case_id, tenant_id)).fetchone()
+        row = conn.execute("SELECT id FROM ai_diagnostic_cases WHERE id = ? AND tenant_id = ? AND created_by_opaque = ?", (case_id, tenant_id, owner_opaque)).fetchone()
         if not row:
             raise LookupError("diagnostic case not found")
         conn.execute("UPDATE ai_diagnostic_cases SET status = 'investigating', handoff_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?", (_json(safe, {}), now, case_id, tenant_id))
@@ -345,34 +377,63 @@ def handoff_case(*, tenant_id: str, case_id: str, user_id: str, handoff: dict[st
     return {"case_id": case_id, "status": "investigating", "handoff": safe, "updated_at": now}
 
 
+def ensure_diagnostic_case_access(*, tenant_id: str, case_id: str, user_id: str) -> None:
+    """Fail closed before any diagnostic work can use another user's case."""
+    owner_opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id="diagnostic-owner")
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT id FROM ai_diagnostic_cases WHERE id = ? AND tenant_id = ? AND created_by_opaque = ?",
+            (str(case_id), str(tenant_id), owner_opaque),
+        ).fetchone()
+    if not row:
+        raise LookupError("diagnostic case not found")
+
+
 def stable_digest(value: Any) -> str:
     return hashlib.sha256(_json(value, {}).encode("utf-8")).hexdigest()
 
 
-def persist_diagnostic_run(*, tenant_id: str, case_id: str | None, result: dict[str, Any], playbook_code: str, vendor: str | None = None, platform: str | None = None, device_id: str | None = None) -> None:
+def persist_diagnostic_run(*, tenant_id: str, user_id: str | None = None, case_id: str | None, result: dict[str, Any], playbook_code: str, vendor: str | None = None, platform: str | None = None, device_id: str | None = None) -> None:
     """Persist only bounded step evidence and stable error codes."""
     run_id = str(result.get("run_id") or f"dia_{uuid.uuid4().hex[:16]}")
     started = _now()
+    owner_opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id="diagnostic-owner") if user_id else None
     with get_db_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO ai_diagnostic_runs
-                (id, case_id, tenant_id, state, playbook_code, vendor, platform, device_id, read_only, started_at, finished_at, error_code)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET state = excluded.state, finished_at = excluded.finished_at, error_code = excluded.error_code
-            """,
-            (run_id, case_id or "", tenant_id, str(result.get("state") or "failed"), playbook_code, vendor, platform, device_id, started, _now(), next((str(step.get("error_code")) for step in result.get("steps", []) if step.get("error_code")), None)),
-        )
+        if case_id and owner_opaque:
+            case = conn.execute("SELECT id FROM ai_diagnostic_cases WHERE id = ? AND tenant_id = ? AND created_by_opaque = ?", (case_id, tenant_id, owner_opaque)).fetchone()
+            if not case:
+                raise LookupError("diagnostic case not found")
+        try:
+            conn.execute(
+                """
+                INSERT INTO ai_diagnostic_runs
+                    (id, case_id, tenant_id, user_id_opaque, state, playbook_code, vendor, platform, device_id, read_only, started_at, finished_at, error_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET state = excluded.state, finished_at = excluded.finished_at, error_code = excluded.error_code
+                """,
+                (run_id, case_id or "", tenant_id, owner_opaque, str(result.get("state") or "failed"), playbook_code, vendor, platform, device_id, started, _now(), next((str(step.get("error_code")) for step in result.get("steps", []) if step.get("error_code")), None)),
+            )
+        except Exception:
+            conn.rollback()
+            conn.execute(
+                """
+                INSERT INTO ai_diagnostic_runs
+                    (id, case_id, tenant_id, state, playbook_code, vendor, platform, device_id, read_only, started_at, finished_at, error_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET state = excluded.state, finished_at = excluded.finished_at, error_code = excluded.error_code
+                """,
+                (run_id, case_id or "", tenant_id, str(result.get("state") or "failed"), playbook_code, vendor, platform, device_id, started, _now(), next((str(step.get("error_code")) for step in result.get("steps", []) if step.get("error_code")), None)),
+            )
         for step in result.get("steps") or []:
             conn.execute(
                 """
                 INSERT INTO ai_diagnostic_steps
-                    (id, run_id, tenant_id, step_no, purpose, command_safe, target_safe, status, evidence_json, duration_ms, error_code, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, run_id, tenant_id, user_id_opaque, step_no, purpose, command_safe, target_safe, status, evidence_json, duration_ms, error_code, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (run_id, step_no) DO UPDATE SET status = excluded.status, evidence_json = excluded.evidence_json, duration_ms = excluded.duration_ms, error_code = excluded.error_code
                 """,
                 (
-                    f"{run_id}_step_{int(step.get('step_no') or 0)}", run_id, tenant_id,
+                    f"{run_id}_step_{int(step.get('step_no') or 0)}", run_id, tenant_id, owner_opaque,
                     int(step.get("step_no") or 0), _safe_comment(step.get("purpose"), 160),
                     _safe_comment(step.get("command"), 240), _safe_comment(step.get("target"), 160),
                     str(step.get("status") or "failed"), _json(step.get("evidence") or [], []),

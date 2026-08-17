@@ -16,6 +16,7 @@ from ai.security.classification import DataLevel, classify_text
 from ai.security.minimizer import minimize
 from ai.security.sanitizer import sanitize_text
 from ai.security.tokenization import token_vault, tokenize_text
+from ai.security.tokenization import opaque_user_id
 from ai.services.metrics import ai_metrics
 
 
@@ -46,6 +47,7 @@ class AgentRunner:
         now_iso = datetime.now(timezone.utc).isoformat()
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         tenant = tenant_id or "tenant-default"
+        owner_opaque = opaque_user_id(user_id, tenant_id=tenant, task_id="agent-owner")
         max_steps = max(1, min(int(max_steps or 1), 50))
         max_tool_calls = max(1, min(int(max_tool_calls or 1), 200))
         timeout_seconds = max(5, min(int(timeout_seconds or 5), 3600))
@@ -57,15 +59,29 @@ class AgentRunner:
         # 1. Save Run Record
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO ai_agent_run (id, agent_id, user_id, question, status, risk_level,
-                                         max_steps, max_tool_calls, deadline_at, cancel_requested, started_at)
-                VALUES (?, ?, ?, ?, 'running', 'R0', ?, ?, ?, 0, ?)
-                """,
-                (run_id, agent_code, user_id, safe_question, max_steps, max_tool_calls,
-                 (datetime.now(timezone.utc).timestamp() + timeout_seconds), now_iso)
-            )
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO ai_agent_run (id, agent_id, tenant_id, user_id_opaque, user_id, question, status, risk_level,
+                                             max_steps, max_tool_calls, deadline_at, cancel_requested, started_at)
+                    VALUES (?, ?, ?, ?, NULL, ?, 'running', 'R0', ?, ?, ?, 0, ?)
+                    """,
+                    (run_id, agent_code, tenant, owner_opaque, safe_question, max_steps, max_tool_calls,
+                     (datetime.now(timezone.utc).timestamp() + timeout_seconds), now_iso)
+                )
+            except Exception:
+                # Keep old V1 installations bootable while m0146 is being
+                # applied; new installations always take the scoped branch.
+                conn.rollback()
+                cursor.execute(
+                    """
+                    INSERT INTO ai_agent_run (id, agent_id, user_id, question, status, risk_level,
+                                             max_steps, max_tool_calls, deadline_at, cancel_requested, started_at)
+                    VALUES (?, ?, ?, ?, 'running', 'R0', ?, ?, ?, 0, ?)
+                    """,
+                    (run_id, agent_code, user_id, safe_question, max_steps, max_tool_calls,
+                     (datetime.now(timezone.utc).timestamp() + timeout_seconds), now_iso)
+                )
             conn.commit()
 
         tools_catalog = tool_registry.list_tools()
@@ -95,7 +111,7 @@ class AgentRunner:
             step_start = datetime.now(timezone.utc).isoformat()
             
             try:
-                control = self._read_control(run_id)
+                control = self._read_control(run_id, tenant_id=tenant, user_id_opaque=owner_opaque)
                 if control.get("cancel_requested"):
                     run_status = "cancelled"
                     final_result = "Agent run cancelled by the requester"
@@ -140,19 +156,42 @@ class AgentRunner:
                     }
                     steps_executed.append(step_info)
 
+                    self._persist_tool_evidence(
+                        run_id=run_id,
+                        tenant_id=tenant,
+                        user_id_opaque=owner_opaque,
+                        step_no=step_no,
+                        tool_name=str(t_name or ""),
+                        arguments=t_args,
+                        result=tool_res,
+                    )
+
                     # Save step to DB
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
-                        cursor.execute(
-                            """
-                            INSERT INTO ai_agent_step (id, run_id, step_no, step_type, tool_name, tool_input, tool_output, status, started_at, finished_at)
-                            VALUES (?, ?, ?, 'tool_call', ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                step_id, run_id, step_no, t_name, json.dumps({"keys": sorted(str(key) for key in t_args)}, ensure_ascii=False),
-                                json.dumps(tool_res, ensure_ascii=False), "success" if tool_res.get("success") else "error", step_start, step_finish
+                        try:
+                            cursor.execute(
+                                """
+                                INSERT INTO ai_agent_step (id, run_id, tenant_id, user_id_opaque, step_no, step_type, tool_name, tool_input, tool_output, status, started_at, finished_at)
+                                VALUES (?, ?, ?, ?, ?, 'tool_call', ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    step_id, run_id, tenant, owner_opaque, step_no, t_name, json.dumps({"keys": sorted(str(key) for key in t_args)}, ensure_ascii=False),
+                                    json.dumps(tool_res, ensure_ascii=False), "success" if tool_res.get("success") else "error", step_start, step_finish
+                                )
                             )
-                        )
+                        except Exception:
+                            conn.rollback()
+                            cursor.execute(
+                                """
+                                INSERT INTO ai_agent_step (id, run_id, step_no, step_type, tool_name, tool_input, tool_output, status, started_at, finished_at)
+                                VALUES (?, ?, ?, 'tool_call', ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    step_id, run_id, step_no, t_name, json.dumps({"keys": sorted(str(key) for key in t_args)}, ensure_ascii=False),
+                                    json.dumps(tool_res, ensure_ascii=False), "success" if tool_res.get("success") else "error", step_start, step_finish
+                                )
+                            )
                         conn.commit()
 
                     # Feed tool output back to agent history
@@ -166,13 +205,23 @@ class AgentRunner:
                     
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
-                        cursor.execute(
-                            """
-                            INSERT INTO ai_agent_step (id, run_id, step_no, step_type, tool_output, status, started_at, finished_at)
-                            VALUES (?, ?, ?, 'final_answer', ?, 'success', ?, ?)
-                            """,
-                            (step_id, run_id, step_no, final_result, step_start, step_finish)
-                        )
+                        try:
+                            cursor.execute(
+                                """
+                                INSERT INTO ai_agent_step (id, run_id, tenant_id, user_id_opaque, step_no, step_type, tool_output, status, started_at, finished_at)
+                                VALUES (?, ?, ?, ?, ?, 'final_answer', ?, 'success', ?, ?)
+                                """,
+                                (step_id, run_id, tenant, owner_opaque, step_no, final_result, step_start, step_finish)
+                            )
+                        except Exception:
+                            conn.rollback()
+                            cursor.execute(
+                                """
+                                INSERT INTO ai_agent_step (id, run_id, step_no, step_type, tool_output, status, started_at, finished_at)
+                                VALUES (?, ?, ?, 'final_answer', ?, 'success', ?, ?)
+                                """,
+                                (step_id, run_id, step_no, final_result, step_start, step_finish)
+                            )
                         conn.commit()
                     break
                 else:
@@ -195,13 +244,22 @@ class AgentRunner:
         finished_iso = datetime.now(timezone.utc).isoformat()
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE ai_agent_run SET status = ?, finished_at = ?, final_result = ?
-                WHERE id = ?
-                """,
-                (run_status, finished_iso, final_result, run_id)
-            )
+            try:
+                cursor.execute(
+                    """
+                    UPDATE ai_agent_run SET status = ?, finished_at = ?, final_result = ?
+                    WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?
+                    """,
+                    (run_status, finished_iso, final_result, run_id, tenant, owner_opaque)
+                )
+            except Exception:
+                cursor.execute(
+                    """
+                    UPDATE ai_agent_run SET status = ?, finished_at = ?, final_result = ?
+                    WHERE id = ?
+                    """,
+                    (run_status, finished_iso, final_result, run_id)
+                )
             conn.commit()
 
         ai_metrics.agent_finished(run_status)
@@ -216,12 +274,55 @@ class AgentRunner:
         }
 
     @staticmethod
-    def _read_control(run_id: str) -> dict[str, Any]:
+    def _persist_tool_evidence(*, run_id: str, tenant_id: str, user_id_opaque: str, step_no: int, tool_name: str, arguments: dict[str, Any], result: dict[str, Any]) -> None:
+        """Persist only bounded, already-sanitized tool/evidence projections."""
+        tool_call_id = f"{run_id}_tool_{step_no}"
+        output = result.get("output") if isinstance(result, dict) else {}
+        output = output if isinstance(output, dict) else {}
+        safe_input = {"keys": sorted(str(key) for key in (arguments or {}))[:50]}
+        safe_result = {
+            "success": bool(result.get("success")) if isinstance(result, dict) else False,
+            "error_code": str(result.get("error_code") or "")[:120] if isinstance(result, dict) else "TOOL_EXECUTION_FAILED",
+            "evidence_count": len(output.get("evidence") or []) if isinstance(output.get("evidence"), list) else 0,
+        }
+        with get_db_connection() as conn:
+            try:
+                conn.execute(
+                    """INSERT INTO ai_tool_calls
+                       (id, task_id, tenant_id, user_id_opaque, step_no, tool_name,
+                        input_safe_json, result_safe_json, source, freshness, status,
+                        policy_decision, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (tool_call_id, run_id, tenant_id, user_id_opaque, step_no, tool_name[:120],
+                     json.dumps(safe_input, ensure_ascii=False), json.dumps(safe_result, ensure_ascii=False),
+                     str(output.get("source") or "agent_tool")[:120], str(output.get("freshness") or "")[:120],
+                     "success" if safe_result["success"] else "error", "allow" if safe_result["success"] else "deny", datetime.now(timezone.utc).isoformat()),
+                )
+                evidence_items = output.get("evidence") if isinstance(output.get("evidence"), list) else []
+                for evidence in evidence_items[:50]:
+                    if not isinstance(evidence, dict):
+                        continue
+                    conn.execute(
+                        """INSERT INTO ai_evidence
+                           (id, task_id, tool_call_id, tenant_id, user_id_opaque,
+                            source_type, source_id, citation, fact_json, confidence, collected_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (f"{tool_call_id}_ev_{uuid.uuid4().hex[:8]}", run_id, tool_call_id, tenant_id, user_id_opaque,
+                         str(evidence.get("source_type") or "tool")[:80], str(evidence.get("source_id") or "")[:160],
+                         str(evidence.get("citation") or "")[:240], json.dumps({"keys": sorted(str(key) for key in evidence if key not in {"content", "raw"})[:30]}, ensure_ascii=False),
+                         max(0.0, min(float(evidence.get("confidence") or 0), 1.0)), datetime.now(timezone.utc).isoformat()),
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def _read_control(run_id: str, *, tenant_id: str, user_id_opaque: str) -> dict[str, Any]:
         try:
             with get_db_connection() as conn:
                 row = conn.execute(
-                    "SELECT cancel_requested, deadline_at FROM ai_agent_run WHERE id = ?",
-                    (run_id,),
+                    "SELECT cancel_requested, deadline_at FROM ai_agent_run WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?",
+                    (run_id, tenant_id, user_id_opaque),
                 ).fetchone()
                 return dict(row) if row else {}
         except Exception:

@@ -292,29 +292,35 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
 @router.post("/feedback")
 def submit_copilot_feedback(payload: CopilotFeedbackRequest, user=Depends(require_ai_permission("ai.copilot.feedback"))):
     tenant_id = str(user.get("tenant_id") or "tenant-default")
-    return record_feedback(
-        tenant_id=tenant_id,
-        conversation_id=payload.conversation_id,
-        message_id=payload.message_id,
-        user_id=str(user.get("username") or "anonymous"),
-        rating=payload.rating,
-        reasons=payload.reasons,
-        comment=payload.comment,
-    )
+    try:
+        return record_feedback(
+            tenant_id=tenant_id,
+            conversation_id=payload.conversation_id,
+            message_id=payload.message_id,
+            user_id=str(user.get("username") or "anonymous"),
+            rating=payload.rating,
+            reasons=payload.reasons,
+            comment=payload.comment,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="conversation message not found") from exc
 
 
 @router.post("/cases")
 def create_copilot_case(payload: DiagnosticCaseRequest, user=Depends(require_ai_permission("ai.assistant"))):
     tenant_id = str(user.get("tenant_id") or "tenant-default")
-    return create_diagnostic_case(
-        tenant_id=tenant_id,
-        user_id=str(user.get("username") or "anonymous"),
-        title=payload.title,
-        symptom=payload.symptom,
-        conversation_id=payload.conversation_id,
-        scope=payload.context.model_dump(exclude_none=True),
-        plan=[item.model_dump(exclude_none=True) for item in payload.plan],
-    )
+    try:
+        return create_diagnostic_case(
+            tenant_id=tenant_id,
+            user_id=str(user.get("username") or "anonymous"),
+            title=payload.title,
+            symptom=payload.symptom,
+            conversation_id=payload.conversation_id,
+            scope=payload.context.model_dump(exclude_none=True),
+            plan=[item.model_dump(exclude_none=True) for item in payload.plan],
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
 
 
 @router.post("/cases/{case_id}/handoff")

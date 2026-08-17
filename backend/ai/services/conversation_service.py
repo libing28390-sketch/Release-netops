@@ -246,6 +246,8 @@ def create_task(*, tenant_id: str, user_id: str, scene: str, conversation_id: st
     task_id = f"aitask_{uuid.uuid4().hex[:20]}"
     now = datetime.now(timezone.utc)
     with get_db_connection() as conn:
+        if conversation_id and not _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id):
+            raise LookupError("conversation not found")
         conn.execute(
             """
             INSERT INTO ai_tasks
