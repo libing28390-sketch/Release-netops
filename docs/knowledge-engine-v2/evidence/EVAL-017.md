@@ -42,7 +42,7 @@
 
 ## 已认证浏览器可见检查
 
-- `/ai/providers`：页面标题、Provider 数量、AES-256、脱敏 Key 和安全网关提示可见；未执行真实 Provider 连通性写操作。
+- `/ai/providers`：页面标题、Provider 数量、AES-256、脱敏 Key 和安全网关提示可见；初次五页面检查未执行真实 Provider 连通性写操作，后续仅执行了用户配置 Provider 的最小认证探针。
 - `/ai/models`：模型表格、Provider 关联、场景路由和“添加 Model”入口可见。
 - `/ai/copilot`：Copilot 空会话、模型选择器、诊断范围、发送按钮和只读提示可见。
 - `/ai/knowledge`：文档/版本、Source Registry、RAG Evaluation、Retrieval Trace 四个视图入口可见。
@@ -69,6 +69,7 @@
 - 页面中的 `unknown` 标签对应 `data_region`，不是健康状态或错误码；当前 PostgreSQL Provider 行确实为 `data_region='unknown'`。前端已改为显示“区域: 未配置”，并提供 global/cn/us/eu 选择，避免裸 `unknown` 误导；不根据 URL 擅自推断区域。
 - API Key 表单只允许在当前编辑会话中查看本次新输入的值（小眼睛切换）；编辑已有 Provider 时不会读取或回显旧 Key，提交后仍只返回脱敏值。
 - 错误 Key 复测（认证浏览器 + PostgreSQL Provider）：返回 `AI_AUTH_FAILED`，约 702 ms；页面明确提示 API Key 被 Provider 拒绝，不再显示 `AI_PROVIDER_CIRCUIT_OPEN` 或泛化错误；认证失败不再重试/累计熔断，保存新 Key 会清除旧熔断与健康冷却。
+- API Key 小眼睛现场复测（认证浏览器）：编辑已有 Provider 时输入框初始为空；输入测试值后由 `password` 切换为 `text`，再切回 `password`；随后清空并取消，未保存测试值。
 
 ## 数据库影响
 
@@ -95,8 +96,8 @@
 
 ## 已知限制
 
-- 真实浏览器路径依赖认证会话；本轮已通过已认证 Chrome 会话读取并验证页面，但按清单硬门槛仍等待用户确认。
-- 未执行真实 Provider 连通性测试，避免向外部供应商发送请求；自动化测试使用 mock。
+- 真实浏览器路径依赖认证会话；本轮已通过已认证浏览器读取并验证页面，但按清单硬门槛仍等待用户确认。
+- 本轮只执行一次用户配置 Provider 的最小错误密钥认证探针，用于确认 `AI_AUTH_FAILED` 展示；未发送业务数据或执行设备写操作，其他自动化测试使用 mock。
 
 ## 最终结论
 

@@ -7,11 +7,11 @@ Next Task: EVAL-017（完成 Copilot、Provider、Model、Knowledge、Security �
 
 Completed: 311 / 359
 P0: 250 / 277
-Last Verified Commit: e0ff2300（EVAL-017 Provider data-region label and selector PASS）
+Last Verified Commit: 5573fbae（EVAL-017 Provider auth failure surface and API-key visibility PASS）
 
 Recent Migration: EVAL-012 复用 m0117/m0119/m0120/m0121/m0145/m0150；5 个 PostgreSQL 探针 rollback/cleanup PASS，无生产写入
-Recent Build: EVAL-017 npm lint PASS；Vite build PASS（3680 modules）；前端关键路径 14 files / 52 tests PASS；Provider 修复聚焦 3 passed；SQLite 未作为证据
-Last Security Check: EVAL-017 Provider masked secret、permission 403 contract、Security fail-closed/dry-run、Copilot read-only UI PASS；Provider PUBLIC 探测经安全网关放行；SQLite 未作为证据
+Recent Build: EVAL-017 npm lint PASS；Vite build PASS（3680 modules）；前端关键路径 14 files / 52 tests PASS；Provider 修复聚焦 5 passed；SQLite 未作为证据
+Last Security Check: EVAL-017 Provider masked secret、new-key show/hide、permission 403 contract、Security fail-closed/dry-run、Copilot read-only UI PASS；错误 Key 返回 AI_AUTH_FAILED；SQLite 未作为证据
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
 Recovery Point: EVAL-017（自动化与已认证浏览器检查通过，等待用户可见确认）→ EVAL-018 → EVAL-019；ING-020/021 仍需认证浏览器会话补做可见验证
@@ -64,6 +64,7 @@ EVAL-017：PASS_AUTOMATED_USER_VERIFY_PENDING；证据 docs/knowledge-engine-v2/
 EVAL-017 浏览器复查（2026-08-17）：五个关键页面在等待懒加载后均可见且无页面错误；Model/Copilot/Knowledge 的短暂 Loading 约 1.6–2 秒后在约 8 秒内完成；Copilot 窄屏 `bodyScrollWidth=innerWidth=433`，无横向溢出；本轮只读，无外部 Provider 请求和生产写入。
 EVAL-017 Provider 连通性复测（2026-08-17）：认证浏览器打开 `/ai/providers`，通过安全网关执行固定 PUBLIC 探测；DeepSeek `deepseek-v4-flash` 返回 `ok`，约 2112 ms；页面显示“连接测试通过”、`健康: healthy`，旧 `AI_SECURITY_BLOCKED` 徽标清除。该次为用户配置 Provider 的最小外部请求，无设备写操作；PostgreSQL 仅由服务更新 Provider 健康状态，未执行 SQLite。
 EVAL-017 Provider 数据区域复查（2026-08-17）：PostgreSQL 中当前 Provider `data_region='unknown'`；浏览器已显示“区域: 未配置”，编辑表单提供 `unknown/global/cn/us/eu`，不根据 URL 自动推断区域。
+EVAL-017 Provider 错误 Key 与可见性复查（2026-08-17）：错误 Key 的认证浏览器探针返回 `AI_AUTH_FAILED`（HTTP 401/403，约 702 ms），页面不再显示熔断码；编辑框小眼睛只切换本次新输入值，旧 Key 仍不回显；后端聚焦 15 passed，前端 Provider 5 passed，lint/build/compile/diff PASS。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
