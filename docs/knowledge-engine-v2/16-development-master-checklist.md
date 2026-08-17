@@ -532,7 +532,7 @@
 
 ## 18. 数据迁移、影子运行与切换
 
-- [ ] `MIG-001` `P0/ARCH+DBA+AI/M`：按 Document、Metadata、Chunk、Embedding 分别确定迁移策略。
+- [x] `MIG-001` `P0/ARCH+DBA+AI/M`：按 Document、Metadata、Chunk、Embedding 分别确定迁移策略。
 - [ ] `MIG-002` `P0/DBA+AI/M`：可信原始文档优先迁移；不可证明质量的 Chunk/Embedding 不直接迁移。
 - [ ] `MIG-003` `P0/DBA+AI/M`：建立旧 ID 到 V2 ID 映射和迁移 Manifest。
 - [ ] `MIG-004` `P0/DBA+BE/M`：迁移脚本支持 dry-run、断点续跑、幂等和批次回滚。
