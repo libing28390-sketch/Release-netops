@@ -34,7 +34,7 @@ import {
   Pencil,
   Info,
 } from 'lucide-react';
-import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, clearSampleKnowledge, deleteKnowledgeDocument, batchDeleteKnowledgeDocuments, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets } from '../../../api/ai';
+import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, clearSampleKnowledge, deleteKnowledgeDocument, batchDeleteKnowledgeDocuments, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 
@@ -415,6 +415,20 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   // Modal & File Upload State
   const [showModal, setShowModal] = useState(false);
+  const [ingestionMode, setIngestionMode] = useState<'official_url' | 'enterprise_sop' | null>(null);
+  const [ingestionSubmitting, setIngestionSubmitting] = useState(false);
+  const [ingestionError, setIngestionError] = useState('');
+  const [ingestionMessage, setIngestionMessage] = useState('');
+  const [officialUrl, setOfficialUrl] = useState('');
+  const [officialVendor, setOfficialVendor] = useState('Huawei');
+  const [officialFamily, setOfficialFamily] = useState('');
+  const [officialVersion, setOfficialVersion] = useState('');
+  const [officialName, setOfficialName] = useState('');
+  const [officialTerms, setOfficialTerms] = useState('pending');
+  const [enterpriseSopFile, setEnterpriseSopFile] = useState<File | null>(null);
+  const [enterpriseTitle, setEnterpriseTitle] = useState('');
+  const [enterpriseOwner, setEnterpriseOwner] = useState('');
+  const [enterpriseDepartment, setEnterpriseDepartment] = useState('');
   const [inputMode, setInputMode] = useState<'upload' | 'paste'>('upload');
   const [docName, setDocName] = useState('');
   const [content, setContent] = useState('');
@@ -819,6 +833,84 @@ export const KnowledgeManagementTab: React.FC = () => {
     clearQueue();
   };
 
+  const closeIngestionPanel = () => {
+    if (ingestionSubmitting) return;
+    setIngestionMode(null);
+    setIngestionError('');
+    setIngestionMessage('');
+  };
+
+  const handleOfficialUrlImport = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIngestionError('');
+    setIngestionMessage('');
+    if (!officialUrl.trim().toLowerCase().startsWith('https://')) {
+      setIngestionError('官方来源必须使用 HTTPS URL，并由 Source Registry 做域名与重定向校验。');
+      return;
+    }
+    if (!officialFamily.trim() || !officialVersion.trim() || officialTerms !== 'approved') {
+      setIngestionError('请填写 Product Family、版本范围，并确认官方条款已审核。');
+      return;
+    }
+    setIngestionSubmitting(true);
+    try {
+      await importKnowledgeOfficialUrl({
+        url: officialUrl.trim(),
+        source_kind: 'product_page',
+        vendor: officialVendor,
+        product_family: officialFamily.trim(),
+        version_scope: { primary: officialVersion.trim() },
+        terms_review_status: 'approved',
+        name: officialName.trim(),
+      });
+      setIngestionMessage('官方来源导入任务已提交，后续状态由 Ingestion Job 管理。');
+      setOfficialUrl('');
+      setOfficialFamily('');
+      setOfficialVersion('');
+      await fetchStatsAndDocs();
+    } catch (error: any) {
+      setIngestionError(error?.message || '官方来源导入失败');
+    } finally {
+      setIngestionSubmitting(false);
+    }
+  };
+
+  const handleEnterpriseSopImport = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIngestionError('');
+    setIngestionMessage('');
+    if (!enterpriseSopFile) {
+      setIngestionError('请选择一个企业 SOP 文件。');
+      return;
+    }
+    if (!enterpriseTitle.trim() || !enterpriseOwner.trim() || !enterpriseDepartment.trim()) {
+      setIngestionError('企业 SOP 必须填写标题、负责人和所属部门。');
+      return;
+    }
+    if (enterpriseSopFile.size > 20_000_000) {
+      setIngestionError('企业 SOP 文件不能超过 20 MB。');
+      return;
+    }
+    setIngestionSubmitting(true);
+    try {
+      await importKnowledgeEnterpriseSop(enterpriseSopFile, {
+        title: enterpriseTitle.trim(),
+        owner: enterpriseOwner.trim(),
+        department: enterpriseDepartment.trim(),
+      });
+      setIngestionMessage('企业 SOP 导入任务已提交；分类已由服务端固定为 INTERNAL。');
+      setEnterpriseSopFile(null);
+      setEnterpriseTitle('');
+      setEnterpriseOwner('');
+      setEnterpriseDepartment('');
+      await fetchStatsAndDocs();
+    } catch (error: any) {
+      setIngestionError(error?.message || '企业 SOP 导入失败');
+    } finally {
+      setIngestionSubmitting(false);
+    }
+  };
+
   const selectedVendorOption = directoryVendorOptions.find((item) => item.value === vendor);
 
   const buildKnowledgeMetadata = (overrides?: {
@@ -1182,6 +1274,45 @@ export const KnowledgeManagementTab: React.FC = () => {
           </p>
         </div>
       </div>
+
+      <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-700/80 dark:bg-slate-800" aria-label="知识来源导入入口">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">受治理的知识导入</h3>
+            <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">官方来源走 URL / Source Registry 校验；企业 SOP 走本地文件 / INTERNAL 分类，两套表单互不混用。</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => { setIngestionMode('official_url'); setIngestionError(''); setIngestionMessage(''); }} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${ingestionMode === 'official_url' ? 'bg-blue-600 text-white' : 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200'}`}>
+              <span className="mr-1.5">🌐</span>导入官方 URL
+            </button>
+            <button type="button" onClick={() => { setIngestionMode('enterprise_sop'); setIngestionError(''); setIngestionMessage(''); }} className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${ingestionMode === 'enterprise_sop' ? 'bg-emerald-600 text-white' : 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200'}`}>
+              <span className="mr-1.5">📄</span>上传企业 SOP
+            </button>
+            {ingestionMode && <button type="button" onClick={closeIngestionPanel} disabled={ingestionSubmitting} className="rounded-xl px-2.5 py-2 text-xs text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700" aria-label="关闭导入表单"><X className="h-3.5 w-3.5" /></button>}
+          </div>
+        </div>
+        {ingestionMode === 'official_url' && (
+          <form onSubmit={handleOfficialUrlImport} className="mt-4 grid gap-3 border-t border-blue-100 pt-4 dark:border-blue-900/50 md:grid-cols-2 xl:grid-cols-4">
+            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2 xl:col-span-2">官方 HTTPS URL<input value={officialUrl} onChange={(event) => setOfficialUrl(event.target.value)} placeholder="https://support.huawei.com/..." className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">Vendor<select value={officialVendor} onChange={(event) => setOfficialVendor(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option>Huawei</option><option>Cisco</option><option>H3C</option><option>Ruijie</option></select></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">Product Family<input value={officialFamily} onChange={(event) => setOfficialFamily(event.target.value)} placeholder="CloudEngine / Catalyst" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">版本范围<input value={officialVersion} onChange={(event) => setOfficialVersion(event.target.value)} placeholder="V800R022 / IOS XE 17.9" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">名称（可选）<input value={officialName} onChange={(event) => setOfficialName(event.target.value)} placeholder="官方产品页" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">条款审核<select value={officialTerms} onChange={(event) => setOfficialTerms(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option value="pending">未审核</option><option value="approved">已审核并同意</option></select></label>
+            <div className="flex items-end"><button type="submit" disabled={ingestionSubmitting} className="w-full rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{ingestionSubmitting ? '提交中…' : '提交官方导入任务'}</button></div>
+          </form>
+        )}
+        {ingestionMode === 'enterprise_sop' && (
+          <form onSubmit={handleEnterpriseSopImport} className="mt-4 grid gap-3 border-t border-emerald-100 pt-4 dark:border-emerald-900/50 md:grid-cols-2 xl:grid-cols-4">
+            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2">企业 SOP 文件（≤20 MB）<input type="file" accept=".md,.markdown,.txt,.html,.htm,.docx,.pdf,.yaml,.yml" onChange={(event) => setEnterpriseSopFile(event.target.files?.[0] || null)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">标题<input value={enterpriseTitle} onChange={(event) => setEnterpriseTitle(event.target.value)} placeholder="变更 SOP" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">负责人<input value={enterpriseOwner} onChange={(event) => setEnterpriseOwner(event.target.value)} placeholder="姓名或工号" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">所属部门<input value={enterpriseDepartment} onChange={(event) => setEnterpriseDepartment(event.target.value)} placeholder="网络运维部" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <div className="flex items-end gap-2"><span className="flex-1 rounded-xl bg-emerald-50 px-3 py-2 text-[10px] text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200">分类固定为 INTERNAL</span><button type="submit" disabled={ingestionSubmitting} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{ingestionSubmitting ? '提交中…' : '提交企业 SOP'}</button></div>
+          </form>
+        )}
+        {(ingestionError || ingestionMessage) && <div className={`mt-3 rounded-xl px-3 py-2 text-[11px] ${ingestionError ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>{ingestionError || ingestionMessage}</div>}
+      </section>
 
       {/* Top Metrics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

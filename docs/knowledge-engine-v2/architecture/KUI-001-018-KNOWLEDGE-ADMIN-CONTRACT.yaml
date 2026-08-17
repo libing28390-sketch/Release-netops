@@ -54,6 +54,17 @@ filters:
       - case
       - user_document
       - sample
+ingestion_forms:
+  official:
+    endpoint: /api/knowledge-v2/ingestion/official-url
+    transport: json
+    required: [url, vendor, product_family, version_scope, terms_review_status]
+    validation: [https_only, source_registry_allowlist, terms_approved]
+  enterprise:
+    endpoint: /api/knowledge-v2/ingestion/enterprise-sop
+    transport: multipart
+    required: [file, title, owner, department]
+    validation: [max_20mb, classification_forced_internal, tenant_scoped]
   pagination:
     max_page_size: 100
     default_page_size: 20

@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "KUI-010",
+  "current_task": "KUI-011",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T12:35:00+08:00",
-  "last_completed_task": "KUI-009",
+  "updated_at": "2026-08-17T13:05:00+08:00",
+  "last_completed_task": "KUI-010",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -267,7 +267,8 @@
     "KUI-006",
     "KUI-007",
     "KUI-008",
-    "KUI-009"
+    "KUI-009",
+    "KUI-010"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -301,7 +302,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "KUI-010",
     "KUI-011",
     "KUI-012",
     "KUI-013",
@@ -687,6 +687,7 @@
   "kui007_status": "DONE_PASS",
   "kui008_status": "DONE_PASS",
   "kui009_status": "DONE_PASS",
+  "kui010_status": "DONE_PASS",
   "kui001_008_evidence": "docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md",
   "kui001_018_contract": "docs/knowledge-engine-v2/architecture/KUI-001-018-KNOWLEDGE-ADMIN-CONTRACT.yaml",
   "kui001_008_focused_tests": "11 passed",
@@ -695,7 +696,11 @@
   "kui001_008_frontend_build": "PASS; existing large-chunk warning only",
   "kui009_evidence": "docs/knowledge-engine-v2/evidence/KUI-009.md",
   "kui009_postgresql_probe": "PASS; official/enterprise allowlist scope, default-tenant fallback, tenant isolation and no official-to-enterprise leakage",
-  "completed_count": 262,
-  "p0_completed_count": 217,
-  "resume_from": "KUI-010"
+  "kui010_evidence": "docs/knowledge-engine-v2/evidence/KUI-010.md",
+  "kui010_regression": "21 passed; official URL and enterprise SOP import contract/validation/permission/idempotency",
+  "kui010_frontend_lint": "PASS",
+  "kui010_frontend_build": "PASS; existing large-chunk warning only",
+  "completed_count": 263,
+  "p0_completed_count": 218,
+  "resume_from": "KUI-011"
 }

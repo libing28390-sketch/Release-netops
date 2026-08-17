@@ -1188,6 +1188,45 @@ export async function getKnowledgeDocument(docId: string): Promise<KnowledgeDocu
   return apiRequest<KnowledgeDocumentDetail>(`/api/ai/assistant/documents/${encodeURIComponent(docId)}`);
 }
 
+export interface KnowledgeOfficialUrlImportPayload {
+  url: string;
+  source_kind: string;
+  vendor: string;
+  product_family: string;
+  version_scope: Record<string, string>;
+  terms_review_status: string;
+  reviewer?: string;
+  name?: string;
+  description?: string;
+  idempotency_key?: string;
+}
+
+export async function importKnowledgeOfficialUrl(payload: KnowledgeOfficialUrlImportPayload): Promise<Record<string, unknown>> {
+  return apiRequest<Record<string, unknown>>('/api/knowledge-v2/ingestion/official-url', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function importKnowledgeEnterpriseSop(file: File, fields: {
+  title: string;
+  owner: string;
+  department: string;
+  description?: string;
+}): Promise<Record<string, unknown>> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('title', fields.title);
+  form.append('owner', fields.owner);
+  form.append('department', fields.department);
+  form.append('classification', 'INTERNAL');
+  if (fields.description) form.append('description', fields.description);
+  return apiRequest<Record<string, unknown>>('/api/knowledge-v2/ingestion/enterprise-sop', {
+    method: 'POST',
+    body: form,
+  });
+}
+
 export async function addKnowledgeDocument(data: {
   name: string;
   content: string;
