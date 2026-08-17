@@ -7,7 +7,7 @@ Next Task: EVAL-004（覆盖指定版本、未指定版本、冲突版本和未�
 
 Completed: 298 / 359
 P0: 237 / 277
-Last Verified Commit: 待提交（EVAL-003 PASS）
+Last Verified Commit: aa521cd5（EVAL-003 query type coverage PASS）
 
 Recent Migration: EVAL-003 无 migration；离线 Query 类型 coverage fixture 无数据库连接/写入
 Recent Build: EVAL-003 validator PASS；7 types each 12；EVAL-001/EVAL-002/EVAL-003 tests 3 passed；contract YAML/py_compile/diff PASS

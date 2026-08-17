@@ -393,7 +393,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "待提交（EVAL-003 PASS）",
+  "last_verified_commit": "aa521cd5（EVAL-003 query type coverage PASS）",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -968,7 +968,7 @@
   "provider_tags_bugfix_commit": "b264fede",
   "provider_tags_bugfix_evidence": "docs/knowledge-engine-v2/evidence/BUG-PROVIDER-TAGS-001.md",
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
-  "last_verified_commit": "待提交（EVAL-003 PASS）",
+  "last_verified_commit": "aa521cd5（EVAL-003 query type coverage PASS）",
   "total_count": 359,
   "completed_count": 298,
   "p0_total_count": 277,
