@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-007 (DONE_PASS)
-Last Completed: EVAL-007
-Next Task: EVAL-008（建立人工 Golden Answer、适用版本和引用标注流程）
+Current Task: EVAL-008 (DONE_PASS)
+Last Completed: EVAL-008
+Next Task: EVAL-009（实现可重复离线评测命令和机器可读报告）
 
-Completed: 302 / 359
-P0: 241 / 277
-Last Verified Commit: 730fcacd（EVAL-007 security metrics PASS）
+Completed: 303 / 359
+P0: 242 / 277
+Last Verified Commit: 待提交（EVAL-008 PASS）
 
-Recent Migration: EVAL-007 无 migration；离线安全指标 fixture 无数据库连接/写入
-Recent Build: EVAL-007 security metric smoke PASS；9 cases；EVAL-001～EVAL-007 tests 7 passed；py_compile/contract YAML/diff PASS
-Last Security Check: EVAL-007 secret/prompt/auth/outbound 仅输出 bounded rates；无原文回显；database=none；SQLite=not_used
+Recent Migration: EVAL-008 无 migration；离线人工标注 fixture 无数据库连接/写入
+Recent Build: EVAL-008 annotation validator PASS；12 annotations/12 citations；EVAL-001～EVAL-008 tests 8 passed；py_compile/contract YAML/diff PASS
+Last Security Check: EVAL-008 标注无正文/凭据/租户/ACL；只存 locator/claim ID；database=none；SQLite=not_used
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-008
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-009
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -41,6 +41,8 @@ EVAL-005：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-005.md；Re
 EVAL-006：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-006.md；Product/OS/Version Match、Wrong Vendor、Official Source、Citation Accuracy 定义与实现 PASS；EVAL-001～EVAL-006 tests 6 passed；无数据库连接，SQLite 未作为验收证据。
 
 EVAL-007：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-007.md；Secret/Prompt Injection/Authorization/Outbound 四类指标定义与 smoke PASS；EVAL-001～EVAL-007 tests 7 passed；无数据库连接，SQLite 未作为验收证据。
+
+EVAL-008：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-008.md；12 条 Golden Answer、适用版本和官方引用双人复核冻结 PASS；EVAL-001～EVAL-008 tests 8 passed；无数据库连接，SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
