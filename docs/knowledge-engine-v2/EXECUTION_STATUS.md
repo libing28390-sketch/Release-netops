@@ -7,7 +7,7 @@ Next Task: EVAL-008（建立人工 Golden Answer、适用版本和引用标注�
 
 Completed: 302 / 359
 P0: 241 / 277
-Last Verified Commit: 待提交（EVAL-007 PASS）
+Last Verified Commit: 730fcacd（EVAL-007 security metrics PASS）
 
 Recent Migration: EVAL-007 无 migration；离线安全指标 fixture 无数据库连接/写入
 Recent Build: EVAL-007 security metric smoke PASS；9 cases；EVAL-001～EVAL-007 tests 7 passed；py_compile/contract YAML/diff PASS
