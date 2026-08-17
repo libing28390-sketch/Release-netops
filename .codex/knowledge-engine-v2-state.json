@@ -1,9 +1,9 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "CHK-015",
-  "task_state": "PENDING",
-  "updated_at": "2026-08-17T14:48:00+08:00",
+  "current_task": "OBS-008",
+  "task_state": "USER_VERIFY_PENDING",
+  "updated_at": "2026-08-17T15:10:00+08:00",
   "last_completed_task": "OBS-007",
   "completed_tasks": [
     "ADR-001",
@@ -390,7 +390,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "b351f448",
+  "last_verified_commit": "10cca00e",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -880,8 +880,15 @@
   "obs007_focused_tests": "OBS-007 focused 4; Import/Reindex regression 11; AI 252; frontend 21 files/101 tests",
   "obs007_gate_summary": "Catalog 192; Database 188 + 2 documented skips; V1 PostgreSQL 10/10; lint/build/compile/diff PASS; live PostgreSQL queue probe PASS",
   "obs007_production_ddl": "NONE",
-  "last_verified_commit": "b242e196",
+  "obs008_status": "USER_VERIFY_PENDING",
+  "obs008_final_verified_at": "2026-08-17T15:10:00+08:00",
+  "obs008_evidence": "docs/knowledge-engine-v2/evidence/OBS-008.md",
+  "obs008_contract": "docs/knowledge-engine-v2/architecture/OBS-008-DATABASE-OBSERVABILITY-CONTRACT.yaml",
+  "obs008_focused_tests": "OBS-008 focused 4; AI suite 256; frontend 21 files/101 tests",
+  "obs008_gate_summary": "PostgreSQL live probe PASS (cache 0.994742, slow-query pg_stat_activity fallback, capacity PASS, relation bloat WARN); lint/build/compile/diff PASS; V1 PostgreSQL 10/10",
+  "obs008_production_ddl": "NONE",
+  "last_verified_commit": "10cca00e",
   "completed_count": 287,
   "p0_completed_count": 234,
-  "resume_from": "CHK-015"
+  "resume_from": "OBS-008"
 }
