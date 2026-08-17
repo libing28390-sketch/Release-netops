@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-009 (DONE_PASS)
-Last Completed: EVAL-009
-Next Task: EVAL-010（在 CI 中执行小型固定集，完整集进入发布门禁）
+Current Task: EVAL-011（ANALYZING）
+Last Completed: EVAL-010
+Next Task: EVAL-011（覆盖 Provider CRUD、模型切换、Fallback、权限和密钥安全测试）
 
-Completed: 304 / 359
-P0: 243 / 277
-Last Verified Commit: 7b577f55（EVAL-009 offline evaluation runner PASS）
+Completed: 305 / 359
+P0: 244 / 277
+Last Verified Commit: 339b5d2f（EVAL-010 PostgreSQL CI/release gate implementation PASS）
 
-Recent Migration: EVAL-009 无 migration；离线 runner 无数据库连接/写入
-Recent Build: EVAL-009 runner PASS；8 components；repeat report equal；EVAL-001～EVAL-009 tests 9 passed；JSON/py_compile/contract YAML/diff PASS
-Last Security Check: EVAL-009 report 无原文/凭据/SQL；仅状态/计数/hash；database=none；SQLite=not_used
+Recent Migration: EVAL-010 无 migration；CI 仅启动临时 PostgreSQL service，离线 runner 无数据库连接/写入
+Recent Build: EVAL-010 small 4/4 PASS；full 8/8 PASS；EVAL-001～EVAL-010 tests 11 passed；YAML/py_compile/diff PASS
+Last Security Check: EVAL-010 工作流仅使用合成 PostgreSQL 凭据；sqlite_references=0；离线报告无原文/凭据/SQL
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-010
+Recovery Point: EVAL-011（当前分析）→ EVAL-012 → EVAL-013；ING-020/021 仍需认证浏览器会话补做可见验证
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -45,6 +45,8 @@ EVAL-007：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-007.md；Se
 EVAL-008：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-008.md；12 条 Golden Answer、适用版本和官方引用双人复核冻结 PASS；EVAL-001～EVAL-008 tests 8 passed；无数据库连接，SQLite 未作为验收证据。
 
 EVAL-009：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-009.md；8 个 EVAL 组件统一 runner、严格模式和可重复 JSON 报告 PASS；EVAL-001～EVAL-009 tests 9 passed；无数据库连接，SQLite 未作为验收证据。
+
+EVAL-010：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-010.md；PR/main push 小型固定集（4 components）与 release 完整集（8 components）均接入严格门禁；CI gate validator PASS、EVAL-001～EVAL-010 tests 11 passed；所有受检 workflow 使用 PostgreSQL service/URL，SQLite 引用 0；离线 runner database=none、sqlite=not_used。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
