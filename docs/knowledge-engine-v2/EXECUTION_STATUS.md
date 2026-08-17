@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: OBS-001 (PENDING; API-009 PASS)
-Last Completed: API-009
-Next Task: OBS-001（按原清单依赖继续）
+Current Task: OBS-003 (PENDING; OBS-002 PASS)
+Last Completed: OBS-002
+Next Task: OBS-003（按原清单依赖继续）
 
-Completed: 280 / 359
-P0: 230 / 277
-Last Verified Commit: b94aaad6（API-009 PASS；本地提交；未 push）
+Completed: 282 / 359
+P0: 232 / 277
+Last Verified Commit: dc23b1d3（OBS-002 PASS；本地提交；未 push）
 
-Recent Migration: m0147 additive task execution guards；临时 PostgreSQL schema 双次升级幂等，状态机与 rollback PASS，未应用生产 DDL
-Recent Build: API-009 PostgreSQL probe PASS；AI regression 234 passed；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
-Last Security Check: API-009 claim/cancel/timeout/step/tool budget/complete/fail 均按 tenant/user + execution token 原子保护，stale worker fail closed PASS
-Recovery Point: OBS-001
+Recent Migration: OBS-002 无 migration；PostgreSQL authoritative path 未写生产
+Recent Build: OBS-002 focused 9 passed；AI 237 passed；KUI 回归 6 passed；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
+Last Security Check: Trace 只保留 bounded/allowlisted runtime；Security block 终止外发，Provider/Model 仅保留标识，无凭据/正文；PASS
+Recovery Point: OBS-003
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -38,6 +38,8 @@ KUI-001..008 证据：
 - API-007 SSE idempotency：stream_id/sequence 有界回放、Abort 租约释放、重连去重、完成流只读回放且 conversation 写入至多一次；API-006/007 后端 9 passed，AI 全套 234 passed，前端 21 files / 100 tests，PostgreSQL V1 baseline 10/10，lint/build/compile/diff PASS；无 DDL/生产写入
 - API-008 session scope：m0146 additive tenant/user opaque scope 与索引；conversation/task、feedback、Agent cancel/trace、tool/evidence、diagnostic case/run 全部按认证 scope 过滤；PostgreSQL 临时 schema probe PASS（幂等/跨域拒绝/回滚），AI 234 passed，前端 21 files / 100 tests，V1 10/10，lint/build/compile/diff PASS；未应用生产 DDL
 - API-009 task execution：m0147 additive counters/token/version 与执行索引；claim、取消/超时 reconcile、step/tool budget、complete/fail 采用 PostgreSQL 条件 UPDATE 并发保护；临时 PostgreSQL probe PASS，AI 234 passed，V1 10/10，lint/build/compile/diff PASS；未应用生产 DDL
+- OBS-001 retrieval observation：raw query 仅 request-scope captured/hash/length，normalized query、entities、filters、candidates、scores、final chunks 有界投影；focused 4，AI 236，KUI 回归与 V1 PostgreSQL baseline PASS；无 DDL
+- OBS-002 runtime observation：reranker、citation、latency、tokens、provider/model、security result 统一写入 non-stream/SSE Trace，嵌套更新不丢历史阶段；focused 9，AI 237，KUI 回归 6，lint/build/compile/diff 与 V1 PostgreSQL baseline PASS；无 DDL
 
 Blocked Tasks: none
 
