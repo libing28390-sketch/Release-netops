@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-008 (DONE_PASS)
-Last Completed: EVAL-008
-Next Task: EVAL-009（实现可重复离线评测命令和机器可读报告）
+Current Task: EVAL-009 (DONE_PASS)
+Last Completed: EVAL-009
+Next Task: EVAL-010（在 CI 中执行小型固定集，完整集进入发布门禁）
 
-Completed: 303 / 359
-P0: 242 / 277
-Last Verified Commit: af0dc936（EVAL-008 golden annotations PASS）
+Completed: 304 / 359
+P0: 243 / 277
+Last Verified Commit: 待提交（EVAL-009 PASS）
 
-Recent Migration: EVAL-008 无 migration；离线人工标注 fixture 无数据库连接/写入
-Recent Build: EVAL-008 annotation validator PASS；12 annotations/12 citations；EVAL-001～EVAL-008 tests 8 passed；py_compile/contract YAML/diff PASS
-Last Security Check: EVAL-008 标注无正文/凭据/租户/ACL；只存 locator/claim ID；database=none；SQLite=not_used
+Recent Migration: EVAL-009 无 migration；离线 runner 无数据库连接/写入
+Recent Build: EVAL-009 runner PASS；8 components；repeat report equal；EVAL-001～EVAL-009 tests 9 passed；JSON/py_compile/contract YAML/diff PASS
+Last Security Check: EVAL-009 report 无原文/凭据/SQL；仅状态/计数/hash；database=none；SQLite=not_used
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-009
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-010
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -43,6 +43,8 @@ EVAL-006：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-006.md；Pr
 EVAL-007：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-007.md；Secret/Prompt Injection/Authorization/Outbound 四类指标定义与 smoke PASS；EVAL-001～EVAL-007 tests 7 passed；无数据库连接，SQLite 未作为验收证据。
 
 EVAL-008：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-008.md；12 条 Golden Answer、适用版本和官方引用双人复核冻结 PASS；EVAL-001～EVAL-008 tests 8 passed；无数据库连接，SQLite 未作为验收证据。
+
+EVAL-009：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-009.md；8 个 EVAL 组件统一 runner、严格模式和可重复 JSON 报告 PASS；EVAL-001～EVAL-009 tests 9 passed；无数据库连接，SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

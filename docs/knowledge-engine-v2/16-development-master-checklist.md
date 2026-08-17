@@ -502,7 +502,7 @@
 - [x] `EVAL-006` `P0/AI+QA/M`：定义 Product、OS、Version Match、Wrong Vendor、Official Source 和 Citation Accuracy。
 - [x] `EVAL-007` `P0/SEC+QA/M`：定义秘密泄漏、Prompt Injection、越权和外发策略指标。
 - [x] `EVAL-008` `P0/QA+NET/M`：建立人工 Golden Answer、适用版本和引用标注流程。
-- [ ] `EVAL-009` `P0/AI+QA/M`：实现可重复离线评测命令和机器可读报告。
+- [x] `EVAL-009` `P0/AI+QA/M`：实现可重复离线评测命令和机器可读报告。
 - [ ] `EVAL-010` `P0/QA+AI/M`：在 CI 中执行小型固定集，完整集进入发布门禁。
 - [ ] `EVAL-011` `P0/QA/L`：覆盖 Provider CRUD、模型切换、Fallback、权限和密钥安全测试。
 - [ ] `EVAL-012` `P0/QA/L`：覆盖 Source/Document/Version/Chunk/Reindex 生命周期测试。

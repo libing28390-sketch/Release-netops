@@ -1,0 +1,50 @@
+task_id: EVAL-009
+title: reproducible offline evaluation command and machine-readable report
+priority: P0
+status: executable
+authority: offline_evaluation_runner
+scope:
+  - run EVAL-001 through EVAL-008 validators in a fixed order
+  - fail strict mode when any component is not PASS
+  - emit a deterministic JSON report with component results and hashes
+  - make repeat runs byte-equivalent for the same checked-in inputs
+command:
+  script: scripts/knowledge_engine_v2_eval_offline.py
+  strict: --strict
+  default_output: docs/knowledge-engine-v2/eval/eval-offline-report-v1.json
+  order: [EVAL-001, EVAL-002, EVAL-003, EVAL-004, EVAL-005, EVAL-006, EVAL-007, EVAL-008]
+report:
+  schema_version: 1
+  required_fields: [status, component_count, components, database, sqlite, external_network, production_write, reproducibility, report_sha256]
+  component_count: 8
+  reproducibility:
+    generated_at: null
+    random_seed: null
+    deterministic_inputs: true
+  hash: sha256_of_canonical_report_without_report_sha256
+safety:
+  database: none
+  sqlite: not_used
+  external_network: forbidden
+  production_write: false
+  secrets: forbidden
+  output: no_raw_source_text_or_credentials
+verification:
+  runner: scripts/knowledge_engine_v2_eval_offline.py
+  focused_test: tests/knowledge_engine_v2/test_eval009_offline_evaluation.py
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval_offline.py --strict"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_eval009_offline_evaluation.py -q -p no:cacheprovider"
+    - ".venv\\Scripts\\python.exe -m py_compile scripts/knowledge_engine_v2_eval_offline.py tests/knowledge_engine_v2/test_eval009_offline_evaluation.py"
+    - "git diff --check"
+  required_results:
+    - status: PASS
+    - component_count: 8
+    - repeat_report_equal: true
+    - database: none
+    - sqlite: not_used
+rollback:
+  runtime: remove EVAL-009 command from CI/evaluation selection
+  data: delete the generated report, runner, test and contract; retain individual task evidence
+  database: none; no migration or persistent write
+  compatibility: no V1 route or production retrieval behavior changes
