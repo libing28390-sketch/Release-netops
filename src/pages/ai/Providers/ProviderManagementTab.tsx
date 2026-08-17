@@ -9,6 +9,8 @@ import {
   KeyRound,
   LockKeyhole,
   Plus,
+  Pencil,
+  Power,
   RefreshCw,
   ShieldCheck,
   Trash2,
@@ -16,7 +18,7 @@ import {
   XCircle,
   type LucideIcon,
 } from 'lucide-react';
-import { getAIProviders, createAIProvider, deleteAIProvider, testAIProvider, AIProvider } from '../../../api/ai';
+import { getAIProviders, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
 
 interface ProviderTestResult {
@@ -90,9 +92,10 @@ export const ProviderManagementTab: React.FC = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [providerType, setProviderType] = useState('deepseek');
-  const [baseUrl, setBaseUrl] = useState('');
+  const [baseUrl, setBaseUrl] = useState('https://api.deepseek.com');
   const [apiKey, setApiKey] = useState('');
   const [defaultModelCode, setDefaultModelCode] = useState('deepseek-v4-flash');
   const [timeout, setTimeout] = useState(30);
@@ -154,7 +157,15 @@ export const ProviderManagementTab: React.FC = () => {
 
   const handleDelete = async (id: string) => {
     const provider = providers.find((item) => item.id === id);
-    if (!window.confirm(zh ? '确定要删除该 Provider 吗？' : 'Delete this Provider?')) return;
+    try {
+      const preview = await getAIProviderDeletePreview(id);
+      const summary = zh
+        ? `${provider?.name || 'Provider'}：${preview.model_count || 0} 个模型、${preview.route_count || 0} 条路由引用。继续尝试删除？`
+        : `${provider?.name || 'Provider'}: ${preview.model_count || 0} models and ${preview.route_count || 0} route references. Continue?`;
+      if (!window.confirm(summary)) return;
+    } catch {
+      if (!window.confirm(zh ? '无法读取删除预览，仍要尝试删除吗？' : 'Delete preview failed. Try anyway?')) return;
+    }
 
     setDeletingId(id);
     try {
@@ -169,27 +180,45 @@ export const ProviderManagementTab: React.FC = () => {
     }
   };
 
+  const handleToggle = async (provider: AIProvider) => {
+    try {
+      const updated = await updateAIProvider(provider.id, { enabled: !provider.enabled });
+      setProviders((current) => current.map((item) => item.id === updated.id ? updated : item));
+      showToast(zh ? `${provider.name} 已${updated.enabled ? '启用' : '停用'}` : `${provider.name} ${updated.enabled ? 'enabled' : 'disabled'}`, 'success');
+    } catch (err: unknown) {
+      showToast(getErrorMessage(err, zh ? '更新 Provider 状态失败' : 'Failed to update Provider status'), 'error');
+    }
+  };
+
+  const openEdit = (provider: AIProvider) => {
+    setEditingId(provider.id);
+    setName(provider.name);
+    setProviderType(provider.provider_type);
+    setBaseUrl(provider.base_url || '');
+    setApiKey('');
+    setDefaultModelCode('');
+    setTimeout(provider.timeout || 30);
+    setShowModal(true);
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await createAIProvider({
-        name,
-        provider_type: providerType,
-        base_url: baseUrl || undefined,
-        api_key: apiKey || undefined,
-        default_model_code: defaultModelCode || undefined,
-        timeout,
-        enabled: true,
-      });
+      if (editingId) {
+        await updateAIProvider(editingId, { name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, timeout });
+      } else {
+        await createAIProvider({ name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, default_model_code: defaultModelCode || undefined, timeout, enabled: true });
+      }
       setShowModal(false);
+      setEditingId(null);
       setName('');
       setApiKey('');
-      setBaseUrl('');
+      setBaseUrl('https://api.deepseek.com');
       setDefaultModelCode('deepseek-v4-flash');
       setTimeout(30);
       await fetchProviders();
-      showToast(zh ? 'Provider 已添加' : 'Provider added', 'success');
+      showToast(zh ? (editingId ? 'Provider 已更新' : 'Provider 已添加') : (editingId ? 'Provider updated' : 'Provider added'), 'success');
     } catch (err: unknown) {
       showToast(getErrorMessage(err, zh ? '添加 Provider 失败' : 'Failed to add Provider'), 'error');
     } finally {
@@ -245,7 +274,7 @@ export const ProviderManagementTab: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => setShowModal(true)}
+              onClick={() => { setEditingId(null); setShowModal(true); }}
               className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-950"
             >
               <Plus className="h-4 w-4" />
@@ -340,9 +369,9 @@ export const ProviderManagementTab: React.FC = () => {
           </span>
           <h3 className="relative mt-4 text-base font-bold text-slate-800 dark:text-white">{zh ? '还没有 Provider' : 'No Providers yet'}</h3>
           <p className="relative mx-auto mt-1.5 max-w-md text-sm leading-6 text-slate-500 dark:text-slate-400">
-            {zh ? '添加一个 DeepSeek Provider，配置密钥后即可开始绑定模型和测试请求。' : 'Add a DeepSeek Provider, configure its key, then bind a model and run a connectivity test.'}
+            {zh ? '可添加多个供应商实例，并在模型管理与 Copilot 中自由切换。' : 'Add multiple provider instances and switch models from Model Management or Copilot.'}
           </p>
-          <button type="button" onClick={() => setShowModal(true)} className="relative mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
+          <button type="button" onClick={() => { setEditingId(null); setShowModal(true); }} className="relative mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
             <Plus className="h-4 w-4" />
             {zh ? '添加第一个 Provider' : 'Add your first Provider'}
           </button>
@@ -373,6 +402,27 @@ export const ProviderManagementTab: React.FC = () => {
                         <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-indigo-500 dark:text-indigo-300">{provider.provider_type}</p>
                       </div>
                     </div>
+                    <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openEdit(provider)}
+                      disabled={isTesting || isDeleting}
+                      aria-label={zh ? `编辑 ${provider.name}` : `Edit ${provider.name}`}
+                      title={zh ? '编辑 Provider' : 'Edit Provider'}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-300"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleToggle(provider)}
+                      disabled={isTesting || isDeleting}
+                      aria-label={provider.enabled ? (zh ? `停用 ${provider.name}` : `Disable ${provider.name}`) : (zh ? `启用 ${provider.name}` : `Enable ${provider.name}`)}
+                      title={provider.enabled ? (zh ? '停用 Provider' : 'Disable Provider') : (zh ? '启用 Provider' : 'Enable Provider')}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-amber-50 hover:text-amber-600 disabled:opacity-50 dark:hover:bg-amber-950/30 dark:hover:text-amber-300"
+                    >
+                      <Power className="h-4 w-4" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => void handleDelete(provider.id)}
@@ -383,6 +433,7 @@ export const ProviderManagementTab: React.FC = () => {
                     >
                       <Trash2 className={`h-4 w-4 ${isDeleting ? 'animate-pulse' : ''}`} />
                     </button>
+                    </div>
                   </div>
 
                   <p className="mt-3 truncate font-mono text-[11px] text-slate-400 dark:text-slate-500" title={provider.id}>{provider.id}</p>
@@ -408,6 +459,11 @@ export const ProviderManagementTab: React.FC = () => {
                         <span className="ml-auto shrink-0 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">AES-256</span>
                       </div>
                     </dl>
+                    <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
+                      <span className={`rounded-full px-2 py-0.5 font-semibold ${provider.health_status === 'healthy' ? 'bg-emerald-100 text-emerald-700' : provider.health_status === 'unhealthy' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-600'}`}>{zh ? '健康' : 'Health'}: {provider.health_status || 'unknown'}</span>
+                      {provider.last_error_code && <span className="rounded-full bg-rose-50 px-2 py-0.5 font-mono text-rose-700">{provider.last_error_code}</span>}
+                      {provider.data_region && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">{provider.data_region}</span>}
+                    </div>
                   </div>
 
                   <div className={`mt-4 min-h-[92px] rounded-2xl border p-4 ${isTesting ? 'border-indigo-100 bg-indigo-50/60 dark:border-indigo-900/60 dark:bg-indigo-950/20' : result?.success ? 'border-emerald-100 bg-emerald-50/70 dark:border-emerald-900/60 dark:bg-emerald-950/20' : result ? 'border-rose-100 bg-rose-50/70 dark:border-rose-900/60 dark:bg-rose-950/20' : 'border-slate-100 bg-white dark:border-slate-800 dark:bg-slate-900'}`}>
@@ -479,10 +535,10 @@ export const ProviderManagementTab: React.FC = () => {
                   <Plus className="h-3.5 w-3.5" />
                   {zh ? '新增接入' : 'New connection'}
                 </div>
-                <h3 id="add-provider-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-white">{zh ? '添加 AI Provider' : 'Add AI Provider'}</h3>
+                <h3 id="add-provider-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-white">{zh ? (editingId ? '编辑 AI Provider' : '添加 AI Provider') : (editingId ? 'Edit AI Provider' : 'Add AI Provider')}</h3>
                 <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{zh ? '填写连接信息，密钥只会以加密形式保存。' : 'Add connection details. The key is stored only in encrypted form.'}</p>
               </div>
-              <button type="button" onClick={() => setShowModal(false)} aria-label={zh ? '关闭' : 'Close'} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+              <button type="button" onClick={() => { setEditingId(null); setShowModal(false); }} aria-label={zh ? '关闭' : 'Close'} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -496,13 +552,22 @@ export const ProviderManagementTab: React.FC = () => {
 
                 <div>
                   <label className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? '供应商类型' : 'Provider type'}</label>
-                  <div className="flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50/70 px-3.5 py-2.5 dark:border-indigo-900/60 dark:bg-indigo-950/30">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white"><Bot className="h-4 w-4" /></span>
-                    <div>
-                      <p className="text-sm font-semibold text-indigo-950 dark:text-indigo-100">DeepSeek V1</p>
-                      <p className="text-[11px] text-indigo-900/60 dark:text-indigo-200/60">OpenAI-compatible API</p>
-                    </div>
-                  </div>
+                  <select value={providerType} onChange={(e) => {
+                    const next = e.target.value;
+                    setProviderType(next);
+                    if (next === 'deepseek') { setBaseUrl('https://api.deepseek.com'); setDefaultModelCode('deepseek-v4-flash'); }
+                    else if (next === 'openai' || next === 'azure_openai') { setBaseUrl('https://api.openai.com/v1'); setDefaultModelCode('gpt-4o'); }
+                    else if (next === 'ollama' || next === 'local') { setBaseUrl('http://127.0.0.1:11434/v1'); setDefaultModelCode('llama3.1'); }
+                    else { setBaseUrl(''); setDefaultModelCode(''); }
+                  }} className="w-full rounded-xl border border-indigo-200 bg-indigo-50/70 px-3.5 py-2.5 text-sm font-semibold text-indigo-950 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-100">
+                    <option value="deepseek">DeepSeek（官方适配器）</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="openai_compatible">OpenAI-compatible 自定义端点</option>
+                    <option value="azure_openai">Azure OpenAI</option>
+                    <option value="qwen">通义千问兼容端点</option>
+                    <option value="ollama">Ollama / 本地</option>
+                    <option value="local">Local OpenAI-compatible</option>
+                  </select>
                 </div>
 
                 <div>
@@ -515,7 +580,7 @@ export const ProviderManagementTab: React.FC = () => {
                     <label htmlFor="provider-api-key" className="block text-xs font-bold text-slate-700 dark:text-slate-300">API Key</label>
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"><LockKeyhole className="h-3 w-3" />AES-256-GCM</span>
                   </div>
-                  <input id="provider-api-key" type="password" required placeholder="sk-..." value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                  <input id="provider-api-key" type="password" required={providerType !== 'ollama' && providerType !== 'local'} placeholder={providerType === 'ollama' || providerType === 'local' ? (zh ? '本地端点可留空' : 'Optional for local endpoint') : 'sk-...'} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-[1fr_150px]">
@@ -532,10 +597,10 @@ export const ProviderManagementTab: React.FC = () => {
               </div>
 
               <div className="mt-6 flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 dark:border-slate-800 sm:flex-row sm:justify-end">
-                <button type="button" onClick={() => setShowModal(false)} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">{zh ? '取消' : 'Cancel'}</button>
+                <button type="button" onClick={() => { setEditingId(null); setShowModal(false); }} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">{zh ? '取消' : 'Cancel'}</button>
                 <button type="submit" disabled={submitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60">
                   {submitting && <RefreshCw className="h-4 w-4 animate-spin" />}
-                  {submitting ? (zh ? '保存中…' : 'Saving…') : (zh ? '确认添加' : 'Add Provider')}
+                  {submitting ? (zh ? '保存中…' : 'Saving…') : (editingId ? (zh ? '保存修改' : 'Save changes') : (zh ? '确认添加' : 'Add Provider'))}
                 </button>
               </div>
             </form>

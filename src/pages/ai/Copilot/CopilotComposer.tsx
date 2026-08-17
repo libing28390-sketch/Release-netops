@@ -6,6 +6,10 @@ export interface CopilotModelOption {
   name: string;
   model_code: string;
   provider_name: string;
+  model_type?: string;
+  context_length?: number;
+  health_status?: string;
+  stream_supported?: boolean;
 }
 
 interface CopilotComposerProps {
@@ -84,7 +88,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   ];
 
   const effectiveModels = models.length > 0 ? models : defaultModels;
-  const currentModelObj = effectiveModels.find((m) => m.model_code === selectedModel) || effectiveModels[0];
+  const currentModelObj = effectiveModels.find((m) => m.id === selectedModel) || effectiveModels[0];
 
   // Group models by provider
   const groupedModels = effectiveModels.reduce((acc, m) => {
@@ -96,7 +100,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
 
   const resetDefaults = () => {
     if (effectiveModels.length > 0 && onSelectModel) {
-      onSelectModel(effectiveModels[0].model_code);
+      onSelectModel(effectiveModels[0].id);
     }
     setReasoningLevel('high');
     setSpeedLevel('fast');
@@ -143,12 +147,12 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
                       {pName} 供应商
                     </div>
                     {mList.map((m) => {
-                      const isSelected = m.model_code === selectedModel;
+                      const isSelected = m.id === selectedModel;
                       return (
                         <button
-                          key={m.model_code}
+                          key={m.id}
                           onClick={() => {
-                            if (onSelectModel) onSelectModel(m.model_code);
+                            if (onSelectModel) onSelectModel(m.id);
                             setActiveSubPanel('main');
                           }}
                           className={`w-full px-3 py-2 rounded-xl text-left flex items-center justify-between transition cursor-pointer ${
@@ -157,7 +161,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
                               : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/60'
                           }`}
                         >
-                          <span className="truncate">{m.name}</span>
+                          <span className="min-w-0 truncate"><span>{m.name}</span><span className="ml-1 text-[10px] text-gray-400">{m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {m.health_status || 'unknown'}</span></span>
                           {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />}
                         </button>
                       );

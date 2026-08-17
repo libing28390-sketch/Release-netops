@@ -1,11 +1,22 @@
 import React from 'react';
 import { RotateCcw, SlidersHorizontal, ChevronDown, Sparkles, Bot, ShieldCheck } from 'lucide-react';
 
+interface CopilotModelOption {
+  id: string;
+  name: string;
+  model_code: string;
+  provider_name: string;
+  model_type?: string;
+  context_length?: number;
+  health_status?: string;
+  stream_supported?: boolean;
+}
+
 interface CopilotHeaderProps {
   sessionTitle: string;
   selectedModel: string;
   onSelectModel: (model: string) => void;
-  models?: Array<{ id: string; name: string; model_code: string; provider_name: string }>;
+  models?: CopilotModelOption[];
   onClearChat: () => void;
   onToggleInspector: () => void;
   isInspectorOpen: boolean;
@@ -20,7 +31,7 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
   onToggleInspector,
   isInspectorOpen,
 }) => {
-  const defaultModels = [
+  const defaultModels: CopilotModelOption[] = [
     { id: 'm0', name: 'DeepSeek V4 Flash (默认极速)', model_code: 'deepseek-v4-flash', provider_name: 'DeepSeek' },
     { id: 'm0pro', name: 'DeepSeek V4 Pro (专业旗舰)', model_code: 'deepseek-v4-pro', provider_name: 'DeepSeek' },
   ];
@@ -55,8 +66,8 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
             {Object.entries(groupedModels).map(([providerName, modelList]) => (
               <optgroup key={providerName} label={providerName}>
                 {modelList.map((m) => (
-                  <option key={m.model_code} value={m.model_code}>
-                    {m.name || m.model_code}
+                  <option key={m.id} value={m.id}>
+                    {m.name || m.model_code} · {m.model_type || 'chat'} · {m.context_length ? `${Math.round(m.context_length / 1000)}k` : 'ctx'} · {m.health_status || 'unknown'}
                   </option>
                 ))}
               </optgroup>

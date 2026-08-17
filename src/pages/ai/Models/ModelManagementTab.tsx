@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Cpu, Plus, RefreshCw, Trash2, GitBranch, Star } from 'lucide-react';
-import { getAIModels, createAIModel, deleteAIModel, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelRoute, AIProvider } from '../../../api/ai';
+import { Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power } from 'lucide-react';
+import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelRoute, AIProvider } from '../../../api/ai';
 
 export const ModelManagementTab: React.FC = () => {
   const [models, setModels] = useState<AIModel[]>([]);
@@ -14,6 +14,7 @@ export const ModelManagementTab: React.FC = () => {
   const [providerId, setProviderId] = useState('');
   const [modelCode, setModelCode] = useState('');
   const [isDefault, setIsDefault] = useState(false);
+  const [modelType, setModelType] = useState('chat');
 
   const fetchData = async () => {
     setLoading(true);
@@ -45,16 +46,36 @@ export const ModelManagementTab: React.FC = () => {
         name,
         provider_id: providerId,
         model_code: modelCode,
-        model_type: 'chat',
+        model_type: modelType,
         is_default: isDefault,
         enabled: true,
       });
       setShowModal(false);
       setName('');
       setModelCode('');
+      setModelType('chat');
       fetchData();
     } catch (err: any) {
       alert(err.message || '添加模型失败');
+    }
+  };
+
+  const handleToggle = async (model: AIModel) => {
+    try {
+      await updateAIModel(model.id, { enabled: !model.enabled });
+      await fetchData();
+    } catch (err: any) {
+      alert(err.message || '更新模型状态失败');
+    }
+  };
+
+  const handleSetDefault = async (model: AIModel) => {
+    try {
+      await updateAIModel(model.id, { is_default: true });
+      await setAIUserDefaultModel(model.id);
+      await fetchData();
+    } catch (err: any) {
+      alert(err.message || '设置默认模型失败');
     }
   };
 
@@ -127,7 +148,7 @@ export const ModelManagementTab: React.FC = () => {
                 <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 text-xs font-semibold">
                   <th className="py-3 px-4">模型名称</th>
                   <th className="py-3 px-4">Model Code</th>
-                  <th className="py-3 px-4">供应商 ID</th>
+                  <th className="py-3 px-4">Provider / 能力</th>
                   <th className="py-3 px-4">默认模型</th>
                   <th className="py-3 px-4">状态</th>
                   <th className="py-3 px-4 text-right">操作</th>
@@ -138,7 +159,17 @@ export const ModelManagementTab: React.FC = () => {
                   <tr key={m.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="py-3 px-4 font-semibold text-gray-900 dark:text-white">{m.name}</td>
                     <td className="py-3 px-4 font-mono text-xs text-indigo-600 dark:text-indigo-400">{m.model_code}</td>
-                    <td className="py-3 px-4 font-mono text-xs text-gray-400">{m.provider_id}</td>
+                    <td className="py-3 px-4">
+                      <div className="font-semibold text-gray-700 dark:text-gray-200">{providers.find((p) => p.id === m.provider_id)?.name || m.provider_id}</div>
+                      <div className="mt-1 flex flex-wrap gap-1 text-[10px]">
+                        <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">{m.model_type}</span>
+                        {m.stream_supported && <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">stream</span>}
+                        {m.thinking_supported && <span className="rounded bg-violet-50 px-1.5 py-0.5 text-violet-700 dark:bg-violet-950 dark:text-violet-300">thinking</span>}
+                        {m.tool_call_supported && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-sky-700 dark:bg-sky-950 dark:text-sky-300">tools</span>}
+                        {m.json_supported && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300">JSON</span>}
+                      </div>
+                      <div className="mt-1 text-[10px] text-gray-400">{(m.context_length || 0).toLocaleString()} ctx · {m.health_status || 'unknown'} · {m.last_latency_ms ?? '-'} ms · ${(m.cost_input_per_1k || 0).toFixed(4)}/1k in</div>
+                    </td>
                     <td className="py-3 px-4">
                       {m.is_default && (
                         <span className="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 rounded-full font-medium inline-flex items-center gap-1">
@@ -152,9 +183,11 @@ export const ModelManagementTab: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <button onClick={() => handleDelete(m.id)} className="text-gray-400 hover:text-red-600">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => void handleSetDefault(m)} title="设为当前用户默认" className="rounded p-1 text-gray-400 hover:text-amber-600"><Star className="w-4 h-4" /></button>
+                        <button onClick={() => void handleToggle(m)} title={m.enabled ? '禁用' : '启用'} className="rounded p-1 text-gray-400 hover:text-indigo-600"><Power className="w-4 h-4" /></button>
+                        <button onClick={() => handleDelete(m.id)} className="rounded p-1 text-gray-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -231,6 +264,16 @@ export const ModelManagementTab: React.FC = () => {
                   onChange={(e) => setModelCode(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-mono"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">模型用途</label>
+                <select value={modelType} onChange={(e) => setModelType(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white">
+                  <option value="chat">Chat 对话</option>
+                  <option value="reasoning">Reasoning 推理</option>
+                  <option value="embedding">Embedding 向量</option>
+                  <option value="rerank">Rerank 重排</option>
+                </select>
               </div>
 
               <div>

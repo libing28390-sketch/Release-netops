@@ -17,7 +17,7 @@ from ai.services.ip_troubleshooting import ip_troubleshooting_service
 from ai.services.mac_troubleshooting import mac_troubleshooting_service
 from ai.services.knowledge_service import knowledge_service
 from ai.services.knowledge_reindex_service import knowledge_reindex_service
-from ai.services.conversation_service import append_message, get_context
+from ai.services.conversation_service import append_message, get_context, set_conversation_model
 
 router = APIRouter(prefix="/assistant", tags=["AI Copilot & Knowledge"])
 
@@ -26,6 +26,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., description="User question or prompt")
     history: Optional[List[Dict[str, str]]] = None
     conversation_id: Optional[str] = None
+    model_id: Optional[str] = None
 
 
 class IPLocationRequest(BaseModel):
@@ -50,11 +51,21 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
     user_id = user.get("username", "user")
     tenant_id = user.get("tenant_id") or "tenant-default"
     history = req.history
+    requested_model_id = req.model_id
+    model_selection_source = "message_explicit_model" if req.model_id else None
     if req.conversation_id:
         try:
             context = get_context(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id)
             history = [{"role": item["role"], "content": item["content"]} for item in context["messages"]]
-            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=req.message)
+            if not requested_model_id and context.get("conversation", {}).get("selected_model_id"):
+                requested_model_id = context["conversation"]["selected_model_id"]
+                model_selection_source = "session_model"
+            if req.model_id:
+                try:
+                    set_conversation_model(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, model_id=req.model_id, locked=True)
+                except (RuntimeError, LookupError):
+                    pass
+            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=req.message, requested_model_id=requested_model_id)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="conversation not found") from exc
         except ValueError as exc:
@@ -67,10 +78,12 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
         tenant_id=tenant_id,
         roles=[str(user.get("role"))] if user.get("role") else [],
         site_ids=user.get("site_ids") or [],
+        model_id=requested_model_id,
+        model_selection_source=model_selection_source,
     )
     if req.conversation_id:
         try:
-            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content=result.get("answer", ""), citations=result.get("citations") or [])
+            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content=result.get("answer", ""), citations=result.get("citations") or [], requested_model_id=result.get("requested_model_id") or requested_model_id, actual_model_id=result.get("model_id"), provider_id=result.get("provider_id"), route_reason=result.get("route_reason"), fallback_used=bool(result.get("fallback_used")))
         except (LookupError, ValueError):
             # Do not discard a valid model answer when the safe-history write
             # rejects provider output or the client disconnects during cleanup.
@@ -84,11 +97,21 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
     user_id = user.get("username", "user")
     tenant_id = user.get("tenant_id") or "tenant-default"
     history = req.history
+    requested_model_id = req.model_id
+    model_selection_source = "message_explicit_model" if req.model_id else None
     if req.conversation_id:
         try:
             context = get_context(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id)
             history = [{"role": item["role"], "content": item["content"]} for item in context["messages"]]
-            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=req.message)
+            if not requested_model_id and context.get("conversation", {}).get("selected_model_id"):
+                requested_model_id = context["conversation"]["selected_model_id"]
+                model_selection_source = "session_model"
+            if req.model_id:
+                try:
+                    set_conversation_model(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, model_id=req.model_id, locked=True)
+                except (RuntimeError, LookupError):
+                    pass
+            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=req.message, requested_model_id=requested_model_id)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="conversation not found") from exc
         except ValueError as exc:
@@ -96,6 +119,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
 
     async def events():
         collected: list[str] = []
+        route_meta: dict[str, Any] = {}
         async for event in ai_assistant_service.chat_stream(
             req.message,
             history=history,
@@ -103,6 +127,8 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
             tenant_id=tenant_id,
             roles=[str(user.get("role"))] if user.get("role") else [],
             site_ids=user.get("site_ids") or [],
+            model_id=requested_model_id,
+            model_selection_source=model_selection_source,
         ):
             if req.conversation_id:
                 for line in event.splitlines():
@@ -114,10 +140,12 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                         continue
                     if isinstance(payload, dict) and payload.get("content"):
                         collected.append(str(payload["content"]))
+                    if isinstance(payload, dict) and payload.get("model_id"):
+                        route_meta.update(payload)
             yield event
         if req.conversation_id and collected:
             try:
-                append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content="".join(collected))
+                append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content="".join(collected), requested_model_id=route_meta.get("requested_model_id") or requested_model_id, actual_model_id=route_meta.get("model_id"), provider_id=route_meta.get("provider_id"), route_reason=route_meta.get("route_reason"), fallback_used=bool(route_meta.get("fallback_used")))
             except (LookupError, ValueError):
                 pass
 

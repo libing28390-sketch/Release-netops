@@ -134,6 +134,9 @@ async def _bg_init():
 async def lifespan(app: FastAPI):
     # ── startup ──
     logger.info(f"Starting up {settings.PROJECT_NAME} in {settings.ENVIRONMENT} mode...")
+    if settings.EXTERNAL_AI_ENABLED:
+        from ai.security.crypto import require_configured_master_key
+        require_configured_master_key()
 
     # Initialize Database once
     init_db()

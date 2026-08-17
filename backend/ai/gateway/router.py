@@ -36,7 +36,7 @@ class ModelRouter:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT model_id, fallback_model_id FROM ai_model_route WHERE scene = ? AND enabled = 1",
+                    "SELECT model_id, fallback_model_id FROM ai_model_route WHERE scene = ? AND enabled = 1 ORDER BY priority DESC, updated_at DESC LIMIT 1",
                     (scene,)
                 )
                 row = cursor.fetchone()
@@ -63,6 +63,26 @@ class ModelRouter:
             logger.warning(f"Error resolving model route for scene '{scene}': {exc}")
         
         return None, None
+
+    def resolve_route_with_reason(self, scene: str) -> tuple[Optional[str], Optional[str], str]:
+        """Resolve a route while preserving the precedence explanation."""
+        try:
+            with get_db_connection() as conn:
+                row = conn.execute(
+                    "SELECT model_id, fallback_model_id FROM ai_model_route WHERE scene = ? AND enabled = 1 ORDER BY priority DESC, updated_at DESC LIMIT 1",
+                    (scene,),
+                ).fetchone()
+                if row:
+                    return row[0], row[1], "scene_route"
+                row = conn.execute("SELECT id FROM ai_model WHERE is_default = 1 AND enabled = 1 ORDER BY priority DESC LIMIT 1").fetchone()
+                if row:
+                    return row[0], None, "system_default"
+                row = conn.execute("SELECT id FROM ai_model WHERE enabled = 1 ORDER BY priority DESC LIMIT 1").fetchone()
+                if row:
+                    return row[0], None, "system_default"
+        except Exception as exc:
+            logger.warning("Error resolving model route with reason for scene '%s': %s", scene, type(exc).__name__)
+        return None, None, "system_default"
 
 
 model_router = ModelRouter()

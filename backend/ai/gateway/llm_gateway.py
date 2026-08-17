@@ -18,14 +18,19 @@ from ai.security.gateway import AISecurityGateway, SecurityBlocked, ai_security_
 from ai.security.tokenization import opaque_user_id
 from ai.gateway.exceptions import (
     AIException,
+    AIBudgetExceededException,
+    AICircuitOpenException,
     AIModelNotFoundException,
     AINetworkException,
+    AIProviderUnsupportedException,
+    AIQuotaExceededException,
     AISecurityBlockedException,
 )
 from ai.gateway.router import model_router
+from ai.gateway.limits import ai_limits
+from core.config import settings
 from ai.providers.base import BaseLLMProvider
-from ai.providers.deepseek import DeepSeekProvider
-from ai.providers.openai_compatible import OpenAICompatibleProvider
+from ai.providers.registry import provider_adapter
 from ai.services.metrics import ai_metrics
 
 logger = logging.getLogger(__name__)
@@ -67,22 +72,44 @@ class LLMGateway:
             
             plain_api_key = decrypt_api_key(row[4])
             
-            p_type = p_data["provider_type"].lower()
-            if p_type == "deepseek":
-                return DeepSeekProvider(p_data, api_key=plain_api_key)
-            else:
-                return OpenAICompatibleProvider(p_data, api_key=plain_api_key)
+            try:
+                adapter = provider_adapter(str(p_data["provider_type"] or ""))
+            except ValueError as exc:
+                raise AIProviderUnsupportedException() from exc
+            return adapter(p_data, api_key=plain_api_key)
 
     def _get_model_details(self, model_id_or_code: str) -> Dict[str, Any]:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
-                "m.enabled, p.provider_type "
-                "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
-                "WHERE (m.id = ? OR m.model_code = ?) AND m.enabled = 1",
-                (model_id_or_code, model_id_or_code)
-            )
+            try:
+                cursor.execute(
+                    "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
+                    "m.enabled, p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, "
+                    "m.json_supported, m.stream_supported, p.allowed_data_classification, p.data_region, "
+                    "m.context_length, m.max_output_tokens, m.cost_input_per_1k, m.cost_output_per_1k "
+                    "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
+                    "WHERE (m.id = ? OR m.model_code = ?) AND m.enabled = 1 AND COALESCE(p.enabled, 0) = 1",
+                    (model_id_or_code, model_id_or_code)
+                )
+            except Exception:
+                # Legacy installations are allowed to read the old shape, but
+                # production PostgreSQL runs m0139 and uses the extended row.
+                # PostgreSQL marks the transaction failed after an undefined
+                # column error, so clear that state before the compatibility
+                # query rather than masking the original fallback path.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
+                    "m.enabled, p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, "
+                    "m.json_supported, 1, 'PUBLIC', 'unknown', 32768, 4096, 0, 0 "
+                    "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
+                    "WHERE (m.id = ? OR m.model_code = ?) AND m.enabled = 1",
+                    (model_id_or_code, model_id_or_code)
+                )
             row = cursor.fetchone()
             if row:
                 return {
@@ -92,15 +119,35 @@ class LLMGateway:
                     "default_temperature": row[3],
                     "default_max_tokens": row[4],
                     "provider_type": row[6] or "",
+                    "model_type": row[7] or "chat",
+                    "thinking_supported": bool(row[8]),
+                    "tool_call_supported": bool(row[9]),
+                    "json_supported": bool(row[10]),
+                    "stream_supported": bool(row[11] if row[11] is not None else True),
+                    "allowed_data_classification": row[12] or "PUBLIC",
+                    "data_region": row[13] or "unknown",
+                    "context_length": int(row[14] or 32768),
+                    "max_output_tokens": int(row[15] or 4096),
+                    "cost_input_per_1k": float(row[16] or 0),
+                    "cost_output_per_1k": float(row[17] or 0),
                 }
             
             # If not found by ID or code, try any active default model
-            cursor.execute(
-                "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
-                "p.provider_type "
-                "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
-                "WHERE m.enabled = 1 ORDER BY m.is_default DESC, m.priority DESC LIMIT 1"
-            )
+            try:
+                cursor.execute(
+                    "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
+                    "p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, m.json_supported, m.stream_supported, "
+                    "p.allowed_data_classification, p.data_region, m.context_length, m.max_output_tokens, m.cost_input_per_1k, m.cost_output_per_1k "
+                    "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
+                    "WHERE m.enabled = 1 AND COALESCE(p.enabled, 0) = 1 ORDER BY m.is_default DESC, m.priority DESC LIMIT 1"
+                )
+            except Exception:
+                cursor.execute(
+                    "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
+                    "p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, m.json_supported, 1, 'PUBLIC', 'unknown', 32768, 4096, 0, 0 "
+                    "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
+                    "WHERE m.enabled = 1 ORDER BY m.is_default DESC, m.priority DESC LIMIT 1"
+                )
             def_row = cursor.fetchone()
             if def_row:
                 return {
@@ -110,9 +157,92 @@ class LLMGateway:
                     "default_temperature": def_row[3],
                     "default_max_tokens": def_row[4],
                     "provider_type": def_row[5] or "",
+                    "model_type": def_row[6] or "chat",
+                    "thinking_supported": bool(def_row[7]),
+                    "tool_call_supported": bool(def_row[8]),
+                    "json_supported": bool(def_row[9]),
+                    "stream_supported": bool(def_row[10] if def_row[10] is not None else True),
+                    "allowed_data_classification": def_row[11] or "PUBLIC",
+                    "data_region": def_row[12] or "unknown",
+                    "context_length": int(def_row[13] or 32768),
+                    "max_output_tokens": int(def_row[14] or 4096),
+                    "cost_input_per_1k": float(def_row[15] or 0),
+                    "cost_output_per_1k": float(def_row[16] or 0),
                 }
         
         raise AIModelNotFoundException("No active AI model configured in database.")
+
+    def _authorize_model(self, model_info: Dict[str, Any], *, tenant_id: str, user_id: Optional[str], roles: Optional[List[str]]) -> None:
+        """Enforce model visibility without leaking ACL or provider details."""
+        try:
+            with get_db_connection() as conn:
+                rows = conn.execute(
+                    "SELECT subject_type, subject_id, allow_access FROM ai_model_acl WHERE model_id = ? AND tenant_id = ?",
+                    (model_info["id"], tenant_id),
+                ).fetchall()
+        except Exception:
+            # V1 installations before m0139 have no ACL table; preserve their
+            # existing visibility behavior until the migration is applied.
+            rows = []
+        if not rows:
+            return
+        subjects = {("user", str(user_id or "")), ("tenant", str(tenant_id))}
+        subjects.update(("role", str(role)) for role in (roles or []))
+        matching = [row for row in rows if (str(row[0]), str(row[1])) in subjects]
+        if not matching or not any(bool(row[2]) for row in matching):
+            raise AIModelNotFoundException("Requested AI model is not available for this user")
+
+    def _get_user_default_model(self, *, tenant_id: str, user_id: Optional[str], roles: Optional[List[str]]) -> Optional[str]:
+        if not user_id:
+            return None
+        try:
+            opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id="model-preference")
+            with get_db_connection() as conn:
+                row = conn.execute("SELECT p.model_id FROM ai_user_model_preference p JOIN ai_model m ON m.id = p.model_id JOIN ai_provider v ON v.id = m.provider_id WHERE p.tenant_id = ? AND p.user_id_opaque = ? AND p.enabled = 1 AND m.enabled = 1 AND v.enabled = 1", (tenant_id, opaque)).fetchone()
+            return str(row[0]) if row else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _apply_model_capabilities(model_info: Dict[str, Any], *, tools, response_format, thinking, reasoning_effort):
+        if model_info.get("model_type") in {"embedding", "rerank"}:
+            raise AIModelNotFoundException("Selected model is not a chat-capable model")
+        return (
+            tools if model_info.get("tool_call_supported", True) else None,
+            response_format if model_info.get("json_supported", True) else None,
+            bool(thinking and model_info.get("thinking_supported", False)),
+            reasoning_effort if model_info.get("thinking_supported", False) else None,
+        )
+
+    @staticmethod
+    def _classification_rank(value: str | None) -> int:
+        return {"PUBLIC": 1, "INTERNAL": 2, "CONFIDENTIAL": 3}.get(str(value or "PUBLIC").upper(), 0)
+
+    def _fallback_is_compatible(self, primary: Dict[str, Any], fallback: Dict[str, Any]) -> bool:
+        """A fallback may not downgrade the data classification boundary."""
+        if fallback.get("model_type") in {"embedding", "rerank"}:
+            return False
+        if not fallback.get("stream_supported", True) and primary.get("stream_required"):
+            return False
+        return self._classification_rank(fallback.get("allowed_data_classification")) >= self._classification_rank(primary.get("allowed_data_classification"))
+
+    def _budget_exceeded(self, *, provider_id: str, model_id: str) -> bool:
+        budget = float(getattr(settings, "AI_DAILY_BUDGET_USD", 0) or 0)
+        if budget <= 0:
+            return False
+        today = datetime.now(timezone.utc).date().isoformat()
+        try:
+            with get_db_connection() as conn:
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(estimated_cost), 0) FROM ai_usage_daily WHERE date = ? AND provider_id = ? AND model_id = ?",
+                    (today, provider_id, model_id),
+                ).fetchone()
+            return float(row[0] or 0) >= budget if row else False
+        except Exception:
+            # Budget enforcement must fail closed only when a budget is
+            # explicitly configured; an unavailable legacy usage table is not
+            # allowed to block an otherwise healthy V1 deployment by default.
+            return bool(budget > 0 and getattr(settings, "AI_BUDGET_FAIL_CLOSED", False))
 
     def _log_request(
         self,
@@ -131,6 +261,19 @@ class LLMGateway:
         error_message: Optional[str] = None,
     ) -> None:
         ai_metrics.request_finished(scene, status=status, latency_ms=latency_ms)
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            with get_db_connection() as health_conn:
+                if provider_id:
+                    health_conn.execute(
+                        "UPDATE ai_provider SET health_status = ?, last_success_at = CASE WHEN ? = 'healthy' THEN ? ELSE last_success_at END, last_error_code = CASE WHEN ? = 'healthy' THEN NULL ELSE ? END, last_health_check_at = ?, last_error_at = CASE WHEN ? = 'healthy' THEN last_error_at ELSE ? END WHERE id = ?",
+                        ("healthy" if status == "success" else "unhealthy", status, now, status, error_code, now, status, now, provider_id),
+                    )
+                if model_id:
+                    health_conn.execute("UPDATE ai_model SET health_status = ?, last_latency_ms = ?, last_success_at = CASE WHEN ? = 'healthy' THEN ? ELSE last_success_at END, last_error_code = CASE WHEN ? = 'healthy' THEN NULL ELSE ? END WHERE id = ?", ("healthy" if status == "success" else "unhealthy", max(0, int(latency_ms or 0)), status, now, status, error_code, model_id))
+                health_conn.commit()
+        except Exception:
+            logger.debug("Failed to update provider/model health", exc_info=True)
         try:
             now_iso = datetime.now(timezone.utc).isoformat()
             with get_db_connection() as conn:
@@ -152,6 +295,41 @@ class LLMGateway:
                 conn.commit()
         except Exception as exc:
             logger.warning(f"Failed to save AI request audit log: {exc}")
+        # Keep the durable daily cost/usage read model separate from the
+        # request audit row.  It contains counters only; never prompt text or
+        # provider response bodies.
+        if provider_id and model_id:
+            try:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                date_key = datetime.now(timezone.utc).date().isoformat()
+                with get_db_connection() as usage_conn:
+                    price = usage_conn.execute(
+                        "SELECT cost_input_per_1k, cost_output_per_1k FROM ai_model WHERE id = ?",
+                        (model_id,),
+                    ).fetchone()
+                    input_rate = float(price[0] or 0) if price else 0.0
+                    output_rate = float(price[1] or 0) if price else 0.0
+                    cost = (max(0, int(input_tokens or 0)) / 1000.0) * input_rate + (max(0, int(output_tokens or 0)) / 1000.0) * output_rate
+                    row = usage_conn.execute(
+                        "SELECT id, requests, input_tokens, output_tokens, estimated_cost, success_count, error_count, avg_latency FROM ai_usage_daily WHERE date = ? AND provider_id = ? AND model_id = ? AND scene = ?",
+                        (date_key, provider_id, model_id, scene),
+                    ).fetchone()
+                    if row:
+                        requests = int(row[1] or 0) + 1
+                        successes = int(row[5] or 0) + (1 if status == "success" else 0)
+                        errors = int(row[6] or 0) + (0 if status == "success" else 1)
+                        usage_conn.execute(
+                            "UPDATE ai_usage_daily SET requests = ?, input_tokens = ?, output_tokens = ?, estimated_cost = ?, success_count = ?, error_count = ?, avg_latency = ?, created_at = ? WHERE id = ?",
+                            (requests, int(row[2] or 0) + max(0, int(input_tokens or 0)), int(row[3] or 0) + max(0, int(output_tokens or 0)), float(row[4] or 0) + cost, successes, errors, (float(row[7] or 0) * (requests - 1) + max(0, int(latency_ms or 0))) / requests, now_iso, row[0]),
+                        )
+                    else:
+                        usage_conn.execute(
+                            "INSERT INTO ai_usage_daily (id, date, provider_id, model_id, scene, requests, input_tokens, output_tokens, estimated_cost, success_count, error_count, avg_latency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (f"usage_{uuid.uuid4().hex[:16]}", date_key, provider_id, model_id, scene, 1, max(0, int(input_tokens or 0)), max(0, int(output_tokens or 0)), cost, 1 if status == "success" else 0, 0 if status == "success" else 1, max(0, int(latency_ms or 0)), now_iso),
+                        )
+                    usage_conn.commit()
+            except Exception:
+                logger.debug("Failed to update AI daily usage counters", exc_info=True)
 
     def _log_security_audit(
         self,
@@ -208,6 +386,8 @@ class LLMGateway:
         prompt_version: Optional[int] = None,
         user_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+        selection_source: Optional[str] = None,
         task_id: Optional[str] = None,
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
@@ -255,19 +435,33 @@ class LLMGateway:
         # security gateway is the only component allowed to transform model
         # input; `sanitize_inputs=False` is retained for API compatibility but
         # can no longer bypass policy.
+        requested_model_id = model_id
+        route_reason = selection_source or ("message_explicit_model" if model_id else "scene_route_or_system_default")
         target_model_id = model_id
         fallback_model_id = None
         if not target_model_id:
-            target_model_id, fallback_model_id = model_router.resolve_route(scene)
+            user_default = self._get_user_default_model(tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
+            if user_default:
+                target_model_id = user_default
+                route_reason = "user_default_model"
+            else:
+                target_model_id, fallback_model_id, route_reason = model_router.resolve_route_with_reason(scene)
 
         target_info = self._get_model_details(target_model_id)
+        self._authorize_model(target_info, tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
+        tools, response_format, thinking, reasoning_effort = self._apply_model_capabilities(
+            target_info, tools=tools, response_format=response_format, thinking=thinking, reasoning_effort=reasoning_effort
+        )
         if fallback_model_id:
             try:
                 fallback_info = self._get_model_details(fallback_model_id)
+                self._authorize_model(fallback_info, tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
                 allowed_types = {item.lower() for item in self.security_gateway.policy.allowed_provider_types}
                 if str(fallback_info.get("provider_type") or "").lower() not in allowed_types:
                     # A route fallback is still an external egress. Never let
                     # it bypass the same provider allowlist as the primary.
+                    fallback_model_id = None
+                elif not self._fallback_is_compatible(target_info, fallback_info):
                     fallback_model_id = None
             except AIException:
                 fallback_model_id = None
@@ -340,7 +534,17 @@ class LLMGateway:
         # Helper to execute call on candidate model
         async def _attempt_call(m_id: str) -> Dict[str, Any]:
             model_info = self._get_model_details(m_id)
+            self._authorize_model(model_info, tenant_id=tenant, user_id=user_id, roles=roles)
+            if self._budget_exceeded(provider_id=model_info["provider_id"], model_id=model_info["id"]):
+                raise AIBudgetExceededException()
             provider_inst = self._get_provider_instance(model_info["provider_id"])
+            call_tools, call_response_format, call_thinking, call_reasoning = self._apply_model_capabilities(
+                model_info,
+                tools=processed_tools,
+                response_format=secure_payload.provider_options.get("response_format"),
+                thinking=bool(secure_payload.provider_options.get("thinking")),
+                reasoning_effort=secure_payload.provider_options.get("reasoning_effort"),
+            )
             
             used_temp = temperature if temperature is not None else model_info["default_temperature"]
             used_tokens = max_tokens if max_tokens is not None else model_info["default_max_tokens"]
@@ -351,28 +555,34 @@ class LLMGateway:
             
             for attempt in range(max_retries + 1):
                 try:
-                    res = await provider_inst.chat(
-                        processed_messages,
-                        model=model_info["model_code"],
-                        temperature=used_temp,
-                        max_tokens=used_tokens,
-                        tools=processed_tools,
-                        response_format=secure_payload.provider_options.get("response_format"),
-                        thinking=bool(secure_payload.provider_options.get("thinking")),
-                        reasoning_effort=secure_payload.provider_options.get("reasoning_effort"),
-                        user_id=provider_user_id,
-                    )
+                    async with ai_limits.slot(provider_id=model_info["provider_id"], tenant_id=tenant, user_id=user_id):
+                        res = await provider_inst.chat(
+                            processed_messages,
+                            model=model_info["model_code"],
+                            temperature=used_temp,
+                            max_tokens=used_tokens,
+                            tools=call_tools,
+                            response_format=call_response_format,
+                            thinking=call_thinking,
+                            reasoning_effort=call_reasoning,
+                            user_id=provider_user_id,
+                        )
+                    ai_limits.record_success(model_info["provider_id"])
                     res["provider_id"] = model_info["provider_id"]
                     res["model_id"] = model_info["id"]
                     return res
                 except AIException as exc:
                     last_err = exc
+                    if isinstance(exc, (AICircuitOpenException, AIQuotaExceededException, AIBudgetExceededException)):
+                        break
+                    ai_limits.record_failure(model_info["provider_id"])
                     if attempt < max_retries:
                         await asyncio.sleep(0.5 * (2 ** attempt))
                 except Exception as exc:
                     # Provider exceptions may contain response bodies or input
                     # fragments. Keep them out of the persisted/public error.
                     last_err = AINetworkException("Unexpected provider error")
+                    ai_limits.record_failure(model_info["provider_id"])
                     if attempt < max_retries:
                         await asyncio.sleep(0.5 * (2 ** attempt))
             
@@ -398,6 +608,9 @@ class LLMGateway:
                 status="success"
             )
             result["request_id"] = request_id
+            result["requested_model_id"] = requested_model_id
+            result["route_reason"] = route_reason
+            result["fallback_used"] = False
             if result.get("content"):
                 result["content"] = self.security_gateway.resolve_output(
                     result["content"], tenant_id=tenant, task_id=task
@@ -436,6 +649,9 @@ class LLMGateway:
                         status="success"
                     )
                     result["request_id"] = request_id
+                    result["requested_model_id"] = requested_model_id
+                    result["route_reason"] = "scene_route_fallback"
+                    result["fallback_used"] = True
                     if result.get("content"):
                         result["content"] = self.security_gateway.resolve_output(
                             result["content"], tenant_id=tenant, task_id=task
@@ -489,6 +705,9 @@ class LLMGateway:
         response_format: Optional[Dict[str, Any]] = None,
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+        selection_source: Optional[str] = None,
+        route_meta: Optional[Dict[str, Any]] = None,
     ):
         request_id = self._generate_request_id()
         start_time = time.perf_counter()
@@ -514,12 +733,37 @@ class LLMGateway:
             )
             raise blocked
 
+        requested_model_id = model_id
+        fallback_model_id = None
+        route_reason = selection_source or ("message_explicit_model" if model_id else "scene_route_or_system_default")
         target_model_id = model_id
         if not target_model_id:
-            primary_id, _ = model_router.resolve_route(scene)
-            target_model_id = primary_id
+            tenant_for_pref = tenant_id or "tenant-default"
+            user_default = self._get_user_default_model(tenant_id=tenant_for_pref, user_id=user_id, roles=roles)
+            if user_default:
+                target_model_id = user_default
+                route_reason = "user_default_model"
+            else:
+                primary_id, fallback_model_id, route_reason = model_router.resolve_route_with_reason(scene)
+                target_model_id = primary_id
 
         model_info = self._get_model_details(target_model_id)
+        self._authorize_model(model_info, tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
+        if fallback_model_id:
+            try:
+                fallback_info = self._get_model_details(fallback_model_id)
+                self._authorize_model(fallback_info, tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
+                if not self._fallback_is_compatible(model_info, fallback_info):
+                    fallback_model_id = None
+            except AIException:
+                fallback_model_id = None
+
+        if route_meta is not None:
+            route_meta.update({"requested_model_id": requested_model_id, "model_id": model_info.get("id"), "provider_id": model_info.get("provider_id"), "route_reason": route_reason, "fallback_used": False, "request_id": request_id})
+
+        tools, response_format, thinking, reasoning_effort = self._apply_model_capabilities(
+            model_info, tools=tools, response_format=response_format, thinking=thinking, reasoning_effort=reasoning_effort
+        )
         
         used_temp = temperature if temperature is not None else model_info.get("default_temperature", 0.7)
         used_tokens = max_tokens if max_tokens is not None else model_info.get("default_max_tokens", 2048)
@@ -589,37 +833,55 @@ class LLMGateway:
             status="prepared",
         )
 
+        async def _stream_candidate(candidate_info: Dict[str, Any]):
+            if self._budget_exceeded(provider_id=candidate_info["provider_id"], model_id=candidate_info["id"]):
+                raise AIBudgetExceededException()
+            provider_inst = self._get_provider_instance(candidate_info["provider_id"])
+            call_tools, call_response_format, call_thinking, call_reasoning = self._apply_model_capabilities(
+                candidate_info,
+                tools=secure_payload.tools,
+                response_format=secure_payload.provider_options.get("response_format"),
+                thinking=bool(secure_payload.provider_options.get("thinking")),
+                reasoning_effort=secure_payload.provider_options.get("reasoning_effort"),
+            )
+            try:
+                async with ai_limits.slot(provider_id=candidate_info["provider_id"], tenant_id=tenant, user_id=user_id):
+                    if hasattr(provider_inst, "chat_stream"):
+                        async for chunk in provider_inst.chat_stream(
+                            processed_messages,
+                            model=candidate_info["model_code"],
+                            temperature=used_temp,
+                            max_tokens=used_tokens,
+                            tools=call_tools,
+                            response_format=call_response_format,
+                            thinking=call_thinking,
+                            reasoning_effort=call_reasoning,
+                            user_id=secure_payload.user_id,
+                        ):
+                            yield chunk
+                    else:
+                        result = await provider_inst.chat(
+                            processed_messages,
+                            model=candidate_info["model_code"],
+                            temperature=used_temp,
+                            max_tokens=used_tokens,
+                            tools=call_tools,
+                            response_format=call_response_format,
+                            thinking=call_thinking,
+                            reasoning_effort=call_reasoning,
+                            user_id=secure_payload.user_id,
+                        )
+                        if result.get("content"):
+                            yield str(result["content"])
+                ai_limits.record_success(candidate_info["provider_id"])
+            except Exception:
+                ai_limits.record_failure(candidate_info["provider_id"])
+                raise
+
         try:
-            provider_inst = self._get_provider_instance(model_info["provider_id"])
-            if hasattr(provider_inst, "chat_stream"):
-                async for chunk in provider_inst.chat_stream(
-                    processed_messages,
-                    model=model_info["model_code"],
-                    temperature=used_temp,
-                    max_tokens=used_tokens,
-                    tools=secure_payload.tools,
-                    response_format=secure_payload.provider_options.get("response_format"),
-                    thinking=bool(secure_payload.provider_options.get("thinking")),
-                    reasoning_effort=secure_payload.provider_options.get("reasoning_effort"),
-                    user_id=secure_payload.user_id,
-                ):
-                    full_content.append(chunk)
-                    yield self.security_gateway.resolve_output(chunk, tenant_id=tenant, task_id=task)
-            else:
-                res = await provider_inst.chat(
-                    processed_messages,
-                    model=model_info["model_code"],
-                    temperature=used_temp,
-                    max_tokens=used_tokens,
-                    tools=secure_payload.tools,
-                    response_format=secure_payload.provider_options.get("response_format"),
-                    thinking=bool(secure_payload.provider_options.get("thinking")),
-                    reasoning_effort=secure_payload.provider_options.get("reasoning_effort"),
-                    user_id=secure_payload.user_id,
-                )
-                txt = res.get("content", "")
-                full_content.append(txt)
-                yield self.security_gateway.resolve_output(txt, tenant_id=tenant, task_id=task)
+            async for chunk in _stream_candidate(model_info):
+                full_content.append(chunk)
+                yield self.security_gateway.resolve_output(chunk, tenant_id=tenant, task_id=task)
 
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             combined_txt = "".join(full_content)
@@ -639,7 +901,25 @@ class LLMGateway:
                 latency_ms=latency_ms,
                 status="success"
             )
+            if route_meta is not None:
+                route_meta.update({"model_id": model_info["id"], "provider_id": model_info["provider_id"], "fallback_used": False})
         except Exception as exc:
+            if fallback_model_id and not full_content:
+                try:
+                    fallback_info = self._get_model_details(fallback_model_id)
+                    self._authorize_model(fallback_info, tenant_id=tenant, user_id=user_id, roles=roles)
+                    if not self._fallback_is_compatible(model_info, fallback_info):
+                        raise AIModelNotFoundException("Fallback model is not compatible with the selected data policy")
+                    async for chunk in _stream_candidate(fallback_info):
+                        full_content.append(chunk)
+                        yield self.security_gateway.resolve_output(chunk, tenant_id=tenant, task_id=task)
+                    if route_meta is not None:
+                        route_meta.update({"model_id": fallback_info["id"], "provider_id": fallback_info["provider_id"], "route_reason": "scene_route_fallback", "fallback_used": True})
+                    latency_ms = int((time.perf_counter() - start_time) * 1000)
+                    self._log_request(request_id=request_id, user_id=secure_payload.user_id, scene=scene, provider_id=fallback_info["provider_id"], model_id=fallback_info["id"], prompt_id=None, prompt_version=None, input_tokens=max(1, sum(len(m.get("content", "")) for m in messages) // 3), output_tokens=max(1, len("".join(full_content)) // 3), latency_ms=latency_ms, status="success")
+                    return
+                except Exception:
+                    logger.warning("LLM stream fallback failed", exc_info=True)
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             self._log_request(
                 request_id=request_id,

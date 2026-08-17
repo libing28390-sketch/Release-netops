@@ -1,8 +1,8 @@
-"""Offline, deterministic V1 baseline for the current local RAG retrieval path.
+"""Historical compatibility runner for the V1 retrieval baseline.
 
-The harness uses an in-memory SQLite fixture and the real RAGRetriever. It never
-opens a provider/network connection and is intentionally kept outside runtime
-code so future V2 work can rerun the same gold cases.
+Project acceptance no longer uses this SQLite fixture.  Use
+``scripts/knowledge_engine_v2_v1_baseline_pg.py`` for the authoritative
+PostgreSQL temporary-table/transaction baseline.
 """
 
 from __future__ import annotations

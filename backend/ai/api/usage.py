@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from database.core import get_db_connection
 from ai.security.permissions import require_ai_permission
 from ai.services.metrics import ai_metrics
+from core.config import settings
 
 router = APIRouter(tags=["AI Audit & Usage"])
 
@@ -84,13 +85,34 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
         )
         scene_breakdown = {r[0]: r[1] for r in cursor.fetchall()}
 
+        estimated_cost = 0.0
+        provider_breakdown: dict[str, dict[str, Any]] = {}
+        try:
+            cursor.execute("SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost), AVG(avg_latency) FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC")
+            for item in cursor.fetchall():
+                cost = float(item[5] or 0)
+                estimated_cost += cost
+                provider_breakdown[f"{item[0]}:{item[1]}"] = {
+                    "requests": int(item[2] or 0), "input_tokens": int(item[3] or 0),
+                    "output_tokens": int(item[4] or 0), "estimated_cost_usd": round(cost, 6),
+                    "avg_latency_ms": round(float(item[6] or 0), 2),
+                }
+        except Exception:
+            pass
+        budget = float(getattr(settings, "AI_DAILY_BUDGET_USD", 0) or 0)
+
         return {
             "total_requests": total_requests,
             "total_input_tokens": total_input_tokens,
             "total_output_tokens": total_output_tokens,
             "total_tokens": total_input_tokens + total_output_tokens,
             "avg_latency_ms": round(avg_latency_ms, 2),
-            "scene_breakdown": scene_breakdown
+            "scene_breakdown": scene_breakdown,
+            "estimated_cost_usd": round(estimated_cost, 6),
+            "budget_usd": budget,
+            "budget_percent": round((estimated_cost / budget) * 100, 2) if budget > 0 else 0,
+            "budget_alert": bool(budget > 0 and estimated_cost >= budget * 0.8),
+            "provider_breakdown": provider_breakdown,
         }
 
 

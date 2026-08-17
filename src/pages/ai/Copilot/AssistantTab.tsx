@@ -188,7 +188,7 @@ const AssistantProcessPanel: React.FC<{
 export const AssistantTab: React.FC = () => {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState('');
-  const [selectedModel, setSelectedModel] = useState('deepseek-v4-flash');
+  const [selectedModel, setSelectedModel] = useState('');
   const [availableModels, setAvailableModels] = useState<CopilotModelOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [sessionLoadingId, setSessionLoadingId] = useState<string | null>(null);
@@ -220,6 +220,9 @@ export const AssistantTab: React.FC = () => {
     setSessionLoadingId(sessionId);
     try {
       const context = await getAIConversation(sessionId);
+      if (context.conversation.selected_model_id) {
+        setSelectedModel(context.conversation.selected_model_id);
+      }
       const remoteMessages = context.messages
         .filter((message) => message.role === 'user' || message.role === 'assistant')
         .map(mapConversationMessage);
@@ -255,12 +258,16 @@ export const AssistantTab: React.FC = () => {
             name: m.name,
             model_code: m.model_code,
             provider_name: enabledProviderMap.get(m.provider_id) || 'AI 供应商',
+            model_type: m.model_type,
+            context_length: m.context_length,
+            health_status: m.health_status,
+            stream_supported: m.stream_supported,
           }));
 
         if (validModels.length > 0) {
           setAvailableModels(validModels);
-          if (!validModels.some((m) => m.model_code === selectedModel)) {
-            setSelectedModel(validModels[0].model_code);
+          if (!validModels.some((m) => m.id === selectedModel)) {
+            setSelectedModel(validModels[0].id);
           }
         }
       } catch (err) {
@@ -620,7 +627,8 @@ export const AssistantTab: React.FC = () => {
             })
           );
         },
-        conversationId
+        conversationId,
+        selectedModel,
       );
 
       const elapsed = streamDurationMs ?? Date.now() - startTime;

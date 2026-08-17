@@ -11,13 +11,15 @@ policy:
     - migration and retrieval probes use a transaction or session-local temporary fixtures and finish with rollback
     - a skipped PostgreSQL probe is not a pass and cannot advance a RET task
   sqlite:
-    role: compatibility_only
+    role: excluded_from_project_acceptance
+    project_policy: PostgreSQL_is_the_only_database_used_by_Nexora_Knowledge_Engine_V2
     allowed_for:
-      - parser and pure-function unit tests
-      - legacy adapter syntax checks where no PostgreSQL behavior is under test
+      - none_for_RET_acceptance
     forbidden_as:
+      - any_database_or_migration_evidence
       - evidence for pg_trgm, PostgreSQL FTS, pgvector, JSONB containment, HNSW/GiST/GiN behavior, tenant SQL plans, or RET milestone gates
       - a substitute for an unavailable PostgreSQL run
+    note: Existing SQLite compatibility tests are retained only as non-gating legacy checks and must not be reported as RET verification.
   environment_failure: mark the affected task BLOCKED with the missing DATABASE_URL/extension/permission and continue only with independent non-DB work
 required_probes:
   - name: ret_pg_migration_probe
@@ -30,7 +32,7 @@ required_probes:
     command: .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_ret_pg_probe.py --explain
     checks: [required_index, no_unbounded_scan, bounded_top_k, plan_recorded]
   - name: ret_v1_baseline
-    command: .venv\\Scripts\\python.exe docs/knowledge-engine-v2/eval/run_v1_baseline.py
+    command: .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_v1_baseline_pg.py
     checks: [retrieval_accuracy, wrong_vendor_rate, version_conflict_rate, citation_accuracy, citation_recall, latency]
 task_gate:
   RET-008: [pg_trgm_extension, trgm_index, configurable_threshold, threshold_boundary, tenant_and_status_sql, pg_probe]

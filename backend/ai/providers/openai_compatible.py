@@ -12,7 +12,9 @@ import httpx
 
 from ai.gateway.exceptions import (
     AIAuthFailedException,
+    AIInvalidRequestException,
     AIInvalidResponseException,
+    AIModelNotFoundException,
     AINetworkException,
     AIRateLimitException,
     AIProviderTimeoutException,
@@ -94,6 +96,14 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 response = await client.post(url, headers=self._get_headers(), json=payload)
                 if response.status_code == 401:
                     raise AIAuthFailedException("AI provider authentication failed")
+                if response.status_code == 403:
+                    raise AIAuthFailedException("AI provider authorization failed")
+                if response.status_code == 404:
+                    raise AIModelNotFoundException("AI provider model or endpoint was not found")
+                if response.status_code in {400, 422}:
+                    raise AIInvalidRequestException("AI provider rejected the request parameters")
+                if response.status_code in {408, 504}:
+                    raise AIProviderTimeoutException("AI provider request timed out")
                 if response.status_code == 429:
                     raise AIRateLimitException("AI provider rate limit exceeded")
                 if 300 <= response.status_code < 400:
@@ -123,7 +133,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 }
         except httpx.TimeoutException as exc:
             raise AIProviderTimeoutException("AI provider request timed out") from exc
-        except (AIAuthFailedException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIProviderTimeoutException):
+        except (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIProviderTimeoutException):
             raise
         except Exception as exc:
             raise AINetworkException("Network error calling AI provider") from exc
@@ -172,6 +182,16 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 async with client.stream("POST", url, headers=self._get_headers(), json=payload) as response:
                     if 300 <= response.status_code < 400:
                         raise AINetworkException("AI provider redirect refused")
+                    if response.status_code == 401 or response.status_code == 403:
+                        raise AIAuthFailedException("AI provider authorization failed")
+                    if response.status_code == 404:
+                        raise AIModelNotFoundException("AI provider model or endpoint was not found")
+                    if response.status_code in {400, 422}:
+                        raise AIInvalidRequestException("AI provider rejected the request parameters")
+                    if response.status_code in {408, 504}:
+                        raise AIProviderTimeoutException("AI provider stream timed out")
+                    if response.status_code == 429:
+                        raise AIRateLimitException("AI provider rate limit exceeded")
                     if response.status_code >= 400:
                         await response.aread()
                         raise AINetworkException(f"AI provider returned HTTP {response.status_code}")
@@ -192,7 +212,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                             content = delta.get("content")
                             if content:
                                 yield str(content)
-        except (AIAuthFailedException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIProviderTimeoutException):
+        except (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException, AIRateLimitException, AINetworkException, AIInvalidResponseException, AIProviderTimeoutException):
             raise
         except httpx.TimeoutException as exc:
             raise AIProviderTimeoutException("AI provider stream timed out") from exc

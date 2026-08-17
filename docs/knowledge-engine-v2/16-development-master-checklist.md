@@ -311,49 +311,49 @@
 
 ### 11.1 数据与供应商管理
 
-- [ ] `LLM-001` `P0/ARCH+BE/S`：确认一个 Provider Type 可创建多个 Provider Instance，例如两个 OpenAI-compatible Endpoint。
-- [ ] `LLM-002` `P0/DBA+BE/M`：补齐 Provider 唯一名称、类型、Base URL、代理、超时、重试、启用状态、健康状态和标签字段。
-- [ ] `LLM-003` `P0/BE+SEC/M`：实现 API Key 加密保存、掩码返回、更新不回显和主密钥缺失拒绝启动。
-- [ ] `LLM-004` `P0/SEC+OPS/M`：实现 API Key 轮换、失效、审计和恢复流程。
-- [ ] `LLM-005` `P0/BE/M`：移除当前仅允许 DeepSeek Provider 的硬限制，改为可扩展 Provider Adapter 注册表。
-- [ ] `LLM-006` `P0/BE/M`：支持 DeepSeek Adapter。
-- [ ] `LLM-007` `P0/BE/M`：支持通用 OpenAI-compatible Adapter。
-- [ ] `LLM-008` `P1/BE/M`：评估并支持 OpenAI、Azure OpenAI、Ollama/本地兼容端点的差异配置。
-- [ ] `LLM-009` `P0/BE+SEC/M`：所有 Provider 连接测试必须经过 Security Gateway，且只发送公开测试文本。
-- [ ] `LLM-010` `P0/BE/M`：实现 Provider 健康检查、延迟、最近成功、最近错误和稳定错误码。
-- [ ] `LLM-011` `P1/BE+OPS/M`：实现健康探测退避，避免不可用 Provider 被高频测试。
-- [ ] `LLM-012` `P1/FE/M`：实现多个供应商实例的新增、编辑、禁用、测试和删除影响预览。
+- [x] `LLM-001` `P0/ARCH+BE/S`：确认一个 Provider Type 可创建多个 Provider Instance，例如两个 OpenAI-compatible Endpoint。
+- [x] `LLM-002` `P0/DBA+BE/M`：补齐 Provider 唯一名称、类型、Base URL、代理、超时、重试、启用状态、健康状态和标签字段。
+- [x] `LLM-003` `P0/BE+SEC/M`：实现 API Key 加密保存、掩码返回、更新不回显和主密钥缺失拒绝启动。
+- [x] `LLM-004` `P0/SEC+OPS/M`：实现 API Key 轮换、失效、审计和恢复流程。
+- [x] `LLM-005` `P0/BE/M`：移除当前仅允许 DeepSeek Provider 的硬限制，改为可扩展 Provider Adapter 注册表。
+- [x] `LLM-006` `P0/BE/M`：支持 DeepSeek Adapter。
+- [x] `LLM-007` `P0/BE/M`：支持通用 OpenAI-compatible Adapter。
+- [x] `LLM-008` `P1/BE/M`：评估并支持 OpenAI、Azure OpenAI、Ollama/本地兼容端点的差异配置。
+- [x] `LLM-009` `P0/BE+SEC/M`：所有 Provider 连接测试必须经过 Security Gateway，且只发送公开测试文本。
+- [x] `LLM-010` `P0/BE/M`：实现 Provider 健康检查、延迟、最近成功、最近错误和稳定错误码。
+- [x] `LLM-011` `P1/BE+OPS/M`：实现健康探测退避，避免不可用 Provider 被高频测试。
+- [x] `LLM-012` `P1/FE/M`：实现多个供应商实例的新增、编辑、禁用、测试和删除影响预览。
 
 ### 11.2 模型目录与能力
 
-- [ ] `LLM-013` `P0/DBA+BE/M`：保证模型唯一性以 Provider ID + Model Code 为边界，禁止仅按 model_code 全局匹配。
-- [ ] `LLM-014` `P0/BE/M`：实现 Chat、Reasoning、Embedding、Rerank 模型类型。
-- [ ] `LLM-015` `P0/BE/M`：记录 context length、max output、tool call、JSON、stream、thinking、temperature 支持能力。
-- [ ] `LLM-016` `P0/BE/M`：实现手动添加模型和可选的 Provider 模型发现。
-- [ ] `LLM-017` `P0/BE+QA/M`：验证模型能力与请求参数，拒绝向不支持的模型发送 thinking/tool 参数。
-- [ ] `LLM-018` `P0/BE/M`：实现模型启用、禁用、默认、优先级和展示名称。
-- [ ] `LLM-019` `P0/BE/M`：模型删除前检查会话默认值、场景路由、Fallback 和正在执行的任务。
-- [ ] `LLM-020` `P1/FE/M`：实现按供应商分组的模型管理和能力徽标。
-- [ ] `LLM-021` `P1/FE/M`：展示模型健康、最近延迟、错误率、Token 与成本摘要。
+- [x] `LLM-013` `P0/DBA+BE/M`：保证模型唯一性以 Provider ID + Model Code 为边界，禁止仅按 model_code 全局匹配。
+- [x] `LLM-014` `P0/BE/M`：实现 Chat、Reasoning、Embedding、Rerank 模型类型。
+- [x] `LLM-015` `P0/BE/M`：记录 context length、max output、tool call、JSON、stream、thinking、temperature 支持能力。
+- [x] `LLM-016` `P0/BE/M`：实现手动添加模型和可选的 Provider 模型发现。
+- [x] `LLM-017` `P0/BE+QA/M`：验证模型能力与请求参数，拒绝向不支持的模型发送 thinking/tool 参数。
+- [x] `LLM-018` `P0/BE/M`：实现模型启用、禁用、默认、优先级和展示名称。
+- [x] `LLM-019` `P0/BE/M`：模型删除前检查会话默认值、场景路由、Fallback 和正在执行的任务。
+- [x] `LLM-020` `P1/FE/M`：实现按供应商分组的模型管理和能力徽标。
+- [x] `LLM-021` `P1/FE/M`：展示模型健康、最近延迟、错误率、Token 与成本摘要。
 
 ### 11.3 路由、切换与故障转移
 
-- [ ] `LLM-022` `P0/ARCH+BE/M`：定义优先级：消息显式选择 > 会话选择 > 用户默认 > 场景路由 > 系统默认。
-- [ ] `LLM-023` `P0/BE+SEC/M`：实现模型可见范围和 RBAC，用户只能选择被授权模型。
-- [ ] `LLM-024` `P0/BE+FE/M`：Chat 请求增加稳定的 model_id；不得只传可能冲突的 model_code。
-- [ ] `LLM-025` `P0/FE+BE/M`：真正接通 Copilot 模型选择到 SSE 与非流式请求。
-- [ ] `LLM-026` `P0/FE+BE/M`：实现会话级模型锁定与持久化，刷新页面后保持选择。
-- [ ] `LLM-027` `P0/FE+BE/M`：允许下一条消息切换模型，但不修改历史消息的模型归属。
-- [ ] `LLM-028` `P0/BE+DBA/M`：每条消息保存 requested_model_id、actual_model_id、provider_id 和路由原因。
-- [ ] `LLM-029` `P0/BE/M`：场景路由支持 Primary、Fallback、启停和优先级。
-- [ ] `LLM-030` `P0/BE+SEC/M`：仅在策略允许、数据分类兼容时执行跨 Provider Fallback。
-- [ ] `LLM-031` `P0/BE+FE/M`：发生 Fallback 时在回答元数据中明确显示，不得静默替换。
-- [ ] `LLM-032` `P0/BE/M`：区分超时、认证失败、限流、模型不存在、内容安全、网络失败和无效响应。
-- [ ] `LLM-033` `P1/BE/M`：实现并发上限、每用户/租户额度、Provider 配额和熔断。
-- [ ] `LLM-034` `P1/BE+OPS/M`：实现预算阈值、成本告警和超额策略。
-- [ ] `LLM-035` `P1/FE/M`：普通工程师界面只显示授权模型；高级参数进入专家模式。
-- [ ] `LLM-036` `P1/FE/M`：模型切换器显示供应商、模型名称、用途、速度、上下文和可用状态。
-- [ ] `LLM-037` `P1/QA/L`：覆盖多供应商同名模型、Provider 禁用、模型禁用、Fallback、无权限和切换并发测试。
+- [x] `LLM-022` `P0/ARCH+BE/M`：定义优先级：消息显式选择 > 会话选择 > 用户默认 > 场景路由 > 系统默认。
+- [x] `LLM-023` `P0/BE+SEC/M`：实现模型可见范围和 RBAC，用户只能选择被授权模型。
+- [x] `LLM-024` `P0/BE+FE/M`：Chat 请求增加稳定的 model_id；不得只传可能冲突的 model_code。
+- [x] `LLM-025` `P0/FE+BE/M`：真正接通 Copilot 模型选择到 SSE 与非流式请求。
+- [x] `LLM-026` `P0/FE+BE/M`：实现会话级模型锁定与持久化，刷新页面后保持选择。
+- [x] `LLM-027` `P0/FE+BE/M`：允许下一条消息切换模型，但不修改历史消息的模型归属。
+- [x] `LLM-028` `P0/BE+DBA/M`：每条消息保存 requested_model_id、actual_model_id、provider_id 和路由原因。
+- [x] `LLM-029` `P0/BE/M`：场景路由支持 Primary、Fallback、启停和优先级。
+- [x] `LLM-030` `P0/BE+SEC/M`：仅在策略允许、数据分类兼容时执行跨 Provider Fallback。
+- [x] `LLM-031` `P0/BE+FE/M`：发生 Fallback 时在回答元数据中明确显示，不得静默替换。
+- [x] `LLM-032` `P0/BE/M`：区分超时、认证失败、限流、模型不存在、内容安全、网络失败和无效响应。
+- [x] `LLM-033` `P1/BE/M`：实现并发上限、每用户/租户额度、Provider 配额和熔断。
+- [x] `LLM-034` `P1/BE+OPS/M`：实现预算阈值、成本告警和超额策略。
+- [x] `LLM-035` `P1/FE/M`：普通工程师界面只显示授权模型；高级参数进入专家模式。
+- [x] `LLM-036` `P1/FE/M`：模型切换器显示供应商、模型名称、用途、速度、上下文和可用状态。
+- [x] `LLM-037` `P1/QA/L`：覆盖多供应商同名模型、Provider 禁用、模型禁用、Fallback、无权限和切换并发测试。
 
 **退出标准**：用户选择的模型真实生效；每条消息能证明实际使用了哪个供应商和模型；故障转移透明、受控、可审计。
 

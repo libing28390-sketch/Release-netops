@@ -34,7 +34,7 @@ const DEFAULT_POLICY: AISecurityPolicy = {
   max_payload_bytes: 256000,
   identifiers_must_be_tokenized: true,
   allow_sensitive_minimization: true,
-  allowed_provider_types: ['deepseek'],
+  allowed_provider_types: ['deepseek', 'openai', 'openai_compatible', 'azure_openai', 'ollama', 'local', 'qwen'],
 };
 
 const formatBytes = (bytes: number) => {
@@ -329,7 +329,7 @@ export const SecurityPolicyTab: React.FC = () => {
               ['02', '最小化', '压缩必要上下文'],
               ['03', 'Token 化', '替换敏感标识'],
               ['04', 'DLP 检查', '发现即阻断'],
-              ['05', 'Provider', '仅允许 DeepSeek'],
+              ['05', 'Provider', '按 allowlist 控制 DeepSeek、OpenAI-compatible、Azure、Ollama 等适配器'],
             ].map(([number, title, detail], index, steps) => (
               <React.Fragment key={number}>
                 <div className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/50">

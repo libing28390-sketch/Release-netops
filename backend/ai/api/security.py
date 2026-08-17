@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from database.core import get_db_connection
 from ai.security.gateway import SecurityBlocked, SecurityPolicy, ai_security_gateway
 from ai.security.permissions import require_ai_permission
+from ai.schemas.provider import SUPPORTED_PROVIDER_TYPES
 
 router = APIRouter(prefix="/security", tags=["AI Security Gateway"])
 
@@ -39,8 +40,8 @@ def load_persisted_security_policy() -> None:
             except Exception:
                 pass
             try:
-                candidate = tuple(str(item).lower() for item in json.loads(policy_row[2] or '[]'))
-                if candidate and set(candidate) <= {'deepseek'}:
+                candidate = tuple(str(item).lower().strip().replace('-', '_') for item in json.loads(policy_row[2] or '[]'))
+                if candidate and set(candidate) <= set(SUPPORTED_PROVIDER_TYPES):
                     allowed = candidate
             except Exception:
                 pass
@@ -81,9 +82,9 @@ def get_security_policy(user=Depends(require_ai_permission("ai.audit.view"))):
 
 @router.put("/policy", response_model=Dict[str, Any])
 def update_security_policy(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.provider.manage"))):
-    allowed = tuple(str(item).lower() for item in payload.get("allowed_provider_types", ["deepseek"]))
-    if not allowed or any(item != "deepseek" for item in allowed):
-        raise HTTPException(status_code=400, detail="Only the approved DeepSeek provider is allowed")
+    allowed = tuple(str(item).lower().strip().replace('-', '_') for item in payload.get("allowed_provider_types", SUPPORTED_PROVIDER_TYPES))
+    if not allowed or any(item not in SUPPORTED_PROVIDER_TYPES for item in allowed):
+        raise HTTPException(status_code=400, detail="Provider type is not in the approved adapter allowlist")
     policy = SecurityPolicy(
         external_ai_enabled=bool(payload.get("external_ai_enabled", False)),
         kill_switch=bool(payload.get("kill_switch", False)),

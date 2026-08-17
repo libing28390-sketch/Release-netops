@@ -13,6 +13,13 @@ export interface AIProvider {
   created_by?: string;
   created_at: string;
   updated_at: string;
+  health_status?: string;
+  last_health_check_at?: string | null;
+  last_success_at?: string | null;
+  last_error_code?: string | null;
+  tags?: string[];
+  data_region?: string;
+  allowed_data_classification?: string;
 }
 
 export interface AIModel {
@@ -33,6 +40,14 @@ export interface AIModel {
   priority: number;
   created_at: string;
   updated_at: string;
+  stream_supported?: boolean;
+  display_name?: string;
+  cost_input_per_1k?: number;
+  cost_output_per_1k?: number;
+  health_status?: string;
+  last_latency_ms?: number | null;
+  last_success_at?: string | null;
+  last_error_code?: string | null;
 }
 
 export interface AIModelRoute {
@@ -41,8 +56,17 @@ export interface AIModelRoute {
   model_id: string;
   fallback_model_id?: string;
   enabled: boolean;
+  priority?: number;
+  data_classification?: string;
   created_at: string;
   updated_at: string;
+  health_status?: string;
+  last_health_check_at?: string | null;
+  last_success_at?: string | null;
+  last_error_code?: string | null;
+  tags?: string[];
+  data_region?: string;
+  allowed_data_classification?: string;
 }
 
 export interface AISecurityPolicy {
@@ -161,6 +185,11 @@ export interface AIUsageSummary {
   total_tokens: number;
   avg_latency_ms: number;
   scene_breakdown: Record<string, number>;
+  estimated_cost_usd?: number;
+  budget_usd?: number;
+  budget_percent?: number;
+  budget_alert?: boolean;
+  provider_breakdown?: Record<string, { requests: number; input_tokens: number; output_tokens: number; estimated_cost_usd: number; avg_latency_ms: number }>;
 }
 
 export interface AgentRunResponse {
@@ -222,6 +251,18 @@ export async function testAIProvider(id: string): Promise<{
   }>(`/api/ai/providers/${id}/test`, {
     method: 'POST',
   });
+}
+
+export async function rotateAIProviderKey(id: string, api_key: string): Promise<AIProvider> {
+  return apiRequest<AIProvider>(`/api/ai/providers/${id}/rotate-key`, { method: 'POST', body: JSON.stringify({ api_key }) });
+}
+
+export async function invalidateAIProviderKey(id: string, reason?: string): Promise<AIProvider> {
+  return apiRequest<AIProvider>(`/api/ai/providers/${id}/invalidate-key`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+export async function getAIProviderDeletePreview(id: string): Promise<any> {
+  return apiRequest(`/api/ai/providers/${id}/delete-preview`);
 }
 
 export interface AIPlatformMetrics {
@@ -329,6 +370,18 @@ export async function getAIUsageSummary(): Promise<AIUsageSummary> {
   return apiRequest<AIUsageSummary>('/api/ai/usage/summary');
 }
 
+export async function updateAIModel(id: string, data: Partial<AIModel>): Promise<AIModel> {
+  return apiRequest<AIModel>(`/api/ai/models/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function setAIUserDefaultModel(model_id: string): Promise<{ model_id: string; tenant_id: string; updated_at: string }> {
+  return apiRequest('/api/ai/models/preferences/default', { method: 'POST', body: JSON.stringify({ model_id }) });
+}
+
+export async function setAIModelAccess(id: string, data: { tenant_id?: string; subject_type: 'role' | 'user' | 'tenant'; subject_id: string; allow_access: boolean }): Promise<any> {
+  return apiRequest(`/api/ai/models/${id}/access`, { method: 'POST', body: JSON.stringify(data) });
+}
+
 export interface AIAuditLog {
   id: string;
   request_id: string;
@@ -406,6 +459,8 @@ export interface AIConversationSummary {
   title: string;
   status: AIConversationStatus;
   context_budget?: number;
+  selected_model_id?: string | null;
+  model_locked?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -480,10 +535,10 @@ export async function importAIConversationMessages(
   });
 }
 
-export async function chatAssistant(message: string, history?: Array<{ role: string; content: string }>): Promise<{ answer: string; intent: string; citations: any[]; retrieval?: AssistantRetrievalTrace; request_id: string }> {
+export async function chatAssistant(message: string, history?: Array<{ role: string; content: string }>, modelId?: string): Promise<{ answer: string; intent: string; citations: any[]; retrieval?: AssistantRetrievalTrace; request_id: string }> {
   return apiRequest('/api/ai/assistant/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, model_id: modelId }),
   });
 }
 
@@ -496,6 +551,7 @@ export async function chatAssistantStream(
   onDone?: (meta: AssistantStreamDoneMeta) => void,
   onError?: (error: AssistantStreamError) => void,
   conversationId?: string,
+  modelId?: string,
 ): Promise<void> {
   const token = localStorage.getItem('netops_token') || localStorage.getItem('token');
   const headers: Record<string, string> = {
@@ -508,7 +564,7 @@ export async function chatAssistantStream(
   const response = await fetch('/api/ai/assistant/chat-stream', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ message, history, conversation_id: conversationId }),
+    body: JSON.stringify({ message, history, conversation_id: conversationId, model_id: modelId }),
   });
 
   if (!response.ok) {

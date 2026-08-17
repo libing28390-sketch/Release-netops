@@ -23,6 +23,19 @@ def _get_encryption_key() -> bytes:
     return hashlib.sha256(raw_secret.encode("utf-8")).digest()
 
 
+def has_configured_master_key() -> bool:
+    """Return whether a non-placeholder provider-key master secret exists."""
+    raw_secret = str(getattr(settings, "CREDENTIAL_ENCRYPTION_KEY", "") or "").strip()
+    if not raw_secret:
+        return False
+    return raw_secret.lower() not in {"change-me-to-a-random-secret", "supersecret", "nexora-ai-default-key"} and len(raw_secret) >= 16
+
+
+def require_configured_master_key() -> None:
+    if not has_configured_master_key():
+        raise RuntimeError("CREDENTIAL_ENCRYPTION_KEY must be configured before storing AI provider keys")
+
+
 def encrypt_api_key(plaintext: Optional[str]) -> Optional[str]:
     """Encrypt plain API Key using AES-256-GCM."""
     if not plaintext:

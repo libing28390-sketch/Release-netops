@@ -69,6 +69,7 @@ async def chat_stream(payload: ChatRequest, user=Depends(require_ai_permission("
 
     async def events():
         collected: list[str] = []
+        route_meta: dict[str, Any] = {}
         yield _event("meta", {"contract": "nxa.ai.v1", "model": payload.model, "stream": True})
         try:
             async for token in llm_gateway.chat_stream(
@@ -83,17 +84,21 @@ async def chat_stream(payload: ChatRequest, user=Depends(require_ai_permission("
                 response_format=payload.response_format,
                 thinking=payload.thinking,
                 reasoning_effort=payload.reasoning_effort,
+                roles=[str(user.get("role"))] if user.get("role") else [],
+                route_meta=route_meta,
             ):
                 if token:
                     collected.append(token)
                     yield _event("token", {"content": token})
             if payload.conversation_id and collected:
                 try:
-                    append_message(conversation_id=payload.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content="".join(collected))
+                    append_message(conversation_id=payload.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content="".join(collected), requested_model_id=route_meta.get("requested_model_id") or payload.model, actual_model_id=route_meta.get("model_id"), provider_id=route_meta.get("provider_id"), route_reason=route_meta.get("route_reason"), fallback_used=bool(route_meta.get("fallback_used")))
                 except (LookupError, ValueError):
                     # The provider response remains available; the failure is
                     # represented only as a stable event and never raw text.
                     yield _event("warning", {"code": "CONVERSATION_PERSIST_FAILED"})
+            if route_meta:
+                yield _event("meta", route_meta)
             yield _event("done", {"finish_reason": "stop"})
         except AISecurityBlockedException as exc:
             yield _event("error", {"code": exc.code, "request_id": exc.request_id})
@@ -130,12 +135,13 @@ async def chat(payload: ChatRequest, user=Depends(require_ai_permission("ai.assi
         response_format=payload.response_format,
         thinking=payload.thinking,
         reasoning_effort=payload.reasoning_effort,
+        roles=[str(user.get("role"))] if user.get("role") else [],
         user_id=user_id,
         tenant_id=tenant_id,
     )
     if payload.conversation_id:
         try:
-            append_message(conversation_id=payload.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content=result.get("content", ""))
+            append_message(conversation_id=payload.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content=result.get("content", ""), requested_model_id=result.get("requested_model_id") or payload.model, actual_model_id=result.get("model_id"), provider_id=result.get("provider_id"), route_reason=result.get("route_reason"), fallback_used=bool(result.get("fallback_used")))
         except (LookupError, ValueError):
             pass
     return {
@@ -145,6 +151,11 @@ async def chat(payload: ChatRequest, user=Depends(require_ai_permission("ai.assi
         "finish_reason": result.get("finish_reason"),
         "usage": {"input_tokens": result.get("input_tokens", 0), "output_tokens": result.get("output_tokens", 0)},
         "request_id": result.get("request_id"),
+        "requested_model_id": result.get("requested_model_id") or payload.model,
+        "actual_model_id": result.get("model_id"),
+        "provider_id": result.get("provider_id"),
+        "route_reason": result.get("route_reason"),
+        "fallback_used": bool(result.get("fallback_used")),
     }
 
 

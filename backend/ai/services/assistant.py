@@ -477,6 +477,8 @@ class AIAssistantService:
         tenant_id: Optional[str] = None,
         roles: Optional[List[str]] = None,
         site_ids: Optional[List[str]] = None,
+        model_id: Optional[str] = None,
+        model_selection_source: Optional[str] = None,
     ) -> Dict[str, Any]:
         # 1. Parse intent
         intent_info = await intent_parser.parse_intent(message, user_id=user_id)
@@ -619,8 +621,11 @@ class AIAssistantService:
         res = await llm_gateway.chat(
             scene="chat",
             messages=messages,
+            model_id=model_id,
             user_id=user_id,
             tenant_id=tenant_id,
+            roles=roles,
+            selection_source=model_selection_source,
         )
 
         answer = res.get("content", "")
@@ -633,7 +638,12 @@ class AIAssistantService:
             "citations": citations,
             "answer_contract": answer_contract(intent=intent, citations=citations, grounded=bool(citations or context_facts), no_match=bool(intent == "knowledge" and not citations)),
             "retrieval": knowledge_trace,
-            "request_id": res.get("request_id")
+            "request_id": res.get("request_id"),
+            "model_id": res.get("model_id"),
+            "provider_id": res.get("provider_id"),
+            "requested_model_id": res.get("requested_model_id"),
+            "route_reason": res.get("route_reason"),
+            "fallback_used": bool(res.get("fallback_used")),
         }
 
     async def chat_stream(
@@ -644,6 +654,8 @@ class AIAssistantService:
         tenant_id: Optional[str] = None,
         roles: Optional[List[str]] = None,
         site_ids: Optional[List[str]] = None,
+        model_id: Optional[str] = None,
+        model_selection_source: Optional[str] = None,
     ):
         started_at = time.perf_counter()
         active_step = ("intent", "识别问题类型", "intent_parser.parse_intent")
@@ -820,7 +832,8 @@ class AIAssistantService:
             grounded=bool(citations or context_facts),
             no_match=bool(intent == "knowledge" and not citations),
         )
-        meta = {"intent": intent, "facts_retrieved": bool(context_facts), "citations": citations, "answer_contract": contract}
+        route_meta: Dict[str, Any] = {}
+        meta = {"intent": intent, "facts_retrieved": bool(context_facts), "citations": citations, "answer_contract": contract, "requested_model_id": model_id, "selection_source": model_selection_source}
         if intent == "knowledge":
             meta["retrieval"] = knowledge_trace
         yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
@@ -857,7 +870,7 @@ class AIAssistantService:
         tokens_emitted = 0
         llm_failed = False
         try:
-            async for token in llm_gateway.chat_stream(scene="chat", messages=messages, user_id=user_id, tenant_id=tenant_id):
+            async for token in llm_gateway.chat_stream(scene="chat", messages=messages, model_id=model_id, user_id=user_id, tenant_id=tenant_id, roles=roles, selection_source=model_selection_source, route_meta=route_meta):
                 if token:
                     tokens_emitted += 1
                     yield f"event: token\ndata: {json.dumps({'content': token}, ensure_ascii=False)}\n\n"
@@ -942,6 +955,9 @@ class AIAssistantService:
                 detail="回答生成完成",
                 operation=llm_step[2],
             )
+
+        if route_meta:
+            yield f"event: meta\ndata: {json.dumps(route_meta, ensure_ascii=False)}\n\n"
 
         yield _done_event(started_at)
 

@@ -33,7 +33,9 @@ class SecurityPolicy:
     max_payload_bytes: int = 256_000
     identifiers_must_be_tokenized: bool = True
     allow_sensitive_minimization: bool = True
-    allowed_provider_types: tuple[str, ...] = ("deepseek",)
+    allowed_provider_types: tuple[str, ...] = (
+        "deepseek", "openai", "openai_compatible", "azure_openai", "ollama", "local", "qwen",
+    )
 
 
 @dataclass
@@ -104,6 +106,11 @@ class AISecurityGateway:
             external_ai_enabled=bool(getattr(settings, "EXTERNAL_AI_ENABLED", False)),
             kill_switch=bool(getattr(settings, "AI_KILL_SWITCH", False)),
             max_payload_bytes=int(getattr(settings, "AI_MAX_PAYLOAD_BYTES", 256_000)),
+            allowed_provider_types=tuple(
+                item.strip().lower().replace("-", "_")
+                for item in str(getattr(settings, "AI_PROVIDER_ALLOWLIST", "deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen")).split(",")
+                if item.strip()
+            ) or SecurityPolicy.allowed_provider_types,
         )
 
     def _classify(self, value: Any) -> tuple[DataLevel, list[Finding]]:

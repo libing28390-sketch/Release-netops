@@ -1,16 +1,22 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: LLM-001 (PENDING; RET-001..022 and CIT-001..010 PASS)
-Last Completed: CIT-010
-Next Task: LLM-001 多 Provider Instance 架构确认
+Current Task: ING-020 (PENDING; LLM-001..037 PASS)
+Last Completed: LLM-037
+Next Task: ING-020（按原清单依赖继续）
 
-Completed: 153 / 359
-P0: 134 / 277
+Completed: 190 / 359
+P0: 161 / 277
 
 Blocked Tasks: none
 
 Recent Tests:
+- LLM PostgreSQL-only gate: migration/contract probe PASS; m0139/m0140/m0141 idempotency, multi-provider, provider+model scope, ACL, key rotation audit, fallback and usage scope verified; PostgreSQL 18.4, vector 0.8.6, pg_trgm 1.6; transaction rollback PASS
+- LLM backend contract tests: 8 passed; AI/CIT/RET regression: 31 passed; Python compile PASS; security provider allowlist API contract PASS
+- V1 PostgreSQL authoritative baseline: 10/10; retrieval_accuracy=1.0; wrong_vendor_rate=0.0; version_conflict_rate=0.0; citation_accuracy=1.0; transaction rollback PASS
+- RET PostgreSQL retrieval/explain regression: PASS; tenant/status/ACL/FTS/trigram/vector and index plan verified; PostgreSQL 18.4, vector 0.8.6, pg_trgm 1.6
+- Frontend TypeScript lint: PASS; Vite production build: PASS (existing large chunk warning only)
+- PostgreSQL test policy: SQLite is excluded from project acceptance and was not used for LLM/RET gates
 - CIT-001..010 grounding/citation contract: 17 backend tests passed; deterministic refusal, per-conclusion mapping, allowlist/version/lifecycle/URL validation, stale warning and secret redaction verified
 - CIT frontend source cards: `npm.cmd run lint` PASS; `npm.cmd run build` PASS (existing large-chunk warning only)
 - RET-022 PostgreSQL benchmark: PASS; 10k/100k/1m temporary fixtures, FTS/trigram/vector p50/p95, tenant leak=0, HNSW Top-K=10, rollback PASS; 1m trigram capacity warning recorded

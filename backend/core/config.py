@@ -70,9 +70,17 @@ class Settings(BaseSettings):
     AI_KILL_SWITCH: bool = False
     AI_SECURITY_VAULT_TTL_SECONDS: int = 3600
     AI_MAX_PAYLOAD_BYTES: int = 256000
-    AI_PROVIDER_ALLOWLIST: str = "deepseek"
+    AI_PROVIDER_ALLOWLIST: str = "deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen"
     AI_DEBUG_PAYLOAD: bool = False
     AI_OUTBOUND_PROXY_URL: str = ""
+    AI_PROVIDER_MAX_CONCURRENCY: int = 8
+    AI_TENANT_MAX_CONCURRENCY: int = 4
+    AI_USER_MAX_CONCURRENCY: int = 2
+    AI_CONCURRENCY_ACQUIRE_TIMEOUT_SECONDS: float = 10.0
+    AI_CIRCUIT_FAILURE_THRESHOLD: int = 3
+    AI_CIRCUIT_COOLDOWN_SECONDS: float = 30.0
+    AI_HEALTH_BACKOFF_SECONDS: int = 30
+    AI_DAILY_BUDGET_USD: float = 0.0
 
     # PAM Web terminal compatibility control. Host-key registration is not a
     # login prerequisite; legacy algorithms still require explicit opt-in.

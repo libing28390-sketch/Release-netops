@@ -8,10 +8,13 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
-def _validate_deepseek_model_code(value: str) -> str:
+SUPPORTED_MODEL_TYPES = {"chat", "reasoning", "embedding", "rerank"}
+
+
+def _validate_model_code(value: str) -> str:
     code = str(value or '').strip()
-    if code.lower().startswith('deepseek-') and code.lower() not in {'deepseek-v4-flash', 'deepseek-v4-pro'}:
-        raise ValueError('DeepSeek V1 only permits deepseek-v4-flash or deepseek-v4-pro')
+    if not code or len(code) > 256:
+        raise ValueError('model_code must be non-empty and <= 256 characters')
     return code
 
 
@@ -30,11 +33,23 @@ class AIModelBase(BaseModel):
     enabled: bool = True
     is_default: bool = False
     priority: int = Field(10, ge=1)
+    stream_supported: bool = True
+    display_name: Optional[str] = None
+    cost_input_per_1k: float = Field(0, ge=0)
+    cost_output_per_1k: float = Field(0, ge=0)
 
     @field_validator('model_code')
     @classmethod
     def validate_model_code(cls, value: str) -> str:
-        return _validate_deepseek_model_code(value)
+        return _validate_model_code(value)
+
+    @field_validator('model_type')
+    @classmethod
+    def validate_model_type(cls, value: str) -> str:
+        normalized = str(value or '').strip().lower()
+        if normalized not in SUPPORTED_MODEL_TYPES:
+            raise ValueError(f'Unsupported model_type: {normalized or "empty"}')
+        return normalized
 
 
 class AIModelCreate(AIModelBase):
@@ -56,17 +71,39 @@ class AIModelUpdate(BaseModel):
     enabled: Optional[bool] = None
     is_default: Optional[bool] = None
     priority: Optional[int] = None
+    stream_supported: Optional[bool] = None
+    display_name: Optional[str] = None
+    cost_input_per_1k: Optional[float] = Field(None, ge=0)
+    cost_output_per_1k: Optional[float] = Field(None, ge=0)
 
     @field_validator('model_code')
     @classmethod
     def validate_model_code(cls, value: str | None) -> str | None:
-        return _validate_deepseek_model_code(value) if value is not None else value
+        return _validate_model_code(value) if value is not None else value
+
+    @field_validator('model_type')
+    @classmethod
+    def validate_model_type(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        normalized = str(value).strip().lower()
+        if normalized not in SUPPORTED_MODEL_TYPES:
+            raise ValueError(f'Unsupported model_type: {normalized}')
+        return normalized
 
 
 class AIModelResponse(AIModelBase):
     id: str
     created_at: str
     updated_at: str
+    stream_supported: bool = True
+    display_name: Optional[str] = None
+    cost_input_per_1k: float = 0
+    cost_output_per_1k: float = 0
+    health_status: str = "unknown"
+    last_latency_ms: Optional[int] = None
+    last_success_at: Optional[str] = None
+    last_error_code: Optional[str] = None
 
 
 class AIModelRouteBase(BaseModel):
@@ -74,6 +111,8 @@ class AIModelRouteBase(BaseModel):
     model_id: str
     fallback_model_id: Optional[str] = None
     enabled: bool = True
+    priority: int = Field(10, ge=1, le=10000)
+    data_classification: str = Field("PUBLIC", pattern="^(PUBLIC|INTERNAL|CONFIDENTIAL)$")
 
 
 class AIModelRouteCreate(AIModelRouteBase):

@@ -57,6 +57,11 @@ class AIModelNotFoundException(AIException):
         super().__init__("AI_MODEL_NOT_FOUND", message, request_id, status.HTTP_404_NOT_FOUND)
 
 
+class AIProviderUnsupportedException(AIException):
+    def __init__(self, message: str = "AI provider type is not supported", request_id: Optional[str] = None):
+        super().__init__("AI_PROVIDER_UNSUPPORTED", message, request_id, status.HTTP_400_BAD_REQUEST)
+
+
 class AINetworkException(AIException):
     def __init__(self, message: str = "Network error connecting to AI Provider", request_id: Optional[str] = None):
         super().__init__("AI_NETWORK_ERROR", message, request_id, status.HTTP_502_BAD_GATEWAY)
@@ -65,6 +70,26 @@ class AINetworkException(AIException):
 class AIInvalidResponseException(AIException):
     def __init__(self, message: str = "Invalid response format from AI Provider", request_id: Optional[str] = None):
         super().__init__("AI_INVALID_RESPONSE", message, request_id, status.HTTP_502_BAD_GATEWAY)
+
+
+class AIInvalidRequestException(AIException):
+    def __init__(self, message: str = "AI provider rejected the request", request_id: Optional[str] = None):
+        super().__init__("AI_INVALID_REQUEST", message, request_id, status.HTTP_400_BAD_REQUEST)
+
+
+class AICircuitOpenException(AIException):
+    def __init__(self, message: str = "AI provider circuit is temporarily open", request_id: Optional[str] = None):
+        super().__init__("AI_PROVIDER_CIRCUIT_OPEN", message, request_id, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class AIQuotaExceededException(AIException):
+    def __init__(self, message: str = "AI concurrency or quota limit exceeded", request_id: Optional[str] = None):
+        super().__init__("AI_QUOTA_EXCEEDED", message, request_id, status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+class AIBudgetExceededException(AIException):
+    def __init__(self, message: str = "AI daily budget limit exceeded", request_id: Optional[str] = None):
+        super().__init__("AI_BUDGET_EXCEEDED", message, request_id, status.HTTP_429_TOO_MANY_REQUESTS)
 
 
 class AISecurityBlockedException(AIException):
