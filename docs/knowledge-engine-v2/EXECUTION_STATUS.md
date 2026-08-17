@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: MIG-002（ANALYZING）
-Last Completed: MIG-001
-Next Task: MIG-002（可信原始文档优先迁移；不可证明质量的 Chunk/Embedding 不直接迁移）
+Current Task: MIG-003（ANALYZING）
+Last Completed: MIG-002
+Next Task: MIG-003（建立旧 ID 到 V2 ID 映射和迁移 Manifest）
 
-Completed: 316 / 359
-P0: 251 / 277
-Last Verified Commit: a379402b（MIG-001 four-layer migration strategy PASS）
+Completed: 317 / 359
+P0: 252 / 277
+Last Verified Commit: a379402b（MIG-001 four-layer migration strategy PASS；MIG-002 待提交）
 
-Recent Migration: EVAL-020 无生产 migration；V1 PostgreSQL baseline 使用 transaction rollback，production_database_write=false
-Recent Build: EVAL-020 security gate 3.106s PASS；安全回归 64 passed、wrapper 4 passed；npm lint PASS；Vite build PASS（3680 modules）；SQLite 未作为证据
-Last Security Check: EVAL-020 dependency/Secret/AI route permission/log redaction/stable error response 全部 PASS；AI 路由 96/96；Secret 静态发现 0；PostgreSQL V1 10/10；SQLite forbidden
+Recent Migration: MIG-002 DONE_PASS；PostgreSQL READ ONLY inventory；156 documents 全部需 source/hash reconciliation；trusted source candidates=0；Chunk/Embedding direct copy=forbidden；无生产 DDL/写入；SQLite 未作为证据
+Recent Build: MIG-002 focused 2 passed；V1 PostgreSQL baseline 10/10；npm lint PASS；Vite build PASS（3680 modules，既有 chunk-size warning）；git diff --check PASS
+Last Security Check: MIG-002 report 仅输出计数/状态/hash，不输出原文、ID、DSN、密钥或异常原文；PostgreSQL read-only；SQLite forbidden
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: MIG-002（可信原始文档优先迁移）→ MIG-003；ING-020/021 仍需认证浏览器会话补做可见验证
+Recovery Point: MIG-003（建立旧 ID 到 V2 ID 映射和迁移 Manifest）→ MIG-004；ING-020/021 仍需认证浏览器会话补做可见验证
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -69,6 +69,8 @@ EVAL-018：DONE_PASS_WITH_CAPACITY_WARNING；证据 docs/knowledge-engine-v2/evi
 EVAL-019：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-019.md；100 import / 1000 PostgreSQL reindex / 100 SSE / 100 Provider cycles，恢复与幂等边界 PASS；相关回归 35 passed，V1 PostgreSQL 10/10，duration 2.842s。
 EVAL-020：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-020.md；依赖、Secret、AI 路由权限 96/96、日志脱敏、稳定错误响应和 PostgreSQL V1 10/10 PASS；安全回归 64 passed、wrapper 4 passed；lint/build/compile/diff PASS；SQLite 未作为验收证据。
 MIG-001：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-001.md；Document/Metadata/Chunk/Embedding 四层策略、W0-W5 顺序、PostgreSQL READ ONLY catalog、V1 10/10、DB-017 6 passed、lint/build/compile/diff PASS；未执行生产迁移。
+
+MIG-002：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-002.md；source-first contract、PostgreSQL READ ONLY classification、2 focused tests、V1 10/10、lint/build/diff PASS；156 行需 source/hash reconciliation，trusted source candidates=0；Chunk/Embedding direct copy forbidden；未执行生产迁移。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
