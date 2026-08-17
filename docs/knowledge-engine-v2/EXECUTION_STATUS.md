@@ -7,7 +7,7 @@ Next Task: EVAL-010（在 CI 中执行小型固定集，完整集进入发布门
 
 Completed: 304 / 359
 P0: 243 / 277
-Last Verified Commit: 待提交（EVAL-009 PASS）
+Last Verified Commit: 7b577f55（EVAL-009 offline evaluation runner PASS）
 
 Recent Migration: EVAL-009 无 migration；离线 runner 无数据库连接/写入
 Recent Build: EVAL-009 runner PASS；8 components；repeat report equal；EVAL-001～EVAL-009 tests 9 passed；JSON/py_compile/contract YAML/diff PASS
