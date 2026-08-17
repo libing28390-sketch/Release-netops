@@ -43,11 +43,24 @@ def _validate_provider_endpoint(provider_type: str, base_url: str | None) -> Non
 
 
 def _row_to_provider(row) -> AIProviderResponse:
-    tags = []
-    try:
-        tags = json.loads(row[12] or "[]") if row[12] else []
-    except (TypeError, ValueError):
-        tags = []
+    # PostgreSQL TEXT/JSON adapters can return a JSON string, a decoded list,
+    # or legacy `{}` from m0139's original default.  The public contract is
+    # always list[str]; malformed/object values fail closed to an empty list so
+    # one legacy row cannot take down the whole Provider page.
+    raw_tags = row[12] if len(row) > 12 else None
+    if isinstance(raw_tags, list):
+        decoded_tags = raw_tags
+    elif isinstance(raw_tags, tuple):
+        decoded_tags = list(raw_tags)
+    elif raw_tags:
+        try:
+            parsed_tags = json.loads(str(raw_tags))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_tags = []
+        decoded_tags = parsed_tags if isinstance(parsed_tags, list) else []
+    else:
+        decoded_tags = []
+    tags = [tag.strip() for tag in decoded_tags if isinstance(tag, str) and tag.strip()]
     return AIProviderResponse(
         id=row[0], name=row[1], provider_type=row[2], base_url=row[3], api_key_masked=row[4],
         timeout=row[5], max_retries=row[6], proxy_url=row[7], enabled=bool(row[8]), created_by=row[9],
