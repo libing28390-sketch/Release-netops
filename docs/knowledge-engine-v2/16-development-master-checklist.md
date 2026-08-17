@@ -456,7 +456,7 @@
 - [x] `KUI-009` `P0/FE+BE/M`：实现官方知识与企业知识明显分区。
 - [x] `KUI-010` `P0/FE+BE/M`：官方来源导入与企业文件上传使用不同表单和校验。
 - [x] `KUI-011` `P0/FE+BE/M`：批量上传前预览每个文件的 Metadata，不允许用一组错误 Metadata 覆盖不同文档。
-- [ ] `KUI-012` `P0/FE+BE/M`：删除、禁用、Reparse、Rechunk、Reindex 使用独立动作和确认。
+- [x] `KUI-012` `P0/FE+BE/M`：删除、禁用、Reparse、Rechunk、Reindex 使用独立动作和确认。
 - [ ] `KUI-013` `P0/FE+BE/M`：危险操作显示影响文档、Chunk、Index、引用和恢复方式。
 - [ ] `KUI-014` `P1/FE+BE/M`：实现文档版本比较、发布、替代和回滚。
 - [ ] `KUI-015` `P1/FE+BE/M`：实现 Source Registry 与刷新状态管理。

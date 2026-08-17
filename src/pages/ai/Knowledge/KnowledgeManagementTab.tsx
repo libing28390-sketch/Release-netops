@@ -29,12 +29,13 @@ import {
   CheckCircle,
   XCircle,
   Eye,
+  RefreshCw,
   CalendarDays,
   ChevronRight,
   Pencil,
   Info,
 } from 'lucide-react';
-import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, clearSampleKnowledge, deleteKnowledgeDocument, batchDeleteKnowledgeDocuments, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets } from '../../../api/ai';
+import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, clearSampleKnowledge, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 
@@ -476,6 +477,8 @@ export const KnowledgeManagementTab: React.FC = () => {
   // Document selection for batch delete
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [documentActionBusy, setDocumentActionBusy] = useState<string | null>(null);
+  const [documentActionNotice, setDocumentActionNotice] = useState('');
 
   // Document viewer state
   const [selectedDocument, setSelectedDocument] = useState<KnowledgeDocumentDetail | null>(null);
@@ -1281,13 +1284,51 @@ export const KnowledgeManagementTab: React.FC = () => {
   };
 
   const handleDeleteSingle = async (docId: string, docName: string) => {
-    if (!window.confirm(`确认删除文档「${docName}」及其所有切片索引吗？\n此操作不可撤销。`)) return;
+    if (!window.confirm(`确认删除文档「${docName}」及其所有切片索引吗？\n将记录删除影响与审计证据；不可原地撤销。`)) return;
+    setDocumentActionBusy(`${docId}:delete`);
+    setDocumentActionNotice('');
     try {
       await deleteKnowledgeDocument(docId);
       setSelectedDocIds(prev => { const n = new Set(prev); n.delete(docId); return n; });
-      fetchStatsAndDocs();
+      setDocumentActionNotice(`文档「${docName}」已删除，恢复方式已记录在动作审计中。`);
+      void fetchStatsAndDocs();
     } catch (err: any) {
       alert(err.message || '删除失败');
+    } finally {
+      setDocumentActionBusy(null);
+    }
+  };
+
+  const handleDocumentAction = async (doc: KnowledgeDocument, action: 'disable' | 'enable' | 'reparse' | 'rechunk' | 'reindex') => {
+    const labels = {
+      disable: '禁用',
+      enable: '启用',
+      reparse: '重新解析 Metadata',
+      rechunk: '重新切片',
+      reindex: '重建索引',
+    } as const;
+    const impacts = {
+      disable: '文档将从默认检索结果中移除，现有切片保留，可用“启用”恢复。',
+      enable: '文档恢复为 active；现有切片和索引不会被删除。',
+      reparse: '仅重新解析正文与 Metadata，不直接删除切片；正文变化后会标记需要重新切片。',
+      rechunk: '按当前正文和已确认 Metadata 事务性替换全部切片与向量。',
+      reindex: '重新解析、切片、生成向量并替换检索索引，旧文档行保留。',
+    } as const;
+    const label = labels[action];
+    if (!window.confirm(`确认${label}「${doc.name}」吗？\n${impacts[action]}\n操作会写入租户动作审计，并记录恢复方式。`)) return;
+    const busyKey = `${doc.id}:${action}`;
+    setDocumentActionBusy(busyKey);
+    setDocumentActionNotice('');
+    try {
+      const handlers = { disable: disableKnowledgeDocument, enable: enableKnowledgeDocument, reparse: reparseKnowledgeDocument, rechunk: rechunkKnowledgeDocument, reindex: reindexKnowledgeDocument } as const;
+      const result = await handlers[action](doc.id, `knowledge admin confirmed ${action}`);
+      const suffix = result.job_id ? `（任务 ${result.job_id} 已排队）` : '';
+      setDocumentActionNotice(`${label}已提交${suffix}；影响 ${result.impact.documents} 文档 / ${result.impact.chunks} Chunk。`);
+      void fetchStatsAndDocs();
+    } catch (err: any) {
+      alert(err.message || `${label}失败`);
+    } finally {
+      setDocumentActionBusy(null);
     }
   };
 
@@ -1297,7 +1338,7 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (!window.confirm(`确认批量删除选中的 ${ids.length} 篇文档及其全部切片索引吗？\n此操作不可撤销。`)) return;
     setDeleting(true);
     try {
-      await batchDeleteKnowledgeDocuments(ids);
+      await batchDeleteKnowledgeDocuments(ids, 'knowledge admin confirmed batch delete');
       setSelectedDocIds(new Set());
       fetchStatsAndDocs();
     } catch (err: any) {
@@ -1540,6 +1581,11 @@ export const KnowledgeManagementTab: React.FC = () => {
               </div>
             </div>
           </div>
+          {documentActionNotice && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/25 dark:text-emerald-200" role="status">
+              {documentActionNotice}
+            </div>
+          )}
 
           <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-3 shadow-xs dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label="产品层级浏览">
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -1770,13 +1816,58 @@ export const KnowledgeManagementTab: React.FC = () => {
                           {new Date(doc.created_at).toLocaleDateString()}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <button
-                            onClick={() => handleDeleteSingle(doc.id, doc.name)}
-                            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition cursor-pointer"
-                            title="删除此文档"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => void handleDocumentAction(doc, doc.status === 'disabled' ? 'enable' : 'disable')}
+                              disabled={Boolean(documentActionBusy)}
+                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-amber-50 hover:text-amber-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-amber-950/40"
+                              title={doc.status === 'disabled' ? '启用文档（独立确认）' : '禁用文档（独立确认）'}
+                              aria-label={doc.status === 'disabled' ? '启用文档' : '禁用文档'}
+                            >
+                              {doc.status === 'disabled' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDocumentAction(doc, 'reparse')}
+                              disabled={Boolean(documentActionBusy)}
+                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-blue-50 hover:text-blue-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-blue-950/40"
+                              title="重新解析 Metadata（独立确认）"
+                              aria-label="重新解析 Metadata"
+                            >
+                              <FileText className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDocumentAction(doc, 'rechunk')}
+                              disabled={Boolean(documentActionBusy)}
+                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-violet-50 hover:text-violet-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-violet-950/40"
+                              title="重新切片（独立确认）"
+                              aria-label="重新切片"
+                            >
+                              <Layers className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDocumentAction(doc, 'reindex')}
+                              disabled={Boolean(documentActionBusy)}
+                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-indigo-50 hover:text-indigo-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-indigo-950/40"
+                              title="重建索引（独立确认）"
+                              aria-label="重建索引"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteSingle(doc.id, doc.name)}
+                              disabled={Boolean(documentActionBusy)}
+                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-500 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-red-950/40"
+                              title="删除此文档（独立确认）"
+                              aria-label="删除此文档"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

@@ -58,6 +58,17 @@ _DEFAULT_VENDOR_DIRECTORY_NAMES = ("huawei", "h3c", "cisco", "ruijie")
 _DIRECTORY_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 _OFFICIAL_KNOWLEDGE_TYPES = ("official_vendor", "official_url", "official_local")
 _ENTERPRISE_KNOWLEDGE_TYPES = ("internal_sop", "internal_standard", "case", "user_document", "sample")
+_DOCUMENT_ACTIONS = frozenset({"delete", "disable", "enable", "reparse", "rechunk", "reindex"})
+
+
+class KnowledgeDocumentActionError(ValueError):
+    """Stable, bounded error for a confirmed document lifecycle action."""
+
+    def __init__(self, code: str, message: str, *, status_code: int = 400):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status_code = status_code
 
 
 class KnowledgeService:
@@ -999,6 +1010,245 @@ class KnowledgeService:
             conn.commit()
             retrieval_cache.invalidate_documents(doc_ids)
             return {"deleted_count": deleted, "requested": len(doc_ids)}
+
+    @staticmethod
+    def _safe_action_text(value: Any, *, field: str, maximum: int, required: bool = False) -> str:
+        text = str(value or "").strip()
+        if (required and not text) or len(text) > maximum or any(ord(char) < 32 or ord(char) == 127 for char in text):
+            raise KnowledgeDocumentActionError("KNOWLEDGE_ACTION_INPUT_INVALID", f"{field} is invalid")
+        return text
+
+    @staticmethod
+    def _action_json(value: Dict[str, Any]) -> Any:
+        return _json_db_value(value)
+
+    @staticmethod
+    def _write_action_audit(
+        *,
+        action_id: str,
+        action: str,
+        document_id: str,
+        tenant_id: str,
+        actor_id: str,
+        actor_username: str,
+        status: str,
+        impact: Dict[str, Any],
+        reason: str,
+        job_id: str | None = None,
+    ) -> None:
+        """Write metadata-only audit evidence without exposing source text."""
+        try:
+            from services.audit_service import log_audit_event
+
+            log_audit_event(
+                event_type=f"knowledge_document_{action}",
+                category="knowledge_document",
+                severity="warning" if action in {"delete", "disable"} else "info",
+                status="success" if status == "succeeded" else "open",
+                summary=f"Knowledge document action {action} {status}",
+                actor_id=actor_id,
+                actor_username=actor_username,
+                actor_role="knowledge_admin",
+                target_type="ai_document",
+                target_id=document_id,
+                job_id=job_id,
+                details={
+                    "action_id": action_id,
+                    "tenant_id": tenant_id,
+                    "action": action,
+                    "status": status,
+                    "reason": reason,
+                    "impact": impact,
+                },
+            )
+        except Exception:
+            # The dedicated action ledger is the authoritative evidence.  A
+            # legacy audit provider must not make a durable document action
+            # appear to have failed or leak an implementation error.
+            return
+
+    def execute_document_action(
+        self,
+        *,
+        doc_id: str,
+        action: str,
+        tenant_id: str = "tenant-default",
+        actor_id: str = "system",
+        actor_username: str = "system",
+        confirm: bool = False,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """Execute one explicitly confirmed, tenant-scoped document action.
+
+        Delete/disable/enable are committed in one transaction with the
+        action ledger.  Reparse/rechunk/reindex create a tenant-scoped job
+        carrying the action id; the worker owns the subsequent transactional
+        document/chunk replacement.
+        """
+        action = self._safe_action_text(action, field="action", maximum=32, required=True).lower()
+        if action not in _DOCUMENT_ACTIONS:
+            raise KnowledgeDocumentActionError("KNOWLEDGE_ACTION_NOT_ALLOWED", "document action is not allowed")
+        doc_id = self._safe_action_text(doc_id, field="document_id", maximum=256, required=True)
+        tenant_id = self._safe_action_text(tenant_id or "tenant-default", field="tenant_id", maximum=256, required=True)
+        actor_id = self._safe_action_text(actor_id or "system", field="actor_id", maximum=256, required=True)
+        actor_username = self._safe_action_text(actor_username or actor_id, field="actor_username", maximum=256, required=True)
+        reason = self._safe_action_text(reason, field="reason", maximum=1024)
+        if not confirm:
+            raise KnowledgeDocumentActionError(
+                "KNOWLEDGE_ACTION_CONFIRMATION_REQUIRED",
+                "explicit confirmation is required for this document action",
+                status_code=409,
+            )
+
+        action_id = f"kda_{uuid.uuid4().hex[:20]}"
+        now = datetime.now(timezone.utc).isoformat()
+        pending_job: Dict[str, Any] | None = None
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            row = cursor.execute(
+                "SELECT id, name, status, tenant_id FROM ai_document "
+                "WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
+                (doc_id, tenant_id),
+            ).fetchone()
+            if not row:
+                raise KnowledgeDocumentActionError("KNOWLEDGE_DOCUMENT_NOT_FOUND", "document was not found", status_code=404)
+            row_values = dict(row) if hasattr(row, "keys") else {
+                "id": row[0], "name": row[1], "status": row[2], "tenant_id": row[3],
+            }
+            chunk_row = cursor.execute(
+                "SELECT COUNT(*) FROM ai_document_chunk WHERE document_id = ?",
+                (doc_id,),
+            ).fetchone()
+            chunk_count = int((chunk_row[0] if chunk_row else 0) or 0)
+            impact = {
+                "documents": 1,
+                "chunks": chunk_count,
+                "indexes": chunk_count,
+                "references": 0,
+                "reference_scope": "legacy_ai_document_has_no_reference_graph",
+            }
+            recovery = {
+                "disable": "POST /api/ai/assistant/documents/{id}/actions/enable",
+                "enable": "POST /api/ai/assistant/documents/{id}/actions/disable",
+                "reparse": "rechunk or reindex the same document if body/index becomes stale",
+                "rechunk": "reindex the same document if embedding/index repair is required",
+                "reindex": "retry the returned tenant-scoped job",
+                "delete": "restore from the approved PostgreSQL backup; no in-place undelete",
+            }[action]
+            queued = action in {"reparse", "rechunk", "reindex"}
+            cursor.execute(
+                """INSERT INTO ai_knowledge_document_action
+                (id, tenant_id, document_id, action, status, confirmed, actor_id,
+                 actor_username, reason, impact_json, recovery_json, created_at)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)""",
+                (
+                    action_id, tenant_id, doc_id, action, "queued" if queued else "running",
+                    actor_id, actor_username, reason, self._action_json(impact),
+                    self._action_json({"recovery": recovery}), now,
+                ),
+            )
+            if action in {"disable", "enable"}:
+                target = "disabled" if action == "disable" else "active"
+                current = str(row_values.get("status") or "active")
+                if current != target:
+                    cursor.execute(
+                        "UPDATE ai_document SET status = ?, updated_at = ? WHERE id = ? "
+                        "AND COALESCE(tenant_id, 'tenant-default') = ?",
+                        (target, now, doc_id, tenant_id),
+                    )
+                cursor.execute(
+                    "UPDATE ai_knowledge_document_action SET status = 'succeeded', completed_at = ? WHERE id = ?",
+                    (now, action_id),
+                )
+                conn.commit()
+                result = {
+                    "action_id": action_id,
+                    "action": action,
+                    "document_id": doc_id,
+                    "status": "succeeded",
+                    "idempotent": current == target,
+                    "previous_status": current,
+                    "current_status": target,
+                    "impact": impact,
+                    "recovery": {"recovery": recovery},
+                }
+                self._write_action_audit(
+                    action_id=action_id, action=action, document_id=doc_id, tenant_id=tenant_id,
+                    actor_id=actor_id, actor_username=actor_username, status="succeeded",
+                    impact=impact, reason=reason,
+                )
+                retrieval_cache.invalidate_documents([doc_id])
+                return result
+            if action == "delete":
+                cursor.execute("DELETE FROM ai_document_chunk WHERE document_id = ?", (doc_id,))
+                cursor.execute(
+                    "DELETE FROM ai_document WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
+                    (doc_id, tenant_id),
+                )
+                cursor.execute(
+                    "UPDATE ai_knowledge_document_action SET status = 'succeeded', completed_at = ? WHERE id = ?",
+                    (now, action_id),
+                )
+                conn.commit()
+                result = {
+                    "action_id": action_id,
+                    "action": action,
+                    "document_id": doc_id,
+                    "status": "succeeded",
+                    "impact": impact,
+                    "recovery": {"recovery": recovery},
+                }
+                self._write_action_audit(
+                    action_id=action_id, action=action, document_id=doc_id, tenant_id=tenant_id,
+                    actor_id=actor_id, actor_username=actor_username, status="succeeded",
+                    impact=impact, reason=reason,
+                )
+                retrieval_cache.invalidate_documents([doc_id])
+                return result
+            conn.commit()
+
+        try:
+            from ai.services.knowledge_reindex_service import knowledge_reindex_service
+
+            pending_job = knowledge_reindex_service.create_job(
+                tenant_id=tenant_id,
+                scope={"document_id": doc_id},
+                operation=action,
+                action_id=action_id,
+                run_async=True,
+            )
+            job_id = str(pending_job.get("id") or "")
+            with get_db_connection() as conn:
+                conn.execute(
+                    "UPDATE ai_knowledge_document_action SET job_id = ? WHERE id = ?",
+                    (job_id, action_id),
+                )
+                conn.commit()
+            result = {
+                "action_id": action_id,
+                "action": action,
+                "document_id": doc_id,
+                "status": "queued",
+                "job_id": job_id,
+                "impact": impact,
+                "recovery": {"recovery": recovery},
+                "job": pending_job,
+            }
+            self._write_action_audit(
+                action_id=action_id, action=action, document_id=doc_id, tenant_id=tenant_id,
+                actor_id=actor_id, actor_username=actor_username, status="queued",
+                impact=impact, reason=reason, job_id=job_id,
+            )
+            return result
+        except Exception as exc:
+            safe_code = "KNOWLEDGE_ACTION_JOB_CREATE_FAILED"
+            with get_db_connection() as conn:
+                conn.execute(
+                    "UPDATE ai_knowledge_document_action SET status = 'failed', error_code = ?, completed_at = ? WHERE id = ?",
+                    (safe_code, datetime.now(timezone.utc).isoformat(), action_id),
+                )
+                conn.commit()
+            raise KnowledgeDocumentActionError(safe_code, "document action could not be queued", status_code=503) from exc
 
     def smart_chunk_markdown(self, markdown_text: str, max_chunk_size: int = 800) -> List[Dict[str, Any]]:
         """Compatibility wrapper around the V2 chunking engine.

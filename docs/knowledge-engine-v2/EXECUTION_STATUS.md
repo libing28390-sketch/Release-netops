@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: KUI-012 (PENDING; KUI-001..011 PASS)
-Last Completed: KUI-011
-Next Task: KUI-012（按原清单依赖继续）
+Current Task: KUI-013 (PENDING; KUI-001..012 PASS)
+Last Completed: KUI-012
+Next Task: KUI-013（按原清单依赖继续）
 
-Completed: 264 / 359
-P0: 219 / 277
-Last Verified Commit: 9f2fe795（KUI-011 待提交）
+Completed: 265 / 359
+P0: 220 / 277
+Last Verified Commit: 7024953c（KUI-012 工作树待提交）
 
-Recent Migration: m0142/m0143/m0144 applied on PostgreSQL 18.4; rollback/tenant and JSONB contract probe PASS
+Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
 Recent Build: frontend lint/build PASS; Python compile PASS; existing large-chunk warning only
 Last Security Check: metadata-only audit, tenant isolation, secret redaction and adapter bypass audit PASS
-Recovery Point: KUI-012
+Recovery Point: KUI-013
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -22,6 +22,7 @@ KUI-001..008 证据：
 - KUI-009 scope：PostgreSQL 官方/企业白名单分区探针 PASS；聚焦测试 12 passed
 - KUI-010 forms：官方 URL / 企业 SOP 分离表单；官方/企业回归与 KUI 测试 21 passed
 - KUI-011 batch：逐文件 Metadata 预览、厂商冲突阻断；KUI 聚焦测试 7 passed，lint/build PASS
+- KUI-012 actions：删除/禁用/启用/Reparse/Rechunk/Reindex 独立确认、租户动作 ledger；KUI/DB-022/m0145 回归 19 passed，PostgreSQL probe PASS，lint/build/Vitest 90 passed
 
 Blocked Tasks: none
 

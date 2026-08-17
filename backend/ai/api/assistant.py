@@ -15,7 +15,7 @@ from ai.security.sanitizer import sanitize_text
 from ai.services.natural_query import natural_query_service
 from ai.services.ip_troubleshooting import ip_troubleshooting_service
 from ai.services.mac_troubleshooting import mac_troubleshooting_service
-from ai.services.knowledge_service import knowledge_service
+from ai.services.knowledge_service import KnowledgeDocumentActionError, knowledge_service
 from ai.services.knowledge_reindex_service import knowledge_reindex_service
 from ai.services.conversation_service import append_message, get_context, set_conversation_model
 from ai.security.security_service import create_diagnostic_case, handoff_case, record_feedback
@@ -87,6 +87,15 @@ class KnowledgeBatchDeleteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     doc_ids: List[str] = Field(..., min_length=1, max_length=100)
+    confirm: bool = Field(default=False, description="Explicit destructive-action confirmation")
+    reason: str = Field(default="", max_length=1024)
+
+
+class KnowledgeDocumentActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: bool = Field(default=False, description="Explicit action confirmation")
+    reason: str = Field(default="", max_length=1024)
 
 
 from fastapi.responses import StreamingResponse
@@ -568,19 +577,130 @@ def get_document_detail(doc_id: str, user=Depends(require_ai_permission("ai.view
     return document
 
 
+def _execute_knowledge_document_action(
+    doc_id: str,
+    action: str,
+    payload: KnowledgeDocumentActionRequest,
+    user: Dict[str, Any],
+):
+    try:
+        return knowledge_service.execute_document_action(
+            doc_id=doc_id,
+            action=action,
+            tenant_id=user.get("tenant_id") or "tenant-default",
+            actor_id=user.get("id") or user.get("user_id") or user.get("username") or "system",
+            actor_username=user.get("username") or "system",
+            confirm=payload.confirm,
+            reason=payload.reason,
+        )
+    except KnowledgeDocumentActionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+
+@router.post("/documents/{doc_id}/actions/delete")
+def delete_document_action(
+    doc_id: str,
+    payload: KnowledgeDocumentActionRequest,
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    """Explicitly confirmed document deletion with a durable action ledger."""
+    return _execute_knowledge_document_action(doc_id, "delete", payload, user)
+
+
+@router.post("/documents/{doc_id}/actions/disable")
+def disable_document_action(
+    doc_id: str,
+    payload: KnowledgeDocumentActionRequest,
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    return _execute_knowledge_document_action(doc_id, "disable", payload, user)
+
+
+@router.post("/documents/{doc_id}/actions/enable")
+def enable_document_action(
+    doc_id: str,
+    payload: KnowledgeDocumentActionRequest,
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    return _execute_knowledge_document_action(doc_id, "enable", payload, user)
+
+
+@router.post("/documents/{doc_id}/actions/reparse")
+def reparse_document_action(
+    doc_id: str,
+    payload: KnowledgeDocumentActionRequest,
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    return _execute_knowledge_document_action(doc_id, "reparse", payload, user)
+
+
+@router.post("/documents/{doc_id}/actions/rechunk")
+def rechunk_document_action(
+    doc_id: str,
+    payload: KnowledgeDocumentActionRequest,
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    return _execute_knowledge_document_action(doc_id, "rechunk", payload, user)
+
+
+@router.post("/documents/{doc_id}/actions/reindex")
+def reindex_document_action(
+    doc_id: str,
+    payload: KnowledgeDocumentActionRequest,
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    return _execute_knowledge_document_action(doc_id, "reindex", payload, user)
+
+
 @router.delete("/documents/{doc_id}")
-def delete_document(doc_id: str, user=Depends(require_ai_permission("ai.knowledge.manage"))):
-    """Delete a single document and its chunks."""
-    result = knowledge_service.delete_document(doc_id, tenant_id=user.get("tenant_id") or "tenant-default")
-    if not result.get("deleted"):
-        raise HTTPException(status_code=404, detail=result.get("error", "文档不存在"))
-    return result
+def delete_document(
+    doc_id: str,
+    payload: Optional[KnowledgeDocumentActionRequest] = None,
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    """Compatibility route; destructive calls must use the explicit action contract."""
+    if payload is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "KNOWLEDGE_ACTION_CONFIRMATION_REQUIRED",
+                "message": "use POST /documents/{id}/actions/delete with confirm=true",
+            },
+        )
+    return _execute_knowledge_document_action(doc_id, "delete", payload, user)
 
 
 @router.post("/documents/batch-delete")
 def batch_delete_documents(payload: KnowledgeBatchDeleteRequest, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Batch delete multiple documents by IDs."""
-    return knowledge_service.batch_delete_documents(
-        payload.doc_ids,
-        tenant_id=user.get("tenant_id") or "tenant-default",
-    )
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "KNOWLEDGE_ACTION_CONFIRMATION_REQUIRED",
+                "message": "explicit confirmation is required for batch deletion",
+            },
+        )
+    tenant_id = user.get("tenant_id") or "tenant-default"
+    actions = []
+    for doc_id in payload.doc_ids:
+        try:
+            actions.append(
+                knowledge_service.execute_document_action(
+                    doc_id=doc_id,
+                    action="delete",
+                    tenant_id=tenant_id,
+                    actor_id=user.get("id") or user.get("user_id") or user.get("username") or "system",
+                    actor_username=user.get("username") or "system",
+                    confirm=True,
+                    reason=payload.reason or "confirmed batch delete",
+                )
+            )
+        except KnowledgeDocumentActionError as exc:
+            if exc.code == "KNOWLEDGE_DOCUMENT_NOT_FOUND":
+                continue
+            raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    return {"deleted_count": len(actions), "requested": len(payload.doc_ids), "actions": actions}

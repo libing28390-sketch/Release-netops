@@ -1247,15 +1247,56 @@ export async function clearSampleKnowledge(): Promise<any> {
   });
 }
 
-export async function deleteKnowledgeDocument(docId: string): Promise<any> {
-  return apiRequest(`/api/ai/assistant/documents/${encodeURIComponent(docId)}`, {
-    method: 'DELETE',
+export type KnowledgeDocumentAction = 'delete' | 'disable' | 'enable' | 'reparse' | 'rechunk' | 'reindex';
+
+export interface KnowledgeDocumentActionResult {
+  action_id: string;
+  action: KnowledgeDocumentAction;
+  document_id: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  job_id?: string;
+  idempotent?: boolean;
+  previous_status?: string;
+  current_status?: string;
+  impact: { documents: number; chunks: number; indexes: number; references: number; reference_scope?: string };
+  recovery: { recovery: string };
+  job?: Record<string, unknown>;
+}
+
+export async function runKnowledgeDocumentAction(docId: string, action: KnowledgeDocumentAction, data: { confirm: boolean; reason?: string }): Promise<KnowledgeDocumentActionResult> {
+  return apiRequest<KnowledgeDocumentActionResult>(`/api/ai/assistant/documents/${encodeURIComponent(docId)}/actions/${action}`, {
+    method: 'POST',
+    body: JSON.stringify(data),
   });
 }
 
-export async function batchDeleteKnowledgeDocuments(docIds: string[]): Promise<any> {
+export async function deleteKnowledgeDocument(docId: string, reason = 'confirmed by knowledge administrator'): Promise<KnowledgeDocumentActionResult> {
+  return runKnowledgeDocumentAction(docId, 'delete', { confirm: true, reason });
+}
+
+export async function disableKnowledgeDocument(docId: string, reason = 'confirmed by knowledge administrator'): Promise<KnowledgeDocumentActionResult> {
+  return runKnowledgeDocumentAction(docId, 'disable', { confirm: true, reason });
+}
+
+export async function reparseKnowledgeDocument(docId: string, reason = 'confirmed by knowledge administrator'): Promise<KnowledgeDocumentActionResult> {
+  return runKnowledgeDocumentAction(docId, 'reparse', { confirm: true, reason });
+}
+
+export async function rechunkKnowledgeDocument(docId: string, reason = 'confirmed by knowledge administrator'): Promise<KnowledgeDocumentActionResult> {
+  return runKnowledgeDocumentAction(docId, 'rechunk', { confirm: true, reason });
+}
+
+export async function reindexKnowledgeDocument(docId: string, reason = 'confirmed by knowledge administrator'): Promise<KnowledgeDocumentActionResult> {
+  return runKnowledgeDocumentAction(docId, 'reindex', { confirm: true, reason });
+}
+
+export async function enableKnowledgeDocument(docId: string, reason = 'confirmed by knowledge administrator'): Promise<KnowledgeDocumentActionResult> {
+  return runKnowledgeDocumentAction(docId, 'enable', { confirm: true, reason });
+}
+
+export async function batchDeleteKnowledgeDocuments(docIds: string[], reason = 'confirmed by knowledge administrator'): Promise<any> {
   return apiRequest('/api/ai/assistant/documents/batch-delete', {
     method: 'POST',
-    body: JSON.stringify({ doc_ids: docIds }),
+    body: JSON.stringify({ doc_ids: docIds, confirm: true, reason }),
   });
 }

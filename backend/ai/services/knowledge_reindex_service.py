@@ -49,6 +49,7 @@ MIN_BATCH_SIZE = 1
 MAX_BATCH_SIZE = 5000
 DEFAULT_LEASE_SECONDS = 15 * 60
 _CONTROL_KEY = "_db022_control"
+_SUPPORTED_OPERATIONS = frozenset({"reparse", "rechunk", "reindex"})
 
 
 class ReindexLeaseLost(RuntimeError):
@@ -160,6 +161,8 @@ class KnowledgeReindexService:
                 embedding_success INTEGER NOT NULL DEFAULT 0,
                 embedding_failed INTEGER NOT NULL DEFAULT 0,
                 error_log_json TEXT NOT NULL DEFAULT '[]',
+                operation TEXT NOT NULL DEFAULT 'reindex',
+                action_id TEXT,
                 created_at TEXT NOT NULL,
                 started_at TEXT,
                 finished_at TEXT,
@@ -167,6 +170,17 @@ class KnowledgeReindexService:
             )
             """
         )
+        # m0145 adds these columns for existing installations.  The worker is
+        # also able to start on a database that has not yet run the migration
+        # (for example during a rolling deployment), so keep this repair
+        # idempotent at the runtime boundary as well.  Check the schema first;
+        # catching PostgreSQL ``duplicate_column`` would otherwise leave the
+        # transaction aborted for the subsequent INSERT.
+        existing = self._table_columns(cursor, "ai_knowledge_reindex_job")
+        if "operation" not in existing:
+            cursor.execute("ALTER TABLE ai_knowledge_reindex_job ADD COLUMN operation TEXT NOT NULL DEFAULT 'reindex'")
+        if "action_id" not in existing:
+            cursor.execute("ALTER TABLE ai_knowledge_reindex_job ADD COLUMN action_id TEXT")
 
     @staticmethod
     def _external_scope(scope: Dict[str, Any] | None) -> dict[str, Any]:
@@ -298,7 +312,12 @@ class KnowledgeReindexService:
         dry_run: bool = False,
         run_async: bool = True,
         batch_size: int = DEFAULT_BATCH_SIZE,
+        operation: str = "reindex",
+        action_id: str | None = None,
     ) -> Dict[str, Any]:
+        operation = str(operation or "reindex").strip().lower()
+        if operation not in _SUPPORTED_OPERATIONS:
+            raise ValueError("Unsupported knowledge document operation")
         scope = self._external_scope(scope)
         safe_batch_size = _clamp_batch_size(batch_size)
         job_id = f"reindex_{uuid.uuid4().hex[:16]}"
@@ -309,12 +328,12 @@ class KnowledgeReindexService:
             self._ensure_job_table(cursor)
             cursor.execute(
                 """INSERT INTO ai_knowledge_reindex_job
-                (id, tenant_id, scope_json, dry_run, status, total, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)""",
+                (id, tenant_id, scope_json, dry_run, status, total, operation, action_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)""",
                 (
                     job_id, tenant_id,
                     json.dumps(self._stored_scope(scope, batch_size=safe_batch_size), ensure_ascii=False),
-                    1 if dry_run else 0, total, now, now,
+                    1 if dry_run else 0, total, operation, action_id, now, now,
                 ),
             )
             conn.commit()
@@ -323,7 +342,14 @@ class KnowledgeReindexService:
             thread.start()
         else:
             self.run_job(job_id)
-        return self.get_status(job_id) or {"id": job_id, "status": "queued", "total": total, "batch_size": safe_batch_size}
+        return self.get_status(job_id) or {
+            "id": job_id,
+            "status": "queued",
+            "total": total,
+            "batch_size": safe_batch_size,
+            "operation": operation,
+            "action_id": action_id,
+        }
 
     def _record_failure(self, job_id: str, document: dict[str, Any], error: str) -> None:
         with get_db_connection() as conn:
@@ -354,7 +380,115 @@ class KnowledgeReindexService:
             )
             conn.commit()
 
-    def _process_document(self, document: dict[str, Any], dry_run: bool) -> dict[str, int]:
+    def _sync_action_status(self, job: dict[str, Any], status: str, *, error_code: str | None = None) -> None:
+        """Project a terminal job outcome to the KUI action ledger."""
+        action_id = str(job.get("action_id") or "").strip()
+        if not action_id:
+            return
+        try:
+            with get_db_connection() as conn:
+                conn.execute(
+                    "UPDATE ai_knowledge_document_action SET status = ?, error_code = ?, completed_at = ? WHERE id = ?",
+                    (status, error_code, _now(), action_id),
+                )
+                conn.commit()
+        except Exception:
+            # The job remains the source of truth for recovery.  A legacy
+            # installation without m0145 must not crash a worker.
+            return
+
+    def _process_document(
+        self,
+        document: dict[str, Any],
+        dry_run: bool,
+        operation: str = "reindex",
+    ) -> dict[str, int]:
+        """Process one document for an explicitly confirmed operation.
+
+        Reparse is deliberately metadata-only.  Rechunk and Reindex use the
+        existing transactional replacement path; Rechunk still validates the
+        source before replacing chunks because chunk metadata is part of the
+        retrieval contract and must not be written from an unparsed body.
+        """
+        operation = str(operation or "reindex").strip().lower()
+        if operation not in _SUPPORTED_OPERATIONS:
+            raise ValueError("Unsupported knowledge document operation")
+        if operation == "reparse":
+            return self._process_reparse(document, dry_run)
+        return self._process_full_reindex(document, dry_run)
+
+    def _process_reparse(self, document: dict[str, Any], dry_run: bool) -> dict[str, int]:
+        """Parse and persist metadata without touching document chunks."""
+        raw = document.get("original_content") or document.get("normalized_content") or ""
+        parsed = parse_markdown_document(str(raw))
+        source_metadata: dict[str, Any] = {}
+        raw_meta = document.get("metadata_json")
+        if isinstance(raw_meta, dict):
+            source_metadata = raw_meta
+        elif raw_meta:
+            try:
+                loaded = json.loads(str(raw_meta))
+                if isinstance(loaded, dict):
+                    source_metadata = loaded
+            except (TypeError, ValueError):
+                source_metadata = {}
+        directory_path = source_metadata.get("knowledge_directory_path") or source_metadata.get("source_relative_path")
+        validated = validate_metadata(
+            parsed.metadata,
+            directory_path=directory_path,
+            name=document.get("name"),
+            allow_missing_required=parsed.metadata_parse_status == "missing",
+        )
+        merged = merge_metadata(validated, source_metadata)
+        merged.setdefault("document_id", document.get("document_id") or document.get("id"))
+        merged.setdefault("status", document.get("status") or "active")
+        merged.setdefault("exclude_from_rag", False)
+        content = parsed.content.strip()
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        merged.setdefault("document_version", str(merged.get("source_version") or content_hash[:16]))
+        merged.setdefault("parser_version", ChunkingEngine.parser_version)
+        merged.setdefault("index_version", document.get("index_version") or ChunkingEngine.default_index_version)
+        platform = merged.get("cli_platform")
+        if str(platform or "").lower() == "all":
+            platform = None
+        vendor = merged.get("vendor") or document.get("vendor") or "all"
+        if dry_run:
+            return {"parsed": 1, "updated": 0, "rechunked": 0, "embedding_success": 0, "embedding_failed": 0}
+
+        old_content = str(document.get("normalized_content") or "").strip()
+        ingestion_status = "ready" if old_content == content else "rechunk_required"
+        now = _now()
+        values = {
+            "vendor": vendor,
+            "platform": platform,
+            "metadata_json": self._json_value(merged),
+            "normalized_content": content,
+            "fts_text": f"{document.get('name') or ''}\n{content}",
+            "original_content": parsed.original_content,
+            "content_hash": content_hash,
+            "ingestion_status": ingestion_status,
+            "metadata_parse_status": parsed.metadata_parse_status,
+            "metadata_parse_error": parsed.metadata_parse_error,
+            "parser_version": merged.get("parser_version"),
+            "document_version": merged.get("document_version"),
+            "index_version": merged.get("index_version"),
+            "updated_at": now,
+            "exclude_from_rag": 1 if merged.get("exclude_from_rag") else 0,
+            **metadata_columns(merged),
+        }
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            available_docs = self._table_columns(cursor, "ai_document")
+            values = {key: value for key, value in values.items() if key in available_docs}
+            cursor.execute(
+                f"UPDATE ai_document SET {', '.join(f'{key} = ?' for key in values)} WHERE id = ?",
+                [*values.values(), document["id"]],
+            )
+            conn.commit()
+        retrieval_cache.invalidate_documents([document["id"]])
+        return {"parsed": 1, "updated": 1, "rechunked": 0, "embedding_success": 0, "embedding_failed": 0}
+
+    def _process_full_reindex(self, document: dict[str, Any], dry_run: bool) -> dict[str, int]:
         raw = document.get("original_content") or document.get("normalized_content") or ""
         parsed = parse_markdown_document(str(raw))
         source_metadata = {}
@@ -520,6 +654,11 @@ class KnowledgeReindexService:
         scope, control = self._decode_scope(raw.get("scope_json"))
         tenant_id = raw.get("tenant_id") or "tenant-default"
         dry_run = bool(raw.get("dry_run"))
+        operation = str(raw.get("operation") or "reindex").strip().lower()
+        if operation not in _SUPPORTED_OPERATIONS:
+            self._update_job(job_id, status="failed", error_log_json=json.dumps([{"code": "KNOWLEDGE_OPERATION_INVALID"}], ensure_ascii=False), finished_at=_now())
+            self._sync_action_status(raw, "failed", error_code="KNOWLEDGE_OPERATION_INVALID")
+            return self.get_status(job_id) or raw
         batch_size = _clamp_batch_size(control.get("batch_size"))
         cursor_checkpoint = str(control.get("cursor") or "") or None
         lease = _ReindexLease(job_id)
@@ -561,7 +700,12 @@ class KnowledgeReindexService:
                     if not lease.heartbeat():
                         raise ReindexLeaseLost(job_id)
                     try:
-                        result = self._process_document(document, dry_run)
+                        if operation == "reindex":
+                            # Keep the long-standing two-argument seam
+                            # patchable for V1/DB-022 compatibility tests.
+                            result = self._process_document(document, dry_run)
+                        else:
+                            result = self._process_document(document, dry_run, operation=operation)
                         for key in ("parsed", "updated", "rechunked", "embedding_success", "embedding_failed"):
                             counters[key] += int(result.get(key) or 0)
                     except (EmbeddingProviderError, SecurityBlocked, MetadataParseError, MetadataValidationError, ValueError) as exc:
@@ -595,6 +739,11 @@ class KnowledgeReindexService:
                 finished_at=_now(),
                 scope_json=json.dumps(self._stored_scope(scope, batch_size=batch_size), ensure_ascii=False),
             )
+            self._sync_action_status(
+                raw,
+                "failed" if counters["failed"] else "succeeded",
+                error_code="KNOWLEDGE_ACTION_PARTIAL_FAILURE" if counters["failed"] else None,
+            )
         except ReindexLeaseLost:
             # A replacement worker can safely resume from the last committed
             # keyset checkpoint.  The current document is idempotent and may
@@ -612,6 +761,7 @@ class KnowledgeReindexService:
                 )
             except Exception:
                 logger.error("[RAG reindex] job=%s could not persist lease-loss checkpoint", job_id, exc_info=True)
+            self._sync_action_status(raw, "failed", error_code="KNOWLEDGE_ACTION_LEASE_LOST")
         except Exception as exc:
             logger.error("[RAG reindex] job=%s failed: %s", job_id, type(exc).__name__, exc_info=True)
             self._update_job(
@@ -624,6 +774,7 @@ class KnowledgeReindexService:
                     ensure_ascii=False,
                 ),
             )
+            self._sync_action_status(raw, "failed", error_code="KNOWLEDGE_ACTION_JOB_FAILED")
         finally:
             lease.release()
         return self.get_status(job_id) or {}
@@ -656,6 +807,8 @@ class KnowledgeReindexService:
             dry_run=False,
             run_async=run_async,
             batch_size=_clamp_batch_size(previous.get("batch_size")),
+            operation=str(previous.get("operation") or "reindex"),
+            action_id=previous.get("action_id"),
         )
 
 

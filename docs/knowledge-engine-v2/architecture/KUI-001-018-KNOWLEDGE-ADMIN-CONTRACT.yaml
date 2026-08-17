@@ -11,11 +11,11 @@ scope:
     - KUI-006
     - KUI-007
     - KUI-008
-  later_tasks:
     - KUI-009
     - KUI-010
     - KUI-011
     - KUI-012
+  later_tasks:
     - KUI-013
     - KUI-014
     - KUI-015
@@ -81,6 +81,46 @@ batch_upload:
       - platform
       - metadata_json
     case_insensitive: true
+actions:
+  confirmation_required: true
+  endpoint_template: /api/ai/assistant/documents/{document_id}/actions/{action}
+  actions:
+    delete:
+      permission: ai.knowledge.manage
+      mode: synchronous
+      impact: [documents, chunks, indexes, references]
+      recovery: approved_postgresql_backup_restore_only
+    disable:
+      permission: ai.knowledge.manage
+      mode: synchronous
+      recovery: enable_action
+    enable:
+      permission: ai.knowledge.manage
+      mode: synchronous
+      recovery: disable_action
+    reparse:
+      permission: ai.knowledge.manage
+      mode: tenant_scoped_job
+      mutation: metadata_only
+    rechunk:
+      permission: ai.knowledge.manage
+      mode: tenant_scoped_job
+      mutation: transactional_chunk_replace
+    reindex:
+      permission: ai.knowledge.manage
+      mode: tenant_scoped_job
+      mutation: transactional_metadata_chunk_embedding_replace
+  ledger:
+    table: ai_knowledge_document_action
+    tenant_scoped: true
+    metadata_only: true
+    operation_column: ai_knowledge_reindex_job.operation
+    job_link_column: ai_knowledge_reindex_job.action_id
+  errors:
+    confirmation_required: KNOWLEDGE_ACTION_CONFIRMATION_REQUIRED
+    not_found: KNOWLEDGE_DOCUMENT_NOT_FOUND
+    input_invalid: KNOWLEDGE_ACTION_INPUT_INVALID
+    job_create_failed: KNOWLEDGE_ACTION_JOB_CREATE_FAILED
 request_lifecycle:
   list_requests:
     cancel_previous_request: true
