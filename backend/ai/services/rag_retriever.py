@@ -28,6 +28,7 @@ from ai.services.retrieval_contract import (
     retrieval_cache_key,
     version_compatibility,
 )
+from ai.services.retrieval_index_service import retrieval_index_service
 
 
 @dataclass
@@ -105,6 +106,24 @@ class RAGRetriever:
     @staticmethod
     def invalidate_cache_for_tenant(tenant_id: str) -> int:
         return retrieval_cache.invalidate_tenant(tenant_id)
+
+    @staticmethod
+    def _active_index_generation(tenant_id: str) -> Optional[Dict[str, Any]]:
+        """Return the tenant's active shadow generation, fail-safe to V1.
+
+        A missing migration or a temporarily unavailable control table must
+        never make the legacy retrieval path unavailable.  Cutover itself is
+        PostgreSQL-transactional; this read only selects a committed pointer.
+        """
+        try:
+            generation = retrieval_index_service.get_active_generation(tenant_id)
+            if not generation or str(generation.get("status") or "") != "active":
+                return None
+            if not generation.get("id") or not generation.get("index_version"):
+                return None
+            return generation
+        except Exception:
+            return None
 
     @classmethod
     def _search_tokens(cls, value: str) -> set[str]:
@@ -304,11 +323,17 @@ class RAGRetriever:
                     params.append(f"%{value}%")
         return " AND ".join(where), params
 
-    def _query_rows(self, request: RetrievalRequest, vector_top_n: int) -> tuple[list[Any], int, Dict[str, Any]]:
+    def _query_rows(
+        self,
+        request: RetrievalRequest,
+        vector_top_n: int,
+        active_generation: Optional[Dict[str, Any]] = None,
+    ) -> tuple[list[Any], int, Dict[str, Any]]:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             columns = self._table_columns(cursor, "ai_document")
-            chunk_columns = self._table_columns(cursor, "ai_document_chunk")
+            source_table = "ai_retrieval_index_shadow_chunk" if active_generation else "ai_document_chunk"
+            chunk_columns = self._table_columns(cursor, source_table)
             where_sql, params = self._filter_sql(request, columns)
             cursor.execute(
                 f"SELECT COUNT(*) FROM ai_document d WHERE {where_sql}",
@@ -330,6 +355,24 @@ class RAGRetriever:
             embedding_model_expr = "c.embedding_model" if "embedding_model" in chunk_columns else "NULL"
             embedding_dimensions_expr = "c.embedding_dimensions" if "embedding_dimensions" in chunk_columns else "NULL"
             candidate_where = f"AND {candidate_expr} = 1"
+            source_where = ""
+            source_params: list[Any] = []
+            if active_generation:
+                generation_id = str(active_generation.get("id") or "")
+                generation_tenant = str(active_generation.get("tenant_id") or request.tenant_id)
+                if generation_tenant != str(request.tenant_id):
+                    # Never use a generation belonging to a different tenant,
+                    # even if a caller supplied a forged request object.
+                    return [], document_count, {
+                        "metadata_filter": where_sql,
+                        "metadata_candidate_documents": document_count,
+                        "candidate_count": 0,
+                        "vector_top_n": 0,
+                        "index_source": "v1",
+                        "capability_degraded": ["INDEX_TENANT_MISMATCH"],
+                    }
+                source_where = "c.generation_id = ? AND c.tenant_id = ? AND d.tenant_id = ? AND "
+                source_params = [generation_id, generation_tenant, generation_tenant]
             cursor.execute(
                 f"""SELECT c.id, c.content, c.embedding, c.metadata_json, c.section,
                            d.id, d.name, {source_expr}, {document_version_expr}, d.vendor, d.platform, d.tenant_id,
@@ -338,12 +381,12 @@ class RAGRetriever:
                            {software_train_expr}, {software_release_expr},
                            {candidate_expr}, {chunk_role_expr},
                            {parent_expr}, {ordinal_expr}, {embedding_model_expr}, {embedding_dimensions_expr}
-                    FROM ai_document_chunk c
+                    FROM {source_table} c
                     JOIN ai_document d ON c.document_id = d.id
-                    WHERE {where_sql}
+                    WHERE {source_where}{where_sql}
                       {candidate_where}
                     ORDER BY d.id ASC, {ordinal_order_expr} ASC, c.id ASC""",
-                params,
+                source_params + params,
             )
             rows = cursor.fetchall()
             debug = {
@@ -353,13 +396,18 @@ class RAGRetriever:
                 # Every metadata-eligible chunk is scored.  This field is
                 # retained for the existing trace contract.
                 "vector_top_n": len(rows),
+                "index_source": "shadow" if active_generation else "v1",
             }
+            if active_generation:
+                debug["index_generation_id"] = active_generation.get("id")
+                debug["index_version"] = active_generation.get("index_version")
             return rows, document_count, debug
 
     def _native_accelerator_scores(
         self,
         request: RetrievalRequest,
         chunk_ids: Sequence[Any],
+        active_generation: Optional[Dict[str, Any]] = None,
     ) -> tuple[dict[str, dict[str, float]], dict[str, Any]]:
         """Run bounded PostgreSQL FTS/trigram/vector shadow scores.
 
@@ -375,7 +423,11 @@ class RAGRetriever:
             "trgm_candidates": 0,
             "vector_candidates": 0,
             "capability_degraded": [],
+            "index_source": "shadow" if active_generation else "v1",
         }
+        if active_generation:
+            debug["index_generation_id"] = active_generation.get("id")
+            debug["index_version"] = active_generation.get("index_version")
         if not _USE_PG or not chunk_ids:
             if not _USE_PG:
                 debug["capability_degraded"] = ["POSTGRES_ACCELERATORS_NOT_APPLICABLE"]
@@ -385,16 +437,22 @@ class RAGRetriever:
         try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                columns = self._table_columns(cursor, "ai_document_chunk")
+                source_table = "ai_retrieval_index_shadow_chunk" if active_generation else "ai_document_chunk"
+                columns = self._table_columns(cursor, source_table)
+                scope_sql = ""
+                scope_params: list[Any] = []
+                if active_generation:
+                    scope_sql = "generation_id = ? AND tenant_id = ? AND "
+                    scope_params = [str(active_generation.get("id") or ""), str(active_generation.get("tenant_id") or request.tenant_id)]
                 if "search_text" in columns:
                     query_text = str(request.query or "")[:20000]
                     try:
                         rows = cursor.execute(
                             "SELECT id, LEAST(1.0, ts_rank_cd(to_tsvector('simple', COALESCE(search_text, '')), "
                             "websearch_to_tsquery('simple', ?))) "
-                            f"FROM ai_document_chunk WHERE id IN ({placeholders}) "
+                            f"FROM {source_table} WHERE {scope_sql}id IN ({placeholders}) "
                             "AND to_tsvector('simple', COALESCE(search_text, '')) @@ websearch_to_tsquery('simple', ?)",
-                            [query_text, *chunk_ids, query_text],
+                            [query_text, *scope_params, *chunk_ids, query_text],
                         ).fetchall()
                         for row in rows:
                             scores.setdefault(str(row[0]), {})["fts"] = max(0.0, min(1.0, float(row[1] or 0.0)))
@@ -407,9 +465,9 @@ class RAGRetriever:
                     try:
                         rows = cursor.execute(
                             "SELECT id, similarity(COALESCE(search_text, ''), ?) "
-                            f"FROM ai_document_chunk WHERE id IN ({placeholders}) "
+                            f"FROM {source_table} WHERE {scope_sql}id IN ({placeholders}) "
                             "AND similarity(COALESCE(search_text, ''), ?) >= ?",
-                            [query_text, *chunk_ids, query_text, threshold],
+                            [query_text, *scope_params, *chunk_ids, query_text, threshold],
                         ).fetchall()
                         for row in rows:
                             scores.setdefault(str(row[0]), {})["trgm"] = max(0.0, min(1.0, float(row[1] or 0.0)))
@@ -428,8 +486,8 @@ class RAGRetriever:
                         vector_literal = "[" + ",".join(str(float(value)) for value in query_vector) + "]"
                         rows = cursor.execute(
                             "SELECT id, GREATEST(0.0, LEAST(1.0, 1 - (embedding_vector <=> CAST(? AS vector)))) "
-                            f"FROM ai_document_chunk WHERE id IN ({placeholders}) AND embedding_vector IS NOT NULL",
-                            [vector_literal, *chunk_ids],
+                            f"FROM {source_table} WHERE {scope_sql}id IN ({placeholders}) AND embedding_vector IS NOT NULL",
+                            [vector_literal, *scope_params, *chunk_ids],
                         ).fetchall()
                         for row in rows:
                             scores.setdefault(str(row[0]), {})["vector"] = max(0.0, min(1.0, float(row[1] or 0.0)))
@@ -465,7 +523,11 @@ class RAGRetriever:
     def search(self, request: RetrievalRequest, min_relevance: float = 0.20) -> Dict[str, Any]:
         top_k = max(1, int(request.top_k or 3))
         candidate_hint = max(top_k * 30, 100)
-        cache_key = retrieval_cache_key(request)
+        active_generation = self._active_index_generation(request.tenant_id)
+        cache_key = retrieval_cache_key(
+            request,
+            index_version=str((active_generation or {}).get("index_version") or "retrieval-v1"),
+        )
         if self.cache_enabled:
             cached = retrieval_cache.get(cache_key)
             if cached is not None:
@@ -473,10 +535,11 @@ class RAGRetriever:
                 self.last_debug = cached.get("debug") or {}
                 return cached
         try:
-            rows, _document_count, debug = self._query_rows(request, candidate_hint)
+            rows, _document_count, debug = self._query_rows(request, candidate_hint, active_generation)
             accelerator_scores, accelerator_debug = self._native_accelerator_scores(
                 request,
                 [row[0] for row in rows],
+                active_generation,
             )
             debug.update(accelerator_debug)
             try:

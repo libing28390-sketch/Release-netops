@@ -251,7 +251,7 @@
 - [x] `CHK-011` `P0/AI+DBA/M`：验证 Embedding 维度与 pgvector 列兼容性，拒绝静默混用。
 - [x] `CHK-012` `P0/AI+BE/M`：实现批量 Embedding、失败重试、幂等和限速。
 - [x] `CHK-013` `P1/AI+BE/M`：实现 Document 修改后的精确 Rechunk/Reembed/Reindex。
-- [ ] `CHK-014` `P1/AI+BE/M`：实现双 Index、Shadow Index、切换和回滚。
+- [x] `CHK-014` `P1/AI+BE/M`：实现双 Index、Shadow Index、切换和回滚。
 - [ ] `CHK-015` `P1/FE/M`：实现 Chunk 查看器，支持 Parent、Neighbor、Metadata 和来源定位。
 - [ ] `CHK-016` `P2/AI+QA/L`：建立不同 Chunk 配置的离线对比实验。
 

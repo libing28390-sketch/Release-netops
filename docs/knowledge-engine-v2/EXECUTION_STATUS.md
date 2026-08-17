@@ -1,26 +1,28 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: CHK-013 (DONE_PASS)
-Last Completed: CHK-013
-Next Task: CHK-014（实现双 Index、Shadow Index、切换和回滚）
+Current Task: CHK-014 (DONE_PASS)
+Last Completed: CHK-014
+Next Task: CHK-015（实现 Chunk 查看器，支持 Parent、Neighbor、Metadata 和来源定位）
 
-Completed: 292 / 359
+Completed: 293 / 359
 P0: 234 / 277
-Last Verified Commit: 25ca5444（CHK-013 PostgreSQL precise rebuild probe PASS）
+Last Verified Commit: 待提交（CHK-014 PostgreSQL shadow index probe PASS）
 
-Recent Migration: CHK-013 无新增 migration；PostgreSQL ai_document/ai_document_chunk 精确重建探针 PASS 并 rollback，无生产探针写入
-Recent Build: CHK-013 PostgreSQL probe PASS；CHK-P0 chunk/embedding/API contract regression 15 passed；py_compile/diff PASS
-Last Security Check: CHK-013 tenant + updated_at CAS 防止 stale rebuild 覆盖；provider/dimension 失败不替换旧 Chunk；原始正文事实保持不变
+Recent Migration: CHK-014 m0150 shadow generation migration 重复执行 PASS；真实 PostgreSQL DDL/数据探针 rollback，无生产探针写入
+Recent Build: CHK-014 PostgreSQL probe PASS；PG wrapper test 1 passed；CHK-P0 chunk/embedding/API contract regression 15 passed；py_compile/diff PASS
+Last Security Check: CHK-014 generation/shadow/RAG accelerator 均 tenant+generation 限定；not-ready 禁止切换；只失效目标租户 cache；SQLite 未作为验收证据
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ CHK-014
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ CHK-015
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
 ING-024：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-024.md；focused 7 passed；相关回归 44 + 14 passed；PostgreSQL-only duplicate-content probe PASS；SQLite 未作为验收证据。
 
 CHK-013：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-013.md；PostgreSQL-only precise rebuild probe PASS；CHK-P0 chunk/embedding/API regression 15 passed；SQLite 未作为验收证据。
+
+CHK-014：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-014.md；PostgreSQL-only shadow generation/cutover/rollback probe PASS；PG wrapper 1 passed；CHK-P0 chunk/embedding/API regression 15 passed；SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

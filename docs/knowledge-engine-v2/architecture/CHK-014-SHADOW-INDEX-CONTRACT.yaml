@@ -1,0 +1,58 @@
+task_id: CHK-014
+title: dual index and shadow generation cutover
+priority: P1
+status: executable
+authority: PostgreSQL
+scope:
+  - build a tenant-scoped shadow retrieval generation from the V1 document/chunk projection
+  - verify FTS, pg_trgm and pgvector-compatible shadow structures before reads use them
+  - atomically switch one committed active generation per tenant
+  - include generation/index version in retrieval cache keys and invalidate tenant cache after commit
+  - restore the prior generation with an atomic rollback pointer change
+invariants:
+  source_and_compatibility:
+    - V1 ai_document and ai_document_chunk remain the source projection and are never rewritten by cutover
+    - shadow rows carry generation_id and tenant_id on every primary key
+    - one tenant cannot read or activate another tenant generation
+    - a generation is immutable from the read path after it becomes active
+  lifecycle:
+    - building -> shadow -> ready -> active is the only successful promotion path
+    - not_ready_generations_cannot_be_activated
+    - only one active generation exists per tenant
+    - active -> superseded and active -> rolled_back transitions are transactional
+    - rollback restores previous_generation_id and invalidates only that tenant cache
+  query:
+    - RAG reads the active shadow table only after committed cutover
+    - missing or unavailable control metadata fails safe to the V1 path
+    - FTS, trigram and vector accelerator queries are bounded by generation, tenant and candidate IDs
+  security:
+    - tenant predicates are present in create/build/read/cutover/rollback operations
+    - generation metadata is bounded and excludes secrets, identity, ACL and tenant payloads
+    - verification/error fields contain stable codes and counts, never document bodies or SQL
+implementation:
+  migration: backend/database/migrations/m0150_retrieval_shadow_generations.py
+  service: backend/ai/services/retrieval_index_service.py
+  retriever: backend/ai/services/rag_retriever.py
+  tables:
+    - ai_retrieval_index_generation
+    - ai_retrieval_index_shadow_chunk
+verification:
+  postgresql_probe: scripts/knowledge_engine_v2_chk014_pg_probe.py
+  required_vectors:
+    - migration_is_idempotent_and_uses_jsonb_vector_pg_trgm
+    - two_generations_can_build_without_read_cutover
+    - active_pointer_switch_is_atomic_and_cache_versioned
+    - not_ready_cutover_is_rejected
+    - tenant_isolation_is_enforced
+    - rollback_restores_prior_generation
+    - probe_transaction_rolls_back_all_rows_and_ddl
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_chk014_pg_probe.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_chk014_shadow_index_pg.py -q -p no:cacheprovider"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m py_compile backend/database/migrations/m0150_retrieval_shadow_generations.py backend/ai/services/retrieval_index_service.py backend/ai/services/rag_retriever.py scripts/knowledge_engine_v2_chk014_pg_probe.py"
+    - "git diff --check"
+rollback:
+  runtime: call RetrievalIndexService.rollback_generation and route reads to previous active generation
+  data: retain V1 source/chunk rows and shadow generations for audit; no destructive cutover delete
+  database: acceptance probe rolls back its transaction; migration downgrade is release-gated no-op
+  operational: disable shadow-read feature flag or remove active pointer only after previous generation is verified
