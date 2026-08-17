@@ -1,17 +1,17 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: ING-022 (ANALYZING)
-Last Completed: OBS-008
-Next Task: ING-022（官方 Seed URL 小规模批量采集与速率限制）
+Current Task: ING-023 (ANALYZING)
+Last Completed: ING-022
+Next Task: ING-023（实现采集并发、退避、robots/服务条款记录和站点异常告警）
 
-Completed: 288 / 359
+Completed: 289 / 359
 P0: 234 / 277
-Last Verified Commit: bd3684df（ING-021 Metadata 预览与人工确认自动化门禁 PASS；浏览器可见验证待登录）
+Last Verified Commit: 2228373f（ING-022 官方 Seed 批量采集与限速自动化门禁 PASS）
 
-Recent Migration: OBS-003 无 migration；PostgreSQL authoritative path 未写生产
-Recent Build: ING-021 专项 5 passed；AI 267 passed；Catalog 192 passed；frontend 22 files/104 tests；lint/build/compile/diff PASS；无新增 Migration
-Last Security Check: ING-021 令牌绑定 tenant/actor/content hash、过期/篡改/跨租户拒绝、Metadata secret/ACL/identity 字段拒绝 PASS；无原始正文回显
+Recent Migration: ING-022 无 migration；PostgreSQL Source Registry/Version/Import Job 既有边界复用，未写生产 DDL
+Recent Build: ING-022 专项 5 passed；AI 267 passed；Catalog 197 passed；frontend 22 files/104 tests；lint/build/compile/diff PASS；无新增 Migration
+Last Security Check: ING-022 整批 CAT-001 预检、tenant+Host 限速、CAT-004 safe outbound 复用、bounded error 和无原始响应泄漏 PASS
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
 Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ ING-022 ANALYZING

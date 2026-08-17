@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "ING-022",
+  "current_task": "ING-023",
   "task_state": "ANALYZING",
-  "updated_at": "2026-08-17T17:48:00+08:00",
-  "last_completed_task": "OBS-008",
+  "updated_at": "2026-08-17T18:02:00+08:00",
+  "last_completed_task": "ING-022",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -323,7 +323,6 @@
   "pending_tasks": [
     "ING-020",
     "ING-021",
-    "ING-022",
     "ING-023",
     "ING-024",
     "CHK-013",
@@ -910,12 +909,19 @@
   "ing021_browser_status": "BLOCKED_AUTH_REQUIRED",
   "ing021_blocker_reason": "The local browser session is unauthenticated; credentials are user-provided and were not guessed or inspected.",
   "ing021_resume_from": "ING-021",
+  "ing022_status": "DONE_PASS",
+  "ing022_final_verified_at": "2026-08-17T18:02:00+08:00",
+  "ing022_evidence": "docs/knowledge-engine-v2/evidence/ING-022.md",
+  "ing022_contract": "docs/knowledge-engine-v2/architecture/ING-022-OFFICIAL-SEED-BATCH-CONTRACT.yaml",
+  "ing022_focused_tests": "ING-022 5 passed; AI 267 passed; Catalog 197 passed",
+  "ing022_gate_summary": "preflight/rate-limit/security/tenant tests PASS; py_compile/lint/build/diff PASS; no migration",
+  "ing022_production_ddl": "NONE",
   "provider_tags_bugfix_status": "PASS_VERIFIED",
   "provider_tags_bugfix_commit": "b264fede",
   "provider_tags_bugfix_evidence": "docs/knowledge-engine-v2/evidence/BUG-PROVIDER-TAGS-001.md",
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
-  "last_verified_commit": "bd3684df",
-  "completed_count": 288,
+  "last_verified_commit": "2228373f",
+  "completed_count": 289,
   "p0_completed_count": 234,
   "resume_from": "ING-020"
 }
