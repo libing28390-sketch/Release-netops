@@ -5,6 +5,8 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock3,
+  Eye,
+  EyeOff,
   Globe2,
   KeyRound,
   LockKeyhole,
@@ -96,6 +98,36 @@ const getTestDescription = (result: ProviderTestResult, zh: boolean) => {
       : 'The external AI egress is disabled. Enable it in AI Security Gateway first.';
   }
 
+  if (result.error_code === 'AI_AUTH_FAILED') {
+    return zh
+      ? 'Provider 已拒绝 API Key（HTTP 401/403）。请重新填写或轮换 API Key；认证失败不会继续重试。'
+      : 'The Provider rejected the API key (HTTP 401/403). Re-enter or rotate the key; authentication failures are not retried.';
+  }
+
+  if (result.error_code === 'AI_PROVIDER_CIRCUIT_OPEN') {
+    return zh
+      ? 'Provider 因连续失败暂时熔断。请先修正 API Key、Base URL 或模型配置；保存新 API Key 会自动清除旧熔断，或等待冷却后重试。'
+      : 'The Provider circuit is temporarily open after repeated failures. Fix the API key, Base URL, or model; saving a new key resets the circuit, or retry after cooldown.';
+  }
+
+  if (result.error_code === 'AI_HEALTH_BACKOFF') {
+    return zh
+      ? '刚刚已经执行过一次失败探测，系统正在短暂冷却。请修正 API Key 后保存，或等待冷却结束再重试。'
+      : 'A failed probe just ran and the health backoff is active. Fix and save the API key, or retry after the cooldown.';
+  }
+
+  if (result.error_code === 'AI_MODEL_NOT_FOUND') {
+    return zh
+      ? 'Provider 找不到绑定模型或接口地址，请检查模型代码和 Base URL。'
+      : 'The Provider could not find the bound model or endpoint. Check the model code and Base URL.';
+  }
+
+  if (result.error_code === 'AI_NETWORK_ERROR') {
+    return zh
+      ? '无法连接 Provider，请检查 Base URL、网络代理和 HTTPS 配置。'
+      : 'The Provider could not be reached. Check the Base URL, network proxy, and HTTPS configuration.';
+  }
+
   return zh
     ? '没有收到有效的模型响应，请检查 API Key、Base URL、绑定模型和安全网关策略。'
     : 'No valid model response was received. Check the API key, Base URL, bound model, and gateway policy.';
@@ -117,6 +149,7 @@ export const ProviderManagementTab: React.FC = () => {
   const [providerType, setProviderType] = useState('deepseek');
   const [baseUrl, setBaseUrl] = useState('https://api.deepseek.com');
   const [apiKey, setApiKey] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
   const [defaultModelCode, setDefaultModelCode] = useState('deepseek-v4-flash');
   const [timeout, setTimeout] = useState(30);
   const [dataRegion, setDataRegion] = useState('unknown');
@@ -229,6 +262,7 @@ export const ProviderManagementTab: React.FC = () => {
     setProviderType(provider.provider_type);
     setBaseUrl(provider.base_url || '');
     setApiKey('');
+    setShowApiKey(false);
     setDefaultModelCode('');
     setTimeout(provider.timeout || 30);
     setDataRegion(provider.data_region || 'unknown');
@@ -250,6 +284,7 @@ export const ProviderManagementTab: React.FC = () => {
       setName('');
       setApiKey('');
       setBaseUrl('https://api.deepseek.com');
+      setShowApiKey(false);
       setDefaultModelCode('deepseek-v4-flash');
       setTimeout(30);
       setDataRegion('unknown');
@@ -311,7 +346,7 @@ export const ProviderManagementTab: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => { setEditingId(null); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setShowModal(true); }}
+              onClick={() => { setEditingId(null); setApiKey(''); setShowApiKey(false); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setShowModal(true); }}
               className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-950"
             >
               <Plus className="h-4 w-4" />
@@ -408,7 +443,7 @@ export const ProviderManagementTab: React.FC = () => {
           <p className="relative mx-auto mt-1.5 max-w-md text-sm leading-6 text-slate-500 dark:text-slate-400">
             {zh ? '可添加多个供应商实例，并在模型管理与 Copilot 中自由切换。' : 'Add multiple provider instances and switch models from Model Management or Copilot.'}
           </p>
-          <button type="button" onClick={() => { setEditingId(null); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setShowModal(true); }} className="relative mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
+          <button type="button" onClick={() => { setEditingId(null); setApiKey(''); setShowApiKey(false); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setShowModal(true); }} className="relative mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
             <Plus className="h-4 w-4" />
             {zh ? '添加第一个 Provider' : 'Add your first Provider'}
           </button>
@@ -578,7 +613,7 @@ export const ProviderManagementTab: React.FC = () => {
                 <h3 id="add-provider-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-white">{zh ? (editingId ? '编辑 AI Provider' : '添加 AI Provider') : (editingId ? 'Edit AI Provider' : 'Add AI Provider')}</h3>
                 <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{zh ? '填写连接信息，密钥只会以加密形式保存。' : 'Add connection details. The key is stored only in encrypted form.'}</p>
               </div>
-              <button type="button" onClick={() => { setEditingId(null); setShowModal(false); }} aria-label={zh ? '关闭' : 'Close'} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+              <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} aria-label={zh ? '关闭' : 'Close'} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -633,7 +668,18 @@ export const ProviderManagementTab: React.FC = () => {
                     <label htmlFor="provider-api-key" className="block text-xs font-bold text-slate-700 dark:text-slate-300">API Key</label>
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"><LockKeyhole className="h-3 w-3" />AES-256-GCM</span>
                   </div>
-                  <input id="provider-api-key" type="password" required={providerType !== 'ollama' && providerType !== 'local'} placeholder={providerType === 'ollama' || providerType === 'local' ? (zh ? '本地端点可留空' : 'Optional for local endpoint') : 'sk-...'} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                  <div className="relative">
+                    <input id="provider-api-key" type={showApiKey ? 'text' : 'password'} required={providerType !== 'ollama' && providerType !== 'local'} placeholder={providerType === 'ollama' || providerType === 'local' ? (zh ? '本地端点可留空' : 'Optional for local endpoint') : 'sk-...'} value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 pr-11 font-mono text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey((visible) => !visible)}
+                      aria-label={showApiKey ? (zh ? '隐藏 API Key' : 'Hide API Key') : (zh ? '显示 API Key' : 'Show API Key')}
+                      title={showApiKey ? (zh ? '隐藏本次输入的 API Key' : 'Hide the newly entered API Key') : (zh ? '显示本次输入的 API Key' : 'Show the newly entered API Key')}
+                      className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800 dark:hover:text-indigo-300"
+                    >
+                      {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-[1fr_150px]">
@@ -665,7 +711,7 @@ export const ProviderManagementTab: React.FC = () => {
               </div>
 
               <div className="mt-6 flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 dark:border-slate-800 sm:flex-row sm:justify-end">
-                <button type="button" onClick={() => { setEditingId(null); setShowModal(false); }} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">{zh ? '取消' : 'Cancel'}</button>
+                <button type="button" onClick={() => { setEditingId(null); setShowApiKey(false); setShowModal(false); }} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200">{zh ? '取消' : 'Cancel'}</button>
                 <button type="submit" disabled={submitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60">
                   {submitting && <RefreshCw className="h-4 w-4 animate-spin" />}
                   {submitting ? (zh ? '保存中…' : 'Saving…') : (editingId ? (zh ? '保存修改' : 'Save changes') : (zh ? '确认添加' : 'Add Provider'))}

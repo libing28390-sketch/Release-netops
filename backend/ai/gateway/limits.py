@@ -90,5 +90,9 @@ class AILimitManager:
         if circuit.failures >= self.failure_threshold:
             circuit.opened_until = time.monotonic() + self.cooldown_seconds
 
+    def reset_provider(self, provider_id: str) -> None:
+        """Forget circuit failures after an operator changes Provider config."""
+        self._circuits.pop(str(provider_id), None)
+
 
 ai_limits = AILimitManager()

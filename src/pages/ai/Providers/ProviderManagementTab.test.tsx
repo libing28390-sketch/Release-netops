@@ -68,6 +68,11 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
     await user.type(screen.getByLabelText('Provider 名称'), '备用 OpenAI');
     await user.type(screen.getByLabelText('API Key'), 'sk-test-only');
+    expect(screen.getByLabelText('API Key').getAttribute('type')).toBe('password');
+    await user.click(screen.getByRole('button', { name: '显示 API Key' }));
+    expect(screen.getByLabelText('API Key').getAttribute('type')).toBe('text');
+    await user.click(screen.getByRole('button', { name: '隐藏 API Key' }));
+    expect(screen.getByLabelText('API Key').getAttribute('type')).toBe('password');
     await user.selectOptions(screen.getByLabelText('数据区域'), 'global');
     await user.selectOptions(screen.getByLabelText('允许数据分类'), 'INTERNAL');
     await user.click(screen.getByRole('button', { name: '确认添加' }));
@@ -102,5 +107,35 @@ describe('ProviderManagementTab browser key paths', () => {
     await screen.findByText('DeepSeek 主供应商');
     await user.click(screen.getByRole('button', { name: '测试连通性' }));
     expect(await screen.findByText(/允许的数据分类级别不足/)).toBeTruthy();
+  });
+
+  it('explains an invalid API key instead of showing a generic gateway failure', async () => {
+    testProvider.mockResolvedValueOnce({
+      success: false,
+      message: 'provider connection test blocked or failed',
+      error_code: 'AI_AUTH_FAILED',
+      latency_ms: 120,
+    } as any);
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+
+    await screen.findByText('DeepSeek 主供应商');
+    await user.click(screen.getByRole('button', { name: '测试连通性' }));
+    expect(await screen.findByText(/Provider 已拒绝 API Key/)).toBeTruthy();
+  });
+
+  it('explains the health backoff after a recent failed probe', async () => {
+    testProvider.mockResolvedValueOnce({
+      success: false,
+      message: 'health probe backoff is active',
+      error_code: 'AI_HEALTH_BACKOFF',
+      latency_ms: 0,
+    } as any);
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+
+    await screen.findByText('DeepSeek 主供应商');
+    await user.click(screen.getByRole('button', { name: '测试连通性' }));
+    expect(await screen.findByText(/短暂冷却/)).toBeTruthy();
   });
 });

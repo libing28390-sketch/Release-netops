@@ -21,7 +21,9 @@ from ai.security.security_service import create_security_incident, record_securi
 from ai.gateway.exceptions import (
     AIException,
     AIBudgetExceededException,
+    AIAuthFailedException,
     AICircuitOpenException,
+    AIInvalidRequestException,
     AIModelNotFoundException,
     AINetworkException,
     AIProviderUnsupportedException,
@@ -648,6 +650,12 @@ class LLMGateway:
                 except AIException as exc:
                     last_err = exc
                     if isinstance(exc, (AICircuitOpenException, AIQuotaExceededException, AIBudgetExceededException)):
+                        break
+                    # Deterministic configuration/request failures must be
+                    # surfaced immediately. Retrying a bad API key or an
+                    # invalid model only turns a useful code into a circuit
+                    # breaker result and needlessly delays the operator.
+                    if isinstance(exc, (AIAuthFailedException, AIInvalidRequestException, AIModelNotFoundException)):
                         break
                     ai_limits.record_failure(model_info["provider_id"])
                     if attempt < max_retries:

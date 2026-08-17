@@ -24,6 +24,7 @@ from ai.schemas.provider import (
 from api.knowledge_v2_contracts import ProviderKeyInvalidationRequest, ProviderKeyRotationRequest
 from ai.gateway.exceptions import AIException
 from ai.gateway.llm_gateway import llm_gateway
+from ai.gateway.limits import ai_limits
 from core.config import settings
 
 router = APIRouter(prefix="/providers", tags=["AI Providers"])
@@ -236,6 +237,8 @@ def update_provider(provider_id: str, payload: AIProviderUpdate, user=Depends(re
         if payload.provider_type is not None: fields.append("provider_type = ?"); params.append(payload.provider_type)
         if payload.base_url is not None: fields.append("base_url = ?"); params.append(payload.base_url)
         if payload.api_key is not None: fields.extend(["api_key_encrypted = ?", "api_key_masked = ?"]); params.extend([enc_key, masked_key])
+        if payload.api_key is not None:
+            fields.extend(["health_status = 'unknown'", "last_health_check_at = NULL", "last_success_at = NULL", "last_error_code = NULL", "last_error_at = NULL"])
         if payload.timeout is not None: fields.append("timeout = ?"); params.append(payload.timeout)
         if payload.max_retries is not None: fields.append("max_retries = ?"); params.append(payload.max_retries)
         if payload.proxy_url is not None: fields.append("proxy_url = ?"); params.append(payload.proxy_url)
@@ -251,6 +254,8 @@ def update_provider(provider_id: str, payload: AIProviderUpdate, user=Depends(re
         query = f"UPDATE ai_provider SET {', '.join(fields)} WHERE id = ?"
         cursor.execute(query, tuple(params))
         conn.commit()
+        if payload.api_key is not None:
+            ai_limits.reset_provider(provider_id)
 
         cursor.execute(_PROVIDER_SELECT + " WHERE id = ?", (provider_id,))
         r = cursor.fetchone()
@@ -311,6 +316,7 @@ def rotate_provider_key(provider_id: str, payload: ProviderKeyRotationRequest, u
         conn.execute("INSERT INTO ai_provider_key_rotation (id, provider_id, key_version, status, api_key_encrypted, api_key_masked, created_by, created_at) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)", (f"key_{uuid.uuid4().hex[:12]}", provider_id, version, encrypted, masked, user.get("username", "admin"), now_iso))
         conn.execute("INSERT INTO ai_provider_key_audit (id, provider_id, key_version, action, actor_id, reason_code, created_at) VALUES (?, ?, ?, 'rotate', ?, ?, ?)", (f"keyaudit_{uuid.uuid4().hex[:12]}", provider_id, version, user.get("username", "admin"), "manual_rotation", now_iso))
         conn.commit()
+        ai_limits.reset_provider(provider_id)
         return _row_to_provider(conn.execute(_PROVIDER_SELECT + " WHERE id = ?", (provider_id,)).fetchone())
 
 
