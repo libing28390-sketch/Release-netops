@@ -17,11 +17,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: nexora_kb_v2_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nexora_kb_v2_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     # CI must never inherit a production dotenv.  These values are isolated,
     # non-secret test defaults; provider/device credentials stay in fixtures.
     env:
       ENVIRONMENT: test
-      DATABASE_URL: sqlite:////tmp/nexora-kb-v2-ci.db
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/nexora_kb_v2_ci
       REDIS_URL: redis://127.0.0.1:6379/11
       SECRET_KEY: test-only-secret-placeholder
       CREDENTIAL_ENCRYPTION_KEY: test-only-credential-placeholder

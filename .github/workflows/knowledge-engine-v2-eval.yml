@@ -1,0 +1,98 @@
+name: Knowledge Engine V2 Evaluation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/ai/services/evaluation_metrics.py"
+      - "backend/ai/services/security_evaluation_metrics.py"
+      - "docs/knowledge-engine-v2/eval/**"
+      - "docs/knowledge-engine-v2/architecture/EVAL-*.yaml"
+      - "scripts/knowledge_engine_v2_eval_*.py"
+      - "tests/knowledge_engine_v2/test_eval*.py"
+      - ".github/workflows/knowledge-engine-v2-eval.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/ai/services/evaluation_metrics.py"
+      - "backend/ai/services/security_evaluation_metrics.py"
+      - "docs/knowledge-engine-v2/eval/**"
+      - "docs/knowledge-engine-v2/architecture/EVAL-*.yaml"
+      - "scripts/knowledge_engine_v2_eval_*.py"
+      - "tests/knowledge_engine_v2/test_eval*.py"
+      - ".github/workflows/knowledge-engine-v2-eval.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  small-fixed-set:
+    name: EVAL-010 small fixed set (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: nexora_kb_v2_eval
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nexora_kb_v2_eval"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/nexora_kb_v2_eval
+      PYTHONPATH: backend
+      SECRET_KEY: test-only-secret-placeholder
+      CREDENTIAL_ENCRYPTION_KEY: test-only-credential-placeholder
+      AI_ENABLED: "false"
+      EXTERNAL_AI_ENABLED: "false"
+      KNOWLEDGE_V2_ENABLED: "false"
+      KNOWLEDGE_V2_SHADOW_READ: "false"
+      KNOWLEDGE_V2_ROLLOUT_PERCENT: "0"
+      KNOWLEDGE_V2_WRITE_ENABLED: "false"
+      NETWORK_WRITE_ENABLED: "false"
+      PRODUCTION_CREDENTIALS_ALLOWED: "false"
+      AI_GATEWAY_MODE: mock
+      DATA_CLASSIFICATION: synthetic
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install evaluation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest
+
+      - name: Validate PostgreSQL-only gate wiring
+        run: python scripts/knowledge_engine_v2_eval_ci_gate_check.py
+
+      - name: Run small fixed evaluation set
+        run: |
+          python scripts/knowledge_engine_v2_eval_offline.py \
+            --profile small \
+            --strict \
+            --output "$RUNNER_TEMP/eval-offline-small-report-v1.json"
+
+      - name: Run small fixed set regression tests
+        run: >-
+          pytest -q -p no:cacheprovider
+          tests/knowledge_engine_v2/test_eval001_query_dataset.py
+          tests/knowledge_engine_v2/test_eval003_query_type_coverage.py
+          tests/knowledge_engine_v2/test_eval005_metrics.py
+          tests/knowledge_engine_v2/test_eval007_security_metrics.py
+          tests/knowledge_engine_v2/test_eval010_ci_gate.py
+

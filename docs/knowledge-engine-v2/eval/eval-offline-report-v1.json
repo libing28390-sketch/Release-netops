@@ -1,6 +1,7 @@
 {
   "report_schema_version": 1,
   "evaluation_run": "nexora-kb-v2-offline-eval-v1",
+  "profile": "full",
   "status": "PASS",
   "component_count": 8,
   "components": [
@@ -367,5 +368,5 @@
     "random_seed": null,
     "command_version": "knowledge_engine_v2_eval_offline_v1"
   },
-  "report_sha256": "12df1c369843f08adcfb4a578fc706f35b70c2d8a41b61d1db04c946805d4013"
+  "report_sha256": "9d48238cbc53ebaafddf8298361c4b194edc74923585a3d5b62e01c91892b02d"
 }
