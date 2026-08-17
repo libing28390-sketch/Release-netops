@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: API-009 (PENDING; API-008 PASS)
-Last Completed: API-008
-Next Task: API-009（按原清单依赖继续）
+Current Task: OBS-001 (PENDING; API-009 PASS)
+Last Completed: API-009
+Next Task: OBS-001（按原清单依赖继续）
 
-Completed: 279 / 359
-P0: 229 / 277
-Last Verified Commit: a1efe6b9（API-008 PASS；本地提交；未 push）
+Completed: 280 / 359
+P0: 230 / 277
+Last Verified Commit: b94aaad6（API-009 PASS；本地提交；未 push）
 
-Recent Migration: m0146 additive session scope migration；临时 PostgreSQL schema 双次升级幂等，事务 rollback PASS，未应用生产 DDL
-Recent Build: API-008 PostgreSQL probe PASS；AI regression 234 passed；frontend 21 files / 100 tests；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
-Last Security Check: API-008 会话、消息、任务、Agent trace、tool/evidence、诊断 case/run 均按 tenant + opaque user scope，跨域请求 fail closed PASS
-Recovery Point: API-009
+Recent Migration: m0147 additive task execution guards；临时 PostgreSQL schema 双次升级幂等，状态机与 rollback PASS，未应用生产 DDL
+Recent Build: API-009 PostgreSQL probe PASS；AI regression 234 passed；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
+Last Security Check: API-009 claim/cancel/timeout/step/tool budget/complete/fail 均按 tenant/user + execution token 原子保护，stale worker fail closed PASS
+Recovery Point: OBS-001
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -37,6 +37,7 @@ KUI-001..008 证据：
 - API-006 versioned SSE：统一 meta/progress/token/citation/done/error 的 `nxa.sse.v1` 封套，前端增量消费 citation；后端 SSE/RAG 38 passed，前端 21 files / 99 tests，V1 PostgreSQL baseline 10/10，lint/build/compile/diff PASS
 - API-007 SSE idempotency：stream_id/sequence 有界回放、Abort 租约释放、重连去重、完成流只读回放且 conversation 写入至多一次；API-006/007 后端 9 passed，AI 全套 234 passed，前端 21 files / 100 tests，PostgreSQL V1 baseline 10/10，lint/build/compile/diff PASS；无 DDL/生产写入
 - API-008 session scope：m0146 additive tenant/user opaque scope 与索引；conversation/task、feedback、Agent cancel/trace、tool/evidence、diagnostic case/run 全部按认证 scope 过滤；PostgreSQL 临时 schema probe PASS（幂等/跨域拒绝/回滚），AI 234 passed，前端 21 files / 100 tests，V1 10/10，lint/build/compile/diff PASS；未应用生产 DDL
+- API-009 task execution：m0147 additive counters/token/version 与执行索引；claim、取消/超时 reconcile、step/tool budget、complete/fail 采用 PostgreSQL 条件 UPDATE 并发保护；临时 PostgreSQL probe PASS，AI 234 passed，V1 10/10，lint/build/compile/diff PASS；未应用生产 DDL
 
 Blocked Tasks: none
 

@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "API-009",
+  "current_task": "OBS-001",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T13:28:00+08:00",
-  "last_completed_task": "API-008",
+  "updated_at": "2026-08-17T13:42:00+08:00",
+  "last_completed_task": "API-009",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -284,7 +284,8 @@
     "API-005",
     "API-006",
     "API-007",
-    "API-008"
+    "API-008",
+    "API-009"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -318,7 +319,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "API-009",
     "OBS-001",
     "OBS-002",
     "OBS-003",
@@ -390,7 +390,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "a1efe6b9",
+  "last_verified_commit": "b94aaad6",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -823,8 +823,16 @@
   "api008_postgresql_probe": "PASS; idempotent migration, tenant/user isolation, diagnostic and agent trace scope, transaction rollback",
   "api008_v1_baseline": "PASS; PostgreSQL 10/10; no production write",
   "api008_production_ddl": "RELEASE_GATED_TRANSACTION_PROBE_ONLY",
-  "last_verified_commit": "a1efe6b9",
-  "completed_count": 279,
-  "p0_completed_count": 229,
-  "resume_from": "API-009"
+  "api009_status": "DONE_PASS",
+  "api009_final_verified_at": "2026-08-17T13:42:00+08:00",
+  "api009_evidence": "docs/knowledge-engine-v2/evidence/API-009.md",
+  "api009_contract": "docs/knowledge-engine-v2/architecture/API-009-TASK-EXECUTION-CONTRACT.yaml",
+  "api009_migration": "m0147_ai_task_execution_guards",
+  "api009_focused_tests": "PostgreSQL isolated probe PASS; AI regression 234 passed",
+  "api009_postgresql_probe": "PASS; migration idempotency, single claim, budgets, timeout/cancel, terminal once and tenant scope",
+  "api009_production_ddl": "RELEASE_GATED_TRANSACTION_PROBE_ONLY",
+  "last_verified_commit": "b94aaad6",
+  "completed_count": 280,
+  "p0_completed_count": 230,
+  "resume_from": "OBS-001"
 }
