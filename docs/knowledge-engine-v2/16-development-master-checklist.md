@@ -496,7 +496,7 @@
 
 - [x] `EVAL-001` `P0/NET+AI+QA/L`：建立首批 100～200 条固定 Query 数据集。
 - [x] `EVAL-002` `P0/NET+AI/M`：覆盖 Huawei/Cisco 的 VLAN、Interface、OSPF、SSH、NTP、Route。
-- [ ] `EVAL-003` `P0/NET+AI/M`：覆盖 Exact、Alias、Prefix、Ambiguous、Typo、Wrong Vendor、Product Conflict。
+- [x] `EVAL-003` `P0/NET+AI/M`：覆盖 Exact、Alias、Prefix、Ambiguous、Typo、Wrong Vendor、Product Conflict。
 - [ ] `EVAL-004` `P0/NET+AI/M`：覆盖指定版本、未指定版本、冲突版本和未知版本。
 - [ ] `EVAL-005` `P0/AI+QA/M`：定义 Recall@K、Precision@K、MRR、NDCG 和 Entity Resolution Accuracy。
 - [ ] `EVAL-006` `P0/AI+QA/M`：定义 Product、OS、Version Match、Wrong Vendor、Official Source 和 Citation Accuracy。

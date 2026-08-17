@@ -1,0 +1,73 @@
+{
+  "status": "PASS",
+  "coverage_id": "nexora-kb-eval-query-type-coverage-v1-20260817",
+  "parent_dataset_id": "nexora-kb-eval-v1-20260817",
+  "type_counts": {
+    "alias": 12,
+    "ambiguous": 12,
+    "exact": 12,
+    "prefix": 12,
+    "product_conflict": 12,
+    "typo": 12,
+    "wrong_vendor": 12
+  },
+  "outcome_counts": {
+    "alias": {
+      "answer": 12
+    },
+    "ambiguous": {
+      "clarify": 12
+    },
+    "exact": {
+      "answer": 12
+    },
+    "prefix": {
+      "answer": 12
+    },
+    "product_conflict": {
+      "no_match": 12
+    },
+    "typo": {
+      "answer": 12
+    },
+    "wrong_vendor": {
+      "no_match": 12
+    }
+  },
+  "sample_case_ids": {
+    "alias": [
+      "EVAL-Q002",
+      "EVAL-Q012"
+    ],
+    "ambiguous": [
+      "EVAL-Q004",
+      "EVAL-Q014"
+    ],
+    "exact": [
+      "EVAL-Q001",
+      "EVAL-Q011"
+    ],
+    "prefix": [
+      "EVAL-Q003",
+      "EVAL-Q013"
+    ],
+    "product_conflict": [
+      "EVAL-Q007",
+      "EVAL-Q017"
+    ],
+    "typo": [
+      "EVAL-Q005",
+      "EVAL-Q015"
+    ],
+    "wrong_vendor": [
+      "EVAL-Q006",
+      "EVAL-Q016"
+    ]
+  },
+  "dataset_sha256": "132f36c7b2b0534372b44907284c036f751e4a4b21c8370f03ef7d51212261e9",
+  "coverage_sha256": "7374f6b87191ab8313bae75e34282d832dbf185f89a762e3cf9c0d449e2385e4",
+  "database": "none",
+  "sqlite": "not_used",
+  "external_network": "not_used",
+  "secrets": false
+}
