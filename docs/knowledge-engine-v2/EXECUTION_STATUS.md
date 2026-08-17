@@ -1,20 +1,22 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: ING-023 (ANALYZING)
-Last Completed: ING-022
-Next Task: ING-023（实现采集并发、退避、robots/服务条款记录和站点异常告警）
+Current Task: ING-024 (ANALYZING)
+Last Completed: ING-023
+Next Task: ING-024（建立恶意 HTML、超大文件、损坏 PDF、重定向循环和重复内容测试）
 
-Completed: 289 / 359
+Completed: 290 / 359
 P0: 234 / 277
-Last Verified Commit: 2228373f（ING-022 官方 Seed 批量采集与限速自动化门禁 PASS）
+Last Verified Commit: dc7e8317（ING-023 采集运行控制实现与 PostgreSQL 探针门禁 PASS）
 
-Recent Migration: ING-022 无 migration；PostgreSQL Source Registry/Version/Import Job 既有边界复用，未写生产 DDL
-Recent Build: ING-022 专项 5 passed；AI 267 passed；Catalog 197 passed；frontend 22 files/104 tests；lint/build/compile/diff PASS；无新增 Migration
-Last Security Check: ING-022 整批 CAT-001 预检、tenant+Host 限速、CAT-004 safe outbound 复用、bounded error 和无原始响应泄漏 PASS
+Recent Migration: ING-023 m0149 PostgreSQL JSONB/tenant anomaly projection；事务 probe PASS 并 rollback，无生产探针写入
+Recent Build: ING-023 专项 9 passed；AI 267 passed；PostgreSQL probe PASS；lint/build/compile/diff PASS
+Last Security Check: ING-023 robots 请求复用 CAT-004 host/TLS/DNS/redirect/path；terms/robots/alert 仅稳定摘要，无正文/头部/凭据/异常泄漏
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ ING-022 ANALYZING
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ ING-024 ANALYZING
+
+ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
