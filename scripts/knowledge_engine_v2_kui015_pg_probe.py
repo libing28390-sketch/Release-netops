@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -14,15 +15,6 @@ sys.path.insert(0, str(ROOT / "backend"))
 from database import core  # noqa: E402
 from services import source_registry_service as source_registry_module  # noqa: E402
 from services.source_registry_service import SourceRegistryError, get_source_refresh_status  # noqa: E402
-
-
-TENANT = "__kui015_pg_tenant"
-OTHER_TENANT = "__kui015_pg_other"
-SOURCE_ID = "__kui015_pg_source"
-VERSION_ID = "__kui015_pg_version"
-OBS_ID = "__kui015_pg_observation"
-USER = {"id": "__kui015_pg_user", "username": "kui015-pg", "role": "Operator", "tenant_id": TENANT}
-OTHER_USER = {"id": "__kui015_pg_other_user", "username": "kui015-other", "role": "Operator", "tenant_id": OTHER_TENANT}
 
 
 class _SameConnectionContext:
@@ -55,6 +47,16 @@ def _run() -> dict[str, Any]:
     conn = core.get_db_connection()
     original_get_db_connection = source_registry_module.get_db_connection
     try:
+        # IDs must be unique across reruns because the observation table is
+        # append-only and deliberately cannot be cleaned up with DELETE.
+        suffix = uuid.uuid4().hex[:10]
+        tenant = f"__kui015_pg_tenant_{suffix}"
+        other_tenant = f"__kui015_pg_other_{suffix}"
+        source_id = f"__kui015_pg_source_{suffix}"
+        version_id = f"__kui015_pg_version_{suffix}"
+        observation_id = f"__kui015_pg_observation_{suffix}"
+        user = {"id": f"__kui015_pg_user_{suffix}", "username": "kui015-pg", "role": "Operator", "tenant_id": tenant}
+        other_user = {"id": f"__kui015_pg_other_user_{suffix}", "username": "kui015-other", "role": "Operator", "tenant_id": other_tenant}
         # Keep fixture rows in one transaction.  The observation table is
         # append-only by design, so rollback—not DELETE—is the safe cleanup.
         source_registry_module.get_db_connection = lambda: _SameConnectionContext(conn)
@@ -70,14 +72,14 @@ def _run() -> dict[str, Any]:
                VALUES (?, ?, 'internal', 'internal', 'KUI015 source',
                        'https://kb.internal.example/kui015', 'kb.internal.example',
                        'internal', '{}', 'active', TRUE, 'valid', ?, ?, ?, ?)""",
-            (SOURCE_ID, TENANT, now, now, USER["id"], USER["id"]),
+            (source_id, tenant, now, now, user["id"], user["id"]),
         )
         cur.execute(
             """INSERT INTO kb_source_version
                (id, tenant_id, source_registry_id, fetched_at, content_hash, byte_size,
                 parser_name, parser_version, status, created_at, updated_at, created_by, updated_by)
                VALUES (?, ?, ?, ?, ?, ?, 'plain_text', 'kui015-test-1', 'verified', ?, ?, ?, ?)""",
-            (VERSION_ID, TENANT, SOURCE_ID, now, digest, len(body), now, now, USER["id"], USER["id"]),
+            (version_id, tenant, source_id, now, digest, len(body), now, now, user["id"], user["id"]),
         )
         cur.execute(
             """INSERT INTO kb_source_refresh_observation
@@ -89,17 +91,16 @@ def _run() -> dict[str, Any]:
                VALUES (?, ?, ?, ?, ?, 'GET', 200, 'unchanged', ?, ?, '', '',
                        'https://kb.internal.example/kui015', 'text/plain', '', '{}',
                        '{"worker":"kui015-probe"}', ?, ?, 'none', '', '{}')""",
-            (OBS_ID, TENANT, SOURCE_ID, VERSION_ID, now, digest, len(body), now, USER["id"]),
+            (observation_id, tenant, source_id, version_id, now, digest, len(body), now, user["id"]),
         )
-        conn.commit()
-        status = get_source_refresh_status(SOURCE_ID, USER)
+        status = get_source_refresh_status(source_id, user)
         if status["freshness_status"] != "healthy" or status["observation_count"] != 1 or status["counts"]["unchanged"] != 1:
             raise AssertionError(f"refresh status mismatch: {status}")
         if any(secret in json.dumps(status, ensure_ascii=False, default=str).lower() for secret in ("refresh body", "worker")):
             raise AssertionError("refresh status leaked raw/metadata detail")
         denied = False
         try:
-            get_source_refresh_status(SOURCE_ID, OTHER_USER)
+            get_source_refresh_status(source_id, other_user)
         except SourceRegistryError as exc:
             denied = exc.code == "SOURCE_NOT_FOUND"
         if not denied:
