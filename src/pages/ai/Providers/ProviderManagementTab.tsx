@@ -46,6 +46,14 @@ const metricToneClasses: Record<MetricCardProps['tone'], string> = {
   slate: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
 };
 
+const DATA_REGION_OPTIONS = [
+  { value: 'unknown', zh: '未配置', en: 'Not configured' },
+  { value: 'global', zh: '全球', en: 'Global' },
+  { value: 'cn', zh: '中国', en: 'China' },
+  { value: 'us', zh: '美国', en: 'United States' },
+  { value: 'eu', zh: '欧盟', en: 'European Union' },
+] as const;
+
 const MetricCard: React.FC<MetricCardProps> = ({ icon: Icon, label, value, helper, tone }) => (
   <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm shadow-slate-200/40 dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-none">
     <div className="flex items-start justify-between gap-3">
@@ -111,6 +119,7 @@ export const ProviderManagementTab: React.FC = () => {
   const [apiKey, setApiKey] = useState('');
   const [defaultModelCode, setDefaultModelCode] = useState('deepseek-v4-flash');
   const [timeout, setTimeout] = useState(30);
+  const [dataRegion, setDataRegion] = useState('unknown');
   const [allowedDataClassification, setAllowedDataClassification] = useState('PUBLIC');
   const [submitting, setSubmitting] = useState(false);
 
@@ -222,6 +231,7 @@ export const ProviderManagementTab: React.FC = () => {
     setApiKey('');
     setDefaultModelCode('');
     setTimeout(provider.timeout || 30);
+    setDataRegion(provider.data_region || 'unknown');
     setAllowedDataClassification(provider.allowed_data_classification || 'PUBLIC');
     setShowModal(true);
   };
@@ -231,9 +241,9 @@ export const ProviderManagementTab: React.FC = () => {
     setSubmitting(true);
     try {
       if (editingId) {
-        await updateAIProvider(editingId, { name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, timeout, allowed_data_classification: allowedDataClassification });
+        await updateAIProvider(editingId, { name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, timeout, data_region: dataRegion, allowed_data_classification: allowedDataClassification });
       } else {
-        await createAIProvider({ name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, default_model_code: defaultModelCode || undefined, timeout, enabled: true, allowed_data_classification: allowedDataClassification });
+        await createAIProvider({ name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, default_model_code: defaultModelCode || undefined, timeout, data_region: dataRegion, enabled: true, allowed_data_classification: allowedDataClassification });
       }
       setShowModal(false);
       setEditingId(null);
@@ -242,6 +252,7 @@ export const ProviderManagementTab: React.FC = () => {
       setBaseUrl('https://api.deepseek.com');
       setDefaultModelCode('deepseek-v4-flash');
       setTimeout(30);
+      setDataRegion('unknown');
       setAllowedDataClassification('PUBLIC');
       await fetchProviders();
       showToast(zh ? (editingId ? 'Provider 已更新' : 'Provider 已添加') : (editingId ? 'Provider updated' : 'Provider added'), 'success');
@@ -300,7 +311,7 @@ export const ProviderManagementTab: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => { setEditingId(null); setAllowedDataClassification('PUBLIC'); setShowModal(true); }}
+              onClick={() => { setEditingId(null); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setShowModal(true); }}
               className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-950"
             >
               <Plus className="h-4 w-4" />
@@ -397,7 +408,7 @@ export const ProviderManagementTab: React.FC = () => {
           <p className="relative mx-auto mt-1.5 max-w-md text-sm leading-6 text-slate-500 dark:text-slate-400">
             {zh ? '可添加多个供应商实例，并在模型管理与 Copilot 中自由切换。' : 'Add multiple provider instances and switch models from Model Management or Copilot.'}
           </p>
-          <button type="button" onClick={() => { setEditingId(null); setAllowedDataClassification('PUBLIC'); setShowModal(true); }} className="relative mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
+          <button type="button" onClick={() => { setEditingId(null); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setShowModal(true); }} className="relative mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
             <Plus className="h-4 w-4" />
             {zh ? '添加第一个 Provider' : 'Add your first Provider'}
           </button>
@@ -488,7 +499,10 @@ export const ProviderManagementTab: React.FC = () => {
                     <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
                       <span className={`rounded-full px-2 py-0.5 font-semibold ${provider.health_status === 'healthy' ? 'bg-emerald-100 text-emerald-700' : provider.health_status === 'unhealthy' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-600'}`}>{zh ? '健康' : 'Health'}: {provider.health_status || 'unknown'}</span>
                       {provider.last_error_code && <span className="rounded-full bg-rose-50 px-2 py-0.5 font-mono text-rose-700">{provider.last_error_code}</span>}
-                      {provider.data_region && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">{provider.data_region}</span>}
+                      {provider.data_region && (() => {
+                        const region = DATA_REGION_OPTIONS.find((option) => option.value === provider.data_region?.toLowerCase());
+                        return <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">{zh ? `区域: ${region?.zh || provider.data_region}` : `Region: ${region?.en || provider.data_region}`}</span>;
+                      })()}
                     </div>
                   </div>
 
@@ -571,6 +585,19 @@ export const ProviderManagementTab: React.FC = () => {
 
             <form onSubmit={handleCreate} className="overflow-y-auto px-5 py-5 sm:px-6">
               <div className="space-y-4">
+                <div>
+                  <label htmlFor="provider-data-region" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? '数据区域' : 'Data region'}</label>
+                  <select
+                    id="provider-data-region"
+                    value={dataRegion}
+                    onChange={(e) => setDataRegion(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  >
+                    {DATA_REGION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.value} · {zh ? option.zh : option.en}</option>)}
+                  </select>
+                  <p className="mt-1.5 text-[10px] text-slate-400">{zh ? '按供应商实际数据驻留/合规区域选择；不确定时保持未配置。' : 'Choose the Provider\'s actual data-residency/compliance region; keep Not configured when uncertain.'}</p>
+                </div>
+
                 <div>
                   <label htmlFor="provider-name" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? 'Provider 名称' : 'Provider name'}</label>
                   <input id="provider-name" type="text" required placeholder={zh ? '例如：DeepSeek 官方' : 'e.g. DeepSeek official'} value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />

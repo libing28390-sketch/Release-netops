@@ -66,6 +66,7 @@
 - 回归：后端安全/Provider 聚焦 18 passed；LLM/Security/API/Provider 回归 21 passed；Provider 前端 3 passed；`npm run lint` PASS；`npm run build` PASS；`py_compile`/`git diff --check` PASS。
 - PostgreSQL 只读探针确认：安全策略启用、全局 Kill Switch 关闭、Provider/模型启用；本次探针 `production_write=false`，未发送外部 Provider 请求。
 - 当前 Provider 仍保持 `PUBLIC` 配置，未擅自扩大其数据外发范围；如需 Copilot 发送 INTERNAL 内容，应在 Provider 编辑中明确选择 `INTERNAL` 并保存。
+- 页面中的 `unknown` 标签对应 `data_region`，不是健康状态或错误码；当前 PostgreSQL Provider 行确实为 `data_region='unknown'`。前端已改为显示“区域: 未配置”，并提供 global/cn/us/eu 选择，避免裸 `unknown` 误导；不根据 URL 擅自推断区域。
 
 ## 数据库影响
 

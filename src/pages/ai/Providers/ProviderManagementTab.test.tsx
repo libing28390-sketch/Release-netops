@@ -27,6 +27,7 @@ const provider = {
   timeout: 30,
   max_retries: 2,
   enabled: true,
+  data_region: 'unknown',
   allowed_data_classification: 'PUBLIC',
   health_status: 'unhealthy',
   last_error_code: 'AI_SECURITY_BLOCKED',
@@ -67,9 +68,10 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
     await user.type(screen.getByLabelText('Provider 名称'), '备用 OpenAI');
     await user.type(screen.getByLabelText('API Key'), 'sk-test-only');
+    await user.selectOptions(screen.getByLabelText('数据区域'), 'global');
     await user.selectOptions(screen.getByLabelText('允许数据分类'), 'INTERNAL');
     await user.click(screen.getByRole('button', { name: '确认添加' }));
-    await waitFor(() => expect(createProvider).toHaveBeenCalledWith(expect.objectContaining({ name: '备用 OpenAI', api_key: 'sk-test-only', allowed_data_classification: 'INTERNAL' })));
+    await waitFor(() => expect(createProvider).toHaveBeenCalledWith(expect.objectContaining({ name: '备用 OpenAI', api_key: 'sk-test-only', data_region: 'global', allowed_data_classification: 'INTERNAL' })));
   });
 
   it('shows the empty state and a recoverable request error', async () => {
