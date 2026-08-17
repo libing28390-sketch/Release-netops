@@ -7,7 +7,7 @@ Next Task: KUI-018（按原清单依赖继续）
 
 Completed: 270 / 359
 P0: 221 / 277
-Last Verified Commit: 待 KUI-017 功能提交后写入（不 push）
+Last Verified Commit: 3298c6f9（KUI-017 PASS；不 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
 Recent Build: KUI-017 frontend lint/build/Vitest PASS（18 files / 94 tests）；Python compile/PostgreSQL 探针 PASS；仅既有 large-chunk warning
