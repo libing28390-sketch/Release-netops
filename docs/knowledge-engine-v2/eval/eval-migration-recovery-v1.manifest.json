@@ -1,0 +1,94 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-014",
+  "database": "postgresql",
+  "sqlite": "not_used",
+  "coverage": {
+    "fresh_install": true,
+    "repeated_execution": true,
+    "backfill": true,
+    "constraints": true,
+    "rollback": true,
+    "recovery": true
+  },
+  "production_database_write": false,
+  "source_sha256": {
+    "contract": "786d1a355cdd37eed34a9c544314e540ab60cf7012040663ff9eb00caec53a9f",
+    "runner": "f63d7c5fc9c35a6d296cab59e884b85f265f57eb4fa848c05a47393f43ad653d",
+    "schema": "63d64fc427edf4fcd94e3f5d564e20c7e443c367d47d31481bb3d6385bf8164e",
+    "backfill": "93a658e8f8d48da87787fe718a336b07c87ed60f3bbd5d00d6b6c921dacde08b"
+  },
+  "matrix": {
+    "status": "PASS",
+    "task_id": "EVAL-014",
+    "database": "postgresql",
+    "sqlite": "not_used",
+    "temporary_database": "nexora_eval014_3dc5659be8fb",
+    "temporary_database_dropped": true,
+    "fresh_install": {
+      "status": "PASS",
+      "fresh_database_before_bootstrap": true,
+      "baseline_marker": 1,
+      "first_applied": 150,
+      "history_versions": 150,
+      "pending_after_first": [],
+      "second_applied": 0,
+      "pending_after_second": [],
+      "v1_tables": [
+        "users",
+        "devices",
+        "ai_document",
+        "ai_document_chunk"
+      ],
+      "v1_counts_unchanged": true
+    },
+    "repeated_execution": {
+      "status": "PASS",
+      "second_applied": 0
+    },
+    "backfill": {
+      "status": "PASS",
+      "migration": "m0148_ai_provider_tags_json_normalization",
+      "rows_after_repeat": {
+        "valid": "[\"network\"]",
+        "empty": "[]",
+        "null": "[]",
+        "blank": "[]"
+      },
+      "idempotent": true,
+      "rollback": true
+    },
+    "constraints": {
+      "status": "PASS",
+      "checks": {
+        "source_type_check": "23514",
+        "tenant_canonical_unique": "23505",
+        "nonnegative_byte_size": "23514",
+        "tenant_source_fk": "23503",
+        "immutable_source_fact": "P0001"
+      },
+      "all_rejected": true
+    },
+    "rollback": {
+      "status": "PASS",
+      "backfill_transaction": true,
+      "failed_migration": true
+    },
+    "recovery": {
+      "status": "PASS",
+      "first_attempt_applied": 0,
+      "higher_version_called_after_failure": false,
+      "partial_ddl_rolled_back": true,
+      "corrected_retry_applied": 2,
+      "history_after_retry": [
+        1,
+        2,
+        3
+      ],
+      "history_drift_fail_closed": true
+    },
+    "production_database_write": false,
+    "external_network_call": false
+  },
+  "rollback_or_cleanup": true
+}
