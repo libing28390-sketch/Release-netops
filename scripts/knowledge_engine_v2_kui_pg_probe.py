@@ -118,6 +118,21 @@ def _run() -> dict[str, Any]:
         if doc_ids[1] in visible_ids or doc_ids[0] not in visible_ids:
             raise AssertionError("tenant isolation failed in KUI document list")
 
+        scoped_official = knowledge_service_module.KnowledgeService().list_documents(
+            tenant_id="tenant-kui-a", knowledge_scope="official", page_size=100
+        )
+        scoped_enterprise = knowledge_service_module.KnowledgeService().list_documents(
+            tenant_id="tenant-kui-a", knowledge_scope="enterprise", page_size=100
+        )
+        if {item["id"] for item in scoped_official["items"]} != {doc_ids[0]}:
+            raise AssertionError(f"official scope mismatch: {scoped_official}")
+        enterprise_ids = {item["id"] for item in scoped_enterprise["items"]}
+        if doc_ids[0] in enterprise_ids or any(
+            item["knowledge_source_type"] not in {"internal_sop", "internal_standard", "case", "user_document", "sample"}
+            for item in scoped_enterprise["items"]
+        ):
+            raise AssertionError(f"enterprise scope leaked official fixture or type: {scoped_enterprise}")
+
         return {
             "postgresql": True,
             "semantic_filter": True,
@@ -125,6 +140,7 @@ def _run() -> dict[str, Any]:
             "pagination": result["page_size"] == 1 and result["total_pages"] == 1,
             "product_facets": True,
             "detail_contract": True,
+            "knowledge_scopes": True,
             "internal_path_redaction": True,
         }
     finally:

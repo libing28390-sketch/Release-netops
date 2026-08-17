@@ -56,6 +56,8 @@ _DEFAULT_DIRECTORY_NAMES = (
 )
 _DEFAULT_VENDOR_DIRECTORY_NAMES = ("huawei", "h3c", "cisco", "ruijie")
 _DIRECTORY_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+_OFFICIAL_KNOWLEDGE_TYPES = ("official_vendor", "official_url", "official_local")
+_ENTERPRISE_KNOWLEDGE_TYPES = ("internal_sop", "internal_standard", "case", "user_document", "sample")
 
 
 class KnowledgeService:
@@ -513,6 +515,7 @@ class KnowledgeService:
         self,
         knowledge_source_type: Optional[str] = None,
         directory_path: Optional[str] = None,
+        knowledge_scope: Optional[str] = None,
         tenant_id: str = "tenant-default",
         search: str = "",
         vendor: str = "",
@@ -561,6 +564,14 @@ class KnowledgeService:
             if knowledge_source_type:
                 where.append("d.knowledge_source_type = ?")
                 params.append(knowledge_source_type)
+            normalized_scope = str(knowledge_scope or "").strip().lower()
+            scope_types = {
+                "official": _OFFICIAL_KNOWLEDGE_TYPES,
+                "enterprise": _ENTERPRISE_KNOWLEDGE_TYPES,
+            }.get(normalized_scope)
+            if scope_types:
+                where.append(f"d.knowledge_source_type IN ({', '.join('?' for _ in scope_types)})")
+                params.extend(scope_types)
             if directory_path and directory_path.strip():
                 # Directory paths are persisted inside metadata_json.  Keep
                 # this portable across PostgreSQL/SQLite and tolerate the
@@ -709,6 +720,7 @@ class KnowledgeService:
         tenant_id: str = "tenant-default",
         knowledge_source_type: Optional[str] = None,
         directory_path: Optional[str] = None,
+        knowledge_scope: Optional[str] = None,
         status: str = "active",
     ) -> Dict[str, Any]:
         """Return bounded Vendor/Family/Series browse facets without bodies."""
@@ -729,6 +741,14 @@ class KnowledgeService:
             if knowledge_source_type:
                 where.append("d.knowledge_source_type = ?")
                 params.append(knowledge_source_type)
+            normalized_scope = str(knowledge_scope or "").strip().lower()
+            scope_types = {
+                "official": _OFFICIAL_KNOWLEDGE_TYPES,
+                "enterprise": _ENTERPRISE_KNOWLEDGE_TYPES,
+            }.get(normalized_scope)
+            if scope_types:
+                where.append(f"d.knowledge_source_type IN ({', '.join('?' for _ in scope_types)})")
+                params.extend(scope_types)
             if directory_path and directory_path.strip():
                 normalized_path = directory_path.strip().strip("/").lower()
                 where.append(

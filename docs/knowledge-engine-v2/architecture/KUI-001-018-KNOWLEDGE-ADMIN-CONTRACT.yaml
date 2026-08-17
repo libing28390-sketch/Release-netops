@@ -42,6 +42,18 @@ filters:
     - knowledge_source_type
     - status
     - directory_path
+    - knowledge_scope
+  knowledge_scope:
+    official:
+      - official_vendor
+      - official_url
+      - official_local
+    enterprise:
+      - internal_sop
+      - internal_standard
+      - case
+      - user_document
+      - sample
   pagination:
     max_page_size: 100
     default_page_size: 20

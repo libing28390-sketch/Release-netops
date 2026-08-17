@@ -48,6 +48,7 @@ interface FolderCategory {
 }
 
 type FileQueueStatus = 'pending' | 'reading' | 'indexing' | 'done' | 'error';
+type KnowledgeScope = 'all' | 'official' | 'enterprise';
 
 interface FileQueueItem {
   id: string;
@@ -388,6 +389,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   });
 
   const [selectedFolder, setSelectedFolder] = useState<string>('all');
+  const [knowledgeScope, setKnowledgeScope] = useState<KnowledgeScope>('all');
   const [selectedDirectoryPath, setSelectedDirectoryPath] = useState('');
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [documentFacets, setDocumentFacets] = useState<KnowledgeDocumentFacets>({ vendors: [], families: [], series: [] });
@@ -490,6 +492,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         getKnowledgeStats(controller.signal),
         getKnowledgeDocuments({
           sourceType: selectedFolder === 'all' ? undefined : selectedFolder,
+          knowledgeScope,
           directoryPath: selectedDirectoryPath || undefined,
           search: searchQuery,
           ...semanticFilters,
@@ -499,6 +502,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         }),
         getKnowledgeDocumentFacets({
           sourceType: selectedFolder === 'all' ? undefined : selectedFolder,
+          knowledgeScope,
           directoryPath: selectedDirectoryPath || undefined,
           status: semanticFilters.status,
           signal: controller.signal,
@@ -520,7 +524,7 @@ export const KnowledgeManagementTab: React.FC = () => {
     } finally {
       if (requestId === documentsRequestIdRef.current) setLoading(false);
     }
-  }, [currentPage, itemsPerPage, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
+  }, [currentPage, itemsPerPage, knowledgeScope, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
 
   useEffect(() => {
     void fetchStatsAndDocs();
@@ -1072,6 +1076,14 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   const handleFolderChange = (folderId: string) => {
     setSelectedFolder(folderId);
+    if (folderId !== 'all') setKnowledgeScope('all');
+    setCurrentPage(1);
+    setSelectedDocIds(new Set());
+  };
+
+  const handleKnowledgeScopeChange = (scope: KnowledgeScope) => {
+    setKnowledgeScope(scope);
+    setSelectedFolder('all');
     setCurrentPage(1);
     setSelectedDocIds(new Set());
   };
@@ -1288,6 +1300,27 @@ export const KnowledgeManagementTab: React.FC = () => {
         </div>
         {/* Right Content Area: Document Management Table */}
         <div className="lg:col-span-3 space-y-4">
+          <div className="grid gap-3 md:grid-cols-3" aria-label="官方知识与企业知识分区">
+            {([
+              ['all', '全部知识', '统一查看，但保留来源徽标与服务端边界', 'bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/50 dark:border-slate-700 dark:text-slate-200'],
+              ['official', '官方知识', '厂商官方资料与 Source Registry 来源', 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-900 dark:text-blue-200'],
+              ['enterprise', '企业知识', 'SOP、规范、案例与用户上传资料', 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-900 dark:text-emerald-200'],
+            ] as const).map(([scope, title, description, tone]) => (
+              <button
+                key={scope}
+                type="button"
+                onClick={() => handleKnowledgeScopeChange(scope)}
+                className={`rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${tone} ${knowledgeScope === scope ? 'ring-2 ring-indigo-400 ring-offset-1 dark:ring-offset-gray-900' : ''}`}
+                aria-pressed={knowledgeScope === scope}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-bold">{title}</span>
+                  {knowledgeScope === scope && <CheckCircle2 className="h-4 w-4 text-indigo-500" />}
+                </div>
+                <span className="mt-1 block text-[10px] leading-4 opacity-75">{description}</span>
+              </button>
+            ))}
+          </div>
           {/* Action Bar & Search */}
           <div className="flex items-center justify-between gap-4 bg-white dark:bg-gray-800 p-3 rounded-2xl border border-gray-200/80 dark:border-gray-700/80 shadow-xs">
             <div className="relative flex-1 max-w-md">

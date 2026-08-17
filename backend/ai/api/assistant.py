@@ -466,6 +466,7 @@ def list_documents(
     source_type: Optional[str] = Query(default=None, max_length=64),
     search: str = Query(default="", max_length=200),
     directory_path: Optional[str] = Query(default=None, max_length=500),
+    knowledge_scope: Optional[str] = Query(default=None, max_length=32),
     vendor: str = Query(default="", max_length=128),
     product_family: str = Query(default="", max_length=256),
     product_series: str = Query(default="", max_length=256),
@@ -487,6 +488,7 @@ def list_documents(
     return knowledge_service.list_documents(
         knowledge_source_type=source_type,
         directory_path=directory_path,
+        knowledge_scope=knowledge_scope,
         search=search,
         vendor=vendor,
         product_family=product_family,
@@ -511,6 +513,7 @@ def list_documents(
 def list_document_facets(
     source_type: Optional[str] = Query(default=None, max_length=64),
     directory_path: Optional[str] = Query(default=None, max_length=500),
+    knowledge_scope: Optional[str] = Query(default=None, max_length=32),
     status: str = Query(default="active", max_length=32),
     user=Depends(require_ai_permission("ai.view")),
 ):
@@ -518,6 +521,7 @@ def list_document_facets(
     return knowledge_service.list_document_facets(
         knowledge_source_type=source_type,
         directory_path=directory_path,
+        knowledge_scope=knowledge_scope,
         status=status,
         tenant_id=user.get("tenant_id") or "tenant-default",
     )

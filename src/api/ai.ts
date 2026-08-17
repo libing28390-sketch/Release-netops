@@ -1091,6 +1091,7 @@ export interface KnowledgeDocumentFacets {
 
 export interface KnowledgeDocumentsQuery {
   sourceType?: string;
+  knowledgeScope?: 'all' | 'official' | 'enterprise';
   search?: string;
   directoryPath?: string;
   vendor?: string;
@@ -1113,6 +1114,7 @@ export interface KnowledgeDocumentsQuery {
 
 export async function getKnowledgeDocuments({
   sourceType,
+  knowledgeScope,
   search,
   directoryPath,
   vendor,
@@ -1137,6 +1139,7 @@ export async function getKnowledgeDocuments({
     page_size: String(pageSize),
   });
   if (sourceType) params.set('source_type', sourceType);
+  if (knowledgeScope && knowledgeScope !== 'all') params.set('knowledge_scope', knowledgeScope);
   if (search?.trim()) params.set('search', search.trim());
   if (directoryPath?.trim()) params.set('directory_path', directoryPath.trim());
   const filterParams: Array<[string, string | undefined]> = [
@@ -1162,17 +1165,20 @@ export async function getKnowledgeDocuments({
 
 export async function getKnowledgeDocumentFacets({
   sourceType,
+  knowledgeScope,
   directoryPath,
   status = 'active',
   signal,
 }: {
   sourceType?: string;
+  knowledgeScope?: 'all' | 'official' | 'enterprise';
   directoryPath?: string;
   status?: string;
   signal?: AbortSignal;
 } = {}): Promise<KnowledgeDocumentFacets> {
   const params = new URLSearchParams();
   if (sourceType) params.set('source_type', sourceType);
+  if (knowledgeScope && knowledgeScope !== 'all') params.set('knowledge_scope', knowledgeScope);
   if (directoryPath?.trim()) params.set('directory_path', directoryPath.trim());
   if (status) params.set('status', status);
   return apiRequest<KnowledgeDocumentFacets>(`/api/ai/assistant/documents/facets?${params.toString()}`, { signal });

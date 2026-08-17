@@ -97,6 +97,18 @@ def test_product_hierarchy_facets_are_bounded_and_tenant_scoped(monkeypatch):
     assert "kb_import" not in json.dumps(facets, ensure_ascii=False)
 
 
+def test_official_and_enterprise_scopes_are_server_side(monkeypatch):
+    connection = _connection()
+    monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
+    service = knowledge_service_module.KnowledgeService()
+
+    official = service.list_documents(tenant_id="tenant-a", knowledge_scope="official")
+    enterprise = service.list_documents(tenant_id="tenant-a", knowledge_scope="enterprise")
+
+    assert [item["id"] for item in official["items"]] == ["doc-huawei"]
+    assert [item["id"] for item in enterprise["items"]] == ["doc-cisco"]
+
+
 def test_detail_contract_loads_body_source_and_explicit_version_history(monkeypatch):
     connection = _connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
