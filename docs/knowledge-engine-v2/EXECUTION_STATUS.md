@@ -61,6 +61,7 @@ EVAL-015：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-015.md；Pr
 EVAL-016：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-016.md；Huawei VRP5、Cisco IOS/IOS-XE/NX-OS、H3C Comware v5/v7/v9 Mock/Fixture、TextFSM、只读命令和 UNKNOWN boundary 123 passed；EVAL-016 wrapper 2 passed；V1 PostgreSQL baseline 10/10；SQLite 未作为验收证据。
 
 EVAL-017：PASS_AUTOMATED_USER_VERIFY_PENDING；证据 docs/knowledge-engine-v2/evidence/EVAL-017.md；Copilot、Provider、Model、Knowledge、Security 前端关键路径 14 files / 52 tests；EVAL-017 wrapper 2 passed；npm lint/build PASS；已认证浏览器可见路径与窄屏无横向溢出检查 PASS；V1 PostgreSQL 10/10；等待用户完成一次可见确认后勾选。
+EVAL-017 浏览器复查（2026-08-17）：五个关键页面在等待懒加载后均可见且无页面错误；Model/Copilot/Knowledge 的短暂 Loading 约 1.6–2 秒后在约 8 秒内完成；Copilot 窄屏 `bodyScrollWidth=innerWidth=433`，无横向溢出；本轮只读，无外部 Provider 请求和生产写入。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

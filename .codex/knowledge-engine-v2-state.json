@@ -3,7 +3,7 @@
   "current_milestone": "M2",
   "current_task": "EVAL-017",
   "task_state": "VERIFYING",
-  "updated_at": "2026-08-17T20:50:00+08:00",
+  "updated_at": "2026-08-17T21:15:00+08:00",
   "last_completed_task": "EVAL-016",
   "completed_tasks": [
     "ADR-001",
@@ -1114,5 +1114,7 @@
   "eval017_postgresql_policy": "PASS; V1 authority baseline PostgreSQL 10/10; frontend component tests database=none; sqlite=not_used; production_database_write=false",
   "eval017_browser_status": "USER_VERIFY_PENDING",
   "eval017_browser_paths": "/ai/providers, /ai/models, /ai/copilot, /ai/knowledge, /ai/security; narrow viewport bodyScrollWidth==innerWidth",
+  "eval017_browser_recheck_at": "2026-08-17T21:15:00+08:00",
+  "eval017_browser_recheck": "PASS; all five authenticated routes rendered after lazy-load wait; browser error/warn logs 0; Copilot narrow CSS viewport 433px with no horizontal overflow; read-only, no external Provider call or production write",
   "eval017_production_ddl": "NONE"
 }

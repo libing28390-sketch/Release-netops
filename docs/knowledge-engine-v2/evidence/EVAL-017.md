@@ -50,6 +50,15 @@
 - 窄屏 390px 请求（浏览器实际 CSS viewport 433px）：Copilot 与 Knowledge 均可见，`bodyScrollWidth == innerWidth == 433`，无横向溢出。
 - 浏览器当前已认证会话可用；仍需用户在页面上完成一次可见确认，才能将正式 Checkbox 从 `[ ]` 改为 `[x]`。
 
+## 本轮浏览器复查（2026-08-17）
+
+- 使用当前已认证浏览器会话逐一访问 `/ai/providers`、`/ai/models`、`/ai/copilot`、`/ai/knowledge`、`/ai/security`。
+- 五个页面在等待懒加载完成后均正常渲染；页面标题、关键控件和主要数据区域可见，页面正文没有“服务内部异常”、Unhandled/Traceback 或其他错误提示。
+- `/ai/providers`、`/ai/models`、`/ai/copilot`、`/ai/security` 复查时浏览器 error/warn 日志为 0；Knowledge 页面复查日志同样为 0。
+- Model、Copilot、Knowledge 首次约 1.6–2 秒快照可能仍显示 Loading；继续等待约 8 秒后均完成渲染，属于前端懒加载延迟，不判定为服务故障。
+- Copilot 窄屏复查：请求 viewport 390×844，浏览器实际 CSS viewport 为 433px；`bodyScrollWidth=433`、`documentElement.scrollWidth=433`、`innerWidth=433`，无横向溢出。
+- 本轮只读查看，没有执行 Provider 连通性测试、真实外部 AI 请求、设备写操作或生产数据库写入。
+
 ## 数据库影响
 
 - 无生产 DDL、无生产数据写入。
