@@ -93,6 +93,7 @@ def _runtime_projection(runtime: Any) -> dict[str, Any]:
     tokens = runtime.get("tokens") if isinstance(runtime.get("tokens"), Mapping) else {}
     security = runtime.get("security") if isinstance(runtime.get("security"), Mapping) else {}
     citation = runtime.get("citation") if isinstance(runtime.get("citation"), Mapping) else {}
+    quality = runtime.get("quality") if isinstance(runtime.get("quality"), Mapping) else {}
     token_projection = {
         key: _nonnegative_int(tokens.get(key))
         for key in ("input", "output", "total")
@@ -132,6 +133,15 @@ def _runtime_projection(runtime: Any) -> dict[str, Any]:
             "decision": _text(security.get("decision") or runtime.get("security_result") or "not_recorded", 32),
             "policy_version": _text(security.get("policy_version"), 64),
             "result_code": _text(security.get("result_code"), 64),
+        },
+        "quality": {
+            "no_match": bool(quality.get("no_match")),
+            "wrong_vendor_count": _nonnegative_int(quality.get("wrong_vendor_count")),
+            "version_conflict_count": _nonnegative_int(quality.get("version_conflict_count")),
+            "low_confidence_count": _nonnegative_int(quality.get("low_confidence_count")),
+            "low_confidence_threshold": _safe_score(quality.get("low_confidence_threshold")),
+            "top_relevance_score": _safe_score(quality.get("top_relevance_score")),
+            "error": bool(quality.get("error")),
         },
     }
 

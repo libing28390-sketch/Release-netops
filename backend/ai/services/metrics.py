@@ -24,6 +24,7 @@ class AIMetrics:
         self.provider_costs: defaultdict[str, float] = defaultdict(float)
         self.provider_limits = Counter()
         self.fallbacks = Counter()
+        self.retrieval = Counter()
         self.tools = Counter()
         self.agents = Counter()
 
@@ -94,6 +95,29 @@ class AIMetrics:
         with self._lock:
             self.fallbacks[key] += 1
 
+    def retrieval_observed(
+        self,
+        *,
+        no_match: bool = False,
+        wrong_vendor: bool = False,
+        version_conflict: bool = False,
+        low_confidence: bool = False,
+        error: bool = False,
+    ) -> None:
+        """Record bounded retrieval quality signals, never query contents."""
+
+        with self._lock:
+            self.retrieval["queries"] += 1
+            for name, active in (
+                ("no_match", no_match),
+                ("wrong_vendor", wrong_vendor),
+                ("version_conflict", version_conflict),
+                ("low_confidence", low_confidence),
+                ("errors", error),
+            ):
+                if active:
+                    self.retrieval[name] += 1
+
     def tool_finished(self, name: str, *, status: str) -> None:
         with self._lock:
             self.tools[f"{name}:{status}"] += 1
@@ -137,6 +161,15 @@ class AIMetrics:
                 "providers": providers,
                 "limits": dict(self.provider_limits),
                 "fallbacks": dict(self.fallbacks),
+                "retrieval": {
+                    "queries": int(self.retrieval.get("queries", 0)),
+                    "no_match": int(self.retrieval.get("no_match", 0)),
+                    "no_match_rate": round(self.retrieval.get("no_match", 0) / self.retrieval.get("queries", 1), 4) if self.retrieval.get("queries") else 0,
+                    "wrong_vendor": int(self.retrieval.get("wrong_vendor", 0)),
+                    "version_conflict": int(self.retrieval.get("version_conflict", 0)),
+                    "low_confidence": int(self.retrieval.get("low_confidence", 0)),
+                    "errors": int(self.retrieval.get("errors", 0)),
+                },
                 "tools": dict(self.tools),
                 "agents": dict(self.agents),
                 "cache": {"hits": 0, "misses": 0, "note": "No provider-side prompt cache is enabled by default."},

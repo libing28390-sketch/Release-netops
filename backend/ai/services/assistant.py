@@ -27,6 +27,7 @@ from ai.services.citation_service import (
 )
 from ai.services.copilot_contract import build_copilot_contract
 from ai.services.retrieval_trace_store import record_retrieval_trace, update_retrieval_trace
+from ai.services.metrics import ai_metrics
 from ai.security.sanitizer import sanitize_log_text
 from core.context import request_id_var, resolve_request_id
 
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 SSE_EVENT_VERSION = "nxa.sse.v1"
 SSE_EVENT_TYPES = frozenset({"meta", "progress", "token", "citation", "done", "error"})
+LOW_CONFIDENCE_THRESHOLD = 0.45
 _SSE_CONTEXT: ContextVar["_SSEEventContext | None"] = ContextVar("nexora_sse_context", default=None)
 
 
@@ -213,6 +215,15 @@ class AIAssistantService:
             retrieval = rag_retriever.search(request)
             retrieval.setdefault("debug", {})["clarification_required"] = False
             retrieval["debug"]["cross_platform_search"] = bool(resolution.ambiguous)
+        quality = self._retrieval_quality_signals(request, retrieval)
+        retrieval.setdefault("debug", {})["quality"] = quality
+        ai_metrics.retrieval_observed(
+            no_match=bool(quality["no_match"]),
+            wrong_vendor=bool(quality["wrong_vendor_count"]),
+            version_conflict=bool(quality["version_conflict_count"]),
+            low_confidence=bool(quality["low_confidence_count"]),
+            error=bool(quality["error"]),
+        )
         trace_seed = self._knowledge_retrieval_trace(
             {"request": request, "resolution": resolution, **retrieval},
             retrieval.get("results") or [],
@@ -220,6 +231,7 @@ class AIAssistantService:
         request_id = resolve_request_id(request_id or request_id_var.get("-"), prefix="req")
         trace_seed["request_id"] = request_id
         trace_seed.setdefault("runtime", {}).setdefault("latency", {})["retrieval_ms"] = max(0, int((time.perf_counter() - retrieval_started_at) * 1000))
+        trace_seed.setdefault("runtime", {})["quality"] = quality
         retrieval["retrieval_trace_id"] = record_retrieval_trace(
             tenant_id=tenant_id or "tenant-default",
             user_id=user_id,
@@ -246,6 +258,50 @@ class AIAssistantService:
         )
         retrieval["request_id"] = request_id
         return {"request": request, "resolution": resolution, **retrieval}
+
+    @staticmethod
+    def _retrieval_quality_signals(request: RetrievalRequest, retrieval: Dict[str, Any]) -> Dict[str, Any]:
+        """Derive bounded quality counters from structured retrieval output."""
+
+        results = retrieval.get("results") if isinstance(retrieval.get("results"), list) else []
+        debug = retrieval.get("debug") if isinstance(retrieval.get("debug"), dict) else {}
+        requested_vendor = str(getattr(request, "vendor", "") or "").strip().lower()
+        requested_version = bool(getattr(request, "software_train", None) or getattr(request, "software_release", None))
+        wrong_vendor_count = int(debug.get("wrong_vendor_count") or 0)
+        if requested_vendor:
+            def vendor_for(item: Any) -> str:
+                metadata = item.get("metadata") if isinstance(item, dict) and isinstance(item.get("metadata"), dict) else {}
+                return str((item.get("vendor") if isinstance(item, dict) else None) or metadata.get("vendor") or "").strip().lower()
+
+            wrong_vendor_count = max(
+                wrong_vendor_count,
+                sum(
+                    1
+                    for item in results
+                    if vendor_for(item) and vendor_for(item) != requested_vendor
+                ),
+            )
+        version_conflict_count = int(debug.get("version_conflict_count") or 0)
+        if requested_version:
+            version_conflict_count = max(
+                version_conflict_count,
+                sum(1 for item in results if float(item.get("version_score") or 0.0) <= 0.0),
+            )
+        scores = [
+            max(0.0, min(1.0, float(item.get("relevance_score") or 0.0)))
+            for item in results
+            if isinstance(item, dict)
+        ]
+        low_confidence_count = sum(1 for score in scores if score < LOW_CONFIDENCE_THRESHOLD)
+        return {
+            "no_match": not bool(results),
+            "wrong_vendor_count": wrong_vendor_count,
+            "version_conflict_count": version_conflict_count,
+            "low_confidence_count": low_confidence_count,
+            "low_confidence_threshold": LOW_CONFIDENCE_THRESHOLD,
+            "top_relevance_score": round(max(scores), 4) if scores else None,
+            "error": bool(debug.get("error")),
+        }
 
     @staticmethod
     def _knowledge_no_match_answer(knowledge_result: Optional[Dict[str, Any]]) -> str:
@@ -562,6 +618,7 @@ class AIAssistantService:
                 "latency": {
                     "retrieval_ms": as_int(debug.get("retrieval_latency_ms")),
                 },
+                "quality": debug.get("quality") or {},
             },
             "citations": knowledge_result.get("citations") or [],
             "explanation": knowledge_result.get("explanation") or {},

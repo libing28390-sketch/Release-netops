@@ -286,6 +286,15 @@ export interface AIPlatformMetrics {
   }>;
   limits?: Record<string, number>;
   fallbacks?: Record<string, number>;
+  retrieval?: {
+    queries: number;
+    no_match: number;
+    no_match_rate: number;
+    wrong_vendor: number;
+    version_conflict: number;
+    low_confidence: number;
+    errors: number;
+  };
   tools: Record<string, number>;
   agents: Record<string, number>;
   cache: { hits: number; misses: number; note?: string };
@@ -526,6 +535,17 @@ export interface AssistantRetrievalTrace {
     ambiguous?: boolean;
     platform_candidates?: string[];
     evidence?: string;
+  };
+  runtime?: {
+    quality?: {
+      no_match?: boolean;
+      wrong_vendor_count?: number;
+      version_conflict_count?: number;
+      low_confidence_count?: number;
+      low_confidence_threshold?: number;
+      top_relevance_score?: number | null;
+      error?: boolean;
+    };
   };
 }
 

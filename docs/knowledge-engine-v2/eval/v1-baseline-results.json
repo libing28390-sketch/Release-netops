@@ -9,10 +9,10 @@
     "citation_accuracy": 1.0,
     "citation_recall": 1.0,
     "latency_ms": {
-      "average": 0.5897,
-      "p50": 0.5728,
-      "p95": 0.9568,
-      "max": 1.1184
+      "average": 1.7099,
+      "p50": 1.5498,
+      "p95": 3.4955,
+      "max": 3.8072
     }
   },
   "cases": [
@@ -29,7 +29,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 1.1184,
+      "latency_ms": 3.8072,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -46,6 +46,8 @@
         ],
         "dedup_document_count": 1,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 1,
         "final_document_ids": [
           "huawei.yunshan.v600.display_arp.command"
@@ -56,7 +58,7 @@
           "timeout_ms": 120,
           "candidate_count": 1,
           "cost_units": 1,
-          "latency_ms": 0
+          "latency_ms": 1
         },
         "cache": {
           "hit": false,
@@ -79,7 +81,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.5735,
+      "latency_ms": 1.7513,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -96,6 +98,8 @@
         ],
         "dedup_document_count": 1,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 1,
         "final_document_ids": [
           "huawei.yunshan.v600.vlan_access.configuration"
@@ -129,7 +133,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.6548,
+      "latency_ms": 1.784,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -146,6 +150,8 @@
         ],
         "dedup_document_count": 1,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 1,
         "final_document_ids": [
           "huawei.yunshan.v300.display_ospf_peer.output.001"
@@ -156,7 +162,7 @@
           "timeout_ms": 120,
           "candidate_count": 1,
           "cost_units": 1,
-          "latency_ms": 0
+          "latency_ms": 1
         },
         "cache": {
           "hit": false,
@@ -179,7 +185,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.411,
+      "latency_ms": 1.7217,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -196,6 +202,8 @@
         ],
         "dedup_document_count": 1,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 1,
         "final_document_ids": [
           "huawei.yunshan.v600.display_ospf_peer_brief.output.001"
@@ -231,7 +239,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.6459,
+      "latency_ms": 3.1145,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
         "metadata_candidate_documents": 2,
@@ -248,6 +256,8 @@
         ],
         "dedup_document_count": 2,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 2,
         "final_document_ids": [
           "huawei.yunshan.v300.display_ospf_peer.output.001",
@@ -259,7 +269,7 @@
           "timeout_ms": 120,
           "candidate_count": 2,
           "cost_units": 2,
-          "latency_ms": 0
+          "latency_ms": 1
         },
         "cache": {
           "hit": false,
@@ -284,7 +294,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.7593,
+      "latency_ms": 1.114,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))",
         "metadata_candidate_documents": 2,
@@ -301,6 +311,8 @@
         ],
         "dedup_document_count": 2,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 2,
         "final_document_ids": [
           "huawei.cloudengine-6800.product_registry.series",
@@ -331,7 +343,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.3023,
+      "latency_ms": 0.6618,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))",
         "metadata_candidate_documents": 0,
@@ -348,6 +360,8 @@
         ],
         "dedup_document_count": 0,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 0,
         "final_document_ids": [],
         "reranker": {
@@ -376,7 +390,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.4837,
+      "latency_ms": 0.9394,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -393,6 +407,8 @@
         ],
         "dedup_document_count": 1,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 1,
         "final_document_ids": [
           "cisco.iosxe.show_arp.command"
@@ -426,7 +442,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.3756,
+      "latency_ms": 0.8276,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -443,6 +459,8 @@
         ],
         "dedup_document_count": 1,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 1,
         "final_document_ids": [
           "h3c.comware.display_ospf_peer.command"
@@ -476,7 +494,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.5721,
+      "latency_ms": 1.3779,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -493,6 +511,8 @@
         ],
         "dedup_document_count": 1,
         "incompatible_embedding_chunks": 0,
+        "version_conflict_count": 0,
+        "wrong_vendor_count": 0,
         "expanded_context_chunks": 1,
         "final_document_ids": [
           "huawei.yunshan.v600.display_arp.command"

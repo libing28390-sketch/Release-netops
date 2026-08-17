@@ -487,6 +487,8 @@ class RAGRetriever:
             scored: list[dict[str, Any]] = []
             chunks_by_document: Dict[str, list[dict[str, Any]]] = {}
             incompatible_vectors = 0
+            version_conflicts = 0
+            wrong_vendor_rows = 0
             current_model = str(getattr(embedding_provider, "model_id", "") or "")
             for row in rows:
                 (
@@ -501,6 +503,10 @@ class RAGRetriever:
                 if not document_is_visible(document, tenant_id=request.tenant_id, user_id=request.user_id, roles=request.roles, site_ids=request.site_ids):
                     continue
                 metadata = self._parse_json(meta_json)
+                requested_vendor = str(getattr(request, "vendor", "") or "").strip().lower()
+                actual_vendor = str(metadata.get("vendor") or d_vendor or "").strip().lower()
+                if requested_vendor and actual_vendor and requested_vendor != actual_vendor:
+                    wrong_vendor_rows += 1
                 keyword_score = self._calc_keyword_relevance(
                     request.query,
                     str(content or ""),
@@ -582,6 +588,7 @@ class RAGRetriever:
                     # Version conflicts are hard retrieval boundaries.  A
                     # lexical/vector hit must not smuggle a known incompatible
                     # release into an operator answer.
+                    version_conflicts += 1
                     continue
                 item = {
                     "chunk_id": c_id,
@@ -637,6 +644,8 @@ class RAGRetriever:
             debug.update({
                 "dedup_document_count": len(best_by_document),
                 "incompatible_embedding_chunks": incompatible_vectors,
+                "version_conflict_count": version_conflicts,
+                "wrong_vendor_count": wrong_vendor_rows,
                 "expanded_context_chunks": sum(int(item.get("context_chunk_count") or 0) for item in final_results),
                 "final_document_ids": [item["document_id"] for item in final_results],
                 "reranker": reranker_debug,
