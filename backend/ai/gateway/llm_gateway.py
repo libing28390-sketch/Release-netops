@@ -31,6 +31,7 @@ from ai.gateway.exceptions import (
 from ai.gateway.router import model_router
 from ai.gateway.limits import ai_limits
 from core.config import settings
+from core.context import request_id_var, resolve_request_id
 from ai.providers.base import BaseLLMProvider
 from ai.providers.registry import provider_adapter
 from ai.services.metrics import ai_metrics
@@ -44,8 +45,10 @@ class LLMGateway:
     def __init__(self, security_gateway: AISecurityGateway | None = None):
         self.security_gateway = security_gateway or ai_security_gateway
 
-    def _generate_request_id(self) -> str:
-        return f"ai_req_{uuid.uuid4().hex[:12]}"
+    def _generate_request_id(self, request_id: Optional[str] = None) -> str:
+        """Reuse the API correlation id, or create one for direct callers."""
+
+        return resolve_request_id(request_id or request_id_var.get("-"), prefix="ai_req")
 
     def _get_provider_instance(self, provider_id: str) -> BaseLLMProvider:
         with get_db_connection() as conn:
@@ -435,8 +438,9 @@ class LLMGateway:
         site_id: Optional[str] = None,
         department: Optional[str] = None,
         document_scope: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        request_id = self._generate_request_id()
+        request_id = self._generate_request_id(request_id)
         start_time = time.perf_counter()
         ai_metrics.request_started(scene)
 
@@ -620,6 +624,7 @@ class LLMGateway:
                             thinking=call_thinking,
                             reasoning_effort=call_reasoning,
                             user_id=provider_user_id,
+                            request_id=request_id,
                         )
                     ai_limits.record_success(model_info["provider_id"])
                     res["provider_id"] = model_info["provider_id"]
@@ -766,8 +771,9 @@ class LLMGateway:
         site_id: Optional[str] = None,
         department: Optional[str] = None,
         document_scope: Optional[str] = None,
+        request_id: Optional[str] = None,
     ):
-        request_id = self._generate_request_id()
+        request_id = self._generate_request_id(request_id)
         start_time = time.perf_counter()
         ai_metrics.request_started(scene)
 
@@ -928,6 +934,7 @@ class LLMGateway:
                             thinking=call_thinking,
                             reasoning_effort=call_reasoning,
                             user_id=secure_payload.user_id,
+                            request_id=request_id,
                         ):
                             yield chunk
                     else:
@@ -941,6 +948,7 @@ class LLMGateway:
                             thinking=call_thinking,
                             reasoning_effort=call_reasoning,
                             user_id=secure_payload.user_id,
+                            request_id=request_id,
                         )
                         if result.get("content"):
                             yield str(result["content"])

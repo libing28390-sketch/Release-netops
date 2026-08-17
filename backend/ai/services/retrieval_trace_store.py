@@ -242,6 +242,7 @@ def _project(
     query: str,
     trace: Mapping[str, Any],
     observation: Mapping[str, Any] | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     request = trace.get("request") if isinstance(trace.get("request"), Mapping) else {}
     resolution = trace.get("resolution") if isinstance(trace.get("resolution"), Mapping) else {}
@@ -253,6 +254,7 @@ def _project(
     }
     return {
         "trace_id": trace_id,
+        "request_id": _text(request_id or trace.get("request_id"), 128) or None,
         "tenant_id": _text(tenant_id, 128),
         "actor_hash": _hash(user_id)[:16] if user_id else None,
         "query_hash": _hash(query),
@@ -286,9 +288,9 @@ def _project(
     }
 
 
-def record_retrieval_trace(*, tenant_id: str, user_id: str | None, query: str, trace: Mapping[str, Any], observation: Mapping[str, Any] | None = None) -> str:
+def record_retrieval_trace(*, tenant_id: str, user_id: str | None, query: str, trace: Mapping[str, Any], observation: Mapping[str, Any] | None = None, request_id: str | None = None) -> str:
     trace_id = f"rt_{uuid.uuid4().hex[:24]}"
-    projected = _project(trace_id=trace_id, tenant_id=tenant_id or "tenant-default", user_id=user_id, query=query, trace=trace, observation=observation)
+    projected = _project(trace_id=trace_id, tenant_id=tenant_id or "tenant-default", user_id=user_id, query=query, trace=trace, observation=observation, request_id=request_id)
     with _LOCK:
         _TRACES.appendleft(projected)
     return trace_id

@@ -27,8 +27,8 @@ class AzureOpenAIProvider(OpenAICompatibleProvider):
             return f"{base}/chat/completions"
         return f"{base}/openai/deployments/{{model}}/chat/completions"
 
-    def _get_headers(self):
-        headers = super()._get_headers()
+    def _get_headers(self, request_id=None):
+        headers = super()._get_headers(request_id)
         if self.api_key:
             headers.pop("Authorization", None)
             headers["api-key"] = self.api_key

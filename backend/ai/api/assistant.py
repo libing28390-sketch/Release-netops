@@ -108,6 +108,7 @@ class KnowledgeDocumentActionRequest(BaseModel):
 
 
 from fastapi.responses import StreamingResponse
+from core.context import request_id_var
 
 @router.post("/chat")
 async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("ai.assistant"))):
@@ -145,6 +146,7 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
         model_id=requested_model_id,
         model_selection_source=model_selection_source,
         context=req.context.model_dump(exclude_none=True),
+        request_id=request_id_var.get("-"),
     )
     if req.conversation_id:
         try:
@@ -240,6 +242,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                 model_selection_source=model_selection_source,
                 context=req.context.model_dump(exclude_none=True),
                 stream_id=stream_state.stream_id,
+                request_id=request_id_var.get("-"),
             ):
                 for part in split_sse_events(event):
                     sequence = event_sequence(part)
@@ -372,6 +375,7 @@ def knowledge_retrieval_test(
         user_id=user_id,
         roles=roles,
         site_ids=user.get("site_ids") or [],
+        request_id=request_id_var.get("-"),
     )
     request = result.get("request")
     resolution = result.get("resolution")
@@ -411,6 +415,7 @@ def knowledge_retrieval_test(
         "final_chunks": final_chunks,
         "explanation": result.get("explanation") or {},
         "debug": result.get("debug") or {},
+        "request_id": result.get("request_id") or request_id_var.get("-"),
     }
 
 

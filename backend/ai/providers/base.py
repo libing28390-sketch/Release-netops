@@ -34,6 +34,7 @@ class BaseLLMProvider(ABC):
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         user_id: Optional[str] = None,
+        request_id: Optional[str] = None,
         stream: bool = False,
     ) -> Dict[str, Any]:
         """

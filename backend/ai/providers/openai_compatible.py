@@ -20,6 +20,7 @@ from ai.gateway.exceptions import (
     AIProviderTimeoutException,
 )
 from ai.providers.base import BaseLLMProvider
+from core.context import resolve_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +48,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             return
         raise AINetworkException("AI provider endpoint must use HTTPS")
 
-    def _get_headers(self) -> Dict[str, str]:
+    def _get_headers(self, request_id: Optional[str] = None) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        if request_id:
+            headers["X-Request-ID"] = resolve_request_id(request_id, prefix="req")
         return headers
 
     async def chat(
@@ -65,6 +68,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         user_id: Optional[str] = None,
+        request_id: Optional[str] = None,
         stream: bool = False,
     ) -> Dict[str, Any]:
         url = self._get_endpoint()
@@ -93,7 +97,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 proxy=self.proxy_url,
                 follow_redirects=False,
             ) as client:
-                response = await client.post(url, headers=self._get_headers(), json=payload)
+                response = await client.post(url, headers=self._get_headers(request_id), json=payload)
                 if response.status_code == 401:
                     raise AIAuthFailedException("AI provider authentication failed")
                 if response.status_code == 403:
@@ -150,6 +154,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         user_id: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> AsyncIterator[str]:
         url = self._get_endpoint()
         self._validate_endpoint(url)
@@ -179,7 +184,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 proxy=self.proxy_url,
                 follow_redirects=False,
             ) as client:
-                async with client.stream("POST", url, headers=self._get_headers(), json=payload) as response:
+                async with client.stream("POST", url, headers=self._get_headers(request_id), json=payload) as response:
                     if 300 <= response.status_code < 400:
                         raise AINetworkException("AI provider redirect refused")
                     if response.status_code == 401 or response.status_code == 403:

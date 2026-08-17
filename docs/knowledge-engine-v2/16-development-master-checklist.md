@@ -482,7 +482,7 @@
 - [x] `OBS-001` `P0/BE+AI/M`：记录 raw query、normalized query、entities、filters、candidates、scores、final chunks。
 - [x] `OBS-002` `P0/BE+AI/M`：记录 reranker、citation、latency、tokens、provider、model 和 security result。
 - [x] `OBS-003` `P0/SEC+BE/M`：Trace 和日志写入前脱敏，限制原始查询保留。
-- [ ] `OBS-004` `P0/BE+OPS/M`：建立请求 ID 贯穿前端、API、RAG、Gateway 和 Provider。
+- [x] `OBS-004` `P0/BE+OPS/M`：建立请求 ID 贯穿前端、API、RAG、Gateway 和 Provider。
 - [ ] `OBS-005` `P1/OPS+BE/M`：建立 Provider 错误率、延迟、限流、Fallback 和成本监控。
 - [ ] `OBS-006` `P1/OPS+AI/M`：建立检索 No Match、错误厂商、版本冲突和低置信度监控。
 - [ ] `OBS-007` `P1/OPS+BE/M`：建立 Import/Reindex 队列积压、失败和租约异常告警。

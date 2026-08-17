@@ -51,6 +51,8 @@ describe('versioned assistant SSE contract', () => {
     expect(progress).toEqual(['nxa.sse.v1']);
     expect(citations).toEqual(['nxa.sse.v1:c1']);
     expect(done).toEqual(['nxa.sse.v1:completed']);
+    const requestHeaders = (vi.mocked(fetch).mock.calls[0][1]?.headers || {}) as Record<string, string>;
+    expect(requestHeaders['X-Request-ID']).toMatch(/^web_/);
   });
 
   it('scopes stream events and ignores duplicate sequences after reconnect', async () => {

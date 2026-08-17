@@ -1,4 +1,4 @@
-import { apiRequest } from './http';
+import { apiRequest, createClientRequestId } from './http';
 
 export interface AIProvider {
   id: string;
@@ -499,6 +499,7 @@ export interface AssistantStreamCitation {
 }
 
 export interface AssistantRetrievalTrace {
+  request_id?: string | null;
   trace_id?: string | null;
   source?: 'local_rag' | string;
   status?: 'hit' | 'no_match' | 'not_run' | string;
@@ -517,6 +518,7 @@ export interface AssistantRetrievalTrace {
 
 export interface AssistantStreamMeta {
   event_version?: string;
+  request_id?: string;
   stream_id?: string;
   sequence?: number;
   intent?: string;
@@ -545,6 +547,7 @@ export interface CopilotContract {
 
 export interface AssistantStreamError {
   event_version?: string;
+  request_id?: string;
   stream_id?: string;
   sequence?: number;
   code?: string;
@@ -671,6 +674,7 @@ export async function chatAssistantStream(
   const token = localStorage.getItem('netops_token') || localStorage.getItem('token');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'X-Request-ID': createClientRequestId(),
   };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -700,7 +704,8 @@ export async function chatAssistantStream(
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`HTTP ${response.status}: ${errText}`);
+    const responseRequestId = response.headers?.get?.('X-Request-ID') || headers['X-Request-ID'];
+    throw new Error(`HTTP ${response.status}: ${errText}${responseRequestId ? ` (Request ID: ${responseRequestId})` : ''}`);
   }
 
   const reader = response.body?.getReader();
@@ -950,6 +955,7 @@ export async function runKnowledgeEvaluation(suite = 'v1_baseline_postgresql'): 
 
 export interface KnowledgeRetrievalTrace {
   trace_id: string;
+  request_id?: string | null;
   tenant_id: string;
   actor_hash?: string | null;
   query_hash: string;

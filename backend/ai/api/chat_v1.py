@@ -26,6 +26,7 @@ from ai.services.conversation_service import (
     rename_conversation,
     request_cancel,
 )
+from core.context import request_id_var
 
 
 router = APIRouter(prefix="/api/v1/ai", tags=["AI V1 Chat"])
@@ -58,6 +59,7 @@ def _event(name: str, data: dict[str, Any]) -> str:
 async def chat_stream(payload: ChatRequest, user=Depends(require_ai_permission("ai.assistant"))):
     user_id = str(user.get("username") or "anonymous")
     tenant_id = str(user.get("tenant_id") or "tenant-default")
+    request_id = request_id_var.get("-")
     messages = [item.model_dump(exclude_none=True) for item in payload.messages]
     if payload.conversation_id:
         try:
@@ -70,7 +72,7 @@ async def chat_stream(payload: ChatRequest, user=Depends(require_ai_permission("
     async def events():
         collected: list[str] = []
         route_meta: dict[str, Any] = {}
-        yield _event("meta", {"contract": "nxa.ai.v1", "model": payload.model, "stream": True})
+        yield _event("meta", {"contract": "nxa.ai.v1", "model": payload.model, "stream": True, "request_id": request_id})
         try:
             async for token in llm_gateway.chat_stream(
                 scene="chat",
@@ -86,6 +88,7 @@ async def chat_stream(payload: ChatRequest, user=Depends(require_ai_permission("
                 reasoning_effort=payload.reasoning_effort,
                 roles=[str(user.get("role"))] if user.get("role") else [],
                 route_meta=route_meta,
+                request_id=request_id,
             ):
                 if token:
                     collected.append(token)
@@ -107,7 +110,7 @@ async def chat_stream(payload: ChatRequest, user=Depends(require_ai_permission("
             yield _event("error", {"code": exc.code, "request_id": exc.request_id})
             yield _event("done", {"finish_reason": "error"})
         except Exception:
-            yield _event("error", {"code": "AI_INTERNAL_ERROR"})
+            yield _event("error", {"code": "AI_INTERNAL_ERROR", "request_id": request_id})
             yield _event("done", {"finish_reason": "error"})
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -117,6 +120,7 @@ async def chat_stream(payload: ChatRequest, user=Depends(require_ai_permission("
 async def chat(payload: ChatRequest, user=Depends(require_ai_permission("ai.assistant"))):
     user_id = str(user.get("username") or "anonymous")
     tenant_id = str(user.get("tenant_id") or "tenant-default")
+    request_id = request_id_var.get("-")
     messages = [item.model_dump(exclude_none=True) for item in payload.messages]
     if payload.conversation_id:
         try:
@@ -138,6 +142,7 @@ async def chat(payload: ChatRequest, user=Depends(require_ai_permission("ai.assi
         roles=[str(user.get("role"))] if user.get("role") else [],
         user_id=user_id,
         tenant_id=tenant_id,
+        request_id=request_id,
     )
     if payload.conversation_id:
         try:

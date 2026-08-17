@@ -1,0 +1,40 @@
+task_id: OBS-004
+title: End-to-end request ID correlation
+status: verified
+contract_version: nxa.request-id.v1
+authority:
+  frontend_http: src/api/http.ts
+  frontend_sse: src/api/ai.ts
+  api_boundary: backend/main.py
+  context: backend/core/context.py
+  copilot: backend/ai/services/assistant.py
+  retrieval_trace: backend/ai/services/retrieval_trace_store.py
+  gateway: backend/ai/gateway/llm_gateway.py
+  provider_transport: backend/ai/providers/openai_compatible.py
+generation:
+  inbound_header: X-Request-ID
+  accepted_pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+  invalid_or_missing: server_generated
+  response_header: X-Request-ID
+propagation:
+  frontend: every apiRequest and assistant SSE request sends one id
+  api: contextvars request_id_var is set before route execution
+  rag: retrieval trace stores bounded request_id with tenant scope
+  gateway: chat and chat_stream reuse context/explicit id across retries and fallback
+  provider: transport-only X-Request-ID header; never placed in provider body
+  sse: every versioned assistant event carries request_id
+security:
+  bounded: true
+  header_injection_rejected: true
+  raw_query_or_credentials_in_id: forbidden
+  tenant_trace_scope: strict
+compatibility:
+  - legacy callers without request_id continue to receive generated IDs
+  - V1 chat responses retain request_id and SSE adds it to meta/error events
+  - no database migration or production DDL
+verification:
+  tests:
+    - backend/tests/ai/test_obs004_request_id_correlation.py
+    - src/api/http.test.ts
+    - src/api/ai.test.ts
+  result: PASS

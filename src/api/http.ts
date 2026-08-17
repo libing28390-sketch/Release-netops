@@ -22,12 +22,21 @@ export const authHeaders = (json = false): HeadersInit => {
   };
 };
 
+export function createClientRequestId(prefix = 'web'): string {
+  const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+  if (typeof randomUUID === 'function') return `${prefix}_${randomUUID()}`;
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
+}
+
 export async function apiRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   const bodyIsFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
+  const headers = new Headers(authHeaders(Boolean(init.body) && !bodyIsFormData));
+  new Headers(init.headers || {}).forEach((value, key) => headers.set(key, value));
+  if (!headers.has('X-Request-ID')) headers.set('X-Request-ID', createClientRequestId());
   const response = await fetch(url, {
     ...init,
     // Let the browser set the multipart boundary for FormData uploads.
-    headers: { ...authHeaders(Boolean(init.body) && !bodyIsFormData), ...(init.headers || {}) },
+    headers,
   });
   const requestId = response.headers.get('X-Request-ID') || undefined;
   const payload = await response.json().catch(() => ({}));

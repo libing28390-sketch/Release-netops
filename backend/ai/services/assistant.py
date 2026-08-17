@@ -28,6 +28,7 @@ from ai.services.citation_service import (
 from ai.services.copilot_contract import build_copilot_contract
 from ai.services.retrieval_trace_store import record_retrieval_trace, update_retrieval_trace
 from ai.security.sanitizer import sanitize_log_text
+from core.context import request_id_var, resolve_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,9 @@ _SSE_CONTEXT: ContextVar["_SSEEventContext | None"] = ContextVar("nexora_sse_con
 
 
 class _SSEEventContext:
-    def __init__(self, stream_id: str):
+    def __init__(self, stream_id: str, request_id: str = "-"):
         self.stream_id = stream_id
+        self.request_id = request_id
         self.next_sequence = 1
 
     def identity(self) -> tuple[str, int]:
@@ -57,6 +59,7 @@ def _sse_event(event_type: str, payload: Dict[str, Any]) -> str:
     context = _SSE_CONTEXT.get()
     event_id = ""
     if context is not None:
+        data["request_id"] = context.request_id
         stream_id, sequence = context.identity()
         data["stream_id"] = stream_id
         data["sequence"] = sequence
@@ -181,6 +184,7 @@ class AIAssistantService:
         user_id: Optional[str] = None,
         roles: Optional[List[str]] = None,
         site_ids: Optional[List[str]] = None,
+        request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         retrieval_started_at = time.perf_counter()
         request, resolution = self.build_knowledge_request(
@@ -213,6 +217,8 @@ class AIAssistantService:
             {"request": request, "resolution": resolution, **retrieval},
             retrieval.get("results") or [],
         )
+        request_id = resolve_request_id(request_id or request_id_var.get("-"), prefix="req")
+        trace_seed["request_id"] = request_id
         trace_seed.setdefault("runtime", {}).setdefault("latency", {})["retrieval_ms"] = max(0, int((time.perf_counter() - retrieval_started_at) * 1000))
         retrieval["retrieval_trace_id"] = record_retrieval_trace(
             tenant_id=tenant_id or "tenant-default",
@@ -236,7 +242,9 @@ class AIAssistantService:
                 "candidates": [*(resolution.candidates or []), *(retrieval.get("results") or [])],
                 "final_chunks": retrieval.get("results") or [],
             },
+            request_id=request_id,
         )
+        retrieval["request_id"] = request_id
         return {"request": request, "resolution": resolution, **retrieval}
 
     @staticmethod
@@ -528,6 +536,7 @@ class AIAssistantService:
             "cli_platform", "document_category", "feature_domain", "feature",
         )
         return {
+            "request_id": knowledge_result.get("request_id"),
             "trace_id": knowledge_result.get("retrieval_trace_id"),
             "source": "local_rag",
             "status": "hit" if rag_chunks else "no_match",
@@ -569,7 +578,9 @@ class AIAssistantService:
         model_id: Optional[str] = None,
         model_selection_source: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
+        request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        request_id = resolve_request_id(request_id or request_id_var.get("-"), prefix="req")
         # 1. Parse intent
         intent_info = await intent_parser.parse_intent(message, user_id=user_id)
         intent = intent_info.get("intent", "general_qa")
@@ -602,7 +613,7 @@ class AIAssistantService:
                     citations=report.get("citations", []) or [],
                     grounded=bool(report.get("matched_count", 0) or report.get("analysis")),
                 ),
-                "request_id": None,
+                "request_id": request_id,
                 "copilot": build_copilot_contract(
                     intent=intent, message=message, context=copilot_context,
                     citations=report.get("citations", []) or [], runtime={},
@@ -634,6 +645,7 @@ class AIAssistantService:
                 user_id=user_id,
                 roles=roles,
                 site_ids=site_ids,
+                request_id=request_id,
             )
             rag_chunks = knowledge_result.get("results") or []
             knowledge_trace = self._knowledge_retrieval_trace(knowledge_result, rag_chunks)
@@ -684,7 +696,7 @@ class AIAssistantService:
                 "citations": [],
                 "answer_contract": answer_contract(intent=intent, citations=[], grounded=False, no_match=True),
                 "retrieval": knowledge_trace,
-                "request_id": None,
+                "request_id": request_id,
                 "copilot": build_copilot_contract(
                     intent=intent, message=message, context=copilot_context,
                     retrieval=knowledge_trace, citations=[], runtime={},
@@ -705,7 +717,7 @@ class AIAssistantService:
                 "citations": citations,
                 "answer_contract": answer_contract(intent=intent, citations=citations, grounded=True),
                 "retrieval": knowledge_trace,
-                "request_id": None,
+                "request_id": request_id,
                 "copilot": build_copilot_contract(
                     intent=intent, message=message, context=copilot_context,
                     retrieval=knowledge_trace, citations=citations, runtime={},
@@ -742,6 +754,7 @@ class AIAssistantService:
                 tenant_id=tenant_id,
                 roles=roles,
                 selection_source=model_selection_source,
+                request_id=request_id,
             )
         except AISecurityBlockedException:
             if knowledge_trace is not None and knowledge_trace.get("trace_id"):
@@ -785,7 +798,7 @@ class AIAssistantService:
             "citations": citations,
             "answer_contract": answer_contract(intent=intent, citations=citations, grounded=bool(citations or context_facts), no_match=bool(intent == "knowledge" and not citations)),
             "retrieval": knowledge_trace,
-            "request_id": res.get("request_id"),
+            "request_id": res.get("request_id") or request_id,
             "model_id": res.get("model_id"),
             "provider_id": res.get("provider_id"),
             "requested_model_id": res.get("requested_model_id"),
@@ -819,6 +832,7 @@ class AIAssistantService:
         model_selection_source: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         stream_id: Optional[str] = None,
+        request_id: Optional[str] = None,
     ):
         """Stream one request under a stable, resumable SSE identity.
 
@@ -828,8 +842,9 @@ class AIAssistantService:
         concurrent requests.
         """
 
+        request_id = resolve_request_id(request_id or request_id_var.get("-"), prefix="req")
         active_stream_id = stream_id or f"sse_{uuid.uuid4().hex}"
-        context_token = _SSE_CONTEXT.set(_SSEEventContext(active_stream_id))
+        context_token = _SSE_CONTEXT.set(_SSEEventContext(active_stream_id, request_id))
         try:
             async for event in self._chat_stream_impl(
                 message,
@@ -841,6 +856,7 @@ class AIAssistantService:
                 model_id=model_id,
                 model_selection_source=model_selection_source,
                 context=context,
+                request_id=request_id,
             ):
                 yield event
         finally:
@@ -857,7 +873,9 @@ class AIAssistantService:
         model_id: Optional[str] = None,
         model_selection_source: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
+        request_id: Optional[str] = None,
     ):
+        request_id = resolve_request_id(request_id or request_id_var.get("-"), prefix="req")
         started_at = time.perf_counter()
         active_step = ("intent", "识别问题类型", "intent_parser.parse_intent")
         yield _progress_event(active_step[0], active_step[1], "running", operation=active_step[2])
@@ -962,6 +980,7 @@ class AIAssistantService:
                     user_id=user_id,
                     roles=roles,
                     site_ids=site_ids,
+                    request_id=request_id,
                 )
                 rag_chunks = knowledge_result.get("results") or []
                 knowledge_trace = self._knowledge_retrieval_trace(knowledge_result, rag_chunks)
@@ -1048,6 +1067,7 @@ class AIAssistantService:
         )
         route_meta: Dict[str, Any] = {}
         meta = {
+            "request_id": request_id,
             "intent": intent,
             "facts_retrieved": bool(context_facts),
             "citations": citations,
@@ -1102,6 +1122,7 @@ class AIAssistantService:
                 route_meta=route_meta, workspace_id=copilot_context.get("workspace_id"),
                 site_id=copilot_context.get("site_id"), department=copilot_context.get("department"),
                 document_scope=copilot_context.get("document_scope"),
+                request_id=request_id,
             ):
                 if token:
                     tokens_emitted += 1

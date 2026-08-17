@@ -388,7 +388,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown(wait=False)
     logger.info("[Scheduler] APScheduler stopped")
 
-from core.context import request_id_var, user_var, route_var
+from core.context import request_id_var, resolve_request_id, user_var, route_var
 from core.metrics import metrics_registry
 from core.scheduler_lock import synchronized_scheduler_job
 import time
@@ -437,7 +437,7 @@ async def knowledge_v2_boundary_alias(request: Request, call_next):
 @app.middleware("http")
 async def add_request_id_and_log(request: Request, call_next):
     start_time = time.perf_counter()
-    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request_id = resolve_request_id(request.headers.get("X-Request-ID"), prefix="req")
     req_token = request_id_var.set(request_id)
     user_token = user_var.set("anonymous")
     route_token = route_var.set(request.url.path)
@@ -495,7 +495,7 @@ from fastapi.exceptions import RequestValidationError
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global unhandled exception on {request.url.path}: {exc}", exc_info=True)
     if is_stable_api_path(request.url.path):
-        request_id = request.headers.get("X-Request-ID") or request_id_var.get("-")
+        request_id = resolve_request_id(request_id_var.get("-"), prefix="req")
         response = JSONResponse(
             status_code=500,
             content=stable_error_payload(500, "服务内部异常，请联系管理员查看后端日志", request_id=request_id),
@@ -513,7 +513,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def ai_exception_handler(request: Request, exc: AIException):
     """Return stable AI error codes without exposing provider/payload details."""
     if is_stable_api_path(request.url.path):
-        request_id = exc.request_id or request.headers.get("X-Request-ID") or request_id_var.get("-")
+        request_id = resolve_request_id(exc.request_id or request_id_var.get("-"), prefix="req")
         response = JSONResponse(
             status_code=exc.status_code,
             content=stable_error_payload(
@@ -563,7 +563,7 @@ async def validation_exception_handler(request, exc):
         })
     detail_msg = '；'.join(messages) or '请求参数校验失败'
     if is_stable_api_path(request.url.path):
-        request_id = request.headers.get("X-Request-ID") or request_id_var.get("-")
+        request_id = resolve_request_id(request_id_var.get("-"), prefix="req")
         response = JSONResponse(
             status_code=422,
             content=stable_error_payload(
@@ -700,7 +700,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 async def stable_http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Normalize errors for the V2/V1 AI boundary while preserving legacy detail."""
 
-    request_id = request.headers.get("X-Request-ID") or request_id_var.get("-")
+    request_id = resolve_request_id(request_id_var.get("-"), prefix="req")
     if is_stable_api_path(request.url.path):
         response = JSONResponse(
             status_code=exc.status_code,
