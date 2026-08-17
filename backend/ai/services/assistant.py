@@ -216,6 +216,23 @@ class AIAssistantService:
             user_id=user_id,
             query=message,
             trace=trace_seed,
+            observation={
+                "raw_query": message,
+                "normalized_query": resolution.normalized_query,
+                "entities": resolution.metadata,
+                "filters": {
+                    field: getattr(request, field, None)
+                    for field in (
+                        "vendor", "product_family", "product_series", "product_model", "os_family",
+                        "os_generation", "software_train", "software_release", "cli_platform",
+                        "document_category", "feature_domain", "feature", "subfeature", "risk_level",
+                        "verification_level", "rag_priority", "status",
+                    )
+                    if getattr(request, field, None) not in (None, "", [], {})
+                },
+                "candidates": [*(resolution.candidates or []), *(retrieval.get("results") or [])],
+                "final_chunks": retrieval.get("results") or [],
+            },
         )
         return {"request": request, "resolution": resolution, **retrieval}
 
