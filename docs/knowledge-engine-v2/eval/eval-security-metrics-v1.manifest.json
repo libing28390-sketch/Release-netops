@@ -1,0 +1,23 @@
+{
+  "status": "PASS",
+  "fixture_id": "nexora-kb-eval-security-cases-v1-20260817",
+  "class_counts": {
+    "authorization": 2,
+    "outbound": 3,
+    "prompt_injection": 2,
+    "secret_leakage": 2
+  },
+  "report": {
+    "case_count": 9,
+    "secret_leakage_rate": 0.5,
+    "prompt_injection_block_rate": 1.0,
+    "authorization_violation_rate": 0.5,
+    "outbound_policy_compliance_rate": 0.6666666666666666
+  },
+  "database": "none",
+  "sqlite": "not_used",
+  "external_network": "not_used",
+  "secrets": false,
+  "fixture_sha256": "dfc5c5e8e91e62c72de764666f658aa7ce6299a77ee3aa58bc083667c68f3714",
+  "module_sha256": "72f284beec4ae6f88c74516c29bcf46357c2efe2cf5ab6848ea7cbd9ee788f7e"
+}

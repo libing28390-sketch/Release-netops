@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-006 (DONE_PASS)
-Last Completed: EVAL-006
-Next Task: EVAL-007（定义秘密泄漏、Prompt Injection、越权和外发策略指标）
+Current Task: EVAL-007 (DONE_PASS)
+Last Completed: EVAL-007
+Next Task: EVAL-008（建立人工 Golden Answer、适用版本和引用标注流程）
 
-Completed: 301 / 359
-P0: 240 / 277
-Last Verified Commit: 903eda9e（EVAL-006 quality metrics PASS）
+Completed: 302 / 359
+P0: 241 / 277
+Last Verified Commit: 待提交（EVAL-007 PASS）
 
-Recent Migration: EVAL-006 无 migration；离线质量/来源指标无数据库连接/写入
-Recent Build: EVAL-006 quality metric smoke PASS；六项指标；EVAL-001～EVAL-006 tests 6 passed；py_compile/contract YAML/diff PASS
-Last Security Check: EVAL-006 citation/source 只处理 bounded metadata；无外网；database=none；SQLite=not_used
+Recent Migration: EVAL-007 无 migration；离线安全指标 fixture 无数据库连接/写入
+Recent Build: EVAL-007 security metric smoke PASS；9 cases；EVAL-001～EVAL-007 tests 7 passed；py_compile/contract YAML/diff PASS
+Last Security Check: EVAL-007 secret/prompt/auth/outbound 仅输出 bounded rates；无原文回显；database=none；SQLite=not_used
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-007
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-008
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -39,6 +39,8 @@ EVAL-004：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-004.md；sp
 EVAL-005：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-005.md；Recall@K/Precision@K/MRR/NDCG/Entity Resolution Accuracy 定义与实现 PASS；EVAL-001～EVAL-005 tests 5 passed；无数据库连接，SQLite 未作为验收证据。
 
 EVAL-006：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-006.md；Product/OS/Version Match、Wrong Vendor、Official Source、Citation Accuracy 定义与实现 PASS；EVAL-001～EVAL-006 tests 6 passed；无数据库连接，SQLite 未作为验收证据。
+
+EVAL-007：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-007.md；Secret/Prompt Injection/Authorization/Outbound 四类指标定义与 smoke PASS；EVAL-001～EVAL-007 tests 7 passed；无数据库连接，SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

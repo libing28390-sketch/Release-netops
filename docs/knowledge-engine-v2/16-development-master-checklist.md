@@ -500,7 +500,7 @@
 - [x] `EVAL-004` `P0/NET+AI/M`：覆盖指定版本、未指定版本、冲突版本和未知版本。
 - [x] `EVAL-005` `P0/AI+QA/M`：定义 Recall@K、Precision@K、MRR、NDCG 和 Entity Resolution Accuracy。
 - [x] `EVAL-006` `P0/AI+QA/M`：定义 Product、OS、Version Match、Wrong Vendor、Official Source 和 Citation Accuracy。
-- [ ] `EVAL-007` `P0/SEC+QA/M`：定义秘密泄漏、Prompt Injection、越权和外发策略指标。
+- [x] `EVAL-007` `P0/SEC+QA/M`：定义秘密泄漏、Prompt Injection、越权和外发策略指标。
 - [ ] `EVAL-008` `P0/QA+NET/M`：建立人工 Golden Answer、适用版本和引用标注流程。
 - [ ] `EVAL-009` `P0/AI+QA/M`：实现可重复离线评测命令和机器可读报告。
 - [ ] `EVAL-010` `P0/QA+AI/M`：在 CI 中执行小型固定集，完整集进入发布门禁。
