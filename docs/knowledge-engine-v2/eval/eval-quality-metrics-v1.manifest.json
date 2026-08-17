@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "metrics": [
+    "product_match",
+    "os_match",
+    "version_match",
+    "wrong_vendor_rate",
+    "official_source_rate",
+    "citation_accuracy"
+  ],
+  "report": {
+    "case_count": 3,
+    "product_match": 0.6666666666666666,
+    "os_match": 0.6666666666666666,
+    "version_match": 1.0,
+    "wrong_vendor_rate": 0.3333333333333333,
+    "official_source_rate": 0.6666666666666666,
+    "citation_accuracy": 0.6666666666666666
+  },
+  "database": "none",
+  "sqlite": "not_used",
+  "external_network": "not_used",
+  "secrets": false,
+  "module_sha256": "aa5de3004ac8e3c5fbf981954bc332b8bd1baf9447010598e15160c108226173"
+}

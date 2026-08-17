@@ -1,0 +1,60 @@
+task_id: EVAL-006
+title: product OS version source and citation quality metrics
+priority: P0
+status: executable
+authority: offline_metric_library
+scope:
+  - define Product Match, OS Match and Version Match accuracy
+  - define Wrong Vendor rate and fail-closed vendor guessing behavior
+  - define Official Source rate for answer citations
+  - define strict Citation Accuracy against Gold document IDs
+metrics:
+  product_match:
+    formula: exact_normalized_expected_product_equals_predicted_product_per_query
+    normalization: same_entity_normalization_as_EVAL-005
+  os_match:
+    formula: exact_normalized_expected_os_equals_predicted_os_per_query
+    normalization: same_entity_normalization_as_EVAL-005
+  version_match:
+    formula: relation_equal_and_exact_release_equal_when_relation_is_exact
+    unspecified: predicted_relation_unspecified_and_no_predicted_release
+    conflict_or_unknown: predicted_relation_equal_and_no_predicted_release
+  wrong_vendor_rate:
+    formula: wrong_or_unexpected_predicted_vendor_cases_divided_by_all_cases
+    ambiguous: any_predicted_vendor_is_a_wrong_guess
+  official_source_rate:
+    formula: answer_cases_have_at_least_one_citation_and_all_citations_are_official
+    non_answer: empty_citations_pass; supplied_citations_must_all_be_official
+  citation_accuracy:
+    formula: answer_citations_non_empty_and_subset_of_Gold_with_at_least_one_hit
+    non_answer: citations_must_be_empty
+aggregation:
+  all_metrics: macro_mean_per_query
+  empty_case_set: 0
+implementation:
+  module: backend/ai/services/evaluation_metrics.py
+  smoke_check: scripts/knowledge_engine_v2_eval_quality_metrics_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval006_quality_metrics.py
+safety:
+  database: none
+  sqlite: not_used
+  external_network: forbidden
+  secrets: forbidden
+  production_writes: forbidden
+  persistence_note: database-backed callers may read PostgreSQL rows, but metric functions open no database
+verification:
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval_quality_metrics_check.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_eval006_quality_metrics.py -q -p no:cacheprovider"
+    - ".venv\\Scripts\\python.exe -m py_compile backend/ai/services/evaluation_metrics.py scripts/knowledge_engine_v2_eval_quality_metrics_check.py tests/knowledge_engine_v2/test_eval006_quality_metrics.py"
+    - "git diff --check"
+  required_results:
+    - status: PASS
+    - metrics: [product_match, os_match, version_match, wrong_vendor_rate, official_source_rate, citation_accuracy]
+    - database: none
+    - sqlite: not_used
+rollback:
+  runtime: stop consuming the EVAL-006 metric report and use the prior EVAL-005 metric set
+  data: remove the added functions, smoke report, test and contract in a revert commit
+  database: none; no migration or persistent write
+  compatibility: no V1 retrieval, source or API changes

@@ -30,5 +30,5 @@
   "sqlite": "not_used",
   "external_network": "not_used",
   "secrets": false,
-  "module_sha256": "7668917dbc460c20409d79f89ab7608f72dc1543cf7fd25cc9b44e718ae4464d"
+  "module_sha256": "aa5de3004ac8e3c5fbf981954bc332b8bd1baf9447010598e15160c108226173"
 }
