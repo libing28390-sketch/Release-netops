@@ -968,7 +968,7 @@
   "provider_tags_bugfix_commit": "b264fede",
   "provider_tags_bugfix_evidence": "docs/knowledge-engine-v2/evidence/BUG-PROVIDER-TAGS-001.md",
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
-  "last_verified_commit": "待提交（CHK-016验证已通过）",
+  "last_verified_commit": "6660ce70（CHK-016 offline experiment PASS）",
   "total_count": 359,
   "completed_count": 295,
   "p0_total_count": 277,

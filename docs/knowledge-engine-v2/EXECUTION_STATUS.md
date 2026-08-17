@@ -7,7 +7,7 @@ Next Task: EVAL-001（建立首批 100～200 条固定 Query 数据集）
 
 Completed: 295 / 359
 P0: 234 / 277
-Last Verified Commit: 待提交（CHK-016 offline experiment PASS）
+Last Verified Commit: 6660ce70（CHK-016 offline experiment PASS）
 
 Recent Migration: CHK-016 无 migration；纯内存 Chunk 实验无数据库连接/写入
 Recent Build: CHK-016 offline report PASS；4 配置对比；deterministic repeat PASS；wrapper 1 passed；py_compile/diff PASS
