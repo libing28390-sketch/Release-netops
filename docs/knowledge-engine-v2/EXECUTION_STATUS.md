@@ -7,7 +7,7 @@ Next Task: API-008（按原清单依赖继续）
 
 Completed: 278 / 359
 P0: 228 / 277
-Last Verified Commit: 5a772524（API-006 PASS；API-007 待本地提交；不 push）
+Last Verified Commit: 349db956（API-007 PASS；本地提交；未 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
 Recent Build: API-007 backend AI regression 234 passed（含 API-006/007 9 passed）；frontend 21 files / 100 tests；PostgreSQL V1 baseline 10/10；lint/build/compile/diff PASS
