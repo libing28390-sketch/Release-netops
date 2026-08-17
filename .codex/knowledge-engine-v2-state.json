@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "EVAL-011",
+  "current_task": "EVAL-012",
   "task_state": "ANALYZING",
-  "updated_at": "2026-08-18T00:45:00+08:00",
-  "last_completed_task": "EVAL-010",
+  "updated_at": "2026-08-18T01:10:00+08:00",
+  "last_completed_task": "EVAL-011",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -144,6 +144,7 @@
     "EVAL-008",
     "EVAL-009",
     "EVAL-010",
+    "EVAL-011",
     "RET-001",
     "RET-002",
     "RET-003",
@@ -340,7 +341,6 @@
   "pending_tasks": [
     "ING-020",
     "ING-021",
-    "EVAL-011",
     "EVAL-012",
     "EVAL-013",
     "EVAL-014",
@@ -970,10 +970,10 @@
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
   "last_verified_commit": "339b5d2f（EVAL-010 PostgreSQL CI/release gate implementation PASS）",
   "total_count": 359,
-  "completed_count": 305,
+  "completed_count": 306,
   "p0_total_count": 277,
-  "p0_completed_count": 244,
-  "resume_from": "EVAL-011",
+  "p0_completed_count": 245,
+  "resume_from": "EVAL-012",
   "eval001_status": "DONE_PASS",
   "eval001_final_verified_at": "2026-08-17T21:20:00+08:00",
   "eval001_evidence": "docs/knowledge-engine-v2/evidence/EVAL-001.md",
@@ -1056,5 +1056,13 @@
   "eval010_report": "docs/knowledge-engine-v2/eval/eval-offline-small-report-v1.json",
   "eval010_focused_tests": "CI gate validator PASS; small 4/4; full 8/8; EVAL-001～EVAL-010 tests 11 passed; YAML/py_compile/diff PASS",
   "eval010_postgresql_policy": "PASS; CI/release workflows use PostgreSQL service and postgresql:// URL; sqlite_references=0; offline runner database=none/sqlite=not_used",
-  "eval010_production_ddl": "NONE"
+  "eval010_production_ddl": "NONE",
+  "eval011_status": "DONE_PASS",
+  "eval011_final_verified_at": "2026-08-18T01:10:00+08:00",
+  "eval011_evidence": "docs/knowledge-engine-v2/evidence/EVAL-011.md",
+  "eval011_contract": "docs/knowledge-engine-v2/architecture/EVAL-011-PROVIDER-MODEL-SECURITY-CONTRACT.yaml",
+  "eval011_manifest": "docs/knowledge-engine-v2/eval/eval-provider-model-security-v1.manifest.json",
+  "eval011_focused_tests": "PostgreSQL probe PASS; backend Provider/Model/Security/API 33 passed; EVAL-011 wrapper 2 passed; V1 PostgreSQL baseline 10/10; lint/build/compile/diff PASS",
+  "eval011_postgresql_policy": "PASS; database=postgresql; sqlite=not_used; probe transaction rollback=true; no production write",
+  "eval011_production_ddl": "NONE"
 }

@@ -504,7 +504,7 @@
 - [x] `EVAL-008` `P0/QA+NET/M`：建立人工 Golden Answer、适用版本和引用标注流程。
 - [x] `EVAL-009` `P0/AI+QA/M`：实现可重复离线评测命令和机器可读报告。
 - [x] `EVAL-010` `P0/QA+AI/M`：在 CI 中执行小型固定集，完整集进入发布门禁。
-- [ ] `EVAL-011` `P0/QA/L`：覆盖 Provider CRUD、模型切换、Fallback、权限和密钥安全测试。
+- [x] `EVAL-011` `P0/QA/L`：覆盖 Provider CRUD、模型切换、Fallback、权限和密钥安全测试。
 - [ ] `EVAL-012` `P0/QA/L`：覆盖 Source/Document/Version/Chunk/Reindex 生命周期测试。
 - [ ] `EVAL-013` `P0/QA/L`：覆盖检索、引用、No Match、Ambiguous 和版本冲突测试。
 - [ ] `EVAL-014` `P0/QA+DBA/L`：覆盖迁移、新装、重复迁移、回填、约束、回滚和恢复。
