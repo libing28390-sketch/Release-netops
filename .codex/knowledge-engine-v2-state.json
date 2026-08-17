@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "EVAL-020",
+  "current_task": "MIG-001",
   "task_state": "ANALYZING",
-  "updated_at": "2026-08-17T22:00:00+08:00",
-  "last_completed_task": "EVAL-019",
+  "updated_at": "2026-08-17T22:08:28+08:00",
+  "last_completed_task": "EVAL-020",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -153,6 +153,7 @@
     "EVAL-017",
     "EVAL-018",
     "EVAL-019",
+    "EVAL-020",
     "RET-001",
     "RET-002",
     "RET-003",
@@ -349,7 +350,6 @@
   "pending_tasks": [
     "ING-020",
     "ING-021",
-    "EVAL-020",
     "MIG-001",
     "MIG-002",
     "MIG-003",
@@ -393,7 +393,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "5ed04340（EVAL-019 bounded import/reindex/SSE/Provider stability PASS）",
+  "last_verified_commit": "daaa375f（EVAL-020 dependency/Secret/permission/log/error security gate PASS）",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -968,10 +968,10 @@
   "provider_tags_bugfix_evidence": "docs/knowledge-engine-v2/evidence/BUG-PROVIDER-TAGS-001.md",
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
   "total_count": 359,
-  "completed_count": 314,
+  "completed_count": 315,
   "p0_total_count": 277,
   "p0_completed_count": 250,
-  "resume_from": "EVAL-020",
+  "resume_from": "MIG-001",
   "eval001_status": "DONE_PASS",
   "eval001_final_verified_at": "2026-08-17T21:20:00+08:00",
   "eval001_evidence": "docs/knowledge-engine-v2/evidence/EVAL-001.md",
@@ -1142,5 +1142,15 @@
   "eval019_runner": "scripts/knowledge_engine_v2_eval019_stability.py",
   "eval019_gate_summary": "100 import cycles with 10 recovered transient failures; 1000 PostgreSQL temporary reindex rows with 4 recovered batches; 100 SSE streams/400 events with 0 duplicate or out-of-order; 100 Provider cycles/4 recovered transient failures; 35 related regressions; V1 PostgreSQL 10/10; duration 2.842s",
   "eval019_postgresql_policy": "PASS; PostgreSQL temporary queue only; SQLite forbidden; production_database_write=false; external_provider_request=false",
-  "eval019_production_ddl": "NONE"
+  "eval019_production_ddl": "NONE",
+  "eval020_status": "DONE_PASS",
+  "eval020_final_verified_at": "2026-08-17T22:08:28+08:00",
+  "eval020_evidence": "docs/knowledge-engine-v2/evidence/EVAL-020.md",
+  "eval020_contract": "docs/knowledge-engine-v2/architecture/EVAL-020-SECURITY-GATE-CONTRACT.yaml",
+  "eval020_report": "docs/knowledge-engine-v2/eval/eval-security-gate-v1.json",
+  "eval020_runner": "scripts/knowledge_engine_v2_eval020_security_check.py",
+  "eval020_focused_tests": "EVAL-020 wrapper 4 passed; AI security/observability/provider/API regression 64 passed",
+  "eval020_gate_summary": "dependency pip/npm PASS; Secret validator and 415-file scan 0 findings; AI route permissions 96/96; AI log/error scans 0 findings; PostgreSQL V1 10/10; lint/build/compile/diff PASS",
+  "eval020_postgresql_policy": "PASS; PostgreSQL V1 transaction rollback; SQLite forbidden; production_database_write=false",
+  "eval020_production_ddl": "NONE"
 }

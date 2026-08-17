@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-020（ANALYZING）
-Last Completed: EVAL-019
-Next Task: EVAL-020（执行依赖、Secret、权限、日志和错误响应安全检查）
+Current Task: MIG-001（ANALYZING）
+Last Completed: EVAL-020
+Next Task: MIG-001（按 Document、Metadata、Chunk、Embedding 分别确定迁移策略）
 
-Completed: 314 / 359
+Completed: 315 / 359
 P0: 250 / 277
-Last Verified Commit: 5573fbae（EVAL-017 Provider auth failure surface and API-key visibility PASS）
+Last Verified Commit: daaa375f（EVAL-020 dependency/Secret/permission/log/error security gate PASS）
 
-Recent Migration: EVAL-019 无生产 migration；临时 PostgreSQL Reindex 队列 transaction rollback + connection close 清理 PASS
-Recent Build: EVAL-019 bounded stability 2.842s PASS；相关回归 35 passed；pytest 3 passed；npm lint PASS；Vite build PASS（3680 modules）；SQLite 未作为证据
-Last Security Check: EVAL-019 tenant/fingerprint SSE 作用域、Provider external_call=false、错误/报告无 Secret/DSN/raw body、PostgreSQL-only PASS；SQLite 未作为证据
+Recent Migration: EVAL-020 无生产 migration；V1 PostgreSQL baseline 使用 transaction rollback，production_database_write=false
+Recent Build: EVAL-020 security gate 3.106s PASS；安全回归 64 passed、wrapper 4 passed；npm lint PASS；Vite build PASS（3680 modules）；SQLite 未作为证据
+Last Security Check: EVAL-020 dependency/Secret/AI route permission/log redaction/stable error response 全部 PASS；AI 路由 96/96；Secret 静态发现 0；PostgreSQL V1 10/10；SQLite forbidden
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: EVAL-020（依赖、Secret、权限、日志和错误响应安全检查）→ MIG-001；ING-020/021 仍需认证浏览器会话补做可见验证
+Recovery Point: MIG-001（迁移策略定义）→ MIG-002；ING-020/021 仍需认证浏览器会话补做可见验证
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -67,6 +67,7 @@ EVAL-017 Provider 数据区域复查（2026-08-17）：PostgreSQL 中当前 Prov
 EVAL-017 Provider 错误 Key 与可见性复查（2026-08-17）：错误 Key 的认证浏览器探针返回 `AI_AUTH_FAILED`（HTTP 401/403，约 702 ms），页面不再显示熔断码；编辑框小眼睛只切换本次新输入值，旧 Key 仍不回显；后端聚焦 15 passed，前端 Provider 5 passed，lint/build/compile/diff PASS。
 EVAL-018：DONE_PASS_WITH_CAPACITY_WARNING；证据 docs/knowledge-engine-v2/evidence/EVAL-018.md；PostgreSQL 10k/100k/1m 临时样本、FTS/trigram/vector P50/P95/P99、Top-K=10、租户泄漏=0、V1 10/10、pytest 2、lint/build/compile/diff PASS；1m trigram P95=11313.107ms 超过 3000ms 初始目标，发布门槛保持关闭。
 EVAL-019：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-019.md；100 import / 1000 PostgreSQL reindex / 100 SSE / 100 Provider cycles，恢复与幂等边界 PASS；相关回归 35 passed，V1 PostgreSQL 10/10，duration 2.842s。
+EVAL-020：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-020.md；依赖、Secret、AI 路由权限 96/96、日志脱敏、稳定错误响应和 PostgreSQL V1 10/10 PASS；安全回归 64 passed、wrapper 4 passed；lint/build/compile/diff PASS；SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
