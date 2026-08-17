@@ -7,7 +7,7 @@ Next Task: CHK-015（实现 Chunk 查看器，支持 Parent、Neighbor、Metadat
 
 Completed: 293 / 359
 P0: 234 / 277
-Last Verified Commit: 待提交（CHK-014 PostgreSQL shadow index probe PASS）
+Last Verified Commit: 08d63085（CHK-014 PostgreSQL shadow index probe PASS）
 
 Recent Migration: CHK-014 m0150 shadow generation migration 重复执行 PASS；真实 PostgreSQL DDL/数据探针 rollback，无生产探针写入
 Recent Build: CHK-014 PostgreSQL probe PASS；PG wrapper test 1 passed；CHK-P0 chunk/embedding/API contract regression 15 passed；py_compile/diff PASS

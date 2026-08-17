@@ -952,7 +952,7 @@
   "provider_tags_bugfix_commit": "b264fede",
   "provider_tags_bugfix_evidence": "docs/knowledge-engine-v2/evidence/BUG-PROVIDER-TAGS-001.md",
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
-  "last_verified_commit": "待提交（CHK-014验证已通过）",
+  "last_verified_commit": "08d63085（CHK-014 PostgreSQL shadow index probe PASS）",
   "total_count": 359,
   "completed_count": 293,
   "p0_total_count": 277,
