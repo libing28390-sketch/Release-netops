@@ -2,8 +2,8 @@
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
   "current_task": "EVAL-019",
-  "task_state": "ANALYZING",
-  "updated_at": "2026-08-17T21:52:00+08:00",
+  "task_state": "VERIFYING",
+  "updated_at": "2026-08-17T21:56:49+08:00",
   "last_completed_task": "EVAL-018",
   "completed_tasks": [
     "ADR-001",
@@ -1133,5 +1133,13 @@
   "eval018_percentiles": "P50/P95/P99 per FTS/trigram/vector; five repetitions; P99 is max observed",
   "eval018_postgresql_policy": "PASS; PostgreSQL 18.4 with vector 0.8.6 and pg_trgm 1.6; temporary session only; SQLite forbidden; production_database_write=false",
   "eval018_result": "Top-K=10 and tenant_leaks=0 at all scales; 1m trigram P95 11313.107ms exceeds 3000ms initial target and remains a release capacity warning",
-  "eval018_production_ddl": "NONE"
+  "eval018_production_ddl": "NONE",
+  "eval019_status": "PASS_VERIFYING",
+  "eval019_evidence": "docs/knowledge-engine-v2/evidence/EVAL-019.md",
+  "eval019_contract": "docs/knowledge-engine-v2/architecture/EVAL-019-STABILITY-CONTRACT.yaml",
+  "eval019_report": "docs/knowledge-engine-v2/eval/eval-stability-v1.json",
+  "eval019_runner": "scripts/knowledge_engine_v2_eval019_stability.py",
+  "eval019_gate_summary": "100 import cycles with 10 recovered transient failures; 1000 PostgreSQL temporary reindex rows with 4 recovered batches; 100 SSE streams/400 events with 0 duplicate or out-of-order; 100 Provider cycles/4 recovered transient failures; 35 related regressions; V1 PostgreSQL 10/10; duration 2.842s",
+  "eval019_postgresql_policy": "PASS; PostgreSQL temporary queue only; SQLite forbidden; production_database_write=false; external_provider_request=false",
+  "eval019_production_ddl": "NONE"
 }

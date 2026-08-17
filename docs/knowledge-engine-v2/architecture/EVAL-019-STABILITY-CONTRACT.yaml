@@ -1,0 +1,57 @@
+task_id: EVAL-019
+title: 导入、Reindex、SSE 与 Provider 故障恢复稳定性测试
+priority: P1
+milestone: M2
+authority: PostgreSQL
+database_policy:
+  persistence_authority: PostgreSQL
+  sqlite: forbidden
+  production_database_write: false
+  pg_fixture_scope: temporary_session_only
+scope:
+  bounded_soak:
+    import_cycles: 100
+    reindex_rows: 1000
+    sse_stream_cycles: 100
+    provider_cycles: 100
+    duration_limit_seconds: 180
+  paths:
+    import:
+      - lease_claim
+      - transient_failure
+      - retry_and_resume
+      - terminal_success
+    reindex:
+      - PostgreSQL_keyset_batch
+      - lease_owner_fencing
+      - checkpoint_progress
+      - transient_batch_recovery
+    sse:
+      - versioned_event_envelope
+      - disconnect_resume
+      - monotonic_sequence
+      - duplicate_suppression
+    provider:
+      - transient_network_failure
+      - bounded_retry
+      - circuit_recovery
+      - successful_response_after_recovery
+  external_calls: false
+  device_write_commands: false
+quality_gates:
+  - all four paths complete their bounded cycles
+  - recovered failures do not remain terminally failed
+  - no duplicate SSE sequence or cross-scope replay
+  - Reindex queue is fully completed with monotonic checkpoints
+  - Provider transient failures recover without an open circuit after success
+  - PostgreSQL temporary fixture rolls back and leaves no public objects
+  - errors and reports contain no secret, raw provider body, or DSN
+  - V1 PostgreSQL baseline remains passing
+  - py_compile and diff checks pass
+rollback:
+  schema: no_production_schema_change
+  data: temporary_queue_transaction_rollback_and_connection_close
+  operational: discard_report_only
+known_limitations:
+  - bounded local soak is a stability regression gate, not a multi-hour production soak
+  - external Provider and device writes are intentionally mocked/fault-injected
