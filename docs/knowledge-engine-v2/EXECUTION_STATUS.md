@@ -7,7 +7,7 @@ Next Task: EVAL-006（定义 Product、OS、Version Match、Wrong Vendor、Offic
 
 Completed: 300 / 359
 P0: 239 / 277
-Last Verified Commit: 待提交（EVAL-005 PASS）
+Last Verified Commit: 75beb5a5（EVAL-005 metrics PASS）
 
 Recent Migration: EVAL-005 无 migration；离线指标库无数据库连接/写入
 Recent Build: EVAL-005 metric smoke PASS；五项指标；EVAL-001～EVAL-005 tests 5 passed；py_compile/contract YAML/diff PASS
