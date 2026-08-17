@@ -20,8 +20,8 @@ scope:
     - KUI-015
     - KUI-016
     - KUI-017
-  later_tasks:
     - KUI-018
+  later_tasks: []
 principles:
   business_entity_first: true
   internal_storage_path_is_never_user_metadata: true
@@ -218,6 +218,24 @@ retrieval_trace_management:
     citations: metadata_summary_only
     cross_tenant_lookup: 404
   lifecycle: [hit, no_match, not_run]
+ui_validation:
+  language:
+    supported: [zh, en]
+    pagination_labels: [items, per_page, first_page, previous_page, next_page, last_page]
+  theme:
+    supported: [light, dark]
+    dark_mode_selector: 'html[data-theme="dark"]'
+  responsive:
+    narrow_viewport: '360px'
+    requirements: [no_horizontal_page_overflow, table_horizontal_scroll, controls_wrap]
+  tables:
+    knowledge_documents: [sticky_header, horizontal_scroll]
+    evaluation_cases: [sticky_header, horizontal_scroll]
+  pagination:
+    knowledge_documents:
+      default_page_size: 20
+      max_page_size: 100
+      clamp_page_bounds: true
 request_lifecycle:
   list_requests:
     cancel_previous_request: true
@@ -253,3 +271,4 @@ verification:
   frontend_checks:
     - npm.cmd run lint
     - npm.cmd run build
+    - npm.cmd run test:frontend -- --run src/pages/ai/Knowledge/KnowledgeAdminResponsive.test.tsx

@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: KUI-018 (PENDING; KUI-001..017 PASS)
-Last Completed: KUI-017
-Next Task: KUI-018（按原清单依赖继续）
+Current Task: API-001 (PENDING; KUI-001..018 PASS)
+Last Completed: KUI-018
+Next Task: API-001（按原清单依赖继续）
 
-Completed: 270 / 359
+Completed: 271 / 359
 P0: 221 / 277
-Last Verified Commit: 3298c6f9（KUI-017 PASS；不 push）
+Last Verified Commit: 待 KUI-018 功能提交后写入（不 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
-Recent Build: KUI-017 frontend lint/build/Vitest PASS（18 files / 94 tests）；Python compile/PostgreSQL 探针 PASS；仅既有 large-chunk warning
+Recent Build: KUI-018 frontend lint/build/Vitest PASS（19 files / 97 tests）；KUI-017 后端/PostgreSQL 探针仍 PASS；仅既有 large-chunk warning
 Last Security Check: metadata-only audit, tenant isolation, secret redaction and adapter bypass audit PASS
-Recovery Point: KUI-018
+Recovery Point: API-001
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -28,6 +28,7 @@ KUI-001..008 证据：
 - KUI-015 Source Registry：tenant-scoped 列表、刷新状态、bounded observation history、校验/刷新动作与前端管理面板；CAT/ING-018/019 回归 21 passed，PostgreSQL probe PASS，lint/build/Vitest 90 passed，状态响应无正文/秘密泄漏
 - KUI-016 RAG Evaluation：固定 V1 集在 PostgreSQL 临时事务中执行，指标门禁、回归用例摘要与脱敏页面；KUI/CAT/ING 回归 27 passed，PostgreSQL probe PASS，lint/build/Vitest 92 passed，无生产写入/外网/原始 SQL 泄漏
 - KUI-017 Retrieval Trace：检索自动登记有界 Trace、管理员列表/详情查看器、严格租户隔离、默认脱敏和引用 metadata 摘要；RAG/Trace 回归 9 passed，PostgreSQL probe PASS，lint/build/Vitest 94 passed，Query hash-only、无原文/SQL/URL/凭据泄漏
+- KUI-018 UI QA：知识文档/评测表格窄屏横向滚动与粘性表头、暗色变体、分页边界和中英文分页文案；响应式 QA 3 passed，全量前端 19 files / 97 tests，lint/build PASS
 
 Blocked Tasks: none
 

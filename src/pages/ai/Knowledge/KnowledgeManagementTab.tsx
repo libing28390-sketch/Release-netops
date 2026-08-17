@@ -1859,8 +1859,9 @@ export const KnowledgeManagementTab: React.FC = () => {
                 <p className="text-xs text-gray-400">点击上方“上传本地知识文件”导入属于您的企业文档。</p>
               </div>
             ) : (
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-xs text-left">
-                <thead className="bg-gray-50 dark:bg-gray-900/60 text-gray-500 dark:text-gray-400 font-semibold">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-xs text-left">
+                <thead className="sticky top-0 z-10 bg-gray-50 shadow-sm dark:bg-gray-900/95 text-gray-500 dark:text-gray-400 font-semibold">
                   <tr>
                     <th className="px-3 py-3 w-10">
                       <input
@@ -1994,7 +1995,8 @@ export const KnowledgeManagementTab: React.FC = () => {
                     );
                   })}
                 </tbody>
-              </table>
+                </table>
+              </div>
             )}
             {!loading && totalDocuments > 0 && (
               <Pagination
