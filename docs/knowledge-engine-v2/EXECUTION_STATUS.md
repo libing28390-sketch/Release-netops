@@ -7,7 +7,7 @@ Next Task: CHK-016（建立不同 Chunk 配置的离线对比实验）
 
 Completed: 294 / 359
 P0: 234 / 277
-Last Verified Commit: 待提交（CHK-015 PostgreSQL chunk viewer probe PASS）
+Last Verified Commit: cb92b9f5（CHK-015 PostgreSQL chunk viewer probe PASS）
 
 Recent Migration: CHK-015 无新增 migration；真实 PostgreSQL V1 Document/Chunk 详情探针 rollback，无生产探针写入
 Recent Build: CHK-015 PostgreSQL probe PASS；PG wrapper test 1 passed；TypeScript lint PASS；Vite production build PASS；py_compile/diff PASS
