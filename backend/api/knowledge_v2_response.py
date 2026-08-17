@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,6 +24,63 @@ class PaginationMeta(BaseModel):
     total_pages: int
     sort_by: str
     sort_order: Literal["asc", "desc"]
+
+
+# Stable list projections.  Detail-only fields must never be added to a list
+# response by accident: documents expose bodies/chunks through the document
+# detail endpoint, while source versions and refresh observations expose only
+# bounded operational facts.  Keep these as tuples (rather than a permissive
+# blacklist) so a newly added service column cannot silently become public API.
+DOCUMENT_SUMMARY_FIELDS: tuple[str, ...] = (
+    "id", "knowledge_base_id", "name", "source", "vendor", "platform",
+    "cli_platform", "document_id", "document_category", "product_family",
+    "product_series", "product_model", "os_family", "os_generation",
+    "software_train", "software_release", "feature_domain", "feature",
+    "subfeature", "risk_level", "verification_level", "rag_priority",
+    "metadata_parse_status", "exclude_from_rag", "status",
+    "knowledge_source_type", "tenant_id", "acl", "source_trust_level",
+    "created_at", "chunk_count",
+)
+
+SOURCE_SUMMARY_FIELDS: tuple[str, ...] = (
+    "id", "tenant_id", "source_type", "source_kind", "name", "description",
+    "canonical_url", "allowed_host", "trust_level", "status", "fetch_enabled",
+    "validation_status", "created_at", "updated_at",
+)
+
+SOURCE_VERSION_SUMMARY_FIELDS: tuple[str, ...] = (
+    "id", "tenant_id", "source_registry_id", "fetched_at", "content_hash",
+    "byte_size", "parser_name", "parser_version", "source_etag",
+    "source_last_modified", "fetch_url", "response_content_type", "http_status",
+    "verification_method", "error_code", "status", "created_at", "updated_at",
+)
+
+REFRESH_OBSERVATION_SUMMARY_FIELDS: tuple[str, ...] = (
+    "id", "tenant_id", "source_registry_id", "source_version_id", "checked_at",
+    "request_method", "http_status", "outcome", "content_hash", "byte_size",
+    "source_etag", "source_last_modified", "fetch_url", "response_content_type",
+    "error_code", "detection_type", "replacement_url",
+)
+
+
+def project_summary(item: Mapping[str, Any], *, fields: Sequence[str]) -> dict[str, Any]:
+    """Project one service row into an explicit, detail-free list summary."""
+
+    return {field: item[field] for field in fields if field in item}
+
+
+def project_summary_items(
+    payload: Mapping[str, Any],
+    *,
+    item_key: str = "items",
+    fields: Sequence[str],
+) -> dict[str, Any]:
+    """Project a list nested in a response while preserving its envelope."""
+
+    result = dict(payload)
+    values = payload.get(item_key) or []
+    result[item_key] = [project_summary(item, fields=fields) for item in values if isinstance(item, Mapping)]
+    return result
 
 
 def paginate_items(
@@ -102,4 +159,10 @@ def _status_code(status_code: int) -> str:
     }.get(status_code, "API_ERROR")
 
 
-__all__ = ["PaginationQuery", "PaginationMeta", "paginate_items", "attach_pagination", "is_stable_api_path", "stable_error_payload"]
+__all__ = [
+    "PaginationQuery", "PaginationMeta", "DOCUMENT_SUMMARY_FIELDS",
+    "SOURCE_SUMMARY_FIELDS", "SOURCE_VERSION_SUMMARY_FIELDS",
+    "REFRESH_OBSERVATION_SUMMARY_FIELDS", "project_summary",
+    "project_summary_items", "paginate_items", "attach_pagination",
+    "is_stable_api_path", "stable_error_payload",
+]

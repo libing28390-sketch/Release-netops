@@ -30,7 +30,7 @@ from api.knowledge_v2_contracts import (
     KnowledgeReindexRequest,
     SearchContract,
 )
-from api.knowledge_v2_response import PaginationMeta, attach_pagination
+from api.knowledge_v2_response import DOCUMENT_SUMMARY_FIELDS, PaginationMeta, attach_pagination, project_summary_items
 
 router = APIRouter(prefix="/assistant", tags=["AI Copilot & Knowledge"])
 
@@ -522,7 +522,7 @@ def list_documents(
     normalized_sort = sort_by.strip().lower() if sort_by.strip().lower() in allowed_sort_fields else "created_at"
     normalized_order = "asc" if sort_order.strip().lower() == "asc" else "desc"
     return attach_pagination(
-        result,
+        project_summary_items(result, item_key="items", fields=DOCUMENT_SUMMARY_FIELDS),
         PaginationMeta(
             page=int(result.get("page") or 1),
             page_size=int(result.get("page_size") or page_size),

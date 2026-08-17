@@ -25,7 +25,14 @@ from services.source_registry_service import (
     update_source,
     validate_source,
 )
-from api.knowledge_v2_response import attach_pagination, paginate_items
+from api.knowledge_v2_response import (
+    REFRESH_OBSERVATION_SUMMARY_FIELDS,
+    SOURCE_SUMMARY_FIELDS,
+    SOURCE_VERSION_SUMMARY_FIELDS,
+    attach_pagination,
+    paginate_items,
+    project_summary,
+)
 
 
 router = APIRouter(prefix="/knowledge-v2/sources", tags=["knowledge-v2-source-registry"])
@@ -113,7 +120,10 @@ def api_list_sources(
     sort_order: str = Query(default="desc", pattern="^(?i:asc|desc)$"),
     user=require_permission("knowledge_source", "read"),
 ):
-    rows = _call(list_sources, user, status=status, tenant_id=tenant_id)
+    rows = [
+        project_summary(row, fields=SOURCE_SUMMARY_FIELDS)
+        for row in _call(list_sources, user, status=status, tenant_id=tenant_id)
+    ]
     items, meta = paginate_items(
         rows, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order,
         allowed_sort_fields={"updated_at", "created_at", "name", "status", "source_type", "trust_level"},
@@ -188,7 +198,10 @@ def api_list_source_versions(
     sort_order: str = Query(default="desc", pattern="^(?i:asc|desc)$"),
     user=require_permission("knowledge_source", "read"),
 ):
-    rows = _call(list_source_versions, source_id, user)
+    rows = [
+        project_summary(row, fields=SOURCE_VERSION_SUMMARY_FIELDS)
+        for row in _call(list_source_versions, source_id, user)
+    ]
     items, meta = paginate_items(
         rows, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order,
         allowed_sort_fields={"fetched_at", "created_at", "status", "byte_size", "id"},
@@ -211,7 +224,10 @@ def api_list_source_refresh_observations(
     # contract tests and avoids leaking framework sentinel values to services.
     if not isinstance(limit, int):
         limit = 50
-    rows = _call(list_source_refresh_observations, source_id, user, limit=limit)
+    rows = [
+        project_summary(row, fields=REFRESH_OBSERVATION_SUMMARY_FIELDS)
+        for row in _call(list_source_refresh_observations, source_id, user, limit=limit)
+    ]
     items, meta = paginate_items(
         rows, page=page, page_size=min(page_size, limit), sort_by=sort_by, sort_order=sort_order,
         allowed_sort_fields={"observed_at", "created_at", "outcome", "detection_type", "http_status"},
