@@ -2,8 +2,8 @@
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
   "current_task": "EVAL-018",
-  "task_state": "ANALYZING",
-  "updated_at": "2026-08-17T21:45:00+08:00",
+  "task_state": "VERIFYING",
+  "updated_at": "2026-08-17T21:49:41+08:00",
   "last_completed_task": "EVAL-017",
   "completed_tasks": [
     "ADR-001",
@@ -1122,5 +1122,15 @@
   "eval017_data_region_ui": "PASS; PostgreSQL provider data_region remains explicit unknown; UI renders 区域: 未配置 and offers unknown/global/cn/us/eu without inferring or mutating production data",
   "eval017_provider_auth_fix": "PASS; HTTP 401/403 maps to AI_AUTH_FAILED, deterministic auth/model/request failures do not retry or open circuit, API-key change resets circuit/backoff, frontend shows actionable Chinese/English message",
   "eval017_api_key_visibility": "PASS; current newly entered key can be shown/hidden in edit form only; existing stored key remains blank/masked",
-  "eval017_production_ddl": "NONE"
+  "eval017_production_ddl": "NONE",
+  "eval018_status": "PASS_WITH_CAPACITY_WARNING_VERIFYING",
+  "eval018_evidence": "docs/knowledge-engine-v2/evidence/EVAL-018.md",
+  "eval018_contract": "docs/knowledge-engine-v2/architecture/EVAL-018-PERFORMANCE-CONTRACT.yaml",
+  "eval018_report": "docs/knowledge-engine-v2/eval/eval-performance-v1.json",
+  "eval018_benchmark": "scripts/knowledge_engine_v2_eval018_performance.py",
+  "eval018_scales": [10000, 100000, 1000000],
+  "eval018_percentiles": "P50/P95/P99 per FTS/trigram/vector; five repetitions; P99 is max observed",
+  "eval018_postgresql_policy": "PASS; PostgreSQL 18.4 with vector 0.8.6 and pg_trgm 1.6; temporary session only; SQLite forbidden; production_database_write=false",
+  "eval018_result": "Top-K=10 and tenant_leaks=0 at all scales; 1m trigram P95 11313.107ms exceeds 3000ms initial target and remains a release capacity warning",
+  "eval018_production_ddl": "NONE"
 }

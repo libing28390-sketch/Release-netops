@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-018（ANALYZING）
+Current Task: EVAL-018（VERIFYING）
 Last Completed: EVAL-017
-Next Task: EVAL-018（执行 10k/100k/1m 性能样本并记录 P50/P95/P99）
+Next Task: EVAL-018（完成性能报告与容量告警复核）
 
 Completed: 312 / 359
 P0: 250 / 277
 Last Verified Commit: 5573fbae（EVAL-017 Provider auth failure surface and API-key visibility PASS）
 
-Recent Migration: EVAL-012 复用 m0117/m0119/m0120/m0121/m0145/m0150；5 个 PostgreSQL 探针 rollback/cleanup PASS，无生产写入
-Recent Build: EVAL-017 npm lint PASS；Vite build PASS（3680 modules）；前端关键路径 14 files / 52 tests PASS；Provider 修复聚焦 5 passed；SQLite 未作为证据
-Last Security Check: EVAL-017 Provider masked secret、new-key show/hide、permission 403 contract、Security fail-closed/dry-run、Copilot read-only UI PASS；错误 Key 返回 AI_AUTH_FAILED；SQLite 未作为证据
+Recent Migration: EVAL-018 无生产 migration；临时 PostgreSQL 表/索引 transaction rollback + connection close 清理 PASS
+Recent Build: EVAL-018 benchmark 10k/100k/1m PASS_WITH_CAPACITY_WARNING；pytest 2 passed；npm lint PASS；Vite build PASS（3680 modules）；SQLite 未作为证据
+Last Security Check: EVAL-018 PostgreSQL-only、temporary-session、tenant_leaks=0、no production write、secret/DSN 不输出 PASS；SQLite 未作为证据
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: EVAL-017（自动化与已认证浏览器检查通过，等待用户可见确认）→ EVAL-018 → EVAL-019；ING-020/021 仍需认证浏览器会话补做可见验证
+Recovery Point: EVAL-018（性能报告已生成，等待容量告警与证据复核）→ EVAL-019；ING-020/021 仍需认证浏览器会话补做可见验证
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -65,6 +65,7 @@ EVAL-017 浏览器复查（2026-08-17）：五个关键页面在等待懒加载�
 EVAL-017 Provider 连通性复测（2026-08-17）：认证浏览器打开 `/ai/providers`，通过安全网关执行固定 PUBLIC 探测；DeepSeek `deepseek-v4-flash` 返回 `ok`，约 2112 ms；页面显示“连接测试通过”、`健康: healthy`，旧 `AI_SECURITY_BLOCKED` 徽标清除。该次为用户配置 Provider 的最小外部请求，无设备写操作；PostgreSQL 仅由服务更新 Provider 健康状态，未执行 SQLite。
 EVAL-017 Provider 数据区域复查（2026-08-17）：PostgreSQL 中当前 Provider `data_region='unknown'`；浏览器已显示“区域: 未配置”，编辑表单提供 `unknown/global/cn/us/eu`，不根据 URL 自动推断区域。
 EVAL-017 Provider 错误 Key 与可见性复查（2026-08-17）：错误 Key 的认证浏览器探针返回 `AI_AUTH_FAILED`（HTTP 401/403，约 702 ms），页面不再显示熔断码；编辑框小眼睛只切换本次新输入值，旧 Key 仍不回显；后端聚焦 15 passed，前端 Provider 5 passed，lint/build/compile/diff PASS。
+EVAL-018 性能样本（2026-08-17）：PostgreSQL 18.4 + vector 0.8.6 + pg_trgm 1.6；10k/100k/1m 临时样本均完成，FTS/trigram/vector 均记录 P50/P95/P99，Top-K=10、租户泄漏=0；1m trigram P95=11313.107ms 超过 3000ms 初始目标，状态 PASS_WITH_CAPACITY_WARNING，发布门槛保持关闭。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

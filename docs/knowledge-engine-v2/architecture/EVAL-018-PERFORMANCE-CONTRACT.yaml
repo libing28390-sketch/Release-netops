@@ -1,0 +1,48 @@
+task_id: EVAL-018
+title: 10k/100k/1m PostgreSQL 性能样本与分位延迟记录
+priority: P1
+milestone: M2
+authority: PostgreSQL
+database_policy:
+  persistence_authority: PostgreSQL
+  sqlite: forbidden
+  fixture_scope: temporary_session_only
+  production_database_write: false
+scope:
+  purpose: >-
+    Measure representative V2 retrieval/index paths at 10k, 100k and 1m rows;
+    this is an evaluation gate, not a production load test or a claim about
+    the distribution of the production corpus.
+  scales: [10000, 100000, 1000000]
+  query_paths: [fts, trigram, vector]
+  result_shape:
+    latency_percentiles_ms: [p50, p95, p99]
+    sample_count_per_path: 5
+    top_k: 10
+    tenant_leaks: 0
+  required_metadata:
+    - PostgreSQL server and extension versions
+    - fixture row count and temporary-session scope
+    - query/index path
+    - p50/p95/p99 latency in milliseconds
+    - tenant isolation and top-k result checks
+    - rollback/cleanup result
+  limitations:
+    - p99 with five repetitions is the maximum observed sample and is diagnostic only
+    - a 1m trigram warning must be recorded instead of hidden or averaged away
+    - production cutover requires a separately approved staging distribution test
+quality_gates:
+  - all three scales complete or a redacted bounded failure is recorded
+  - every query path records p50, p95 and p99
+  - PostgreSQL is reported as the database authority
+  - top_k equals 10 and cross-tenant leak count equals 0
+  - no permanent table, index, row, or production schema is written
+  - V1 PostgreSQL baseline remains passing
+  - code compiles and diff has no whitespace errors
+performance_interpretation:
+  initial_retrieval_p95_target_ms: 3000
+  over_target_action: record_capacity_warning_and_keep_release_gate_closed
+rollback:
+  schema: no_production_schema_change
+  data: temporary_session_objects_disappear_on_connection_close
+  operational: rollback_transaction_and_close_connection
