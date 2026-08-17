@@ -16,10 +16,10 @@ scope:
     - KUI-011
     - KUI-012
     - KUI-013
-  later_tasks:
     - KUI-014
     - KUI-015
     - KUI-016
+  later_tasks:
     - KUI-017
     - KUI-018
 principles:
@@ -171,6 +171,33 @@ source_registry_management:
     refresh_requires: knowledge_source.create
     audit_required: true
     append_only_observations: true
+evaluation_management:
+  suite: v1_baseline_postgresql
+  endpoints:
+    status: /api/knowledge-v2/evaluation
+    run: /api/knowledge-v2/evaluation/run
+  permissions:
+    read: knowledge_source.read
+    run: knowledge_source.read
+  execution:
+    database: PostgreSQL
+    temporary_transaction: true
+    production_database_write: false
+    external_network_call: false
+    rollback: transaction_rollback
+    serialized_runs: true
+  metrics:
+    higher_is_better: [retrieval_accuracy, citation_accuracy, citation_recall]
+    lower_is_better: [wrong_vendor_rate, version_conflict_rate]
+    release_thresholds:
+      retrieval_accuracy: '>= 0.95'
+      citation_accuracy: '>= 0.95'
+      citation_recall: '>= 0.95'
+      wrong_vendor_rate: '<= 0.01'
+      version_conflict_rate: '<= 0.01'
+  response_excludes: [raw_sql, debug_plan, chunk_body, expected_document_ids, returned_document_ids, provider_credentials]
+  case_limit: 200
+  lifecycle: [not_run, passed, failed]
 request_lifecycle:
   list_requests:
     cancel_previous_request: true

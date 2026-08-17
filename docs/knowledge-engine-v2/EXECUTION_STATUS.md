@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: KUI-016 (PENDING; KUI-001..015 PASS)
-Last Completed: KUI-015
-Next Task: KUI-016（按原清单依赖继续）
+Current Task: KUI-017 (PENDING; KUI-001..016 PASS)
+Last Completed: KUI-016
+Next Task: KUI-017（按原清单依赖继续）
 
-Completed: 268 / 359
+Completed: 269 / 359
 P0: 221 / 277
-Last Verified Commit: 906e8d42（KUI-015 PASS；不 push）
+Last Verified Commit: 待 KUI-016 本地提交（KUI-016 PASS；不 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
-Recent Build: KUI-015 frontend lint/build/Vitest PASS; Python compile PASS; existing large-chunk warning only
+Recent Build: KUI-016 frontend lint/build/Vitest PASS; Python compile PASS; existing large-chunk warning only
 Last Security Check: metadata-only audit, tenant isolation, secret redaction and adapter bypass audit PASS
-Recovery Point: KUI-016
+Recovery Point: KUI-017
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -26,6 +26,7 @@ KUI-001..008 证据：
 - KUI-013 impact：危险操作服务端预览文档/Chunk/Index/引用/恢复方式；后端回归 20 passed，PostgreSQL probe PASS，lint/build/Vitest 90 passed
 - KUI-014 version management：版本比较（metadata-only）、发布、替代、原子回滚和幂等；KUI/ING-015/CAT-015 回归 11 passed，PostgreSQL probe PASS，lint/build/Vitest 90 passed，未返回正文或改写 source facts
 - KUI-015 Source Registry：tenant-scoped 列表、刷新状态、bounded observation history、校验/刷新动作与前端管理面板；CAT/ING-018/019 回归 21 passed，PostgreSQL probe PASS，lint/build/Vitest 90 passed，状态响应无正文/秘密泄漏
+- KUI-016 RAG Evaluation：固定 V1 集在 PostgreSQL 临时事务中执行，指标门禁、回归用例摘要与脱敏页面；KUI/CAT/ING 回归 27 passed，PostgreSQL probe PASS，lint/build/Vitest 92 passed，无生产写入/外网/原始 SQL 泄漏
 
 Blocked Tasks: none
 

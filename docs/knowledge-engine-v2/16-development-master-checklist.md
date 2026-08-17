@@ -460,7 +460,7 @@
 - [x] `KUI-013` `P0/FE+BE/M`：危险操作显示影响文档、Chunk、Index、引用和恢复方式。
 - [x] `KUI-014` `P1/FE+BE/M`：实现文档版本比较、发布、替代和回滚。
 - [x] `KUI-015` `P1/FE+BE/M`：实现 Source Registry 与刷新状态管理。
-- [ ] `KUI-016` `P1/FE+BE/M`：实现 RAG Evaluation 与回归结果页面。
+- [x] `KUI-016` `P1/FE+BE/M`：实现 RAG Evaluation 与回归结果页面。
 - [ ] `KUI-017` `P1/FE+BE/M`：实现 Retrieval Trace 管理员查看器，默认脱敏。
 - [ ] `KUI-018` `P1/FE+QA/M`：完成中英文、暗色、窄屏、表格粘性表头和分页验证。
 

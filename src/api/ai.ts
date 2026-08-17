@@ -816,6 +816,67 @@ export async function runKnowledgeRetrievalTest(query: string, filters: Record<s
   });
 }
 
+export interface KnowledgeEvaluationGate {
+  metric: string;
+  actual: number;
+  operator: '>=' | '<=' | string;
+  threshold: number;
+  passed: boolean;
+}
+
+export interface KnowledgeEvaluationCase {
+  id: string;
+  query: string;
+  retrieval_correct: boolean;
+  citation_precision: number;
+  vendor_mismatch: boolean;
+  version_conflict: boolean;
+  latency_ms: number;
+}
+
+export interface KnowledgeEvaluationReport {
+  contract_version: string;
+  suite: string;
+  status: 'not_run' | 'passed' | 'failed' | string;
+  tenant_id: string;
+  baseline_id: string;
+  system_under_test: string;
+  database: 'PostgreSQL' | string;
+  execution_mode: string;
+  production_database_write: boolean;
+  external_network_call: boolean;
+  rollback: string;
+  case_count: number;
+  dataset?: { baseline_id: string; case_count: number; domains: string[]; database: string };
+  metrics: {
+    retrieval_accuracy: number;
+    wrong_vendor_rate: number;
+    version_conflict_rate: number;
+    citation_accuracy: number;
+    citation_recall: number;
+    latency_ms: { average: number; p50: number; p95: number; max: number };
+  } | null;
+  gates: KnowledgeEvaluationGate[];
+  cases: KnowledgeEvaluationCase[];
+  thresholds?: Record<string, { operator: string; threshold: number }>;
+  started_at?: string;
+  duration_ms?: number;
+  last_run?: unknown;
+}
+
+export async function getKnowledgeEvaluation(includeCases = true): Promise<KnowledgeEvaluationReport> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeEvaluationReport>>(`/api/knowledge-v2/evaluation?include_cases=${includeCases ? 'true' : 'false'}`);
+  return payload.data;
+}
+
+export async function runKnowledgeEvaluation(suite = 'v1_baseline_postgresql'): Promise<KnowledgeEvaluationReport> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeEvaluationReport>>('/api/knowledge-v2/evaluation/run', {
+    method: 'POST',
+    body: JSON.stringify({ suite }),
+  });
+  return payload.data;
+}
+
 export interface KnowledgeCatalogModel {
   product_model_id: string;
   tenant_id: string;
