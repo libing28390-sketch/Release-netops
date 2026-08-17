@@ -535,7 +535,7 @@
 - [x] `MIG-001` `P0/ARCH+DBA+AI/M`：按 Document、Metadata、Chunk、Embedding 分别确定迁移策略。
 - [x] `MIG-002` `P0/DBA+AI/M`：可信原始文档优先迁移；不可证明质量的 Chunk/Embedding 不直接迁移。
 - [x] `MIG-003` `P0/DBA+AI/M`：建立旧 ID 到 V2 ID 映射和迁移 Manifest。
-- [ ] `MIG-004` `P0/DBA+BE/M`：迁移脚本支持 dry-run、断点续跑、幂等和批次回滚。
+- [x] `MIG-004` `P0/DBA+BE/M`：迁移脚本支持 dry-run、断点续跑、幂等和批次回滚。
 - [ ] `MIG-005` `P0/DBA+AI/M`：为旧 Metadata 建立可信、需验证、不可用三个等级。
 - [ ] `MIG-006` `P0/NET+AI/L`：从官方来源重新验证厂商、产品、OS 和版本字段。
 - [ ] `MIG-007` `P0/AI+BE/L`：对迁移文档重新 Parse、Chunk、Embed、Index。

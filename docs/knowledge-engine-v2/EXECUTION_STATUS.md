@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: MIG-004（ANALYZING）
-Last Completed: MIG-003
-Next Task: MIG-004（迁移脚本支持 dry-run、断点续跑、幂等和批次回滚）
+Current Task: MIG-005（ANALYZING）
+Last Completed: MIG-004
+Next Task: MIG-005（为旧 Metadata 建立可信、需验证、不可用三个等级）
 
-Completed: 318 / 359
-P0: 253 / 277
-Last Verified Commit: c9bdcef0（MIG-003 identity mapping manifest PASS）
+Completed: 319 / 359
+P0: 254 / 277
+Last Verified Commit: 73c2475c（MIG-004 migration runner PASS）
 
-Recent Migration: MIG-003 DONE_PASS；156 条 legacy document 全部建立稳定 UUID5 old→V2 mapping；manifest digest 可复现；source registry unresolved=156；无生产 DDL/写入；SQLite 未作为证据
-Recent Build: MIG-003 focused 5 passed（含 MIG-002 regression）；V1 PostgreSQL baseline 10/10；npm lint PASS；Vite build PASS（3680 modules，既有 chunk-size warning）；git diff --check PASS
-Last Security Check: MIG-003 manifest 只含必要 ID/hash/分类/动作，原文、metadata、ACL、DSN、Secret 和异常原文未落盘；tenant 仅 hash；PostgreSQL read-only；SQLite forbidden
+Recent Migration: MIG-004 DONE_PASS；MIG-003 manifest 156 条 dry-run、7 bounded batches、cursor=156；checkpoint manifest-bound；PostgreSQL temp rollback 1→0；无生产 DDL/写入；SQLite 未作为证据
+Recent Build: MIG-004 focused 4 passed、MIG-002..004 regression 9 passed；V1 PostgreSQL baseline 10/10；npm lint PASS；Vite build PASS（3680 modules，既有 chunk-size warning）；git diff --check PASS
+Last Security Check: MIG-004 checkpoint/report 仅保存 digest/cursor/counts/稳定错误码；原文、metadata、ACL、Secret、DSN 和异常原文未落盘；apply guard fail-closed；PostgreSQL temp transaction；SQLite forbidden
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: MIG-004（迁移脚本 dry-run、断点续跑、幂等和批次回滚）→ MIG-005；ING-020/021 仍需认证浏览器会话补做可见验证
+Recovery Point: MIG-005（为旧 Metadata 建立可信、需验证、不可用三个等级）→ MIG-006；ING-020/021 仍需认证浏览器会话补做可见验证
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -73,6 +73,8 @@ MIG-001：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-001.md；Docu
 MIG-002：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-002.md；source-first contract、PostgreSQL READ ONLY classification、2 focused tests、V1 10/10、lint/build/diff PASS；156 行需 source/hash reconciliation，trusted source candidates=0；Chunk/Embedding direct copy forbidden；未执行生产迁移。
 
 MIG-003：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-003.md；156 条 legacy row 的 deterministic UUID5 old→V2 mapping、manifest digest、source registry resolution、5 focused tests、V1 10/10、lint/build/diff PASS；未执行生产迁移。
+
+MIG-004：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-004.md；dry-run 156/156、7 bounded batches、manifest-bound checkpoint、resume/idempotency/failure rollback、PostgreSQL temp rollback 1→0、9 regression tests、V1 10/10、lint/build/diff PASS；生产 apply guard 保持关闭。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
