@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-001 (DONE_PASS)
-Last Completed: EVAL-001
-Next Task: EVAL-002（覆盖 Huawei/Cisco 的 VLAN、Interface、OSPF、SSH、NTP、Route）
+Current Task: EVAL-002 (DONE_PASS)
+Last Completed: EVAL-002
+Next Task: EVAL-003（覆盖 Exact、Alias、Prefix、Ambiguous、Typo、Wrong Vendor、Product Conflict）
 
-Completed: 296 / 359
-P0: 235 / 277
-Last Verified Commit: 89b19d86（EVAL-001 fixed query dataset PASS）
+Completed: 297 / 359
+P0: 236 / 277
+Last Verified Commit: 待提交（EVAL-002 PASS）
 
-Recent Migration: EVAL-001 无 migration；离线固定 Query 数据集无数据库连接/写入
-Recent Build: EVAL-001 validator PASS；120 cases；10 query types each 12；focused test 1 passed；contract YAML PASS；py_compile/diff PASS
-Last Security Check: EVAL-001 fixture 无凭据/租户/ACL；无外网；database=none；SQLite=not_used
+Recent Migration: EVAL-002 无 migration；离线厂商/意图 coverage fixture 无数据库连接/写入
+Recent Build: EVAL-002 validator PASS；12 tracks；36 examples；父数据集每 Track 9 cases；EVAL-001/EVAL-002 tests 2 passed；contract YAML/py_compile/diff PASS
+Last Security Check: EVAL-002 CLI fixture 无凭据/租户/ACL；无外网；database=none；SQLite=not_used
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-002
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-003
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -29,6 +29,8 @@ CHK-015：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-015.md；Post
 CHK-016：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-016.md；4 配置离线 Chunk 实验 PASS；deterministic repeat PASS；wrapper 1 passed；无数据库连接，SQLite 未作为验收证据。
 
 EVAL-001：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-001.md；120 条固定 Query 数据集；validator PASS；focused test 1 passed；无数据库连接，SQLite 未作为验收证据；后续持久化评测统一使用 PostgreSQL。
+
+EVAL-002：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-002.md；12 个厂商/意图 Track、36 条 CLI 示例、父数据集一致性 PASS；EVAL-001/EVAL-002 tests 2 passed；无数据库连接，SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

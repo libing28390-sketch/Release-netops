@@ -1,0 +1,156 @@
+schema_version: 1
+coverage_id: nexora-kb-eval-intent-coverage-v1-20260817
+status: frozen
+parent_dataset_id: nexora-kb-eval-v1-20260817
+scope: vendor_and_network_intent_coverage
+source_policy:
+  database: none
+  sqlite: not_used
+  external_network: forbidden
+  secrets: forbidden
+required_query_types: [exact, alias, prefix, typo, wrong_vendor, product_conflict, version_exact, version_conflict, no_match]
+tracks:
+  - id: EVAL-COV-HUAWEI-VLAN
+    vendor: Huawei
+    intent: vlan
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    gold_document_id: fixture-huawei-vlan
+    canonical_terms: ["display vlan", "port default vlan", "vlan batch", vlan]
+    query_examples: ["Huawei CE6885-48YS8CQ display vlan", "Huawei CE6885-48YS8CQ port default vlan", "Huawei CE6885-48YS8CQ vlan batch configuration"]
+  - id: EVAL-COV-CISCO-VLAN
+    vendor: Cisco
+    intent: vlan
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    gold_document_id: fixture-cisco-vlan
+    canonical_terms: ["show vlan brief", "switchport access vlan", "show interfaces switchport", vlan]
+    query_examples: ["Cisco C9300-48P show vlan brief", "Cisco C9300-48P switchport access vlan", "Cisco C9300-48P show interfaces switchport"]
+  - id: EVAL-COV-HUAWEI-INTERFACE
+    vendor: Huawei
+    intent: interface
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    gold_document_id: fixture-huawei-interface
+    canonical_terms: ["display interface brief", "interface gigabitethernet", shutdown, description]
+    query_examples: ["Huawei CE6885-48YS8CQ display interface brief", "Huawei CE6885-48YS8CQ interface GigabitEthernet", "Huawei CE6885-48YS8CQ interface shutdown description"]
+  - id: EVAL-COV-CISCO-INTERFACE
+    vendor: Cisco
+    intent: interface
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    gold_document_id: fixture-cisco-interface
+    canonical_terms: ["show interfaces status", "interface gigabitethernet", shutdown, description]
+    query_examples: ["Cisco C9300-48P show interfaces status", "Cisco C9300-48P interface GigabitEthernet", "Cisco C9300-48P interface shutdown description"]
+  - id: EVAL-COV-HUAWEI-OSPF
+    vendor: Huawei
+    intent: ospf
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    gold_document_id: fixture-huawei-ospf
+    canonical_terms: ["display ospf peer", ospf, "display ospf routing", neighbor]
+    query_examples: ["Huawei CE6885-48YS8CQ display ospf peer", "Huawei CE6885-48YS8CQ ospf configuration", "Huawei CE6885-48YS8CQ display ospf routing neighbor"]
+  - id: EVAL-COV-CISCO-OSPF
+    vendor: Cisco
+    intent: ospf
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    gold_document_id: fixture-cisco-ospf
+    canonical_terms: ["show ip ospf neighbor", "router ospf", "show ip route ospf", neighbor]
+    query_examples: ["Cisco C9300-48P show ip ospf neighbor", "Cisco C9300-48P router ospf configuration", "Cisco C9300-48P show ip route ospf neighbor"]
+  - id: EVAL-COV-HUAWEI-SSH
+    vendor: Huawei
+    intent: ssh
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    gold_document_id: fixture-huawei-ssh
+    canonical_terms: [stelnet, "ssh server enable", "ssh user", ssh]
+    query_examples: ["Huawei CE6885-48YS8CQ stelnet configuration", "Huawei CE6885-48YS8CQ ssh server enable", "Huawei CE6885-48YS8CQ ssh user"]
+  - id: EVAL-COV-CISCO-SSH
+    vendor: Cisco
+    intent: ssh
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    gold_document_id: fixture-cisco-ssh
+    canonical_terms: ["ip ssh version 2", "transport input ssh", "crypto key generate rsa", "show ip ssh"]
+    query_examples: ["Cisco C9300-48P ip ssh version 2", "Cisco C9300-48P transport input ssh", "Cisco C9300-48P crypto key generate rsa show ip ssh"]
+  - id: EVAL-COV-HUAWEI-NTP
+    vendor: Huawei
+    intent: ntp
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    gold_document_id: fixture-huawei-ntp
+    canonical_terms: ["display ntp-service status", "ntp-service enable", "ntp-service unicast-server", ntp]
+    query_examples: ["Huawei CE6885-48YS8CQ display ntp-service status", "Huawei CE6885-48YS8CQ ntp-service enable", "Huawei CE6885-48YS8CQ ntp-service unicast-server"]
+  - id: EVAL-COV-CISCO-NTP
+    vendor: Cisco
+    intent: ntp
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    gold_document_id: fixture-cisco-ntp
+    canonical_terms: ["show ntp status", "ntp server", "ntp authenticate", ntp]
+    query_examples: ["Cisco C9300-48P show ntp status", "Cisco C9300-48P ntp server", "Cisco C9300-48P ntp authenticate"]
+  - id: EVAL-COV-HUAWEI-ROUTE
+    vendor: Huawei
+    intent: route
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    gold_document_id: fixture-huawei-route
+    canonical_terms: ["display ip routing-table", "ip route-static", "display ip routing-table protocol", route]
+    query_examples: ["Huawei CE6885-48YS8CQ display ip routing-table", "Huawei CE6885-48YS8CQ ip route-static", "Huawei CE6885-48YS8CQ display ip routing-table protocol"]
+  - id: EVAL-COV-CISCO-ROUTE
+    vendor: Cisco
+    intent: route
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    gold_document_id: fixture-cisco-route
+    canonical_terms: ["show ip route", "ip route", "show ip route ospf", route]
+    query_examples: ["Cisco C9300-48P show ip route", "Cisco C9300-48P ip route static", "Cisco C9300-48P show ip route ospf"]
