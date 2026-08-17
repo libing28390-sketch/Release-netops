@@ -7,11 +7,11 @@ Next Task: EVAL-017（完成 Copilot、Provider、Model、Knowledge、Security �
 
 Completed: 311 / 359
 P0: 250 / 277
-Last Verified Commit: 5c135b79（EVAL-016 platform/readonly fixture gate implementation PASS）
+Last Verified Commit: 8475d85a（EVAL-017 Provider security classification probe and health-card refresh PASS）
 
 Recent Migration: EVAL-012 复用 m0117/m0119/m0120/m0121/m0145/m0150；5 个 PostgreSQL 探针 rollback/cleanup PASS，无生产写入
-Recent Build: EVAL-017 npm lint PASS；Vite build PASS（3680 modules）；前端关键路径 14 files / 52 tests PASS；SQLite 未作为证据
-Last Security Check: EVAL-017 Provider masked secret、permission 403 contract、Security fail-closed/dry-run、Copilot read-only UI PASS；SQLite 未作为证据
+Recent Build: EVAL-017 npm lint PASS；Vite build PASS（3680 modules）；前端关键路径 14 files / 52 tests PASS；Provider 修复聚焦 3 passed；SQLite 未作为证据
+Last Security Check: EVAL-017 Provider masked secret、permission 403 contract、Security fail-closed/dry-run、Copilot read-only UI PASS；Provider PUBLIC 探测经安全网关放行；SQLite 未作为证据
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
 Recovery Point: EVAL-017（自动化与已认证浏览器检查通过，等待用户可见确认）→ EVAL-018 → EVAL-019；ING-020/021 仍需认证浏览器会话补做可见验证
@@ -62,6 +62,7 @@ EVAL-016：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-016.md；Hu
 
 EVAL-017：PASS_AUTOMATED_USER_VERIFY_PENDING；证据 docs/knowledge-engine-v2/evidence/EVAL-017.md；Copilot、Provider、Model、Knowledge、Security 前端关键路径 14 files / 52 tests；EVAL-017 wrapper 2 passed；npm lint/build PASS；已认证浏览器可见路径与窄屏无横向溢出检查 PASS；V1 PostgreSQL 10/10；等待用户完成一次可见确认后勾选。
 EVAL-017 浏览器复查（2026-08-17）：五个关键页面在等待懒加载后均可见且无页面错误；Model/Copilot/Knowledge 的短暂 Loading 约 1.6–2 秒后在约 8 秒内完成；Copilot 窄屏 `bodyScrollWidth=innerWidth=433`，无横向溢出；本轮只读，无外部 Provider 请求和生产写入。
+EVAL-017 Provider 连通性复测（2026-08-17）：认证浏览器打开 `/ai/providers`，通过安全网关执行固定 PUBLIC 探测；DeepSeek `deepseek-v4-flash` 返回 `ok`，约 2112 ms；页面显示“连接测试通过”、`健康: healthy`，旧 `AI_SECURITY_BLOCKED` 徽标清除。该次为用户配置 Provider 的最小外部请求，无设备写操作；PostgreSQL 仅由服务更新 Provider 健康状态，未执行 SQLite。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
