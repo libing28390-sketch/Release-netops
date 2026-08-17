@@ -7,7 +7,7 @@ Next Task: EVAL-005（定义 Recall@K、Precision@K、MRR、NDCG 和 Entity Reso
 
 Completed: 299 / 359
 P0: 238 / 277
-Last Verified Commit: 待提交（EVAL-004 PASS）
+Last Verified Commit: a470c83e（EVAL-004 version coverage PASS）
 
 Recent Migration: EVAL-004 无 migration；离线版本 coverage fixture 无数据库连接/写入
 Recent Build: EVAL-004 validator PASS；四类版本各 12；EVAL-001～EVAL-004 tests 4 passed；contract YAML/py_compile/diff PASS
