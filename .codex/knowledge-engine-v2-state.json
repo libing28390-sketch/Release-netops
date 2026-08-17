@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "API-002",
+  "current_task": "API-003",
   "task_state": "PENDING",
   "updated_at": "2026-08-17T13:05:00+08:00",
-  "last_completed_task": "API-001",
+  "last_completed_task": "API-002",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -277,7 +277,8 @@
     "KUI-016",
     "KUI-017",
     "KUI-018",
-    "API-001"
+    "API-001",
+    "API-002"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -311,7 +312,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "API-002",
     "API-003",
     "API-004",
     "API-005",
@@ -390,7 +390,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "5223be39",
+  "last_verified_commit": "c78b04b1",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -772,7 +772,13 @@
   "api001_frontend_lint": "PASS",
   "api001_frontend_build": "PASS; existing large-chunk warning only",
   "api001_frontend_tests": "19 files / 97 tests passed",
-  "completed_count": 272,
-  "p0_completed_count": 222,
-  "resume_from": "API-002"
+  "api002_status": "DONE_PASS",
+  "api002_final_verified_at": "2026-08-17T13:30:00+08:00",
+  "api002_evidence": "docs/knowledge-engine-v2/evidence/API-002.md",
+  "api002_contract": "docs/knowledge-engine-v2/architecture/API-002-PYDANTIC-CONTRACT.yaml",
+  "api002_focused_tests": "4 passed; CAT/RAG/pagination 14 passed; API boundary/catalog 8 passed",
+  "api002_production_ddl": "NONE",
+  "completed_count": 273,
+  "p0_completed_count": 223,
+  "resume_from": "API-003"
 }
