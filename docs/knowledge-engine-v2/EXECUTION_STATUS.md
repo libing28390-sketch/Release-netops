@@ -1,24 +1,26 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: ING-024 (DONE_PASS)
-Last Completed: ING-024
-Next Task: CHK-013（实现 Document 修改后的精确 Rechunk/Reembed/Reindex）
+Current Task: CHK-013 (DONE_PASS)
+Last Completed: CHK-013
+Next Task: CHK-014（实现双 Index、Shadow Index、切换和回滚）
 
-Completed: 291 / 359
+Completed: 292 / 359
 P0: 234 / 277
-Last Verified Commit: 972bafea（ING-024 PostgreSQL duplicate-content probe PASS）
+Last Verified Commit: <pending CHK-013 commit>（CHK-013 PostgreSQL precise rebuild probe PASS）
 
-Recent Migration: ING-024 无新增 migration；PostgreSQL source/version 唯一性探针 PASS 并 rollback，无生产探针写入
-Recent Build: ING-024 focused 7 passed；ING-006/007/008/idempotency regression 44 passed；CAT-004 pure 14 passed；PostgreSQL probe/compile/diff PASS
-Last Security Check: ING-024 HTML executable/hidden regions removed；Prompt Injection quarantine；oversize/redirect/PDF failures bounded and redacted
+Recent Migration: CHK-013 无新增 migration；PostgreSQL ai_document/ai_document_chunk 精确重建探针 PASS 并 rollback，无生产探针写入
+Recent Build: CHK-013 PostgreSQL probe PASS；CHK-P0 chunk/embedding/API contract regression 15 passed；py_compile/diff PASS
+Last Security Check: CHK-013 tenant + updated_at CAS 防止 stale rebuild 覆盖；provider/dimension 失败不替换旧 Chunk；原始正文事实保持不变
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ CHK-013
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ CHK-014
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
 ING-024：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-024.md；focused 7 passed；相关回归 44 + 14 passed；PostgreSQL-only duplicate-content probe PASS；SQLite 未作为验收证据。
+
+CHK-013：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-013.md；PostgreSQL-only precise rebuild probe PASS；CHK-P0 chunk/embedding/API regression 15 passed；SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

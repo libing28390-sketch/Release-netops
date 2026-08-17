@@ -57,6 +57,12 @@ class ReindexLeaseLost(RuntimeError):
     """Raised when a worker no longer owns the database lease."""
 
 
+class ReindexDocumentChanged(RuntimeError):
+    """Raised when a document changes while its derived rows are rebuilding."""
+
+    code = "KNOWLEDGE_DOCUMENT_CHANGED_DURING_REBUILD"
+
+
 def _clamp_batch_size(value: Any) -> int:
     try:
         parsed = int(value)
@@ -496,8 +502,15 @@ class KnowledgeReindexService:
         return {"parsed": 1, "updated": 1, "rechunked": 0, "embedding_success": 0, "embedding_failed": 0}
 
     def _process_full_reindex(self, document: dict[str, Any], dry_run: bool) -> dict[str, int]:
-        raw = document.get("original_content") or document.get("normalized_content") or ""
-        parsed = parse_markdown_document(str(raw))
+        # ``original_content`` is the immutable source fact while
+        # ``normalized_content`` is the current derived body.  Rebuilds must
+        # consume the latest normalized body after an edit, but parse metadata
+        # from the original source so a re-chunk never erases Front Matter or
+        # rewrites the V1 source fact.
+        original_content = str(document.get("original_content") or "")
+        normalized_content = str(document.get("normalized_content") or "").strip()
+        metadata_source = original_content or normalized_content
+        parsed = parse_markdown_document(metadata_source)
         source_metadata = {}
         raw_meta = document.get("metadata_json")
         if isinstance(raw_meta, dict):
@@ -520,7 +533,7 @@ class KnowledgeReindexService:
         merged.setdefault("document_id", document.get("document_id") or document.get("id"))
         merged.setdefault("status", document.get("status") or "active")
         merged.setdefault("exclude_from_rag", False)
-        content = parsed.content.strip()
+        content = normalized_content or parsed.content.strip()
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         merged.setdefault("document_version", str(merged.get("source_version") or content_hash[:16]))
         merged.setdefault("parser_version", ChunkingEngine.parser_version)
@@ -555,7 +568,6 @@ class KnowledgeReindexService:
             "metadata_json": self._json_value(merged),
             "normalized_content": content,
             "fts_text": f"{document.get('name') or ''}\n{content}",
-            "original_content": parsed.original_content,
             "content_hash": content_hash,
             "chunking_version": "v2",
             "ingestion_status": "ready",
@@ -578,10 +590,21 @@ class KnowledgeReindexService:
             cursor = conn.cursor()
             available_docs = self._table_columns(cursor, "ai_document")
             values = {key: value for key, value in values.items() if key in available_docs}
+            predicates = ["id = ?"]
+            predicate_params: list[Any] = [document["id"]]
+            if "tenant_id" in available_docs:
+                predicates.append("COALESCE(tenant_id, 'tenant-default') = ?")
+                predicate_params.append(str(document.get("tenant_id") or "tenant-default"))
+            expected_updated_at = str(document.get("_reindex_expected_updated_at") or "").strip()
+            if expected_updated_at and "updated_at" in available_docs:
+                predicates.append("updated_at = ?")
+                predicate_params.append(expected_updated_at)
             cursor.execute(
-                f"UPDATE ai_document SET {', '.join(f'{key} = ?' for key in values)} WHERE id = ?",
-                [*values.values(), document["id"]],
+                f"UPDATE ai_document SET {', '.join(f'{key} = ?' for key in values)} WHERE {' AND '.join(predicates)}",
+                [*values.values(), *predicate_params],
             )
+            if expected_updated_at and int(getattr(cursor, "rowcount", 0) or 0) != 1:
+                raise ReindexDocumentChanged()
             cursor.execute("DELETE FROM ai_document_chunk WHERE document_id = ?", (document["id"],))
             available_chunks = self._table_columns(cursor, "ai_document_chunk")
             assert_pgvector_column_compatible(cursor, expected_dimensions=contract.dimensions)
@@ -707,6 +730,11 @@ class KnowledgeReindexService:
                     if not lease.heartbeat():
                         raise ReindexLeaseLost(job_id)
                     try:
+                        # Keep a compare-and-set snapshot alongside the
+                        # document.  The long-standing two-argument seam
+                        # remains patchable for V1/DB-022 compatibility tests.
+                        document = dict(document)
+                        document["_reindex_expected_updated_at"] = document.get("updated_at")
                         if operation == "reindex":
                             # Keep the long-standing two-argument seam
                             # patchable for V1/DB-022 compatibility tests.

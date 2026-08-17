@@ -1,0 +1,54 @@
+task_id: CHK-013
+title: precise document rechunk, re-embed and re-index
+priority: P1
+status: executable
+authority: PostgreSQL
+scope:
+  - a rebuild consumes the latest normalized document body
+  - immutable original_content and source facts are preserved
+  - chunk IDs, content hashes and embedding metadata are regenerated together
+  - all derived-row replacement is atomic after parsing and embedding succeed
+  - a concurrent document edit cannot be overwritten by a stale rebuild
+  - dry-run and provider failure have no persisted side effects
+invariants:
+  source_and_projection:
+    - original_content_is_not_rewritten_by_rechunk_or_reindex
+    - normalized_content_hash_is_the_rebuild_input_identity
+    - changed_content_produces_new_chunk_hashes_or_ids
+    - every_chunk_records_chunker_parser_document_index_and_embedding_contract
+  atomicity:
+    - parse_and_embed_before_replacing_existing_chunks
+    - document_update_and_chunk_delete_insert_share_one_transaction
+    - provider_failure_or_dimension_failure_preserves_previous_projection
+    - dry_run_preserves_document_and_chunk_rows
+  concurrency:
+    - rebuild_update_uses_document_tenant_and_updated_at_compare_and_set
+    - stale_rebuild_returns_KNOWLEDGE_DOCUMENT_CHANGED_DURING_REBUILD
+    - stale_rebuild_never_deletes_or_inserts_chunks
+  security:
+    - tenant_predicate_is_required_on_document_update
+    - no_raw_document_body_is_written_to_job_error_projection
+    - retrieval_cache_invalidates_only_after_commit
+implementation:
+  service: backend/ai/services/knowledge_reindex_service.py
+  method: KnowledgeReindexService._process_full_reindex
+  operation_routes: [rechunk, reindex]
+  source_selection: normalized_content_then_original_content_for_legacy_rows
+  metadata_selection: original_content_front_matter_then_metadata_json
+  compatibility: retain_existing_reparse_and_V1_ai_document_chunk_projection
+verification:
+  postgresql_probe: scripts/knowledge_engine_v2_chk013_pg_probe.py
+  required_vectors:
+    - changed_normalized_body_rebuilds_chunks_and_embeddings
+    - immutable_original_content_is_preserved
+    - dry_run_is_read_only
+    - provider_failure_is_atomic
+    - concurrent_edit_is_rejected_by_compare_and_set
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_chk013_pg_probe.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m py_compile backend/ai/services/knowledge_reindex_service.py scripts/knowledge_engine_v2_chk013_pg_probe.py"
+    - "git diff --check"
+rollback:
+  runtime: stop_rechunk_reindex_workers_and_route_reads_to_existing_V1_projection
+  data: retain_prior_chunks_until_next_verified_rebuild; no_source_fact_delete
+  database: probe_transaction_rolls_back; no_new_production_ddl
