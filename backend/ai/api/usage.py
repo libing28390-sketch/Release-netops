@@ -10,6 +10,7 @@ from database.core import get_db_connection
 from ai.security.permissions import require_ai_permission
 from ai.services.metrics import ai_metrics
 from ai.services.job_observability import snapshot as job_observability_snapshot
+from ai.services.database_observability import snapshot as database_observability_snapshot
 from core.config import settings
 
 router = APIRouter(tags=["AI Audit & Usage"])
@@ -137,4 +138,5 @@ def get_ai_metrics(user=Depends(require_ai_permission("ai.audit.view"))):
     """Return low-cardinality provider/tool/agent metrics without payloads."""
     metrics = ai_metrics.snapshot()
     metrics["jobs"]["observability"] = job_observability_snapshot()
+    metrics["database"] = database_observability_snapshot()
     return metrics

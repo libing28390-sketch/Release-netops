@@ -313,6 +313,40 @@ export interface AIPlatformMetrics {
       alert_thresholds: { backlog: number; failed: number; lease_anomalies: number };
     };
   };
+  database?: {
+    backend: string;
+    status: string;
+    read_only?: boolean;
+    production_authority?: string;
+    relation_stats?: {
+      status: string;
+      tables?: Array<{
+        table: string;
+        status: string;
+        live_rows?: number;
+        dead_rows?: number;
+        total_bytes?: number;
+        index_bytes?: number;
+        dead_to_live_ratio?: number;
+        vacuum_signal?: string | null;
+      }>;
+    };
+    cache?: { status: string; hits?: number; reads?: number; hit_rate?: number };
+    slow_queries?: {
+      status: string;
+      threshold_ms?: number;
+      sample_size?: number;
+      slow_query_count?: number;
+      query_text_included?: boolean;
+    };
+    capacity?: {
+      status: string;
+      database_bytes?: number;
+      budget_bytes?: number;
+      usage_ratio?: number;
+      synthetic_rows_inserted?: boolean;
+    };
+  };
   tools: Record<string, number>;
   agents: Record<string, number>;
   cache: { hits: number; misses: number; note?: string };

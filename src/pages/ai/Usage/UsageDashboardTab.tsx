@@ -4,7 +4,9 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock3,
+  Database,
   Fingerprint,
+  Gauge,
   Info,
   RefreshCw,
   ShieldCheck,
@@ -32,6 +34,14 @@ const formatScene = (scene: string, zh: boolean) => sceneLabels[scene] || (zh ? 
 const formatLatency = (latency?: number | null) => {
   if (typeof latency !== 'number' || !Number.isFinite(latency)) return '—';
   return latency >= 1000 ? `${(latency / 1000).toFixed(2)} s` : `${latency} ms`;
+};
+
+const formatBytes = (bytes?: number | null) => {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  return `${(value / (1024 ** index)).toFixed(index > 1 ? 2 : 0)} ${units[index]}`;
 };
 
 const formatRequestId = (requestId: string) => requestId.length > 20 ? `${requestId.slice(0, 15)}…${requestId.slice(-4)}` : requestId;
@@ -132,6 +142,17 @@ export const UsageDashboardTab: React.FC = () => {
       )}
 
       {metrics && <section className="grid grid-cols-2 gap-3 xl:grid-cols-4"><div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold text-slate-400">{zh ? '网关请求状态' : 'Gateway status'}</p><p className="mt-2 text-lg font-bold text-slate-900 dark:text-white"><span className="text-emerald-600">{successfulCount}</span><span className="mx-1 text-slate-300">/</span><span className="text-amber-600">{blockedCount}</span><span className="mx-1 text-slate-300">/</span><span className="text-rose-600">{errorCount}</span></p><p className="mt-1 text-[11px] text-slate-400">{zh ? '成功 / 阻断 / 错误' : 'Success / blocked / error'}</p></div><div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold text-slate-400">{zh ? '工具调用' : 'Tool calls'}</p><p className="mt-2 text-lg font-bold text-slate-900 dark:text-white">{Object.values(metrics.tools).reduce((sum, value) => sum + value, 0)}</p><p className="mt-1 text-[11px] text-slate-400">{zh ? '受控只读工具执行次数' : 'Controlled read-only executions'}</p></div><div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold text-slate-400">{zh ? 'Agent 结果' : 'Agent results'}</p><p className="mt-2 text-lg font-bold text-slate-900 dark:text-white">{Object.values(metrics.agents).reduce((sum, value) => sum + value, 0)}</p><p className="mt-1 text-[11px] text-slate-400">{zh ? 'Agent 执行结果数' : 'Agent execution results'}</p></div><div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><p className="text-xs font-semibold text-slate-400">Provider Cache</p><p className="mt-2 text-lg font-bold text-slate-900 dark:text-white">{zh ? '默认关闭' : 'Off by default'}</p><p className="mt-1 text-[11px] text-slate-400">{zh ? '避免跨请求复用敏感上下文' : 'Avoid cross-request context reuse'}</p></div></section>}
+
+      {metrics?.database?.backend === 'postgresql' && <section className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600 dark:bg-cyan-500/10 dark:text-cyan-300"><Database className="h-4 w-4" /></span><div><h3 className="text-sm font-bold text-slate-900 dark:text-white">{zh ? 'PostgreSQL 数据库观测' : 'PostgreSQL database observability'}</h3><p className="text-[11px] text-slate-500 dark:text-slate-400">{zh ? '只读目录指标；不返回 SQL、参数或业务正文' : 'Read-only catalog signals; SQL, parameters, and business payloads are excluded'}</p></div></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${metrics.database.status === 'PASS' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'}`}>{metrics.database.status}</span></div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950/50"><p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{zh ? '缓存命中率' : 'Cache hit rate'}</p><p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{Math.round((metrics.database.cache?.hit_rate || 0) * 100)}%</p><p className="text-[10px] text-slate-500">{(metrics.database.cache?.hits || 0).toLocaleString()} / {(metrics.database.cache?.reads || 0).toLocaleString()} {zh ? '读取' : 'reads'}</p></div>
+          <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950/50"><p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{zh ? '慢查询样本' : 'Slow query samples'}</p><p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{metrics.database.slow_queries?.slow_query_count || 0}</p><p className="text-[10px] text-slate-500">{zh ? `阈值 ${metrics.database.slow_queries?.threshold_ms || 0} ms` : `Threshold ${metrics.database.slow_queries?.threshold_ms || 0} ms`}</p></div>
+          <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950/50"><p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{zh ? '数据库容量' : 'Database size'}</p><p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{formatBytes(metrics.database.capacity?.database_bytes)}</p><p className="text-[10px] text-slate-500">{Math.round((metrics.database.capacity?.usage_ratio || 0) * 100)}% {zh ? '预算占用' : 'of budget'}</p></div>
+          <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950/50"><p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{zh ? '关系膨胀信号' : 'Relation bloat signal'}</p><p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{metrics.database.relation_stats?.status || '—'}</p><p className="text-[10px] text-slate-500">{zh ? '基于 dead/live tuple 比率' : 'Based on dead/live tuple ratio'}</p></div>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400"><Gauge className="h-3.5 w-3.5" />{zh ? '所有指标由 PostgreSQL 只读系统视图计算；SQLite 不作为生产观测证据。' : 'All signals come from read-only PostgreSQL catalog views; SQLite is not production evidence.'}</div>
+      </section>}
 
       <section className="flex flex-col gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-4 dark:border-indigo-900/70 dark:bg-indigo-950/20 sm:flex-row sm:items-start sm:px-5"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-md shadow-indigo-600/20"><Info className="h-4 w-4" /></span><div><h3 className="text-sm font-bold text-indigo-950 dark:text-indigo-100">{zh ? '用户列怎么看？' : 'How to read the user column'}</h3><p className="mt-1.5 text-xs leading-5 text-indigo-900/70 dark:text-indigo-200/70">{zh ? '“会话用户”表示请求来自已认证会话；右侧 8 位是隐私化内部标识，便于追踪同一请求来源，但不是登录用户名。能直接识别的用户名会直接显示。' : '“Session user” means the request came from an authenticated session. The final 8 characters are a privacy-safe internal identifier for tracing, not the login name. Recognizable usernames are shown directly.'}</p></div></section>
 
