@@ -1,0 +1,53 @@
+task_id: OBS-007
+title: Import and Reindex queue observability
+status: verified
+contract_version: nxa.jobs.observability.v1
+authority:
+  import_state_machine: backend/services/ingestion_pipeline_service.py
+  import_lease: backend/services/ingestion_job_lease_service.py
+  reindex_worker: backend/ai/services/knowledge_reindex_service.py
+  metrics: backend/ai/services/metrics.py
+  aggregation: backend/ai/services/job_observability.py
+signals:
+  queue_backlog:
+    definition: queued plus retry_wait jobs
+    dimensions: import, reindex
+  failures:
+    definition: jobs in failed state; reindex also reports bounded document failure count
+    payload: aggregate_count_only
+  lease_anomaly:
+    definition: running job has a missing, malformed, or expired lease, or a bounded lease-loss event was observed
+    payload: aggregate_count_only
+  lifecycle_events:
+    allowlist: [enqueued, claimed, succeeded, failed, retry_scheduled, retry_created, lease_acquired, lease_held, lease_lost, lease_expired, lease_error, document_failed]
+    payload: low_cardinality_counter_only
+alerts:
+  endpoint: /api/ai/metrics.jobs.observability.alerts
+  thresholds:
+    backlog: env:AI_JOB_QUEUE_BACKLOG_ALERT_THRESHOLD default 100
+    failed: env:AI_JOB_FAILURE_ALERT_THRESHOLD default 1
+    lease_anomalies: env:AI_JOB_LEASE_ANOMALY_ALERT_THRESHOLD default 1
+  severity:
+    backlog: warning
+    failed: error
+    lease_anomaly: error
+  no_external_dispatch: true
+  reason: API exposes deterministic bounded conditions; deployment-specific paging is an OPS integration.
+security:
+  no_job_id: true
+  no_tenant_id: true
+  no_worker_id: true
+  no_raw_error: true
+  no_sql_or_payload: true
+  ai_audit_permission_required: true
+compatibility:
+  - import control plane remains process-local until the DB-011 migration gate
+  - reindex queue reads the existing PostgreSQL-authoritative ai_knowledge_reindex_job and scheduler_locks tables
+  - no V1 document, chunk, scheduler-lock, or migration semantics are changed
+  - metrics and frontend TypeScript contracts are additive
+verification:
+  tests:
+    - backend/tests/ai/test_obs007_job_metrics.py
+    - backend/tests/ai/test_ingestion_job_control_surface.py
+    - backend/tests/database/test_ing017_import_job_lease.py
+  result: PASS

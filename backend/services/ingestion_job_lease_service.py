@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from database import get_db_connection
+from ai.services.metrics import ai_metrics
 from services.ingestion_pipeline_service import (
     IngestionJob,
     IngestionPipeline,
@@ -103,10 +104,12 @@ class ImportJobLease:
                 # all other database failures fail closed as unavailable.
                 pgcode = str(getattr(exc, "pgcode", "") or "")
                 if pgcode == "23505" or "unique" in str(exc).casefold() or "constraint" in str(exc).casefold() or "duplicate" in str(exc).casefold():
+                    ai_metrics.job_event("import", "lease_held")
                     return False
                 raise LeaseError("LEASE_STORAGE_UNAVAILABLE", "The Import Job lease store is unavailable") from exc
         self.owner_token = token
         self.held = True
+        ai_metrics.job_event("import", "lease_acquired")
         return True
 
     def heartbeat(self, *, now: datetime | None = None) -> bool:
@@ -124,6 +127,7 @@ class ImportJobLease:
                 conn.commit()
                 if int(getattr(cursor, "rowcount", 0) or 0) != 1:
                     self.held = False
+                    ai_metrics.job_event("import", "lease_lost")
                     raise LeaseError("STALE_LEASE", "The worker lease is stale")
                 return True
             except LeaseError:
@@ -134,6 +138,7 @@ class ImportJobLease:
                 except Exception:
                     pass
                 self.held = False
+                ai_metrics.job_event("import", "lease_error")
                 raise LeaseError("LEASE_STORAGE_UNAVAILABLE", "The Import Job lease store is unavailable") from exc
 
     def release(self) -> bool:

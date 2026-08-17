@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from database.core import get_db_connection
 from ai.security.permissions import require_ai_permission
 from ai.services.metrics import ai_metrics
+from ai.services.job_observability import snapshot as job_observability_snapshot
 from core.config import settings
 
 router = APIRouter(tags=["AI Audit & Usage"])
@@ -134,4 +135,6 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
 @router.get("/metrics", response_model=Dict[str, Any])
 def get_ai_metrics(user=Depends(require_ai_permission("ai.audit.view"))):
     """Return low-cardinality provider/tool/agent metrics without payloads."""
-    return ai_metrics.snapshot()
+    metrics = ai_metrics.snapshot()
+    metrics["jobs"]["observability"] = job_observability_snapshot()
+    return metrics

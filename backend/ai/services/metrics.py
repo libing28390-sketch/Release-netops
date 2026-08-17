@@ -6,9 +6,17 @@ and tool payloads never enter this object.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from collections import Counter, defaultdict
 from threading import Lock
 from typing import Any
+
+
+_JOB_EVENT_ALLOWLIST = frozenset({
+    "enqueued", "claimed", "succeeded", "failed", "retry_scheduled",
+    "retry_created", "lease_acquired", "lease_held", "lease_lost",
+    "lease_expired", "lease_error", "document_failed",
+})
 
 
 class AIMetrics:
@@ -25,6 +33,11 @@ class AIMetrics:
         self.provider_limits = Counter()
         self.fallbacks = Counter()
         self.retrieval = Counter()
+        # Import/Reindex operational signals intentionally contain only
+        # low-cardinality event names and aggregate queue gauges.  Job IDs,
+        # tenant IDs, worker IDs and error bodies never enter this object.
+        self.job_events = Counter()
+        self.job_queues: dict[str, dict[str, Any]] = {}
         self.tools = Counter()
         self.agents = Counter()
 
@@ -118,6 +131,54 @@ class AIMetrics:
                 if active:
                     self.retrieval[name] += 1
 
+    def job_event(self, job_kind: str, event: str) -> None:
+        """Record one bounded Import/Reindex lifecycle event.
+
+        ``job_kind`` and ``event`` are labels only; callers must not pass job
+        identifiers or exception text.  Keeping this contract here makes it
+        safe for the gateway metrics endpoint to expose the counters.
+        """
+
+        kind = str(job_kind or "unknown").strip().lower()[:24]
+        name = str(event or "unknown").strip().lower()[:48]
+        if kind not in {"import", "reindex"}:
+            kind = "unknown"
+        if name not in _JOB_EVENT_ALLOWLIST:
+            name = "unknown"
+        with self._lock:
+            self.job_events[f"{kind}:{name}"] += 1
+
+    def set_job_queue_snapshot(self, job_kind: str, snapshot: dict[str, Any]) -> None:
+        """Store an aggregate queue gauge for the next metrics response.
+
+        Only the documented numeric gauge fields are copied.  This prevents a
+        future caller from accidentally putting IDs, SQL or error details into
+        the low-cardinality metrics payload.
+        """
+
+        kind = str(job_kind or "unknown").strip().lower()[:24]
+        if kind not in {"import", "reindex"}:
+            return
+        allowed = {
+            "queued", "retry_wait", "running", "succeeded", "completed",
+            "failed", "cancelled", "backlog", "lease_anomalies",
+            "lease_expired", "document_failures",
+        }
+        safe: dict[str, int] = {}
+        for key in allowed:
+            try:
+                safe[key] = max(0, int(snapshot.get(key, 0) or 0))
+            except (TypeError, ValueError):
+                safe[key] = 0
+        with self._lock:
+            self.job_queues[kind] = safe
+
+    def _job_snapshot(self) -> dict[str, Any]:
+        return {
+            "events": dict(self.job_events),
+            "queues": deepcopy(self.job_queues),
+        }
+
     def tool_finished(self, name: str, *, status: str) -> None:
         with self._lock:
             self.tools[f"{name}:{status}"] += 1
@@ -170,6 +231,7 @@ class AIMetrics:
                     "low_confidence": int(self.retrieval.get("low_confidence", 0)),
                     "errors": int(self.retrieval.get("errors", 0)),
                 },
+                "jobs": self._job_snapshot(),
                 "tools": dict(self.tools),
                 "agents": dict(self.agents),
                 "cache": {"hits": 0, "misses": 0, "note": "No provider-side prompt cache is enabled by default."},

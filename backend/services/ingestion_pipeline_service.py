@@ -20,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Iterable
 
+from ai.services.metrics import ai_metrics
+
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 _MAX_ERROR_EVENTS = 100
@@ -447,6 +449,18 @@ class IngestionJob:
         )
         self._recompute_progress()
 
+    def _metrics_kind(self) -> str:
+        """Map pipeline job kinds to the two OBS-007 queue families."""
+
+        if self.job_kind in {
+            JobKind.DOCUMENT_REINDEX.value,
+            JobKind.CHUNK_REBUILD.value,
+            JobKind.EMBEDDING_REBUILD.value,
+            JobKind.INDEX_BUILD.value,
+        }:
+            return "reindex"
+        return "import"
+
     @property
     def terminal(self) -> bool:
         return self.execution_state in TERMINAL_EXECUTION_STATES
@@ -634,6 +648,7 @@ class IngestionJob:
             if self.lease_owner and self.lease_expires_at and self.lease_expires_at > moment:
                 raise LeaseError("LEASE_HELD", "Another worker currently holds the job lease")
             if self.lease_owner and self.lease_expires_at and self.lease_expires_at <= moment:
+                ai_metrics.job_event(self._metrics_kind(), "lease_expired")
                 raise LeaseError("LEASE_EXPIRED", "The current worker lease must be recovered before a new claim")
         if self.execution_state not in {ExecutionState.QUEUED.value, ExecutionState.RETRY_WAIT.value}:
             raise LeaseError("LEASE_NOT_CLAIMABLE", "The job is not waiting for a worker")
@@ -653,6 +668,7 @@ class IngestionJob:
         self.next_retry_at = None
         self._touch(worker)
         self._audit("job_claimed", actor=worker, request_id=request_id, before_state=before, after_state=self.execution_state, lease_expires_at=_iso(self.lease_expires_at), fencing_token=self.fencing_token)
+        ai_metrics.job_event(self._metrics_kind(), "claimed")
         return self.to_dict()
 
     @_synchronized
@@ -661,8 +677,10 @@ class IngestionJob:
         token = _clean_text(fencing_token, field="fencing_token", maximum=128, required=True)
         moment = now or _now()
         if self.execution_state != ExecutionState.RUNNING.value or self.lease_owner != worker or self.fencing_token != token:
+            ai_metrics.job_event(self._metrics_kind(), "lease_lost")
             raise LeaseError("STALE_LEASE", "The worker lease is stale")
         if not self.lease_expires_at or self.lease_expires_at <= moment:
+            ai_metrics.job_event(self._metrics_kind(), "lease_expired")
             raise LeaseError("LEASE_EXPIRED", "The worker lease has expired")
         try:
             seconds = int(lease_seconds)
@@ -726,6 +744,7 @@ class IngestionJob:
         self.fencing_token = ""
         self.transition_execution_state(ExecutionState.RETRY_WAIT.value, actor=actor, request_id=request_id)
         self._audit("retry_scheduled", actor=actor, request_id=request_id, retry_count=self.retry_count, next_retry_at=_iso(self.next_retry_at))
+        ai_metrics.job_event(self._metrics_kind(), "retry_scheduled")
         return self.to_dict()
 
     @_synchronized
@@ -743,19 +762,23 @@ class IngestionJob:
             self.execution_state = ExecutionState.RUNNING.value
         if self.execution_state != ExecutionState.FAILED.value:
             self.transition_execution_state(ExecutionState.FAILED.value, actor=actor, request_id=request_id)
+        ai_metrics.job_event(self._metrics_kind(), "failed")
         return self.to_dict()
 
     @_synchronized
     def complete(self, *, actor: str = "system", request_id: str = "") -> dict[str, Any]:
         if self.phase != IngestionPhase.COMPLETED.value:
             raise InvalidPhaseError(self.phase, IngestionPhase.COMPLETED.value, code="COMPLETION_PHASE_REQUIRED")
-        return self.transition_execution_state(ExecutionState.SUCCEEDED.value, actor=actor, request_id=request_id)
+        result = self.transition_execution_state(ExecutionState.SUCCEEDED.value, actor=actor, request_id=request_id)
+        ai_metrics.job_event(self._metrics_kind(), "succeeded")
+        return result
 
     @_synchronized
     def recover_expired_lease(self, *, now: datetime | None = None, request_id: str = "") -> dict[str, Any]:
         moment = now or _now()
         if self.execution_state != ExecutionState.RUNNING.value or not self.lease_expires_at or self.lease_expires_at > moment:
             return self.to_dict()
+        ai_metrics.job_event(self._metrics_kind(), "lease_expired")
         self.record_error(
             classify_ingestion_error(IngestionErrorCode.WORKER_LOST.value, phase=self.phase, attempt_no=self.attempt_no, correlation_id=request_id, occurred_at=moment),
             actor="system",
@@ -770,10 +793,12 @@ class IngestionJob:
             self.fencing_token = ""
             self.transition_execution_state(ExecutionState.RETRY_WAIT.value, actor="system", request_id=request_id)
             self._audit("lease_expired", actor="system", request_id=request_id, next_retry_at=_iso(self.next_retry_at))
+            ai_metrics.job_event(self._metrics_kind(), "retry_scheduled")
             return self.to_dict()
         self.phase = IngestionPhase.FAILED.value
         self.transition_execution_state(ExecutionState.FAILED.value, actor="system", request_id=request_id)
         self._audit("lease_expired", actor="system", request_id=request_id, terminal=True)
+        ai_metrics.job_event(self._metrics_kind(), "failed")
         return self.to_dict()
 
     @_synchronized
@@ -1002,6 +1027,8 @@ class IngestionPipeline:
             original._audit("retry_requested", actor=actor_value, request_id=request_value, retry_job_id=child.id)
             self._jobs[child.id] = child
             self._idempotency[(tenant, retry_key)] = child.id
+            ai_metrics.job_event(child._metrics_kind(), "enqueued")
+            ai_metrics.job_event(child._metrics_kind(), "retry_created")
             return child
 
     def create_job(
@@ -1040,6 +1067,7 @@ class IngestionPipeline:
             job._audit("job_created", actor=actor, scope_fingerprint=fingerprint, dry_run=bool(dry_run))
             self._jobs[job.id] = job
             self._idempotency[(tenant, key)] = job.id
+            ai_metrics.job_event(job._metrics_kind(), "enqueued")
             return job
 
     def get_job(self, job_id: str, *, tenant_id: str) -> IngestionJob | None:
@@ -1061,6 +1089,45 @@ class IngestionPipeline:
         with self._lock:
             self._jobs.clear()
             self._idempotency.clear()
+
+    def observability_snapshot(self, *, family: str = "import", now: datetime | None = None) -> dict[str, int]:
+        """Return aggregate Import/Reindex queue gauges without identifiers."""
+
+        selected_family = str(family or "import").strip().lower()
+        if selected_family not in {"import", "reindex"}:
+            selected_family = "import"
+        moment = now or _now()
+        counts = {
+            "queued": 0,
+            "retry_wait": 0,
+            "running": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "cancelled": 0,
+            "backlog": 0,
+            "lease_anomalies": 0,
+            "lease_expired": 0,
+            "document_failures": 0,
+        }
+        with self._lock:
+            jobs = list(self._jobs.values())
+        for job in jobs:
+            if job._metrics_kind() != selected_family:
+                continue
+            state = str(job.execution_state or "").lower()
+            if state in counts:
+                counts[state] += 1
+            if state in {ExecutionState.QUEUED.value, ExecutionState.RETRY_WAIT.value}:
+                counts["backlog"] += 1
+            if state == ExecutionState.RUNNING.value:
+                if not job.lease_owner or not job.lease_expires_at or job.lease_expires_at <= moment:
+                    counts["lease_anomalies"] += 1
+                    counts["lease_expired"] += 1
+            counts["document_failures"] += max(0, int(job.failed_count or 0))
+            for event in job.audit_events:
+                if isinstance(event, dict) and event.get("event_type") == "lease_expired":
+                    counts["lease_expired"] += 1
+        return counts
 
     def recover_expired_leases(self, *, now: datetime | None = None) -> list[dict[str, Any]]:
         with self._lock:

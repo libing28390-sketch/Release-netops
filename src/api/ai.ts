@@ -295,6 +295,24 @@ export interface AIPlatformMetrics {
     low_confidence: number;
     errors: number;
   };
+  jobs?: {
+    events: Record<string, number>;
+    queues: Record<string, Record<string, number>>;
+    observability?: {
+      observed_at: string;
+      sources: Record<string, string>;
+      queues: Record<string, Record<string, number>>;
+      alerts: Array<{
+        code: string;
+        severity: string;
+        kind: string;
+        value: number;
+        threshold: number;
+        message: string;
+      }>;
+      alert_thresholds: { backlog: number; failed: number; lease_anomalies: number };
+    };
+  };
   tools: Record<string, number>;
   agents: Record<string, number>;
   cache: { hits: number; misses: number; note?: string };

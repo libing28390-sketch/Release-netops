@@ -36,6 +36,7 @@ from ai.services.knowledge_metadata import (
     validate_metadata,
 )
 from ai.services.retrieval_contract import retrieval_cache
+from ai.services.metrics import ai_metrics
 
 
 def _now() -> str:
@@ -89,6 +90,7 @@ class _ReindexLease:
                     (self.lock_name, self.owner, expires.isoformat()),
                 )
                 conn.commit()
+                ai_metrics.job_event("reindex", "lease_acquired")
                 self._held = True
                 return True
             except Exception:
@@ -96,6 +98,7 @@ class _ReindexLease:
                     conn.rollback()
                 except Exception:
                     pass
+                ai_metrics.job_event("reindex", "lease_held")
                 return False
 
     def heartbeat(self) -> bool:
@@ -114,6 +117,7 @@ class _ReindexLease:
                 rowcount = getattr(cursor, "rowcount", 0)
                 if int(rowcount or 0) != 1:
                     self._held = False
+                    ai_metrics.job_event("reindex", "lease_lost")
                     return False
                 return True
             except Exception:
@@ -122,6 +126,7 @@ class _ReindexLease:
                 except Exception:
                     pass
                 self._held = False
+                ai_metrics.job_event("reindex", "lease_error")
                 return False
 
     def release(self) -> None:
@@ -337,6 +342,7 @@ class KnowledgeReindexService:
                 ),
             )
             conn.commit()
+        ai_metrics.job_event("reindex", "enqueued")
         if run_async:
             thread = threading.Thread(target=self.run_job, args=(job_id,), daemon=True, name=f"rag-reindex-{job_id}")
             thread.start()
@@ -367,6 +373,7 @@ class KnowledgeReindexService:
                 (int(row[1] or 0) + 1, json.dumps(errors, ensure_ascii=False), _now(), job_id),
             )
             conn.commit()
+        ai_metrics.job_event("reindex", "document_failed")
 
     def _mark_document_parse_error(self, document: dict[str, Any], error: str) -> None:
         columns = set(document)
@@ -739,6 +746,7 @@ class KnowledgeReindexService:
                 finished_at=_now(),
                 scope_json=json.dumps(self._stored_scope(scope, batch_size=batch_size), ensure_ascii=False),
             )
+            ai_metrics.job_event("reindex", "succeeded")
             self._sync_action_status(
                 raw,
                 "failed" if counters["failed"] else "succeeded",
@@ -749,6 +757,7 @@ class KnowledgeReindexService:
             # keyset checkpoint.  The current document is idempotent and may
             # be retried; it is never marked successful speculatively.
             logger.warning("[RAG reindex] job=%s lease lost; checkpoint retained", job_id)
+            ai_metrics.job_event("reindex", "lease_lost")
             try:
                 self._update_job(
                     job_id,
@@ -764,6 +773,7 @@ class KnowledgeReindexService:
             self._sync_action_status(raw, "failed", error_code="KNOWLEDGE_ACTION_LEASE_LOST")
         except Exception as exc:
             logger.error("[RAG reindex] job=%s failed: %s", job_id, type(exc).__name__, exc_info=True)
+            ai_metrics.job_event("reindex", "failed")
             self._update_job(
                 job_id,
                 **counters,
