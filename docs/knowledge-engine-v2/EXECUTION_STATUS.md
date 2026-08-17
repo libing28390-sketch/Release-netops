@@ -7,7 +7,7 @@ Next Task: CHK-013（实现 Document 修改后的精确 Rechunk/Reembed/Reindex�
 
 Completed: 291 / 359
 P0: 234 / 277
-Last Verified Commit: <pending ING-024 commit>（ING-024 PostgreSQL duplicate-content probe PASS）
+Last Verified Commit: 972bafea（ING-024 PostgreSQL duplicate-content probe PASS）
 
 Recent Migration: ING-024 无新增 migration；PostgreSQL source/version 唯一性探针 PASS 并 rollback，无生产探针写入
 Recent Build: ING-024 focused 7 passed；ING-006/007/008/idempotency regression 44 passed；CAT-004 pure 14 passed；PostgreSQL probe/compile/diff PASS
