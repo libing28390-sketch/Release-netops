@@ -7,7 +7,7 @@ Next Task: EVAL-002（覆盖 Huawei/Cisco 的 VLAN、Interface、OSPF、SSH、NT
 
 Completed: 296 / 359
 P0: 235 / 277
-Last Verified Commit: 待提交（EVAL-001 PASS）
+Last Verified Commit: 89b19d86（EVAL-001 fixed query dataset PASS）
 
 Recent Migration: EVAL-001 无 migration；离线固定 Query 数据集无数据库连接/写入
 Recent Build: EVAL-001 validator PASS；120 cases；10 query types each 12；focused test 1 passed；contract YAML PASS；py_compile/diff PASS
