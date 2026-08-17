@@ -31,6 +31,7 @@ from api.knowledge_documents import DocumentLifecycleRequest, DocumentVersionAct
 from api.knowledge_ingestion import (
     IngestionJobCancelRequest,
     IngestionJobRetryRequest,
+    OfficialSeedBatchRequest,
     OfficialUrlImportRequest,
 )
 from api.knowledge_sources import (
@@ -375,6 +376,7 @@ SourceFetchContract = SourceFetchRequest
 DocumentLifecycleContract = DocumentLifecycleRequest
 DocumentVersionActionContract = DocumentVersionActionRequest
 OfficialUrlImportContract = OfficialUrlImportRequest
+OfficialSeedBatchContract = OfficialSeedBatchRequest
 ImportCancelContract = IngestionJobCancelRequest
 ImportRetryContract = IngestionJobRetryRequest
 
@@ -387,7 +389,7 @@ __all__ = [
     "SourceLifecycleContract", "SourceFetchContract", "DocumentLifecycleContract", "DocumentVersionActionContract",
     "ProductSoftwareScope", "ProductPlatformBindingAdvisory", "ProductCatalogModelRequest", "ProductAliasRequest",
     "CatalogVersionBundleContract", "CatalogVersionImportContract", "CatalogVersionRollbackContract",
-    "OfficialUrlImportContract", "ImportCancelContract", "ImportRetryContract", "KnowledgeBaseCreateRequest",
+    "OfficialUrlImportContract", "OfficialSeedBatchContract", "ImportCancelContract", "ImportRetryContract", "KnowledgeBaseCreateRequest",
     "KnowledgeDocumentCreateRequest", "KnowledgeMetadataPreviewRequest", "KnowledgeReindexRequest", "KnowledgeDirectoryCreateRequest", "KnowledgeDirectoryRenameRequest",
     "RetrievalFilters", "SearchContract", "ChatHistoryMessage", "CopilotContext", "CopilotPlanItem",
     "SecurityMessage", "SecurityPolicyUpdateRequest", "SecurityTestPayloadRequest", "SecurityKillSwitchRequest",

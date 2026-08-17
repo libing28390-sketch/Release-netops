@@ -14,6 +14,13 @@ from core.rbac import require_permission
 from services.enterprise_sop_import_service import EnterpriseSopImportError, import_enterprise_sop_file
 from services.local_official_file_import_service import LocalOfficialFileImportError, import_local_official_file
 from services.official_url_import_service import OfficialUrlImportError, import_single_official_url
+from services.official_seed_batch_service import (
+    DEFAULT_RATE_LIMIT_PER_MINUTE,
+    MAX_RATE_LIMIT_PER_MINUTE,
+    MAX_SEED_ITEMS,
+    OfficialSeedBatchError,
+    collect_official_seed_batch,
+)
 from services.ingestion_pipeline_service import IngestionPipelineError, ingestion_pipeline
 
 
@@ -37,6 +44,14 @@ class OfficialUrlImportRequest(BaseModel):
     idempotency_key: str = Field(default="", max_length=256)
     request_id: str = Field(default="", max_length=256)
     max_retries: int = Field(default=1, ge=0, le=5)
+
+
+class OfficialSeedBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[OfficialUrlImportRequest] = Field(..., min_length=1, max_length=MAX_SEED_ITEMS)
+    rate_limit_per_minute: int = Field(default=DEFAULT_RATE_LIMIT_PER_MINUTE, ge=1, le=MAX_RATE_LIMIT_PER_MINUTE)
+    request_id: str = Field(default="", max_length=256)
 
 
 class IngestionJobCancelRequest(BaseModel):
@@ -239,6 +254,21 @@ def _call(fn, *args, **kwargs):
         raise HTTPException(status_code=500, detail={"code": "INGESTION_IMPORT_ERROR", "message": "Official URL import operation failed"}) from exc
 
 
+def _call_seed_batch(*args, **kwargs):
+    try:
+        return collect_official_seed_batch(*args, **kwargs)
+    except OfficialSeedBatchError as exc:
+        detail: dict[str, Any] = {"code": exc.code, "message": exc.message}
+        if exc.details is not None:
+            detail["details"] = exc.details
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Official Seed batch operation failed")
+        raise HTTPException(status_code=500, detail={"code": "SEED_BATCH_ERROR", "message": "Official Seed batch operation failed"}) from exc
+
+
 @router.post("/official-url")
 def api_import_official_url(
     response: Response,
@@ -251,6 +281,24 @@ def api_import_official_url(
     # Keep the job error in the response body for retry/observability instead
     # of converting a bounded source failure into an opaque server exception.
     return {"success": bool(result.get("success")), "data": result, "message": "Official URL import accepted" if status == 202 else "Official URL import failed"}
+
+
+@router.post("/official-seed-batch")
+def api_import_official_seed_batch(
+    response: Response,
+    payload: OfficialSeedBatchRequest = Body(...),
+    user=require_permission("knowledge_source", "create"),
+):
+    """Collect a small reviewed Seed URL set with server-owned pacing."""
+
+    result = _call_seed_batch(
+        user,
+        [item.model_dump(exclude_none=True) for item in payload.items],
+        rate_limit_per_minute=payload.rate_limit_per_minute,
+        request_id=payload.request_id,
+    )
+    response.status_code = 202
+    return {"success": True, "data": result, "message": "Official Seed batch accepted"}
 
 
 async def _read_local_file(file: UploadFile) -> bytes:
