@@ -498,7 +498,7 @@
 - [x] `EVAL-002` `P0/NET+AI/M`：覆盖 Huawei/Cisco 的 VLAN、Interface、OSPF、SSH、NTP、Route。
 - [x] `EVAL-003` `P0/NET+AI/M`：覆盖 Exact、Alias、Prefix、Ambiguous、Typo、Wrong Vendor、Product Conflict。
 - [x] `EVAL-004` `P0/NET+AI/M`：覆盖指定版本、未指定版本、冲突版本和未知版本。
-- [ ] `EVAL-005` `P0/AI+QA/M`：定义 Recall@K、Precision@K、MRR、NDCG 和 Entity Resolution Accuracy。
+- [x] `EVAL-005` `P0/AI+QA/M`：定义 Recall@K、Precision@K、MRR、NDCG 和 Entity Resolution Accuracy。
 - [ ] `EVAL-006` `P0/AI+QA/M`：定义 Product、OS、Version Match、Wrong Vendor、Official Source 和 Citation Accuracy。
 - [ ] `EVAL-007` `P0/SEC+QA/M`：定义秘密泄漏、Prompt Injection、越权和外发策略指标。
 - [ ] `EVAL-008` `P0/QA+NET/M`：建立人工 Golden Answer、适用版本和引用标注流程。

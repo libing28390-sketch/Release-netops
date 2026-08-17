@@ -1,0 +1,34 @@
+{
+  "status": "PASS",
+  "metrics": [
+    "recall_at_k",
+    "precision_at_k",
+    "mrr",
+    "ndcg_at_k",
+    "entity_resolution_accuracy"
+  ],
+  "retrieval_case_count": 3,
+  "entity_resolution_case_count": 3,
+  "retrieval_report": {
+    "case_count": 3,
+    "recall_at_k": {
+      "1": 0.333333,
+      "3": 0.666667
+    },
+    "precision_at_k": {
+      "1": 0.333333,
+      "3": 0.555556
+    },
+    "mrr": 0.5,
+    "ndcg_at_k": {
+      "1": 0.333333,
+      "3": 0.564475
+    }
+  },
+  "entity_resolution_accuracy": 0.666667,
+  "database": "none",
+  "sqlite": "not_used",
+  "external_network": "not_used",
+  "secrets": false,
+  "module_sha256": "7668917dbc460c20409d79f89ab7608f72dc1543cf7fd25cc9b44e718ae4464d"
+}

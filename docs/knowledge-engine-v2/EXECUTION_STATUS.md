@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-004 (DONE_PASS)
-Last Completed: EVAL-004
-Next Task: EVAL-005（定义 Recall@K、Precision@K、MRR、NDCG 和 Entity Resolution Accuracy）
+Current Task: EVAL-005 (DONE_PASS)
+Last Completed: EVAL-005
+Next Task: EVAL-006（定义 Product、OS、Version Match、Wrong Vendor、Official Source 和 Citation Accuracy）
 
-Completed: 299 / 359
-P0: 238 / 277
-Last Verified Commit: a470c83e（EVAL-004 version coverage PASS）
+Completed: 300 / 359
+P0: 239 / 277
+Last Verified Commit: 待提交（EVAL-005 PASS）
 
-Recent Migration: EVAL-004 无 migration；离线版本 coverage fixture 无数据库连接/写入
-Recent Build: EVAL-004 validator PASS；四类版本各 12；EVAL-001～EVAL-004 tests 4 passed；contract YAML/py_compile/diff PASS
-Last Security Check: EVAL-004 版本 fixture 无凭据/租户/ACL；无外网；database=none；SQLite=not_used
+Recent Migration: EVAL-005 无 migration；离线指标库无数据库连接/写入
+Recent Build: EVAL-005 metric smoke PASS；五项指标；EVAL-001～EVAL-005 tests 5 passed；py_compile/contract YAML/diff PASS
+Last Security Check: EVAL-005 指标只处理 bounded IDs/实体字段；无外网；database=none；SQLite=not_used
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-005
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-006
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -35,6 +35,8 @@ EVAL-002：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-002.md；12
 EVAL-003：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-003.md；7 类 Query 各 12 条；正向 answer、歧义 clarify、错误厂商/产品冲突 no_match 边界 PASS；EVAL-001/EVAL-002/EVAL-003 tests 3 passed；无数据库连接，SQLite 未作为验收证据。
 
 EVAL-004：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-004.md；specified/unspecified/conflict/unknown 各 12 条；未知版本 12 个厂商/意图组合 PASS；EVAL-001～EVAL-004 tests 4 passed；无数据库连接，SQLite 未作为验收证据。
+
+EVAL-005：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-005.md；Recall@K/Precision@K/MRR/NDCG/Entity Resolution Accuracy 定义与实现 PASS；EVAL-001～EVAL-005 tests 5 passed；无数据库连接，SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
