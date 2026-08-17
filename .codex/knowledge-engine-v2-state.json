@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "EVAL-012",
+  "current_task": "EVAL-013",
   "task_state": "ANALYZING",
-  "updated_at": "2026-08-18T01:10:00+08:00",
-  "last_completed_task": "EVAL-011",
+  "updated_at": "2026-08-18T01:35:00+08:00",
+  "last_completed_task": "EVAL-012",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -145,6 +145,7 @@
     "EVAL-009",
     "EVAL-010",
     "EVAL-011",
+    "EVAL-012",
     "RET-001",
     "RET-002",
     "RET-003",
@@ -341,7 +342,6 @@
   "pending_tasks": [
     "ING-020",
     "ING-021",
-    "EVAL-012",
     "EVAL-013",
     "EVAL-014",
     "EVAL-015",
@@ -970,10 +970,10 @@
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
   "last_verified_commit": "339b5d2f（EVAL-010 PostgreSQL CI/release gate implementation PASS）",
   "total_count": 359,
-  "completed_count": 306,
+  "completed_count": 307,
   "p0_total_count": 277,
-  "p0_completed_count": 245,
-  "resume_from": "EVAL-012",
+  "p0_completed_count": 246,
+  "resume_from": "EVAL-013",
   "eval001_status": "DONE_PASS",
   "eval001_final_verified_at": "2026-08-17T21:20:00+08:00",
   "eval001_evidence": "docs/knowledge-engine-v2/evidence/EVAL-001.md",
@@ -1064,5 +1064,13 @@
   "eval011_manifest": "docs/knowledge-engine-v2/eval/eval-provider-model-security-v1.manifest.json",
   "eval011_focused_tests": "PostgreSQL probe PASS; backend Provider/Model/Security/API 33 passed; EVAL-011 wrapper 2 passed; V1 PostgreSQL baseline 10/10; lint/build/compile/diff PASS",
   "eval011_postgresql_policy": "PASS; database=postgresql; sqlite=not_used; probe transaction rollback=true; no production write",
-  "eval011_production_ddl": "NONE"
+  "eval011_production_ddl": "NONE",
+  "eval012_status": "DONE_PASS",
+  "eval012_final_verified_at": "2026-08-18T01:35:00+08:00",
+  "eval012_evidence": "docs/knowledge-engine-v2/evidence/EVAL-012.md",
+  "eval012_contract": "docs/knowledge-engine-v2/architecture/EVAL-012-LIFECYCLE-TEST-CONTRACT.yaml",
+  "eval012_manifest": "docs/knowledge-engine-v2/eval/eval-lifecycle-v1.manifest.json",
+  "eval012_focused_tests": "5 PostgreSQL lifecycle probes PASS; EVAL-012 wrapper 2 passed; V1 PostgreSQL baseline 10/10; py_compile/YAML/diff PASS",
+  "eval012_postgresql_policy": "PASS; source/document/version/chunk/reindex all use PostgreSQL; sqlite=not_used; rollback_or_cleanup=true; no production write",
+  "eval012_production_ddl": "NONE"
 }
