@@ -49,9 +49,13 @@ def _connection():
             created_at TEXT NOT NULL,
             completed_at TEXT
         );
+        CREATE TABLE kb_document_source (tenant_id TEXT, document_id TEXT);
+        CREATE TABLE kb_document_version (tenant_id TEXT, document_id TEXT);
         INSERT INTO ai_document (id, knowledge_base_id, name, status, tenant_id, updated_at, original_content, normalized_content, metadata_json, document_id, vendor, platform)
         VALUES ('doc-a', 'kb-a', 'OSPF guide', 'active', 'tenant-a', '2026-08-17', '# OSPF\nhello', '# OSPF\nhello', '{}', 'doc-a', 'Huawei', 'huawei_vrp');
         INSERT INTO ai_document_chunk (id, document_id, content) VALUES ('chunk-a', 'doc-a', 'hello');
+        INSERT INTO kb_document_source (tenant_id, document_id) VALUES ('tenant-a', 'doc-a');
+        INSERT INTO kb_document_version (tenant_id, document_id) VALUES ('tenant-a', 'doc-a');
         INSERT INTO ai_document (id, knowledge_base_id, name, status, tenant_id, updated_at, original_content, normalized_content, metadata_json, document_id, vendor, platform)
         VALUES ('doc-b', 'kb-b', 'Other tenant', 'active', 'tenant-b', '2026-08-17', '# OSPF\nother', '# OSPF\nother', '{}', 'doc-b', 'Huawei', 'huawei_vrp');
         """
@@ -67,6 +71,26 @@ def test_confirmation_is_required_before_any_mutation(monkeypatch):
     with pytest.raises(knowledge_service_module.KnowledgeDocumentActionError) as exc:
         service.execute_document_action(doc_id="doc-a", action="disable", tenant_id="tenant-a", confirm=False)
     assert exc.value.code == "KNOWLEDGE_ACTION_CONFIRMATION_REQUIRED"
+    assert conn.execute("SELECT status FROM ai_document WHERE id = 'doc-a'").fetchone()[0] == "active"
+    assert conn.execute("SELECT COUNT(*) FROM ai_knowledge_document_action").fetchone()[0] == 0
+
+
+def test_impact_preview_is_read_only_and_counts_references(monkeypatch):
+    conn = _connection()
+    monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: conn)
+    preview = knowledge_service_module.KnowledgeService().get_document_action_impact(doc_id="doc-a", tenant_id="tenant-a")
+    assert preview["safe_to_confirm"] is True
+    assert preview["impact"] == {
+        "documents": 1,
+        "chunks": 1,
+        "indexes": 1,
+        "references": 2,
+        "reference_details": [
+            {"type": "source_observation", "count": 1},
+            {"type": "document_version", "count": 1},
+        ],
+        "reference_scope": "kb_document_source_and_kb_document_version",
+    }
     assert conn.execute("SELECT status FROM ai_document WHERE id = 'doc-a'").fetchone()[0] == "active"
     assert conn.execute("SELECT COUNT(*) FROM ai_knowledge_document_action").fetchone()[0] == 0
 

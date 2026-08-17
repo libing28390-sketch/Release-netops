@@ -35,7 +35,7 @@ import {
   Pencil,
   Info,
 } from 'lucide-react';
-import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, clearSampleKnowledge, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets } from '../../../api/ai';
+import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 
@@ -479,6 +479,11 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [documentActionBusy, setDocumentActionBusy] = useState<string | null>(null);
   const [documentActionNotice, setDocumentActionNotice] = useState('');
+  const [pendingDocumentAction, setPendingDocumentAction] = useState<{
+    doc: KnowledgeDocument;
+    action: KnowledgeDocumentAction;
+    preview: KnowledgeDocumentActionImpact;
+  } | null>(null);
 
   // Document viewer state
   const [selectedDocument, setSelectedDocument] = useState<KnowledgeDocumentDetail | null>(null);
@@ -1283,47 +1288,43 @@ export const KnowledgeManagementTab: React.FC = () => {
     setDocumentDetailError('');
   };
 
-  const handleDeleteSingle = async (docId: string, docName: string) => {
-    if (!window.confirm(`确认删除文档「${docName}」及其所有切片索引吗？\n将记录删除影响与审计证据；不可原地撤销。`)) return;
-    setDocumentActionBusy(`${docId}:delete`);
+  const documentActionLabels: Record<KnowledgeDocumentAction, string> = {
+    delete: '删除',
+    disable: '禁用',
+    enable: '启用',
+    reparse: '重新解析 Metadata',
+    rechunk: '重新切片',
+    reindex: '重建索引',
+  };
+
+  const requestDocumentAction = async (doc: KnowledgeDocument, action: KnowledgeDocumentAction) => {
+    setDocumentActionBusy(`${doc.id}:${action}:preview`);
     setDocumentActionNotice('');
     try {
-      await deleteKnowledgeDocument(docId);
-      setSelectedDocIds(prev => { const n = new Set(prev); n.delete(docId); return n; });
-      setDocumentActionNotice(`文档「${docName}」已删除，恢复方式已记录在动作审计中。`);
-      void fetchStatsAndDocs();
+      const preview = await getKnowledgeDocumentActionImpact(doc.id);
+      if (!preview.safe_to_confirm) throw new Error('当前文档不满足安全确认条件');
+      setPendingDocumentAction({ doc, action, preview });
     } catch (err: any) {
-      alert(err.message || '删除失败');
+      alert(err.message || '无法读取危险操作影响预览');
     } finally {
       setDocumentActionBusy(null);
     }
   };
 
-  const handleDocumentAction = async (doc: KnowledgeDocument, action: 'disable' | 'enable' | 'reparse' | 'rechunk' | 'reindex') => {
-    const labels = {
-      disable: '禁用',
-      enable: '启用',
-      reparse: '重新解析 Metadata',
-      rechunk: '重新切片',
-      reindex: '重建索引',
-    } as const;
-    const impacts = {
-      disable: '文档将从默认检索结果中移除，现有切片保留，可用“启用”恢复。',
-      enable: '文档恢复为 active；现有切片和索引不会被删除。',
-      reparse: '仅重新解析正文与 Metadata，不直接删除切片；正文变化后会标记需要重新切片。',
-      rechunk: '按当前正文和已确认 Metadata 事务性替换全部切片与向量。',
-      reindex: '重新解析、切片、生成向量并替换检索索引，旧文档行保留。',
-    } as const;
-    const label = labels[action];
-    if (!window.confirm(`确认${label}「${doc.name}」吗？\n${impacts[action]}\n操作会写入租户动作审计，并记录恢复方式。`)) return;
+  const confirmDocumentAction = async () => {
+    if (!pendingDocumentAction) return;
+    const { doc, action, preview } = pendingDocumentAction;
     const busyKey = `${doc.id}:${action}`;
+    const label = documentActionLabels[action];
+    setPendingDocumentAction(null);
     setDocumentActionBusy(busyKey);
     setDocumentActionNotice('');
     try {
-      const handlers = { disable: disableKnowledgeDocument, enable: enableKnowledgeDocument, reparse: reparseKnowledgeDocument, rechunk: rechunkKnowledgeDocument, reindex: reindexKnowledgeDocument } as const;
+      const handlers = { delete: deleteKnowledgeDocument, disable: disableKnowledgeDocument, enable: enableKnowledgeDocument, reparse: reparseKnowledgeDocument, rechunk: rechunkKnowledgeDocument, reindex: reindexKnowledgeDocument } as const;
       const result = await handlers[action](doc.id, `knowledge admin confirmed ${action}`);
       const suffix = result.job_id ? `（任务 ${result.job_id} 已排队）` : '';
-      setDocumentActionNotice(`${label}已提交${suffix}；影响 ${result.impact.documents} 文档 / ${result.impact.chunks} Chunk。`);
+      setSelectedDocIds(prev => { const next = new Set(prev); if (action === 'delete') next.delete(doc.id); return next; });
+      setDocumentActionNotice(`${label}已提交${suffix}；影响 ${preview.impact.documents} 文档 / ${preview.impact.chunks} Chunk / ${preview.impact.indexes} Index / ${preview.impact.references} 引用。恢复方式已记录。`);
       void fetchStatsAndDocs();
     } catch (err: any) {
       alert(err.message || `${label}失败`);
@@ -1335,12 +1336,19 @@ export const KnowledgeManagementTab: React.FC = () => {
   const handleBatchDelete = async () => {
     const ids = Array.from(selectedDocIds);
     if (ids.length === 0) return;
-    if (!window.confirm(`确认批量删除选中的 ${ids.length} 篇文档及其全部切片索引吗？\n此操作不可撤销。`)) return;
     setDeleting(true);
     try {
+      const previews = await Promise.all(ids.map((id) => getKnowledgeDocumentActionImpact(id)));
+      const impact = previews.reduce((total, item) => ({
+        documents: total.documents + item.impact.documents,
+        chunks: total.chunks + item.impact.chunks,
+        indexes: total.indexes + item.impact.indexes,
+        references: total.references + item.impact.references,
+      }), { documents: 0, chunks: 0, indexes: 0, references: 0 });
+      if (!window.confirm(`确认批量删除 ${impact.documents} 篇文档吗？\n影响：${impact.chunks} Chunk / ${impact.indexes} Index / ${impact.references} 引用。\n操作不可原地撤销，恢复方式为 PostgreSQL 备份恢复。`)) return;
       await batchDeleteKnowledgeDocuments(ids, 'knowledge admin confirmed batch delete');
       setSelectedDocIds(new Set());
-      fetchStatsAndDocs();
+      void fetchStatsAndDocs();
     } catch (err: any) {
       alert(err.message || '批量删除失败');
     } finally {
@@ -1819,7 +1827,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                           <div className="flex items-center justify-center gap-1">
                             <button
                               type="button"
-                              onClick={() => void handleDocumentAction(doc, doc.status === 'disabled' ? 'enable' : 'disable')}
+                              onClick={() => void requestDocumentAction(doc, doc.status === 'disabled' ? 'enable' : 'disable')}
                               disabled={Boolean(documentActionBusy)}
                               className="rounded-lg p-1.5 text-gray-400 transition hover:bg-amber-50 hover:text-amber-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-amber-950/40"
                               title={doc.status === 'disabled' ? '启用文档（独立确认）' : '禁用文档（独立确认）'}
@@ -1829,7 +1837,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => void handleDocumentAction(doc, 'reparse')}
+                              onClick={() => void requestDocumentAction(doc, 'reparse')}
                               disabled={Boolean(documentActionBusy)}
                               className="rounded-lg p-1.5 text-gray-400 transition hover:bg-blue-50 hover:text-blue-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-blue-950/40"
                               title="重新解析 Metadata（独立确认）"
@@ -1839,7 +1847,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => void handleDocumentAction(doc, 'rechunk')}
+                              onClick={() => void requestDocumentAction(doc, 'rechunk')}
                               disabled={Boolean(documentActionBusy)}
                               className="rounded-lg p-1.5 text-gray-400 transition hover:bg-violet-50 hover:text-violet-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-violet-950/40"
                               title="重新切片（独立确认）"
@@ -1849,7 +1857,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => void handleDocumentAction(doc, 'reindex')}
+                              onClick={() => void requestDocumentAction(doc, 'reindex')}
                               disabled={Boolean(documentActionBusy)}
                               className="rounded-lg p-1.5 text-gray-400 transition hover:bg-indigo-50 hover:text-indigo-600 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-indigo-950/40"
                               title="重建索引（独立确认）"
@@ -1859,7 +1867,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => void handleDeleteSingle(doc.id, doc.name)}
+                              onClick={() => void requestDocumentAction(doc, 'delete')}
                               disabled={Boolean(documentActionBusy)}
                               className="rounded-lg p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-500 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-red-950/40"
                               title="删除此文档（独立确认）"
@@ -2017,6 +2025,48 @@ export const KnowledgeManagementTab: React.FC = () => {
 
             <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-4 text-xs text-slate-400 dark:border-slate-800 sm:px-7"><span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />入库于 {new Date(selectedDocument.created_at).toLocaleString()}</span><button type="button" onClick={closeDocument} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">关闭</button></div>
           </aside>
+        </div>
+      )}
+
+      {pendingDocumentAction && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true" aria-labelledby="knowledge-action-impact-title">
+          <div className="w-full max-w-xl rounded-2xl border border-rose-200 bg-white p-5 shadow-2xl dark:border-rose-900/60 dark:bg-slate-900">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"><AlertTriangle className="h-5 w-5" /></div>
+              <div className="min-w-0">
+                <h3 id="knowledge-action-impact-title" className="text-base font-bold text-slate-950 dark:text-white">危险操作影响确认</h3>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{documentActionLabels[pendingDocumentAction.action]}「{pendingDocumentAction.preview.name}」前，请确认以下服务端预览。</p>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {([
+                ['文档', pendingDocumentAction.preview.impact.documents],
+                ['Chunk', pendingDocumentAction.preview.impact.chunks],
+                ['Index', pendingDocumentAction.preview.impact.indexes],
+                ['引用', pendingDocumentAction.preview.impact.references],
+              ] as const).map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950/50">
+                  <div className="text-[10px] text-slate-400">{label}</div>
+                  <div className="mt-1 font-mono text-lg font-bold text-slate-900 dark:text-white">{value}</div>
+                </div>
+              ))}
+            </div>
+            {pendingDocumentAction.preview.impact.reference_details && pendingDocumentAction.preview.impact.reference_details.length > 0 && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200">
+                引用明细：{pendingDocumentAction.preview.impact.reference_details.map((item) => `${item.type} ${item.count}`).join('、')}
+              </div>
+            )}
+            <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/70 px-3 py-2 text-[11px] leading-5 text-indigo-900 dark:border-indigo-900/60 dark:bg-indigo-950/25 dark:text-indigo-200">
+              <span className="font-semibold">恢复方式：</span>{pendingDocumentAction.preview.recovery[pendingDocumentAction.action] || '按租户动作审计与任务状态恢复'}
+            </div>
+            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-5 text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/25 dark:text-rose-200">
+              {pendingDocumentAction.action === 'delete' ? '删除会移除文档与全部切片，不能在系统内原地撤销；请确认已具备 PostgreSQL 备份恢复条件。' : '动作会写入租户动作审计；任务型操作失败时保留源文档并允许重试。'}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setPendingDocumentAction(null)} disabled={Boolean(documentActionBusy)} className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-800">取消</button>
+              <button type="button" onClick={() => void confirmDocumentAction()} disabled={Boolean(documentActionBusy)} className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:cursor-wait disabled:opacity-50">确认{documentActionLabels[pendingDocumentAction.action]}</button>
+            </div>
+          </div>
         </div>
       )}
 

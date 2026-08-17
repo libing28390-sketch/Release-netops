@@ -15,8 +15,8 @@ scope:
     - KUI-010
     - KUI-011
     - KUI-012
-  later_tasks:
     - KUI-013
+  later_tasks:
     - KUI-014
     - KUI-015
     - KUI-016
@@ -84,6 +84,12 @@ batch_upload:
 actions:
   confirmation_required: true
   endpoint_template: /api/ai/assistant/documents/{document_id}/actions/{action}
+  impact_preview_endpoint: /api/ai/assistant/documents/{document_id}/actions/impact
+  impact_preview:
+    read_only: true
+    fields: [documents, chunks, indexes, references, reference_details, reference_scope]
+    recovery_required: true
+    server_calculated: true
   actions:
     delete:
       permission: ai.knowledge.manage

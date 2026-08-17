@@ -71,6 +71,10 @@ def _run() -> dict[str, Any]:
         knowledge_service_module.KnowledgeService._write_action_audit = staticmethod(lambda **kwargs: None)
         service = knowledge_service_module.KnowledgeService()
 
+        preview = service.get_document_action_impact(doc_id=doc_a, tenant_id="__kui012_tenant_a")
+        if not preview["safe_to_confirm"] or set(("documents", "chunks", "indexes", "references")) - set(preview["impact"]):
+            raise AssertionError(f"impact preview contract mismatch: {preview}")
+
         missing_confirmation = False
         try:
             service.execute_document_action(doc_id=doc_a, action="disable", tenant_id="__kui012_tenant_a", confirm=False)
@@ -143,6 +147,7 @@ def _run() -> dict[str, Any]:
             "postgresql": True,
             "migration_0145": bool(cur.execute("SELECT 1 FROM schema_migrations WHERE version = 145").fetchone()),
             "confirmation": missing_confirmation,
+            "impact_preview": True,
             "tenant_isolation": cross_tenant_denied,
             "disable_enable_recovery": True,
             "independent_operations": True,

@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: KUI-013 (PENDING; KUI-001..012 PASS)
-Last Completed: KUI-012
-Next Task: KUI-013（按原清单依赖继续）
+Current Task: KUI-014 (PENDING; KUI-001..013 PASS)
+Last Completed: KUI-013
+Next Task: KUI-014（按原清单依赖继续）
 
-Completed: 265 / 359
-P0: 220 / 277
+Completed: 266 / 359
+P0: 221 / 277
 Last Verified Commit: 29c8b557（KUI-012 PASS）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
 Recent Build: frontend lint/build PASS; Python compile PASS; existing large-chunk warning only
 Last Security Check: metadata-only audit, tenant isolation, secret redaction and adapter bypass audit PASS
-Recovery Point: KUI-013
+Recovery Point: KUI-014
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -23,6 +23,7 @@ KUI-001..008 证据：
 - KUI-010 forms：官方 URL / 企业 SOP 分离表单；官方/企业回归与 KUI 测试 21 passed
 - KUI-011 batch：逐文件 Metadata 预览、厂商冲突阻断；KUI 聚焦测试 7 passed，lint/build PASS
 - KUI-012 actions：删除/禁用/启用/Reparse/Rechunk/Reindex 独立确认、租户动作 ledger；KUI/DB-022/m0145 回归 19 passed，PostgreSQL probe PASS，lint/build/Vitest 90 passed
+- KUI-013 impact：危险操作服务端预览文档/Chunk/Index/引用/恢复方式；后端回归 20 passed，PostgreSQL probe PASS，lint/build/Vitest 90 passed
 
 Blocked Tasks: none
 

@@ -1258,9 +1258,22 @@ export interface KnowledgeDocumentActionResult {
   idempotent?: boolean;
   previous_status?: string;
   current_status?: string;
-  impact: { documents: number; chunks: number; indexes: number; references: number; reference_scope?: string };
+  impact: { documents: number; chunks: number; indexes: number; references: number; reference_details?: Array<{ type: string; count: number }>; reference_scope?: string };
   recovery: { recovery: string };
   job?: Record<string, unknown>;
+}
+
+export interface KnowledgeDocumentActionImpact {
+  document_id: string;
+  name: string;
+  current_status: string;
+  impact: KnowledgeDocumentActionResult['impact'];
+  recovery: Record<string, string>;
+  safe_to_confirm: boolean;
+}
+
+export async function getKnowledgeDocumentActionImpact(docId: string): Promise<KnowledgeDocumentActionImpact> {
+  return apiRequest<KnowledgeDocumentActionImpact>(`/api/ai/assistant/documents/${encodeURIComponent(docId)}/actions/impact`);
 }
 
 export async function runKnowledgeDocumentAction(docId: string, action: KnowledgeDocumentAction, data: { confirm: boolean; reason?: string }): Promise<KnowledgeDocumentActionResult> {

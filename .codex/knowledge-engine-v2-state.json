@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "KUI-013",
+  "current_task": "KUI-014",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T11:10:00+08:00",
-  "last_completed_task": "KUI-012",
+  "updated_at": "2026-08-17T11:18:00+08:00",
+  "last_completed_task": "KUI-013",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -270,7 +270,8 @@
     "KUI-009",
     "KUI-010",
     "KUI-011",
-    "KUI-012"
+    "KUI-012",
+    "KUI-013"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -304,7 +305,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "KUI-013",
     "KUI-014",
     "KUI-015",
     "KUI-016",
@@ -712,7 +712,14 @@
   "kui012_frontend_lint": "PASS",
   "kui012_frontend_build": "PASS; existing large-chunk warning only",
   "kui012_frontend_tests": "16 files / 90 tests passed",
-  "completed_count": 265,
-  "p0_completed_count": 220,
-  "resume_from": "KUI-013"
+  "kui013_status": "DONE_PASS",
+  "kui013_evidence": "docs/knowledge-engine-v2/evidence/KUI-013.md",
+  "kui013_focused_tests": "20 passed",
+  "kui013_postgresql_probe": "PASS; server-calculated impact preview and KUI-012 action regression",
+  "kui013_frontend_lint": "PASS",
+  "kui013_frontend_build": "PASS; existing large-chunk warning only",
+  "kui013_frontend_tests": "16 files / 90 tests passed",
+  "completed_count": 266,
+  "p0_completed_count": 221,
+  "resume_from": "KUI-014"
 }

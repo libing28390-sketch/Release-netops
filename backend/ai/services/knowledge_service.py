@@ -1067,6 +1067,94 @@ class KnowledgeService:
             # appear to have failed or leak an implementation error.
             return
 
+    @staticmethod
+    def _table_exists(cursor, table_name: str) -> bool:
+        """Check an optional canonical table without aborting a PG transaction."""
+        try:
+            cursor.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = current_schema() AND table_name = ?",
+                (table_name,),
+            )
+            return cursor.fetchone() is not None
+        except Exception:
+            try:
+                cursor.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    (table_name,),
+                )
+                return cursor.fetchone() is not None
+            except Exception:
+                return False
+
+    def _document_action_impact(self, cursor, row_values: Dict[str, Any]) -> Dict[str, Any]:
+        doc_id = str(row_values.get("id") or "")
+        chunk_row = cursor.execute(
+            "SELECT COUNT(*) FROM ai_document_chunk WHERE document_id = ?",
+            (doc_id,),
+        ).fetchone()
+        chunk_count = int((chunk_row[0] if chunk_row else 0) or 0)
+        canonical_document_id = str(row_values.get("document_id") or doc_id)
+        source_references = 0
+        version_references = 0
+        reference_details: list[Dict[str, Any]] = []
+        if self._table_exists(cursor, "kb_document_source"):
+            source_references = int((cursor.execute(
+                "SELECT COUNT(*) FROM kb_document_source WHERE tenant_id = ? AND document_id = ?",
+                (str(row_values.get("tenant_id") or "tenant-default"), canonical_document_id),
+            ).fetchone() or [0])[0] or 0)
+            if source_references:
+                reference_details.append({"type": "source_observation", "count": source_references})
+        if self._table_exists(cursor, "kb_document_version"):
+            version_references = int((cursor.execute(
+                "SELECT COUNT(*) FROM kb_document_version WHERE tenant_id = ? AND document_id = ?",
+                (str(row_values.get("tenant_id") or "tenant-default"), canonical_document_id),
+            ).fetchone() or [0])[0] or 0)
+            if version_references:
+                reference_details.append({"type": "document_version", "count": version_references})
+        references = source_references + version_references
+        return {
+            "documents": 1,
+            "chunks": chunk_count,
+            "indexes": chunk_count,
+            "references": references,
+            "reference_details": reference_details,
+            "reference_scope": "kb_document_source_and_kb_document_version" if self._table_exists(cursor, "kb_document_source") or self._table_exists(cursor, "kb_document_version") else "legacy_ai_document_has_no_reference_graph",
+        }
+
+    def get_document_action_impact(self, *, doc_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
+        """Return a safe, read-only impact/recovery preview before confirmation."""
+        doc_id = self._safe_action_text(doc_id, field="document_id", maximum=256, required=True)
+        tenant_id = self._safe_action_text(tenant_id or "tenant-default", field="tenant_id", maximum=256, required=True)
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            row = cursor.execute(
+                "SELECT id, name, status, tenant_id, document_id FROM ai_document "
+                "WHERE id = ? AND COALESCE(tenant_id, 'tenant-default') = ?",
+                (doc_id, tenant_id),
+            ).fetchone()
+            if not row:
+                raise KnowledgeDocumentActionError("KNOWLEDGE_DOCUMENT_NOT_FOUND", "document was not found", status_code=404)
+            row_values = dict(row) if hasattr(row, "keys") else {
+                "id": row[0], "name": row[1], "status": row[2], "tenant_id": row[3], "document_id": row[4],
+            }
+            impact = self._document_action_impact(cursor, row_values)
+            return {
+                "document_id": doc_id,
+                "name": str(row_values.get("name") or ""),
+                "current_status": str(row_values.get("status") or "active"),
+                "impact": impact,
+                "recovery": {
+                    "disable": "POST /api/ai/assistant/documents/{id}/actions/enable",
+                    "enable": "POST /api/ai/assistant/documents/{id}/actions/disable",
+                    "reparse": "rechunk or reindex the same document if body/index becomes stale",
+                    "rechunk": "reindex the same document if embedding/index repair is required",
+                    "reindex": "retry the returned tenant-scoped job",
+                    "delete": "restore from the approved PostgreSQL backup; no in-place undelete",
+                },
+                "safe_to_confirm": True,
+            }
+
     def execute_document_action(
         self,
         *,
@@ -1115,18 +1203,7 @@ class KnowledgeService:
             row_values = dict(row) if hasattr(row, "keys") else {
                 "id": row[0], "name": row[1], "status": row[2], "tenant_id": row[3],
             }
-            chunk_row = cursor.execute(
-                "SELECT COUNT(*) FROM ai_document_chunk WHERE document_id = ?",
-                (doc_id,),
-            ).fetchone()
-            chunk_count = int((chunk_row[0] if chunk_row else 0) or 0)
-            impact = {
-                "documents": 1,
-                "chunks": chunk_count,
-                "indexes": chunk_count,
-                "references": 0,
-                "reference_scope": "legacy_ai_document_has_no_reference_graph",
-            }
+            impact = self._document_action_impact(cursor, row_values)
             recovery = {
                 "disable": "POST /api/ai/assistant/documents/{id}/actions/enable",
                 "enable": "POST /api/ai/assistant/documents/{id}/actions/disable",

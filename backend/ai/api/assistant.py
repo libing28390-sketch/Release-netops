@@ -577,6 +577,18 @@ def get_document_detail(doc_id: str, user=Depends(require_ai_permission("ai.view
     return document
 
 
+@router.get("/documents/{doc_id}/actions/impact")
+def get_document_action_impact(doc_id: str, user=Depends(require_ai_permission("ai.view"))):
+    """Return bounded document/Chunk/index/reference impact before confirmation."""
+    try:
+        return knowledge_service.get_document_action_impact(
+            doc_id=doc_id,
+            tenant_id=user.get("tenant_id") or "tenant-default",
+        )
+    except KnowledgeDocumentActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
 def _execute_knowledge_document_action(
     doc_id: str,
     action: str,
