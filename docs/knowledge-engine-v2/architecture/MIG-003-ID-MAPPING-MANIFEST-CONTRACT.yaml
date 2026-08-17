@@ -1,0 +1,74 @@
+task_id: MIG-003
+title: Legacy to V2 identity mapping and migration manifest
+original_requirement: "建立旧 ID 到 V2 ID 映射和迁移 Manifest。"
+status: frozen_for_execution_planning
+authority: PostgreSQL
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+identity:
+  legacy_key: [ai_document.tenant_id, ai_document.id]
+  semantic_legacy_key: [ai_document.tenant_id, ai_document.document_id]
+  v2_document_id: deterministic_uuid5_over_tenant_and_legacy_id
+  v2_document_version_id: deterministic_uuid5_over_tenant_legacy_id_and_declared_hash
+  namespace_version: nexora-knowledge-engine-v2-mig003-v1
+  collision_policy: fail_closed_and_do_not_publish
+  ordering: tenant_id_hash_then_legacy_id
+
+manifest:
+  format: nexora-knowledge-engine-v2-migration-manifest/v1
+  required_fields:
+    - manifest_version
+    - source_authority
+    - generated_at
+    - manifest_sha256
+    - entries
+    - counts
+    - redaction
+  entry_required_fields:
+    - legacy_table
+    - legacy_id
+    - legacy_document_id
+    - tenant_id_hash
+    - v2_document_id
+    - v2_document_version_id
+    - admissibility
+    - source_registry_resolution
+    - declared_content_hash
+    - actions
+  digest_rule: canonical_json_without_generated_at_and_manifest_sha256
+  no_raw_fields: [original_content, normalized_content, acl_json, metadata_json, source_uri, secret, database_url]
+  persistence: repository_artifact_only_until_MIG-004_review
+
+admissibility:
+  trusted_document_wave:
+    required: [tenant_scope, original_content, original_hash_match, source_registry_resolution, active_status, not_excluded]
+    action: eligible_for_manifest_review_only
+  conditional_reconciliation:
+    examples: [normalized_hash_only, source_registry_unresolved, missing_declared_hash]
+    action: reconcile_before_source_version_creation
+  untrusted_or_quarantined:
+    action: quarantine_and_exclude_from_retrieval
+
+source_registry:
+  authority: kb_source_registry
+  resolution_key: [tenant_id, ai_document.source]
+  unresolved_policy: never_invent_registry_id_and_never_insert_target_row
+
+acceptance:
+  - PostgreSQL_read_only_inventory_completes
+  - every_legacy_document_has_exactly_one_deterministic_mapping
+  - rerun_produces_same_mapping_and_manifest_digest
+  - duplicate_legacy_keys_and_v2_collisions_fail_closed
+  - no_raw_content_or_secret_in_manifest_or_report
+  - zero_production_database_writes
+  - SQLite_not_used
+  - V1_baseline_non_regression
+  - rollback_is_artifact_discard_without_target_data_mutation
+
+evidence:
+  contract: docs/knowledge-engine-v2/architecture/MIG-003-ID-MAPPING-MANIFEST-CONTRACT.yaml
+  runner: scripts/knowledge_engine_v2_mig003_mapping_manifest_check.py
+  report: docs/knowledge-engine-v2/eval/mig-003-migration-report-v1.json
+  manifest: docs/knowledge-engine-v2/eval/mig-003-migration-manifest-v1.json
+  test: tests/knowledge_engine_v2/test_mig003_mapping_manifest.py
