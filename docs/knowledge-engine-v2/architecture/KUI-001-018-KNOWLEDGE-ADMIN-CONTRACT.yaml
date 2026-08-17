@@ -150,6 +150,27 @@ version_management:
   permissions:
     read: knowledge_source.read
     mutate: knowledge_source.update
+source_registry_management:
+  endpoints:
+    list: /api/knowledge-v2/sources
+    refresh_status: /api/knowledge-v2/sources/{source_id}/refresh-status
+    refresh_observations: /api/knowledge-v2/sources/{source_id}/refresh-observations
+    validate: /api/knowledge-v2/sources/{source_id}/validate
+    fetch: /api/knowledge-v2/sources/{source_id}/fetch
+  list:
+    server_tenant_scope: true
+    status_filters: [all, draft, active, disabled, quarantined]
+    response_excludes: [raw_body, credentials, internal_storage_path]
+  refresh_status:
+    states: [healthy, failed, attention, never_checked, not_configured]
+    fields: [last_checked_at, last_outcome, last_detection_type, last_error_code, observation_count, counts, latest_version]
+    history_limit: 200
+    stable_error_codes_only: true
+  operations:
+    validate_requires: knowledge_source.read
+    refresh_requires: knowledge_source.create
+    audit_required: true
+    append_only_observations: true
 request_lifecycle:
   list_requests:
     cancel_previous_request: true

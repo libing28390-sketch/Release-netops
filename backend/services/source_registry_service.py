@@ -1673,3 +1673,102 @@ def list_source_versions(source_id: str, user: dict[str, Any]) -> list[dict[str,
         return [_decode_version(row) for row in rows]
     finally:
         conn.close()
+
+
+def get_source_refresh_status(source_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Return a bounded operational read model for one Source Registry row.
+
+    The response contains only status, hashes, counters and stable error codes;
+    response bodies, headers, credentials and internal storage references are
+    deliberately excluded.  Missing freshness migrations are represented as a
+    safe ``not_configured`` state so V1 installations remain readable.
+    """
+    source_id = _bounded_refresh_text(source_id, field="source_id", maximum=128)
+    conn = get_db_connection()
+    try:
+        source = _get_source_in_conn(conn, source_id, user)
+        tenant_id = str(source.get("tenant_id") or "")
+        _authorize(user, "read", tenant_id)
+        if _database._USE_PG:
+            ready = bool(conn.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'kb_source_refresh_observation'"
+            ).fetchone())
+        else:
+            ready = bool(conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("kb_source_refresh_observation",),
+            ).fetchone())
+        latest_version_row = conn.execute(
+            "SELECT id, content_hash, byte_size, fetched_at, status FROM kb_source_version "
+            "WHERE tenant_id = ? AND source_registry_id = ? ORDER BY fetched_at DESC, id DESC LIMIT 1",
+            (tenant_id, source_id),
+        ).fetchone()
+        latest_version = _row_dict(latest_version_row) or {}
+        if not ready:
+            return {
+                "source_id": source_id,
+                "tenant_id": tenant_id,
+                "registry_status": str(source.get("status") or ""),
+                "validation_status": str(source.get("validation_status") or "unvalidated"),
+                "fetch_enabled": bool(source.get("fetch_enabled")),
+                "freshness_status": "not_configured",
+                "error_code": "SOURCE_FRESHNESS_SCHEMA_UNAVAILABLE",
+                "observation_count": 0,
+                "latest_version": {
+                    "id": str(latest_version.get("id") or ""),
+                    "content_hash": str(latest_version.get("content_hash") or ""),
+                    "byte_size": int(latest_version.get("byte_size") or 0),
+                    "fetched_at": latest_version.get("fetched_at"),
+                    "status": latest_version.get("status"),
+                } if latest_version else None,
+            }
+        rows = conn.execute(
+            "SELECT checked_at, outcome, detection_type, error_code, content_hash, source_version_id, byte_size, http_status "
+            "FROM kb_source_refresh_observation WHERE tenant_id = ? AND source_registry_id = ? "
+            "ORDER BY checked_at DESC, id DESC LIMIT 200",
+            (tenant_id, source_id),
+        ).fetchall()
+        observations = [_row_dict(row) or {} for row in rows]
+        latest = observations[0] if observations else {}
+        counts = {key: 0 for key in ("not_modified", "unchanged", "changed", "failed", "removed", "replacement", "version_updated")}
+        for item in observations:
+            outcome = str(item.get("outcome") or "")
+            if outcome in counts:
+                counts[outcome] += 1
+            detection = str(item.get("detection_type") or "none")
+            if detection in counts:
+                counts[detection] += 1
+        if not observations:
+            freshness_status = "never_checked"
+        elif str(latest.get("outcome") or "") == "failed":
+            freshness_status = "failed"
+        elif str(latest.get("detection_type") or "none") in {"removed", "replacement"}:
+            freshness_status = "attention"
+        else:
+            freshness_status = "healthy"
+        return {
+            "source_id": source_id,
+            "tenant_id": tenant_id,
+            "registry_status": str(source.get("status") or ""),
+            "validation_status": str(source.get("validation_status") or "unvalidated"),
+            "fetch_enabled": bool(source.get("fetch_enabled")),
+            "freshness_status": freshness_status,
+            "last_checked_at": latest.get("checked_at"),
+            "last_outcome": latest.get("outcome"),
+            "last_detection_type": latest.get("detection_type") or "none",
+            "last_error_code": str(latest.get("error_code") or "")[:128],
+            "last_content_hash": str(latest.get("content_hash") or "")[:64],
+            "last_source_version_id": str(latest.get("source_version_id") or ""),
+            "last_http_status": latest.get("http_status"),
+            "observation_count": len(observations),
+            "counts": counts,
+            "latest_version": {
+                "id": str(latest_version.get("id") or ""),
+                "content_hash": str(latest_version.get("content_hash") or ""),
+                "byte_size": int(latest_version.get("byte_size") or 0),
+                "fetched_at": latest_version.get("fetched_at"),
+                "status": latest_version.get("status"),
+            } if latest_version else None,
+        }
+    finally:
+        conn.close()

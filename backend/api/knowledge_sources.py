@@ -19,6 +19,7 @@ from services.source_registry_service import (
     get_source,
     list_source_versions,
     list_source_refresh_observations,
+    get_source_refresh_status,
     list_sources,
     record_source_version,
     update_source,
@@ -192,6 +193,14 @@ def api_list_source_refresh_observations(
         "data": _call(list_source_refresh_observations, source_id, user, limit=limit),
         "message": "",
     }
+
+
+@router.get("/{source_id}/refresh-status")
+def api_get_source_refresh_status(
+    source_id: str = Path(..., min_length=1, max_length=128),
+    user=require_permission("knowledge_source", "read"),
+):
+    return {"success": True, "data": _call(get_source_refresh_status, source_id, user), "message": ""}
 
 
 @router.post("/{source_id}/versions")

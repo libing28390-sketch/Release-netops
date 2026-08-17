@@ -1106,6 +1106,87 @@ export interface KnowledgeDocumentVersionComparison {
   raw_content_included: false;
 }
 
+export interface KnowledgeSourceRegistry {
+  id: string;
+  tenant_id: string;
+  source_type: string;
+  source_kind: string;
+  name: string;
+  description?: string;
+  canonical_url: string;
+  allowed_host: string;
+  trust_level: string;
+  status: string;
+  fetch_enabled: boolean;
+  validation_status: string;
+  validation?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  updated_at?: string;
+  created_at?: string;
+}
+
+export interface KnowledgeSourceRefreshObservation {
+  id: string;
+  source_registry_id: string;
+  source_version_id?: string | null;
+  checked_at?: string;
+  outcome: string;
+  detection_type?: string;
+  content_hash?: string;
+  byte_size?: number;
+  http_status?: number | null;
+  error_code?: string;
+  metadata?: Record<string, unknown>;
+  version_signal?: Record<string, unknown>;
+}
+
+export interface KnowledgeSourceRefreshStatus {
+  source_id: string;
+  tenant_id: string;
+  registry_status: string;
+  validation_status: string;
+  fetch_enabled: boolean;
+  freshness_status: 'healthy' | 'failed' | 'attention' | 'never_checked' | 'not_configured' | string;
+  last_checked_at?: string | null;
+  last_outcome?: string | null;
+  last_detection_type?: string;
+  last_error_code?: string;
+  last_content_hash?: string;
+  last_source_version_id?: string;
+  last_http_status?: number | null;
+  observation_count: number;
+  counts: Record<string, number>;
+  latest_version?: { id: string; content_hash: string; byte_size: number; fetched_at?: string; status?: string } | null;
+  error_code?: string;
+}
+
+interface KnowledgeSourceEnvelope<T> { success: boolean; data: T; message?: string }
+
+export async function listKnowledgeSources(status = 'all'): Promise<KnowledgeSourceRegistry[]> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRegistry[]>>(`/api/knowledge-v2/sources?status=${encodeURIComponent(status)}`);
+  return payload.data || [];
+}
+
+export async function getKnowledgeSourceRefreshStatus(sourceId: string): Promise<KnowledgeSourceRefreshStatus> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRefreshStatus>>(`/api/knowledge-v2/sources/${encodeURIComponent(sourceId)}/refresh-status`);
+  return payload.data;
+}
+
+export async function listKnowledgeSourceRefreshObservations(sourceId: string, limit = 50): Promise<KnowledgeSourceRefreshObservation[]> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRefreshObservation[]>>(`/api/knowledge-v2/sources/${encodeURIComponent(sourceId)}/refresh-observations?limit=${limit}`);
+  return payload.data || [];
+}
+
+export async function validateKnowledgeSource(sourceId: string): Promise<Record<string, unknown>> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<Record<string, unknown>>>(`/api/knowledge-v2/sources/${encodeURIComponent(sourceId)}/validate`, { method: 'POST' });
+  return payload.data;
+}
+
+export async function refreshKnowledgeSource(sourceId: string): Promise<Record<string, unknown>> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<Record<string, unknown>>>(`/api/knowledge-v2/sources/${encodeURIComponent(sourceId)}/fetch`, { method: 'POST', body: JSON.stringify({ method: 'GET' }) });
+  return payload.data;
+}
+
 export interface KnowledgeDocumentsResponse {
   items: KnowledgeDocument[];
   total: number;

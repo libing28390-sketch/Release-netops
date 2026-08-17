@@ -143,3 +143,43 @@ def test_cat003_api_contract_exposes_crud_lifecycle_validation_and_versions():
     assert any(path.endswith("/{source_id}/enable") and "POST" in methods for path, methods in paths)
     assert any(path.endswith("/{source_id}/disable") and "POST" in methods for path, methods in paths)
     assert any(path.endswith("/{source_id}/versions") and "POST" in methods for path, methods in paths)
+
+
+def test_kui015_source_refresh_status_is_bounded_and_tenant_scoped(isolated_db, make_user):
+    from services.source_registry_service import (
+        create_source,
+        enable_source,
+        get_source_refresh_status,
+        record_source_refresh_observation,
+        SourceRegistryError,
+    )
+
+    operator = make_user("kui015-status", role="Operator")
+    source = create_source(_internal_payload("https://kb.internal.example/docs/kui015"), operator)
+    enable_source(source["id"], operator)
+    record_source_refresh_observation(
+        source["id"],
+        {
+            "request_method": "GET",
+            "http_status": 200,
+            "outcome": "unchanged",
+            "content_hash": "",
+            "error": {},
+            "metadata": {"worker": "test"},
+        },
+        operator,
+    )
+    status = get_source_refresh_status(source["id"], operator)
+    assert status["freshness_status"] == "healthy"
+    assert status["observation_count"] == 1
+    assert status["counts"]["unchanged"] == 1
+    assert "body" not in str(status).lower()
+    other = make_user("kui015-other", role="Operator")
+    other["tenant_id"] = "tenant-kui015-other"
+    with pytest.raises(SourceRegistryError) as denied:
+        get_source_refresh_status(source["id"], other)
+    assert denied.value.code == "SOURCE_NOT_FOUND"
+
+    from api.knowledge_sources import router
+    paths = {(route.path, tuple(sorted(route.methods or ()))) for route in router.routes}
+    assert any(path.endswith("/{source_id}/refresh-status") and "GET" in methods for path, methods in paths)

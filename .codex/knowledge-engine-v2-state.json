@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "KUI-015",
+  "current_task": "KUI-016",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T11:35:00+08:00",
-  "last_completed_task": "KUI-014",
+  "updated_at": "2026-08-17T11:50:00+08:00",
+  "last_completed_task": "KUI-015",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -272,7 +272,8 @@
     "KUI-011",
     "KUI-012",
     "KUI-013",
-    "KUI-014"
+    "KUI-014",
+    "KUI-015"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -306,7 +307,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "KUI-015",
     "KUI-016",
     "KUI-017",
     "KUI-018",
@@ -390,7 +390,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "0fe8ebca",
+  "last_verified_commit": "PENDING_KUI_015_LOCAL_COMMIT",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -728,7 +728,16 @@
   "kui014_frontend_lint": "PASS",
   "kui014_frontend_build": "PASS; existing large-chunk warning only",
   "kui014_frontend_tests": "16 files / 90 tests passed",
-  "completed_count": 267,
+  "kui015_status": "DONE_PASS",
+  "kui015_final_verified_at": "2026-08-17T11:50:00+08:00",
+  "kui015_evidence": "docs/knowledge-engine-v2/evidence/KUI-015.md",
+  "kui015_contract": "docs/knowledge-engine-v2/architecture/KUI-001-018-KNOWLEDGE-ADMIN-CONTRACT.yaml",
+  "kui015_focused_tests": "21 passed; CAT-003/ING-018/ING-019 regression",
+  "kui015_postgresql_probe": "PASS; status projection, bounded observation history, tenant isolation, no raw leak, rollback cleanup",
+  "kui015_frontend_lint": "PASS",
+  "kui015_frontend_build": "PASS; existing large-chunk warning only",
+  "kui015_frontend_tests": "16 files / 90 tests passed",
+  "completed_count": 268,
   "p0_completed_count": 221,
-  "resume_from": "KUI-015"
+  "resume_from": "KUI-016"
 }
