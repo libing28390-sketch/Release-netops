@@ -43,6 +43,7 @@ def _json_db_value(value: Dict[str, Any]) -> Any:
             pass
     return json_safe_metadata(value)
 from ai.services.rag_policy import parse_acl
+from ai.services.retrieval_contract import retrieval_cache
 
 
 _DEFAULT_DIRECTORY_NAMES = (
@@ -714,6 +715,7 @@ class KnowledgeService:
                 cursor.execute("DELETE FROM ai_document WHERE id = ?", (doc_id,))
             
             conn.commit()
+            retrieval_cache.invalidate_documents(doc_ids)
             return {"deleted_count": len(doc_ids)}
 
     def delete_document(self, doc_id: str, tenant_id: str = "tenant-default") -> Dict[str, Any]:
@@ -732,6 +734,7 @@ class KnowledgeService:
             cursor.execute("DELETE FROM ai_document_chunk WHERE document_id = ?", (doc_id,))
             cursor.execute("DELETE FROM ai_document WHERE id = ?", (doc_id,))
             conn.commit()
+            retrieval_cache.invalidate_documents([doc_id])
             return {"deleted": True, "id": doc_id}
 
     def batch_delete_documents(self, doc_ids: List[str], tenant_id: str = "tenant-default") -> Dict[str, Any]:
@@ -752,6 +755,7 @@ class KnowledgeService:
                     cursor.execute("DELETE FROM ai_document WHERE id = ?", (doc_id,))
                     deleted += 1
             conn.commit()
+            retrieval_cache.invalidate_documents(doc_ids)
             return {"deleted_count": deleted, "requested": len(doc_ids)}
 
     def smart_chunk_markdown(self, markdown_text: str, max_chunk_size: int = 800) -> List[Dict[str, Any]]:
@@ -980,6 +984,10 @@ class KnowledgeService:
                     [chunk_values[key] for key in chunk_columns_ordered],
                 )
             conn.commit()
+
+        # Exact invalidation occurs only after the document and all chunks are
+        # committed; a failed transaction cannot evict a still-valid result.
+        retrieval_cache.invalidate_documents([doc_id])
 
         return {
             "document_id": doc_id,

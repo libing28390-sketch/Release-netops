@@ -21,16 +21,16 @@ policy:
   environment_failure: mark the affected task BLOCKED with the missing DATABASE_URL/extension/permission and continue only with independent non-DB work
 required_probes:
   - name: ret_pg_migration_probe
-    command: py -3.13 scripts/knowledge_engine_v2_ret_pg_probe.py
+    command: .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_ret_pg_probe.py
     checks: [real_connection, vector_version, pg_trgm_version, m0138_idempotency, rollback, v1_columns_unchanged]
   - name: ret_pg_retrieval_probe
-    command: py -3.13 scripts/knowledge_engine_v2_ret_pg_probe.py --retrieval
+    command: .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_ret_pg_probe.py --retrieval
     checks: [tenant_filter, status_filter, acl_filter, fts, trgm_threshold, vector_cosine, bounded_candidate_set, no_secret_output]
   - name: ret_pg_explain_probe
-    command: py -3.13 scripts/knowledge_engine_v2_ret_pg_probe.py --explain
+    command: .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_ret_pg_probe.py --explain
     checks: [required_index, no_unbounded_scan, bounded_top_k, plan_recorded]
   - name: ret_v1_baseline
-    command: py -3.13 docs/knowledge-engine-v2/eval/run_v1_baseline.py
+    command: .venv\\Scripts\\python.exe docs/knowledge-engine-v2/eval/run_v1_baseline.py
     checks: [retrieval_accuracy, wrong_vendor_rate, version_conflict_rate, citation_accuracy, citation_recall, latency]
 task_gate:
   RET-008: [pg_trgm_extension, trgm_index, configurable_threshold, threshold_boundary, tenant_and_status_sql, pg_probe]

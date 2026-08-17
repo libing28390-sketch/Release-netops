@@ -23,7 +23,7 @@
 
 ```powershell
 $env:PYTHONPATH = "backend"
-py -3.13 scripts/knowledge_engine_v2_ret_pg_probe.py
+.venv\\Scripts\\python.exe scripts/knowledge_engine_v2_ret_pg_probe.py
 ```
 
 若 `DATABASE_URL`、扩展、权限或连接不可用，RET 任务标记为 `BLOCKED`，不得

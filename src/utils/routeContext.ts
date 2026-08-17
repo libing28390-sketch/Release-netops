@@ -220,6 +220,7 @@ export function getRouteContext(pathname: string): RouteContext {
     else if (second === 'copilot') activeTab = 'ai-copilot';
     else if (second === 'agents') activeTab = 'ai-agents';
     else if (second === 'knowledge') activeTab = 'ai-knowledge';
+    else if (second === 'retrieval-test') activeTab = 'ai-retrieval-test';
     else if (second === 'catalog') activeTab = 'ai-catalog';
     else if (second === 'governance') activeTab = 'ai-governance';
     else if (second === 'usage') activeTab = 'ai-usage';

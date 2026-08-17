@@ -9,6 +9,7 @@ import { AgentManagementTab } from './Agents/AgentManagementTab';
 import { GovernanceTab } from './Governance/GovernanceTab';
 import { KnowledgeManagementTab } from './Knowledge/KnowledgeManagementTab';
 import { ProductCatalogManagementTab } from './Catalog/ProductCatalogManagementTab';
+import { RetrievalTestTab } from './Knowledge/RetrievalTestTab';
 
 interface AiCenterPageProps {
   activeSubTab?: string;
@@ -26,6 +27,7 @@ export const AiCenterPage: React.FC<AiCenterPageProps> = ({ activeSubTab }) => {
       {activeTab === 'copilot' && <AssistantTab />}
       {activeTab === 'agents' && <AgentManagementTab />}
       {activeTab === 'knowledge' && <KnowledgeManagementTab />}
+      {activeTab === 'retrieval-test' && <RetrievalTestTab />}
       {activeTab === 'catalog' && <ProductCatalogManagementTab />}
       {activeTab === 'governance' && <GovernanceTab />}
       {activeTab === 'usage' && <UsageDashboardTab />}

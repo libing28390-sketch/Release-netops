@@ -35,6 +35,7 @@ from ai.services.knowledge_metadata import (
     parse_markdown_document,
     validate_metadata,
 )
+from ai.services.retrieval_contract import retrieval_cache
 
 
 def _now() -> str:
@@ -494,6 +495,7 @@ class KnowledgeReindexService:
                 )
             conn.commit()
         counters["updated"] = 1
+        retrieval_cache.invalidate_documents([document["id"]])
         return counters
 
     def _read_job_record(self, job_id: str) -> Optional[Dict[str, Any]]:

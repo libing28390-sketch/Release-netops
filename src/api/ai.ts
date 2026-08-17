@@ -616,6 +616,42 @@ export async function getKnowledgeStats(): Promise<{ total_documents: number; to
   return apiRequest('/api/ai/assistant/knowledge-stats');
 }
 
+export interface RetrievalTestResult {
+  contract_version: string;
+  normalized_query?: string | null;
+  entities: Record<string, unknown>;
+  filters: Record<string, unknown>;
+  resolution: {
+    outcome?: string;
+    ambiguous: boolean;
+    candidates: Array<Record<string, unknown>>;
+    platform_candidates: string[];
+    match_method?: string;
+    match_score?: number | null;
+  };
+  final_chunks: Array<{
+    chunk_id?: string;
+    document_id?: string;
+    document_name?: string;
+    section?: string;
+    platform?: string;
+    score?: number;
+    score_components?: Record<string, unknown>;
+    version_evidence?: string;
+    content?: string;
+    context_chunk_ids?: string[];
+  }>;
+  explanation: Record<string, unknown>;
+  debug: Record<string, unknown>;
+}
+
+export async function runKnowledgeRetrievalTest(query: string, filters: Record<string, unknown> = {}, topK = 5): Promise<RetrievalTestResult> {
+  return apiRequest<RetrievalTestResult>('/api/ai/assistant/knowledge-retrieval-test', {
+    method: 'POST',
+    body: JSON.stringify({ query, filters, top_k: topK }),
+  });
+}
+
 export interface KnowledgeCatalogModel {
   product_model_id: string;
   tenant_id: string;

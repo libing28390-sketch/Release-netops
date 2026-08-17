@@ -1,0 +1,41 @@
+tasks: [RET-011, RET-012, RET-013, RET-014, RET-015, RET-016, RET-017, RET-018, RET-019, RET-020]
+title: Metadata-filtered, fused, explainable retrieval contract
+hard_filters:
+  tenant: server_owned_and_applied_before_scoring
+  knowledge_domain: feature_domain_feature_subfeature_document_category
+  product: vendor_product_family_series_model
+  platform: os_family_os_generation_cli_platform
+  version: software_train_software_release_applicability
+  lifecycle: status_exclude_from_rag
+  permission: acl_and_authenticated_access_scope
+ranking:
+  components: [lexical, vector, metadata, trust, version]
+  weights: {lexical: 0.45, vector: 0.25, metadata: 0.15, trust: 0.10, version: 0.05}
+  deterministic: true
+  known_version_conflict: hard_exclusion
+reranker:
+  interface: rank(query, candidates)
+  candidate_cap: 20
+  timeout_ms_cap: 5000
+  failure: return_original_order_and_record_degradation
+ambiguity_and_no_match:
+  ambiguous: return_bounded_candidates_and_block_high_risk_answer
+  no_match: explicit_local_knowledge_gap; never_call_llm_to_invent_local_facts
+context:
+  include: [primary, parent, immediate_neighbor]
+  hard_character_budget: category_bounded
+cache:
+  key_fields: [query, filters, document_version, metadata_version, index_version, access_scope, tenant_id]
+  invalidation: [document_disable, document_update, permission_change, tenant_scope]
+  default_feature_flag: AI_RETRIEVAL_CACHE_ENABLED=0
+explanation:
+  contract_version: ret-explanation-v1
+  includes: [filters, candidate_count, stages, score_components, version_evidence, no_match]
+  excludes: [raw_query, raw_sql, provider_secret, unsanitized_document_body]
+admin_surface:
+  endpoint: POST /api/ai/assistant/knowledge-retrieval-test
+  permission: ai.knowledge.manage
+  ui_route: /ai/retrieval-test
+rollback:
+  runtime: disable_native_accelerators_and_reranker_cache
+  data: no_deletion; retain_v1_fields_and_chunks

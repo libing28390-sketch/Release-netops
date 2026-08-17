@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, Field
 from ai.security.permissions import require_ai_permission
 from ai.services.assistant import ai_assistant_service
+from ai.services.intent_parser import intent_parser
+from ai.security.sanitizer import sanitize_text
 from ai.services.natural_query import natural_query_service
 from ai.services.ip_troubleshooting import ip_troubleshooting_service
 from ai.services.mac_troubleshooting import mac_troubleshooting_service
@@ -32,6 +34,12 @@ class IPLocationRequest(BaseModel):
 
 class MACLocationRequest(BaseModel):
     mac: str = Field(..., description="Target MAC Address to trace")
+
+
+class RetrievalTestRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=2000)
+    top_k: int = Field(5, ge=1, le=20)
+    filters: Dict[str, Any] = Field(default_factory=dict)
 
 
 from fastapi.responses import StreamingResponse
@@ -114,6 +122,83 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                 pass
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@router.post("/knowledge-retrieval-test")
+def knowledge_retrieval_test(
+    payload: RetrievalTestRequest,
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    """Admin-only retrieval inspection surface for RET-021.
+
+    It returns normalized entities, server-owned hard filters, bounded resolver
+    candidates, final chunk evidence and the redacted RET explanation object.
+    It never returns provider credentials, raw SQL or unbounded document data.
+    """
+
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    user_id = str(user.get("username") or "")
+    roles = [str(user.get("role"))] if user.get("role") else []
+    metadata = intent_parser.parse_knowledge_metadata(payload.query)
+    requested_filters = {
+        key: value
+        for key, value in dict(payload.filters or {}).items()
+        if key in {
+            "vendor", "product_family", "product_series", "product_model",
+            "os_family", "os_generation", "software_train", "software_release",
+            "cli_platform", "document_category", "feature_domain", "feature",
+            "subfeature", "risk_level", "verification_level", "rag_priority",
+            "applicability",
+        }
+    }
+    metadata.update({key: value for key, value in requested_filters.items() if value not in (None, "", [], {})})
+    result = ai_assistant_service.retrieve_knowledge(
+        payload.query,
+        {"knowledge_intent": metadata},
+        tenant_id=tenant_id,
+        user_id=user_id,
+        roles=roles,
+        site_ids=user.get("site_ids") or [],
+    )
+    request = result.get("request")
+    resolution = result.get("resolution")
+    resolution_data = resolution.to_dict() if hasattr(resolution, "to_dict") else dict(resolution or {})
+    results = result.get("results") or []
+    final_chunks = [
+        {
+            "chunk_id": item.get("chunk_id"),
+            "document_id": item.get("document_id"),
+            "document_name": item.get("document_name"),
+            "section": item.get("section"),
+            "platform": item.get("platform"),
+            "score": item.get("relevance_score"),
+            "score_components": item.get("score_components"),
+            "version_evidence": item.get("version_evidence"),
+            "content": sanitize_text(str(item.get("content") or ""))[:12000],
+            "context_chunk_ids": item.get("context_chunk_ids") or [],
+        }
+        for item in results[:20]
+    ]
+    return {
+        "contract_version": "ret-admin-test-v1",
+        "normalized_query": resolution_data.get("normalized_query"),
+        "entities": resolution_data.get("metadata") or metadata,
+        "filters": {
+            key: getattr(request, key, value)
+            for key, value in requested_filters.items()
+        },
+        "resolution": {
+            "outcome": resolution_data.get("outcome"),
+            "ambiguous": bool(resolution_data.get("ambiguous")),
+            "candidates": resolution_data.get("candidates") or [],
+            "platform_candidates": resolution_data.get("platform_candidates") or [],
+            "match_method": resolution_data.get("match_method"),
+            "match_score": resolution_data.get("match_score"),
+        },
+        "final_chunks": final_chunks,
+        "explanation": result.get("explanation") or {},
+        "debug": result.get("debug") or {},
+    }
 
 
 @router.post("/ip-location")

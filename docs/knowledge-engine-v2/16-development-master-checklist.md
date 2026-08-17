@@ -271,18 +271,18 @@
 - [x] `RET-008` `P0/AI+DBA/M`：实现 pg_trgm Fuzzy Match 与阈值配置。
 - [x] `RET-009` `P0/AI+DBA/M`：实现 PostgreSQL FTS，优化命令、错误字符串和关键词。
 - [x] `RET-010` `P0/AI+DBA/M`：实现 pgvector Semantic Retrieval。
-- [ ] `RET-011` `P0/AI/M`：实现 Metadata Filter，至少覆盖租户、知识域、厂商、产品、OS、版本、状态和权限。
-- [ ] `RET-012` `P0/AI/M`：实现 Lexical、Vector、Metadata、Trust、Version 的融合评分。
-- [ ] `RET-013` `P0/AI/M`：实现 Reranker 接口、超时、降级和成本限制。
-- [ ] `RET-014` `P0/AI+NET/M`：实现版本兼容性校验和冲突证据说明。
-- [ ] `RET-015` `P0/AI/M`：实现 Ambiguous Match 返回候选，不进入高风险回答。
-- [ ] `RET-016` `P0/AI/M`：实现 No Match，禁止使用模型记忆伪装成本地资料。
-- [ ] `RET-017` `P0/AI+BE/M`：实现 Parent/Neighbor Context Builder 与最小上下文限制。
-- [ ] `RET-018` `P0/AI+DBA/M`：实现按 document_version、metadata_version、index_version、access_scope 的缓存键。
-- [ ] `RET-019` `P0/AI+BE/M`：实现文档禁用、更新和权限变化后的精确缓存失效。
-- [ ] `RET-020` `P1/AI+BE/M`：实现检索解释对象，供工程师证据面板使用。
-- [ ] `RET-021` `P1/FE+BE/M`：实现管理员检索测试页，可显示解析实体、过滤条件、候选和最终 Chunk。
-- [ ] `RET-022` `P1/AI+QA/L`：为 10k/100k/1m 规模完成检索与索引 Benchmark。
+- [x] `RET-011` `P0/AI/M`：实现 Metadata Filter，至少覆盖租户、知识域、厂商、产品、OS、版本、状态和权限。
+- [x] `RET-012` `P0/AI/M`：实现 Lexical、Vector、Metadata、Trust、Version 的融合评分。
+- [x] `RET-013` `P0/AI/M`：实现 Reranker 接口、超时、降级和成本限制。
+- [x] `RET-014` `P0/AI+NET/M`：实现版本兼容性校验和冲突证据说明。
+- [x] `RET-015` `P0/AI/M`：实现 Ambiguous Match 返回候选，不进入高风险回答。
+- [x] `RET-016` `P0/AI/M`：实现 No Match，禁止使用模型记忆伪装成本地资料。
+- [x] `RET-017` `P0/AI+BE/M`：实现 Parent/Neighbor Context Builder 与最小上下文限制。
+- [x] `RET-018` `P0/AI+DBA/M`：实现按 document_version、metadata_version、index_version、access_scope 的缓存键。
+- [x] `RET-019` `P0/AI+BE/M`：实现文档禁用、更新和权限变化后的精确缓存失效。
+- [x] `RET-020` `P1/AI+BE/M`：实现检索解释对象，供工程师证据面板使用。
+- [x] `RET-021` `P1/FE+BE/M`：实现管理员检索测试页，可显示解析实体、过滤条件、候选和最终 Chunk。
+- [x] `RET-022` `P1/AI+QA/L`：为 10k/100k/1m 规模完成检索与索引 Benchmark。
 
 **退出标准**：CE68/CE688/Catalyst93 等真实写法可正确识别；错误厂商和版本不被静默混用。
 

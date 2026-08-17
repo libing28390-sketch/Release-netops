@@ -163,6 +163,7 @@ export const navConfig: NavGroup[] = [
       { id: 'ai-copilot',    label: 'AI Copilot 对话', labelEn: 'AI Copilot',   path: '/ai/copilot',    icon: 'MessageSquare' },
       { id: 'ai-agents',     label: 'Agent 注册表',    labelEn: 'Agents',       path: '/ai/agents',     icon: 'Layers3' },
       { id: 'ai-knowledge',  label: '知识库管理',      labelEn: 'Knowledge',    path: '/ai/knowledge',  icon: 'BookOpen' },
+      { id: 'ai-retrieval-test', label: '检索测试', labelEn: 'Retrieval Test', path: '/ai/retrieval-test', icon: 'Search', requiredRole: 'Administrator' },
       { id: 'ai-catalog',    label: '产品目录',        labelEn: 'Product Catalog', path: '/ai/catalog', icon: 'Layers', requiredRole: 'Viewer' },
       { id: 'ai-governance', label: 'AI 变更治理',    labelEn: 'Governance',   path: '/ai/governance', icon: 'ShieldCheck' },
       { id: 'ai-usage',      label: 'Token 统计审计',  labelEn: 'Token Usage',  path: '/ai/usage',      icon: 'Activity' },

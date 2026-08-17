@@ -17,6 +17,7 @@ from ai.services.ip_troubleshooting import ip_troubleshooting_service
 from ai.services.mac_troubleshooting import mac_troubleshooting_service
 from ai.services.rag_retriever import rag_retriever, RetrievalRequest
 from ai.services.product_resolver import product_resolver, EntityResolution
+from ai.services.retrieval_contract import build_retrieval_explanation
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,8 @@ class AIAssistantService:
         """
         if not resolution.ambiguous:
             return False
+        if str(getattr(request, "risk_level", "") or "").lower() in {"high", "critical"}:
+            return True
         # Short series prefixes such as S57 are search scopes rather than a
         # claim about one exact hardware/OS mapping.  Return the exact
         # matching variants and let the answer keep them separated by
@@ -142,6 +145,7 @@ class AIAssistantService:
                     "cross_platform_search": False,
                 },
             }
+            retrieval["explanation"] = build_retrieval_explanation(request, retrieval["debug"], [])
         else:
             retrieval = rag_retriever.search(request)
             retrieval.setdefault("debug", {})["clarification_required"] = False

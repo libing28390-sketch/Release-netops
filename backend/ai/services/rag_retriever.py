@@ -20,6 +20,14 @@ from ai.security.sanitizer import sanitize_text
 from ai.services.rag_policy import document_is_visible, trust_rank
 from ai.services.knowledge_metadata import canonical_vendor
 from ai.services.product_resolver import product_resolver
+from ai.services.retrieval_contract import (
+    BoundedReranker,
+    build_minimal_context,
+    build_retrieval_explanation,
+    retrieval_cache,
+    retrieval_cache_key,
+    version_compatibility,
+)
 
 
 @dataclass
@@ -77,8 +85,26 @@ class RAGRetriever:
         "huawei", "command", "config", "configuration", "switch", "device",
     }
 
-    def __init__(self) -> None:
+    def __init__(self, *, reranker: Any = None, cache_enabled: bool | None = None) -> None:
         self.last_debug: Dict[str, Any] = {}
+        self.reranker = BoundedReranker(reranker)
+        # Native caching is a release-safe feature flag.  Tests and legacy
+        # deployments can keep it off while still using the exact key and
+        # invalidation contract; PostgreSQL deployments may enable it with
+        # AI_RETRIEVAL_CACHE_ENABLED=1.
+        self.cache_enabled = (
+            str(os.environ.get("AI_RETRIEVAL_CACHE_ENABLED", "0")).lower() in {"1", "true", "yes"}
+            if cache_enabled is None
+            else bool(cache_enabled)
+        )
+
+    @staticmethod
+    def invalidate_cache_for_documents(document_ids: Sequence[Any]) -> int:
+        return retrieval_cache.invalidate_documents(document_ids)
+
+    @staticmethod
+    def invalidate_cache_for_tenant(tenant_id: str) -> int:
+        return retrieval_cache.invalidate_tenant(tenant_id)
 
     @classmethod
     def _search_tokens(cls, value: str) -> set[str]:
@@ -292,6 +318,10 @@ class RAGRetriever:
             document_category_expr = "d.document_category" if "document_category" in columns else "NULL"
             cli_platform_expr = "d.cli_platform" if "cli_platform" in columns else "NULL"
             semantic_document_id_expr = "d.document_id" if "document_id" in columns else "NULL"
+            source_expr = "d.source" if "source" in columns else "NULL"
+            document_version_expr = "d.version" if "version" in columns else "NULL"
+            software_train_expr = "d.software_train" if "software_train" in columns else "NULL"
+            software_release_expr = "d.software_release" if "software_release" in columns else "NULL"
             candidate_expr = "COALESCE(c.is_retrieval_candidate, 1)" if "is_retrieval_candidate" in chunk_columns else "1"
             chunk_role_expr = "c.chunk_role" if "chunk_role" in chunk_columns else "'legacy'"
             parent_expr = "c.parent_chunk_id" if "parent_chunk_id" in chunk_columns else "NULL"
@@ -302,9 +332,10 @@ class RAGRetriever:
             candidate_where = f"AND {candidate_expr} = 1"
             cursor.execute(
                 f"""SELECT c.id, c.content, c.embedding, c.metadata_json, c.section,
-                           d.id, d.name, d.vendor, d.platform, d.tenant_id,
+                           d.id, d.name, {source_expr}, {document_version_expr}, d.vendor, d.platform, d.tenant_id,
                            d.acl_json, d.source_trust_level,
                            {document_category_expr}, {cli_platform_expr}, {semantic_document_id_expr},
+                           {software_train_expr}, {software_release_expr},
                            {candidate_expr}, {chunk_role_expr},
                            {parent_expr}, {ordinal_expr}, {embedding_model_expr}, {embedding_dimensions_expr}
                     FROM ai_document_chunk c
@@ -415,43 +446,32 @@ class RAGRetriever:
 
     @staticmethod
     def _expand_document_context(primary: Dict[str, Any], chunks: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-        """Attach ordered sibling chunks so a hit is not reduced to one heading."""
+        """Attach primary/parent/neighbor chunks under a hard context budget."""
 
         category = str(primary.get("document_category") or "")
         max_chars = 12_000 if category == "configuration" else 10_000 if category == "cli_output" else 8_000
-        ordered = sorted(chunks, key=lambda item: (int(item.get("ordinal") or 0), str(item.get("chunk_id") or "")))
-        selected: list[Dict[str, Any]] = []
-        used = 0
-        for item in ordered:
-            content = str(item.get("content") or "").strip()
-            if not content:
-                continue
-            addition = len(content) + len(str(item.get("section") or "")) + 8
-            if selected and used + addition > max_chars:
-                continue
-            selected.append(item)
-            used += addition
-        if primary not in selected:
-            selected.insert(0, primary)
-
-        context_parts = []
-        seen: set[str] = set()
-        for item in selected:
-            content = str(item.get("content") or "").strip()
-            if not content or content in seen:
-                continue
-            seen.add(content)
-            heading = str(item.get("section") or "General Overview")
-            context_parts.append(f"## {heading}\n{content}")
+        context = build_minimal_context(primary, chunks, max_chars=max_chars)
         expanded = dict(primary)
-        expanded["content"] = "\n\n".join(context_parts)
-        expanded["context_sections"] = [str(item.get("section") or "General Overview") for item in selected]
-        expanded["context_chunk_count"] = len(selected)
+        expanded["content"] = context["content"]
+        selected_ids = set(context["context_chunk_ids"])
+        expanded["context_sections"] = [
+            str(item.get("section") or "General Overview")
+            for item in chunks
+            if str(item.get("chunk_id") or "") in selected_ids
+        ]
+        expanded.update(context)
         return expanded
 
     def search(self, request: RetrievalRequest, min_relevance: float = 0.20) -> Dict[str, Any]:
         top_k = max(1, int(request.top_k or 3))
         candidate_hint = max(top_k * 30, 100)
+        cache_key = retrieval_cache_key(request)
+        if self.cache_enabled:
+            cached = retrieval_cache.get(cache_key)
+            if cached is not None:
+                cached.setdefault("debug", {})["cache"] = {"hit": True, "key": cache_key}
+                self.last_debug = cached.get("debug") or {}
+                return cached
         try:
             rows, _document_count, debug = self._query_rows(request, candidate_hint)
             accelerator_scores, accelerator_debug = self._native_accelerator_scores(
@@ -471,9 +491,10 @@ class RAGRetriever:
             for row in rows:
                 (
                     c_id, content, embedding_json, meta_json, section,
-                    doc_id, doc_name, d_vendor, d_platform, d_tenant,
+                    doc_id, doc_name, document_source, document_version, d_vendor, d_platform, d_tenant,
                     acl_json, trust_level, document_category, cli_platform,
-                    semantic_document_id, _is_candidate, chunk_role,
+                    semantic_document_id, document_software_train, document_software_release,
+                    _is_candidate, chunk_role,
                     parent_chunk_id, ordinal, stored_embedding_model, stored_embedding_dimensions,
                 ) = row
                 document = {"id": doc_id, "tenant_id": d_tenant, "acl_json": acl_json}
@@ -528,7 +549,24 @@ class RAGRetriever:
                     elif actual_text == requested_text:
                         matched_count += 1
                 metadata_score = matched_count / max(1, requested_count)
-                score = 0.65 * keyword_score + 0.20 * vector_score + 0.15 * metadata_score
+                applicable_versions = metadata.get("applicable_versions") or metadata.get("verified_versions") or []
+                version_score, version_evidence = version_compatibility(
+                    request.software_train,
+                    request.software_release,
+                    document_software_train or metadata.get("software_train"),
+                    document_software_release or metadata.get("software_release"),
+                    applicable_versions if isinstance(applicable_versions, (list, tuple, set)) else [],
+                )
+                trust_score = max(0.0, min(1.0, trust_rank(trust_level) / 4.0))
+                from ai.services.retrieval_contract import ScoreComponents
+                components = ScoreComponents(
+                    lexical=keyword_score,
+                    vector=vector_score,
+                    metadata=metadata_score,
+                    trust=trust_score,
+                    version=version_score,
+                )
+                score = components.total
                 exact_command_required = bool(self._command_phrases(request.query)) and str(document_category or "") in {"command", "cli_output"}
                 # Product/series questions often use a local alias such as
                 # ``CE6800`` while the verified document stores the canonical
@@ -540,10 +578,18 @@ class RAGRetriever:
                     and (request.product_series or request.product_model)
                     and metadata_score >= 0.90
                 )
+                if version_score == 0.0 and (request.software_train or request.software_release):
+                    # Version conflicts are hard retrieval boundaries.  A
+                    # lexical/vector hit must not smuggle a known incompatible
+                    # release into an operator answer.
+                    continue
                 item = {
                     "chunk_id": c_id,
                     "content": sanitize_text(str(content or "")),
                     "document_name": doc_name,
+                    "source": document_source,
+                    "document_version": document_version,
+                    "document_status": request.status,
                     "document_id": semantic_document_id or doc_id,
                     "storage_document_id": doc_id,
                     "section": section,
@@ -561,6 +607,10 @@ class RAGRetriever:
                     "keyword_score": round(keyword_score, 4),
                     "vector_score": round(vector_score, 4),
                     "metadata_score": round(metadata_score, 4),
+                    "trust_score": round(trust_score, 4),
+                    "version_score": round(version_score, 4),
+                    "version_evidence": version_evidence,
+                    "score_components": components.to_dict(),
                     "relevance_score": round(score, 4),
                 }
                 key = str(doc_id)
@@ -579,21 +629,34 @@ class RAGRetriever:
                 key=lambda item: (item["relevance_score"], item["source_trust_rank"]),
                 reverse=True,
             )[:top_k]
+            reranked_documents, reranker_debug = self.reranker.apply(request.query, ranked_documents)
             final_results = [
                 self._expand_document_context(item, chunks_by_document.get(str(item["storage_document_id"]), [item]))
-                for item in ranked_documents
+                for item in reranked_documents[:top_k]
             ]
             debug.update({
                 "dedup_document_count": len(best_by_document),
                 "incompatible_embedding_chunks": incompatible_vectors,
                 "expanded_context_chunks": sum(int(item.get("context_chunk_count") or 0) for item in final_results),
                 "final_document_ids": [item["document_id"] for item in final_results],
+                "reranker": reranker_debug,
+                "cache": {"hit": False, "key": cache_key, "enabled": self.cache_enabled},
+                "outcome": "matched" if final_results else "no_match",
             })
+            explanation = build_retrieval_explanation(request, debug, final_results)
             self.last_debug = debug
-            return {"results": final_results, "debug": debug}
+            payload = {"results": final_results, "debug": debug, "explanation": explanation}
+            if self.cache_enabled:
+                retrieval_cache.set(
+                    cache_key,
+                    payload,
+                    document_ids=[item.get("storage_document_id") for item in final_results],
+                    tenant_id=request.tenant_id,
+                )
+            return payload
         except Exception as exc:
             self.last_debug = {"error": str(exc), "candidate_count": 0, "vector_top_n": candidate_hint}
-            return {"results": [], "debug": self.last_debug}
+            return {"results": [], "debug": self.last_debug, "explanation": build_retrieval_explanation(request, self.last_debug, [])}
 
     def retrieve(
         self,

@@ -1,16 +1,19 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: RET-011 (PENDING; RET-001..010 PASS)
-Last Completed: RET-010
-Next Task: RET-011 Metadata Filter（租户、知识域、厂商、产品、OS、版本、状态、权限）
+Current Task: CIT-001 (PENDING; RET-001..022 PASS)
+Last Completed: RET-022
+Next Task: CIT-001 Citation 数据合同
 
-Completed: 131 / 359
-P0: 117 / 277
+Completed: 143 / 359
+P0: 128 / 277
 
 Blocked Tasks: none
 
 Recent Tests:
+- RET-022 PostgreSQL benchmark: PASS; 10k/100k/1m temporary fixtures, FTS/trigram/vector p50/p95, tenant leak=0, HNSW Top-K=10, rollback PASS; 1m trigram capacity warning recorded
+- RET-011..021 focused contract/RAG tests: 18 passed; version conflict, fused score, reranker timeout, parent/neighbor budget, cache key and explanation redaction verified
+- RET-021 frontend/admin surface: `npm.cmd run lint` PASS; `npm.cmd run build` PASS (existing large-chunk warning only)
 - RET-008..010 PostgreSQL authoritative probe: PASS; PostgreSQL 18.4, vector 0.8.6, pg_trgm 1.6; m0138/index/FTS/trigram/vector/tenant boundary and rollback verified; compatibility suite 19 passed
 - RET PostgreSQL test plan: PASS; SQLite explicitly compatibility-only and never a RET database gate
 - RET-004..007 focused and RAG regression: 15 passed; exact/canonical/prefix/hierarchy boundaries verified
