@@ -50,6 +50,15 @@ interface FolderCategory {
 type FileQueueStatus = 'pending' | 'reading' | 'indexing' | 'done' | 'error';
 type KnowledgeScope = 'all' | 'official' | 'enterprise';
 
+interface QueueMetadataPreview {
+  vendor: string;
+  platform: string;
+  sourceType: string;
+  directoryPath: string;
+  validation: 'ready' | 'warning' | 'error';
+  issue?: string;
+}
+
 interface FileQueueItem {
   id: string;
   fileName: string;
@@ -62,6 +71,7 @@ interface FileQueueItem {
   directoryCategory?: string;
   directoryVendor?: string;
   directoryPath?: string;
+  metadata?: Partial<QueueMetadataPreview>;
 }
 
 /* ── Supported text extensions ── */
@@ -913,6 +923,41 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   const selectedVendorOption = directoryVendorOptions.find((item) => item.value === vendor);
 
+  const getQueueMetadataPreview = (item: FileQueueItem): QueueMetadataPreview => {
+    const directoryPath = item.metadata?.directoryPath || item.directoryPath || knowledgeDirectory || '未指定目录';
+    const inferredSlug = item.directoryVendor || directoryPath.split('/').map((segment) => getKnowledgeDirectoryVendor(segment)).find(Boolean) || '';
+    const inferredOption = inferredSlug
+      ? directoryVendorOptions.find((option) => getKnowledgeDirectoryVendor(option.value) === inferredSlug)
+      : undefined;
+    const selectedVendor = item.metadata?.vendor || inferredOption?.value || vendor;
+    const selectedOption = directoryVendorOptions.find((option) => option.value === selectedVendor);
+    const selectedPlatform = item.metadata?.platform
+      || (selectedVendor === vendor ? platform : selectedOption?.platforms[0]?.value || '');
+    const selectedSourceType = item.metadata?.sourceType || sourceType;
+    let validation: QueueMetadataPreview['validation'] = 'ready';
+    let issue = '';
+    if (inferredSlug && !inferredOption) {
+      validation = 'error';
+      issue = `目录厂商 ${inferredSlug} 尚未同步到资产选项`;
+    } else if (inferredSlug && getKnowledgeDirectoryVendor(selectedVendor) !== inferredSlug) {
+      validation = 'error';
+      issue = `目录厂商为 ${inferredSlug}，当前 Metadata 却选择 ${selectedVendor || '未选择'}`;
+    } else if (!selectedVendor || !selectedPlatform) {
+      validation = 'error';
+      issue = '必须为每个文件选择可用 Vendor 和 CLI Platform';
+    } else if (!inferredSlug) {
+      validation = 'warning';
+      issue = '未从文件路径推断厂商，将使用当前行选择的 Metadata';
+    }
+    return { vendor: selectedVendor, platform: selectedPlatform, sourceType: selectedSourceType, directoryPath, validation, issue };
+  };
+
+  const updateQueueMetadata = (id: string, field: 'vendor' | 'platform' | 'sourceType', value: string) => {
+    setFileQueue((items) => items.map((item) => (
+      item.id === id ? { ...item, error: undefined, metadata: { ...item.metadata, [field]: value } } : item
+    )));
+  };
+
   const buildKnowledgeMetadata = (overrides?: {
     category?: string;
     vendorSlug?: string;
@@ -1038,11 +1083,22 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (pendingItems.length === 0) return;
     if (!ensureAssetMetadataSelection()) return;
 
-    setBatchSubmitting(true);
-    setBatchProgress({ done: 0, total: pendingItems.length });
+    const preparedItems = pendingItems.map((item) => ({ item, metadata: getQueueMetadataPreview(item) }));
+    const invalidItems = preparedItems.filter(({ metadata }) => metadata.validation === 'error');
+    if (invalidItems.length > 0) {
+      setFileQueue((items) => items.map((item) => {
+        const invalid = invalidItems.find(({ item: candidate }) => candidate.id === item.id);
+        return invalid ? { ...item, error: invalid.metadata.issue || 'Metadata 校验失败' } : item;
+      }));
+      window.alert(`有 ${invalidItems.length} 个文件的 Metadata 与目录/资产不一致，请逐行修正后再提交。`);
+      return;
+    }
 
-    for (let i = 0; i < pendingItems.length; i++) {
-      const item = pendingItems[i];
+    setBatchSubmitting(true);
+    setBatchProgress({ done: 0, total: preparedItems.length });
+
+    for (let i = 0; i < preparedItems.length; i++) {
+      const { item, metadata: itemMetadata } = preparedItems[i];
       // Mark as indexing
       setFileQueue(prev => prev.map(f => f.id === item.id ? { ...f, status: 'indexing' as FileQueueStatus } : f));
 
@@ -1050,13 +1106,13 @@ export const KnowledgeManagementTab: React.FC = () => {
         await addKnowledgeDocument({
           name: getFileNameWithoutExt(item.fileName),
           content: item.content.trim(),
-          vendor,
-          ...(platform && platform.toLowerCase() !== 'all' ? { platform } : {}),
-          knowledge_source_type: sourceType,
+          vendor: itemMetadata.vendor,
+          ...(itemMetadata.platform && itemMetadata.platform.toLowerCase() !== 'all' ? { platform: itemMetadata.platform } : {}),
+          knowledge_source_type: itemMetadata.sourceType,
           metadata: buildKnowledgeMetadata({
             category: item.directoryCategory,
-            vendorSlug: item.directoryVendor,
-            directoryPath: item.directoryPath,
+            vendorSlug: getKnowledgeDirectoryVendor(itemMetadata.vendor) || item.directoryVendor,
+            directoryPath: itemMetadata.directoryPath,
             fileName: item.fileName,
             relativePath: item.relativePath,
           }),
@@ -1066,7 +1122,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         setFileQueue(prev => prev.map(f => f.id === item.id ? { ...f, status: 'error' as FileQueueStatus, error: err.message || '提交失败' } : f));
       }
 
-      setBatchProgress({ done: i + 1, total: pendingItems.length });
+      setBatchProgress({ done: i + 1, total: preparedItems.length });
     }
 
     setBatchSubmitting(false);
@@ -1273,6 +1329,9 @@ export const KnowledgeManagementTab: React.FC = () => {
             支持目录分类、多文件批量上传 (Markdown / HTML / PDF / DOCX / TXT / ZIP 压缩包) 与 Standard Markdown 解析。
           </p>
         </div>
+        <button type="button" onClick={() => { setShowModal(true); setInputMode('upload'); setIngestionError(''); }} className="hidden items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 sm:inline-flex">
+          <UploadCloud className="h-3.5 w-3.5" />批量上传企业文件
+        </button>
       </div>
 
       <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-xs dark:border-slate-700/80 dark:bg-slate-800" aria-label="知识来源导入入口">
@@ -1871,7 +1930,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       )}
 
       {/* Upload File & Create Document Modal */}
-      {false && showModal && (
+      {showModal && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-3">
@@ -1994,7 +2053,6 @@ export const KnowledgeManagementTab: React.FC = () => {
                       className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
                     >
                       <option value="internal_sop">📘 企业内部 SOP 目录</option>
-                      <option value="official_vendor">🏢 厂商官方手册库</option>
                       <option value="internal_standard">📜 企业规范标准库</option>
                       <option value="case">🚨 应急处置与排查案例</option>
                       <option value="sample">🧪 系统示例知识 (Sample)</option>
@@ -2068,8 +2126,10 @@ export const KnowledgeManagementTab: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
-                      {fileQueue.map((item) => (
+                    <div className="max-h-72 overflow-y-auto space-y-1 pr-1">
+                      {fileQueue.map((item) => {
+                        const metadata = getQueueMetadataPreview(item);
+                        return (
                         <div
                           key={item.id}
                           className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs transition ${
@@ -2089,6 +2149,33 @@ export const KnowledgeManagementTab: React.FC = () => {
                             {item.status === 'indexing' && <Loader2 className="w-4 h-4 text-indigo-500 animate-spin" />}
                             {item.status === 'pending' && <FileText className="w-4 h-4 text-gray-400" />}
                           </div>
+
+                          {item.status === 'pending' && (
+                            <div className="w-full basis-full rounded-xl border border-slate-200 bg-white/80 p-2 dark:border-slate-700 dark:bg-slate-900/60">
+                              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                <span>本文件 Metadata 预览</span>
+                                <span className={metadata.validation === 'error' ? 'text-rose-600' : metadata.validation === 'warning' ? 'text-amber-600' : 'text-emerald-600'}>{metadata.validation === 'error' ? '需修正' : metadata.validation === 'warning' ? '请确认' : '可提交'}</span>
+                              </div>
+                              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                                <select value={metadata.vendor} onChange={(event) => updateQueueMetadata(item.id, 'vendor', event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" aria-label={`${item.fileName} Vendor Metadata`}>
+                                  <option value="">Vendor</option>
+                                  {directoryVendorOptions.map((option) => <option key={option.value} value={option.value}>{option.value}</option>)}
+                                </select>
+                                <select value={metadata.platform} onChange={(event) => updateQueueMetadata(item.id, 'platform', event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" aria-label={`${item.fileName} Platform Metadata`}>
+                                  <option value="">CLI Platform</option>
+                                  {(directoryVendorOptions.find((option) => option.value === metadata.vendor)?.platforms || []).map((option) => <option key={option.value} value={option.value}>{option.value}</option>)}
+                                </select>
+                                <select value={metadata.sourceType} onChange={(event) => updateQueueMetadata(item.id, 'sourceType', event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" aria-label={`${item.fileName} source type Metadata`}>
+                                  <option value="internal_sop">企业 SOP</option>
+                                  <option value="internal_standard">企业规范</option>
+                                  <option value="case">排查案例</option>
+                                  <option value="sample">系统示例</option>
+                                  <option value="user_document">用户上传</option>
+                                </select>
+                              </div>
+                              <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">目录：{metadata.directoryPath}{metadata.issue ? ` · ${metadata.issue}` : ''}</div>
+                            </div>
+                          )}
 
                           {/* File info */}
                           <div className="flex-1 min-w-0">
@@ -2132,7 +2219,8 @@ export const KnowledgeManagementTab: React.FC = () => {
                             </button>
                           )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
 
                     {/* Batch progress bar */}
@@ -2221,7 +2309,6 @@ export const KnowledgeManagementTab: React.FC = () => {
                       className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
                     >
                       <option value="internal_sop">📘 企业内部 SOP 目录</option>
-                      <option value="official_vendor">🏢 厂商官方手册库</option>
                       <option value="internal_standard">📜 企业规范标准库</option>
                       <option value="case">🚨 应急处置与排查案例</option>
                       <option value="sample">🧪 系统示例知识 (Sample)</option>

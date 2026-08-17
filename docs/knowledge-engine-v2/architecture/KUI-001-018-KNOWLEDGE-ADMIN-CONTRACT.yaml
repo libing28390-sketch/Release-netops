@@ -65,6 +65,12 @@ ingestion_forms:
     transport: multipart
     required: [file, title, owner, department]
     validation: [max_20mb, classification_forced_internal, tenant_scoped]
+batch_upload:
+  metadata_preview_per_file: true
+  editable_fields: [vendor, cli_platform, source_type]
+  inferred_directory_vendor_mismatch: blocking
+  missing_directory_vendor: explicit_warning
+  submit_uses_each_file_preview: true
   pagination:
     max_page_size: 100
     default_page_size: 20
