@@ -7,7 +7,7 @@ Next Task: API-005（按原清单依赖继续）
 
 Completed: 275 / 359
 P0: 225 / 277
-Last Verified Commit: API-004-local（API-004 PASS；不 push）
+Last Verified Commit: 6a825718（API-004 PASS；不 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
 Recent Build: API-004 backend response/pagination regression 28 passed；frontend 20 files / 98 tests；lint/build/compile/diff PASS
