@@ -149,6 +149,17 @@ export const ProviderManagementTab: React.FC = () => {
         error_code: res.error_code,
       };
       setTestResult(result);
+      // Keep the summary card in sync with the just-completed probe. The API
+      // persists the health result, but the list is otherwise only refreshed
+      // on mount/manual refresh, which could leave a stale AI_SECURITY_BLOCKED
+      // badge visible after a successful test.
+      setProviders((current) => current.map((item) => item.id === id
+        ? {
+            ...item,
+            health_status: result.success ? 'healthy' : 'unhealthy',
+            last_error_code: result.success ? null : (result.error_code || item.last_error_code),
+          }
+        : item));
       showToast(
         result.success
           ? (zh ? `${provider?.name || 'Provider'} 连接测试通过` : `${provider?.name || 'Provider'} connection test passed`)

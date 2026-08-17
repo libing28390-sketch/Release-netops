@@ -28,7 +28,8 @@ const provider = {
   max_retries: 2,
   enabled: true,
   allowed_data_classification: 'PUBLIC',
-  health_status: 'healthy',
+  health_status: 'unhealthy',
+  last_error_code: 'AI_SECURITY_BLOCKED',
   created_at: '2026-08-17T00:00:00Z',
   updated_at: '2026-08-17T00:00:00Z',
 };
@@ -58,6 +59,8 @@ describe('ProviderManagementTab browser key paths', () => {
 
     await user.click(screen.getByRole('button', { name: '测试连通性' }));
     expect(await screen.findByText('连接测试通过')).toBeTruthy();
+    expect(screen.getByText('健康: healthy')).toBeTruthy();
+    expect(screen.queryByText('AI_SECURITY_BLOCKED')).toBeNull();
     expect(testProvider).toHaveBeenCalledWith(provider.id);
 
     await user.click(screen.getByRole('button', { name: '添加 Provider' }));
