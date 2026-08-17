@@ -1,4 +1,4 @@
-"""ING-002 single official URL import API."""
+"""Knowledge V2 ingestion and Import Job control API."""
 
 from __future__ import annotations
 
@@ -89,6 +89,22 @@ def _public_job_snapshot(job: Any) -> dict[str, Any]:
     return result
 
 
+_JOB_LIST_FIELDS = (
+    "id", "job_kind", "status", "lifecycle_status", "execution_state", "phase",
+    "phase_started_at", "started_at", "finished_at", "created_at", "updated_at",
+    "retry_of_job_id", "total_count", "processed_count", "parsed_count", "failed_count",
+    "succeeded_count", "skipped_count", "retryable_failed_count", "error_count",
+    "progress_percent", "retry_count", "max_retries", "attempt_no", "next_retry_at",
+    "last_error_code", "last_error_at", "cancel_requested_at", "cancelled_at", "lease_held", "lease_owner",
+)
+
+
+def _public_job_summary(job: Any) -> dict[str, Any]:
+    """Return bounded list data; error/audit history stays on detail endpoints."""
+    snapshot = _public_job_snapshot(job)
+    return {key: snapshot.get(key) for key in _JOB_LIST_FIELDS}
+
+
 def _public_import_result(result: dict[str, Any]) -> dict[str, Any]:
     value = copy.deepcopy(result)
     if isinstance(value.get("job"), dict):
@@ -99,11 +115,44 @@ def _public_import_result(result: dict[str, Any]) -> dict[str, Any]:
 @router.get("/jobs")
 def api_list_ingestion_jobs(
     execution_state: str = Query(default="", max_length=32),
+    phase: str = Query(default="", max_length=32),
+    job_kind: str = Query(default="", max_length=64),
+    search: str = Query(default="", max_length=128),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     user=require_permission("knowledge_import", "read"),
 ):
-    """Return tenant-scoped progress snapshots; counters remain server-owned."""
-    rows = ingestion_pipeline.list_jobs(tenant_id=_job_tenant(user), execution_state=execution_state)
-    return {"success": True, "data": [_public_job_snapshot(row) for row in rows], "count": len(rows)}
+    """Return bounded tenant-scoped progress snapshots; counters remain server-owned."""
+    # Direct service-level tests call this function without FastAPI dependency
+    # injection, so Query defaults arrive as FieldInfo objects. Normalize them
+    # while preserving FastAPI's runtime validation for HTTP requests.
+    execution_state_value = execution_state if isinstance(execution_state, str) else ""
+    phase_value = phase if isinstance(phase, str) else ""
+    job_kind_value = job_kind if isinstance(job_kind, str) else ""
+    search_value = search if isinstance(search, str) else ""
+    page_value = page if isinstance(page, int) else 1
+    page_size_value = page_size if isinstance(page_size, int) else 20
+    rows, total = _call_job_control(
+        ingestion_pipeline.list_jobs_page,
+        tenant_id=_job_tenant(user),
+        execution_state=execution_state_value,
+        phase=phase_value,
+        job_kind=job_kind_value,
+        search=search_value,
+        page=page_value,
+        page_size=page_size_value,
+    )
+    items = [_public_job_summary(row) for row in rows]
+    return {
+        "success": True,
+        "data": items,
+        "items": items,
+        "count": total,
+        "total": total,
+        "page": page_value,
+        "page_size": page_size_value,
+        "total_pages": max(1, (total + page_size_value - 1) // page_size_value),
+    }
 
 
 @router.get("/jobs/{job_id}")

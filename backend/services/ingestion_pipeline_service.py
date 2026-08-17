@@ -1085,6 +1085,56 @@ class IngestionPipeline:
             values = [job.to_dict() for job in self._jobs.values() if job.tenant_id == tenant and (not state or job.execution_state == state)]
         return sorted(values, key=lambda item: (item["created_at"] or "", item["id"]))
 
+    def list_jobs_page(
+        self,
+        *,
+        tenant_id: str,
+        execution_state: str = "",
+        phase: str = "",
+        job_kind: str = "",
+        search: str = "",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Return a bounded tenant-scoped job summary page.
+
+        The in-process pipeline remains the compatibility implementation until
+        DB-011 is physically migrated.  Keeping filtering and slicing here
+        preserves the same API contract when the repository is replaced by a
+        PostgreSQL query, and prevents the list endpoint from returning the
+        full error/audit payload for every job.
+        """
+        tenant = _clean_text(tenant_id, field="tenant_id", maximum=128, required=True)
+        state = _enum_value(ExecutionState, execution_state, field="execution_state") if execution_state else ""
+        phase_value = _enum_value(IngestionPhase, phase, field="phase") if phase else ""
+        kind_value = _enum_value(JobKind, job_kind, field="job_kind") if job_kind else ""
+        query = _clean_text(search, field="search", maximum=128, required=False).casefold()
+        if page < 1 or page_size < 1 or page_size > 100:
+            raise IngestionPipelineError("INVALID_PIPELINE_INPUT", "page must be >= 1 and page_size must be between 1 and 100")
+        with self._lock:
+            values = []
+            for job in self._jobs.values():
+                if job.tenant_id != tenant:
+                    continue
+                if state and job.execution_state != state:
+                    continue
+                if phase_value and job.phase != phase_value:
+                    continue
+                if kind_value and job.job_kind != kind_value:
+                    continue
+                if query:
+                    haystack = " ".join(
+                        str(value or "")
+                        for value in (job.id, job.job_kind, job.execution_state, job.phase, job.last_error_code, job.scope_fingerprint)
+                    ).casefold()
+                    if query not in haystack:
+                        continue
+                values.append(job.to_dict())
+        values.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or ""), reverse=True)
+        total = len(values)
+        offset = (page - 1) * page_size
+        return values[offset:offset + page_size], total
+
     def reset_for_tests(self) -> None:
         with self._lock:
             self._jobs.clear()

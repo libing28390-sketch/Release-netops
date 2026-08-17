@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: ING-020 (PENDING)
+Current Task: ING-020 (USER_VERIFY_PENDING; automated PASS)
 Last Completed: OBS-008
-Next Task: ING-020（导入任务列表、过滤、分页、阶段进度和错误重试）
+Next Task: ING-020（等待已认证浏览器完成 Import Job 列表可见验证）
 
 Completed: 288 / 359
 P0: 234 / 277
 Last Verified Commit: b264fede（Provider tags 修复；浏览器重启后验证 PASS；本地提交；未 push）
 
 Recent Migration: OBS-003 无 migration；PostgreSQL authoritative path 未写生产
-Recent Build: OBS-008 focused 4 passed；AI 256 passed；frontend 21 files/101 tests；PostgreSQL live probe PASS（cache 0.994742、slow-query fallback、capacity PASS，relation bloat WARN）；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS；重启后浏览器验证 Provider 与 Usage Dashboard PASS
-Last Security Check: Database observability 仅返回关系/缓存/耗时/容量聚合；无 SQL、参数、凭据、tenant ID、正文或异常正文泄漏；PASS
-Recovery Point: ING-020 PENDING（OBS-008 已完成）
+Recent Build: OBS-008 focused 4 passed；ING-020 backend 17 passed；AI 262 passed；frontend 22 files/104 tests；lint/build/compile/diff PASS；full backend 1649 passed with unrelated platform/SQLite fixture failures
+Last Security Check: ING-020 tenant predicate、权限边界、列表摘要脱敏和错误详情安全边界 PASS；无 tenant ID、原始错误、审计历史或 Worker fence 泄漏
+Recovery Point: ING-020 USER_VERIFY_PENDING（本地服务已启动但浏览器需要登录）
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

@@ -1612,6 +1612,125 @@ export interface KnowledgeOfficialUrlImportPayload {
   idempotency_key?: string;
 }
 
+export type KnowledgeIngestionExecutionState = 'all' | 'queued' | 'running' | 'retry_wait' | 'paused' | 'cancel_requested' | 'cancelled' | 'succeeded' | 'failed';
+
+export interface KnowledgeIngestionJobSummary {
+  id: string;
+  job_kind: string;
+  status?: string;
+  lifecycle_status?: string;
+  execution_state: string;
+  phase: string;
+  phase_started_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  retry_of_job_id?: string | null;
+  total_count: number;
+  processed_count: number;
+  parsed_count: number;
+  failed_count: number;
+  succeeded_count: number;
+  skipped_count: number;
+  retryable_failed_count: number;
+  error_count: number;
+  progress_percent: number;
+  retry_count: number;
+  max_retries: number;
+  attempt_no: number;
+  next_retry_at?: string | null;
+  last_error_code?: string | null;
+  last_error_at?: string | null;
+  cancel_requested_at?: string | null;
+  cancelled_at?: string | null;
+  lease_held?: boolean;
+}
+
+export interface KnowledgeIngestionJobsResponse {
+  items: KnowledgeIngestionJobSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface KnowledgeIngestionJobsQuery {
+  executionState?: Exclude<KnowledgeIngestionExecutionState, 'all'> | '';
+  phase?: string;
+  jobKind?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+  signal?: AbortSignal;
+}
+
+export interface KnowledgeIngestionJobErrors {
+  job_id: string;
+  phase: string;
+  execution_state: string;
+  last_error_code?: string | null;
+  last_error_at?: string | null;
+  error_count: number;
+  errors: Array<{
+    code?: string;
+    safe_message?: string;
+    message?: string;
+    phase?: string;
+    attempt_no?: number;
+    retryable?: boolean;
+    occurred_at?: string;
+    correlation_id?: string;
+  }>;
+}
+
+export async function listKnowledgeIngestionJobs({
+  executionState,
+  phase,
+  jobKind,
+  search,
+  page = 1,
+  pageSize = 20,
+  signal,
+}: KnowledgeIngestionJobsQuery = {}): Promise<KnowledgeIngestionJobsResponse> {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (executionState) params.set('execution_state', executionState);
+  if (phase?.trim()) params.set('phase', phase.trim());
+  if (jobKind?.trim()) params.set('job_kind', jobKind.trim());
+  if (search?.trim()) params.set('search', search.trim());
+  const payload = await apiRequest<{
+    items?: KnowledgeIngestionJobSummary[];
+    data?: KnowledgeIngestionJobSummary[];
+    total?: number;
+    count?: number;
+    page?: number;
+    page_size?: number;
+    total_pages?: number;
+  }>(`/api/v2/kb/ingestion/jobs?${params.toString()}`, { signal });
+  const total = Number(payload.total ?? payload.count ?? 0);
+  const resolvedPageSize = Number(payload.page_size ?? pageSize);
+  return {
+    items: payload.items ?? payload.data ?? [],
+    total,
+    page: Number(payload.page ?? page),
+    page_size: resolvedPageSize,
+    total_pages: Number(payload.total_pages ?? Math.max(1, Math.ceil(total / resolvedPageSize))),
+  };
+}
+
+export async function getKnowledgeIngestionJobErrors(jobId: string, signal?: AbortSignal): Promise<KnowledgeIngestionJobErrors> {
+  const payload = await apiRequest<{ data: KnowledgeIngestionJobErrors }>(`/api/v2/kb/ingestion/jobs/${encodeURIComponent(jobId)}/errors`, { signal });
+  return payload.data;
+}
+
+export async function retryKnowledgeIngestionJob(jobId: string, requestId = ''): Promise<KnowledgeIngestionJobSummary> {
+  const payload = await apiRequest<{ data: KnowledgeIngestionJobSummary }>(`/api/v2/kb/ingestion/jobs/${encodeURIComponent(jobId)}/retry`, {
+    method: 'POST',
+    body: JSON.stringify(requestId ? { request_id: requestId } : {}),
+  });
+  return payload.data;
+}
+
 export async function importKnowledgeOfficialUrl(payload: KnowledgeOfficialUrlImportPayload): Promise<Record<string, unknown>> {
   return apiRequest<Record<string, unknown>>('/api/v2/kb/ingestion/official-url', {
     method: 'POST',

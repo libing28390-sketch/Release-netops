@@ -41,6 +41,7 @@ import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 import SourceRegistryPanel from './SourceRegistryPanel';
 import RagEvaluationPanel from './RagEvaluationPanel';
 import RetrievalTracePanel from './RetrievalTracePanel';
+import IngestionJobsPanel from './IngestionJobsPanel';
 
 /* ── Types ── */
 interface FolderCategory {
@@ -1534,6 +1535,8 @@ export const KnowledgeManagementTab: React.FC = () => {
         )}
         {(ingestionError || ingestionMessage) && <div className={`mt-3 rounded-xl px-3 py-2 text-[11px] ${ingestionError ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>{ingestionError || ingestionMessage}</div>}
       </section>
+
+      <IngestionJobsPanel />
 
       {/* Top Metrics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
