@@ -1507,8 +1507,8 @@ def match_profile_for_model(vendor: str, model: str) -> dict[str, Any] | None:
 
     # 2. Heuristic series / prefix matching rules
     # Cisco rules
-    if "cisco" in v_clean or any(kw in m_clean for kw in ["c9300", "c3850", "ws-c2960", "nexus"]):
-        if any(x in m_clean for x in ["9300", "9200", "9400", "9500", "c93", "c92"]):
+    if "cisco" in v_clean or any(kw in m_clean for kw in ["c93", "c94", "c95", "c92", "c38", "c36", "c29", "ws-c", "nexus", "catalyst", "asr", "isr"]):
+        if any(x in m_clean for x in ["9300", "9200", "9400", "9500", "c93", "c92", "c94", "c95", "catalyst 9"]):
             target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "Catalyst 9300"), None)
             if target:
                 return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "Catalyst 9000 (IOS-XE)", "preset": target}
