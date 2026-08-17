@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: OBS-008 (USER_VERIFY_PENDING; automated PASS)
-Last Completed: OBS-007
-Next Task: OBS-008（等待用户在 Usage Dashboard 完成可见验证）
+Current Task: ING-020 (PENDING)
+Last Completed: OBS-008
+Next Task: ING-020（导入任务列表、过滤、分页、阶段进度和错误重试）
 
-Completed: 287 / 359
+Completed: 288 / 359
 P0: 234 / 277
-Last Verified Commit: b264fede（Provider tags 修复 PASS；本地提交；未 push）
+Last Verified Commit: b264fede（Provider tags 修复；浏览器重启后验证 PASS；本地提交；未 push）
 
 Recent Migration: OBS-003 无 migration；PostgreSQL authoritative path 未写生产
-Recent Build: OBS-008 focused 4 passed；AI 256 passed；frontend 21 files/101 tests；PostgreSQL live probe PASS（cache 0.994742、slow-query fallback、capacity PASS，relation bloat WARN）；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
+Recent Build: OBS-008 focused 4 passed；AI 256 passed；frontend 21 files/101 tests；PostgreSQL live probe PASS（cache 0.994742、slow-query fallback、capacity PASS，relation bloat WARN）；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS；重启后浏览器验证 Provider 与 Usage Dashboard PASS
 Last Security Check: Database observability 仅返回关系/缓存/耗时/容量聚合；无 SQL、参数、凭据、tenant ID、正文或异常正文泄漏；PASS
-Recovery Point: OBS-008 USER_VERIFY_PENDING
+Recovery Point: ING-020 PENDING（OBS-008 已完成）
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

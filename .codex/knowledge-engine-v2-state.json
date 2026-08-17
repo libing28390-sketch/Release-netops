@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "OBS-008",
-  "task_state": "USER_VERIFY_PENDING",
-  "updated_at": "2026-08-17T15:25:00+08:00",
-  "last_completed_task": "OBS-007",
+  "current_task": "ING-020",
+  "task_state": "PENDING",
+  "updated_at": "2026-08-17T16:43:26+08:00",
+  "last_completed_task": "OBS-008",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -292,7 +292,8 @@
     "OBS-004",
     "OBS-005",
     "OBS-006",
-    "OBS-007"
+    "OBS-007",
+    "OBS-008"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -326,7 +327,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "OBS-008",
     "EVAL-001",
     "EVAL-002",
     "EVAL-003",
@@ -880,19 +880,19 @@
   "obs007_focused_tests": "OBS-007 focused 4; Import/Reindex regression 11; AI 252; frontend 21 files/101 tests",
   "obs007_gate_summary": "Catalog 192; Database 188 + 2 documented skips; V1 PostgreSQL 10/10; lint/build/compile/diff PASS; live PostgreSQL queue probe PASS",
   "obs007_production_ddl": "NONE",
-  "obs008_status": "USER_VERIFY_PENDING",
-  "obs008_final_verified_at": "2026-08-17T15:10:00+08:00",
+  "obs008_status": "DONE_PASS",
+  "obs008_final_verified_at": "2026-08-17T16:43:26+08:00",
   "obs008_evidence": "docs/knowledge-engine-v2/evidence/OBS-008.md",
   "obs008_contract": "docs/knowledge-engine-v2/architecture/OBS-008-DATABASE-OBSERVABILITY-CONTRACT.yaml",
   "obs008_focused_tests": "OBS-008 focused 4; AI suite 256; frontend 21 files/101 tests",
-  "obs008_gate_summary": "PostgreSQL live probe PASS (cache 0.994742, slow-query pg_stat_activity fallback, capacity PASS, relation bloat WARN); lint/build/compile/diff PASS; V1 PostgreSQL 10/10",
+  "obs008_gate_summary": "PostgreSQL live probe PASS (cache 0.994742, slow-query pg_stat_activity fallback, capacity PASS, relation bloat WARN); lint/build/compile/diff PASS; V1 PostgreSQL 10/10; restart后的浏览器验证 PASS（Provider 页面、Usage Dashboard PostgreSQL 观测卡片）",
   "obs008_production_ddl": "NONE",
-  "provider_tags_bugfix_status": "PASS_RESTART_REQUIRED",
+  "provider_tags_bugfix_status": "PASS_VERIFIED",
   "provider_tags_bugfix_commit": "b264fede",
   "provider_tags_bugfix_evidence": "docs/knowledge-engine-v2/evidence/BUG-PROVIDER-TAGS-001.md",
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
   "last_verified_commit": "b264fede",
-  "completed_count": 287,
+  "completed_count": 288,
   "p0_completed_count": 234,
-  "resume_from": "OBS-008"
+  "resume_from": "ING-020"
 }
