@@ -7,7 +7,7 @@ Next Task: KUI-016（按原清单依赖继续）
 
 Completed: 268 / 359
 P0: 221 / 277
-Last Verified Commit: 待 KUI-015 本地提交（KUI-015 PASS；不 push）
+Last Verified Commit: 906e8d42（KUI-015 PASS；不 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
 Recent Build: KUI-015 frontend lint/build/Vitest PASS; Python compile PASS; existing large-chunk warning only
