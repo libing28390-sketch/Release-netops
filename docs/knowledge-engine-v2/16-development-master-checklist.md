@@ -230,7 +230,7 @@
 - [ ] `ING-021` `P1/FE+BE/M`：实现导入前 Metadata 预览与人工确认。
 - [x] `ING-022` `P2/BE+SEC/L`：实现官方 Seed URL 小规模批量采集与速率限制。
 - [x] `ING-023` `P2/BE+OPS/M`：实现采集并发、退避、robots/服务条款记录和站点异常告警。
-- [ ] `ING-024` `P2/QA/L`：建立恶意 HTML、超大文件、损坏 PDF、重定向循环和重复内容测试。
+- [x] `ING-024` `P2/QA/L`：建立恶意 HTML、超大文件、损坏 PDF、重定向循环和重复内容测试。
 
 **退出标准**：Source 到 Published Document 可重复、可追踪、可重试、可隔离。
 

@@ -1,0 +1,31 @@
+task_id: ING-024
+title: Adversarial ingestion and duplicate-content verification
+status: executable
+scope:
+  - malicious HTML is cleaned before security scanning or publication
+  - parser and outbound response byte limits are enforced before unbounded work
+  - damaged PDF magic and degraded extraction paths return stable safe outcomes
+  - redirect loops stop at the registered hop limit
+  - duplicate content is replayed only within the same tenant/source identity
+  - PostgreSQL source-version uniqueness is verified transactionally and rolled back
+invariants:
+  - no raw HTML payload, response body, credential, or parser dependency error is returned in evidence
+  - security findings contain stable rule IDs, bounded locators and evidence hashes only
+  - no SQLite fixture is an acceptance dependency for this task
+  - all persistent checks use the configured PostgreSQL database and rollback before exit
+acceptance:
+  focused_tests: tests/knowledge_engine_v2/test_ing024_adversarial_inputs.py
+  postgresql_probe: scripts/knowledge_engine_v2_ing024_pg_probe.py
+  required_vectors:
+    - executable_and_hidden_html_regions_are_removed
+    - visible_prompt_injection_is_quarantined
+    - parser_and_streamed_response_oversize_are_rejected
+    - invalid_pdf_magic_rejected_and_valid_magic_degrades_safely
+    - redirect_loop_is_bounded
+    - same_tenant_same_hash_replays_and_changed_hash_creates_new_version
+    - same_tenant_duplicate_version_is_rejected_by_postgresql
+  exit_conditions:
+    - focused_tests_pass
+    - PostgreSQL probe reports PASS
+    - py_compile_and_git_diff_check_pass
+    - checklist_checkbox_is_updated_only_after_evidence
