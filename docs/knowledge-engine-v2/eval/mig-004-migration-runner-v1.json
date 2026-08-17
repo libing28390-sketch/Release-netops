@@ -1,0 +1,54 @@
+{
+  "status": "PASS",
+  "task_id": "MIG-004",
+  "authority": "PostgreSQL",
+  "sqlite": "forbidden",
+  "duration_seconds": 0.343,
+  "manifest_sha256": "f9bfde17943cf3420a2b273e5d6f1d1dacb22f12fc7a6c9a6783c9c931aca551",
+  "manifest_entries": 156,
+  "dry_run": {
+    "status": "PASS",
+    "next_offset": 156,
+    "committed_batches": 7,
+    "counts": {
+      "planned": 156,
+      "processed": 156,
+      "inserted": 0,
+      "skipped_idempotent": 0,
+      "failed": 0
+    }
+  },
+  "checkpoint": {
+    "path": "D:\\netops\\netsops-main\\docs\\knowledge-engine-v2\\eval\\mig-004-checkpoint-v1.json",
+    "status": "redacted_manifest_bound"
+  },
+  "postgres_probe": {
+    "database": "PostgreSQL",
+    "temporary_transaction_only": true,
+    "before_rollback": 1,
+    "after_rollback": 0,
+    "batch_rollback": true,
+    "production_database_write": false,
+    "sqlite": "forbidden"
+  },
+  "production_database_write": false,
+  "apply_guard": "approved_target_and_reconciled_manifest_required",
+  "rollback": "failed_batch_only_and_previous_checkpoint_preserved",
+  "report_redacted": true,
+  "contract_sha256": "4011c553391ab21bed4ae6e37ad391723e9e7960e76cb19b71f7b06a96bbc47d",
+  "contract_layers": [
+    "acceptance",
+    "authority",
+    "batch_rollback",
+    "checkpoint",
+    "evidence",
+    "execution",
+    "input",
+    "original_requirement",
+    "production_database_write",
+    "sqlite",
+    "status",
+    "task_id",
+    "title"
+  ]
+}
