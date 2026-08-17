@@ -28,6 +28,35 @@ from ai.services.retrieval_trace_store import record_retrieval_trace, update_ret
 
 logger = logging.getLogger(__name__)
 
+SSE_EVENT_VERSION = "nxa.sse.v1"
+SSE_EVENT_TYPES = frozenset({"meta", "progress", "token", "citation", "done", "error"})
+
+
+def _sse_event(event_type: str, payload: Dict[str, Any]) -> str:
+    """Serialize one versioned SSE event with a stable, additive envelope."""
+
+    if event_type not in SSE_EVENT_TYPES:
+        raise ValueError(f"unsupported SSE event type: {event_type}")
+    data = dict(payload)
+    data["event_version"] = SSE_EVENT_VERSION
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _meta_event(payload: Dict[str, Any]) -> str:
+    """Emit meta first, then bounded citation events for streaming clients."""
+
+    events = [_sse_event("meta", payload)]
+    citations = payload.get("citations")
+    if isinstance(citations, list):
+        for index, citation in enumerate(citations[:20]):
+            if isinstance(citation, dict):
+                events.append(_sse_event("citation", {"index": index, "citation": citation}))
+    return "".join(events)
+
+
+def _token_event(content: Any) -> str:
+    return _sse_event("token", {"content": str(content or "")})
+
 
 def _progress_event(
     step_id: str,
@@ -46,12 +75,12 @@ def _progress_event(
         payload["operation"] = operation
     if command:
         payload["command"] = command
-    return f"event: progress\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    return _sse_event("progress", payload)
 
 
 def _done_event(started_at: float) -> str:
     duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-    return f"event: done\ndata: {json.dumps({'duration_ms': duration_ms}, ensure_ascii=False)}\n\n"
+    return _sse_event("done", {"status": "completed", "duration_ms": duration_ms})
 
 
 class AIAssistantService:
@@ -752,10 +781,10 @@ class AIAssistantService:
                     detail=f"\u6309 PostgreSQL \u5b9e\u9645\u8bb0\u5f55\u805a\u5408 {report.get('matched_count', 0)} \u53f0\u8bbe\u5907",
                     operation=active_step[2],
                 )
-                yield f"event: meta\ndata: {json.dumps({'intent': intent, 'facts_retrieved': True, 'citations': report.get('citations', [])}, ensure_ascii=False)}\n\n"
+                yield _meta_event({"intent": intent, "facts_retrieved": True, "citations": report.get("citations", [])})
                 report_step = ("report", "\u751f\u6210\u786e\u5b9a\u6027\u62a5\u8868", "natural_query_service.render_asset_analysis")
                 yield _progress_event(report_step[0], report_step[1], "running", operation=report_step[2])
-                yield f"event: token\ndata: {json.dumps({'content': report.get('summary', '')}, ensure_ascii=False)}\n\n"
+                yield _token_event(report.get("summary", ""))
                 yield _progress_event(report_step[0], report_step[1], "completed", detail="\u672a\u8c03\u7528\u5927\u6a21\u578b\u6539\u5199\u4e8b\u5b9e\u7edf\u8ba1", operation=report_step[2])
                 yield _done_event(started_at)
                 return
@@ -871,10 +900,10 @@ class AIAssistantService:
                     "retrieval": knowledge_trace,
                     "copilot": build_copilot_contract(intent=intent, message=message, context=copilot_context, retrieval=knowledge_trace, citations=[], runtime={}),
                 }
-                yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
+                yield _meta_event(meta)
                 no_match_step = ("knowledge_no_match", "返回知识库检索结果", "assistant.knowledge_no_match")
                 yield _progress_event(no_match_step[0], no_match_step[1], "running", operation=no_match_step[2])
-                yield f"event: token\ndata: {json.dumps({'content': self._knowledge_no_match_answer(knowledge_result)}, ensure_ascii=False)}\n\n"
+                yield _token_event(self._knowledge_no_match_answer(knowledge_result))
                 yield _progress_event(no_match_step[0], no_match_step[1], "completed", detail="已阻止生成未经知识库验证的通用配置", operation=no_match_step[2])
                 yield _done_event(started_at)
                 return
@@ -887,7 +916,7 @@ class AIAssistantService:
                 detail="只读数据准备失败",
                 operation=active_step[2],
             )
-            yield f"event: error\ndata: {json.dumps({'code': 'ASSISTANT_CONTEXT_ERROR', 'message': '只读数据准备失败'}, ensure_ascii=False)}\n\n"
+            yield _sse_event("error", {"code": "ASSISTANT_CONTEXT_ERROR", "message": "只读数据准备失败", "retryable": True})
             yield _done_event(started_at)
             return
 
@@ -914,12 +943,12 @@ class AIAssistantService:
         }
         if intent == "knowledge":
             meta["retrieval"] = knowledge_trace
-        yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
+        yield _meta_event(meta)
 
         if intent == "knowledge" and self._should_use_cross_platform_retrieval_answer(knowledge_result, rag_chunks):
             fallback_step = ("fallback", "按 CLI 平台整理知识库片段", "assistant.cross_platform_retrieval")
             yield _progress_event(fallback_step[0], fallback_step[1], "running", operation=fallback_step[2])
-            yield f"event: token\ndata: {json.dumps({'content': self._knowledge_fallback_answer(context_facts.get('knowledge_chunks') or [], request=knowledge_result.get('request'))}, ensure_ascii=False)}\n\n"
+            yield _token_event(self._knowledge_fallback_answer(context_facts.get("knowledge_chunks") or [], request=knowledge_result.get("request")))
             yield _progress_event(fallback_step[0], fallback_step[1], "completed", detail="已按平台分隔检索结果", operation=fallback_step[2])
             yield _done_event(started_at)
             return
@@ -957,7 +986,7 @@ class AIAssistantService:
             ):
                 if token:
                     tokens_emitted += 1
-                    yield f"event: token\ndata: {json.dumps({'content': token}, ensure_ascii=False)}\n\n"
+                    yield _token_event(token)
         except AISecurityBlockedException:
             # A security block is a terminal policy decision. Do not turn it
             # into a normal answer or try another external model.
@@ -968,7 +997,7 @@ class AIAssistantService:
                 detail="请求被 AI 安全策略拦截",
                 operation=llm_step[2],
             )
-            yield f"event: error\ndata: {json.dumps({'code': 'AI_SECURITY_BLOCKED'}, ensure_ascii=False)}\n\n"
+            yield _sse_event("error", {"code": "AI_SECURITY_BLOCKED", "message": "请求被 AI 安全策略拦截", "retryable": False})
             yield _done_event(started_at)
             return
         except Exception as err:
@@ -1023,7 +1052,7 @@ class AIAssistantService:
                     "您可以前往 **AI 中心 ➔ 供应商管理** 配置 DeepSeek API Key 开启全量 LLM 对话能力，或继续向我查询 CMDB 资产、IP 定位与本地知识库！"
                 )
 
-            yield f"event: token\ndata: {json.dumps({'content': fallback_text}, ensure_ascii=False)}\n\n"
+            yield _token_event(fallback_text)
             yield _progress_event(
                 fallback_step[0],
                 fallback_step[1],
@@ -1047,7 +1076,7 @@ class AIAssistantService:
                 runtime={"device_connected": False, "cli_executed": False, "external_egress": True,
                          "provider_id": route_meta.get("provider_id"), "model_id": route_meta.get("model_id")},
             )
-            yield f"event: meta\ndata: {json.dumps(route_meta, ensure_ascii=False)}\n\n"
+            yield _meta_event(route_meta)
 
         yield _done_event(started_at)
 

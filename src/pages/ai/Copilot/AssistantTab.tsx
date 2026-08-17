@@ -682,6 +682,27 @@ export const AssistantTab: React.FC = () => {
         selectedModel,
         copilotContext,
         abortController.signal,
+        (citationEvent) => {
+          const raw = citationEvent.citation as Record<string, unknown>;
+          const citation = {
+            ...raw,
+            document: String(raw.document || raw.document_name || 'Nexora'),
+          } as CitationSource;
+          setSessions((prev) =>
+            prev.map((s) => {
+              if (s.id !== activeSessionId) return s;
+              return {
+                ...s,
+                messages: s.messages.map((m) => {
+                  if (m.id !== assistantMsgId) return m;
+                  const existing = m.sources || [];
+                  if (citation.citation_id && existing.some((item) => item.citation_id === citation.citation_id)) return m;
+                  return { ...m, sources: [...existing, citation] };
+                }),
+              };
+            }),
+          );
+        },
       );
 
       const elapsed = streamDurationMs ?? Date.now() - startTime;

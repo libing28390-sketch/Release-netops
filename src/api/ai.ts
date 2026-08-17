@@ -471,6 +471,7 @@ export async function getAIPlatformMetrics(): Promise<AIPlatformMetrics> {
 export type AssistantProcessStepStatus = 'running' | 'completed' | 'error';
 
 export interface AssistantProcessStep {
+  event_version?: string;
   id: string;
   label: string;
   status: AssistantProcessStepStatus;
@@ -480,7 +481,15 @@ export interface AssistantProcessStep {
 }
 
 export interface AssistantStreamDoneMeta {
+  event_version?: string;
+  status?: 'completed' | 'cancelled' | 'error' | string;
   duration_ms?: number;
+}
+
+export interface AssistantStreamCitation {
+  event_version?: string;
+  index?: number;
+  citation: Record<string, unknown>;
 }
 
 export interface AssistantRetrievalTrace {
@@ -501,6 +510,7 @@ export interface AssistantRetrievalTrace {
 }
 
 export interface AssistantStreamMeta {
+  event_version?: string;
   intent?: string;
   citations?: any[];
   facts_retrieved?: boolean;
@@ -526,8 +536,10 @@ export interface CopilotContract {
 }
 
 export interface AssistantStreamError {
+  event_version?: string;
   code?: string;
   message?: string;
+  retryable?: boolean;
 }
 
 export type AIConversationStatus = 'active' | 'archived';
@@ -636,6 +648,7 @@ export async function chatAssistantStream(
   modelId?: string,
   context?: Record<string, unknown>,
   signal?: AbortSignal,
+  onCitation?: (citation: AssistantStreamCitation) => void,
 ): Promise<void> {
   const token = localStorage.getItem('netops_token') || localStorage.getItem('token');
   const headers: Record<string, string> = {
@@ -691,6 +704,8 @@ export async function chatAssistantStream(
           onMeta(parsed);
         } else if (currentEvent === 'progress' && onProgress) {
           onProgress(parsed);
+        } else if (currentEvent === 'citation' && onCitation && parsed.citation && typeof parsed.citation === 'object') {
+          onCitation(parsed as AssistantStreamCitation);
         } else if (currentEvent === 'done' && onDone) {
           onDone(parsed);
         } else if (currentEvent === 'error') {
