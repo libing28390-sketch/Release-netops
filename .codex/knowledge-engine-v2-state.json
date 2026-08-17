@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "API-005",
+  "current_task": "API-006",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T13:05:00+08:00",
-  "last_completed_task": "API-004",
+  "updated_at": "2026-08-17T14:50:00+08:00",
+  "last_completed_task": "API-005",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -280,7 +280,8 @@
     "API-001",
     "API-002",
     "API-003",
-    "API-004"
+    "API-004",
+    "API-005"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -314,7 +315,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "API-005",
     "API-006",
     "API-007",
     "API-008",
@@ -790,7 +790,15 @@
   "api004_contract": "docs/knowledge-engine-v2/architecture/API-004-RESPONSE-PAGINATION-CONTRACT.yaml",
   "api004_focused_tests": "28 passed; frontend 20 files / 98 tests; lint/build PASS",
   "api004_production_ddl": "NONE",
-  "completed_count": 275,
-  "p0_completed_count": 225,
-  "resume_from": "API-005"
+  "api005_status": "DONE_PASS",
+  "api005_final_verified_at": "2026-08-17T14:45:00+08:00",
+  "api005_evidence": "docs/knowledge-engine-v2/evidence/API-005.md",
+  "api005_contract": "docs/knowledge-engine-v2/architecture/API-005-SUMMARY-DETAIL-CONTRACT.yaml",
+  "api005_focused_tests": "4 passed; API/CAT/KUI regression 17 passed",
+  "api005_postgresql_probe": "PASS; summary projections, independent document/source detail, tenant scope and transactional rollback",
+  "api005_production_ddl": "NONE",
+  "last_verified_commit": "4df8998b",
+  "completed_count": 276,
+  "p0_completed_count": 226,
+  "resume_from": "API-006"
 }

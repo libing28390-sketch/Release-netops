@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: API-005 (PENDING; KUI-001..018, API-001..004 PASS)
-Last Completed: API-004
-Next Task: API-005（按原清单依赖继续）
+Current Task: API-006 (PENDING; API-005 PASS)
+Last Completed: API-005
+Next Task: API-006（按原清单依赖继续）
 
-Completed: 275 / 359
-P0: 225 / 277
-Last Verified Commit: 6a825718（API-004 PASS；不 push）
+Completed: 276 / 359
+P0: 226 / 277
+Last Verified Commit: 4df8998b（API-005 PASS；不 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
-Recent Build: API-004 backend response/pagination regression 28 passed；frontend 20 files / 98 tests；lint/build/compile/diff PASS
-Last Security Check: API-004 sort/filter allowlist / tenant scope / stable permission error redaction PASS
-Recovery Point: API-005
+Recent Build: API-005 focused 4 passed；PostgreSQL summary/detail probe PASS；API/CAT/KUI regression 17 passed；lint/build/compile/diff PASS
+Last Security Check: API-005 explicit list projection blocks body/Chunk/log/Trace/raw storage/error/metadata leakage；tenant detail boundary PASS
+Recovery Point: API-006
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -33,6 +33,7 @@ KUI-001..008 证据：
 - API-002 Pydantic contracts：Provider/Model/Source/Document/Product/Alias/Import/Search 严格模型与路由落地；契约测试 4 passed，CAT/RAG/pagination 回归 14 passed，API boundary/catalog 回归 8 passed，py_compile/diff check PASS；无 DDL/生产写入
 - API-003 typed request boundary：Copilot/Security Gateway/Diagnostics 稳定请求边界移除裸 Dict；AST audit、Security/Copilot/Diagnostics 回归 31 passed，API-002/API boundary/CAT-015 回归 11 passed，py_compile/diff check PASS；诊断写操作 fail-closed
 - API-004 response/pagination：产品/Alias/Source/Document 列表接入 bounded pagination/sort/filter meta；稳定 AI/V2 错误统一 code/message/request_id，后端 28 passed，前端 20 files / 98 tests，lint/build/compile/diff PASS
+- API-005 summary/detail：Document、Source、Source Version、Refresh Observation 列表使用显式摘要 allowlist；正文/Chunk、来源配置、刷新状态与 Retrieval Trace 独立加载；API-005 4 passed，PostgreSQL probe PASS，API/CAT/KUI 回归 17 passed，lint/build/compile/diff PASS
 
 Blocked Tasks: none
 
