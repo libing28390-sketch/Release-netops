@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "API-006",
+  "current_task": "API-007",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T14:50:00+08:00",
-  "last_completed_task": "API-005",
+  "updated_at": "2026-08-17T15:10:00+08:00",
+  "last_completed_task": "API-006",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -281,7 +281,8 @@
     "API-002",
     "API-003",
     "API-004",
-    "API-005"
+    "API-005",
+    "API-006"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -315,7 +316,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "API-006",
     "API-007",
     "API-008",
     "API-009",
@@ -797,8 +797,16 @@
   "api005_focused_tests": "4 passed; API/CAT/KUI regression 17 passed",
   "api005_postgresql_probe": "PASS; summary projections, independent document/source detail, tenant scope and transactional rollback",
   "api005_production_ddl": "NONE",
-  "last_verified_commit": "4df8998b",
-  "completed_count": 276,
-  "p0_completed_count": 226,
-  "resume_from": "API-006"
+  "api006_status": "DONE_PASS",
+  "api006_final_verified_at": "2026-08-17T15:05:00+08:00",
+  "api006_evidence": "docs/knowledge-engine-v2/evidence/API-006.md",
+  "api006_contract": "docs/knowledge-engine-v2/architecture/API-006-SSE-EVENT-CONTRACT.yaml",
+  "api006_focused_tests": "11 passed; security/Copilot/RAG regression 38 passed",
+  "api006_frontend_tests": "21 files / 99 tests passed",
+  "api006_postgresql_v1_baseline": "PASS; 10/10; no production write",
+  "api006_production_ddl": "NONE",
+  "last_verified_commit": "5a772524",
+  "completed_count": 277,
+  "p0_completed_count": 227,
+  "resume_from": "API-007"
 }
