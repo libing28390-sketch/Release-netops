@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-011",
+  "database": "postgresql",
+  "sqlite": "not_used",
+  "postgres_probe": "scripts/knowledge_engine_v2_llm_pg_probe.py",
+  "coverage": {
+    "provider_crud": true,
+    "model_switching": true,
+    "fallback": true,
+    "permission": true,
+    "key_security": true,
+    "stable_errors": true
+  },
+  "rollback": "probe_transaction",
+  "production_write": false,
+  "source_sha256": {
+    "plan": "1725e688e0945f085a8f5ef745540f8f2af16e9d506f9bbb10f7cf8c3d840950",
+    "contract": "ffded1b830f45a599c9a413c5dc95a327c2919fa4cf28073b4f075e7dcc95429",
+    "probe": "531e08cfa33c7e5112d8b0dede2909d5f0d4d8b0c7d003818c45fcf9c0eedbcc"
+  }
+}
