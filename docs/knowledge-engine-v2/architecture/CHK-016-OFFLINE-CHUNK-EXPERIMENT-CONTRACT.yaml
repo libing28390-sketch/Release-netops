@@ -1,0 +1,44 @@
+task_id: CHK-016
+title: offline comparison of chunk configurations
+priority: P2
+status: executable
+authority: offline_in_memory
+scope:
+  - compare multiple deterministic ChunkingConfig variants on a fixed network-operations corpus
+  - measure chunk count, token distribution, parent/child and neighbor integrity, CLI/code fidelity and lineage completeness
+  - repeat the selected sensitivity variant to prove deterministic output
+  - write a reviewable JSON report without database or provider side effects
+invariants:
+  reproducibility:
+    - corpus_sha256 and configuration_hash are recorded
+    - the same corpus/configuration produces the same chunk fingerprint
+    - experiment has no network, provider, PostgreSQL or SQLite dependency
+  quality:
+    - every configuration has no empty chunks or duplicate content hashes
+    - parent-child references resolve within the same result set
+    - neighbor relations are symmetric and resolve within the same result set
+    - CLI fences, version markers and source locators remain present
+    - parser/document/index lineage fields are complete for every chunk
+  decision:
+    - report contains four named configurations and bounded per-document metrics
+    - recommendation is derived from quality, fidelity, compactness and latency tie-breaks
+    - recommendation does not silently change production defaults; a later rollout task is required
+implementation:
+  script: scripts/knowledge_engine_v2_chk016_offline_experiment.py
+  report: docs/knowledge-engine-v2/eval/chk016_chunk_experiment.json
+  test: tests/knowledge_engine_v2/test_chk016_offline_experiment.py
+verification:
+  required_vectors:
+    - four configuration variants compared
+    - deterministic repeat passes
+    - all structural and lineage gates pass
+    - report is regenerated from the fixed corpus
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_chk016_offline_experiment.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_chk016_offline_experiment.py -q -p no:cacheprovider"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m py_compile scripts/knowledge_engine_v2_chk016_offline_experiment.py tests/knowledge_engine_v2/test_chk016_offline_experiment.py"
+    - "git diff --check"
+rollback:
+  runtime: remove the experiment report and keep the existing ChunkingConfig production default
+  data: no database rows, migrations, embeddings or external calls are created
+  operational: rerun after corpus/config changes; compare corpus_sha256 before accepting results

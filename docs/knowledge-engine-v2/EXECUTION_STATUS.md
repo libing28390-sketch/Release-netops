@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: CHK-015 (DONE_PASS)
-Last Completed: CHK-015
-Next Task: CHK-016（建立不同 Chunk 配置的离线对比实验）
+Current Task: CHK-016 (DONE_PASS)
+Last Completed: CHK-016
+Next Task: EVAL-001（建立首批 100～200 条固定 Query 数据集）
 
-Completed: 294 / 359
+Completed: 295 / 359
 P0: 234 / 277
-Last Verified Commit: cb92b9f5（CHK-015 PostgreSQL chunk viewer probe PASS）
+Last Verified Commit: 待提交（CHK-016 offline experiment PASS）
 
-Recent Migration: CHK-015 无新增 migration；真实 PostgreSQL V1 Document/Chunk 详情探针 rollback，无生产探针写入
-Recent Build: CHK-015 PostgreSQL probe PASS；PG wrapper test 1 passed；TypeScript lint PASS；Vite production build PASS；py_compile/diff PASS
-Last Security Check: CHK-015 detail tenant 过滤；Parent/Neighbor 限制在同一 Document；Metadata 递归移除 secret/token/identity/ACL；SQLite 未作为验收证据
+Recent Migration: CHK-016 无 migration；纯内存 Chunk 实验无数据库连接/写入
+Recent Build: CHK-016 offline report PASS；4 配置对比；deterministic repeat PASS；wrapper 1 passed；py_compile/diff PASS
+Last Security Check: CHK-016 固定语料无凭据；报告只写 hash/结构/有界延迟；PostgreSQL/SQLite 均未连接
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ CHK-016
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-001
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -25,6 +25,8 @@ CHK-013：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-013.md；Post
 CHK-014：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-014.md；PostgreSQL-only shadow generation/cutover/rollback probe PASS；PG wrapper 1 passed；CHK-P0 chunk/embedding/API regression 15 passed；SQLite 未作为验收证据。
 
 CHK-015：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-015.md；PostgreSQL-only Chunk viewer probe PASS；PG wrapper 1 passed；frontend lint/build PASS；SQLite 未作为验收证据。
+
+CHK-016：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-016.md；4 配置离线 Chunk 实验 PASS；deterministic repeat PASS；wrapper 1 passed；无数据库连接，SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
