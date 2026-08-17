@@ -3,7 +3,7 @@
   "current_milestone": "M2",
   "current_task": "ING-020",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T08:10:00+08:00",
+  "updated_at": "2026-08-17T09:20:00+08:00",
   "last_completed_task": "LLM-037",
   "completed_tasks": [
     "ADR-001",
@@ -634,6 +634,7 @@
   "ret022_final_verified_at": "2026-08-17T04:20:00+08:00",
   "ret022_evidence": "docs/knowledge-engine-v2/evidence/RET-022.md",
   "ret022_benchmark": "scripts/knowledge_engine_v2_ret_benchmark.py",
+  "ret021_evidence": "docs/knowledge-engine-v2/evidence/RET-021.md",
   "cit001_status": "DONE_PASS",
   "cit001_evidence": "docs/knowledge-engine-v2/evidence/CIT-001.md",
   "cit002_status": "DONE_PASS",
@@ -663,9 +664,9 @@
   "llm_v1_pg_baseline": "PASS",
   "llm_v1_pg_baseline_script": "scripts/knowledge_engine_v2_v1_baseline_pg.py",
   "llm_backend_contract_tests": "8 passed",
-  "llm_ai_cit_ret_regression": "31 passed",
+  "llm_ai_cit_ret_regression": "46 passed; CIT/RAG/DB-012/RET combined regression",
   "llm_frontend_lint": "PASS",
   "llm_frontend_build": "PASS",
-  "database_authority": "PostgreSQL only; SQLite excluded from project acceptance",
+  "database_authority": "PostgreSQL only; SQLite is not used by the project test plan and is excluded from acceptance",
   "resume_from": "ING-020"
 }

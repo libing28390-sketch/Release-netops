@@ -12,7 +12,7 @@ policy:
     status: not_used
     acceptance: forbidden
     reason: The deployed Nexora environment uses PostgreSQL; SQLite cannot prove PostgreSQL constraints, JSONB, indexes, locking, concurrency, or query plans.
-    legacy_tests: Existing SQLite compatibility tests are non-gating only and must be excluded from LLM milestone counts and evidence.
+    legacy_tests: No SQLite test is part of the LLM test plan; any historical SQLite-only fixture is excluded from milestone counts and evidence.
   missing_environment: Mark the affected task BLOCKED when PostgreSQL, required extension, credential, permission, or isolated test database is unavailable; do not substitute SQLite.
 required_probes:
   - name: llm_pg_migration_and_contract_probe

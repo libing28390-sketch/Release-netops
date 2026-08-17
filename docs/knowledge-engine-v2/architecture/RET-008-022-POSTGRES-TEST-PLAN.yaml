@@ -11,15 +11,15 @@ policy:
     - migration and retrieval probes use a transaction or session-local temporary fixtures and finish with rollback
     - a skipped PostgreSQL probe is not a pass and cannot advance a RET task
   sqlite:
-    role: excluded_from_project_acceptance
+    role: not_used
     project_policy: PostgreSQL_is_the_only_database_used_by_Nexora_Knowledge_Engine_V2
     allowed_for:
-      - none_for_RET_acceptance
+      - none
     forbidden_as:
       - any_database_or_migration_evidence
       - evidence for pg_trgm, PostgreSQL FTS, pgvector, JSONB containment, HNSW/GiST/GiN behavior, tenant SQL plans, or RET milestone gates
       - a substitute for an unavailable PostgreSQL run
-    note: Existing SQLite compatibility tests are retained only as non-gating legacy checks and must not be reported as RET verification.
+    note: No SQLite command, fixture or result is used for RET implementation or acceptance; any historical SQLite-only fixture is excluded from the project test plan and cannot be reported as verification.
   environment_failure: mark the affected task BLOCKED with the missing DATABASE_URL/extension/permission and continue only with independent non-DB work
 required_probes:
   - name: ret_pg_migration_probe

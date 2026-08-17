@@ -286,7 +286,7 @@
 
 **退出标准**：CE68/CE688/Catalyst93 等真实写法可正确识别；错误厂商和版本不被静默混用。
 
-**RET 验收环境强制规则**：RET-008 至 RET-022 的数据库、索引、检索、租户/权限和性能证据必须以真实 PostgreSQL 为准；必须验证 `vector` 与 `pg_trgm` 扩展、事务回滚和必要的 EXPLAIN 计划。SQLite 仅可用于纯函数或旧版兼容性回归，不能替代 PostgreSQL 通过，也不能作为 RET 任务完成证据。详见 `docs/knowledge-engine-v2/architecture/RET-008-022-POSTGRES-TEST-PLAN.yaml`。
+**RET 验收环境强制规则**：RET-008 至 RET-022 的数据库、索引、检索、租户/权限和性能证据必须以真实 PostgreSQL 为准；必须验证 `vector` 与 `pg_trgm` 扩展、事务回滚和必要的 EXPLAIN 计划。本项目不使用 SQLite；历史 SQLite 兼容夹具不属于本测试方案，不能替代 PostgreSQL 通过，也不能作为 RET 任务完成证据。详见 `docs/knowledge-engine-v2/architecture/RET-008-022-POSTGRES-TEST-PLAN.yaml`。
 
 ---
 

@@ -2,9 +2,9 @@
 
 ## 目标
 
-把 RET-008 至 RET-022 的数据库与检索验收基准明确为真实 PostgreSQL。SQLite
-不再作为 pg_trgm、PostgreSQL FTS、pgvector、JSONB、租户 SQL 或索引计划的
-替代证据。
+把 RET-008 至 RET-022 的数据库与检索验收基准明确为真实 PostgreSQL。项目
+测试方案不使用 SQLite；它不能作为 pg_trgm、PostgreSQL FTS、pgvector、
+JSONB、租户 SQL 或索引计划的替代证据。
 
 ## 已落地
 
@@ -18,8 +18,7 @@
 
 ## 执行约束
 
-默认 pytest 根 fixture 为历史兼容测试而强制 SQLite，因此不能把该 fixture
-下的通过结果写成 RET 数据库门禁。RET 数据库证据必须单独执行：
+RET 数据库证据必须单独执行以下 PostgreSQL 探针：
 
 ```powershell
 $env:PYTHONPATH = "backend"
@@ -31,5 +30,6 @@ $env:PYTHONPATH = "backend"
 
 ## 当前状态
 
-本文件只记录测试方案修订；RET-008 及后续任务仍需逐项完成实现、真实 PG
-验证、Evidence、lint/build 和回归门禁后，才能更新任务清单复选框。
+RET-008 至 RET-022 已完成实现、真实 PostgreSQL 验证、逐项 Evidence、
+lint/build 和回归门禁。RET-022 的 1m trigram p95 已记录为容量风险，
+不影响当前功能 PASS，但必须在发布容量评审中落实更窄的预筛选或阈值策略。

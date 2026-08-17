@@ -12,12 +12,12 @@ Blocked Tasks: none
 
 Recent Tests:
 - LLM PostgreSQL-only gate: migration/contract probe PASS; m0139/m0140/m0141 idempotency, multi-provider, provider+model scope, ACL, key rotation audit, fallback and usage scope verified; PostgreSQL 18.4, vector 0.8.6, pg_trgm 1.6; transaction rollback PASS
-- LLM backend contract tests: 8 passed; AI/CIT/RET regression: 31 passed; Python compile PASS; security provider allowlist API contract PASS
+- LLM backend contract tests: 8 passed; CIT/RAG/DB-012/RET combined regression: 46 passed; Python compile PASS; security provider allowlist API contract PASS
 - V1 PostgreSQL authoritative baseline: 10/10; retrieval_accuracy=1.0; wrong_vendor_rate=0.0; version_conflict_rate=0.0; citation_accuracy=1.0; transaction rollback PASS
 - RET PostgreSQL retrieval/explain regression: PASS; tenant/status/ACL/FTS/trigram/vector and index plan verified; PostgreSQL 18.4, vector 0.8.6, pg_trgm 1.6
 - Frontend TypeScript lint: PASS; Vite production build: PASS (existing large chunk warning only)
-- PostgreSQL test policy: SQLite is excluded from project acceptance and was not used for LLM/RET gates
-- CIT-001..010 grounding/citation contract: 17 backend tests passed; deterministic refusal, per-conclusion mapping, allowlist/version/lifecycle/URL validation, stale warning and secret redaction verified
+- PostgreSQL test policy: the project test plan uses PostgreSQL only; SQLite was not used for LLM/RET gates and is excluded from acceptance
+- CIT-001..010 grounding/citation contract: 25 backend tests passed; deterministic refusal, per-conclusion mapping, allowlist/version/lifecycle/URL validation, stale warning and secret redaction verified
 - CIT frontend source cards: `npm.cmd run lint` PASS; `npm.cmd run build` PASS (existing large-chunk warning only)
 - RET-022 PostgreSQL benchmark: PASS; 10k/100k/1m temporary fixtures, FTS/trigram/vector p50/p95, tenant leak=0, HNSW Top-K=10, rollback PASS; 1m trigram capacity warning recorded
 - RET-011..021 focused contract/RAG tests: 18 passed; version conflict, fused score, reranker timeout, parent/neighbor budget, cache key and explanation redaction verified

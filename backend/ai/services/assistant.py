@@ -486,7 +486,7 @@ class AIAssistantService:
         filters = intent_info.get("filters", {})
 
         context_facts: Dict[str, Any] = {}
-        citations: List[Dict[str, Any]] = []
+        citations = []
         knowledge_trace: Optional[Dict[str, Any]] = None
 
         # 2. Dispatch to specialized intent handler
@@ -662,7 +662,7 @@ class AIAssistantService:
         yield _progress_event(active_step[0], active_step[1], "running", operation=active_step[2])
 
         context_facts: Dict[str, Any] = {}
-        citations: List[Dict[str, Any]] = []
+        citations = []
         knowledge_trace: Optional[Dict[str, Any]] = None
         knowledge_result: Dict[str, Any] | None = None
 
