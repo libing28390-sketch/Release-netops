@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: API-008 (PENDING; API-007 PASS)
-Last Completed: API-007
-Next Task: API-008（按原清单依赖继续）
+Current Task: API-009 (PENDING; API-008 PASS)
+Last Completed: API-008
+Next Task: API-009（按原清单依赖继续）
 
-Completed: 278 / 359
-P0: 228 / 277
-Last Verified Commit: 349db956（API-007 PASS；本地提交；未 push）
+Completed: 279 / 359
+P0: 229 / 277
+Last Verified Commit: a1efe6b9（API-008 PASS；本地提交；未 push）
 
-Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
-Recent Build: API-007 backend AI regression 234 passed（含 API-006/007 9 passed）；frontend 21 files / 100 tests；PostgreSQL V1 baseline 10/10；lint/build/compile/diff PASS
-Last Security Check: API-007 stream 租户/用户/指纹绑定、回放窗口、跨流拒绝、safe error 与会话写入幂等 PASS
-Recovery Point: API-008
+Recent Migration: m0146 additive session scope migration；临时 PostgreSQL schema 双次升级幂等，事务 rollback PASS，未应用生产 DDL
+Recent Build: API-008 PostgreSQL probe PASS；AI regression 234 passed；frontend 21 files / 100 tests；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
+Last Security Check: API-008 会话、消息、任务、Agent trace、tool/evidence、诊断 case/run 均按 tenant + opaque user scope，跨域请求 fail closed PASS
+Recovery Point: API-009
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -36,6 +36,7 @@ KUI-001..008 证据：
 - API-005 summary/detail：Document、Source、Source Version、Refresh Observation 列表使用显式摘要 allowlist；正文/Chunk、来源配置、刷新状态与 Retrieval Trace 独立加载；API-005 4 passed，PostgreSQL probe PASS，API/CAT/KUI 回归 17 passed，lint/build/compile/diff PASS
 - API-006 versioned SSE：统一 meta/progress/token/citation/done/error 的 `nxa.sse.v1` 封套，前端增量消费 citation；后端 SSE/RAG 38 passed，前端 21 files / 99 tests，V1 PostgreSQL baseline 10/10，lint/build/compile/diff PASS
 - API-007 SSE idempotency：stream_id/sequence 有界回放、Abort 租约释放、重连去重、完成流只读回放且 conversation 写入至多一次；API-006/007 后端 9 passed，AI 全套 234 passed，前端 21 files / 100 tests，PostgreSQL V1 baseline 10/10，lint/build/compile/diff PASS；无 DDL/生产写入
+- API-008 session scope：m0146 additive tenant/user opaque scope 与索引；conversation/task、feedback、Agent cancel/trace、tool/evidence、diagnostic case/run 全部按认证 scope 过滤；PostgreSQL 临时 schema probe PASS（幂等/跨域拒绝/回滚），AI 234 passed，前端 21 files / 100 tests，V1 10/10，lint/build/compile/diff PASS；未应用生产 DDL
 
 Blocked Tasks: none
 

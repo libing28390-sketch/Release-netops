@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "API-008",
+  "current_task": "API-009",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T13:04:00+08:00",
-  "last_completed_task": "API-007",
+  "updated_at": "2026-08-17T13:28:00+08:00",
+  "last_completed_task": "API-008",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -283,7 +283,8 @@
     "API-004",
     "API-005",
     "API-006",
-    "API-007"
+    "API-007",
+    "API-008"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -317,7 +318,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "API-008",
     "API-009",
     "OBS-001",
     "OBS-002",
@@ -390,7 +390,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "6a825718",
+  "last_verified_commit": "a1efe6b9",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -813,8 +813,18 @@
   "api007_frontend_tests": "21 files / 100 tests passed",
   "api007_postgresql_v1_baseline": "PASS; 10/10; no production write",
   "api007_production_ddl": "NONE",
-  "last_verified_commit": "349db956",
-  "completed_count": 278,
-  "p0_completed_count": 228,
-  "resume_from": "API-008"
+  "api008_status": "DONE_PASS",
+  "api008_final_verified_at": "2026-08-17T13:28:00+08:00",
+  "api008_evidence": "docs/knowledge-engine-v2/evidence/API-008.md",
+  "api008_contract": "docs/knowledge-engine-v2/architecture/API-008-SESSION-SCOPE-CONTRACT.yaml",
+  "api008_migration": "m0146_ai_session_scope_hardening",
+  "api008_focused_tests": "PostgreSQL isolated probe PASS; AI regression 234 passed",
+  "api008_frontend_tests": "21 files / 100 tests passed",
+  "api008_postgresql_probe": "PASS; idempotent migration, tenant/user isolation, diagnostic and agent trace scope, transaction rollback",
+  "api008_v1_baseline": "PASS; PostgreSQL 10/10; no production write",
+  "api008_production_ddl": "RELEASE_GATED_TRANSACTION_PROBE_ONLY",
+  "last_verified_commit": "a1efe6b9",
+  "completed_count": 279,
+  "p0_completed_count": 229,
+  "resume_from": "API-009"
 }
