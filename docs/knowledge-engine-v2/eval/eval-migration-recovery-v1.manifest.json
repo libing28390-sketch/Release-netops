@@ -23,7 +23,7 @@
     "task_id": "EVAL-014",
     "database": "postgresql",
     "sqlite": "not_used",
-    "temporary_database": "nexora_eval014_3dc5659be8fb",
+    "temporary_database": "nexora_eval014_4c5053574ba8",
     "temporary_database_dropped": true,
     "fresh_install": {
       "status": "PASS",
@@ -77,7 +77,7 @@
     "recovery": {
       "status": "PASS",
       "first_attempt_applied": 0,
-      "higher_version_called_after_failure": false,
+      "higher_version_not_called_after_failure": true,
       "partial_ddl_rolled_back": true,
       "corrected_retry_applied": 2,
       "history_after_retry": [
