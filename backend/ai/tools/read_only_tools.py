@@ -29,7 +29,7 @@ def tool_search_ip(ip: str, tenant_id: str = "tenant-default") -> Dict[str, Any]
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT hostname, platform, vendor, status FROM devices WHERE ip_address = ? AND (tenant_id = ? OR tenant_id IS NULL)", (ip, tenant_id))
+            cursor.execute("SELECT hostname, platform, vendor, status FROM devices WHERE ip_address = ? AND tenant_id = ?", (ip, tenant_id))
             row = cursor.fetchone()
             if row:
                 res["device"] = {"hostname": row[0], "platform": row[1], "vendor": row[2], "status": row[3]}
@@ -46,7 +46,7 @@ def tool_search_mac(mac: str, tenant_id: str = "tenant-default") -> Dict[str, An
     try:
         with get_db_connection() as conn:
             row = conn.execute(
-                "SELECT vlan_id, interface_name FROM mac_table WHERE lower(mac_address) = lower(?) AND (tenant_id = ? OR tenant_id IS NULL) LIMIT 1",
+                "SELECT vlan_id, interface_name FROM mac_table WHERE lower(mac_address) = lower(?) AND tenant_id = ? LIMIT 1",
                 (mac, tenant_id),
             ).fetchone()
             if row:
@@ -69,8 +69,8 @@ def tool_get_device_neighbors(device_id: str, tenant_id: str = "tenant-default")
                 JOIN devices sd ON sd.id = l.source_device_id
                 JOIN devices td ON td.id = l.target_device_id
                 WHERE (l.source_device_id = ? OR l.target_device_id = ?)
-                  AND (sd.tenant_id = ? OR sd.tenant_id IS NULL)
-                  AND (td.tenant_id = ? OR td.tenant_id IS NULL)
+                  AND sd.tenant_id = ?
+                  AND td.tenant_id = ?
                 ORDER BY l.updated_at DESC LIMIT 100
                 """,
                 (device_id, device_id, tenant_id, tenant_id),
@@ -94,7 +94,7 @@ def tool_get_active_alarms(device_id: Optional[str] = None, tenant_id: str = "te
                     SELECT a.title, a.severity, a.device_id
                     FROM alert_events a JOIN devices d ON d.id = a.device_id
                     WHERE a.resolved_at IS NULL AND a.device_id = ?
-                      AND (d.tenant_id = ? OR d.tenant_id IS NULL)
+                      AND d.tenant_id = ?
                     ORDER BY a.created_at DESC LIMIT 100
                     """,
                     (device_id, tenant_id),
@@ -105,7 +105,7 @@ def tool_get_active_alarms(device_id: Optional[str] = None, tenant_id: str = "te
                     SELECT a.title, a.severity, a.device_id
                     FROM alert_events a JOIN devices d ON d.id = a.device_id
                     WHERE a.resolved_at IS NULL
-                      AND (d.tenant_id = ? OR d.tenant_id IS NULL)
+                      AND d.tenant_id = ?
                     ORDER BY a.created_at DESC LIMIT 100
                     """,
                     (tenant_id,),
@@ -134,7 +134,7 @@ def tool_get_asset(device_id: str, tenant_id: str = "tenant-default") -> Dict[st
                        d.role, d.site, d.site_id, p.id, p.name, p.asset_tag
                 FROM devices d
                 LEFT JOIN physical_assets p ON p.id = d.asset_id
-                WHERE d.id = ? AND (d.tenant_id = ? OR d.tenant_id IS NULL)
+                WHERE d.id = ? AND d.tenant_id = ?
                 """,
                 (device_id, tenant_id),
             ).fetchone()
@@ -158,7 +158,7 @@ def tool_get_device_status(device_id: str, tenant_id: str = "tenant-default") ->
     try:
         with get_db_connection() as conn:
             row = conn.execute(
-                "SELECT id, hostname, status, last_seen, updated_at FROM devices WHERE id = ? AND (tenant_id = ? OR tenant_id IS NULL)",
+                "SELECT id, hostname, status, last_seen, updated_at FROM devices WHERE id = ? AND tenant_id = ?",
                 (device_id, tenant_id),
             ).fetchone()
             if row:
@@ -192,7 +192,7 @@ def tool_get_arp_entry(ip: str | None = None, device_id: str | None = None, tena
     entries: list[dict[str, Any]] = []
     try:
         with get_db_connection() as conn:
-            where = ["(d.tenant_id = ? OR d.tenant_id IS NULL)"]
+            where = ["d.tenant_id = ?"]
             params: list[Any] = [tenant_id]
             if ip:
                 where.append("a.ip_address = ?")
@@ -220,7 +220,7 @@ def tool_get_mac_entry(mac: str, device_id: str | None = None, tenant_id: str = 
     entries: list[dict[str, Any]] = []
     try:
         with get_db_connection() as conn:
-            where = ["lower(m.mac_address) = lower(?)", "(d.tenant_id = ? OR d.tenant_id IS NULL)"]
+            where = ["lower(m.mac_address) = lower(?)", "d.tenant_id = ?"]
             params: list[Any] = [mac, tenant_id]
             if device_id:
                 where.append("m.device_id = ?")

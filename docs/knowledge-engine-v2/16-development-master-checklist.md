@@ -361,26 +361,26 @@
 
 ## 12. AI Security Gateway
 
-- [ ] `SEC-001` `P0/SEC+ARCH/M`：定义 PUBLIC、INTERNAL、CONFIDENTIAL、SECRET 分类规则。
-- [ ] `SEC-002` `P0/SEC+BE/M`：统一所有 LLM 和 Embedding 出口到 Security Gateway。
-- [ ] `SEC-003` `P0/SEC+BE/M`：实现默认拒绝；未知 Provider、未知分类、未知权限一律拒绝。
-- [ ] `SEC-004` `P0/SEC+BE/M`：实现密码、Community、API Key、私钥、RADIUS/TACACS Key、JWT、Cookie 检测。
-- [ ] `SEC-005` `P0/SEC+BE/M`：实现内部 IP、主机名、序列号、MAC、Site 和业务名称的策略化处理。
-- [ ] `SEC-006` `P0/SEC+BE/M`：实现脱敏、令牌化、最小上下文和 Scope-bound Token Vault。
-- [ ] `SEC-007` `P0/SEC+BE/M`：禁止默认外发整台配置、全量 CMDB、完整日志、整张拓扑和全量会话。
-- [ ] `SEC-008` `P0/SEC+BE/M`：实现 Prompt Injection Pattern Detection 与 Data/Instruction 分离。
-- [ ] `SEC-009` `P0/SEC+BE/M`：实现文档 Hidden Text、Script 和非正文指令过滤。
-- [ ] `SEC-010` `P0/SEC+BE/M`：实现 tenant、workspace、site、department、document_scope、user_role 访问控制。
-- [ ] `SEC-011` `P0/SEC+AI/M`：确保无权限文档不进入候选、Context、Citation 或 Trace。
-- [ ] `SEC-012` `P0/SEC+BE/M`：实现 Provider/Model 数据驻留和允许分类策略。
-- [ ] `SEC-013` `P0/SEC+BE/M`：实现全局、租户和 Provider Kill Switch。
-- [ ] `SEC-014` `P0/SEC+BE/M`：审计记录策略版本、分类、发现项、处置、Provider、模型和请求 ID。
-- [ ] `SEC-015` `P0/SEC+BE/M`：审计日志本身执行脱敏和访问控制。
-- [ ] `SEC-016` `P0/SEC+FE/M`：安全拦截向用户返回可理解原因，不泄露检测规则和敏感原文。
-- [ ] `SEC-017` `P1/FE+SEC/M`：实现安全策略、审计、事件和 Kill Switch 管理页。
-- [ ] `SEC-018` `P1/SEC+QA/L`：建立恶意附件、Prompt Injection、跨租户、秘密外发和日志侧信道测试集。
-- [ ] `SEC-019` `P1/SEC+OPS/M`：建立安全事件响应、API Key 吊销和审计导出流程。
-- [ ] `SEC-020` `P2/SEC/M`：定期审计新 Provider Adapter 是否存在旁路调用。
+- [x] `SEC-001` `P0/SEC+ARCH/M`：定义 PUBLIC、INTERNAL、CONFIDENTIAL、SECRET 分类规则。
+- [x] `SEC-002` `P0/SEC+BE/M`：统一所有 LLM 和 Embedding 出口到 Security Gateway。
+- [x] `SEC-003` `P0/SEC+BE/M`：实现默认拒绝；未知 Provider、未知分类、未知权限一律拒绝。
+- [x] `SEC-004` `P0/SEC+BE/M`：实现密码、Community、API Key、私钥、RADIUS/TACACS Key、JWT、Cookie 检测。
+- [x] `SEC-005` `P0/SEC+BE/M`：实现内部 IP、主机名、序列号、MAC、Site 和业务名称的策略化处理。
+- [x] `SEC-006` `P0/SEC+BE/M`：实现脱敏、令牌化、最小上下文和 Scope-bound Token Vault。
+- [x] `SEC-007` `P0/SEC+BE/M`：禁止默认外发整台配置、全量 CMDB、完整日志、整张拓扑和全量会话。
+- [x] `SEC-008` `P0/SEC+BE/M`：实现 Prompt Injection Pattern Detection 与 Data/Instruction 分离。
+- [x] `SEC-009` `P0/SEC+BE/M`：实现文档 Hidden Text、Script 和非正文指令过滤。
+- [x] `SEC-010` `P0/SEC+BE/M`：实现 tenant、workspace、site、department、document_scope、user_role 访问控制。
+- [x] `SEC-011` `P0/SEC+AI/M`：确保无权限文档不进入候选、Context、Citation 或 Trace。
+- [x] `SEC-012` `P0/SEC+BE/M`：实现 Provider/Model 数据驻留和允许分类策略。
+- [x] `SEC-013` `P0/SEC+BE/M`：实现全局、租户和 Provider Kill Switch。
+- [x] `SEC-014` `P0/SEC+BE/M`：审计记录策略版本、分类、发现项、处置、Provider、模型和请求 ID。
+- [x] `SEC-015` `P0/SEC+BE/M`：审计日志本身执行脱敏和访问控制。
+- [x] `SEC-016` `P0/SEC+FE/M`：安全拦截向用户返回可理解原因，不泄露检测规则和敏感原文。
+- [x] `SEC-017` `P1/FE+SEC/M`：实现安全策略、审计、事件和 Kill Switch 管理页。
+- [x] `SEC-018` `P1/SEC+QA/L`：建立恶意附件、Prompt Injection、跨租户、秘密外发和日志侧信道测试集。
+- [x] `SEC-019` `P1/SEC+OPS/M`：建立安全事件响应、API Key 吊销和审计导出流程。
+- [x] `SEC-020` `P2/SEC/M`：定期审计新 Provider Adapter 是否存在旁路调用。
 
 **退出标准**：测试集 SECRET 外发为 0；任何外部调用都有安全决策和审计记录。
 
@@ -388,30 +388,30 @@
 
 ## 13. Copilot 工程师体验
 
-- [ ] `COP-001` `P0/PM+NET+FE/M`：拆分普通工程师 AI 助手与管理员 AI 管理中心。
-- [ ] `COP-002` `P0/FE/M`：普通工程师导航只保留 Copilot、我的会话、故障案例和知识检索。
-- [ ] `COP-003` `P0/FE+BE/M`：Provider、Model、Prompt、Agent、Security 菜单按角色隐藏且后端强制鉴权。
-- [ ] `COP-004` `P0/PM+NET/M`：定义咨询、故障诊断、配置生成、知识检索四种意图和风险边界。
-- [ ] `COP-005` `P0/FE+BE/M`：Composer 支持选择设备、接口、Site、时间范围和关联告警。
-- [ ] `COP-006` `P0/FE+BE/M`：支持关联最近变更、拓扑邻居、性能指标和历史事件。
-- [ ] `COP-007` `P0/FE+SEC/M`：附件上传前显示分类、脱敏和外发提示。
-- [ ] `COP-008` `P0/FE+AI/M`：AI 缺少厂商、型号、版本或影响范围时使用结构化追问。
-- [ ] `COP-009` `P0/FE+AI/M`：展示 AI 识别到的厂商、型号、OS、版本和歧义候选。
-- [ ] `COP-010` `P0/FE+AI/M`：实现诊断回答模板，不以无结构长文作为唯一结果。
-- [ ] `COP-011` `P0/FE/M`：展示已确认事实、假设、置信度、所需证据和下一步三项检查。
-- [ ] `COP-012` `P0/FE/M`：清楚标记官方知识、企业知识、实时设备数据和模型推断。
-- [ ] `COP-013` `P0/FE/M`：将开发者 Trace 与工程师证据面板拆分。
-- [ ] `COP-014` `P0/FE+BE/M`：明确显示本次是否连接设备、是否执行 CLI、是否外发和使用哪个模型。
-- [ ] `COP-015` `P0/FE/M`：实现停止生成、重试、修改问题、继续排查和复制。
-- [ ] `COP-016` `P0/FE+BE/M`：实现流式中断后消息一致性和可恢复错误状态。
-- [ ] `COP-017` `P0/FE+BE/M`：实现真实反馈记录，不使用只弹窗不落库的点赞/点踩。
-- [ ] `COP-018` `P1/FE+BE/M`：差评支持型号错、版本错、命令错、证据不足、过时、无关等原因。
-- [ ] `COP-019` `P1/FE+BE/M`：支持会话重命名、归档、删除、搜索、分页和恢复。
-- [ ] `COP-020` `P1/FE+BE/M`：将会话上下文预算、摘要和截断结果可解释化。
-- [ ] `COP-021` `P1/FE/M`：完成窄屏、长命令、长引用、中文/英文和暗色模式适配。
-- [ ] `COP-022` `P1/FE+QA/M`：完成键盘操作、ARIA、焦点和对比度检查。
-- [ ] `COP-023` `P1/PM+FE/M`：设计首次使用引导和高质量示例问题。
-- [ ] `COP-024` `P2/FE+BE/M`：支持将会话生成故障案例、交接记录或工单草稿。
+- [x] `COP-001` `P0/PM+NET+FE/M`：拆分普通工程师 AI 助手与管理员 AI 管理中心。
+- [x] `COP-002` `P0/FE/M`：普通工程师导航只保留 Copilot、我的会话、故障案例和知识检索。
+- [x] `COP-003` `P0/FE+BE/M`：Provider、Model、Prompt、Agent、Security 菜单按角色隐藏且后端强制鉴权。
+- [x] `COP-004` `P0/PM+NET/M`：定义咨询、故障诊断、配置生成、知识检索四种意图和风险边界。
+- [x] `COP-005` `P0/FE+BE/M`：Composer 支持选择设备、接口、Site、时间范围和关联告警。
+- [x] `COP-006` `P0/FE+BE/M`：支持关联最近变更、拓扑邻居、性能指标和历史事件。
+- [x] `COP-007` `P0/FE+SEC/M`：附件上传前显示分类、脱敏和外发提示。
+- [x] `COP-008` `P0/FE+AI/M`：AI 缺少厂商、型号、版本或影响范围时使用结构化追问。
+- [x] `COP-009` `P0/FE+AI/M`：展示 AI 识别到的厂商、型号、OS、版本和歧义候选。
+- [x] `COP-010` `P0/FE+AI/M`：实现诊断回答模板，不以无结构长文作为唯一结果。
+- [x] `COP-011` `P0/FE/M`：展示已确认事实、假设、置信度、所需证据和下一步三项检查。
+- [x] `COP-012` `P0/FE/M`：清楚标记官方知识、企业知识、实时设备数据和模型推断。
+- [x] `COP-013` `P0/FE/M`：将开发者 Trace 与工程师证据面板拆分。
+- [x] `COP-014` `P0/FE+BE/M`：明确显示本次是否连接设备、是否执行 CLI、是否外发和使用哪个模型。
+- [x] `COP-015` `P0/FE/M`：实现停止生成、重试、修改问题、继续排查和复制。
+- [x] `COP-016` `P0/FE+BE/M`：实现流式中断后消息一致性和可恢复错误状态。
+- [x] `COP-017` `P0/FE+BE/M`：实现真实反馈记录，不使用只弹窗不落库的点赞/点踩。
+- [x] `COP-018` `P1/FE+BE/M`：差评支持型号错、版本错、命令错、证据不足、过时、无关等原因。
+- [x] `COP-019` `P1/FE+BE/M`：支持会话重命名、归档、删除、搜索、分页和恢复。
+- [x] `COP-020` `P1/FE+BE/M`：将会话上下文预算、摘要和截断结果可解释化。
+- [x] `COP-021` `P1/FE/M`：完成窄屏、长命令、长引用、中文/英文和暗色模式适配。
+- [x] `COP-022` `P1/FE+QA/M`：完成键盘操作、ARIA、焦点和对比度检查。
+- [x] `COP-023` `P1/PM+FE/M`：设计首次使用引导和高质量示例问题。
+- [x] `COP-024` `P2/FE+BE/M`：支持将会话生成故障案例、交接记录或工单草稿。
 
 **退出标准**：网络工程师不需要了解 RAG 或模型内部概念，也能完成一次可追溯诊断。
 
@@ -419,25 +419,25 @@
 
 ## 14. 网络故障诊断编排与只读工具
 
-- [ ] `DIA-001` `P0/NET+ARCH/M`：定义诊断状态机：症状、范围、假设、证据、检查、结论、修复、验证。
-- [ ] `DIA-002` `P0/NET+BE/M`：定义设备不可达、接口 Down/Flap、OSPF/BGP、丢包、CPU/内存的首批 Playbook。
-- [ ] `DIA-003` `P0/BE+NET/M`：复用 CMDB 设备、平台、凭据和 Site 上下文。
-- [ ] `DIA-004` `P0/BE+NET/M`：复用告警、拓扑、变更、健康和监控数据源。
-- [ ] `DIA-005` `P0/BE+NET/M`：所有网络工具从统一 vendor/platform/command contract 选择命令。
-- [ ] `DIA-006` `P0/BE+NET/M`：禁止根据型号单独推断厂商，禁止缺少平台时回退 Cisco 命令。
-- [ ] `DIA-007` `P0/BE+NET/M`：实现 Ping、TCP、SSH、认证的分层只读诊断。
-- [ ] `DIA-008` `P0/BE+NET/L`：实现 Cisco/Huawei/H3C 首批只读命令映射与 Fixture。
-- [ ] `DIA-009` `P0/BE+NET/M`：复用接口 canonicalizer，处理 10GE/Te/XGE 等等价名称。
-- [ ] `DIA-010` `P0/BE+SEC/M`：只读工具调用仍需权限、审计、超时、并发和输出脱敏。
-- [ ] `DIA-011` `P0/BE+AI/M`：工具结果先结构化和最小化，再进入模型上下文。
-- [ ] `DIA-012` `P0/BE+AI/M`：每个工具步骤记录目的、命令、目标、状态、证据和耗时。
-- [ ] `DIA-013` `P0/BE+AI/M`：依据最新证据更新假设，禁止重复执行无信息增益检查。
-- [ ] `DIA-014` `P0/FE+BE/M`：在 Copilot 显示检查计划并允许逐步授权只读命令。
-- [ ] `DIA-015` `P1/BE+NET/M`：支持用户粘贴 CLI 输出而不连接设备。
-- [ ] `DIA-016` `P1/BE+NET/M`：识别认证失败、超时、不可达、命令不支持和解析失败的稳定错误码。
-- [ ] `DIA-017` `P1/QA+NET/L`：使用 Fixture 和 Mock Driver 覆盖多厂商成功与失败路径。
-- [ ] `DIA-018` `P2/ARCH+SEC/L`：设计写配置审批、差异、快照、回滚和修复后验证；首版不默认启用。
-- [ ] `DIA-019` `P2/BE+NET+SEC/L`：将写操作接入现有 PAM/Change Governance，而不是从 Copilot 直接执行。
+- [x] `DIA-001` `P0/NET+ARCH/M`：定义诊断状态机：症状、范围、假设、证据、检查、结论、修复、验证。
+- [x] `DIA-002` `P0/NET+BE/M`：定义设备不可达、接口 Down/Flap、OSPF/BGP、丢包、CPU/内存的首批 Playbook。
+- [x] `DIA-003` `P0/BE+NET/M`：复用 CMDB 设备、平台、凭据和 Site 上下文。
+- [x] `DIA-004` `P0/BE+NET/M`：复用告警、拓扑、变更、健康和监控数据源。
+- [x] `DIA-005` `P0/BE+NET/M`：所有网络工具从统一 vendor/platform/command contract 选择命令。
+- [x] `DIA-006` `P0/BE+NET/M`：禁止根据型号单独推断厂商，禁止缺少平台时回退 Cisco 命令。
+- [x] `DIA-007` `P0/BE+NET/M`：实现 Ping、TCP、SSH、认证的分层只读诊断。
+- [x] `DIA-008` `P0/BE+NET/L`：实现 Cisco/Huawei/H3C 首批只读命令映射与 Fixture。
+- [x] `DIA-009` `P0/BE+NET/M`：复用接口 canonicalizer，处理 10GE/Te/XGE 等等价名称。
+- [x] `DIA-010` `P0/BE+SEC/M`：只读工具调用仍需权限、审计、超时、并发和输出脱敏。
+- [x] `DIA-011` `P0/BE+AI/M`：工具结果先结构化和最小化，再进入模型上下文。
+- [x] `DIA-012` `P0/BE+AI/M`：每个工具步骤记录目的、命令、目标、状态、证据和耗时。
+- [x] `DIA-013` `P0/BE+AI/M`：依据最新证据更新假设，禁止重复执行无信息增益检查。
+- [x] `DIA-014` `P0/FE+BE/M`：在 Copilot 显示检查计划并允许逐步授权只读命令。
+- [x] `DIA-015` `P1/BE+NET/M`：支持用户粘贴 CLI 输出而不连接设备。
+- [x] `DIA-016` `P1/BE+NET/M`：识别认证失败、超时、不可达、命令不支持和解析失败的稳定错误码。
+- [x] `DIA-017` `P1/QA+NET/L`：使用 Fixture 和 Mock Driver 覆盖多厂商成功与失败路径。
+- [x] `DIA-018` `P2/ARCH+SEC/L`：设计写配置审批、差异、快照、回滚和修复后验证；首版不默认启用。
+- [x] `DIA-019` `P2/BE+NET+SEC/L`：将写操作接入现有 PAM/Change Governance，而不是从 Copilot 直接执行。
 
 **退出标准**：首批故障可形成“假设—证据—检查—结论”闭环；默认无设备写操作。
 

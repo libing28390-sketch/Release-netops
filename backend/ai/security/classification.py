@@ -30,6 +30,15 @@ class SecurityAction(StrEnum):
     BLOCK = "BLOCK"
 
 
+class DataClassification(StrEnum):
+    """Stable policy vocabulary exposed by the Security Gateway contract."""
+
+    PUBLIC = "PUBLIC"
+    INTERNAL = "INTERNAL"
+    CONFIDENTIAL = "CONFIDENTIAL"
+    SECRET = "SECRET"
+
+
 @dataclass(frozen=True)
 class Finding:
     level: DataLevel
@@ -49,6 +58,14 @@ SECRET_ASSIGNMENT_RE = re.compile(
     r"(?im)\b(?:password|passwd|secret|community|token|api[_ -]?key|access[_ -]?token|"
     r"private[_ -]?key|pre-shared-key|key-string|shared-key)\b\s*(?:[:=]|cipher|simple|hash|7|8|9)?\s*['\"]?([^\s,'\";]+)",
 )
+RADIUS_TACACS_SECRET_RE = re.compile(
+    r"(?im)\b(?:radius|tacacs(?:\+|[-_ ]plus)?)[-_ ]?(?:key|secret|shared[-_ ]?secret|server[-_ ]?key)\b\s*(?:[:=]|secret|key)?\s*['\"]?([^\s,'\";]+)"
+)
+JWT_RE = re.compile(r"(?i)\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\b")
+COOKIE_RE = re.compile(r"(?i)\b(?:cookie|set-cookie)\s*[:=]\s*[^\r\n;]+")
+SERIAL_RE = re.compile(r"(?i)\b(?:serial(?:[-_ ]?number)?|sn)\s*[:=#-]?\s*[A-Z0-9][A-Z0-9._-]{5,31}\b")
+SITE_NAME_RE = re.compile(r"(?i)\b(?:site|机房|园区|站点)\s*[:=：]\s*[\u4e00-\u9fffA-Za-z0-9][^\r\n,;]{1,80}")
+BUSINESS_NAME_RE = re.compile(r"(?i)\b(?:customer|business|project|department|业务|客户|项目|部门)\s*[:=：]\s*[^\r\n,;]{1,80}")
 SNMP_SECRET_RE = re.compile(r"(?im)\bsnmp(?:-agent|-server)?\s+community\s+(?:read|write|cipher|simple)?\s*([^\s]+)")
 IPV4_RE = re.compile(r"(?<![\w.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?![\w.])")
 IPV6_RE = re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}(?![\w:])")
@@ -68,7 +85,44 @@ FULL_CONFIG_RE = re.compile(
     r"(?i)(?:show|display)\s+(?:running-config|current-configuration|configuration)|"
     r"\b(?:running-config|current-configuration|full topology|完整拓扑|全量配置)\b"
 )
+FULL_CMDB_RE = re.compile(r"(?i)\b(?:full|entire|all)\s+(?:cmdb|asset inventory|device inventory)\b|全量(?:CMDB|资产|设备清单)")
+FULL_LOG_RE = re.compile(r"(?i)\b(?:full|entire|all)\s+(?:logs?|log stream|session logs?)\b|全量日志|完整日志")
+FULL_SESSION_RE = re.compile(r"(?i)\b(?:full|entire|all)\s+(?:sessions?|terminal sessions?)\b|全量会话|完整会话")
 CONFIG_CHANGE_RE = re.compile(r"(?i)\b(?:configure terminal|system-view|commit|write memory|save)\b")
+HIDDEN_INSTRUCTION_RE = re.compile(r"(?is)(?:<!--.*?(?:ignore|system|instruction|override).*?-->|<script\b.*?>.*?</script>|style\s*=\s*['\"][^'\"]*(?:display\s*:\s*none|visibility\s*:\s*hidden))")
+
+
+def classification_for_level(level: DataLevel) -> DataClassification:
+    if level <= DataLevel.L0_PUBLIC:
+        return DataClassification.PUBLIC
+    if level == DataLevel.L1_GENERAL:
+        return DataClassification.INTERNAL
+    if level == DataLevel.L2_IDENTIFIER:
+        return DataClassification.CONFIDENTIAL
+    return DataClassification.SECRET
+
+
+def normalize_classification(value: Any) -> DataClassification | None:
+    try:
+        return DataClassification(str(value or "").strip().upper())
+    except ValueError:
+        return None
+
+
+def separate_data_and_instructions(messages: Any) -> tuple[Any, list[str]]:
+    """Mark prompt text as untrusted data and return detected instructions.
+
+    The gateway never promotes text found in documents/tool results to a
+    system/developer instruction.  Callers can show the safe categories while
+    retaining the original data only inside their tenant-scoped workflow.
+    """
+    findings: list[str] = []
+    for text in iter_text_values(messages):
+        if PROMPT_INJECTION_RE.search(text):
+            findings.append("prompt_injection")
+        if HIDDEN_INSTRUCTION_RE.search(text):
+            findings.append("hidden_instruction")
+    return messages, sorted(set(findings))
 
 
 def iter_text_values(value: Any) -> Iterable[str]:
@@ -95,15 +149,23 @@ def classify_text(text: str) -> list[Finding]:
         (PRIVATE_KEY_RE, "private_key"),
         (SECRET_ASSIGNMENT_RE, "credential"),
         (SNMP_SECRET_RE, "snmp_community"),
+        (RADIUS_TACACS_SECRET_RE, "radius_or_tacacs_key"),
+        (JWT_RE, "jwt"),
+        (COOKIE_RE, "cookie"),
     ):
         for match in pattern.finditer(text):
             findings.append(Finding(DataLevel.L4_PROHIBITED, category, match.start(), match.end()))
 
     for match in FULL_CONFIG_RE.finditer(text):
         findings.append(Finding(DataLevel.L4_PROHIBITED, "full_configuration_or_topology", match.start(), match.end()))
+    for pattern, category in ((FULL_CMDB_RE, "full_cmdb"), (FULL_LOG_RE, "full_logs"), (FULL_SESSION_RE, "full_sessions")):
+        for match in pattern.finditer(text):
+            findings.append(Finding(DataLevel.L4_PROHIBITED, category, match.start(), match.end()))
 
     for match in PROMPT_INJECTION_RE.finditer(text):
         findings.append(Finding(DataLevel.L3_SENSITIVE, "prompt_injection", match.start(), match.end()))
+    for match in HIDDEN_INSTRUCTION_RE.finditer(text):
+        findings.append(Finding(DataLevel.L3_SENSITIVE, "hidden_instruction", match.start(), match.end()))
 
     if CONFIG_CHANGE_RE.search(text):
         findings.append(Finding(DataLevel.L3_SENSITIVE, "change_command", detail="write-capable command"))
@@ -115,6 +177,9 @@ def classify_text(text: str) -> list[Finding]:
         (EMAIL_RE, "email"),
         (PHONE_RE, "phone"),
         (HOSTNAME_RE, "hostname"),
+        (SERIAL_RE, "serial_number"),
+        (SITE_NAME_RE, "site_name"),
+        (BUSINESS_NAME_RE, "business_name"),
     ):
         for match in pattern.finditer(text):
             findings.append(Finding(DataLevel.L2_IDENTIFIER, category, match.start(), match.end()))

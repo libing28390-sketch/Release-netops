@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Type
 
@@ -76,6 +79,7 @@ class ToolSpec:
     permission_code: str = "ai.assistant"
     read_only: bool = True
     require_confirmation: bool = False
+    timeout_seconds: float = 8.0
 
 
 class ToolRegistry:
@@ -83,6 +87,7 @@ class ToolRegistry:
 
     def __init__(self):
         self._tools: Dict[str, ToolSpec] = {}
+        self._concurrency = threading.BoundedSemaphore(8)
         self._seed_builtin_tools()
 
     def _seed_builtin_tools(self) -> None:
@@ -144,6 +149,7 @@ class ToolRegistry:
                 "require_confirmation": spec.require_confirmation,
                 "permission_code": spec.permission_code,
                 "input_schema": spec.input_model.model_json_schema(),
+                "timeout_seconds": spec.timeout_seconds,
             }
             for spec in self._tools.values()
         ]
@@ -156,6 +162,8 @@ class ToolRegistry:
         tenant_id: str = "tenant-default",
         user_id: str | None = None,
         permissions: set[str] | None = None,
+        task_id: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> Dict[str, Any]:
         spec = self._tools.get(name)
         if not spec:
@@ -174,9 +182,25 @@ class ToolRegistry:
             ai_metrics.tool_finished(name, status="invalid")
             return {"success": False, "error_code": "TOOL_ARGUMENTS_INVALID"}
         safe_args = validated.model_dump()
+        started = time.perf_counter()
+        if not self._concurrency.acquire(timeout=max(0.1, float(timeout_seconds or spec.timeout_seconds))):
+            ai_metrics.tool_finished(name, status="busy")
+            return {"success": False, "error_code": "TOOL_CONCURRENCY_LIMIT"}
         try:
-            output = spec.handler(**safe_args, tenant_id=tenant_id)
-            if inspect.isawaitable(output):
+            def invoke():
+                output = spec.handler(**safe_args, tenant_id=tenant_id)
+                if inspect.isawaitable(output):
+                    return {"__async__": True}
+                return output
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(invoke)
+                try:
+                    output = future.result(timeout=max(0.1, float(timeout_seconds or spec.timeout_seconds)))
+                except FutureTimeoutError:
+                    future.cancel()
+                    ai_metrics.tool_finished(name, status="timeout")
+                    return {"success": False, "error_code": "TOOL_TIMEOUT", "duration_ms": int((time.perf_counter() - started) * 1000)}
+            if isinstance(output, dict) and output.get("__async__"):
                 return {"success": False, "error_code": "ASYNC_TOOL_REQUIRES_ASYNC_RUNNER"}
             safe_output = ai_security_gateway.safe_tool_result(output)
             result = {
@@ -184,6 +208,7 @@ class ToolRegistry:
                 "tool_name": name,
                 "protocol_version": "nxa.tool.v1",
                 "output": safe_output,
+                "audit": {"task_id": task_id, "purpose": spec.description, "status": "success", "duration_ms": int((time.perf_counter() - started) * 1000), "read_only": True},
             }
             ai_metrics.tool_finished(name, status="success")
             return result
@@ -192,6 +217,8 @@ class ToolRegistry:
             # contain credentials or raw device output.
             ai_metrics.tool_finished(name, status="error")
             return {"success": False, "error_code": "TOOL_EXECUTION_FAILED"}
+        finally:
+            self._concurrency.release()
 
 
 tool_registry = ToolRegistry()

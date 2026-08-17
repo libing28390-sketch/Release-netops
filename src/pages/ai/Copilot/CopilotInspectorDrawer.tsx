@@ -45,6 +45,17 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
 
       {/* Content Body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {activeMessage?.copilot && (
+          <div className="space-y-2 p-3 bg-indigo-50/70 dark:bg-indigo-950/20 rounded-xl border border-indigo-100 dark:border-indigo-900/60">
+            <div className="font-semibold text-indigo-700 dark:text-indigo-300">工程师证据面板</div>
+            <div className="space-y-1 text-[11px] text-gray-600 dark:text-gray-300">
+              <div>意图：{activeMessage.copilot.intent || 'consultation'} · 风险：{activeMessage.copilot.risk || 'low'}</div>
+              <div>设备连接：{activeMessage.copilot.runtime?.device_connected ? '是' : '否'} · CLI：{activeMessage.copilot.runtime?.cli_executed ? '已执行' : '未执行'}</div>
+              <div>外发：{activeMessage.copilot.runtime?.external_egress ? '已通过安全网关' : '未外发'}</div>
+              {(activeMessage.copilot.source_labels || []).length > 0 && <div>证据来源：{activeMessage.copilot.source_labels.join('、')}</div>}
+            </div>
+          </div>
+        )}
         {/* Intent & Scene Routing */}
         <div className="space-y-2 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200/60 dark:border-gray-700/60">
           <div className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">

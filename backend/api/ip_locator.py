@@ -140,9 +140,9 @@ async def api_path_diagnose(body: PathDiagnoseRequest, user=require_role("Viewer
             vrf=body.vrf,
             src_vrf=body.src_vrf,
         )
-    except Exception as exc:
-        logger.error(f"[PathDiagnose] diagnose failed: {exc}")
-        raise HTTPException(status_code=500, detail=f'路径诊断失败: {exc}')
+    except Exception:
+        logger.exception("[PathDiagnose] diagnose failed")
+        raise HTTPException(status_code=500, detail="路径诊断失败，请检查目标和管理面连通性")
 
     log_audit_event(
         event_type="path.diagnose",

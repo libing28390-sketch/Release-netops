@@ -18,6 +18,7 @@ from ai.services.mac_troubleshooting import mac_troubleshooting_service
 from ai.services.knowledge_service import knowledge_service
 from ai.services.knowledge_reindex_service import knowledge_reindex_service
 from ai.services.conversation_service import append_message, get_context, set_conversation_model
+from ai.security.security_service import create_diagnostic_case, handoff_case, record_feedback
 
 router = APIRouter(prefix="/assistant", tags=["AI Copilot & Knowledge"])
 
@@ -27,6 +28,29 @@ class ChatRequest(BaseModel):
     history: Optional[List[Dict[str, str]]] = None
     conversation_id: Optional[str] = None
     model_id: Optional[str] = None
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CopilotFeedbackRequest(BaseModel):
+    conversation_id: str = Field(..., min_length=1, max_length=120)
+    message_id: str = Field(..., min_length=1, max_length=120)
+    rating: str = Field(..., pattern="^(positive|negative)$")
+    reasons: List[str] = Field(default_factory=list, max_length=8)
+    comment: str = Field(default="", max_length=500)
+
+
+class DiagnosticCaseRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=160)
+    symptom: str = Field(default="", max_length=2000)
+    conversation_id: Optional[str] = Field(default=None, max_length=120)
+    context: Dict[str, Any] = Field(default_factory=dict)
+    plan: List[Dict[str, Any]] = Field(default_factory=list, max_length=20)
+
+
+class DiagnosticHandoffRequest(BaseModel):
+    summary: str = Field(default="", max_length=2000)
+    assignee: str = Field(default="", max_length=120)
+    ticket_draft: str = Field(default="", max_length=3000)
 
 
 class IPLocationRequest(BaseModel):
@@ -80,6 +104,7 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
         site_ids=user.get("site_ids") or [],
         model_id=requested_model_id,
         model_selection_source=model_selection_source,
+        context=req.context,
     )
     if req.conversation_id:
         try:
@@ -129,6 +154,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
             site_ids=user.get("site_ids") or [],
             model_id=requested_model_id,
             model_selection_source=model_selection_source,
+            context=req.context,
         ):
             if req.conversation_id:
                 for line in event.splitlines():
@@ -150,6 +176,48 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                 pass
 
     return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@router.post("/feedback")
+def submit_copilot_feedback(payload: CopilotFeedbackRequest, user=Depends(require_ai_permission("ai.copilot.feedback"))):
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    return record_feedback(
+        tenant_id=tenant_id,
+        conversation_id=payload.conversation_id,
+        message_id=payload.message_id,
+        user_id=str(user.get("username") or "anonymous"),
+        rating=payload.rating,
+        reasons=payload.reasons,
+        comment=payload.comment,
+    )
+
+
+@router.post("/cases")
+def create_copilot_case(payload: DiagnosticCaseRequest, user=Depends(require_ai_permission("ai.assistant"))):
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    return create_diagnostic_case(
+        tenant_id=tenant_id,
+        user_id=str(user.get("username") or "anonymous"),
+        title=payload.title,
+        symptom=payload.symptom,
+        conversation_id=payload.conversation_id,
+        scope=payload.context,
+        plan=payload.plan,
+    )
+
+
+@router.post("/cases/{case_id}/handoff")
+def handoff_copilot_case(case_id: str, payload: DiagnosticHandoffRequest, user=Depends(require_ai_permission("ai.assistant"))):
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    try:
+        return handoff_case(
+            tenant_id=tenant_id,
+            case_id=case_id,
+            user_id=str(user.get("username") or "anonymous"),
+            handoff=payload.model_dump() if hasattr(payload, "model_dump") else payload.dict(),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="diagnostic case not found") from exc
 
 
 @router.post("/knowledge-retrieval-test")

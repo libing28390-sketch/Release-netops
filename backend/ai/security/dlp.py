@@ -14,6 +14,9 @@ from ai.security.classification import (
     PHONE_RE,
     PRIVATE_KEY_RE,
     SECRET_ASSIGNMENT_RE,
+    RADIUS_TACACS_SECRET_RE,
+    JWT_RE,
+    COOKIE_RE,
 )
 
 
@@ -39,6 +42,12 @@ def scan(value: Any, *, identifiers_blocked: bool = True) -> list[DLPFinding]:
         findings.append(DLPFinding("private_key"))
     if SECRET_ASSIGNMENT_RE.search(text):
         findings.append(DLPFinding("credential"))
+    if RADIUS_TACACS_SECRET_RE.search(text):
+        findings.append(DLPFinding("radius_or_tacacs_key"))
+    if JWT_RE.search(text):
+        findings.append(DLPFinding("jwt"))
+    if COOKIE_RE.search(text):
+        findings.append(DLPFinding("cookie"))
     if identifiers_blocked:
         for pattern, category in (
             (IPV4_RE, "ip_address"), (IPV6_RE, "ip_address"),
@@ -54,4 +63,3 @@ def assert_clean(value: Any, *, identifiers_blocked: bool = True) -> None:
     if findings:
         categories = ",".join(sorted({item.category for item in findings}))
         raise ValueError(f"outbound DLP violation: {categories}")
-

@@ -174,6 +174,7 @@ def list_conversations_api(
     page: int = 1,
     page_size: int = 20,
     include_archived: bool = Query(False),
+    search: str = Query(default="", max_length=200),
     user=Depends(require_ai_permission("ai.assistant")),
 ):
     return list_conversations(
@@ -182,6 +183,7 @@ def list_conversations_api(
         page=page,
         page_size=page_size,
         include_archived=include_archived,
+        search=search,
     )
 
 

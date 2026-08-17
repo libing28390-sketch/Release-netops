@@ -1016,6 +1016,11 @@ def _template_platform_candidates(platform: str) -> list[str]:
         # the explicit fallback is to the canonical H3C family, never to an
         # HP/legacy parser namespace.
         return ['h3c_comware_v9', 'h3c_comware']
+    if selected == 'h3c_comware':
+        # The family namespace is intentionally exact.  A caller that knows a
+        # concrete V5/V9 profile must request that variant explicitly; broad
+        # fallback would mix incompatible command grammars.
+        return ['h3c_comware']
     candidates = [normalized] if normalized else []
     candidates.extend(_COMPATIBLE_PLATFORMS.get(normalized, []))
     return list(dict.fromkeys(candidates))

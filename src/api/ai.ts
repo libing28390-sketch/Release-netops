@@ -76,6 +76,11 @@ export interface AISecurityPolicy {
   identifiers_must_be_tokenized: boolean;
   allow_sensitive_minimization: boolean;
   allowed_provider_types: string[];
+  policy_version?: string;
+  allowed_classifications?: string[];
+  allowed_data_regions?: string[];
+  provider_kill_switches?: Record<string, boolean>;
+  tenant_kill_switches?: Record<string, boolean>;
 }
 
 export interface AISecurityDryRunResult {
@@ -291,11 +296,66 @@ export async function setAIKillSwitch(enabled: boolean, reason?: string): Promis
   });
 }
 
+export async function setAITenantKillSwitch(tenantId: string, enabled: boolean, reason?: string): Promise<{ tenant_id: string; enabled: boolean }> {
+  return apiRequest<{ tenant_id: string; enabled: boolean }>('/api/ai/security/tenant-kill-switch', {
+    method: 'POST',
+    body: JSON.stringify({ tenant_id: tenantId, enabled, reason }),
+  });
+}
+
 export async function testAISecurityPayload(messages: Array<{ role: string; content: string }>, tools?: unknown[]): Promise<AISecurityDryRunResult> {
   return apiRequest<AISecurityDryRunResult>('/api/ai/security/test-payload', {
     method: 'POST',
     body: JSON.stringify({ messages, tools }),
   });
+}
+
+export interface AISecurityEvent {
+  id: string;
+  request_id: string;
+  policy_version: string;
+  classification: string;
+  data_region: string;
+  decision: string;
+  disposition: string;
+  provider_id?: string | null;
+  model_id?: string | null;
+  finding_categories: string[];
+  payload_bytes: number;
+  error_code?: string | null;
+  created_at: string;
+}
+
+export async function getAISecurityEvents(limit = 100, offset = 0): Promise<AISecurityEvent[]> {
+  return apiRequest<AISecurityEvent[]>(`/api/ai/security/events?limit=${limit}&offset=${offset}`);
+}
+
+export async function exportAISecurityEvents(): Promise<string> {
+  const response = await fetch('/api/ai/security/events/export', { headers: { Authorization: `Bearer ${localStorage.getItem('netops_token') || localStorage.getItem('token') || ''}` } });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.text();
+}
+
+export interface AISecurityIncident {
+  id: string;
+  task_id?: string | null;
+  request_id?: string | null;
+  incident_type: string;
+  severity: string;
+  category: string;
+  status: string;
+  created_at: string;
+  resolved_at?: string | null;
+  resolved_by?: string | null;
+}
+
+export async function getAISecurityIncidents(status = ''): Promise<AISecurityIncident[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  return apiRequest<AISecurityIncident[]>(`/api/ai/security/incidents${query}`);
+}
+
+export async function resolveAISecurityIncident(id: string): Promise<{ id: string; status: string; resolved_at: string }> {
+  return apiRequest(`/api/ai/security/incidents/${encodeURIComponent(id)}/resolve`, { method: 'POST' });
 }
 
 export async function getAIModels(): Promise<AIModel[]> {
@@ -444,6 +504,24 @@ export interface AssistantStreamMeta {
   citations?: any[];
   facts_retrieved?: boolean;
   retrieval?: AssistantRetrievalTrace;
+  copilot?: CopilotContract;
+}
+
+export interface CopilotContract {
+  contract_version?: string;
+  intent?: string;
+  risk?: string;
+  confirmed_facts?: string[];
+  assumptions?: string[];
+  confidence?: number;
+  required_evidence?: string[];
+  next_checks?: string[];
+  source_labels?: string[];
+  recognized?: { vendor?: string; model?: string; os?: string; version?: string; ambiguous_candidates?: string[] };
+  runtime?: { device_connected?: boolean; cli_executed?: boolean; external_egress?: boolean; provider_id?: string; model_id?: string };
+  context_budget?: { limit_chars?: number; used_chars?: number; truncated?: boolean; summary?: string };
+  engineer_evidence?: { citations?: any[]; trace_available?: boolean };
+  developer_trace?: Record<string, unknown>;
 }
 
 export interface AssistantStreamError {
@@ -487,8 +565,11 @@ export interface AIConversationList {
   page_size: number;
 }
 
-export async function listAIConversations(includeArchived = true): Promise<AIConversationList> {
-  const query = includeArchived ? '?include_archived=true&page_size=100' : '?page_size=100';
+export async function listAIConversations(includeArchived = true, search = '', page = 1, pageSize = 100): Promise<AIConversationList> {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  if (includeArchived) params.set('include_archived', 'true');
+  if (search.trim()) params.set('search', search.trim());
+  const query = `?${params.toString()}`;
   return apiRequest<AIConversationList>(`/api/v1/ai/conversations${query}`);
 }
 
@@ -552,6 +633,8 @@ export async function chatAssistantStream(
   onError?: (error: AssistantStreamError) => void,
   conversationId?: string,
   modelId?: string,
+  context?: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<void> {
   const token = localStorage.getItem('netops_token') || localStorage.getItem('token');
   const headers: Record<string, string> = {
@@ -564,7 +647,8 @@ export async function chatAssistantStream(
   const response = await fetch('/api/ai/assistant/chat-stream', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ message, history, conversation_id: conversationId, model_id: modelId }),
+    signal,
+    body: JSON.stringify({ message, history, conversation_id: conversationId, model_id: modelId, context: context || {} }),
   });
 
   if (!response.ok) {
@@ -670,6 +754,30 @@ export async function createChangeDraft(data: { title: string; device_id: string
 // Knowledge Base Management APIs
 export async function getKnowledgeStats(): Promise<{ total_documents: number; total_chunks: number; total_vendors: number; ready_indexes: number }> {
   return apiRequest('/api/ai/assistant/knowledge-stats');
+}
+
+export async function submitCopilotFeedback(data: { conversation_id: string; message_id: string; rating: 'positive' | 'negative'; reasons?: string[]; comment?: string }): Promise<{ id: string; rating: string; reasons: string[] }> {
+  return apiRequest('/api/ai/assistant/feedback', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function createCopilotCase(data: { title: string; symptom?: string; conversation_id?: string; context?: Record<string, unknown>; plan?: Array<Record<string, unknown>> }): Promise<any> {
+  return apiRequest('/api/ai/assistant/cases', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function handoffCopilotCase(caseId: string, data: { summary?: string; assignee?: string; ticket_draft?: string }): Promise<any> {
+  return apiRequest(`/api/ai/assistant/cases/${encodeURIComponent(caseId)}/handoff`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function checkCopilotAttachment(text: string, format = 'txt'): Promise<{ decision: string; classification: string; reason_codes?: string[]; user_message: string }> {
+  return apiRequest('/api/ai/security/attachment-check', { method: 'POST', body: JSON.stringify({ text, format }) });
+}
+
+export async function createDiagnosticPlan(data: { symptom: string; playbook?: string; vendor?: string; platform?: string; target: string; device_id?: string }): Promise<any> {
+  return apiRequest('/api/ai/diagnostics/plan', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function runDiagnosticPlan(data: { plan: Record<string, unknown>; authorized_steps: number[]; context?: Record<string, unknown> }): Promise<any> {
+  return apiRequest('/api/ai/diagnostics/run', { method: 'POST', body: JSON.stringify(data) });
 }
 
 export interface RetrievalTestResult {

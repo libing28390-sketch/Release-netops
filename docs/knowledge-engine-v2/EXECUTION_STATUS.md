@@ -1,16 +1,21 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: ING-020 (PENDING; LLM-001..037 PASS)
-Last Completed: LLM-037
-Next Task: ING-020（按原清单依赖继续）
+Current Task: KUI-001 (PENDING; SEC/COP/DIA PASS)
+Last Completed: DIA-019
+Next Task: KUI-001（按原清单依赖继续）
 
-Completed: 190 / 359
-P0: 161 / 277
+Completed: 253 / 359
+P0: 208 / 277
 
 Blocked Tasks: none
 
 Recent Tests:
+- Security/Copilot/Diagnostics PostgreSQL-only probe: PASS; 8 required tables, tenant isolation, metadata-only event/incident lifecycle, read-only diagnostic plan, adapter audit PASS
+- AI regression: 196 passed; diagnostics focused: 10 passed; full vendor audit: 316 passed
+- Frontend TypeScript lint: PASS; Vite production build: PASS (existing large-chunk warning only)
+- Python compile, architecture YAML parse, secret scan and git diff check: PASS
+- PostgreSQL test policy: the project test plan uses PostgreSQL only; SQLite is excluded from acceptance
 - LLM PostgreSQL-only gate: migration/contract probe PASS; m0139/m0140/m0141 idempotency, multi-provider, provider+model scope, ACL, key rotation audit, fallback and usage scope verified; PostgreSQL 18.4, vector 0.8.6, pg_trgm 1.6; transaction rollback PASS
 - LLM backend contract tests: 8 passed; CIT/RAG/DB-012/RET combined regression: 46 passed; Python compile PASS; security provider allowlist API contract PASS
 - V1 PostgreSQL authoritative baseline: 10/10; retrieval_accuracy=1.0; wrong_vendor_rate=0.0; version_conflict_rate=0.0; citation_accuracy=1.0; transaction rollback PASS

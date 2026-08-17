@@ -22,8 +22,14 @@ import {
 import {
   AISecurityDryRunResult,
   AISecurityPolicy,
+  AISecurityIncident,
   getAISecurityPolicy,
+  getAISecurityEvents,
+  getAISecurityIncidents,
+  resolveAISecurityIncident,
+  exportAISecurityEvents,
   setAIKillSwitch,
+  setAITenantKillSwitch,
   testAISecurityPayload,
   updateAISecurityPolicy,
 } from '../../../api/ai';
@@ -35,6 +41,9 @@ const DEFAULT_POLICY: AISecurityPolicy = {
   identifiers_must_be_tokenized: true,
   allow_sensitive_minimization: true,
   allowed_provider_types: ['deepseek', 'openai', 'openai_compatible', 'azure_openai', 'ollama', 'local', 'qwen'],
+  allowed_classifications: ['PUBLIC', 'INTERNAL', 'CONFIDENTIAL'],
+  allowed_data_regions: ['unknown', 'global', 'cn', 'us', 'eu'],
+  tenant_kill_switches: {},
 };
 
 const formatBytes = (bytes: number) => {
@@ -107,12 +116,17 @@ export const SecurityPolicyTab: React.FC = () => {
   const [sample, setSample] = useState('show interface 10.0.0.1\nstatus: interface is up');
   const [dryRun, setDryRun] = useState<AISecurityDryRunResult | null>(null);
   const [testing, setTesting] = useState(false);
+  const [events, setEvents] = useState<Array<import('../../../api/ai').AISecurityEvent>>([]);
+  const [incidents, setIncidents] = useState<AISecurityIncident[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setPolicy(await getAISecurityPolicy());
+      const [nextPolicy, nextEvents, nextIncidents] = await Promise.all([getAISecurityPolicy(), getAISecurityEvents(30), getAISecurityIncidents()]);
+      setPolicy(nextPolicy);
+      setEvents(nextEvents);
+      setIncidents(nextIncidents);
     } catch (err) {
       setError(err instanceof Error ? err.message : '无法读取 AI 安全策略');
     } finally {
@@ -138,6 +152,16 @@ export const SecurityPolicyTab: React.FC = () => {
     }
   };
 
+  const resolveIncident = async (id: string) => {
+    try {
+      await resolveAISecurityIncident(id);
+      setIncidents((current) => current.map((incident) => incident.id === id ? { ...incident, status: 'resolved', resolved_at: new Date().toISOString() } : incident));
+      setNotice('安全事件已标记为已解决。');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '安全事件处理失败');
+    }
+  };
+
   const toggleExternalAI = () => {
     if (!policy.external_ai_enabled && !window.confirm('开启外部 AI 出口后，符合策略的内容才会发送到已允许的 Provider。确定继续吗？')) return;
     void save({ external_ai_enabled: !policy.external_ai_enabled });
@@ -160,6 +184,21 @@ export const SecurityPolicyTab: React.FC = () => {
     }
   };
 
+  const toggleTenantKillSwitch = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const enabled = !Boolean(policy.tenant_kill_switches?.['tenant-default']);
+      await setAITenantKillSwitch('tenant-default', enabled, enabled ? 'tenant security emergency stop' : 'tenant security operator resume');
+      setPolicy((current) => ({ ...current, tenant_kill_switches: { ...(current.tenant_kill_switches || {}), 'tenant-default': enabled } }));
+      setNotice(enabled ? '当前租户外部 AI 已暂停。' : '当前租户外部 AI 已恢复。');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '切换租户安全开关失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const runDryRun = async () => {
     if (!sample.trim()) {
       setError('请先输入一段待检查的文本。');
@@ -174,6 +213,21 @@ export const SecurityPolicyTab: React.FC = () => {
       setError(err instanceof Error ? err.message : '安全策略演练失败');
     } finally {
       setTesting(false);
+    }
+  };
+
+  const exportEvents = async () => {
+    try {
+      const csv = await exportAISecurityEvents();
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `nexora-ai-security-events-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice('安全事件审计已导出（仅元数据）。');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '安全事件导出失败');
     }
   };
 
@@ -302,6 +356,12 @@ export const SecurityPolicyTab: React.FC = () => {
                 <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">故障、泄露或策略异常时立即阻断所有外部调用，不会自动降级到未受控的 Provider。</p>
                 <div className="mt-4 flex items-center gap-2 border-t border-slate-200/70 pt-3 text-xs text-slate-500 dark:border-slate-800"><CircleHelp className="h-3.5 w-3.5" />适合应急处置，解除后请重新运行策略演练。</div>
               </div>
+
+              <div className={`rounded-2xl border p-4 transition ${policy.tenant_kill_switches?.['tenant-default'] ? 'border-rose-200 bg-rose-50/60 dark:border-rose-900/60 dark:bg-rose-950/20' : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/50'}`}>
+                <div className="flex items-start justify-between gap-3"><div className="flex items-center gap-2"><Skull className="h-4 w-4 text-rose-500" /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">当前租户开关</span></div><SwitchButton checked={Boolean(policy.tenant_kill_switches?.['tenant-default'])} danger disabled={saving} onClick={() => void toggleTenantKillSwitch()} label="切换当前租户 AI 开关" /></div>
+                <div className="mt-4 text-sm font-bold text-slate-900 dark:text-white">{policy.tenant_kill_switches?.['tenant-default'] ? '已暂停' : '未暂停'}</div>
+                <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">租户开关优先于 Provider 配置，只影响当前认证租户。</p>
+              </div>
             </div>
           </section>
 
@@ -317,6 +377,7 @@ export const SecurityPolicyTab: React.FC = () => {
               <GuardrailRow icon={<Fingerprint className="h-4 w-4" />} label="敏感标识符 Token 化" description="设备 IP、用户名、密钥等标识在出站前替换为稳定 Token。" enabled={policy.identifiers_must_be_tokenized} />
               <GuardrailRow icon={<EyeOff className="h-4 w-4" />} label="敏感内容最小化" description="只保留当前分析所需内容，减少原始配置和凭据暴露。" enabled={policy.allow_sensitive_minimization} />
               <GuardrailRow icon={<Database className="h-4 w-4" />} label="请求体大小限制" description={`单次 payload 上限 ${formatBytes(policy.max_payload_bytes)}，超过即拒绝。`} enabled={policy.max_payload_bytes > 0} />
+              <GuardrailRow icon={<LockKeyhole className="h-4 w-4" />} label="分类与驻留边界" description={`允许分类 ${policy.allowed_classifications?.join('、') || 'PUBLIC/INTERNAL/CONFIDENTIAL'}；区域 ${policy.allowed_data_regions?.join('、') || 'unknown'}`} enabled={(policy.allowed_classifications || []).length > 0} />
             </div>
           </section>
         </div>
@@ -339,6 +400,27 @@ export const SecurityPolicyTab: React.FC = () => {
                 {index < steps.length - 1 && <ChevronRight className="mx-auto h-5 w-5 shrink-0 self-center text-slate-300 dark:text-slate-700 md:mx-2" />}
               </React.Fragment>
             ))}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+          <div className="flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><AlertTriangle className="h-4 w-4 text-rose-600" />安全事件响应</div><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">阻断请求只保留元数据证据；处理动作受租户和 Administrator 权限保护。</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{incidents.filter((item) => item.status !== 'resolved').length} 待处理</span></div>
+          <div className="mt-4 space-y-2">{incidents.slice(0, 20).map((incident) => <div key={incident.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 px-3 py-2 text-xs dark:border-slate-800"><span className="font-semibold text-slate-800 dark:text-slate-100">{incident.incident_type}</span><span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{incident.severity}</span><span className="text-slate-500">{incident.created_at}</span><span className="ml-auto text-slate-500">{incident.status}</span>{incident.status !== 'resolved' && <button type="button" onClick={() => void resolveIncident(incident.id)} className="rounded border border-emerald-200 px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:text-emerald-300">标记已解决</button>}</div>)}{incidents.length === 0 && <div className="py-4 text-center text-xs text-slate-400">暂无安全事件</div>}</div>
+        </section>
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><Database className="h-4 w-4 text-cyan-600" />安全事件审计</div>
+              <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">仅展示策略版本、分类、处置、Provider/Model 和请求 ID，不返回原始提示词或秘密。</p>
+            </div>
+            <div className="flex items-center gap-2"><button type="button" onClick={() => void exportEvents()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">导出元数据</button><button type="button" onClick={() => void load()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">刷新事件</button></div>
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="min-w-full text-left text-xs"><thead className="text-slate-400"><tr><th className="px-2 py-2">时间</th><th className="px-2 py-2">决定</th><th className="px-2 py-2">分类</th><th className="px-2 py-2">Provider / Model</th><th className="px-2 py-2">发现项</th></tr></thead><tbody>
+              {events.map((event) => <tr key={event.id} className="border-t border-slate-100 dark:border-slate-800"><td className="px-2 py-2 whitespace-nowrap text-slate-500">{event.created_at}</td><td className="px-2 py-2 font-semibold">{event.decision}</td><td className="px-2 py-2">{event.classification}</td><td className="px-2 py-2">{event.provider_id || '—'} / {event.model_id || '—'}</td><td className="px-2 py-2">{event.finding_categories?.join('、') || '无'}</td></tr>)}
+            </tbody></table>
+            {events.length === 0 && <div className="py-6 text-center text-xs text-slate-400">暂无安全事件</div>}
           </div>
         </section>
 

@@ -16,6 +16,7 @@ from database.core import get_db_connection
 from ai.security.crypto import decrypt_api_key
 from ai.security.gateway import AISecurityGateway, SecurityBlocked, ai_security_gateway
 from ai.security.tokenization import opaque_user_id
+from ai.security.security_service import create_security_incident, record_security_event
 from ai.gateway.exceptions import (
     AIException,
     AIBudgetExceededException,
@@ -371,6 +372,43 @@ class LLMGateway:
             # The request log remains useful on installations before m0105;
             # an audit-table failure must never open the external egress path.
             logger.debug("Failed to save AI security audit metadata", exc_info=True)
+        try:
+            level = str(max_data_level or "L1").upper()
+            classification = {"L0": "PUBLIC", "L1": "INTERNAL", "L2": "CONFIDENTIAL", "L3": "SECRET", "L4": "SECRET"}.get(level, "INTERNAL")
+            record_security_event(
+                request_id=request_id,
+                tenant_id=tenant_id,
+                policy_version=self.security_gateway.policy.policy_version,
+                classification=classification,
+                data_region="unknown",
+                decision=decision if decision in {"ALLOW", "MINIMIZE", "TOKENIZE", "BLOCK"} else "BLOCK",
+                disposition="blocked" if status == "blocked" else ("sent" if status in {"success", "completed"} else "prepared"),
+                finding_categories=finding_categories or (),
+                provider_id=provider_type,
+                model_id=model_code,
+                payload_bytes=payload_bytes,
+                error_code=error_code,
+            )
+            if status == "blocked" or decision == "BLOCK":
+                create_security_incident(
+                    tenant_id=tenant_id,
+                    incident_type="policy_violation",
+                    severity="high",
+                    category="gateway",
+                    task_id=task_id,
+                    request_id=request_id,
+                    evidence={
+                        "request_id": request_id,
+                        "provider_id": provider_type,
+                        "model_id": model_code,
+                        "classification": classification,
+                        "decision": decision,
+                        "error_code": error_code,
+                        "finding_categories": finding_categories or (),
+                    },
+                )
+        except Exception:
+            logger.debug("Failed to save extended security event", exc_info=True)
 
     async def chat(
         self,
@@ -392,6 +430,10 @@ class LLMGateway:
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         sanitize_inputs: bool = True,
+        workspace_id: Optional[str] = None,
+        site_id: Optional[str] = None,
+        department: Optional[str] = None,
+        document_scope: Optional[str] = None,
     ) -> Dict[str, Any]:
         request_id = self._generate_request_id()
         start_time = time.perf_counter()
@@ -480,6 +522,15 @@ class LLMGateway:
                     "reasoning_effort": reasoning_effort,
                 },
                 provider_type=target_info.get("provider_type") or "deepseek",
+                provider_id=target_info.get("provider_id"),
+                model_id=target_info.get("id"),
+                data_region=target_info.get("data_region"),
+                provider_allowed_classification=target_info.get("allowed_data_classification"),
+                workspace_id=workspace_id,
+                site_id=site_id,
+                department=department,
+                document_scope=document_scope,
+                user_role=(roles or [None])[0],
             )
         except SecurityBlocked as exc:
             self._log_request(
@@ -708,6 +759,10 @@ class LLMGateway:
         roles: Optional[List[str]] = None,
         selection_source: Optional[str] = None,
         route_meta: Optional[Dict[str, Any]] = None,
+        workspace_id: Optional[str] = None,
+        site_id: Optional[str] = None,
+        department: Optional[str] = None,
+        document_scope: Optional[str] = None,
     ):
         request_id = self._generate_request_id()
         start_time = time.perf_counter()
@@ -783,6 +838,15 @@ class LLMGateway:
                     "reasoning_effort": reasoning_effort,
                 },
                 provider_type=model_info.get("provider_type") or "deepseek",
+                provider_id=model_info.get("provider_id"),
+                model_id=model_info.get("id"),
+                data_region=model_info.get("data_region"),
+                provider_allowed_classification=model_info.get("allowed_data_classification"),
+                workspace_id=workspace_id,
+                site_id=site_id,
+                department=department,
+                document_scope=document_scope,
+                user_role=(roles or [None])[0],
             )
         except SecurityBlocked as exc:
             blocked = AISecurityBlockedException("AI request blocked by security policy")

@@ -22,6 +22,11 @@ AI_PERMISSION_CODES = {
     "ai.knowledge.manage": "Manage AI Knowledge Base & RAG Documents",
     "ai.audit.view": "View AI Audit Logs & Usage Dashboards",
     "ai.agent.use": "Run read-only AI agents",
+    "ai.security.manage": "Manage AI Security Gateway policy",
+    "ai.security.events": "View and export AI Security events",
+    "ai.security.incident": "Respond to AI Security incidents",
+    "ai.copilot.feedback": "Submit Copilot feedback",
+    "ai.diagnostics.run": "Run read-only network diagnostics",
 }
 
 # Role permissions mapping
@@ -30,7 +35,7 @@ ROLE_AI_PERMISSIONS: Dict[str, Set[str]] = {
     "Operator": {
         "ai.view", "ai.use", "ai.command_explain", "ai.config_analyze",
         "ai.diff_analyze", "ai.alarm_analyze", "ai.assistant", "ai.audit.view",
-        "ai.agent.use",
+        "ai.agent.use", "ai.copilot.feedback", "ai.diagnostics.run",
     },
     "Viewer": {
         "ai.view", "ai.command_explain", "ai.config_analyze",

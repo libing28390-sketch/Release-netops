@@ -23,6 +23,7 @@ from ai.services.citation_service import (
     build_grounded_citations,
     refusal_for_missing_evidence,
 )
+from ai.services.copilot_contract import build_copilot_contract
 
 logger = logging.getLogger(__name__)
 
@@ -479,6 +480,7 @@ class AIAssistantService:
         site_ids: Optional[List[str]] = None,
         model_id: Optional[str] = None,
         model_selection_source: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         # 1. Parse intent
         intent_info = await intent_parser.parse_intent(message, user_id=user_id)
@@ -486,6 +488,12 @@ class AIAssistantService:
         filters = intent_info.get("filters", {})
 
         context_facts: Dict[str, Any] = {}
+        copilot_context = {
+            key: value for key, value in (context or {}).items()
+            if key in {"device_id", "interface", "site_id", "workspace_id", "department", "time_range", "alert_ids", "recent_changes", "topology_neighbors", "metrics", "history_events", "vendor", "model", "version", "impact_scope", "os", "document_scope"}
+        }
+        if copilot_context:
+            context_facts["copilot_context"] = copilot_context
         citations = []
         knowledge_trace: Optional[Dict[str, Any]] = None
 
@@ -507,6 +515,10 @@ class AIAssistantService:
                     grounded=bool(report.get("matched_count", 0) or report.get("analysis")),
                 ),
                 "request_id": None,
+                "copilot": build_copilot_contract(
+                    intent=intent, message=message, context=copilot_context,
+                    citations=report.get("citations", []) or [], runtime={},
+                ),
             }
         if intent == "device_search":
             query_res = await natural_query_service.execute_query(
@@ -579,6 +591,10 @@ class AIAssistantService:
                 "answer_contract": answer_contract(intent=intent, citations=[], grounded=False, no_match=True),
                 "retrieval": knowledge_trace,
                 "request_id": None,
+                "copilot": build_copilot_contract(
+                    intent=intent, message=message, context=copilot_context,
+                    retrieval=knowledge_trace, citations=[], runtime={},
+                ),
             }
 
         # Keep retrieved command/configuration documents deterministic and
@@ -596,6 +612,10 @@ class AIAssistantService:
                 "answer_contract": answer_contract(intent=intent, citations=citations, grounded=True),
                 "retrieval": knowledge_trace,
                 "request_id": None,
+                "copilot": build_copilot_contract(
+                    intent=intent, message=message, context=copilot_context,
+                    retrieval=knowledge_trace, citations=citations, runtime={},
+                ),
             }
 
         # 4. Synthesize with LLM
@@ -644,6 +664,20 @@ class AIAssistantService:
             "requested_model_id": res.get("requested_model_id"),
             "route_reason": res.get("route_reason"),
             "fallback_used": bool(res.get("fallback_used")),
+            "copilot": build_copilot_contract(
+                intent=intent,
+                message=message,
+                context=copilot_context,
+                retrieval=knowledge_trace,
+                citations=citations,
+                runtime={
+                    "device_connected": False,
+                    "cli_executed": False,
+                    "external_egress": bool(res.get("provider_id")),
+                    "provider_id": res.get("provider_id"),
+                    "model_id": res.get("model_id"),
+                },
+            ),
         }
 
     async def chat_stream(
@@ -656,12 +690,19 @@ class AIAssistantService:
         site_ids: Optional[List[str]] = None,
         model_id: Optional[str] = None,
         model_selection_source: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
     ):
         started_at = time.perf_counter()
         active_step = ("intent", "识别问题类型", "intent_parser.parse_intent")
         yield _progress_event(active_step[0], active_step[1], "running", operation=active_step[2])
 
         context_facts: Dict[str, Any] = {}
+        copilot_context = {
+            key: value for key, value in (context or {}).items()
+            if key in {"device_id", "interface", "site_id", "workspace_id", "department", "time_range", "alert_ids", "recent_changes", "topology_neighbors", "metrics", "history_events", "vendor", "model", "version", "impact_scope", "os", "document_scope"}
+        }
+        if copilot_context:
+            context_facts["copilot_context"] = copilot_context
         citations = []
         knowledge_trace: Optional[Dict[str, Any]] = None
         knowledge_result: Dict[str, Any] | None = None
@@ -804,6 +845,7 @@ class AIAssistantService:
                     "citations": [],
                     "answer_contract": answer_contract(intent=intent, citations=[], grounded=False, no_match=True),
                     "retrieval": knowledge_trace,
+                    "copilot": build_copilot_contract(intent=intent, message=message, context=copilot_context, retrieval=knowledge_trace, citations=[], runtime={}),
                 }
                 yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
                 no_match_step = ("knowledge_no_match", "返回知识库检索结果", "assistant.knowledge_no_match")
@@ -833,7 +875,19 @@ class AIAssistantService:
             no_match=bool(intent == "knowledge" and not citations),
         )
         route_meta: Dict[str, Any] = {}
-        meta = {"intent": intent, "facts_retrieved": bool(context_facts), "citations": citations, "answer_contract": contract, "requested_model_id": model_id, "selection_source": model_selection_source}
+        meta = {
+            "intent": intent,
+            "facts_retrieved": bool(context_facts),
+            "citations": citations,
+            "answer_contract": contract,
+            "requested_model_id": model_id,
+            "selection_source": model_selection_source,
+            "copilot": build_copilot_contract(
+                intent=intent, message=message, context=copilot_context,
+                retrieval=knowledge_trace, citations=citations,
+                runtime={"device_connected": False, "cli_executed": False, "external_egress": True},
+            ),
+        }
         if intent == "knowledge":
             meta["retrieval"] = knowledge_trace
         yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
@@ -870,7 +924,13 @@ class AIAssistantService:
         tokens_emitted = 0
         llm_failed = False
         try:
-            async for token in llm_gateway.chat_stream(scene="chat", messages=messages, model_id=model_id, user_id=user_id, tenant_id=tenant_id, roles=roles, selection_source=model_selection_source, route_meta=route_meta):
+            async for token in llm_gateway.chat_stream(
+                scene="chat", messages=messages, model_id=model_id, user_id=user_id,
+                tenant_id=tenant_id, roles=roles, selection_source=model_selection_source,
+                route_meta=route_meta, workspace_id=copilot_context.get("workspace_id"),
+                site_id=copilot_context.get("site_id"), department=copilot_context.get("department"),
+                document_scope=copilot_context.get("document_scope"),
+            ):
                 if token:
                     tokens_emitted += 1
                     yield f"event: token\ndata: {json.dumps({'content': token}, ensure_ascii=False)}\n\n"
@@ -957,6 +1017,12 @@ class AIAssistantService:
             )
 
         if route_meta:
+            route_meta["copilot"] = build_copilot_contract(
+                intent=intent, message=message, context=copilot_context,
+                retrieval=knowledge_trace, citations=citations,
+                runtime={"device_connected": False, "cli_executed": False, "external_egress": True,
+                         "provider_id": route_meta.get("provider_id"), "model_id": route_meta.get("model_id")},
+            )
             yield f"event: meta\ndata: {json.dumps(route_meta, ensure_ascii=False)}\n\n"
 
         yield _done_event(started_at)

@@ -49,17 +49,24 @@ def create_conversation(*, tenant_id: str, user_id: str, title: str | None = Non
     return {"id": conversation_id, "tenant_id": tenant_id, "title": (title or "")[:200], "status": "active", "context_budget": max(4096, min(int(context_budget), 131072)), "selected_model_id": selected_model_id, "model_locked": model_locked, "created_at": now, "updated_at": now}
 
 
-def list_conversations(*, tenant_id: str, user_id: str, page: int = 1, page_size: int = 20, include_archived: bool = False) -> dict[str, Any]:
+def list_conversations(*, tenant_id: str, user_id: str, page: int = 1, page_size: int = 20, include_archived: bool = False, search: str = "") -> dict[str, Any]:
     page = max(1, int(page)); page_size = max(1, min(int(page_size), 100))
     opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id="conversation-owner")
     status_clause = "" if include_archived else " AND status = 'active'"
+    normalized_search = str(search or "").strip()[:200]
+    search_clause = ""
+    search_params: list[Any] = []
+    if normalized_search:
+        search_clause = " AND (LOWER(COALESCE(title, '')) LIKE LOWER(?) OR EXISTS (SELECT 1 FROM ai_messages m WHERE m.conversation_id = ai_conversations.id AND LOWER(COALESCE(m.content_safe, '')) LIKE LOWER(?)))"
+        pattern = f"%{normalized_search}%"
+        search_params = [pattern, pattern]
     with get_db_connection() as conn:
-        total = conn.execute(f"SELECT COUNT(*) AS c FROM ai_conversations WHERE tenant_id = ? AND user_id_opaque = ?{status_clause}", (tenant_id, opaque)).fetchone()["c"]
+        total = conn.execute(f"SELECT COUNT(*) AS c FROM ai_conversations WHERE tenant_id = ? AND user_id_opaque = ?{status_clause}{search_clause}", (tenant_id, opaque, *search_params)).fetchone()["c"]
         rows = conn.execute(
-            f"SELECT id, tenant_id, title, status, context_budget, selected_model_id, model_locked, created_at, updated_at FROM ai_conversations WHERE tenant_id = ? AND user_id_opaque = ?{status_clause} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-            (tenant_id, opaque, page_size, (page - 1) * page_size),
+            f"SELECT id, tenant_id, title, status, context_budget, selected_model_id, model_locked, created_at, updated_at FROM ai_conversations WHERE tenant_id = ? AND user_id_opaque = ?{status_clause}{search_clause} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            (tenant_id, opaque, *search_params, page_size, (page - 1) * page_size),
         ).fetchall()
-    return {"items": [dict(row) for row in rows], "total": int(total or 0), "page": page, "page_size": page_size}
+    return {"items": [dict(row) for row in rows], "total": int(total or 0), "page": page, "page_size": page_size, "search": normalized_search}
 
 
 def _get_conversation(conn, conversation_id: str, *, tenant_id: str, user_id: str):

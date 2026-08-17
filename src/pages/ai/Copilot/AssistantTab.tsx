@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, SlidersHorizontal, Check, Clock3, ChevronDown, ChevronUp, ListChecks, Loader2, CheckCircle2, AlertCircle, ExternalLink, AlertTriangle } from 'lucide-react';
+import { Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, SlidersHorizontal, Check, Clock3, ChevronDown, ChevronUp, ListChecks, Loader2, CheckCircle2, AlertCircle, ExternalLink, AlertTriangle, Square, RotateCcw, Pencil, Play } from 'lucide-react';
 import {
   AIConversationMessage,
   AssistantProcessStep,
   AssistantRetrievalTrace,
+  CopilotContract,
   chatAssistantStream,
   clearAIConversation,
   createAIConversation,
@@ -15,6 +16,12 @@ import {
   listAIConversations,
   renameAIConversation,
   archiveAIConversation,
+  submitCopilotFeedback,
+  checkCopilotAttachment,
+  createCopilotCase,
+  handoffCopilotCase,
+  createDiagnosticPlan,
+  runDiagnosticPlan,
 } from '../../../api/ai';
 import { MarkdownRenderer } from '../../../components/MarkdownRenderer';
 import { copyTextWithFallback } from '../../../utils/clipboard';
@@ -56,11 +63,22 @@ interface ChatMessage {
   created_at: string;
   latency_ms?: number;
   processing_steps?: AssistantProcessStep[];
+  copilot?: CopilotContract;
+  feedback?: 'positive' | 'negative';
+  stream_status?: 'streaming' | 'completed' | 'aborted' | 'error';
 }
 
 const LEGACY_STORAGE_KEY = 'nexora_copilot_sessions_v4';
 const SIDEBAR_COLLAPSED_KEY = 'nexora_copilot_sidebar_collapsed_v1';
 const ARCHIVED_VIEW_KEY = 'nexora_copilot_archived_view_v1';
+const FEEDBACK_REASONS: Array<{ code: string; label: string }> = [
+  { code: 'model_wrong', label: '型号错' },
+  { code: 'version_wrong', label: '版本错' },
+  { code: 'command_wrong', label: '命令错' },
+  { code: 'insufficient_evidence', label: '证据不足' },
+  { code: 'stale', label: '内容过时' },
+  { code: 'irrelevant', label: '内容无关' },
+];
 
 const formatSessionTime = (value: string | undefined): string => {
   if (!value) return '';
@@ -202,10 +220,22 @@ export const AssistantTab: React.FC = () => {
   const [expandedProcessId, setExpandedProcessId] = useState<string | null>(null);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [liveElapsedMs, setLiveElapsedMs] = useState(0);
+  const [copilotContext, setCopilotContext] = useState<Record<string, unknown>>({});
+  const [feedbackMessageId, setFeedbackMessageId] = useState<string | null>(null);
+  const [feedbackReasonMessageId, setFeedbackReasonMessageId] = useState<string | null>(null);
+  const [feedbackNotice, setFeedbackNotice] = useState<string | null>(null);
+  const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
+  const [caseNotice, setCaseNotice] = useState<string | null>(null);
+  const [diagnosticPlan, setDiagnosticPlan] = useState<any | null>(null);
+  const [authorizedDiagnosticSteps, setAuthorizedDiagnosticSteps] = useState<number[]>([]);
+  const [diagnosticNotice, setDiagnosticNotice] = useState<string | null>(null);
+  const [caseId, setCaseId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<string | null>(null);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const requestStartedAtRef = useRef<number | null>(null);
   const loadedSessionIdsRef = useRef<Set<string>>(new Set());
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const messages = (activeSession?.messages || []) as ChatMessage[];
@@ -483,6 +513,23 @@ export const AssistantTab: React.FC = () => {
     }
   };
 
+  const handleStopGeneration = () => {
+    abortControllerRef.current?.abort();
+  };
+
+  const handleRetryMessage = (message: ChatMessage) => {
+    const index = messages.findIndex((item) => item.id === message.id);
+    const previousUser = index >= 0
+      ? [...messages.slice(0, index)].reverse().find((item) => item.role === 'user')
+      : undefined;
+    if (previousUser) void handleSend(previousUser.content);
+  };
+
+  const handleContinueMessage = (message: ChatMessage) => {
+    const continuation = `请基于上一条回答继续排查：只推进下一项有信息增益的检查，不重复已完成检查；保持只读并说明依据。\n上一条回答：${message.content.slice(0, 6000)}`;
+    void handleSend(continuation);
+  };
+
   const handleSend = async (userMsg: string) => {
     if (!userMsg.trim() || loading || !activeSession) return;
 
@@ -547,6 +594,8 @@ export const AssistantTab: React.FC = () => {
     setStreamingMessageId(assistantMsgId);
     setLiveElapsedMs(0);
     let streamDurationMs: number | undefined;
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     try {
       const historyPayload = conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content }));
@@ -560,7 +609,7 @@ export const AssistantTab: React.FC = () => {
               if (s.id === activeSessionId) {
                 const msgs = s.messages.map((m) => {
                   if (m.id === assistantMsgId) {
-                    return { ...m, content: m.content + token };
+                    return { ...m, content: m.content + token, stream_status: 'streaming' };
                   }
                   return m;
                 });
@@ -578,9 +627,11 @@ export const AssistantTab: React.FC = () => {
                   if (m.id === assistantMsgId) {
                     return {
                       ...m,
+                      stream_status: 'streaming',
                       intent: meta.intent,
                       sources: meta.citations,
                       retrieval: meta.retrieval,
+                      copilot: meta.copilot,
                     };
                   }
                   return m;
@@ -621,7 +672,7 @@ export const AssistantTab: React.FC = () => {
               return {
                 ...s,
                 messages: s.messages.map((m) =>
-                  m.id === assistantMsgId ? { ...m, content: message } : m
+                  m.id === assistantMsgId ? { ...m, content: message, stream_status: 'error' } : m
                 ),
               };
             })
@@ -629,6 +680,8 @@ export const AssistantTab: React.FC = () => {
         },
         conversationId,
         selectedModel,
+        copilotContext,
+        abortController.signal,
       );
 
       const elapsed = streamDurationMs ?? Date.now() - startTime;
@@ -637,7 +690,7 @@ export const AssistantTab: React.FC = () => {
           if (s.id === activeSessionId) {
             const msgs = s.messages.map((m) => {
               if (m.id === assistantMsgId) {
-                const updatedMsg = { ...m, latency_ms: elapsed };
+                const updatedMsg = { ...m, latency_ms: elapsed, stream_status: 'completed' as const };
                 setActiveInspectorMsg(updatedMsg);
                 return updatedMsg;
               }
@@ -650,6 +703,7 @@ export const AssistantTab: React.FC = () => {
       );
     } catch (err: any) {
       const elapsed = streamDurationMs ?? Date.now() - startTime;
+      const aborted = err?.name === 'AbortError' || abortController.signal.aborted;
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id === activeSessionId) {
@@ -657,8 +711,9 @@ export const AssistantTab: React.FC = () => {
               if (m.id === assistantMsgId) {
                 return {
                   ...m,
-                  content: `[网络或大模型响应失败] ${err.message || '请求超时'}`,
+                  content: aborted ? '[已停止生成，可重试、修改问题或继续排查]' : `[网络或大模型响应失败] ${err.message || '请求超时'}`,
                   latency_ms: elapsed,
+                  stream_status: aborted ? 'aborted' : 'error',
                 };
               }
               return m;
@@ -669,6 +724,7 @@ export const AssistantTab: React.FC = () => {
         })
       );
     } finally {
+      abortControllerRef.current = null;
       setLoading(false);
       setStreamingMessageId(null);
       requestStartedAtRef.current = null;
@@ -684,6 +740,102 @@ export const AssistantTab: React.FC = () => {
       window.setTimeout(() => setCopiedId(null), 2000);
     } catch (e) {
       console.error('Copy failed:', e);
+    }
+  };
+
+  const handleFeedback = async (message: ChatMessage, rating: 'positive' | 'negative', reason?: string) => {
+    if (!activeSessionId || !activeSessionId.startsWith('conv_')) {
+      setFeedbackNotice('请在已保存会话中提交反馈');
+      return;
+    }
+    setFeedbackMessageId(message.id);
+    try {
+      const reasons = rating === 'negative' ? [reason || 'insufficient_evidence'] : [];
+      await submitCopilotFeedback({ conversation_id: activeSessionId, message_id: message.id, rating, reasons });
+      setSessions((previous) => previous.map((session) => session.id === activeSessionId
+        ? { ...session, messages: session.messages.map((item: any) => item.id === message.id ? { ...item, feedback: rating } : item) }
+        : session));
+      setFeedbackNotice(rating === 'positive' ? '已记录为有帮助' : '已记录改进原因');
+      setFeedbackReasonMessageId(null);
+    } catch (error: any) {
+      setFeedbackNotice(error?.message || '反馈提交失败');
+    } finally {
+      setFeedbackMessageId(null);
+      window.setTimeout(() => setFeedbackNotice(null), 2500);
+    }
+  };
+
+  const handleNegativeFeedback = (message: ChatMessage) => {
+    setFeedbackReasonMessageId(message.id);
+  };
+
+  const handleAttachmentText = async (text: string) => {
+    try {
+      const result = await checkCopilotAttachment(text);
+      setAttachmentNotice(result.decision === 'ALLOW' ? '附件已通过预检' : `附件${result.decision === 'BLOCK' ? '已阻止' : '需脱敏'}：${result.user_message}`);
+    } catch (error: any) {
+      setAttachmentNotice(error?.message || '附件预检失败，已阻止上传');
+    }
+  };
+
+  const handleCreateCase = async (message: ChatMessage) => {
+    if (!activeSessionId || !activeSessionId.startsWith('conv_')) {
+      setCaseNotice('请在已保存会话中生成案例');
+      return;
+    }
+    try {
+      const created = await createCopilotCase({
+        title: message.content.slice(0, 80) || 'Copilot 故障案例',
+        symptom: message.content.slice(0, 2000),
+        conversation_id: activeSessionId,
+        context: copilotContext,
+        plan: message.copilot?.next_checks?.map((purpose) => ({ purpose, status: 'planned', read_only: true })) || [],
+      });
+      setCaseId(String(created.id));
+      setCaseNotice(`故障案例已创建：${created.id}`);
+      window.setTimeout(() => setCaseNotice(null), 3000);
+    } catch (error: any) {
+      setCaseNotice(error?.message || '故障案例创建失败');
+    }
+  };
+
+  const handleHandoffCase = async (message: ChatMessage) => {
+    if (!caseId) return;
+    try {
+      await handoffCopilotCase(caseId, {
+        summary: message.content.slice(0, 2000),
+        ticket_draft: `【Nexora Copilot】${message.content.slice(0, 1200)}`,
+      });
+      setCaseNotice(`案例 ${caseId} 已生成交接草稿`);
+    } catch (error: any) {
+      setCaseNotice(error?.message || '案例交接失败');
+    }
+  };
+
+  const handleBuildDiagnosticPlan = async (symptom: string) => {
+    const lower = symptom.toLowerCase();
+    const playbook = lower.includes('ospf') ? 'ospf' : lower.includes('bgp') ? 'bgp' : lower.includes('cpu') ? 'cpu' : lower.includes('memory') ? 'memory' : lower.includes('丢包') || lower.includes('loss') ? 'packet_loss' : lower.includes('接口') || lower.includes('interface') ? 'interface_down' : 'unreachable';
+    try {
+      const plan = await createDiagnosticPlan({ symptom, playbook, vendor: String(copilotContext.vendor || ''), platform: String(copilotContext.platform || ''), target: String(copilotContext.device_id || copilotContext.site_id || '未指定目标'), device_id: String(copilotContext.device_id || '') || undefined });
+      setDiagnosticPlan(plan);
+      setAuthorizedDiagnosticSteps([]);
+      setDiagnosticNotice(null);
+    } catch (error: any) {
+      setDiagnosticNotice(error?.message || '只读检查计划生成失败');
+    }
+  };
+
+  const handleRunDiagnosticPlan = async () => {
+    if (!diagnosticPlan || authorizedDiagnosticSteps.length === 0) {
+      setDiagnosticNotice('请先逐步授权至少一项只读检查');
+      return;
+    }
+    try {
+      const result = await runDiagnosticPlan({ plan: diagnosticPlan, authorized_steps: authorizedDiagnosticSteps, context: { ...copilotContext, case_id: activeSessionId } });
+      setDiagnosticPlan({ ...diagnosticPlan, ...result });
+      setDiagnosticNotice('只读诊断已完成，结果已记录');
+    } catch (error: any) {
+      setDiagnosticNotice(error?.message || '只读诊断执行失败');
     }
   };
 
@@ -760,6 +912,36 @@ export const AssistantTab: React.FC = () => {
                     <div className="text-gray-800 dark:text-gray-100 pl-1">
                       <MarkdownRenderer content={m.content || (loading ? '...' : '')} />
                     </div>
+
+                    {m.copilot && (
+                      <div className="rounded-xl border border-indigo-100 dark:border-indigo-900/60 bg-indigo-50/60 dark:bg-indigo-950/20 p-3 text-xs space-y-2">
+                        <div className="flex flex-wrap items-center gap-2 font-semibold text-indigo-700 dark:text-indigo-300">
+                          <span>诊断摘要</span>
+                          <span className="rounded-full bg-white/80 dark:bg-gray-900/70 px-2 py-0.5">{m.copilot.intent || 'consultation'}</span>
+                          <span className="rounded-full bg-white/80 dark:bg-gray-900/70 px-2 py-0.5">风险 {m.copilot.risk || 'low'}</span>
+                          <span className="rounded-full bg-white/80 dark:bg-gray-900/70 px-2 py-0.5">置信度 {Math.round((m.copilot.confidence || 0) * 100)}%</span>
+                        </div>
+                        {m.copilot.confirmed_facts && m.copilot.confirmed_facts.length > 0 && (
+                          <div><span className="font-medium text-gray-600 dark:text-gray-300">已确认：</span>{m.copilot.confirmed_facts.join('；')}</div>
+                        )}
+                        {m.copilot.required_evidence && m.copilot.required_evidence.length > 0 && (
+                          <div className="text-amber-700 dark:text-amber-300"><span className="font-medium">待补证据：</span>{m.copilot.required_evidence.join('；')}</div>
+                        )}
+                        <div className="flex flex-wrap gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+                          {(m.copilot.source_labels || []).map((label) => <span key={label} className="rounded border border-gray-200 dark:border-gray-700 px-1.5 py-0.5">{label === 'official' ? '官方知识' : label === 'enterprise' ? '企业知识' : label === 'realtime_device' ? '实时设备' : '模型推断'}</span>)}
+                          <span className="rounded border border-gray-200 dark:border-gray-700 px-1.5 py-0.5">{m.copilot.runtime?.external_egress ? '已通过安全网关外发' : '未外发'}</span>
+                          <span className="rounded border border-gray-200 dark:border-gray-700 px-1.5 py-0.5">{m.copilot.runtime?.cli_executed ? '已执行 CLI' : '未执行 CLI'}</span>
+                        </div>
+                        {m.copilot.context_budget && (
+                          <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                            上下文预算 {m.copilot.context_budget.used_chars || 0}/{m.copilot.context_budget.limit_chars || 0} 字符 · {m.copilot.context_budget.truncated ? '已截断并保留结构化摘要' : '未截断'}
+                          </div>
+                        )}
+                        {m.copilot.next_checks && m.copilot.next_checks.length > 0 && (
+                          <div><span className="font-medium text-gray-600 dark:text-gray-300">下一步：</span>{m.copilot.next_checks.slice(0, 3).join('；')}</div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Source References Pill & Popover (Tier 2) */}
                     {m.sources && m.sources.length > 0 && (() => {
@@ -841,18 +1023,39 @@ export const AssistantTab: React.FC = () => {
                         )}
                       </button>
 
+                      <button type="button" onClick={() => handleRetryMessage(m)} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="重试本次问题">
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </button>
+                      <button type="button" onClick={() => setEditDraft(messages.slice(0, messages.findIndex((item) => item.id === m.id)).reverse().find((item) => item.role === 'user')?.content || '')} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="修改上一条问题">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button type="button" onClick={() => handleContinueMessage(m)} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="继续排查">
+                        <Play className="w-3.5 h-3.5" />
+                      </button>
+
                       <button
-                        onClick={() => alert('感谢您的反馈！')}
-                        className="hover:text-emerald-600 p-1 transition"
-                        title="好评"
+                        onClick={() => void handleFeedback(m, 'positive')}
+                        disabled={feedbackMessageId === m.id}
+                        className={`hover:text-emerald-600 p-1 transition ${m.feedback === 'positive' ? 'text-emerald-600' : ''}`}
+                        title="好评（记录到反馈）"
                       >
                         <ThumbsUp className="w-3.5 h-3.5" />
                       </button>
 
+                      <button type="button" onClick={() => void handleCreateCase(m)} className="hover:text-indigo-500 p-1 transition" title="生成故障案例">
+                        案例
+                      </button>
+                      {m.copilot?.intent === 'diagnosis' && (
+                        <button type="button" onClick={() => void handleBuildDiagnosticPlan(m.content)} className="hover:text-amber-600 p-1 transition" title="生成只读诊断计划">
+                          诊断计划
+                        </button>
+                      )}
+
                       <button
-                        onClick={() => alert('感谢您的意见，已提交优化记录。')}
-                        className="hover:text-red-500 p-1 transition"
-                        title="差评"
+                        onClick={() => handleNegativeFeedback(m)}
+                        disabled={feedbackMessageId === m.id}
+                        className={`hover:text-red-500 p-1 transition ${m.feedback === 'negative' ? 'text-red-500' : ''}`}
+                        title="差评（记录改进原因）"
                       >
                         <ThumbsDown className="w-3.5 h-3.5" />
                       </button>
@@ -869,6 +1072,14 @@ export const AssistantTab: React.FC = () => {
                         <span className="text-[11px]">调试 Trace</span>
                       </button>
                     </div>
+                    {feedbackReasonMessageId === m.id && (
+                      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-rose-100 bg-rose-50/70 px-2 py-1.5 text-[11px] text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-300">
+                        <span>请选择差评原因：</span>
+                        {FEEDBACK_REASONS.map((reason) => (
+                          <button key={reason.code} type="button" onClick={() => void handleFeedback(m, 'negative', reason.code)} className="rounded border border-rose-200 bg-white/80 px-1.5 py-0.5 hover:bg-rose-100 dark:border-rose-900/60 dark:bg-gray-900/50">{reason.label}</button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -879,16 +1090,34 @@ export const AssistantTab: React.FC = () => {
                   AI 正在思考中...
                 </div>
               )}
+              {feedbackNotice && <div className="text-center text-xs text-gray-500 dark:text-gray-400">{feedbackNotice}</div>}
+              {caseNotice && <div className="flex items-center justify-center gap-2 text-center text-xs text-indigo-500 dark:text-indigo-300"><span>{caseNotice}</span>{caseId && <button type="button" onClick={() => { const lastAssistant = [...messages].reverse().find((item) => item.role === 'assistant'); if (lastAssistant) void handleHandoffCase(lastAssistant); }} className="rounded border border-indigo-200 px-2 py-0.5 hover:bg-indigo-50 dark:border-indigo-800 dark:hover:bg-indigo-950/40">交接草稿</button>}</div>}
             </div>
           )}
         </div>
 
         {/* Bottom ChatGPT Composer (Fixed at bottom) */}
+        {diagnosticPlan && (
+          <div className="mx-auto mb-2 w-full max-w-[820px] rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs dark:border-amber-900/60 dark:bg-amber-950/20">
+            <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold text-amber-800 dark:text-amber-300">只读诊断计划 · {diagnosticPlan.playbook || 'network'}</span><span className="text-amber-700 dark:text-amber-400">默认不连接设备、不执行写操作</span></div>
+            <div className="mt-2 flex flex-wrap gap-2">{(diagnosticPlan.steps || []).map((step: any) => <label key={`${step.step_no}-${step.purpose}`} className="inline-flex items-center gap-1.5 rounded border border-amber-200 bg-white/70 px-2 py-1 dark:border-amber-900/60 dark:bg-gray-900/40"><input type="checkbox" checked={authorizedDiagnosticSteps.includes(step.step_no)} onChange={(event) => setAuthorizedDiagnosticSteps((current) => event.target.checked ? [...new Set([...current, step.step_no])] : current.filter((item) => item !== step.step_no))} />{step.purpose}{step.command ? ` · ${step.command}` : ''}</label>)}</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2"><button type="button" onClick={() => void handleRunDiagnosticPlan()} className="rounded-lg bg-amber-600 px-2.5 py-1.5 font-semibold text-white hover:bg-amber-700">执行已授权只读检查</button><button type="button" onClick={() => setDiagnosticPlan(null)} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-amber-800 dark:border-amber-900/60 dark:text-amber-300">关闭计划</button>{diagnosticNotice && <span className="text-amber-700 dark:text-amber-300">{diagnosticNotice}</span>}</div>
+            {diagnosticPlan.conclusion && <div className="mt-2 text-amber-800 dark:text-amber-300">结论：{diagnosticPlan.conclusion}</div>}
+          </div>
+        )}
         <CopilotComposer
           onSend={handleSend}
           selectedModel={selectedModel}
           onSelectModel={setSelectedModel}
           models={availableModels}
+          context={copilotContext}
+          onContextChange={setCopilotContext}
+          attachmentNotice={attachmentNotice}
+          onAttachmentText={handleAttachmentText}
+          editDraft={editDraft}
+          onEditDraftConsumed={() => setEditDraft(null)}
+          onStop={handleStopGeneration}
+          isStreaming={loading}
           disabled={loading || sessionLoadingId === activeSessionId || !activeSession}
         />
       </div>

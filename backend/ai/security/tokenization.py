@@ -117,6 +117,9 @@ def tokenize_text(text: str, *, tenant_id: str, task_id: str, vault: ScopedToken
         ("MAC", re.compile(r"(?i)(?<![\w])(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}(?![\w])")),
         ("PHONE", re.compile(r"(?<!\w)(?:\+?\d[\d ()-]{7,18}\d)(?!\w)")),
         ("HOST", re.compile(r"(?<![\w.-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}(?![\w.-])")),
+        ("SERIAL", re.compile(r"(?i)\b(?:serial(?:[-_ ]?number)?|sn)\s*[:=#-]?\s*[A-Z0-9][A-Z0-9._-]{5,31}\b")),
+        ("SITE", re.compile(r"(?i)\b(?:site|机房|园区|站点)\s*[:=：]\s*[\u4e00-\u9fffA-Za-z0-9][^\r\n,;]{1,80}")),
+        ("BUSINESS", re.compile(r"(?i)\b(?:customer|business|project|department|业务|客户|项目|部门)\s*[:=：]\s*[^\r\n,;]{1,80}")),
     )
     result = text
     for kind, pattern in patterns:

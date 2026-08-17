@@ -107,6 +107,12 @@ class _DocumentLike(Protocol):
 
 _RULES: tuple[tuple[str, str, str, re.Pattern[str]], ...] = (
     (
+        "KP_HIDDEN_SCRIPT",
+        "hidden_instruction",
+        "high",
+        re.compile(r"(?is)<script\b.*?>.*?</script>|<!--.*?(?:ignore|system|developer|instruction|override).*?-->|style\s*=\s*['\"][^'\"]*(?:display\s*:\s*none|visibility\s*:\s*hidden)"),
+    ),
+    (
         "PI_OVERRIDE_CONTEXT",
         "prompt_injection",
         "high",

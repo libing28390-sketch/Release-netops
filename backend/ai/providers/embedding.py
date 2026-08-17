@@ -109,6 +109,9 @@ class ExternalEmbeddingProvider(BaseEmbeddingProvider):
         task_id: str = "embedding",
         user_id: str | None = None,
         idempotency_key: str | None = None,
+        provider_id: str | None = None,
+        data_region: str | None = None,
+        allowed_data_classification: str | None = None,
         **_: Any,
     ) -> List[List[float]]:
         if not texts:
@@ -120,6 +123,10 @@ class ExternalEmbeddingProvider(BaseEmbeddingProvider):
             user_id=user_id,
             provider_type=self.provider_type,
             idempotency_key=idempotency_key,
+            provider_id=provider_id,
+            model_id=self.model_id,
+            data_region=data_region,
+            provider_allowed_classification=allowed_data_classification,
         )
         vectors = [list(vector) for vector in self.transport(secure.texts, secure.metadata)]
         if len(vectors) != len(texts):

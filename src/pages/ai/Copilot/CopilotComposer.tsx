@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Plus, MapPin, Sliders, AlertTriangle, BookOpen, ChevronDown, ChevronRight, Check, RotateCcw, Sparkles, Cpu, Zap } from 'lucide-react';
+import { ArrowUp, Plus, MapPin, Sliders, AlertTriangle, BookOpen, ChevronDown, ChevronRight, Check, RotateCcw, Sparkles, Cpu, Zap, Square } from 'lucide-react';
 
 export interface CopilotModelOption {
   id: string;
@@ -18,6 +18,14 @@ interface CopilotComposerProps {
   onSelectModel?: (model: string) => void;
   models?: CopilotModelOption[];
   disabled?: boolean;
+  context?: Record<string, unknown>;
+  onContextChange?: (context: Record<string, unknown>) => void;
+  attachmentNotice?: string | null;
+  onAttachmentText?: (text: string) => void;
+  editDraft?: string | null;
+  onEditDraftConsumed?: () => void;
+  onStop?: () => void;
+  isStreaming?: boolean;
 }
 
 export const CopilotComposer: React.FC<CopilotComposerProps> = ({
@@ -26,6 +34,14 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   onSelectModel,
   models = [],
   disabled,
+  context = {},
+  onContextChange,
+  attachmentNotice,
+  onAttachmentText,
+  editDraft,
+  onEditDraftConsumed,
+  onStop,
+  isStreaming = false,
 }) => {
   const [input, setInput] = useState('');
   const [showQuickMenu, setShowQuickMenu] = useState(false);
@@ -33,6 +49,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   const [activeSubPanel, setActiveSubPanel] = useState<'main' | 'models' | 'reasoning' | 'speed'>('main');
   const [reasoningLevel, setReasoningLevel] = useState<'normal' | 'high'>('high');
   const [speedLevel, setSpeedLevel] = useState<'fast' | 'precise' | 'creative'>('fast');
+  const [showContext, setShowContext] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -44,6 +61,13 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
     }
   }, [input]);
+
+  useEffect(() => {
+    if (editDraft === null || editDraft === undefined) return;
+    setInput(editDraft);
+    onEditDraftConsumed?.();
+    textareaRef.current?.focus();
+  }, [editDraft, onEditDraftConsumed]);
 
   // Click outside to close popovers
   useEffect(() => {
@@ -107,8 +131,42 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
     setActiveSubPanel('main');
   };
 
+  const updateContext = (key: string, value: string) => {
+    onContextChange?.({ ...context, [key]: value || undefined });
+  };
+
   return (
     <div className="relative max-w-[820px] mx-auto w-full shrink-0 px-3 sm:px-4 pb-3 sm:pb-4 pt-1 font-sans">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+        <button type="button" onClick={() => setShowContext((value) => !value)} className="rounded-full border border-gray-200 dark:border-gray-700 px-2.5 py-1 hover:border-indigo-300 hover:text-indigo-600" aria-expanded={showContext}>
+          {showContext ? '收起诊断范围' : '选择诊断范围'}
+        </button>
+        {context.device_id && <span className="rounded-full bg-indigo-50 dark:bg-indigo-950/40 px-2 py-1">设备 {String(context.device_id)}</span>}
+        {context.interface && <span className="rounded-full bg-indigo-50 dark:bg-indigo-950/40 px-2 py-1">接口 {String(context.interface)}</span>}
+        {attachmentNotice && <span className="rounded-full bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-amber-700 dark:text-amber-300">{attachmentNotice}</span>}
+      </div>
+      {showContext && (
+        <div className="mb-2 grid grid-cols-2 gap-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/90 dark:bg-gray-900/90 p-2 text-xs">
+          {([
+            ['device_id', '设备 ID'], ['interface', '接口'], ['site_id', 'Site'], ['time_range', '时间范围'], ['vendor', '厂商'], ['platform', '平台'],
+          ] as Array<[string, string]>).map(([key, label]) => (
+            <label key={key} className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
+              <span className="w-14 shrink-0">{label}</span>
+              <input value={String(context[key] || '')} onChange={(event) => updateContext(key, event.target.value)} className="min-w-0 flex-1 rounded border border-gray-200 dark:border-gray-700 bg-transparent px-2 py-1 text-gray-800 dark:text-gray-200" aria-label={label} />
+            </label>
+          ))}
+          <label className="col-span-2 flex items-center gap-2 text-gray-500 dark:text-gray-400">
+            <span>附件预检</span>
+            <input type="file" accept=".txt,.md,.log,.html" onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (!file || !onAttachmentText) return;
+              const reader = new FileReader();
+              reader.onload = () => onAttachmentText(String(reader.result || ''));
+              reader.readAsText(file);
+            }} className="min-w-0 text-[11px]" aria-label="选择附件进行安全预检" />
+          </label>
+        </div>
+      )}
       {/* Quick Menu Popover */}
       {showQuickMenu && (
         <div className="absolute bottom-full mb-2 left-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-2 shadow-xl z-20 w-64 space-y-1 text-xs">
@@ -335,12 +393,14 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
 
         {/* Circular Send Button */}
         <button
-          type="submit"
-          disabled={disabled || !input.trim()}
+          type={isStreaming ? 'button' : 'submit'}
+          onClick={isStreaming ? onStop : undefined}
+          disabled={isStreaming ? !onStop : disabled || !input.trim()}
           className="w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white flex items-center justify-center transition flex-shrink-0 mb-0.5 shadow-xs cursor-pointer"
-          title="发送"
+          title={isStreaming ? '停止生成' : '发送'}
+          aria-label={isStreaming ? '停止生成' : '发送'}
         >
-          <ArrowUp className="w-4 h-4" />
+          {isStreaming ? <Square className="w-3.5 h-3.5 fill-current" /> : <ArrowUp className="w-4 h-4" />}
         </button>
       </form>
 

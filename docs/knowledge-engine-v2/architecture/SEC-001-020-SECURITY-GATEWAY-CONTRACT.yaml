@@ -1,0 +1,54 @@
+contract: nxa.security-gateway.v2
+status: implementation
+authority: PostgreSQL
+classification:
+  PUBLIC:
+    level: L0
+    examples: [official_public_document, vendor_release_note]
+    default_action: ALLOW
+  INTERNAL:
+    level: L1
+    examples: [sanitized_runbook, aggregate_metric]
+    default_action: ALLOW
+  CONFIDENTIAL:
+    level: L2
+    examples: [tenant_identifier, internal_ip, hostname, mac, serial, site_name]
+    default_action: TOKENIZE
+  SECRET:
+    levels: [L3, L4]
+    examples: [password, community, api_key, private_key, radius_key, tacacs_key, jwt, cookie]
+    default_action: MINIMIZE_OR_BLOCK
+    raw_external_egress: false
+findings:
+  credentials: [credential, snmp_community, radius_key, tacacs_key, jwt, cookie, private_key]
+  identifiers: [ip_address, hostname, serial_number, mac_address, site_name, business_name, email, phone]
+  unsafe_context: [full_configuration_or_topology, full_cmdb, full_logs, full_sessions, prompt_injection, hidden_instruction, script]
+policy:
+  default_deny: true
+  unknown_provider: BLOCK
+  unknown_classification: BLOCK
+  unknown_permission: BLOCK
+  allowed_data_regions: explicit_per_provider_model
+  scope: [tenant, workspace, site, department, document_scope, user_role]
+  kill_switches: [global, tenant, provider]
+token_vault:
+  reversible: true
+  scope: [tenant_id, task_id]
+  ttl_seconds_max: 86400
+  persistent_raw_values: false
+audit:
+  metadata_only: true
+  required_fields: [request_id, tenant_id, policy_version, classification, decision, disposition, provider_id, model_id, finding_categories, data_region, created_at]
+  raw_payload: false
+  secret_redaction: required
+copilot:
+  safe_interception_reason: stable_code_and_user_message
+  trace_split: [engineer_evidence, developer_trace]
+diagnostics:
+  external_calls_require_gateway: true
+  default_write_operations: false
+  required_step_fields: [purpose, command, target, status, evidence, duration_ms]
+exit_criteria:
+  secret_external_egress: 0
+  external_call_has_decision_and_audit: true
+  adapter_bypass_scan: required
