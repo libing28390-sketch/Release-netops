@@ -3,7 +3,7 @@
   "current_milestone": "M2",
   "current_task": "EVAL-017",
   "task_state": "VERIFYING",
-  "updated_at": "2026-08-17T21:15:00+08:00",
+  "updated_at": "2026-08-17T21:18:27+08:00",
   "last_completed_task": "EVAL-016",
   "completed_tasks": [
     "ADR-001",
@@ -393,7 +393,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "5c135b79（EVAL-016 platform/readonly fixture gate implementation PASS）",
+  "last_verified_commit": "e0ff2300（EVAL-017 Provider data-region label and selector PASS）",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -1121,5 +1121,6 @@
   "eval017_provider_live_probe": "PASS; authenticated /ai/providers probe through gateway returned ok from deepseek-v4-flash in 2112ms; card healthy and stale AI_SECURITY_BLOCKED cleared",
   "eval017_provider_live_probe_at": "2026-08-17T21:09:00+08:00",
   "eval017_provider_live_probe_external_request": true,
+  "eval017_data_region_ui": "PASS; PostgreSQL provider data_region remains explicit unknown; UI renders 区域: 未配置 and offers unknown/global/cn/us/eu without inferring or mutating production data",
   "eval017_production_ddl": "NONE"
 }
