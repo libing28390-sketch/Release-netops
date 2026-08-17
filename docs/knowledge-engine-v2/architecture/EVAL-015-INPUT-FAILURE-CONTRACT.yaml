@@ -1,0 +1,63 @@
+task_id: EVAL-015
+title: Success, invalid input, permission denial, empty data and dependency failure coverage
+priority: P0
+status: executable
+authority: PostgreSQL
+scope:
+  success:
+    postgres_probe: scripts/knowledge_engine_v2_chk013_pg_probe.py
+    cases: [changed_projection, original_content_preserved, successful_reindex]
+  invalid_input:
+    pure_tests:
+      - backend/tests/ai/test_api_v2_contracts.py
+      - backend/tests/ai/test_ing006_document_parser_adapters.py
+      - backend/tests/ai/test_ingestion_idempotency.py
+    cases: [unknown_fields, malformed_front_matter, mime_filename_mismatch, invalid_identity, duplicate_content]
+  permission_denial:
+    postgres_probe: scripts/knowledge_engine_v2_llm_pg_probe.py
+    pure_tests:
+      - backend/tests/ai/test_sec_001_020_security_gateway.py
+      - backend/tests/ai/test_security_gateway.py
+    cases: [tenant_model_acl, unknown_residency_denied, write_tool_blocked, credential_blocked]
+  empty_data:
+    postgres_probe: scripts/knowledge_engine_v2_v1_baseline_pg.py
+    cases: [Q07_no_match_empty_result, empty_document_input_fail_closed]
+  dependency_failure:
+    postgres_probe: scripts/knowledge_engine_v2_chk013_pg_probe.py
+    cases: [embedding_provider_failure_atomic, concurrent_edit_rejection]
+database_policy:
+  required_database: PostgreSQL
+  sqlite: forbidden
+  persistence_probe_transaction: rollback
+  production_database_write: false
+  external_network: forbidden
+  excluded_fixture: backend/tests/ai/test_kui_012_document_actions.py (hard-coded sqlite3; not part of acceptance)
+verification:
+  coverage_validator: scripts/knowledge_engine_v2_eval015_input_failure_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval015_input_failure.py
+  pure_contract_tests:
+    - backend/tests/ai/test_api_v2_contracts.py
+    - backend/tests/ai/test_sec_001_020_security_gateway.py
+    - backend/tests/ai/test_security_gateway.py
+    - backend/tests/ai/test_ingestion_pipeline_state_machine.py
+    - backend/tests/ai/test_ingestion_idempotency.py
+    - backend/tests/ai/test_ing006_document_parser_adapters.py
+    - backend/tests/ai/test_ing008_document_security_scan.py
+  commands:
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval015_input_failure_check.py"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe tests/knowledge_engine_v2/test_eval015_input_failure.py -q -p no:cacheprovider"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe -p no:conftest backend/tests/ai/test_api_v2_contracts.py backend/tests/ai/test_sec_001_020_security_gateway.py backend/tests/ai/test_security_gateway.py backend/tests/ai/test_ingestion_pipeline_state_machine.py backend/tests/ai/test_ingestion_idempotency.py backend/tests/ai/test_ing006_document_parser_adapters.py backend/tests/ai/test_ing008_document_security_scan.py -q -p no:cacheprovider"
+    - "git diff --check"
+required_results:
+  - success: PASS
+  - invalid_input: PASS
+  - permission_denial: PASS
+  - empty_data: PASS
+  - dependency_failure: PASS
+  - all_persistence_evidence_database: PostgreSQL
+  - sqlite_acceptance_evidence: false
+  - production_database_write: false
+rollback:
+  application: preserve existing service behavior when any EVAL-015 case fails
+  database: every PostgreSQL probe rolls back transaction-local fixtures
+  data_loss: forbidden

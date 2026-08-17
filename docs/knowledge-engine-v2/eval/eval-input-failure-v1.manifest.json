@@ -1,0 +1,279 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-015",
+  "database": "postgresql",
+  "sqlite": "not_used",
+  "coverage": {
+    "success": true,
+    "invalid_input": true,
+    "permission_denial": true,
+    "empty_data": true,
+    "dependency_failure": true
+  },
+  "postgres_probes": [
+    "scripts/knowledge_engine_v2_llm_pg_probe.py",
+    "scripts/knowledge_engine_v2_chk013_pg_probe.py",
+    "scripts/knowledge_engine_v2_ing024_pg_probe.py",
+    "scripts/knowledge_engine_v2_v1_baseline_pg.py"
+  ],
+  "pure_contract_tests": [
+    "backend/tests/ai/test_api_v2_contracts.py",
+    "backend/tests/ai/test_sec_001_020_security_gateway.py",
+    "backend/tests/ai/test_security_gateway.py",
+    "backend/tests/ai/test_ingestion_pipeline_state_machine.py",
+    "backend/tests/ai/test_ingestion_idempotency.py",
+    "backend/tests/ai/test_ing006_document_parser_adapters.py",
+    "backend/tests/ai/test_ing008_document_security_scan.py"
+  ],
+  "excluded_sqlite_fixture": "backend/tests/ai/test_kui_012_document_actions.py",
+  "production_database_write": false,
+  "source_sha256": {
+    "contract": "c26fb9328774611923b71b22e74b7fd5f017977dbf1006418edc4e7f9a7b8781",
+    "knowledge_engine_v2_llm_pg_probe.py": "531e08cfa33c7e5112d8b0dede2909d5f0d4d8b0c7d003818c45fcf9c0eedbcc",
+    "knowledge_engine_v2_chk013_pg_probe.py": "eb0f7d5c35582adb1afccb9f8319b75baad7cb66fb4a16c6c21ae72a696807c5",
+    "knowledge_engine_v2_ing024_pg_probe.py": "c3479aa73d71b55fca5be3bd74548596c3aaa76a9001d4a09a5dd4b9b5a9e49f",
+    "knowledge_engine_v2_v1_baseline_pg.py": "2bf33bdf46da4bfcd54a4d60f2f00be8777880ab9ddc92f75be1ac8b14f3453b"
+  },
+  "matrix": {
+    "status": "PASS",
+    "task_id": "EVAL-015",
+    "database": "postgresql",
+    "sqlite": "not_used",
+    "probes": {
+      "provider_acl": {
+        "acl_tenant_scoped": true,
+        "database": "postgresql",
+        "duplicate_model_rejected": true,
+        "key_audit": true,
+        "key_rotation": true,
+        "multi_provider": true,
+        "rollback": true,
+        "route_fallback": true,
+        "same_model_code_scope": "provider_id+model_code",
+        "usage_scope": true,
+        "user_default": true
+      },
+      "reindex_dependency": {
+        "status": "PASS",
+        "database": "PostgreSQL",
+        "initial_chunks": 1,
+        "changed_projection": true,
+        "original_content_preserved": true,
+        "dry_run_unchanged": true,
+        "provider_failure_atomic": true,
+        "concurrent_edit_rejected": true,
+        "rollback": true
+      },
+      "duplicate_content": {
+        "status": "PASS",
+        "database": "PostgreSQL",
+        "duplicate_same_tenant_rejected": true,
+        "same_hash_other_tenant_allowed": true,
+        "rollback": true
+      },
+      "v1_empty": {
+        "baseline_id": "nexora-kb-v1-20260809",
+        "system_under_test": "current-local-rag-retrieval-path",
+        "database": "PostgreSQL",
+        "case_count": 10,
+        "metrics": {
+          "retrieval_accuracy": 1.0,
+          "wrong_vendor_rate": 0.0,
+          "version_conflict_rate": 0.0,
+          "citation_accuracy": 1.0,
+          "latency_ms": {
+            "average": 3.3718,
+            "p50": 2.8589,
+            "p95": 5.6798,
+            "max": 7.0044
+          }
+        },
+        "cases": [
+          {
+            "id": "Q01",
+            "query": "S5735-L-V2 V600 ARP",
+            "expected_ids": [
+              "arp-v600"
+            ],
+            "returned_ids": [
+              "arp-v600"
+            ],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 7.0044
+          },
+          {
+            "id": "Q02",
+            "query": "S5735-L-V2 V600 VLAN config",
+            "expected_ids": [
+              "vlan-v600"
+            ],
+            "returned_ids": [
+              "vlan-v600"
+            ],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 4.0609
+          },
+          {
+            "id": "Q03",
+            "query": "Huawei V300 OSPF output",
+            "expected_ids": [
+              "ospf-v300"
+            ],
+            "returned_ids": [
+              "ospf-v300"
+            ],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 2.8272
+          },
+          {
+            "id": "Q04",
+            "query": "Huawei V600 OSPF output",
+            "expected_ids": [
+              "ospf-v600"
+            ],
+            "returned_ids": [
+              "ospf-v600"
+            ],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 2.696
+          },
+          {
+            "id": "Q05",
+            "query": "display ospf peer meaning",
+            "expected_ids": [
+              "ospf-v300",
+              "ospf-v600"
+            ],
+            "returned_ids": [
+              "ospf-v300",
+              "ospf-v600"
+            ],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 2.8906
+          },
+          {
+            "id": "Q06",
+            "query": "CloudEngine 6800 hardware",
+            "expected_ids": [
+              "hw-ce-series",
+              "hw-ce-model"
+            ],
+            "returned_ids": [
+              "hw-ce-series",
+              "hw-ce-model"
+            ],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 3.1861
+          },
+          {
+            "id": "Q07",
+            "query": "CloudEngine 6800 OSPF config",
+            "expected_ids": [],
+            "returned_ids": [],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 2.6492
+          },
+          {
+            "id": "Q08",
+            "query": "Cisco ARP",
+            "expected_ids": [
+              "cisco-arp"
+            ],
+            "returned_ids": [
+              "cisco-arp"
+            ],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 3.2371
+          },
+          {
+            "id": "Q09",
+            "query": "H3C OSPF command",
+            "expected_ids": [
+              "h3c-ospf"
+            ],
+            "returned_ids": [
+              "h3c-ospf"
+            ],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 2.469
+          },
+          {
+            "id": "Q10",
+            "query": "S5735-L-V2 V600 ARP no vendor",
+            "expected_ids": [
+              "arp-v600"
+            ],
+            "returned_ids": [
+              "arp-v600"
+            ],
+            "retrieval_correct": true,
+            "citation_precision": 1.0,
+            "vendor_mismatch": false,
+            "version_conflict": false,
+            "latency_ms": 2.6978
+          }
+        ],
+        "external_network_call": false,
+        "production_database_write": false,
+        "rollback": "transaction_rollback"
+      }
+    },
+    "pure_tests": {
+      "status": "PASS",
+      "database": "none",
+      "sqlite": "not_used",
+      "passed": 69
+    },
+    "success": {
+      "status": "PASS",
+      "changed_projection": true
+    },
+    "invalid_input": {
+      "status": "PASS",
+      "duplicate_same_tenant_rejected": true
+    },
+    "permission_denial": {
+      "status": "PASS",
+      "acl_tenant_scoped": true
+    },
+    "empty_data": {
+      "status": "PASS",
+      "case": "Q07",
+      "returned_ids": []
+    },
+    "dependency_failure": {
+      "status": "PASS",
+      "provider_failure_atomic": true
+    },
+    "production_database_write": false,
+    "rollback_or_cleanup": true
+  },
+  "rollback_or_cleanup": true
+}
