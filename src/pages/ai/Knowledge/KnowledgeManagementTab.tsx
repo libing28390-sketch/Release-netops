@@ -34,7 +34,7 @@ import {
   Pencil,
   Info,
 } from 'lucide-react';
-import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, clearSampleKnowledge, deleteKnowledgeDocument, batchDeleteKnowledgeDocuments, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail } from '../../../api/ai';
+import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, clearSampleKnowledge, deleteKnowledgeDocument, batchDeleteKnowledgeDocuments, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 
@@ -299,7 +299,7 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
               onClick={() => { onSelect(node); setOpen(false); }}
               disabled={disabled}
               className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition ${selected ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'}`}
-              title={`kb_import/${node.path}`}
+              title={`知识目录：${node.path}`}
             >
               {expanded ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-500" /> : <Folder className="h-3.5 w-3.5 shrink-0 text-indigo-400" />}
               <span className="truncate">{getKnowledgeDirectoryDisplayName(node)}</span>
@@ -332,7 +332,7 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
           disabled={disabled}
           className="flex w-full items-center justify-between gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2 text-left text-xs text-gray-700 shadow-sm transition hover:border-indigo-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
         >
-          <span className="flex min-w-0 items-center gap-2"><FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-500" /><span className="truncate">{selectedPath ? `kb_import/${selectedPath}` : '请选择目录'}</span></span>
+          <span className="flex min-w-0 items-center gap-2"><FolderOpen className="h-3.5 w-3.5 shrink-0 text-indigo-500" /><span className="truncate">{selectedPath ? `目录：${selectedPath}` : '请选择目录'}</span></span>
           <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
         </button>
       )}
@@ -372,11 +372,11 @@ function flattenDirectoryNodes(nodes: KnowledgeDirectoryNode[]): KnowledgeDirect
 
 function getDirectoryImportPath(directoryPath: string, vendor: string): string {
   const selectedPath = String(directoryPath || '').replace(/^\/+|\/+$/g, '');
-  if (!selectedPath) return 'kb_import/';
+  if (!selectedPath) return '全部知识目录';
   const hasVendorSegment = selectedPath.split('/').some((segment) => Boolean(getKnowledgeDirectoryVendor(segment)));
   const vendorSlug = getKnowledgeDirectoryVendor(vendor);
   const targetPath = !hasVendorSegment && vendorSlug ? `${selectedPath}/${vendorSlug}` : selectedPath;
-  return `kb_import/${targetPath}/`;
+  return targetPath.split('/').filter(Boolean).join(' / ');
 }
 
 export const KnowledgeManagementTab: React.FC = () => {
@@ -390,12 +390,26 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [selectedFolder, setSelectedFolder] = useState<string>('all');
   const [selectedDirectoryPath, setSelectedDirectoryPath] = useState('');
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [documentFacets, setDocumentFacets] = useState<KnowledgeDocumentFacets>({ vendors: [], families: [], series: [] });
   const [totalDocuments, setTotalDocuments] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [permissionDenied, setPermissionDenied] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [semanticFilters, setSemanticFilters] = useState({
+    vendor: '',
+    productFamily: '',
+    productSeries: '',
+    productModel: '',
+    osFamily: '',
+    softwareRelease: '',
+    featureDomain: '',
+    documentCategory: '',
+    status: 'active',
+  });
 
   // Modal & File Upload State
   const [showModal, setShowModal] = useState(false);
@@ -447,6 +461,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const directUploadTargetRef = useRef<KnowledgeDirectoryNode | null>(null);
   const documentsRequestIdRef = useRef(0);
   const documentDetailRequestIdRef = useRef(0);
+  const documentsAbortRef = useRef<AbortController | null>(null);
 
   const folders: FolderCategory[] = [
     { id: 'all', name: '全部知识文档', icon: '📂', description: '汇总展示所有目录与厂商知识底座' },
@@ -464,34 +479,56 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   const fetchStatsAndDocs = useCallback(async () => {
     const requestId = ++documentsRequestIdRef.current;
+    documentsAbortRef.current?.abort();
+    const controller = new AbortController();
+    documentsAbortRef.current = controller;
     setLoading(true);
+    setLoadError('');
+    setPermissionDenied(false);
     try {
-      const [s, docsPage] = await Promise.all([
-        getKnowledgeStats(),
+      const [s, docsPage, facets] = await Promise.all([
+        getKnowledgeStats(controller.signal),
         getKnowledgeDocuments({
           sourceType: selectedFolder === 'all' ? undefined : selectedFolder,
           directoryPath: selectedDirectoryPath || undefined,
           search: searchQuery,
+          ...semanticFilters,
           page: currentPage,
           pageSize: itemsPerPage,
+          signal: controller.signal,
+        }),
+        getKnowledgeDocumentFacets({
+          sourceType: selectedFolder === 'all' ? undefined : selectedFolder,
+          directoryPath: selectedDirectoryPath || undefined,
+          status: semanticFilters.status,
+          signal: controller.signal,
         }),
       ]);
       if (requestId !== documentsRequestIdRef.current) return;
       setStats(s);
       setDocuments(docsPage.items);
       setTotalDocuments(docsPage.total);
+      setDocumentFacets(facets);
       setCurrentPage((page) => page === docsPage.page ? page : docsPage.page);
-    } catch (e) {
+    } catch (e: any) {
       if (requestId !== documentsRequestIdRef.current) return;
+      if (e?.name === 'AbortError') return;
+      const denied = Number(e?.status) === 403;
+      setPermissionDenied(denied);
+      setLoadError(denied ? '当前账号没有知识库查看权限。' : (e?.message || '知识文档加载失败，请重试'));
       console.error('Failed to load knowledge metrics:', e);
     } finally {
       if (requestId === documentsRequestIdRef.current) setLoading(false);
     }
-  }, [currentPage, itemsPerPage, searchQuery, selectedDirectoryPath, selectedFolder]);
+  }, [currentPage, itemsPerPage, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
 
   useEffect(() => {
     void fetchStatsAndDocs();
   }, [fetchStatsAndDocs]);
+
+  useEffect(() => () => {
+    documentsAbortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -534,8 +571,8 @@ export const KnowledgeManagementTab: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (showModal) void loadAssetOptions();
-  }, [loadAssetOptions, showModal]);
+    void loadAssetOptions();
+  }, [loadAssetOptions]);
 
   useEffect(() => {
     void loadKnowledgeDirectories();
@@ -795,7 +832,10 @@ export const KnowledgeManagementTab: React.FC = () => {
     return {
       knowledge_directory: category,
       knowledge_directory_vendor: vendorSlug || null,
-      knowledge_directory_path: targetPath ? `kb_import/${targetPath}` : null,
+      // Store a semantic directory reference.  The historical kb_import
+      // prefix is a server storage detail and must never be exposed as user
+      // metadata or copied into a new document.
+      knowledge_directory_path: targetPath || null,
       source_file_name: overrides?.fileName || null,
       source_relative_path: overrides?.relativePath || null,
     };
@@ -835,7 +875,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       phase: 'uploading',
       completed: 0,
       total: pendingItems.length,
-      message: `正在导入到 kb_import/${node.path}/…`,
+      message: `正在导入到目录：${node.path}…`,
     });
 
     let completed = 0;
@@ -864,7 +904,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         phase: 'uploading',
         completed,
         total: pendingItems.length,
-        message: `正在导入到 kb_import/${node.path}/（${completed}/${pendingItems.length}）`,
+        message: `正在导入到目录：${node.path}（${completed}/${pendingItems.length}）`,
       });
     }
 
@@ -886,7 +926,7 @@ export const KnowledgeManagementTab: React.FC = () => {
       phase: 'success',
       completed,
       total: pendingItems.length,
-      message: `已将 ${completed} 个文件导入 kb_import/${node.path}/。`,
+      message: `已将 ${completed} 个文件导入目录：${node.path}。`,
     });
   };
 
@@ -1032,6 +1072,28 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   const handleFolderChange = (folderId: string) => {
     setSelectedFolder(folderId);
+    setCurrentPage(1);
+    setSelectedDocIds(new Set());
+  };
+
+  const setSemanticFilter = (key: keyof typeof semanticFilters, value: string) => {
+    setSemanticFilters((current) => ({ ...current, [key]: value }));
+    setCurrentPage(1);
+    setSelectedDocIds(new Set());
+  };
+
+  const clearSemanticFilters = () => {
+    setSemanticFilters({
+      vendor: '',
+      productFamily: '',
+      productSeries: '',
+      productModel: '',
+      osFamily: '',
+      softwareRelease: '',
+      featureDomain: '',
+      documentCategory: '',
+      status: 'active',
+    });
     setCurrentPage(1);
     setSelectedDocIds(new Set());
   };
@@ -1251,8 +1313,141 @@ export const KnowledgeManagementTab: React.FC = () => {
                 </button>
               )}
               <div className="text-xs text-gray-500 dark:text-gray-400">
-                当前目录: <strong className="text-gray-800 dark:text-gray-200 font-semibold">{selectedDirectoryPath ? `kb_import/${selectedDirectoryPath}` : '全部知识文档'}</strong> ({totalDocuments} 篇)
+                当前目录: <strong className="text-gray-800 dark:text-gray-200 font-semibold">{selectedDirectoryPath ? selectedDirectoryPath : '全部知识文档'}</strong> ({totalDocuments} 篇)
               </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-3 shadow-xs dark:border-indigo-900/60 dark:bg-indigo-950/20" aria-label="产品层级浏览">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <span className="text-[11px] font-semibold text-indigo-900 dark:text-indigo-200">产品层级浏览</span>
+                <span className="ml-2 text-[10px] text-indigo-700/70 dark:text-indigo-300/70">Vendor / Product Family / Series</span>
+              </div>
+              <span className="text-[10px] text-indigo-700/70 dark:text-indigo-300/70">点击层级即可应用服务端筛选</span>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              {([
+                ['Vendor', documentFacets.vendors, 'vendor'],
+                ['Product Family', documentFacets.families, 'productFamily'],
+                ['Series', documentFacets.series, 'productSeries'],
+              ] as const).map(([label, items, filterKey]) => (
+                <div key={label} className="min-w-0">
+                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-700/70 dark:text-indigo-300/70">{label}</div>
+                  <div className="flex min-h-8 flex-wrap gap-1.5">
+                    {items.slice(0, 12).map((item) => (
+                      <button
+                        key={`${label}-${item.value}`}
+                        type="button"
+                        onClick={() => setSemanticFilter(filterKey, item.value === 'UNKNOWN' ? '' : item.value)}
+                        className={`rounded-full border px-2 py-1 text-[10px] font-medium transition ${semanticFilters[filterKey] === item.value ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-indigo-200 bg-white text-indigo-800 hover:border-indigo-400 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200'}`}
+                        title={`筛选 ${item.value}`}
+                      >
+                        {item.value} <span className="opacity-60">{item.count}</span>
+                      </button>
+                    ))}
+                    {items.length === 0 && <span className="text-[10px] text-indigo-700/50 dark:text-indigo-300/50">暂无已解析层级</span>}
+                    {items.length > 12 && <span className="self-center text-[10px] text-indigo-700/60 dark:text-indigo-300/60">+{items.length - 12}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200/80 bg-white p-3 shadow-xs dark:border-gray-700/80 dark:bg-gray-800" aria-label="知识文档服务端筛选">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-300">语义筛选（服务端执行）</span>
+              <button
+                type="button"
+                onClick={clearSemanticFilters}
+                disabled={!Object.entries(semanticFilters).some(([key, value]) => key === 'status' ? value !== 'active' : Boolean(value))}
+                className="text-[10px] font-medium text-indigo-600 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-indigo-300"
+              >
+                清除筛选
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <select
+                value={selectedFolder}
+                onChange={(event) => handleFolderChange(event.target.value)}
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按知识来源类型筛选"
+              >
+                {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
+              </select>
+              <select
+                value={semanticFilters.vendor}
+                onChange={(event) => setSemanticFilter('vendor', event.target.value)}
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按厂商筛选"
+              >
+                <option value="">全部厂商</option>
+                {assetOptions.vendors.map((item) => <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value)}</option>)}
+              </select>
+              <input
+                value={semanticFilters.productFamily}
+                onChange={(event) => setSemanticFilter('productFamily', event.target.value)}
+                placeholder="产品 Family"
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按产品 Family 筛选"
+              />
+              <input
+                value={semanticFilters.productModel}
+                onChange={(event) => setSemanticFilter('productModel', event.target.value)}
+                placeholder="型号 Model"
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按产品型号筛选"
+              />
+              <input
+                value={semanticFilters.productSeries}
+                onChange={(event) => setSemanticFilter('productSeries', event.target.value)}
+                placeholder="产品 Series"
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按产品 Series 筛选"
+              />
+              <input
+                value={semanticFilters.osFamily}
+                onChange={(event) => setSemanticFilter('osFamily', event.target.value)}
+                placeholder="OS Family"
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按 OS Family 筛选"
+              />
+              <input
+                value={semanticFilters.softwareRelease}
+                onChange={(event) => setSemanticFilter('softwareRelease', event.target.value)}
+                placeholder="软件版本"
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按软件版本筛选"
+              />
+              <input
+                value={semanticFilters.featureDomain}
+                onChange={(event) => setSemanticFilter('featureDomain', event.target.value)}
+                placeholder="主题 / Feature Domain"
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 placeholder:text-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按主题筛选"
+              />
+              <select
+                value={semanticFilters.documentCategory}
+                onChange={(event) => setSemanticFilter('documentCategory', event.target.value)}
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按文档类型筛选"
+              >
+                <option value="">全部文档类型</option>
+                {KNOWLEDGE_DIRECTORY_OPTIONS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+              <select
+                value={semanticFilters.status}
+                onChange={(event) => setSemanticFilter('status', event.target.value)}
+                className="rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2 text-[11px] text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                aria-label="按生命周期状态筛选"
+              >
+                <option value="active">已启用</option>
+                <option value="all">全部状态</option>
+                <option value="published">已发布</option>
+                <option value="draft">草稿</option>
+                <option value="quarantined">已隔离</option>
+                <option value="disabled">已禁用</option>
+              </select>
             </div>
           </div>
 
@@ -1260,6 +1455,13 @@ export const KnowledgeManagementTab: React.FC = () => {
           <div className="bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80 rounded-2xl overflow-hidden shadow-xs">
             {loading ? (
               <div className="p-8 text-center text-xs text-gray-400">数据加载中...</div>
+            ) : loadError ? (
+              <div className="p-10 text-center">
+                <XCircle className={`mx-auto h-8 w-8 ${permissionDenied ? 'text-amber-400' : 'text-rose-400'}`} />
+                <div className={`mt-3 text-sm font-semibold ${permissionDenied ? 'text-amber-700 dark:text-amber-300' : 'text-rose-700 dark:text-rose-300'}`}>{permissionDenied ? '无权限查看知识文档' : '知识文档加载失败'}</div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{loadError}</p>
+                {!permissionDenied && <button type="button" onClick={() => void fetchStatsAndDocs()} className="mt-4 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">重试</button>}
+              </div>
             ) : documents.length === 0 ? (
               <div className="p-12 text-center space-y-3">
                 <BookOpen className="w-8 h-8 text-gray-300 mx-auto" />
@@ -1310,7 +1512,14 @@ export const KnowledgeManagementTab: React.FC = () => {
                             title="查看文档内容"
                           >
                             <FileCode className="w-4 h-4 flex-shrink-0 text-indigo-500" />
-                            <span className="truncate underline-offset-4 group-hover:underline">{doc.name}</span>
+                            <span className="min-w-0">
+                              <span className="block truncate underline-offset-4 group-hover:underline">{doc.name}</span>
+                              {(doc.product_family || doc.product_model || doc.document_category) && (
+                                <span className="mt-0.5 block truncate text-[10px] font-normal text-gray-400">
+                                  {[doc.product_family, doc.product_model, doc.document_category].filter(Boolean).join(' · ')}
+                                </span>
+                              )}
+                            </span>
                             <Eye className="h-3.5 w-3.5 flex-shrink-0 text-slate-300 opacity-0 transition group-hover:text-indigo-400 group-hover:opacity-100" />
                           </button>
                         </td>
@@ -1320,14 +1529,18 @@ export const KnowledgeManagementTab: React.FC = () => {
                           </span>
                         </td>
                         <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-300">
-                          {getVendorDisplayLabel(doc.vendor)} / {getPlatformDisplayLabel(doc.vendor, doc.platform)}
+                          <span className="block">{getVendorDisplayLabel(doc.vendor)} / {getPlatformDisplayLabel(doc.vendor, doc.platform)}</span>
+                          {(doc.os_family || doc.software_release) && (
+                            <span className="mt-0.5 block text-[10px] text-gray-400">{[doc.os_family, doc.software_release].filter(Boolean).join(' · ')}</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 font-mono text-gray-700 dark:text-gray-200">
                           {doc.chunk_count || 1} 切片
                         </td>
                         <td className="px-4 py-3">
-                          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Ready (就绪)
+                          <span className={`inline-flex items-center gap-1 font-medium ${doc.status === 'active' && !doc.exclude_from_rag ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                            {doc.status === 'active' && !doc.exclude_from_rag ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                            {doc.status === 'active' && !doc.exclude_from_rag ? 'Ready (就绪)' : `${doc.status || '待处理'}${doc.exclude_from_rag ? ' · 已排除 RAG' : ''}`}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-gray-400 font-mono text-[11px]">
@@ -1413,9 +1626,66 @@ export const KnowledgeManagementTab: React.FC = () => {
                   <div className="flex items-start gap-3"><XCircle className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="font-semibold">文档内容加载失败</p><p className="mt-1 text-xs leading-5 opacity-80">{documentDetailError}</p><button type="button" onClick={() => void openDocument(selectedDocument)} className="mt-3 rounded-lg bg-white/80 px-3 py-1.5 text-xs font-semibold dark:bg-rose-900/30">重试</button></div></div>
                 </div>
               ) : selectedDocument.chunks.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 px-5 py-12 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">当前文档没有可展示的内容切片。</div>
+                <div className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Raw Source / 原始来源</div>
+                      <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{selectedDocument.raw_source?.source || selectedDocument.source || '未记录来源'}</div>
+                    </section>
+                    <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Version / Index</div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700 dark:text-slate-200">
+                        <span>文档版本：{selectedDocument.document_version || '未记录'}</span>
+                        <span>索引版本：{selectedDocument.index_version || '未记录'}</span>
+                        <span>Parser：{selectedDocument.parser_version || '未记录'}</span>
+                        <span>历史：{selectedDocument.source_version_history?.length || 0} 条</span>
+                      </div>
+                    </section>
+                  </div>
+                  {selectedDocument.original_content && <details className="rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40"><summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">查看原始正文（按需展开）</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-slate-100 px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:border-slate-800 dark:text-slate-300">{selectedDocument.original_content}</pre></details>}
+                  <div className="rounded-2xl border border-dashed border-slate-300 px-5 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">当前文档没有可展示的内容切片。</div>
+                </div>
               ) : (
                 <div className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Raw Source / 原始来源</div>
+                      <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{selectedDocument.raw_source?.source || selectedDocument.source || '未记录来源'}</div>
+                      {selectedDocument.raw_source?.references?.map((reference, index) => (
+                        <div key={`${String(reference.source_registry_id || 'source')}-${index}`} className="mt-1 truncate text-[10px] text-slate-500 dark:text-slate-400" title={String(reference.canonical_url || '')}>{String(reference.canonical_url || reference.source_version_id || '来源观察记录')}</div>
+                      ))}
+                    </section>
+                    <section className="rounded-2xl border border-slate-200/90 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-900/50">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Version / Index</div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700 dark:text-slate-200">
+                        <span>文档版本：{selectedDocument.document_version || '未记录'}</span>
+                        <span>索引版本：{selectedDocument.index_version || '未记录'}</span>
+                        <span>Parser：{selectedDocument.parser_version || '未记录'}</span>
+                        <span>版本历史：{selectedDocument.source_version_history?.length || 0} 条</span>
+                      </div>
+                    </section>
+                  </div>
+                  {selectedDocument.source_version_history && selectedDocument.source_version_history.length > 0 && (
+                    <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
+                      <div className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-200">版本历史</div>
+                      <div className="space-y-2">
+                        {selectedDocument.source_version_history.map((version) => (
+                          <div key={version.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-slate-50 px-3 py-2 text-[10px] text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                            <span className="font-semibold">v{version.version_no}</span>
+                            <span>{version.lifecycle_status || version.status || 'draft'}</span>
+                            <span className="font-mono">{version.content_hash ? `${version.content_hash.slice(0, 12)}…` : 'hash 未记录'}</span>
+                            <span>{version.byte_size || 0} bytes</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                  {selectedDocument.original_content && (
+                    <details className="rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
+                      <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">查看原始正文（按需展开）</summary>
+                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-slate-100 px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:border-slate-800 dark:text-slate-300">{selectedDocument.original_content}</pre>
+                    </details>
+                  )}
                   <div className="flex items-center gap-2 rounded-2xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-xs leading-5 text-indigo-900/70 dark:border-indigo-900/60 dark:bg-indigo-950/20 dark:text-indigo-200/70"><Info className="h-4 w-4 shrink-0 text-indigo-500" />文档已按 Heading / CLI 结构拆分为切片，以下内容按原始顺序展示。</div>
                   {selectedDocument.chunks.map((chunk, index) => (
                     <section key={chunk.id} className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40">

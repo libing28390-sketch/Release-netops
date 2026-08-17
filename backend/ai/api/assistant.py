@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from ai.security.permissions import require_ai_permission
 from ai.services.assistant import ai_assistant_service
 from ai.services.intent_parser import intent_parser
@@ -65,6 +65,28 @@ class RetrievalTestRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000)
     top_k: int = Field(5, ge=1, le=20)
     filters: Dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeDocumentCreateRequest(BaseModel):
+    """Stable, additive contract for admin document ingestion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(default="Untitled Document", min_length=1, max_length=512)
+    content: str = Field(..., min_length=1, max_length=20_000_000)
+    vendor: str = Field(default="all", max_length=128)
+    platform: Optional[str] = Field(default=None, max_length=128)
+    knowledge_source_type: str = Field(default="user_document", max_length=64)
+    source_trust_level: str = Field(default="internal", max_length=32)
+    chunk_size: int = Field(default=800, ge=128, le=4096)
+    acl: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeBatchDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    doc_ids: List[str] = Field(..., min_length=1, max_length=100)
 
 
 from fastapi.responses import StreamingResponse
@@ -444,6 +466,19 @@ def list_documents(
     source_type: Optional[str] = Query(default=None, max_length=64),
     search: str = Query(default="", max_length=200),
     directory_path: Optional[str] = Query(default=None, max_length=500),
+    vendor: str = Query(default="", max_length=128),
+    product_family: str = Query(default="", max_length=256),
+    product_series: str = Query(default="", max_length=256),
+    product_model: str = Query(default="", max_length=256),
+    os_family: str = Query(default="", max_length=128),
+    os_generation: str = Query(default="", max_length=128),
+    software_train: str = Query(default="", max_length=128),
+    software_release: str = Query(default="", max_length=128),
+    cli_platform: str = Query(default="", max_length=128),
+    document_category: str = Query(default="", max_length=128),
+    feature_domain: str = Query(default="", max_length=128),
+    status: str = Query(default="active", max_length=32),
+    source_trust_level: str = Query(default="", max_length=32),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     user=Depends(require_ai_permission("ai.view")),
@@ -453,31 +488,61 @@ def list_documents(
         knowledge_source_type=source_type,
         directory_path=directory_path,
         search=search,
+        vendor=vendor,
+        product_family=product_family,
+        product_series=product_series,
+        product_model=product_model,
+        os_family=os_family,
+        os_generation=os_generation,
+        software_train=software_train,
+        software_release=software_release,
+        cli_platform=cli_platform,
+        document_category=document_category,
+        feature_domain=feature_domain,
+        status=status,
+        source_trust_level=source_trust_level,
         page=page,
         page_size=page_size,
         tenant_id=user.get("tenant_id") or "tenant-default",
     )
 
 
+@router.get("/documents/facets")
+def list_document_facets(
+    source_type: Optional[str] = Query(default=None, max_length=64),
+    directory_path: Optional[str] = Query(default=None, max_length=500),
+    status: str = Query(default="active", max_length=32),
+    user=Depends(require_ai_permission("ai.view")),
+):
+    """Return bounded product hierarchy facets for the knowledge browser."""
+    return knowledge_service.list_document_facets(
+        knowledge_source_type=source_type,
+        directory_path=directory_path,
+        status=status,
+        tenant_id=user.get("tenant_id") or "tenant-default",
+    )
+
+
 @router.post("/documents")
-def add_document(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.knowledge.manage"))):
+def add_document(payload: KnowledgeDocumentCreateRequest, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Add document and perform automatic chunking + embedding."""
     tenant_id = user.get("tenant_id") or "tenant-default"
     kb_list = knowledge_service.list_knowledge_bases(tenant_id=tenant_id)
     kb_id = kb_list[0]["id"] if kb_list else knowledge_service.create_knowledge_base("Default KB", tenant_id=tenant_id)["id"]
     return knowledge_service.add_document_and_chunk(
         knowledge_base_id=kb_id,
-        name=payload.get("name", "Untitled Document"),
-        content=payload.get("content", ""),
-        vendor=payload.get("vendor", "all"),
+        name=payload.name,
+        content=payload.content,
+        vendor=payload.vendor,
         # A legacy UI hint must never write platform=all.  Front Matter (or a
         # nullable platform-neutral document) is authoritative.
-        platform=payload.get("platform"),
-        knowledge_source_type=payload.get("knowledge_source_type", "user_document"),
+        platform=payload.platform,
+        knowledge_source_type=payload.knowledge_source_type,
         tenant_id=tenant_id,
-        acl=payload.get("acl") if isinstance(payload.get("acl"), dict) else {},
-        source_trust_level=payload.get("source_trust_level", "internal"),
-        metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        acl=payload.acl,
+        source_trust_level=payload.source_trust_level,
+        chunk_size=payload.chunk_size,
+        metadata=payload.metadata,
     )
 
 
@@ -509,12 +574,9 @@ def delete_document(doc_id: str, user=Depends(require_ai_permission("ai.knowledg
 
 
 @router.post("/documents/batch-delete")
-def batch_delete_documents(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.knowledge.manage"))):
+def batch_delete_documents(payload: KnowledgeBatchDeleteRequest, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Batch delete multiple documents by IDs."""
-    doc_ids = payload.get("doc_ids", [])
-    if not doc_ids or not isinstance(doc_ids, list):
-        raise HTTPException(status_code=400, detail="doc_ids 必须为非空列表")
     return knowledge_service.batch_delete_documents(
-        doc_ids,
+        payload.doc_ids,
         tenant_id=user.get("tenant_id") or "tenant-default",
     )

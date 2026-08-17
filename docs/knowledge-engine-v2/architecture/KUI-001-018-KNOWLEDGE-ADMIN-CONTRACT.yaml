@@ -1,0 +1,89 @@
+contract: KUI-001-018-knowledge-admin
+version: 1
+authority: PostgreSQL
+scope:
+  completed_in_this_slice:
+    - KUI-001
+    - KUI-002
+    - KUI-003
+    - KUI-004
+    - KUI-005
+    - KUI-006
+    - KUI-007
+    - KUI-008
+  later_tasks:
+    - KUI-009
+    - KUI-010
+    - KUI-011
+    - KUI-012
+    - KUI-013
+    - KUI-014
+    - KUI-015
+    - KUI-016
+    - KUI-017
+    - KUI-018
+principles:
+  business_entity_first: true
+  internal_storage_path_is_never_user_metadata: true
+  list_payload_excludes_body_and_chunks: true
+  detail_is_explicit_and_on_demand: true
+  tenant_filter_is_server_owned: true
+  database_authority: postgresql
+filters:
+  server_side:
+    - vendor
+    - product_family
+    - product_series
+    - product_model
+    - os_family
+    - software_release
+    - feature_domain
+    - document_category
+    - knowledge_source_type
+    - status
+    - directory_path
+  pagination:
+    max_page_size: 100
+    default_page_size: 20
+  search:
+    fields:
+      - name
+      - vendor
+      - platform
+      - metadata_json
+    case_insensitive: true
+request_lifecycle:
+  list_requests:
+    cancel_previous_request: true
+    stale_response_must_not_update_state: true
+    states:
+      - initial_loading
+      - filter_loading
+      - empty
+      - no_result
+      - permission_denied
+      - failed
+      - retryable
+  detail_requests:
+    body_loaded_only_after_selection: true
+    stale_response_must_not_replace_current_document: true
+    fields:
+      - original_content
+      - normalized_content
+      - raw_source
+      - source_version_history
+      - chunks
+    missing_v2_lineage_returns_empty_history: true
+security:
+  authorization: server_side_tenant_and_permission
+  response_redaction:
+    - internal_import_prefix
+    - credentials
+    - raw_acl_secrets
+  failure_behavior: stable_safe_message_with_request_id
+verification:
+  unit_test: backend/tests/ai/test_kui_001_008_knowledge_admin.py
+  postgresql_probe: scripts/knowledge_engine_v2_kui_pg_probe.py
+  frontend_checks:
+    - npm.cmd run lint
+    - npm.cmd run build

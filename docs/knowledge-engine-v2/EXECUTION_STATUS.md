@@ -1,18 +1,24 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: KUI-001 (PENDING; SEC/COP/DIA PASS)
-Last Completed: DIA-019
-Next Task: KUI-001（按原清单依赖继续）
+Current Task: KUI-009 (PENDING; KUI-001..008 PASS)
+Last Completed: KUI-008
+Next Task: KUI-009（按原清单依赖继续）
 
-Completed: 253 / 359
-P0: 208 / 277
-Last Verified Commit: 6698156c
+Completed: 261 / 359
+P0: 216 / 277
+Last Verified Commit: 6698156c（本批待提交）
 
 Recent Migration: m0142/m0143/m0144 applied on PostgreSQL 18.4; rollback/tenant and JSONB contract probe PASS
-Recent Build: frontend lint/build PASS; Python compile PASS
+Recent Build: frontend lint/build PASS; Python compile PASS; existing large-chunk warning only
 Last Security Check: metadata-only audit, tenant isolation, secret redaction and adapter bypass audit PASS
-Recovery Point: KUI-001
+Recovery Point: KUI-009
+
+KUI-001..008 证据：
+- docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
+- PostgreSQL 探针：PASS（语义筛选、产品层级 Facet、详情契约、分页、租户隔离、kb_import 不泄漏）
+- 聚焦测试：11 passed
+- 前端：npm.cmd run lint PASS；npm.cmd run build PASS
 
 Blocked Tasks: none
 

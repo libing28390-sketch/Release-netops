@@ -752,8 +752,8 @@ export async function createChangeDraft(data: { title: string; device_id: string
 }
 
 // Knowledge Base Management APIs
-export async function getKnowledgeStats(): Promise<{ total_documents: number; total_chunks: number; total_vendors: number; ready_indexes: number }> {
-  return apiRequest('/api/ai/assistant/knowledge-stats');
+export async function getKnowledgeStats(signal?: AbortSignal): Promise<{ total_documents: number; total_chunks: number; total_vendors: number; ready_indexes: number }> {
+  return apiRequest('/api/ai/assistant/knowledge-stats', { signal });
 }
 
 export async function submitCopilotFeedback(data: { conversation_id: string; message_id: string; rating: 'positive' | 'negative'; reasons?: string[]; comment?: string }): Promise<{ id: string; rating: string; reasons: string[] }> {
@@ -1044,6 +1044,29 @@ export interface KnowledgeDocumentChunk {
 
 export interface KnowledgeDocumentDetail extends KnowledgeDocument {
   updated_at?: string;
+  document_id?: string | null;
+  original_content?: string;
+  normalized_content?: string;
+  metadata?: Record<string, unknown>;
+  document_version?: string | null;
+  index_version?: string | null;
+  parser_version?: string | null;
+  raw_source?: {
+    source?: string | null;
+    references?: Array<Record<string, unknown>>;
+  };
+  source_version_history?: Array<{
+    id: string;
+    version_no: number;
+    source_version_id?: string | null;
+    content_hash?: string | null;
+    status?: string | null;
+    lifecycle_status?: string | null;
+    mime_type?: string | null;
+    byte_size?: number;
+    created_at?: string | null;
+    updated_at?: string | null;
+  }>;
   chunks: KnowledgeDocumentChunk[];
 }
 
@@ -1055,20 +1078,59 @@ export interface KnowledgeDocumentsResponse {
   total_pages: number;
 }
 
+export interface KnowledgeDocumentFacet {
+  value: string;
+  count: number;
+}
+
+export interface KnowledgeDocumentFacets {
+  vendors: KnowledgeDocumentFacet[];
+  families: KnowledgeDocumentFacet[];
+  series: KnowledgeDocumentFacet[];
+}
+
 export interface KnowledgeDocumentsQuery {
   sourceType?: string;
   search?: string;
   directoryPath?: string;
+  vendor?: string;
+  productFamily?: string;
+  productSeries?: string;
+  productModel?: string;
+  osFamily?: string;
+  osGeneration?: string;
+  softwareTrain?: string;
+  softwareRelease?: string;
+  cliPlatform?: string;
+  documentCategory?: string;
+  featureDomain?: string;
+  status?: string;
+  sourceTrustLevel?: string;
   page?: number;
   pageSize?: number;
+  signal?: AbortSignal;
 }
 
 export async function getKnowledgeDocuments({
   sourceType,
   search,
   directoryPath,
+  vendor,
+  productFamily,
+  productSeries,
+  productModel,
+  osFamily,
+  osGeneration,
+  softwareTrain,
+  softwareRelease,
+  cliPlatform,
+  documentCategory,
+  featureDomain,
+  status,
+  sourceTrustLevel,
   page = 1,
   pageSize = 20,
+  signal,
 }: KnowledgeDocumentsQuery = {}): Promise<KnowledgeDocumentsResponse> {
   const params = new URLSearchParams({
     page: String(page),
@@ -1077,7 +1139,43 @@ export async function getKnowledgeDocuments({
   if (sourceType) params.set('source_type', sourceType);
   if (search?.trim()) params.set('search', search.trim());
   if (directoryPath?.trim()) params.set('directory_path', directoryPath.trim());
-  return apiRequest(`/api/ai/assistant/documents?${params.toString()}`);
+  const filterParams: Array<[string, string | undefined]> = [
+    ['vendor', vendor],
+    ['product_family', productFamily],
+    ['product_series', productSeries],
+    ['product_model', productModel],
+    ['os_family', osFamily],
+    ['os_generation', osGeneration],
+    ['software_train', softwareTrain],
+    ['software_release', softwareRelease],
+    ['cli_platform', cliPlatform],
+    ['document_category', documentCategory],
+    ['feature_domain', featureDomain],
+    ['status', status],
+    ['source_trust_level', sourceTrustLevel],
+  ];
+  filterParams.forEach(([key, value]) => {
+    if (value?.trim()) params.set(key, value.trim());
+  });
+  return apiRequest(`/api/ai/assistant/documents?${params.toString()}`, { signal });
+}
+
+export async function getKnowledgeDocumentFacets({
+  sourceType,
+  directoryPath,
+  status = 'active',
+  signal,
+}: {
+  sourceType?: string;
+  directoryPath?: string;
+  status?: string;
+  signal?: AbortSignal;
+} = {}): Promise<KnowledgeDocumentFacets> {
+  const params = new URLSearchParams();
+  if (sourceType) params.set('source_type', sourceType);
+  if (directoryPath?.trim()) params.set('directory_path', directoryPath.trim());
+  if (status) params.set('status', status);
+  return apiRequest<KnowledgeDocumentFacets>(`/api/ai/assistant/documents/facets?${params.toString()}`, { signal });
 }
 
 export async function getKnowledgeDocument(docId: string): Promise<KnowledgeDocumentDetail> {

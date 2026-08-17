@@ -515,21 +515,49 @@ class KnowledgeService:
         directory_path: Optional[str] = None,
         tenant_id: str = "tenant-default",
         search: str = "",
+        vendor: str = "",
+        product_family: str = "",
+        product_series: str = "",
+        product_model: str = "",
+        os_family: str = "",
+        os_generation: str = "",
+        software_train: str = "",
+        software_release: str = "",
+        cli_platform: str = "",
+        document_category: str = "",
+        feature_domain: str = "",
+        status: str = "active",
+        source_trust_level: str = "",
         page: int = 1,
         page_size: int = 20,
     ) -> Dict[str, Any]:
-        """List active documents with tenant-safe server-side filtering and pagination."""
+        """List tenant-safe document summaries with semantic server-side filtering.
+
+        The physical ``kb_import`` path is an internal storage detail.  It is
+        accepted only as a server-side directory selector and is never copied
+        into the response summary.  Semantic filters use relational columns
+        when present so PostgreSQL can use the metadata indexes created by the
+        V2 migrations; legacy rows without a column simply fail closed for
+        that filter instead of falling back to an unbounded scan.
+        """
         safe_page_size = min(max(int(page_size or 20), 1), 100)
         requested_page = max(int(page or 1), 1)
         search_term = (search or "").strip().lower()
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            document_columns = self._table_columns(cursor, "ai_document")
             where = [
-                "d.status = 'active'",
                 "(d.tenant_id = ? OR d.tenant_id = 'tenant-default')",
             ]
             params: List[Any] = [tenant_id]
+            normalized_status = str(status or "active").strip().lower()
+            allowed_statuses = {"active", "draft", "published", "quarantined", "superseded", "disabled", "all"}
+            if normalized_status not in allowed_statuses:
+                normalized_status = "active"
+            if normalized_status != "all":
+                where.append("d.status = ?")
+                params.append(normalized_status)
             if knowledge_source_type:
                 where.append("d.knowledge_source_type = ?")
                 params.append(knowledge_source_type)
@@ -537,23 +565,57 @@ class KnowledgeService:
                 # Directory paths are persisted inside metadata_json.  Keep
                 # this portable across PostgreSQL/SQLite and tolerate the
                 # minimal legacy test schema that has no metadata column.
-                directory_columns = self._table_columns(cursor, "ai_document")
-                if "metadata_json" in directory_columns:
+                if "metadata_json" in document_columns:
                     normalized_directory_path = directory_path.strip().strip("/").lower()
                     # metadata_json is JSONB on PostgreSQL after migration
                     # 0113 and TEXT on legacy/SQLite installations.
-                    where.append("LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ?")
-                    params.append(f"%kb_import/{normalized_directory_path}%")
+                    # New documents store only the semantic directory path;
+                    # the legacy kb_import prefix remains readable for
+                    # existing rows during the migration window.
+                    where.append(
+                        "(LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ? "
+                        "OR LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ?)"
+                    )
+                    params.extend([
+                        f"%{normalized_directory_path}%",
+                        f"%kb_import/{normalized_directory_path}%",
+                    ])
                 else:
                     where.append("1 = 0")
+            semantic_filters = {
+                "vendor": vendor,
+                "product_family": product_family,
+                "product_series": product_series,
+                "product_model": product_model,
+                "os_family": os_family,
+                "os_generation": os_generation,
+                "software_train": software_train,
+                "software_release": software_release,
+            "cli_platform": cli_platform,
+            "document_category": document_category,
+            "feature_domain": feature_domain,
+            "source_trust_level": source_trust_level,
+            }
+            for column, value in semantic_filters.items():
+                normalized_value = str(value or "").strip().lower()
+                if not normalized_value:
+                    continue
+                if column not in document_columns:
+                    where.append("1 = 0")
+                    continue
+                where.append(f"LOWER(COALESCE(d.{column}, '')) = ?")
+                params.append(normalized_value)
             if search_term:
-                where.append(
-                    "(LOWER(COALESCE(d.name, '')) LIKE ? "
-                    "OR LOWER(COALESCE(d.vendor, '')) LIKE ? "
-                    "OR LOWER(COALESCE(d.platform, '')) LIKE ?)"
-                )
+                search_clauses = [
+                    "LOWER(COALESCE(d.name, '')) LIKE ?",
+                    "LOWER(COALESCE(d.vendor, '')) LIKE ?",
+                    "LOWER(COALESCE(d.platform, '')) LIKE ?",
+                ]
+                if "metadata_json" in document_columns:
+                    search_clauses.append("LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ?")
+                where.append(f"({' OR '.join(search_clauses)})")
                 search_pattern = f"%{search_term}%"
-                params.extend([search_pattern, search_pattern, search_pattern])
+                params.extend([search_pattern] * len(search_clauses))
 
             where_sql = " AND ".join(where)
             cursor.execute(f"SELECT COUNT(*) FROM ai_document d WHERE {where_sql}", params)
@@ -584,7 +646,7 @@ class KnowledgeService:
                 "subfeature", "risk_level", "verification_level", "rag_priority",
                 "metadata_parse_status", "exclude_from_rag",
             )
-            available_semantic = [field for field in semantic_fields if field in self._table_columns(cursor, "ai_document")]
+            available_semantic = [field for field in semantic_fields if field in document_columns]
             if available_semantic and rows:
                 placeholders = ", ".join("?" for _ in rows)
                 cursor.execute(
@@ -641,25 +703,109 @@ class KnowledgeService:
                 "total_pages": total_pages,
             }
 
-    def get_document_detail(self, doc_id: str, tenant_id: str = "tenant-default") -> Optional[Dict[str, Any]]:
-        """Return one document's metadata and ordered chunk content for the viewer."""
+    def list_document_facets(
+        self,
+        *,
+        tenant_id: str = "tenant-default",
+        knowledge_source_type: Optional[str] = None,
+        directory_path: Optional[str] = None,
+        status: str = "active",
+    ) -> Dict[str, Any]:
+        """Return bounded Vendor/Family/Series browse facets without bodies."""
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            document_columns = self._table_columns(cursor, "ai_document")
+            required = {"vendor", "product_family", "product_series", "metadata_json"}
+            if not required <= document_columns:
+                return {"vendors": [], "families": [], "series": []}
+            where = ["(d.tenant_id = ? OR d.tenant_id = 'tenant-default')"]
+            params: List[Any] = [tenant_id]
+            normalized_status = str(status or "active").strip().lower()
+            if normalized_status not in {"active", "draft", "published", "quarantined", "superseded", "disabled", "all"}:
+                normalized_status = "active"
+            if normalized_status != "all":
+                where.append("d.status = ?")
+                params.append(normalized_status)
+            if knowledge_source_type:
+                where.append("d.knowledge_source_type = ?")
+                params.append(knowledge_source_type)
+            if directory_path and directory_path.strip():
+                normalized_path = directory_path.strip().strip("/").lower()
+                where.append(
+                    "(LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ? "
+                    "OR LOWER(COALESCE(CAST(d.metadata_json AS TEXT), '')) LIKE ?)"
+                )
+                params.extend([f"%{normalized_path}%", f"%kb_import/{normalized_path}%"])
             cursor.execute(
-                """
-                SELECT d.id, d.knowledge_base_id, d.name, d.source, d.vendor, d.platform,
-                       d.status, d.knowledge_source_type, d.tenant_id, d.acl_json,
-                       d.source_trust_level, d.created_at, d.updated_at
-                FROM ai_document d
-                WHERE d.id = ?
-                  AND d.status = 'active'
-                  AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default')
-                """,
+                "SELECT d.vendor, d.product_family, d.product_series, COUNT(*) "
+                "FROM ai_document d WHERE " + " AND ".join(where) +
+                " GROUP BY d.vendor, d.product_family, d.product_series "
+                "ORDER BY LOWER(COALESCE(d.vendor, '')), LOWER(COALESCE(d.product_family, '')), LOWER(COALESCE(d.product_series, '')) "
+                "LIMIT 500",
+                params,
+            )
+            vendors: Dict[str, int] = {}
+            families: Dict[str, int] = {}
+            series: Dict[str, int] = {}
+            for vendor, family, product_series, count in cursor.fetchall():
+                vendor_value = str(vendor or "UNKNOWN").strip() or "UNKNOWN"
+                family_value = str(family or "UNKNOWN").strip() or "UNKNOWN"
+                series_value = str(product_series or "UNKNOWN").strip() or "UNKNOWN"
+                vendors[vendor_value] = vendors.get(vendor_value, 0) + int(count or 0)
+                families[family_value] = families.get(family_value, 0) + int(count or 0)
+                series[series_value] = series.get(series_value, 0) + int(count or 0)
+            return {
+                "vendors": [{"value": key, "count": value} for key, value in vendors.items()],
+                "families": [{"value": key, "count": value} for key, value in families.items()],
+                "series": [{"value": key, "count": value} for key, value in series.items()],
+            }
+
+    def get_document_detail(self, doc_id: str, tenant_id: str = "tenant-default") -> Optional[Dict[str, Any]]:
+        """Return one document's on-demand body, provenance and ordered chunks.
+
+        The legacy ``ai_document`` table is still the V1-compatible index
+        projection.  When the canonical V2 version tables contain a matching
+        document id, their immutable version rows are joined into the detail
+        response; otherwise the response explicitly returns an empty history
+        instead of inventing lineage.
+        """
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            document_columns = self._table_columns(cursor, "ai_document")
+            base_columns = [
+                "id", "knowledge_base_id", "name", "source", "vendor", "platform",
+                "status", "knowledge_source_type", "tenant_id", "acl_json",
+                "source_trust_level", "created_at", "updated_at",
+            ]
+            optional_columns = [
+                "document_id", "original_content", "normalized_content", "metadata_json",
+                "document_version", "index_version", "parser_version",
+                "retrieval_index_version", "metadata_parse_status",
+            ]
+            selected_optional = [field for field in optional_columns if field in document_columns]
+            cursor.execute(
+                f"SELECT {', '.join(f'd.{field}' for field in base_columns + selected_optional)} "
+                "FROM ai_document d "
+                "WHERE d.id = ? AND d.status = 'active' "
+                "AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default')",
                 (doc_id, tenant_id),
             )
             row = cursor.fetchone()
             if not row:
                 return None
+
+            row_values = dict(zip(base_columns + selected_optional, row))
+            metadata_value: Dict[str, Any] = {}
+            raw_metadata = row_values.get("metadata_json")
+            if isinstance(raw_metadata, dict):
+                metadata_value = raw_metadata
+            elif raw_metadata:
+                try:
+                    decoded_metadata = json.loads(str(raw_metadata))
+                    if isinstance(decoded_metadata, dict):
+                        metadata_value = decoded_metadata
+                except (TypeError, ValueError):
+                    metadata_value = {}
 
             cursor.execute(
                 """
@@ -681,20 +827,96 @@ class KnowledgeService:
                 for index, chunk in enumerate(cursor.fetchall())
             ]
 
+            source_version_history: List[Dict[str, Any]] = []
+            raw_sources: List[Dict[str, Any]] = []
+            canonical_document_id = str(row_values.get("document_id") or doc_id)
+            if _USE_PG:
+                cursor.execute(
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() "
+                    "AND table_name IN ('kb_document', 'kb_document_version', 'kb_document_source')"
+                )
+                canonical_tables_ready = len(cursor.fetchall()) == 3
+            else:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
+                    "AND name IN ('kb_document', 'kb_document_version', 'kb_document_source')"
+                )
+                canonical_tables_ready = int(cursor.fetchone()[0] or 0) == 3
+            if canonical_tables_ready:
+                cursor.execute(
+                    "SELECT id, source_uri, canonical_key, source_registry_id, current_version_id "
+                    "FROM kb_document WHERE tenant_id = ? AND id = ?",
+                    (tenant_id, canonical_document_id),
+                )
+                canonical_row = cursor.fetchone()
+                if canonical_row:
+                    canonical_id = str(canonical_row[0])
+                    cursor.execute(
+                        "SELECT id, version_no, source_version_id, content_hash, status, "
+                        "lifecycle_status, mime_type, byte_size, created_at, updated_at "
+                        "FROM kb_document_version WHERE tenant_id = ? AND document_id = ? "
+                        "ORDER BY version_no DESC",
+                        (tenant_id, canonical_id),
+                    )
+                    source_version_history = [
+                        {
+                            "id": version[0],
+                            "version_no": int(version[1] or 0),
+                            "source_version_id": version[2],
+                            "content_hash": version[3],
+                            "status": version[4],
+                            "lifecycle_status": version[5],
+                            "mime_type": version[6],
+                            "byte_size": int(version[7] or 0),
+                            "created_at": version[8],
+                            "updated_at": version[9],
+                        }
+                        for version in cursor.fetchall()
+                    ]
+                    cursor.execute(
+                        "SELECT canonical_url, source_registry_id, source_version_id, status, observed_at "
+                        "FROM kb_document_source WHERE tenant_id = ? AND document_id = ? "
+                        "ORDER BY observed_at DESC",
+                        (tenant_id, canonical_id),
+                    )
+                    raw_sources = [
+                        {
+                            "canonical_url": source[0],
+                            "source_registry_id": source[1],
+                            "source_version_id": source[2],
+                            "status": source[3],
+                            "observed_at": source[4],
+                        }
+                        for source in cursor.fetchall()
+                    ]
+
             return {
-                "id": row[0],
-                "knowledge_base_id": row[1],
-                "name": row[2],
-                "source": row[3],
-                "vendor": row[4],
-                "platform": row[5],
-                "status": row[6],
-                "knowledge_source_type": row[7] or "user_document",
-                "tenant_id": row[8] or "tenant-default",
-                "acl": parse_acl(row[9]),
-                "source_trust_level": row[10] or "untrusted",
-                "created_at": row[11],
-                "updated_at": row[12],
+                "id": row_values["id"],
+                "knowledge_base_id": row_values["knowledge_base_id"],
+                "name": row_values["name"],
+                "source": row_values["source"],
+                "vendor": row_values["vendor"],
+                "platform": row_values["platform"],
+                "status": row_values["status"],
+                "knowledge_source_type": row_values["knowledge_source_type"] or "user_document",
+                "tenant_id": row_values["tenant_id"] or "tenant-default",
+                "acl": parse_acl(row_values["acl_json"]),
+                "source_trust_level": row_values["source_trust_level"] or "untrusted",
+                "created_at": row_values["created_at"],
+                "updated_at": row_values["updated_at"],
+                "document_id": row_values.get("document_id"),
+                "original_content": row_values.get("original_content") or "",
+                "normalized_content": row_values.get("normalized_content") or "",
+                "metadata": metadata_value,
+                "document_version": row_values.get("document_version"),
+                "index_version": row_values.get("index_version") or row_values.get("retrieval_index_version"),
+                "parser_version": row_values.get("parser_version"),
+                "metadata_parse_status": row_values.get("metadata_parse_status"),
+                "raw_source": {
+                    "source": row_values["source"],
+                    "references": raw_sources,
+                },
+                "source_version_history": source_version_history,
                 "chunk_count": len(chunks),
                 "chunks": chunks,
             }
