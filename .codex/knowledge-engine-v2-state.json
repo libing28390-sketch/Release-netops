@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "OBS-007",
+  "current_task": "CHK-015",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T14:35:00+08:00",
-  "last_completed_task": "OBS-006",
+  "updated_at": "2026-08-17T14:48:00+08:00",
+  "last_completed_task": "OBS-007",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -291,7 +291,8 @@
     "OBS-003",
     "OBS-004",
     "OBS-005",
-    "OBS-006"
+    "OBS-006",
+    "OBS-007"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -325,7 +326,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "OBS-007",
     "OBS-008",
     "EVAL-001",
     "EVAL-002",
@@ -873,8 +873,15 @@
   "obs006_focused_tests": "retrieval quality focused 7 passed; AI 248 passed; frontend 21 files/101 tests",
   "obs006_gate_summary": "Catalog 192 passed; Database 188 passed + 2 documented skips; V1 PostgreSQL 10/10; lint/build/compile/diff PASS",
   "obs006_production_ddl": "NONE",
-  "last_verified_commit": "4d7dca24",
-  "completed_count": 286,
+  "obs007_status": "DONE_PASS",
+  "obs007_final_verified_at": "2026-08-17T14:48:00+08:00",
+  "obs007_evidence": "docs/knowledge-engine-v2/evidence/OBS-007.md",
+  "obs007_contract": "docs/knowledge-engine-v2/architecture/OBS-007-IMPORT-REINDEX-OBSERVABILITY-CONTRACT.yaml",
+  "obs007_focused_tests": "OBS-007 focused 4; Import/Reindex regression 11; AI 252; frontend 21 files/101 tests",
+  "obs007_gate_summary": "Catalog 192; Database 188 + 2 documented skips; V1 PostgreSQL 10/10; lint/build/compile/diff PASS; live PostgreSQL queue probe PASS",
+  "obs007_production_ddl": "NONE",
+  "last_verified_commit": "b242e196",
+  "completed_count": 287,
   "p0_completed_count": 234,
-  "resume_from": "OBS-005"
+  "resume_from": "CHK-015"
 }
