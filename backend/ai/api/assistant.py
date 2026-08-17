@@ -30,6 +30,7 @@ from api.knowledge_v2_contracts import (
     KnowledgeReindexRequest,
     SearchContract,
 )
+from api.knowledge_v2_response import PaginationMeta, attach_pagination
 
 router = APIRouter(prefix="/assistant", tags=["AI Copilot & Knowledge"])
 
@@ -488,10 +489,12 @@ def list_documents(
     source_trust_level: str = Query(default="", max_length=32),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    sort_by: str = Query(default="created_at", max_length=64),
+    sort_order: str = Query(default="desc", pattern="^(?i:asc|desc)$"),
     user=Depends(require_ai_permission("ai.view")),
 ):
     """List documents with server-side filtering and pagination."""
-    return knowledge_service.list_documents(
+    result = knowledge_service.list_documents(
         knowledge_source_type=source_type,
         directory_path=directory_path,
         knowledge_scope=knowledge_scope,
@@ -511,7 +514,31 @@ def list_documents(
         source_trust_level=source_trust_level,
         page=page,
         page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
         tenant_id=user.get("tenant_id") or "tenant-default",
+    )
+    allowed_sort_fields = {"created_at", "name", "vendor", "platform", "status", "chunk_count"}
+    normalized_sort = sort_by.strip().lower() if sort_by.strip().lower() in allowed_sort_fields else "created_at"
+    normalized_order = "asc" if sort_order.strip().lower() == "asc" else "desc"
+    return attach_pagination(
+        result,
+        PaginationMeta(
+            page=int(result.get("page") or 1),
+            page_size=int(result.get("page_size") or page_size),
+            total=int(result.get("total") or 0),
+            total_pages=int(result.get("total_pages") or 1),
+            sort_by=normalized_sort,
+            sort_order=normalized_order,
+        ),
+        filters={
+            "source_type": source_type, "search": search, "directory_path": directory_path,
+            "knowledge_scope": knowledge_scope, "vendor": vendor, "product_family": product_family,
+            "product_series": product_series, "product_model": product_model, "os_family": os_family,
+            "os_generation": os_generation, "software_train": software_train, "software_release": software_release,
+            "cli_platform": cli_platform, "document_category": document_category, "feature_domain": feature_domain,
+            "status": status, "source_trust_level": source_trust_level,
+        },
     )
 
 

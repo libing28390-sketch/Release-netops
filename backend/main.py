@@ -90,6 +90,7 @@ from ai.api import ai_router
 from ai.gateway.exceptions import AIException
 from ai.api.chat_v1 import router as ai_v1_chat_router
 from ai.api.security import load_persisted_security_policy
+from api.knowledge_v2_response import is_stable_api_path, stable_error_payload
 from services.scheduler_service import sync_scheduler_jobs, run_scheduled_automation_job_sync_wrapper
 from engine.orchestrator import get_telemetry_orchestrator
 import logging
@@ -493,6 +494,15 @@ from fastapi.exceptions import RequestValidationError
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global unhandled exception on {request.url.path}: {exc}", exc_info=True)
+    if is_stable_api_path(request.url.path):
+        request_id = request.headers.get("X-Request-ID") or request_id_var.get("-")
+        response = JSONResponse(
+            status_code=500,
+            content=stable_error_payload(500, "服务内部异常，请联系管理员查看后端日志", request_id=request_id),
+        )
+        if request_id and request_id != "-":
+            response.headers["X-Request-ID"] = request_id
+        return response
     return JSONResponse(
         status_code=500,
         content={"detail": "服务内部异常，请联系管理员查看后端日志"},
@@ -502,6 +512,19 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.exception_handler(AIException)
 async def ai_exception_handler(request: Request, exc: AIException):
     """Return stable AI error codes without exposing provider/payload details."""
+    if is_stable_api_path(request.url.path):
+        request_id = exc.request_id or request.headers.get("X-Request-ID") or request_id_var.get("-")
+        response = JSONResponse(
+            status_code=exc.status_code,
+            content=stable_error_payload(
+                exc.status_code,
+                {"code": exc.code, "message": exc.message, "details": exc.details},
+                request_id=request_id,
+            ),
+        )
+        if request_id and request_id != "-":
+            response.headers["X-Request-ID"] = request_id
+        return response
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -539,6 +562,19 @@ async def validation_exception_handler(request, exc):
             'input': None if e.get('input') is None else str(e.get('input')),
         })
     detail_msg = '；'.join(messages) or '请求参数校验失败'
+    if is_stable_api_path(request.url.path):
+        request_id = request.headers.get("X-Request-ID") or request_id_var.get("-")
+        response = JSONResponse(
+            status_code=422,
+            content=stable_error_payload(
+                422,
+                {"code": "VALIDATION_ERROR", "message": detail_msg, "details": {"errors": safe_errors}},
+                request_id=request_id,
+            ),
+        )
+        if request_id and request_id != "-":
+            response.headers["X-Request-ID"] = request_id
+        return response
     return JSONResponse(
         status_code=422,
         content={"detail": detail_msg, "errors": safe_errors},
@@ -658,6 +694,22 @@ os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static_bin")
 
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+@app.exception_handler(StarletteHTTPException)
+async def stable_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Normalize errors for the V2/V1 AI boundary while preserving legacy detail."""
+
+    request_id = request.headers.get("X-Request-ID") or request_id_var.get("-")
+    if is_stable_api_path(request.url.path):
+        response = JSONResponse(
+            status_code=exc.status_code,
+            content=stable_error_payload(exc.status_code, exc.detail, request_id=request_id),
+        )
+        if request_id and request_id != "-":
+            response.headers["X-Request-ID"] = request_id
+        return response
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 class SPAStaticFiles(StaticFiles):
     """

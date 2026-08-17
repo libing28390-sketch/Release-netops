@@ -544,6 +544,8 @@ class KnowledgeService:
         source_trust_level: str = "",
         page: int = 1,
         page_size: int = 20,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
     ) -> Dict[str, Any]:
         """List tenant-safe document summaries with semantic server-side filtering.
 
@@ -556,6 +558,16 @@ class KnowledgeService:
         """
         safe_page_size = min(max(int(page_size or 20), 1), 100)
         requested_page = max(int(page or 1), 1)
+        sort_columns = {
+            "created_at": "d.created_at",
+            "name": "d.name",
+            "vendor": "d.vendor",
+            "platform": "d.platform",
+            "status": "d.status",
+            "chunk_count": "chunk_count",
+        }
+        sort_column = sort_columns.get(str(sort_by or "created_at").strip().lower(), "d.created_at")
+        sort_direction = "ASC" if str(sort_order or "desc").strip().lower() == "asc" else "DESC"
         search_term = (search or "").strip().lower()
 
         with get_db_connection() as conn:
@@ -655,7 +667,7 @@ class KnowledgeService:
                 f"WHERE {where_sql} "
                 "GROUP BY d.id, d.knowledge_base_id, d.name, d.source, d.vendor, d.platform, "
                 "d.status, d.knowledge_source_type, d.tenant_id, d.acl_json, d.source_trust_level, d.created_at "
-                "ORDER BY d.created_at DESC LIMIT ? OFFSET ?"
+                f"ORDER BY {sort_column} {sort_direction}, d.id ASC LIMIT ? OFFSET ?"
             )
             cursor.execute(query, [*params, safe_page_size, offset])
             rows = cursor.fetchall()

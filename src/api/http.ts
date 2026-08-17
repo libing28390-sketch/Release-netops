@@ -2,13 +2,15 @@ export class ApiError extends Error {
   status: number;
   detail: unknown;
   requestId?: string;
+  code?: string;
 
-  constructor(status: number, message: string, detail?: unknown, requestId?: string) {
+  constructor(status: number, message: string, detail?: unknown, requestId?: string, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
     this.requestId = requestId;
+    this.code = code;
   }
 }
 
@@ -33,12 +35,14 @@ export async function apiRequest<T>(url: string, init: RequestInit = {}): Promis
     if (response.status === 401) {
       window.dispatchEvent(new Event('netops:auth-expired'));
     }
-    const rawDetail = payload?.detail ?? payload?.message ?? `HTTP ${response.status}`;
+    const errorContract = payload?.error && typeof payload.error === 'object' ? payload.error : undefined;
+    const rawDetail = errorContract ?? payload?.detail ?? payload?.message ?? `HTTP ${response.status}`;
+    const code = typeof errorContract?.code === 'string' ? errorContract.code : undefined;
     let message = typeof rawDetail === 'string' ? rawDetail : rawDetail?.message || JSON.stringify(rawDetail);
     if (requestId) {
       message = `${message} (Request ID: ${requestId})`;
     }
-    throw new ApiError(response.status, message, rawDetail, requestId);
+    throw new ApiError(response.status, message, rawDetail, requestId, code);
   }
   return payload as T;
 }

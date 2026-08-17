@@ -25,6 +25,7 @@ from services.source_registry_service import (
     update_source,
     validate_source,
 )
+from api.knowledge_v2_response import attach_pagination, paginate_items
 
 
 router = APIRouter(prefix="/knowledge-v2/sources", tags=["knowledge-v2-source-registry"])
@@ -106,9 +107,18 @@ def _call(fn, *args, **kwargs):
 def api_list_sources(
     status: str = Query(default="all", max_length=32),
     tenant_id: str | None = Query(default=None, max_length=128),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    sort_by: str = Query(default="updated_at", max_length=64),
+    sort_order: str = Query(default="desc", pattern="^(?i:asc|desc)$"),
     user=require_permission("knowledge_source", "read"),
 ):
-    return {"success": True, "data": _call(list_sources, user, status=status, tenant_id=tenant_id), "message": ""}
+    rows = _call(list_sources, user, status=status, tenant_id=tenant_id)
+    items, meta = paginate_items(
+        rows, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order,
+        allowed_sort_fields={"updated_at", "created_at", "name", "status", "source_type", "trust_level"},
+    )
+    return attach_pagination({"success": True, "data": items, "message": ""}, meta, filters={"status": status, "tenant_id": tenant_id})
 
 
 @router.post("")
@@ -172,15 +182,28 @@ def api_delete_source(
 @router.get("/{source_id}/versions")
 def api_list_source_versions(
     source_id: str = Path(..., min_length=1, max_length=128),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    sort_by: str = Query(default="fetched_at", max_length=64),
+    sort_order: str = Query(default="desc", pattern="^(?i:asc|desc)$"),
     user=require_permission("knowledge_source", "read"),
 ):
-    return {"success": True, "data": _call(list_source_versions, source_id, user), "message": ""}
+    rows = _call(list_source_versions, source_id, user)
+    items, meta = paginate_items(
+        rows, page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order,
+        allowed_sort_fields={"fetched_at", "created_at", "status", "byte_size", "id"},
+    )
+    return attach_pagination({"success": True, "data": items, "message": ""}, meta)
 
 
 @router.get("/{source_id}/refresh-observations")
 def api_list_source_refresh_observations(
     source_id: str = Path(..., min_length=1, max_length=128),
     limit: int = Query(default=50, ge=1, le=200),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    sort_by: str = Query(default="observed_at", max_length=64),
+    sort_order: str = Query(default="desc", pattern="^(?i:asc|desc)$"),
     user=require_permission("knowledge_source", "read"),
 ):
     # FastAPI resolves ``Query`` to an int for HTTP callers.  Keeping a plain
@@ -188,11 +211,12 @@ def api_list_source_refresh_observations(
     # contract tests and avoids leaking framework sentinel values to services.
     if not isinstance(limit, int):
         limit = 50
-    return {
-        "success": True,
-        "data": _call(list_source_refresh_observations, source_id, user, limit=limit),
-        "message": "",
-    }
+    rows = _call(list_source_refresh_observations, source_id, user, limit=limit)
+    items, meta = paginate_items(
+        rows, page=page, page_size=min(page_size, limit), sort_by=sort_by, sort_order=sort_order,
+        allowed_sort_fields={"observed_at", "created_at", "outcome", "detection_type", "http_status"},
+    )
+    return attach_pagination({"success": True, "data": items, "message": ""}, meta)
 
 
 @router.get("/{source_id}/refresh-status")

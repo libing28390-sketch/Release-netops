@@ -32,6 +32,7 @@ from services.product_catalog_service import (
     list_product_catalog,
     resolve_product_alias_dry_run,
 )
+from api.knowledge_v2_response import attach_pagination, paginate_items
 
 
 router = APIRouter(prefix="/knowledge-v2/catalog", tags=["knowledge-v2-product-catalog"])
@@ -111,9 +112,19 @@ def api_list_catalog(
     model: str = Query(default="", max_length=128),
     software_version: str = Query(default="", max_length=128),
     status: str = Query(default="all", max_length=32),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    sort_by: str = Query(default="created_at", max_length=64),
+    sort_order: str = Query(default="desc", pattern="^(?i:asc|desc)$"),
     user=require_permission("knowledge_catalog", "read"),
 ):
-    return {"success": True, "data": _call(list_product_catalog, user, vendor_id=vendor_id, family_code=family_code, series_code=series_code, model=model, software_version=software_version, status=status), "message": ""}
+    result = _call(list_product_catalog, user, vendor_id=vendor_id, family_code=family_code, series_code=series_code, model=model, software_version=software_version, status=status)
+    items, meta = paginate_items(
+        result.get("items") or [], page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order,
+        allowed_sort_fields={"created_at", "vendor_id", "family_code", "series_code", "model_code", "display_name", "status"},
+    )
+    result = attach_pagination({**result, "items": items}, meta, filters={"vendor_id": vendor_id, "family_code": family_code, "series_code": series_code, "model": model, "software_version": software_version, "status": status})
+    return {"success": True, "data": result, "message": ""}
 
 
 @router.get("/aliases")
@@ -121,9 +132,19 @@ def api_list_catalog_aliases(
     alias: str = Query(default="", max_length=256),
     alias_kind: str = Query(default="", max_length=32),
     conflict_status: str = Query(default="all", max_length=64),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    sort_by: str = Query(default="alias", max_length=64),
+    sort_order: str = Query(default="asc", pattern="^(?i:asc|desc)$"),
     user=require_permission("knowledge_catalog", "read"),
 ):
-    return {"success": True, "data": _call(list_product_aliases, user, alias=alias, alias_kind=alias_kind, conflict_status=conflict_status), "message": ""}
+    result = _call(list_product_aliases, user, alias=alias, alias_kind=alias_kind, conflict_status=conflict_status)
+    items, meta = paginate_items(
+        result.get("items") or [], page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order,
+        allowed_sort_fields={"alias", "normalized_alias", "alias_kind", "conflict_status", "status", "product_model_id"},
+    )
+    result = attach_pagination({**result, "items": items}, meta, filters={"alias": alias, "alias_kind": alias_kind, "conflict_status": conflict_status})
+    return {"success": True, "data": result, "message": ""}
 
 
 @router.post("/resolve")
