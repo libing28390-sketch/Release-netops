@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: OBS-004 (PENDING; OBS-003 PASS)
-Last Completed: OBS-003
-Next Task: OBS-004（按原清单依赖继续）
+Current Task: OBS-005 (PENDING; OBS-004 PASS)
+Last Completed: OBS-004
+Next Task: OBS-005（按原清单依赖继续）
 
-Completed: 283 / 359
-P0: 233 / 277
-Last Verified Commit: b351f448（OBS-003 PASS；本地提交；未 push）
+Completed: 284 / 359
+P0: 234 / 277
+Last Verified Commit: 34d3004f（OBS-004 PASS；本地提交；未 push）
 
 Recent Migration: OBS-003 无 migration；PostgreSQL authoritative path 未写生产
-Recent Build: OBS-003 focused 10 passed；AI 238 passed；Database 188 + 2 skips；Catalog 192；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
-Last Security Check: Trace、AI Gateway/Assistant 与 root/console/file logger 写入前脱敏；raw query hash-only；凭据/Bearer/私钥/异常正文不落盘；PASS
-Recovery Point: OBS-004
+Recent Build: OBS-004 focused backend 5 passed；AI 243 passed；frontend HTTP/SSE 4 passed；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
+Last Security Check: request_id bounded/allowlisted；非法 header 注入拒绝；Trace/Gateway/Provider/SSE 全链路复用同一 ID；raw query/凭据不进入 request_id；PASS
+Recovery Point: OBS-005
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -41,6 +41,7 @@ KUI-001..008 证据：
 - OBS-001 retrieval observation：raw query 仅 request-scope captured/hash/length，normalized query、entities、filters、candidates、scores、final chunks 有界投影；focused 4，AI 236，KUI 回归与 V1 PostgreSQL baseline PASS；无 DDL
 - OBS-002 runtime observation：reranker、citation、latency、tokens、provider/model、security result 统一写入 non-stream/SSE Trace，嵌套更新不丢历史阶段；focused 9，AI 237，KUI 回归 6，lint/build/compile/diff 与 V1 PostgreSQL baseline PASS；无 DDL
 - OBS-003 trace/log redaction：Trace 文本、AI Gateway/Assistant 与 root/console/file logger 写入前脱敏，raw query 仅 hash/长度；Database 188+2 skips、Catalog 192、AI 238、focused 10，V1 PostgreSQL 10/10 与 lint/build/compile/diff PASS；无 DDL
+- OBS-004 request ID correlation：前端/API/RAG/Gateway/Provider/SSE 复用 bounded request_id，非法 header fail-closed，Provider 仅通过 X-Request-ID 传输；focused backend 5、AI 243、frontend 4、V1 PostgreSQL 10/10 与 lint/build/compile/diff PASS；无 DDL
 
 Blocked Tasks: none
 
