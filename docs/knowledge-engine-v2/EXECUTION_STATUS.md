@@ -7,7 +7,7 @@ Next Task: OBS-008（等待用户在 Usage Dashboard 完成可见验证）
 
 Completed: 287 / 359
 P0: 234 / 277
-Last Verified Commit: 10cca00e（OBS-008 自动化门禁 PASS；本地提交；未 push）
+Last Verified Commit: b264fede（Provider tags 修复 PASS；本地提交；未 push）
 
 Recent Migration: OBS-003 无 migration；PostgreSQL authoritative path 未写生产
 Recent Build: OBS-008 focused 4 passed；AI 256 passed；frontend 21 files/101 tests；PostgreSQL live probe PASS（cache 0.994742、slow-query fallback、capacity PASS，relation bloat WARN）；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
@@ -46,6 +46,7 @@ KUI-001..008 证据：
 - OBS-006 retrieval quality：监控 No Match、错误厂商、版本冲突、低置信度和检索错误；focused 7、AI 248、frontend 101 tests、Database 188+2 skips、Catalog 192、V1 PostgreSQL 10/10 与 lint/build/compile/diff PASS；无 DDL
 - OBS-007 job observability：Import/Reindex 队列 backlog、失败、租约异常聚合与阈值告警；focused 4、Import/Reindex regression 11、AI 252、frontend 101 tests、Database 188+2 skips、Catalog 192、V1 PostgreSQL 10/10、live PostgreSQL probe 与 lint/build/compile/diff PASS；无 DDL
 - OBS-008 database observability：PostgreSQL 关系 bloat/index bytes、pg_stat_activity/pg_stat_statements 慢查询、缓存命中率、数据库容量及 Usage Dashboard 摘要；focused 4、AI 256、frontend 101 tests、V1 PostgreSQL 10/10、live probe PASS（relation bloat WARN 如实报告）；无 DDL；等待用户可见验证
+- Provider 页面修复：`tags_json={}` 导致 `AIProviderResponse.tags` 类型错误；m0148 已在当前 PostgreSQL 应用，Provider focused 12、AI 259、PG migration probe PASS；等待运行中后端重启后浏览器回归
 
 Blocked Tasks: none
 
