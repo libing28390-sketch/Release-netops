@@ -16,6 +16,7 @@ from database.core import get_db_connection
 from ai.security.crypto import decrypt_api_key
 from ai.security.gateway import AISecurityGateway, SecurityBlocked, ai_security_gateway
 from ai.security.tokenization import opaque_user_id
+from ai.security.sanitizer import sanitize_log_text
 from ai.security.security_service import create_security_incident, record_security_event
 from ai.gateway.exceptions import (
     AIException,
@@ -274,7 +275,7 @@ class LLMGateway:
                     health_conn.execute("UPDATE ai_model SET health_status = ?, last_latency_ms = ?, last_success_at = CASE WHEN ? = 'healthy' THEN ? ELSE last_success_at END, last_error_code = CASE WHEN ? = 'healthy' THEN NULL ELSE ? END WHERE id = ?", ("healthy" if status == "success" else "unhealthy", max(0, int(latency_ms or 0)), status, now, status, error_code, model_id))
                 health_conn.commit()
         except Exception:
-            logger.debug("Failed to update provider/model health", exc_info=True)
+            logger.debug("Failed to update provider/model health code=AI_HEALTH_WRITE_FAILED")
         try:
             now_iso = datetime.now(timezone.utc).isoformat()
             with get_db_connection() as conn:
@@ -294,8 +295,8 @@ class LLMGateway:
                     )
                 )
                 conn.commit()
-        except Exception as exc:
-            logger.warning(f"Failed to save AI request audit log: {exc}")
+        except Exception:
+            logger.warning("Failed to save AI request audit log code=AI_REQUEST_AUDIT_WRITE_FAILED")
         # Keep the durable daily cost/usage read model separate from the
         # request audit row.  It contains counters only; never prompt text or
         # provider response bodies.
@@ -330,7 +331,7 @@ class LLMGateway:
                         )
                     usage_conn.commit()
             except Exception:
-                logger.debug("Failed to update AI daily usage counters", exc_info=True)
+                logger.debug("Failed to update AI daily usage counters code=AI_USAGE_WRITE_FAILED")
 
     def _log_security_audit(
         self,
@@ -371,7 +372,7 @@ class LLMGateway:
         except Exception:
             # The request log remains useful on installations before m0105;
             # an audit-table failure must never open the external egress path.
-            logger.debug("Failed to save AI security audit metadata", exc_info=True)
+            logger.debug("Failed to save AI security audit metadata code=AI_SECURITY_AUDIT_WRITE_FAILED")
         try:
             level = str(max_data_level or "L1").upper()
             classification = {"L0": "PUBLIC", "L1": "INTERNAL", "L2": "CONFIDENTIAL", "L3": "SECRET", "L4": "SECRET"}.get(level, "INTERNAL")
@@ -408,7 +409,7 @@ class LLMGateway:
                     },
                 )
         except Exception:
-            logger.debug("Failed to save extended security event", exc_info=True)
+            logger.debug("Failed to save extended security event code=AI_SECURITY_EVENT_WRITE_FAILED")
 
     async def chat(
         self,
@@ -675,7 +676,7 @@ class LLMGateway:
             return result
             
         except Exception as primary_exc:
-            logger.warning("Primary AI model failed for scene=%s code=%s", scene, getattr(primary_exc, "code", "AI_INTERNAL_ERROR"))
+            logger.warning("Primary AI model failed for scene=%s code=%s", sanitize_log_text(scene, limit=64), sanitize_log_text(getattr(primary_exc, "code", "AI_INTERNAL_ERROR"), limit=64))
 
             if isinstance(primary_exc, AISecurityBlockedException):
                 primary_exc.request_id = request_id
@@ -684,7 +685,7 @@ class LLMGateway:
             # If fallback model is configured, attempt fallback
             if fallback_model_id and fallback_model_id != target_model_id:
                 try:
-                    logger.info("Attempting fallback AI model for scene=%s", scene)
+                    logger.info("Attempting fallback AI model for scene=%s", sanitize_log_text(scene, limit=64))
                     result = await _attempt_call(fallback_model_id)
                     latency_ms = int((time.perf_counter() - start_time) * 1000)
                     
@@ -991,7 +992,7 @@ class LLMGateway:
                     self._log_request(request_id=request_id, user_id=secure_payload.user_id, scene=scene, provider_id=fallback_info["provider_id"], model_id=fallback_info["id"], prompt_id=None, prompt_version=None, input_tokens=fallback_input_tokens, output_tokens=fallback_output_tokens, latency_ms=latency_ms, status="success")
                     return
                 except Exception:
-                    logger.warning("LLM stream fallback failed", exc_info=True)
+                    logger.warning("LLM stream fallback failed code=%s", sanitize_log_text(getattr(fallback_exc, "code", "AI_INTERNAL_ERROR"), limit=64))
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             self._log_request(
                 request_id=request_id,

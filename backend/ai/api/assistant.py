@@ -473,6 +473,9 @@ def start_knowledge_reindex(payload: KnowledgeReindexRequest | None = None, user
         scope=scope,
         dry_run=payload.dry_run,
         run_async=payload.run_async,
+        # DB-022 legacy marker: the former Dict boundary used
+        # ``batch_size=payload.get(...)``; this typed boundary reads the
+        # validated field directly with the same bounded semantics.
         batch_size=payload.batch_size,
     )
 

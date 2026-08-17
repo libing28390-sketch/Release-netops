@@ -617,7 +617,7 @@ def list_source_refresh_observations(
         tenant_id = str(source.get("tenant_id") or "")
         _authorize(user, "read", tenant_id)
         rows = conn.execute(
-            "SELECT * FROM kb_source_refresh_observation WHERE tenant_id = ? AND source_registry_id = ? ORDER BY checked_at DESC, id DESC LIMIT ?",
+            "SELECT * FROM kb_source_refresh_observation WHERE tenant_id = ? AND source_registry_id = ? ORDER BY checked_at DESC, CASE WHEN detection_type = 'none' THEN 0 ELSE 1 END DESC, id DESC LIMIT ?",
             (tenant_id, source_id, bounded_limit),
         ).fetchall()
         return [_decode_refresh_observation(row) for row in rows]

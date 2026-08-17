@@ -9,10 +9,10 @@
     "citation_accuracy": 1.0,
     "citation_recall": 1.0,
     "latency_ms": {
-      "average": 0.7148,
-      "p50": 0.7105,
-      "p95": 1.06,
-      "max": 1.2409
+      "average": 0.9556,
+      "p50": 0.8269,
+      "p95": 1.425,
+      "max": 1.5039
     }
   },
   "cases": [
@@ -29,7 +29,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 1.2409,
+      "latency_ms": 1.5039,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -79,7 +79,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.6479,
+      "latency_ms": 0.7105,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -129,7 +129,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.793,
+      "latency_ms": 0.8452,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -179,7 +179,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.5797,
+      "latency_ms": 0.6385,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -231,7 +231,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.8254,
+      "latency_ms": 1.2025,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
         "metadata_candidate_documents": 2,
@@ -284,7 +284,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.8388,
+      "latency_ms": 1.3285,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))",
         "metadata_candidate_documents": 2,
@@ -331,7 +331,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.3037,
+      "latency_ms": 0.5849,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))",
         "metadata_candidate_documents": 0,
@@ -376,7 +376,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.5751,
+      "latency_ms": 0.8086,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -426,7 +426,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.5708,
+      "latency_ms": 0.7774,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.vendor) = LOWER(?) AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?)",
         "metadata_candidate_documents": 1,
@@ -476,7 +476,7 @@
       "citation_precision": 1.0,
       "vendor_mismatch": false,
       "version_conflict": false,
-      "latency_ms": 0.7731,
+      "latency_ms": 1.1562,
       "debug": {
         "metadata_filter": "d.status = ? AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default') AND COALESCE(d.exclude_from_rag, 0) = 0 AND LOWER(d.document_category) = LOWER(?) AND LOWER(COALESCE(d.software_train, '')) = LOWER(?) AND LOWER(COALESCE(d.feature, '')) = LOWER(?) AND (LOWER(COALESCE(d.product_series, '')) = LOWER(?) OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?)) AND LOWER(d.cli_platform) = LOWER(?)",
         "metadata_candidate_documents": 1,

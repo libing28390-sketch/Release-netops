@@ -215,7 +215,7 @@ def api_list_source_refresh_observations(
     limit: int = Query(default=50, ge=1, le=200),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
-    sort_by: str = Query(default="observed_at", max_length=64),
+    sort_by: str = Query(default="checked_at", max_length=64),
     sort_order: str = Query(default="desc", pattern="^(?i:asc|desc)$"),
     user=require_permission("knowledge_source", "read"),
 ):
@@ -224,13 +224,21 @@ def api_list_source_refresh_observations(
     # contract tests and avoids leaking framework sentinel values to services.
     if not isinstance(limit, int):
         limit = 50
+    if not isinstance(page, int):
+        page = 1
+    if not isinstance(page_size, int):
+        page_size = 50
+    if not isinstance(sort_by, str):
+        sort_by = "checked_at"
+    if not isinstance(sort_order, str):
+        sort_order = "desc"
     rows = [
         project_summary(row, fields=REFRESH_OBSERVATION_SUMMARY_FIELDS)
         for row in _call(list_source_refresh_observations, source_id, user, limit=limit)
     ]
     items, meta = paginate_items(
         rows, page=page, page_size=min(page_size, limit), sort_by=sort_by, sort_order=sort_order,
-        allowed_sort_fields={"observed_at", "created_at", "outcome", "detection_type", "http_status"},
+        allowed_sort_fields={"checked_at", "created_at", "outcome", "detection_type", "http_status"},
     )
     return attach_pagination({"success": True, "data": items, "message": ""}, meta)
 

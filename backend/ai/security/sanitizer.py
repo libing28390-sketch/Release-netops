@@ -9,6 +9,13 @@ from typing import Any, Dict, List, Union
 
 REDACTED_TAG = "<REDACTED>"
 
+_LOG_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[_ -]?key|access[_ -]?token|token|password|passwd|secret|community|authorization|cookie|private[_ -]?key)"
+    r"\s*[:=]\s*[\"']?[^\s,;\"'}]+"
+)
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+_PRIVATE_KEY_RE = re.compile(r"(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----")
+
 _REDACTION_PATTERNS = [
     # SNMP Community (Huawei / H3C / Cisco)
     (re.compile(r'(?i)(snmp-agent\s+community\s+(?:read|write|cipher|simple)?\s+)(\S+)'), r'\1<REDACTED>'),
@@ -44,6 +51,16 @@ def sanitize_text(text: str) -> str:
     for pattern, replacement in _REDACTION_PATTERNS:
         sanitized = pattern.sub(replacement, sanitized)
     return sanitized
+
+
+def sanitize_log_text(value: Any, *, limit: int = 512) -> str:
+    """Return a bounded, secret-free value suitable for application logs."""
+
+    sanitized = sanitize_text(str(value or ""))
+    sanitized = _PRIVATE_KEY_RE.sub("<REDACTED_PRIVATE_KEY>", sanitized)
+    sanitized = _LOG_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<REDACTED>", sanitized)
+    sanitized = _BEARER_RE.sub("Bearer <REDACTED>", sanitized)
+    return sanitized[: max(1, int(limit or 512))]
 
 
 def sanitize_data(data: Union[Dict[str, Any], List[Any], str, int, float, bool, None]) -> Any:

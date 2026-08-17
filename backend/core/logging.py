@@ -23,23 +23,33 @@ _NOISY_LIBS = [
 
 # ── Log sanitization filter ──
 _SENSITIVE_PATTERNS = re.compile(
-    r'(password|passwd|secret|community|token|auth_pass|priv_pass|credential)'
-    r'[\s]*[=:]\s*["\']?([^\s"\'&,;]+)',
+    r'(api[_ -]?key|access[_ -]?token|password|passwd|secret|community|token|auth_pass|priv_pass|credential|authorization|cookie|private[_ -]?key)'
+    r'[\s]*[=:]\s*["\']?([^\s"\'&,;}]+)',
     re.IGNORECASE,
 )
+_BEARER_PATTERN = re.compile(r'(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+')
+_PRIVATE_KEY_PATTERN = re.compile(r'(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----')
+
+
+def _sanitize_log_value(value):
+    if isinstance(value, BaseException):
+        return type(value).__name__
+    if not isinstance(value, str):
+        return value
+    sanitized = _PRIVATE_KEY_PATTERN.sub('<REDACTED_PRIVATE_KEY>', value)
+    sanitized = _BEARER_PATTERN.sub('Bearer <REDACTED>', sanitized)
+    return _SENSITIVE_PATTERNS.sub(r'\1=***', sanitized)
 
 class SanitizeFilter(logging.Filter):
     """Redact sensitive values (passwords, tokens, communities) from log messages."""
     def filter(self, record):
         if isinstance(record.msg, str):
-            record.msg = _SENSITIVE_PATTERNS.sub(r'\1=***', record.msg)
+            record.msg = _sanitize_log_value(record.msg)
+        elif isinstance(record.msg, BaseException):
+            record.msg = type(record.msg).__name__
         if record.args:
-            sanitized = []
-            for arg in record.args if isinstance(record.args, tuple) else (record.args,):
-                if isinstance(arg, str):
-                    sanitized.append(_SENSITIVE_PATTERNS.sub(r'\1=***', arg))
-                else:
-                    sanitized.append(arg)
+            original_args = record.args if isinstance(record.args, tuple) else (record.args,)
+            sanitized = [_sanitize_log_value(arg) for arg in original_args]
             record.args = tuple(sanitized) if isinstance(record.args, tuple) else sanitized[0]
         return True
 
@@ -96,6 +106,7 @@ def setup_logging():
 
     # stdout handler
     console = logging.StreamHandler(sys.stdout)
+    console.addFilter(SanitizeFilter())
     console.setFormatter(fmt)
     root.addHandler(console)
 
@@ -121,6 +132,7 @@ def setup_logging():
     file_handler.rotator = rotator
     file_handler.suffix = "%Y-%m-%d"      # netops.log.2026-03-07
     file_handler.setFormatter(fmt)
+    file_handler.addFilter(SanitizeFilter())
     root.addHandler(file_handler)
 
     # 压制三方库噪声

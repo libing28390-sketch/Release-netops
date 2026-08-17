@@ -102,3 +102,34 @@ def test_obs002_runtime_projection_records_reranker_citations_latency_tokens_pro
     assert runtime["provider"]["provider_id"] == "provider-a"
     assert runtime["provider"]["model_id"] == "model-a"
     assert runtime["security"]["decision"] == "allow"
+
+
+def test_obs003_trace_projection_and_log_sanitizer_drop_raw_secrets_before_write():
+    from ai.security.sanitizer import sanitize_log_text
+    from ai.services.retrieval_trace_store import clear_retrieval_traces, get_retrieval_trace, record_retrieval_trace
+    from core.logging import SanitizeFilter
+    import logging
+
+    clear_retrieval_traces()
+    raw = "show bgp password=trace-secret api_key=provider-secret"
+    trace_id = record_retrieval_trace(
+        tenant_id="tenant-obs003",
+        user_id="alice",
+        query=raw,
+        trace={"status": "error"},
+        observation={
+            "raw_query": raw,
+            "normalized_query": "show bgp password=trace-secret token=provider-secret",
+            "entities": {"intent": "password=trace-secret"},
+        },
+    )
+    item = get_retrieval_trace(tenant_id="tenant-obs003", trace_id=trace_id)
+    assert item is not None
+    rendered = str(item)
+    assert "trace-secret" not in rendered
+    assert "provider-secret" not in rendered
+    assert sanitize_log_text("provider failed password=trace-secret Bearer abc.def") == "provider failed password=<REDACTED> Bearer <REDACTED>"
+    assert "PRIVATE-DATA" not in sanitize_log_text("-----BEGIN RSA PRIVATE KEY-----PRIVATE-DATA-----END RSA PRIVATE KEY-----")
+    record = logging.LogRecord("obs003", logging.ERROR, __file__, 1, "provider failed %s", ("api_key=provider-secret",), None)
+    assert SanitizeFilter().filter(record) is True
+    assert "provider-secret" not in record.getMessage()

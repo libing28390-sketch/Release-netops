@@ -27,6 +27,7 @@ from ai.services.citation_service import (
 )
 from ai.services.copilot_contract import build_copilot_contract
 from ai.services.retrieval_trace_store import record_retrieval_trace, update_retrieval_trace
+from ai.security.sanitizer import sanitize_log_text
 
 logger = logging.getLogger(__name__)
 
@@ -1026,7 +1027,7 @@ class AIAssistantService:
                 yield _done_event(started_at)
                 return
         except Exception:
-            logger.exception("Assistant read-only preparation failed")
+            logger.error("Assistant read-only preparation failed code=%s", sanitize_log_text("ASSISTANT_CONTEXT_ERROR", limit=64))
             yield _progress_event(
                 active_step[0],
                 active_step[1],
@@ -1134,7 +1135,7 @@ class AIAssistantService:
             return
         except Exception as err:
             llm_failed = True
-            logger.error("Error in LLM stream: %s", err)
+            logger.error("Error in LLM stream code=%s", sanitize_log_text(getattr(err, "code", "AI_INTERNAL_ERROR"), limit=64))
             yield _progress_event(
                 llm_step[0],
                 llm_step[1],

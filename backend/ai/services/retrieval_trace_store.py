@@ -15,6 +15,8 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from ai.security.sanitizer import sanitize_log_text
+
 
 MAX_TRACES = 200
 MAX_CITATIONS = 20
@@ -44,7 +46,7 @@ def _now() -> str:
 
 
 def _text(value: Any, limit: int = 128) -> str:
-    return str(value or "").strip()[:limit]
+    return sanitize_log_text(value, limit=limit).replace("<REDACTED>", "<redacted>").strip()[:limit]
 
 
 def _hash(value: Any) -> str:

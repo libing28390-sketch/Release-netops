@@ -59,7 +59,7 @@ REFRESH_OBSERVATION_SUMMARY_FIELDS: tuple[str, ...] = (
     "id", "tenant_id", "source_registry_id", "source_version_id", "checked_at",
     "request_method", "http_status", "outcome", "content_hash", "byte_size",
     "source_etag", "source_last_modified", "fetch_url", "response_content_type",
-    "error_code", "detection_type", "replacement_url",
+    "error_code", "detection_type", "replacement_url", "version_signal",
 )
 
 
