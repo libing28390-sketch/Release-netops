@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "API-007",
+  "current_task": "API-008",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T15:10:00+08:00",
-  "last_completed_task": "API-006",
+  "updated_at": "2026-08-17T13:04:00+08:00",
+  "last_completed_task": "API-007",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -282,7 +282,8 @@
     "API-003",
     "API-004",
     "API-005",
-    "API-006"
+    "API-006",
+    "API-007"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -316,7 +317,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "API-007",
     "API-008",
     "API-009",
     "OBS-001",
@@ -805,8 +805,16 @@
   "api006_frontend_tests": "21 files / 99 tests passed",
   "api006_postgresql_v1_baseline": "PASS; 10/10; no production write",
   "api006_production_ddl": "NONE",
+  "api007_status": "DONE_PASS",
+  "api007_final_verified_at": "2026-08-17T13:04:00+08:00",
+  "api007_evidence": "docs/knowledge-engine-v2/evidence/API-007.md",
+  "api007_contract": "docs/knowledge-engine-v2/architecture/API-007-SSE-IDEMPOTENCY-CONTRACT.yaml",
+  "api007_focused_tests": "5 API-007; 9 API-006/API-007; AI suite 234 passed",
+  "api007_frontend_tests": "21 files / 100 tests passed",
+  "api007_postgresql_v1_baseline": "PASS; 10/10; no production write",
+  "api007_production_ddl": "NONE",
   "last_verified_commit": "5a772524",
-  "completed_count": 277,
-  "p0_completed_count": 227,
-  "resume_from": "API-007"
+  "completed_count": 278,
+  "p0_completed_count": 228,
+  "resume_from": "API-008"
 }

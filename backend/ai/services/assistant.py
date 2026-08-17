@@ -8,6 +8,8 @@ import json
 import logging
 import re
 import time
+import uuid
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 from ai.gateway.llm_gateway import llm_gateway
 from ai.gateway.exceptions import AISecurityBlockedException
@@ -30,6 +32,18 @@ logger = logging.getLogger(__name__)
 
 SSE_EVENT_VERSION = "nxa.sse.v1"
 SSE_EVENT_TYPES = frozenset({"meta", "progress", "token", "citation", "done", "error"})
+_SSE_CONTEXT: ContextVar["_SSEEventContext | None"] = ContextVar("nexora_sse_context", default=None)
+
+
+class _SSEEventContext:
+    def __init__(self, stream_id: str):
+        self.stream_id = stream_id
+        self.next_sequence = 1
+
+    def identity(self) -> tuple[str, int]:
+        sequence = self.next_sequence
+        self.next_sequence += 1
+        return self.stream_id, sequence
 
 
 def _sse_event(event_type: str, payload: Dict[str, Any]) -> str:
@@ -39,7 +53,14 @@ def _sse_event(event_type: str, payload: Dict[str, Any]) -> str:
         raise ValueError(f"unsupported SSE event type: {event_type}")
     data = dict(payload)
     data["event_version"] = SSE_EVENT_VERSION
-    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    context = _SSE_CONTEXT.get()
+    event_id = ""
+    if context is not None:
+        stream_id, sequence = context.identity()
+        data["stream_id"] = stream_id
+        data["sequence"] = sequence
+        event_id = f"id: {stream_id}:{sequence}\n"
+    return f"event: {event_type}\n{event_id}data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _meta_event(payload: Dict[str, Any]) -> str:
@@ -728,6 +749,45 @@ class AIAssistantService:
         }
 
     async def chat_stream(
+        self,
+        message: str,
+        history: Optional[List[Dict[str, str]]] = None,
+        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+        site_ids: Optional[List[str]] = None,
+        model_id: Optional[str] = None,
+        model_selection_source: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        stream_id: Optional[str] = None,
+    ):
+        """Stream one request under a stable, resumable SSE identity.
+
+        The transport identity is intentionally scoped to this generator.  A
+        cancelled generator resets the context so a later request can safely
+        reopen the same registry entry without leaking a stream id across
+        concurrent requests.
+        """
+
+        active_stream_id = stream_id or f"sse_{uuid.uuid4().hex}"
+        context_token = _SSE_CONTEXT.set(_SSEEventContext(active_stream_id))
+        try:
+            async for event in self._chat_stream_impl(
+                message,
+                history=history,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                roles=roles,
+                site_ids=site_ids,
+                model_id=model_id,
+                model_selection_source=model_selection_source,
+                context=context,
+            ):
+                yield event
+        finally:
+            _SSE_CONTEXT.reset(context_token)
+
+    async def _chat_stream_impl(
         self,
         message: str,
         history: Optional[List[Dict[str, str]]] = None,

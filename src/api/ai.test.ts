@@ -52,5 +52,48 @@ describe('versioned assistant SSE contract', () => {
     expect(citations).toEqual(['nxa.sse.v1:c1']);
     expect(done).toEqual(['nxa.sse.v1:completed']);
   });
-});
 
+  it('scopes stream events and ignores duplicate sequences after reconnect', async () => {
+    const event = (type: string, sequence: number, data: Record<string, unknown>) => [
+      `id: sse_api007_client:${sequence}\n`,
+      `event: ${type}\n`,
+      `data: ${JSON.stringify({ ...data, event_version: 'nxa.sse.v1', stream_id: 'sse_api007_client', sequence })}\n\n`,
+    ].join('');
+    const bodies = [
+      event('token', 1, { content: 'hello' }) + event('done', 2, { status: 'completed' }),
+      event('token', 1, { content: 'hello' }) + event('done', 2, { status: 'completed' }) + event('token', 3, { content: ' world' }),
+    ];
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      const streamText = bodies.shift() || '';
+      const bytes = new TextEncoder().encode(streamText);
+      return {
+        ok: true,
+        headers: { get: () => 'sse_api007_client' },
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const tokens: string[] = [];
+    const positions: number[] = [];
+    await chatAssistantStream(
+      'question', undefined, (token) => tokens.push(token), undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, 'sse_api007_client', 0,
+      (session) => positions.push(session.last_event_id),
+    );
+    await chatAssistantStream(
+      'question', undefined, (token) => tokens.push(token), undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, 'sse_api007_client', 2,
+      (session) => positions.push(session.last_event_id),
+    );
+
+    expect(tokens).toEqual(['hello', ' world']);
+    expect(positions).toEqual([1, 2, 3]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});

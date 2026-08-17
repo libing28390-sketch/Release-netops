@@ -10,6 +10,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, ConfigDict, Field
 from ai.security.permissions import require_ai_permission
 from ai.services.assistant import ai_assistant_service
+from ai.services.sse_stream_registry import (
+    SSEStreamConflict,
+    SSEStreamReplayExpired,
+    event_payload,
+    event_sequence,
+    request_fingerprint,
+    split_sse_events,
+    sse_stream_registry,
+)
 from ai.services.intent_parser import intent_parser
 from ai.security.sanitizer import sanitize_text
 from ai.services.natural_query import natural_query_service
@@ -43,6 +52,8 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     model_id: Optional[str] = None
     context: CopilotContext = Field(default_factory=CopilotContext)
+    stream_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{8,128}$")
+    last_event_id: Optional[int] = Field(default=None, ge=0, le=10_000_000)
 
 
 class CopilotFeedbackRequest(BaseModel):
@@ -148,63 +159,134 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
 @router.post("/chat-stream")
 async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permission("ai.assistant"))):
     """AI Assistant Copilot Real-time Streaming SSE Endpoint."""
-    user_id = user.get("username", "user")
-    tenant_id = user.get("tenant_id") or "tenant-default"
+    user_id = str(user.get("username") or "user")
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
     history = [item.model_dump() for item in req.history] if req.history else None
     requested_model_id = req.model_id
     model_selection_source = "message_explicit_model" if req.model_id else None
-    if req.conversation_id:
+    fingerprint = request_fingerprint(
+        {
+            "message": req.message,
+            "history": history or [],
+            "conversation_id": req.conversation_id,
+            "model_id": req.model_id,
+            "context": req.context.model_dump(exclude_none=True),
+        }
+    )
+    try:
+        stream_state = sse_stream_registry.open(
+            stream_id=req.stream_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            fingerprint=fingerprint,
+            last_event_id=req.last_event_id or 0,
+        )
+    except SSEStreamConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": SSEStreamConflict.code, "message": "stream 已被其他请求占用或请求范围不一致"},
+        ) from exc
+    except SSEStreamReplayExpired as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": SSEStreamReplayExpired.code, "message": "stream 重连位置已超出保留窗口，请重新发起请求"},
+        ) from exc
+
+    if req.conversation_id and not stream_state.completed:
         try:
             context = get_context(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id)
-            history = [{"role": item["role"], "content": item["content"]} for item in context["messages"]]
+            context_messages = list(context["messages"])
+            if stream_state.user_message_persisted and context_messages:
+                last_message = context_messages[-1]
+                if last_message.get("role") == "user" and last_message.get("content") == req.message:
+                    context_messages = context_messages[:-1]
+            history = [{"role": item["role"], "content": item["content"]} for item in context_messages]
             if not requested_model_id and context.get("conversation", {}).get("selected_model_id"):
                 requested_model_id = context["conversation"]["selected_model_id"]
                 model_selection_source = "session_model"
-            if req.model_id:
+            if req.model_id and not stream_state.user_message_persisted:
                 try:
                     set_conversation_model(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, model_id=req.model_id, locked=True)
                 except (RuntimeError, LookupError):
                     pass
-            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=req.message, requested_model_id=requested_model_id)
+            if not stream_state.user_message_persisted:
+                append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="user", content=req.message, requested_model_id=requested_model_id)
+                stream_state.user_message_persisted = True
         except LookupError as exc:
+            sse_stream_registry.close(stream_state)
             raise HTTPException(status_code=404, detail="conversation not found") from exc
         except ValueError as exc:
+            sse_stream_registry.close(stream_state)
             raise HTTPException(status_code=400, detail="message cannot be stored safely") from exc
 
     async def events():
-        collected: list[str] = []
         route_meta: dict[str, Any] = {}
-        async for event in ai_assistant_service.chat_stream(
-            req.message,
-            history=history,
-            user_id=user_id,
-            tenant_id=tenant_id,
-            roles=[str(user.get("role"))] if user.get("role") else [],
-            site_ids=user.get("site_ids") or [],
-            model_id=requested_model_id,
-            model_selection_source=model_selection_source,
-            context=req.context.model_dump(exclude_none=True),
-        ):
-            if req.conversation_id:
-                for line in event.splitlines():
-                    if not line.startswith("data:"):
-                        continue
-                    try:
-                        payload = json.loads(line[5:].strip())
-                    except (TypeError, ValueError):
-                        continue
-                    if isinstance(payload, dict) and payload.get("content"):
-                        collected.append(str(payload["content"]))
+        last_event_id = req.last_event_id or 0
+        try:
+            if stream_state.completed:
+                for cached_event in sse_stream_registry.replay(stream_state, after=last_event_id):
+                    yield cached_event.rstrip() + "\n\n"
+                sse_stream_registry.close(stream_state)
+                return
+
+            async for event in ai_assistant_service.chat_stream(
+                req.message,
+                history=history,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                roles=[str(user.get("role"))] if user.get("role") else [],
+                site_ids=user.get("site_ids") or [],
+                model_id=requested_model_id,
+                model_selection_source=model_selection_source,
+                context=req.context.model_dump(exclude_none=True),
+                stream_id=stream_state.stream_id,
+            ):
+                for part in split_sse_events(event):
+                    sequence = event_sequence(part)
+                    was_new = sse_stream_registry.record(stream_state, part)
+                    payload = event_payload(part)
                     if isinstance(payload, dict) and payload.get("model_id"):
                         route_meta.update(payload)
-            yield event
-        if req.conversation_id and collected:
-            try:
-                append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content="".join(collected), requested_model_id=route_meta.get("requested_model_id") or requested_model_id, actual_model_id=route_meta.get("model_id"), provider_id=route_meta.get("provider_id"), route_reason=route_meta.get("route_reason"), fallback_used=bool(route_meta.get("fallback_used")))
-            except (LookupError, ValueError):
-                pass
+                    if sequence is None:
+                        if was_new:
+                            yield part.rstrip() + "\n\n"
+                        continue
+                    _, sequence_number = sequence
+                    if sequence_number <= last_event_id:
+                        continue
+                    # A rerun after cancellation can regenerate a sequence
+                    # already cached by the first attempt. Replay the cached
+                    # bytes instead of appending a second token.
+                    cached_event = stream_state.events.get(sequence_number, part)
+                    yield cached_event.rstrip() + "\n\n"
 
-    return StreamingResponse(events(), media_type="text/event-stream")
+            if req.conversation_id and stream_state.assistant_content and not stream_state.assistant_message_persisted:
+                try:
+                    append_message(
+                        conversation_id=req.conversation_id,
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        role="assistant",
+                        content=stream_state.assistant_content,
+                        requested_model_id=route_meta.get("requested_model_id") or requested_model_id,
+                        actual_model_id=route_meta.get("model_id"),
+                        provider_id=route_meta.get("provider_id"),
+                        route_reason=route_meta.get("route_reason"),
+                        fallback_used=bool(route_meta.get("fallback_used")),
+                    )
+                    stream_state.assistant_message_persisted = True
+                except (LookupError, ValueError):
+                    pass
+            sse_stream_registry.complete(stream_state)
+        finally:
+            if stream_state.active:
+                sse_stream_registry.close(stream_state)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no", "X-Stream-ID": stream_state.stream_id},
+    )
 
 
 @router.post("/feedback")

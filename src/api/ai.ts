@@ -472,6 +472,8 @@ export type AssistantProcessStepStatus = 'running' | 'completed' | 'error';
 
 export interface AssistantProcessStep {
   event_version?: string;
+  stream_id?: string;
+  sequence?: number;
   id: string;
   label: string;
   status: AssistantProcessStepStatus;
@@ -482,12 +484,16 @@ export interface AssistantProcessStep {
 
 export interface AssistantStreamDoneMeta {
   event_version?: string;
+  stream_id?: string;
+  sequence?: number;
   status?: 'completed' | 'cancelled' | 'error' | string;
   duration_ms?: number;
 }
 
 export interface AssistantStreamCitation {
   event_version?: string;
+  stream_id?: string;
+  sequence?: number;
   index?: number;
   citation: Record<string, unknown>;
 }
@@ -511,6 +517,8 @@ export interface AssistantRetrievalTrace {
 
 export interface AssistantStreamMeta {
   event_version?: string;
+  stream_id?: string;
+  sequence?: number;
   intent?: string;
   citations?: any[];
   facts_retrieved?: boolean;
@@ -537,9 +545,16 @@ export interface CopilotContract {
 
 export interface AssistantStreamError {
   event_version?: string;
+  stream_id?: string;
+  sequence?: number;
   code?: string;
   message?: string;
   retryable?: boolean;
+}
+
+export interface AssistantStreamSession {
+  stream_id: string;
+  last_event_id: number;
 }
 
 export type AIConversationStatus = 'active' | 'archived';
@@ -649,6 +664,9 @@ export async function chatAssistantStream(
   context?: Record<string, unknown>,
   signal?: AbortSignal,
   onCitation?: (citation: AssistantStreamCitation) => void,
+  streamId?: string,
+  lastEventId?: number,
+  onStreamPosition?: (session: AssistantStreamSession) => void,
 ): Promise<void> {
   const token = localStorage.getItem('netops_token') || localStorage.getItem('token');
   const headers: Record<string, string> = {
@@ -658,11 +676,26 @@ export async function chatAssistantStream(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  const generatedStreamId = (() => {
+    const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+    if (typeof randomUUID === 'function') return `sse_${randomUUID()}`;
+    return `sse_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+  })();
+  const activeRequestStreamId = streamId || generatedStreamId;
+  const activeRequestLastEventId = Math.max(0, Number(lastEventId || 0));
   const response = await fetch('/api/ai/assistant/chat-stream', {
     method: 'POST',
     headers,
     signal,
-    body: JSON.stringify({ message, history, conversation_id: conversationId, model_id: modelId, context: context || {} }),
+    body: JSON.stringify({
+      message,
+      history,
+      conversation_id: conversationId,
+      model_id: modelId,
+      context: context || {},
+      stream_id: activeRequestStreamId,
+      last_event_id: activeRequestLastEventId,
+    }),
   });
 
   if (!response.ok) {
@@ -676,6 +709,9 @@ export async function chatAssistantStream(
   const decoder = new TextDecoder();
   let buffer = '';
   let currentEvent = 'token';
+  let pendingEventId: string | null = null;
+  let activeStreamId: string | null = streamId || response.headers?.get?.('X-Stream-ID') || null;
+  let lastSequence = activeRequestLastEventId;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -689,6 +725,8 @@ export async function chatAssistantStream(
       const trimmed = line.trim();
       if (trimmed.startsWith('event:')) {
         currentEvent = trimmed.slice(6).trim();
+      } else if (trimmed.startsWith('id:')) {
+        pendingEventId = trimmed.slice(3).trim();
       } else if (trimmed.startsWith('data:')) {
         const dataStr = trimmed.slice(5).trim();
         if (!dataStr) continue;
@@ -698,6 +736,23 @@ export async function chatAssistantStream(
         } catch {
           // Ignore an incomplete or malformed SSE data line.
           continue;
+        }
+
+        const parsedStreamId = typeof parsed?.stream_id === 'string'
+          ? parsed.stream_id
+          : pendingEventId?.includes(':') ? pendingEventId.slice(0, pendingEventId.lastIndexOf(':')) : null;
+        const parsedSequence = typeof parsed?.sequence === 'number'
+          ? parsed.sequence
+          : pendingEventId?.includes(':') ? Number(pendingEventId.slice(pendingEventId.lastIndexOf(':') + 1)) : null;
+        pendingEventId = null;
+        if (parsedStreamId) {
+          if (activeStreamId && parsedStreamId !== activeStreamId) continue;
+          activeStreamId = parsedStreamId;
+          if (typeof parsedSequence === 'number' && Number.isFinite(parsedSequence)) {
+            if (parsedSequence <= lastSequence) continue;
+            lastSequence = parsedSequence;
+            onStreamPosition?.({ stream_id: activeStreamId, last_event_id: lastSequence });
+          }
         }
 
         if (currentEvent === 'meta' && onMeta) {

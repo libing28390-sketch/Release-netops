@@ -476,7 +476,7 @@
 - [x] `API-004` `P0/BE+FE/M`：统一分页、排序、筛选、错误码和权限拒绝响应。
 - [x] `API-005` `P0/BE/M`：列表仅返回摘要，详情独立加载正文、Chunk、日志和 Trace。
 - [x] `API-006` `P0/BE/M`：SSE 定义 meta、progress、token、citation、done、error 事件版本。
-- [ ] `API-007` `P0/BE+FE/M`：SSE 中断、取消和重连保持幂等，不产生重复消息。
+- [x] `API-007` `P0/BE+FE/M`：SSE 中断、取消和重连保持幂等，不产生重复消息。
 - [ ] `API-008` `P0/BE+DBA/M`：会话、消息、任务、工具调用和证据保持租户与用户隔离。
 - [ ] `API-009` `P0/BE/M`：实现任务取消、超时、最大步骤、最大工具次数和状态转换并发保护。
 - [ ] `OBS-001` `P0/BE+AI/M`：记录 raw query、normalized query、entities、filters、candidates、scores、final chunks。

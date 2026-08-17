@@ -1,0 +1,53 @@
+task_id: API-007
+title: Idempotent SSE cancellation, reconnect, and replay
+status: verified
+contract_version: nxa.sse.v1
+transport:
+  media_type: text/event-stream
+  stream_id:
+    pattern: '^[A-Za-z0-9_-]{8,128}$'
+    scope: [tenant_id, user_id, normalized_request_fingerprint]
+  sequence:
+    field: sequence
+    sse_id: '<stream_id>:<sequence>'
+    start: 1
+    monotonic: true
+  replay:
+    request_field: last_event_id
+    bounded_events: 4096
+    bounded_bytes: 2097152
+    expired_code: SSE_REPLAY_WINDOW_EXPIRED
+  cancellation:
+    - client AbortController cancellation closes the active registry lease
+    - reconnecting the same stream is allowed after cancellation
+    - an active duplicate stream receives SSE_STREAM_CONFLICT
+idempotency:
+  - duplicate sequence numbers are stored and delivered once per client position
+  - token content is accumulated only for newly recorded token events
+  - conversation user and assistant messages are persisted at most once per stream
+  - completed streams replay cached events without rerunning the model or appending messages
+  - regenerated events after cancellation reuse the cached bytes for known sequences
+security:
+  - stream ids are bound to authenticated tenant and user
+  - request fingerprint is SHA-256 only; raw prompts and history are not retained in registry state
+  - replay never crosses a tenant, user, or request fingerprint boundary
+  - event payloads remain subject to API-006 allowlist, bounded citations, and safe errors
+backend:
+  registry: backend/ai/services/sse_stream_registry.py
+  service: backend/ai/services/assistant.py
+  route: backend/ai/api/assistant.py
+frontend:
+  parser: src/api/ai.ts
+  behavior:
+    - parses SSE id and sequence fields
+    - ignores events from another stream
+    - ignores sequence values at or below the caller's last_event_id
+    - reports the accepted stream position through onStreamPosition
+compatibility:
+  - existing chatAssistantStream positional callbacks remain valid
+  - stream_id, last_event_id, and onStreamPosition are additive optional arguments
+  - PostgreSQL schema and V1 data are unchanged
+verification:
+  backend_contract_tests: backend/tests/ai/test_api007_sse_idempotency.py
+  frontend_contract_tests: src/api/ai.test.ts
+  result: PASS
