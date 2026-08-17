@@ -1,0 +1,67 @@
+task_id: MIG-002
+title: Source-first migration admissibility gate
+original_requirement: "可信原始文档优先迁移；不可证明质量的 Chunk/Embedding 不直接迁移。"
+status: frozen_for_execution_planning
+authority: PostgreSQL
+sqlite: forbidden_for_acceptance
+automatic_direct_copy: false
+
+source_document_policy:
+  source_of_truth: [ai_document.original_content, ai_document.source, ai_document.content_hash]
+  trusted_document_requires:
+    - original_content_non_empty
+    - source_provenance_non_empty
+    - sha256_original_content_matches_declared_hash
+    - tenant_id_present_and_scope_reconciled
+    - active_status_and_not_excluded_from_rag
+  conditional_document:
+    - original_content_present_but_hash_missing_or_matches_normalized_derivation_only
+    - source_or_acl_requires_reconciliation
+  action_order:
+    - read_only_postgresql_inventory
+    - source_bytes_and_hash_manifest
+    - immutable_document_version_and_provenance
+    - quarantine_or_manual_reconciliation
+    - only_then_allow_derived_rebuild
+  forbidden:
+    - overwrite_original_content_or_declared_hash
+    - treat_normalized_hash_as_original_hash_without_manifest
+    - activate_unscoped_or_unknown_tenant_document
+
+chunk_policy:
+  source_dependency: trusted_active_document_version_with_verified_content_hash
+  direct_copy: forbidden
+  action: rebuild_append_only_generation_from_trusted_source
+  required_checks: [content_hash, raw_content, embedding_content, role, parent, ordinal, locator, duplicate, orphan, cycle, stale_generation]
+  failed_or_unproven: quarantine_and_exclude_from_retrieval
+  rollback: restore_previous_ready_generation_or_v1_adapter
+
+embedding_policy:
+  source_dependency: active_chunk_generation_and_pinned_model_contract
+  direct_copy: forbidden
+  action: recompute_under_provider_model_dimension_contract
+  required_checks: [provider_allowlist, gateway_decision, dimension, vector_hash, model_version, index_version, tenant_scope, recall_latency_shadow]
+  failed_or_unproven: do_not_publish_and_keep_legacy_vector_as_non_authoritative_evidence
+  rollback: previous_ready_vector_generation_or_local_lexical_fallback
+
+classification:
+  trusted_document: may_enter_source_version_wave_after_manifest_gate
+  conditional_document: source_reconciliation_required
+  untrusted_document: quarantine_or_manual_review
+  chunk_and_embedding: never_direct_migrate
+
+acceptance:
+  - PostgreSQL_read_only_inventory_completes
+  - every_document_has_source_hash_admissibility_class
+  - zero_direct_chunk_copy_operations
+  - zero_direct_embedding_copy_operations
+  - V1_rows_and_original_content_unchanged
+  - V1_baseline_non_regression
+  - report_contains_counts_and_hashes_only
+  - rollback_is_v1_adapter_or_previous_ready_generation
+
+evidence:
+  contract: docs/knowledge-engine-v2/architecture/MIG-002-SOURCE-FIRST-MIGRATION-CONTRACT.yaml
+  runner: scripts/knowledge_engine_v2_mig002_source_first_check.py
+  report: docs/knowledge-engine-v2/eval/mig-002-source-first-v1.json
+  test: tests/knowledge_engine_v2/test_mig002_source_first.py

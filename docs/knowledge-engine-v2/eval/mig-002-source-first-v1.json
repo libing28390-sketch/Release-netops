@@ -1,0 +1,70 @@
+{
+  "status": "PASS",
+  "task_id": "MIG-002",
+  "authority": "PostgreSQL",
+  "sqlite": "forbidden",
+  "duration_seconds": 0.394,
+  "source_first": true,
+  "automatic_direct_copy": false,
+  "probe": {
+    "status": "PASS",
+    "database": "PostgreSQL",
+    "transaction_read_only": true,
+    "legacy_tables": {
+      "ai_document": true,
+      "ai_document_chunk": true
+    },
+    "documents": {
+      "total": 156,
+      "original_content_present": 156,
+      "source_provenance_present": 156,
+      "declared_hash_present": 154,
+      "original_hash_match": 0,
+      "normalized_hash_match": 154,
+      "active": 156,
+      "excluded_from_rag": 0,
+      "trusted_source_candidates": 0,
+      "conditional_reconciliation_required": 156,
+      "untrusted_or_quarantined": 0
+    },
+    "derivatives": {
+      "total_chunks": 474,
+      "raw_content_present": 472,
+      "chunk_hash_present": 472,
+      "legacy_embedding_text_present": 472,
+      "pgvector_value_present": 0,
+      "embedding_dimension_present": 472,
+      "retrieval_candidates": 422,
+      "direct_chunk_copy_allowed": false,
+      "direct_embedding_copy_allowed": false,
+      "required_action": "rebuild_from_trusted_document_version"
+    },
+    "production_database_write": false,
+    "rollback": "read_only_transaction_rollback",
+    "sqlite": "forbidden"
+  },
+  "classification": {
+    "trusted_documents_only_after_hash_manifest": true,
+    "conditional_documents_require_reconciliation": true,
+    "chunks_direct_migration": "forbidden",
+    "embeddings_direct_migration": "forbidden"
+  },
+  "rollback": "v1_adapter_or_previous_ready_generation",
+  "report_redacted": true,
+  "contract_sha256": "9e4dfcd14bab615e3854e6bc828ffc7ac6c2c8f217235af23e51847a8be6c911",
+  "contract_layers": [
+    "acceptance",
+    "authority",
+    "automatic_direct_copy",
+    "chunk_policy",
+    "classification",
+    "embedding_policy",
+    "evidence",
+    "original_requirement",
+    "source_document_policy",
+    "sqlite",
+    "status",
+    "task_id",
+    "title"
+  ]
+}
