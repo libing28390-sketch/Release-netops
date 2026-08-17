@@ -7,7 +7,7 @@ Next Task: EVAL-009（实现可重复离线评测命令和机器可读报告）
 
 Completed: 303 / 359
 P0: 242 / 277
-Last Verified Commit: 待提交（EVAL-008 PASS）
+Last Verified Commit: af0dc936（EVAL-008 golden annotations PASS）
 
 Recent Migration: EVAL-008 无 migration；离线人工标注 fixture 无数据库连接/写入
 Recent Build: EVAL-008 annotation validator PASS；12 annotations/12 citations；EVAL-001～EVAL-008 tests 8 passed；py_compile/contract YAML/diff PASS
