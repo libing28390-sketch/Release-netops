@@ -7,7 +7,7 @@ Next Task: EVAL-007（定义秘密泄漏、Prompt Injection、越权和外发策
 
 Completed: 301 / 359
 P0: 240 / 277
-Last Verified Commit: 待提交（EVAL-006 PASS）
+Last Verified Commit: 903eda9e（EVAL-006 quality metrics PASS）
 
 Recent Migration: EVAL-006 无 migration；离线质量/来源指标无数据库连接/写入
 Recent Build: EVAL-006 quality metric smoke PASS；六项指标；EVAL-001～EVAL-006 tests 6 passed；py_compile/contract YAML/diff PASS
