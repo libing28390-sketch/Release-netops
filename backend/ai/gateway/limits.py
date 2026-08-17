@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 from ai.gateway.exceptions import AICircuitOpenException, AIQuotaExceededException
+from ai.services.metrics import ai_metrics
 from core.config import settings
 
 
@@ -51,6 +52,7 @@ class AILimitManager:
             return
         now = time.monotonic()
         if circuit.opened_until > now:
+            ai_metrics.limit_event(provider_id, "circuit_open")
             raise AICircuitOpenException()
         if circuit.opened_until:
             circuit.opened_until = 0.0
@@ -69,6 +71,7 @@ class AILimitManager:
                 try:
                     await asyncio.wait_for(semaphore.acquire(), timeout=self.acquire_timeout)
                 except asyncio.TimeoutError as exc:
+                    ai_metrics.limit_event(provider_id, "concurrency_timeout")
                     raise AIQuotaExceededException() from exc
                 acquired.append(semaphore)
             yield

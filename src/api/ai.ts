@@ -194,7 +194,7 @@ export interface AIUsageSummary {
   budget_usd?: number;
   budget_percent?: number;
   budget_alert?: boolean;
-  provider_breakdown?: Record<string, { requests: number; input_tokens: number; output_tokens: number; estimated_cost_usd: number; avg_latency_ms: number }>;
+  provider_breakdown?: Record<string, { requests: number; success?: number; errors?: number; error_rate?: number; input_tokens: number; output_tokens: number; estimated_cost_usd: number; avg_latency_ms: number }>;
 }
 
 export interface AgentRunResponse {
@@ -273,6 +273,19 @@ export async function getAIProviderDeletePreview(id: string): Promise<any> {
 export interface AIPlatformMetrics {
   requests: Record<string, number>;
   by_scene: Record<string, { requests: number; avg_latency_ms: number; p95_latency_ms: number }>;
+  providers?: Record<string, {
+    requests: number;
+    success: number;
+    errors: number;
+    error_rate: number;
+    avg_latency_ms: number;
+    p95_latency_ms: number;
+    input_tokens: number;
+    output_tokens: number;
+    estimated_cost_usd: number;
+  }>;
+  limits?: Record<string, number>;
+  fallbacks?: Record<string, number>;
   tools: Record<string, number>;
   agents: Record<string, number>;
   cache: { hits: number; misses: number; note?: string };

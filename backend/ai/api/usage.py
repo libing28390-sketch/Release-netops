@@ -88,12 +88,27 @@ def get_usage_summary(user=Depends(require_ai_permission("ai.audit.view"))):
         estimated_cost = 0.0
         provider_breakdown: dict[str, dict[str, Any]] = {}
         try:
-            cursor.execute("SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost), AVG(avg_latency) FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC")
-            for item in cursor.fetchall():
+            try:
+                cursor.execute("SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost), AVG(avg_latency), SUM(success_count), SUM(error_count) FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC")
+                usage_rows = cursor.fetchall()
+            except Exception:
+                # Older installations may not have the additive success/error
+                # counters yet; keep the cost/latency view readable there.
+                conn.rollback()
+                cursor.execute("SELECT provider_id, model_id, SUM(requests), SUM(input_tokens), SUM(output_tokens), SUM(estimated_cost), AVG(avg_latency) FROM ai_usage_daily GROUP BY provider_id, model_id ORDER BY SUM(estimated_cost) DESC")
+                usage_rows = [(*item, None, None) for item in cursor.fetchall()]
+            for item in usage_rows:
                 cost = float(item[5] or 0)
+                requests = int(item[2] or 0)
+                success_count = int(item[7] or 0)
+                error_count = int(item[8] or 0)
+                if item[7] is None and item[8] is None:
+                    success_count = requests
                 estimated_cost += cost
                 provider_breakdown[f"{item[0]}:{item[1]}"] = {
-                    "requests": int(item[2] or 0), "input_tokens": int(item[3] or 0),
+                    "requests": requests, "success": success_count, "errors": error_count,
+                    "error_rate": round(error_count / requests, 4) if requests else 0,
+                    "input_tokens": int(item[3] or 0),
                     "output_tokens": int(item[4] or 0), "estimated_cost_usd": round(cost, 6),
                     "avg_latency_ms": round(float(item[6] or 0), 2),
                 }

@@ -266,6 +266,15 @@ class LLMGateway:
         error_message: Optional[str] = None,
     ) -> None:
         ai_metrics.request_finished(scene, status=status, latency_ms=latency_ms)
+        ai_metrics.provider_finished(
+            provider_id,
+            model_id,
+            status=status,
+            latency_ms=latency_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            error_code=error_code,
+        )
         try:
             now = datetime.now(timezone.utc).isoformat()
             with get_db_connection() as health_conn:
@@ -315,6 +324,7 @@ class LLMGateway:
                     input_rate = float(price[0] or 0) if price else 0.0
                     output_rate = float(price[1] or 0) if price else 0.0
                     cost = (max(0, int(input_tokens or 0)) / 1000.0) * input_rate + (max(0, int(output_tokens or 0)) / 1000.0) * output_rate
+                    ai_metrics.provider_cost(provider_id, model_id, cost)
                     row = usage_conn.execute(
                         "SELECT id, requests, input_tokens, output_tokens, estimated_cost, success_count, error_count, avg_latency FROM ai_usage_daily WHERE date = ? AND provider_id = ? AND model_id = ? AND scene = ?",
                         (date_key, provider_id, model_id, scene),
@@ -689,9 +699,21 @@ class LLMGateway:
             
             # If fallback model is configured, attempt fallback
             if fallback_model_id and fallback_model_id != target_model_id:
+                ai_metrics.fallback_event(
+                    scene,
+                    target_info.get("provider_id"),
+                    fallback_model_id,
+                    status="started",
+                )
                 try:
                     logger.info("Attempting fallback AI model for scene=%s", sanitize_log_text(scene, limit=64))
                     result = await _attempt_call(fallback_model_id)
+                    ai_metrics.fallback_event(
+                        scene,
+                        target_info.get("provider_id"),
+                        fallback_model_id,
+                        status="success",
+                    )
                     latency_ms = int((time.perf_counter() - start_time) * 1000)
                     
                     self._log_request(
@@ -719,6 +741,12 @@ class LLMGateway:
                     result.pop("raw", None)
                     return result
                 except Exception as fallback_exc:
+                    ai_metrics.fallback_event(
+                        scene,
+                        target_info.get("provider_id"),
+                        fallback_model_id,
+                        status="error",
+                    )
                     primary_exc = fallback_exc
 
             # Log error
@@ -732,7 +760,7 @@ class LLMGateway:
                 request_id=request_id,
                 user_id=provider_user_id,
                 scene=scene,
-                provider_id=None,
+                provider_id=target_info.get("provider_id"),
                 model_id=target_model_id,
                 prompt_id=prompt_id,
                 prompt_version=prompt_version,
@@ -984,6 +1012,12 @@ class LLMGateway:
                 route_meta.update({"model_id": model_info["id"], "provider_id": model_info["provider_id"], "fallback_used": False, "status": "success", "security_result": str(secure_payload.action.value), "latency_ms": latency_ms, "input_tokens": in_tok, "output_tokens": out_tok})
         except Exception as exc:
             if fallback_model_id and not full_content:
+                ai_metrics.fallback_event(
+                    scene,
+                    model_info.get("provider_id"),
+                    fallback_model_id,
+                    status="started",
+                )
                 try:
                     fallback_info = self._get_model_details(fallback_model_id)
                     self._authorize_model(fallback_info, tenant_id=tenant, user_id=user_id, roles=roles)
@@ -992,6 +1026,12 @@ class LLMGateway:
                     async for chunk in _stream_candidate(fallback_info):
                         full_content.append(chunk)
                         yield self.security_gateway.resolve_output(chunk, tenant_id=tenant, task_id=task)
+                    ai_metrics.fallback_event(
+                        scene,
+                        model_info.get("provider_id"),
+                        fallback_model_id,
+                        status="success",
+                    )
                     latency_ms = int((time.perf_counter() - start_time) * 1000)
                     fallback_input_tokens = max(1, sum(len(m.get("content", "")) for m in messages) // 3)
                     fallback_output_tokens = max(1, len("".join(full_content)) // 3)
@@ -999,7 +1039,13 @@ class LLMGateway:
                         route_meta.update({"model_id": fallback_info["id"], "provider_id": fallback_info["provider_id"], "route_reason": "scene_route_fallback", "fallback_used": True, "status": "success", "security_result": str(secure_payload.action.value), "latency_ms": latency_ms, "input_tokens": fallback_input_tokens, "output_tokens": fallback_output_tokens})
                     self._log_request(request_id=request_id, user_id=secure_payload.user_id, scene=scene, provider_id=fallback_info["provider_id"], model_id=fallback_info["id"], prompt_id=None, prompt_version=None, input_tokens=fallback_input_tokens, output_tokens=fallback_output_tokens, latency_ms=latency_ms, status="success")
                     return
-                except Exception:
+                except Exception as fallback_exc:
+                    ai_metrics.fallback_event(
+                        scene,
+                        model_info.get("provider_id"),
+                        fallback_model_id,
+                        status="error",
+                    )
                     logger.warning("LLM stream fallback failed code=%s", sanitize_log_text(getattr(fallback_exc, "code", "AI_INTERNAL_ERROR"), limit=64))
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             self._log_request(
