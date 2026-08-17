@@ -12,7 +12,7 @@ import sys
 import database
 import database.core as database_core
 from database.migrations.m0149_knowledge_v2_site_anomaly_alerts import upgrade
-from services.official_seed_batch_service import _record_site_alerts
+from services.official_seed_batch_service import _record_site_alerts, list_site_anomaly_alerts
 
 
 class _SameConnection:
@@ -81,6 +81,9 @@ def main() -> int:
         ).fetchone()[0]
         if int(tenant_rows) != 2:
             raise AssertionError(f"tenant isolation key was not respected: {tenant_rows!r}")
+        listed = list_site_anomaly_alerts(user, status="open", limit=10)
+        if len(listed) != 1 or listed[0]["host"] != "www.cisco.com":
+            raise AssertionError(f"tenant-bounded alert read model failed: {listed!r}")
         connection.rollback()
         print(json.dumps({"status": "PASS", "database": "PostgreSQL", "jsonb": True, "tenant_scope": True, "rollback": True}))
         return 0
