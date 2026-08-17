@@ -484,6 +484,7 @@ export interface AssistantStreamDoneMeta {
 }
 
 export interface AssistantRetrievalTrace {
+  trace_id?: string | null;
   source?: 'local_rag' | string;
   status?: 'hit' | 'no_match' | 'not_run' | string;
   metadata_candidate_documents?: number;
@@ -874,6 +875,56 @@ export async function runKnowledgeEvaluation(suite = 'v1_baseline_postgresql'): 
     method: 'POST',
     body: JSON.stringify({ suite }),
   });
+  return payload.data;
+}
+
+export interface KnowledgeRetrievalTrace {
+  trace_id: string;
+  tenant_id: string;
+  actor_hash?: string | null;
+  query_hash: string;
+  created_at: string;
+  source: string;
+  status: 'hit' | 'no_match' | 'not_run' | string;
+  metadata_candidate_documents: number;
+  candidate_count: number;
+  dedup_document_count: number;
+  final_document_count: number;
+  vector_top_n: number;
+  clarification_required: boolean;
+  cross_platform_search: boolean;
+  request: Record<string, string>;
+  resolution: { ambiguous: boolean; platform_candidates: string[]; evidence: string };
+  citations: Array<{
+    citation_id: string;
+    vendor: string;
+    product: string;
+    software_version: string;
+    source_type: string;
+    status: string;
+    trust: string;
+    validation: string;
+    warning_count: number;
+  }>;
+  citation_warning_count: number;
+  redaction: {
+    default: boolean;
+    raw_query_included: false;
+    raw_chunk_included: false;
+    raw_sql_included: false;
+    credentials_included: false;
+  };
+}
+
+interface KnowledgeRetrievalTraceEnvelope<T> { success: boolean; data: T; message?: string }
+
+export async function listKnowledgeRetrievalTraces(status = 'all', limit = 50): Promise<{ items: KnowledgeRetrievalTrace[]; limit: number; status: string; redacted: boolean }> {
+  const payload = await apiRequest<KnowledgeRetrievalTraceEnvelope<{ items: KnowledgeRetrievalTrace[]; limit: number; status: string; redacted: boolean }>>(`/api/knowledge-v2/retrieval-traces?status=${encodeURIComponent(status)}&limit=${limit}`);
+  return payload.data;
+}
+
+export async function getKnowledgeRetrievalTrace(traceId: string): Promise<KnowledgeRetrievalTrace> {
+  const payload = await apiRequest<KnowledgeRetrievalTraceEnvelope<KnowledgeRetrievalTrace>>(`/api/knowledge-v2/retrieval-traces/${encodeURIComponent(traceId)}`);
   return payload.data;
 }
 

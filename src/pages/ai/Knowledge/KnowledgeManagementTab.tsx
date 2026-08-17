@@ -40,6 +40,7 @@ import Pagination from '../../../components/Pagination';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 import SourceRegistryPanel from './SourceRegistryPanel';
 import RagEvaluationPanel from './RagEvaluationPanel';
+import RetrievalTracePanel from './RetrievalTracePanel';
 
 /* ── Types ── */
 interface FolderCategory {
@@ -494,7 +495,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [versionAdminBusy, setVersionAdminBusy] = useState<string | null>(null);
   const [versionAdminNotice, setVersionAdminNotice] = useState('');
   const [versionCompareResult, setVersionCompareResult] = useState<KnowledgeDocumentVersionComparison | null>(null);
-  const [knowledgeAdminView, setKnowledgeAdminView] = useState<'documents' | 'sources' | 'evaluation'>('documents');
+  const [knowledgeAdminView, setKnowledgeAdminView] = useState<'documents' | 'sources' | 'evaluation' | 'traces'>('documents');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const quickUploadInputRef = useRef<HTMLInputElement>(null);
@@ -1466,9 +1467,10 @@ export const KnowledgeManagementTab: React.FC = () => {
           <button type="button" onClick={() => setKnowledgeAdminView('documents')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${knowledgeAdminView === 'documents' ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-800 dark:text-indigo-300' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}>文档与版本</button>
           <button type="button" onClick={() => setKnowledgeAdminView('sources')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${knowledgeAdminView === 'sources' ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-800 dark:text-indigo-300' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}>Source Registry / 刷新</button>
           <button type="button" onClick={() => setKnowledgeAdminView('evaluation')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${knowledgeAdminView === 'evaluation' ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-800 dark:text-indigo-300' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}>RAG Evaluation / 回归</button>
+          <button type="button" onClick={() => setKnowledgeAdminView('traces')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${knowledgeAdminView === 'traces' ? 'bg-white text-indigo-700 shadow-sm dark:bg-slate-800 dark:text-indigo-300' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}>Retrieval Trace / 追踪</button>
         </div>
       </div>
-      {knowledgeAdminView === 'sources' ? <SourceRegistryPanel /> : knowledgeAdminView === 'evaluation' ? <RagEvaluationPanel /> : <React.Fragment>
+      {knowledgeAdminView === 'sources' ? <SourceRegistryPanel /> : knowledgeAdminView === 'evaluation' ? <RagEvaluationPanel /> : knowledgeAdminView === 'traces' ? <RetrievalTracePanel /> : <React.Fragment>
       <input
         ref={quickUploadInputRef}
         type="file"

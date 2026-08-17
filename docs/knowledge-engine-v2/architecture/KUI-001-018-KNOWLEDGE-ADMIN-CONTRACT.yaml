@@ -19,8 +19,8 @@ scope:
     - KUI-014
     - KUI-015
     - KUI-016
-  later_tasks:
     - KUI-017
+  later_tasks:
     - KUI-018
 principles:
   business_entity_first: true
@@ -198,6 +198,26 @@ evaluation_management:
   response_excludes: [raw_sql, debug_plan, chunk_body, expected_document_ids, returned_document_ids, provider_credentials]
   case_limit: 200
   lifecycle: [not_run, passed, failed]
+retrieval_trace_management:
+  endpoints:
+    list: /api/knowledge-v2/retrieval-traces
+    detail: /api/knowledge-v2/retrieval-traces/{trace_id}
+  permissions:
+    read: knowledge_source.read
+  tenant_scope: strict_server_owned
+  storage:
+    mode: bounded_in_process_read_model
+    max_traces: 200
+    durable_db_migration: deferred_to_DB-012_MIG
+  list_fields: [trace_id, tenant_id, actor_hash, query_hash, created_at, source, status, candidate_count, final_document_count, clarification_required, cross_platform_search]
+  detail_fields: [request, resolution, retrieval_stage_counts, citation_summary, citation_warning_count, redaction]
+  response_excludes: [raw_query, raw_chunk, raw_sql, raw_url, document_id, chunk_id, provider_credentials, actor_username]
+  redaction:
+    default: true
+    query: sha256_only
+    citations: metadata_summary_only
+    cross_tenant_lookup: 404
+  lifecycle: [hit, no_match, not_run]
 request_lifecycle:
   list_requests:
     cancel_previous_request: true

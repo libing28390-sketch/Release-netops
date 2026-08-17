@@ -24,6 +24,7 @@ from ai.services.citation_service import (
     refusal_for_missing_evidence,
 )
 from ai.services.copilot_contract import build_copilot_contract
+from ai.services.retrieval_trace_store import record_retrieval_trace, update_retrieval_trace
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,16 @@ class AIAssistantService:
             retrieval = rag_retriever.search(request)
             retrieval.setdefault("debug", {})["clarification_required"] = False
             retrieval["debug"]["cross_platform_search"] = bool(resolution.ambiguous)
+        trace_seed = self._knowledge_retrieval_trace(
+            {"request": request, "resolution": resolution, **retrieval},
+            retrieval.get("results") or [],
+        )
+        retrieval["retrieval_trace_id"] = record_retrieval_trace(
+            tenant_id=tenant_id or "tenant-default",
+            user_id=user_id,
+            query=message,
+            trace=trace_seed,
+        )
         return {"request": request, "resolution": resolution, **retrieval}
 
     @staticmethod
@@ -447,6 +458,7 @@ class AIAssistantService:
             "cli_platform", "document_category", "feature_domain", "feature",
         )
         return {
+            "trace_id": knowledge_result.get("retrieval_trace_id"),
             "source": "local_rag",
             "status": "hit" if rag_chunks else "no_match",
             "metadata_candidate_documents": as_int(debug.get("metadata_candidate_documents")),
@@ -581,6 +593,12 @@ class AIAssistantService:
             if knowledge_trace is not None:
                 knowledge_trace["citations"] = citations
                 knowledge_trace["citation_warnings"] = citation_warnings
+                if knowledge_trace.get("trace_id"):
+                    update_retrieval_trace(
+                        str(knowledge_trace["trace_id"]),
+                        citations=citations,
+                        citation_warnings=citation_warnings,
+                    )
 
         if intent == "knowledge" and not rag_chunks:
             return {
@@ -831,6 +849,12 @@ class AIAssistantService:
                 if knowledge_trace is not None:
                     knowledge_trace["citations"] = citations
                     knowledge_trace["citation_warnings"] = citation_warnings
+                    if knowledge_trace.get("trace_id"):
+                        update_retrieval_trace(
+                            str(knowledge_trace["trace_id"]),
+                            citations=citations,
+                            citation_warnings=citation_warnings,
+                        )
             yield _progress_event(
                 active_step[0],
                 active_step[1],
