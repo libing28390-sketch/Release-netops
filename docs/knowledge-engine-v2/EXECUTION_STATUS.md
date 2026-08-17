@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-015（ANALYZING）
-Last Completed: EVAL-014
-Next Task: EVAL-015（覆盖成功、非法输入、权限拒绝、空数据和依赖失败）
+Current Task: EVAL-016（ANALYZING）
+Last Completed: EVAL-015
+Next Task: EVAL-016（使用 Mock/Fixture 验证 Cisco、Huawei、H3C 平台映射和只读命令）
 
-Completed: 309 / 359
-P0: 248 / 277
-Last Verified Commit: bd8aab1b（EVAL-014 migration/recovery PostgreSQL gate implementation PASS）
+Completed: 310 / 359
+P0: 249 / 277
+Last Verified Commit: 5bb40e59（EVAL-015 input/failure PostgreSQL gate implementation PASS）
 
 Recent Migration: EVAL-012 复用 m0117/m0119/m0120/m0121/m0145/m0150；5 个 PostgreSQL 探针 rollback/cleanup PASS，无生产写入
-Recent Build: EVAL-014 PostgreSQL temp fresh install 150/150；repeat 0；backfill/constraints/rollback/recovery PASS；wrapper 2 passed；V1 10/10；py_compile/diff PASS
-Last Security Check: EVAL-014 tenant/source FK、canonical uniqueness、immutable source facts、strict history drift and temporary database cleanup PASS；SQLite 未作为证据
+Recent Build: EVAL-015 Provider/Reindex/duplicate/V1 PostgreSQL probes PASS；纯合约 69 passed；wrapper 2 passed；V1 10/10；py_compile/diff PASS
+Last Security Check: EVAL-015 tenant ACL、invalid input fail-closed、empty result、secret/credential blocking、provider-failure atomicity PASS；SQLite 未作为证据（KUI-012 sqlite3 fixture excluded）
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: EVAL-015（当前分析）→ EVAL-016 → EVAL-017；ING-020/021 仍需认证浏览器会话补做可见验证
+Recovery Point: EVAL-016（当前分析）→ EVAL-017 → EVAL-018；ING-020/021 仍需认证浏览器会话补做可见验证
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -55,6 +55,8 @@ EVAL-012：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-012.md；So
 EVAL-013：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-013.md；RET PostgreSQL probe（FTS/trigram/vector/tenant/EXPLAIN/rollback）PASS；V1 PostgreSQL baseline 10/10（retrieval/citation 1.0、version conflict 0.0）；No Match Q07、Ambiguous Q05、版本 Q03/Q04 PASS；EVAL-013 wrapper 2 passed；RET/CIT 纯合约 19 passed；py_compile/diff PASS；SQLite 未作为验收证据。
 
 EVAL-014：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-014.md；PostgreSQL 临时库 fresh install 150/150、repeat 0、m0148 回填幂等、5 项约束拒绝、失败迁移事务回滚、修复重试和 history drift fail-closed 全部 PASS；EVAL-014 wrapper 2 passed；V1 PostgreSQL baseline 10/10；临时库已清理；SQLite 未作为验收证据。
+
+EVAL-015：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-015.md；Provider ACL/Fallback、Reindex 成功与依赖失败原子性、重复内容非法输入、V1 空结果 PostgreSQL probes PASS；无数据库合约 69 passed；EVAL-015 wrapper 2 passed；V1 10/10；SQLite 硬编码 KUI-012 fixture 已明确排除，未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
