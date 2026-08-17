@@ -15,11 +15,16 @@ from services.enterprise_sop_import_service import EnterpriseSopImportError, imp
 from services.local_official_file_import_service import LocalOfficialFileImportError, import_local_official_file
 from services.official_url_import_service import OfficialUrlImportError, import_single_official_url
 from services.official_seed_batch_service import (
+    DEFAULT_BACKOFF_BASE_SECONDS,
+    DEFAULT_CONCURRENCY,
     DEFAULT_RATE_LIMIT_PER_MINUTE,
+    MAX_BACKOFF_BASE_SECONDS,
+    MAX_CONCURRENCY,
     MAX_RATE_LIMIT_PER_MINUTE,
     MAX_SEED_ITEMS,
     OfficialSeedBatchError,
     collect_official_seed_batch,
+    list_site_anomaly_alerts,
 )
 from services.ingestion_pipeline_service import IngestionPipelineError, ingestion_pipeline
 
@@ -51,6 +56,8 @@ class OfficialSeedBatchRequest(BaseModel):
 
     items: list[OfficialUrlImportRequest] = Field(..., min_length=1, max_length=MAX_SEED_ITEMS)
     rate_limit_per_minute: int = Field(default=DEFAULT_RATE_LIMIT_PER_MINUTE, ge=1, le=MAX_RATE_LIMIT_PER_MINUTE)
+    concurrency: int = Field(default=DEFAULT_CONCURRENCY, ge=1, le=MAX_CONCURRENCY)
+    backoff_base_seconds: float = Field(default=DEFAULT_BACKOFF_BASE_SECONDS, ge=0, le=MAX_BACKOFF_BASE_SECONDS)
     request_id: str = Field(default="", max_length=256)
 
 
@@ -269,6 +276,21 @@ def _call_seed_batch(*args, **kwargs):
         raise HTTPException(status_code=500, detail={"code": "SEED_BATCH_ERROR", "message": "Official Seed batch operation failed"}) from exc
 
 
+def _call_site_alerts(*args, **kwargs):
+    try:
+        return list_site_anomaly_alerts(*args, **kwargs)
+    except OfficialSeedBatchError as exc:
+        detail: dict[str, Any] = {"code": exc.code, "message": exc.message}
+        if exc.details is not None:
+            detail["details"] = exc.details
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Official Seed site alert read failed")
+        raise HTTPException(status_code=500, detail={"code": "SITE_ALERT_READ_ERROR", "message": "Official Seed site alert read failed"}) from exc
+
+
 @router.post("/official-url")
 def api_import_official_url(
     response: Response,
@@ -295,10 +317,23 @@ def api_import_official_seed_batch(
         user,
         [item.model_dump(exclude_none=True) for item in payload.items],
         rate_limit_per_minute=payload.rate_limit_per_minute,
+        concurrency=payload.concurrency,
+        backoff_base_seconds=payload.backoff_base_seconds,
         request_id=payload.request_id,
     )
     response.status_code = 202
     return {"success": True, "data": result, "message": "Official Seed batch accepted"}
+
+
+@router.get("/official-site-alerts")
+def api_list_official_site_alerts(
+    host: str = Query(default="", max_length=255),
+    status: str = Query(default="", max_length=16),
+    limit: int = Query(default=50, ge=1, le=200),
+    user=require_permission("knowledge_source", "read"),
+):
+    alerts = _call_site_alerts(user, host=host, status=status, limit=limit)
+    return {"success": True, "data": alerts, "items": alerts, "count": len(alerts)}
 
 
 async def _read_local_file(file: UploadFile) -> bytes:

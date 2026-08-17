@@ -1,0 +1,73 @@
+task_id: ING-023
+title: "Collection concurrency, bounded backoff, robots/terms evidence and site anomaly alerts"
+status: implemented
+priority: P2
+depends_on: [ING-022, CAT-004, ING-018, ING-019, DB-008]
+decision:
+  choice: "extend the reviewed Seed batch scheduler and CAT-004 boundary; keep single-URL compatibility defaults"
+  rationale:
+    - "Source Registry remains the policy authority and safe_outbound_http remains the only network boundary"
+    - "legacy alert_events has no tenant key, so site anomalies use a dedicated tenant-scoped projection"
+    - "robots and terms decisions are recorded through the existing source audit spine with stable, redacted facts"
+invariants:
+  - "batch concurrency is server-bounded to 1..4 workers"
+  - "tenant+host fixed-spacing rate limiting remains enforced under concurrency"
+  - "5xx retry delay is bounded exponential backoff, capped at five seconds and source timeout"
+  - "robots policy is explicit: not_applicable, ignore_with_review or respect"
+  - "robots.txt is fetched only through CAT-004 with exact registered host, HTTPS/443, DNS and redirect gates"
+  - "respect denies disallowed paths and fails closed when robots is unavailable or malformed; absent robots.txt is allowed"
+  - "official collection requires approved, waived or not_required terms review when operational policy is enabled"
+  - "site alerts are tenant/host/stable-code keyed and never contain URLs, headers, bodies, credentials or exception text"
+  - "existing single-URL callers retain operational_policy=false and no new mandatory request fields"
+api:
+  endpoint: POST /api/knowledge-v2/ingestion/official-seed-batch
+  canonical_alias: /api/v2/kb/ingestion/official-seed-batch
+  permission: knowledge_source.create
+  alert_read_endpoint: GET /api/knowledge-v2/ingestion/official-site-alerts
+  alert_read_permission: knowledge_source.read
+  request:
+    fields:
+      items: "1..20 strict OfficialUrlImportRequest objects"
+      rate_limit_per_minute: "1..30; default 6"
+      concurrency: "1..4; default 2"
+      backoff_base_seconds: "0..5; default 0.25"
+      request_id: "optional bounded correlation ID"
+    unknown_fields: forbidden
+  response:
+    status: 202
+    data:
+      items: "bounded job/source/version/policy summaries"
+      alerts: "bounded host/code/severity summaries"
+      policy: "terms status presence flags and robots outcome only"
+network:
+  authority: services.safe_outbound_http.safe_fetch
+  robots_authority: services.safe_outbound_http.check_robots_policy
+  retry: "only bounded policy-approved 5xx attempts; no 4xx retries"
+  body_policy: "robots and source bodies are memory-only; response exposes bytes/status facts only"
+audit:
+  events:
+    - terms_review_recorded
+    - robots_checked
+    - fetch_failed
+  details: "status, outcome, code, byte count and presence flags; no raw URL/body/header"
+alerts:
+  table: kb_site_anomaly_alert
+  key: "tenant_id + host + alert_code"
+  threshold: "one severe removal/robots signal or two same-host stable failures in a batch"
+  lifecycle: "open and idempotently updated; retained on rollback for auditability"
+database:
+  migration: m0149_knowledge_v2_site_anomaly_alerts
+  production_authority: PostgreSQL
+  rollback: "adapter disable/no destructive downgrade; retain anomaly evidence"
+security:
+  tenant_scope: "derived from authenticated principal; never accepted from request"
+  no_legacy_alert_reuse: true
+  no_raw_exception_or_body: true
+known_limits:
+  - "rate limiter is process-local; multi-worker deployments need a shared control-plane limiter before broad crawling"
+acceptance:
+  - "bounded concurrent batch and stable backoff tests pass"
+  - "robots allow/deny/absent and CAT-004 redirect/DNS gates pass"
+  - "terms and robots audit facts are redacted and tenant scoped"
+  - "site anomaly alert migration is idempotent and duplicate-safe"
+  - "AI/Catalog/Database regressions and lint/build/compile pass"

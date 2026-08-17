@@ -10,10 +10,12 @@ callback so the safety contract is testable without a live vendor site.
 from __future__ import annotations
 
 import ipaddress
+import copy
 import socket
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
+from urllib import robotparser
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -264,8 +266,16 @@ def safe_fetch(
     resolver: Resolver | None = None,
     client_factory: Callable[..., httpx.Client] | None = None,
     conditional_headers: Mapping[str, Any] | None = None,
+    backoff_base_seconds: float = 0.0,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> SafeFetchResult:
-    """Fetch one source with bounded bytes, no implicit proxy, and hop gates."""
+    """Fetch one source with bounded bytes, no implicit proxy, and hop gates.
+
+    ``backoff_base_seconds`` is deliberately an explicit service parameter,
+    rather than an unbounded policy value.  ING-023 uses it for bounded
+    exponential delay between retryable 5xx attempts; the default keeps all
+    existing single-source callers behaviour-compatible.
+    """
     if str(source.get("status") or "") != "active" or not bool(source.get("fetch_enabled")):
         raise OutboundCollectionError("OUTBOUND_SOURCE_NOT_ACTIVE", "Only active, fetch-enabled sources may be collected", status_code=409)
     if str(source.get("validation_status") or "") != "valid":
@@ -294,6 +304,12 @@ def safe_fetch(
     except (TypeError, ValueError) as exc:
         raise OutboundCollectionError("OUTBOUND_POLICY_INVALID", "Source retry limits are invalid", status_code=409) from exc
     retry_5xx = bool(retry_policy.get("retry_5xx", True))
+    try:
+        backoff = float(backoff_base_seconds or 0.0)
+    except (TypeError, ValueError) as exc:
+        raise OutboundCollectionError("OUTBOUND_BACKOFF_INVALID", "Outbound retry backoff is invalid", status_code=400) from exc
+    if not 0.0 <= backoff <= 5.0:
+        raise OutboundCollectionError("OUTBOUND_BACKOFF_INVALID", "Outbound retry backoff must be between 0 and 5 seconds", status_code=400)
     allowed_content_types = {
         str(item).split(";", 1)[0].strip().lower()
         for item in (policy.get("content_types") or ALLOWED_CONTENT_TYPES)
@@ -354,6 +370,15 @@ def safe_fetch(
                     if response.status_code < 500 or attempt + 1 >= max_attempts:
                         break
                     response.close()
+                    if backoff > 0:
+                        # Keep the delay bounded by both the configured
+                        # exponential cap and the source timeout.  The
+                        # injected sleeper makes this deterministic in tests.
+                        delay = min(5.0, backoff * (2 ** attempt))
+                        remaining = max(0.0, timeout - (time.monotonic() - started))
+                        if remaining <= 0:
+                            raise OutboundCollectionError("OUTBOUND_TIMEOUT", "Source request timed out", status_code=504)
+                        sleeper(min(delay, remaining))
                 if response is None:
                     raise OutboundCollectionError("OUTBOUND_EMPTY_RESPONSE", "Source request returned no response", status_code=502)
                 try:
@@ -445,3 +470,95 @@ def safe_fetch(
         raise OutboundCollectionError("OUTBOUND_TIMEOUT", "Source request timed out", status_code=504) from exc
     except httpx.TransportError as exc:
         raise OutboundCollectionError("OUTBOUND_TRANSPORT_FAILED", "Source request transport failed", status_code=502) from exc
+
+
+def check_robots_policy(
+    source: dict[str, Any],
+    *,
+    transport: httpx.BaseTransport | None = None,
+    resolver: Resolver | None = None,
+    client_factory: Callable[..., httpx.Client] | None = None,
+    backoff_base_seconds: float = 0.0,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """Evaluate the registered source's robots policy before collection.
+
+    The robots request is still sent through CAT-004.  A short-lived source
+    clone changes only the canonical path to ``/robots.txt`` so the existing
+    host/TLS/DNS/redirect gates remain in force; no caller can turn this
+    helper into an arbitrary outbound URL fetch.
+    """
+
+    policy = _source_policy(source)
+    robots_policy = str(policy.get("robots_policy") or "").strip().lower()
+    user_agent = str(policy.get("user_agent") or "NexoraKnowledgeEngine/2.0")[:256]
+    source_url = str(source.get("canonical_url") or "")
+    source_parts = urlsplit(source_url)
+    host = str(source_parts.hostname or "").lower().rstrip(".")
+    base = {
+        "policy": robots_policy,
+        "user_agent": user_agent,
+        "host": host,
+        "path": "/robots.txt",
+        "allowed": False,
+        "outcome": "",
+        "error_code": "",
+        "status_code": None,
+        "bytes_read": 0,
+        "review_required": False,
+    }
+    if robots_policy == "not_applicable":
+        base.update({"allowed": True, "outcome": "not_applicable"})
+        return base
+    if robots_policy == "ignore_with_review":
+        base.update({"allowed": True, "outcome": "ignored_with_review", "review_required": True})
+        return base
+    if robots_policy != "respect":
+        base.update({"outcome": "invalid_policy", "error_code": "ROBOTS_POLICY_INVALID"})
+        return base
+    if not host or not _host_allowed(source, host):
+        base.update({"outcome": "host_invalid", "error_code": "ROBOTS_HOST_INVALID"})
+        return base
+
+    robots_source = copy.deepcopy(source)
+    robots_source["canonical_url"] = f"https://{host}/robots.txt"
+    robots_policy_copy = copy.deepcopy(policy)
+    robots_policy_copy["max_bytes"] = max(1_024, min(int(policy.get("max_bytes") or 262_144), 262_144))
+    # A robots document is plain text even when the registered document source
+    # only allows HTML/PDF.  This is a local clone policy, not a registry edit.
+    robots_policy_copy["content_types"] = sorted(set(robots_policy_copy.get("content_types") or []) | {"text/plain"})
+    robots_source["collection_policy"] = robots_policy_copy
+    try:
+        result = safe_fetch(
+            robots_source,
+            method="GET",
+            transport=transport,
+            resolver=resolver,
+            client_factory=client_factory,
+            backoff_base_seconds=backoff_base_seconds,
+            sleeper=sleeper,
+        )
+    except OutboundCollectionError as exc:
+        if exc.code == "OUTBOUND_HTTP_SOURCE_NOT_FOUND":
+            base.update({"allowed": True, "outcome": "not_found_allow", "status_code": int((exc.details or {}).get("http_status") or 0)})
+            return base
+        base.update({"outcome": "unavailable", "error_code": "ROBOTS_UNAVAILABLE", "status_code": int((exc.details or {}).get("http_status") or 0) or None})
+        return base
+    try:
+        text = result.content[:262_144].decode("utf-8", errors="replace")
+        parser = robotparser.RobotFileParser()
+        parser.parse(text.splitlines())
+        allowed = bool(parser.can_fetch(user_agent, source_url))
+    except Exception:
+        base.update({"outcome": "invalid", "error_code": "ROBOTS_PARSE_INVALID"})
+        return base
+    base.update(
+        {
+            "allowed": allowed,
+            "outcome": "allowed" if allowed else "disallowed",
+            "status_code": result.status_code,
+            "bytes_read": result.bytes_read,
+            "error_code": "" if allowed else "ROBOTS_DISALLOWED",
+        }
+    )
+    return base

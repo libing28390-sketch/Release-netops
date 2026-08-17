@@ -157,6 +157,9 @@ def import_single_official_url(
     transport: Any = None,
     resolver: Any = None,
     client_factory: Any = None,
+    operational_policy: bool = False,
+    backoff_base_seconds: float = 0.0,
+    sleeper: Any = None,
 ) -> dict[str, Any]:
     """Create or replay one URL import and persist its source-version manifest.
 
@@ -248,6 +251,9 @@ def import_single_official_url(
             transport=transport,
             resolver=resolver,
             client_factory=client_factory,
+            operational_policy=operational_policy,
+            backoff_base_seconds=backoff_base_seconds,
+            sleeper=sleeper,
         )
         version = result.get("version") or {}
         document_result = record_document_version(
@@ -282,6 +288,7 @@ def import_single_official_url(
             "job": job.to_dict(),
             "source": source,
             "fetch": result.get("fetch"),
+            "policy": result.get("policy") or {},
             "version": version,
             "document": document_result.get("document"),
             "document_version": document_result.get("document_version"),

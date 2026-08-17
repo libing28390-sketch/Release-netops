@@ -14,6 +14,7 @@ import copy
 import hashlib
 import json
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1335,6 +1336,9 @@ def collect_source(
     transport: Any = None,
     resolver: Any = None,
     client_factory: Any = None,
+    operational_policy: bool = False,
+    backoff_base_seconds: float = 0.0,
+    sleeper: Any = None,
 ) -> dict[str, Any]:
     """Collect an active registry source through the CAT-004 safe boundary.
 
@@ -1406,11 +1410,72 @@ def collect_source(
                 "error_code": str(exc.code or "SOURCE_CHANGE_APPLY_FAILED")[:128],
             }
 
+    # ING-023's batch path opts into the operational policy gate.  The
+    # historical single-source API keeps the default false for compatibility,
+    # while every opted-in official collection records terms and robots facts
+    # before the document request begins.
+    robots_decision: dict[str, Any] = {
+        "policy": "not_checked",
+        "outcome": "not_checked",
+        "allowed": True,
+        "error_code": "",
+        "status_code": None,
+        "bytes_read": 0,
+        "review_required": False,
+    }
+    terms_metadata = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+    terms_status = str(terms_metadata.get("terms_review_status") or "").strip().lower()
+    terms_review = {
+        "required": bool(operational_policy and _is_official_source(source)),
+        "status": terms_status if terms_status in {"approved", "waived", "not_required"} else "pending",
+        "reviewer_present": bool(str(terms_metadata.get("reviewer") or "").strip()),
+        "reviewed_at_present": bool(str(terms_metadata.get("reviewed_at") or "").strip()),
+    }
+
     _audit_fetch(
         "fetch_started",
-        details={"method": method, "policy_version": source.get("policy_version")},
+        details={"method": method, "policy_version": source.get("policy_version"), "operational_policy": bool(operational_policy)},
     )
-    from services.safe_outbound_http import OutboundCollectionError, safe_fetch
+    from services.safe_outbound_http import OutboundCollectionError, check_robots_policy, safe_fetch
+
+    if operational_policy:
+        _audit_fetch("terms_review_recorded", details=terms_review)
+        if terms_review["required"] and terms_review["status"] not in {"approved", "waived", "not_required"}:
+            _audit_fetch("fetch_failed", details={"code": "TERMS_REVIEW_REQUIRED"})
+            raise SourceRegistryError(
+                "TERMS_REVIEW_REQUIRED",
+                "Official source terms review must be approved before collection",
+                status_code=403,
+            )
+        robots_decision = check_robots_policy(
+            source,
+            transport=transport,
+            resolver=resolver,
+            client_factory=client_factory,
+            backoff_base_seconds=backoff_base_seconds,
+            sleeper=sleeper or time.sleep,
+        )
+        _audit_fetch(
+            "robots_checked",
+            details={
+                "policy": robots_decision.get("policy"),
+                "outcome": robots_decision.get("outcome"),
+                "allowed": bool(robots_decision.get("allowed")),
+                "error_code": str(robots_decision.get("error_code") or "")[:128],
+                "status_code": robots_decision.get("status_code"),
+                "bytes_read": int(robots_decision.get("bytes_read") or 0),
+                "review_required": bool(robots_decision.get("review_required")),
+            },
+        )
+        if not robots_decision.get("allowed"):
+            code = str(robots_decision.get("error_code") or "ROBOTS_POLICY_DENIED")[:128]
+            _audit_fetch("fetch_failed", details={"code": code})
+            raise SourceRegistryError(
+                code,
+                "Source collection was denied by the registered robots policy",
+                status_code=403 if code == "ROBOTS_DISALLOWED" else 502,
+                details={"robots_outcome": str(robots_decision.get("outcome") or "")[:64]},
+            )
 
     try:
         result = safe_fetch(
@@ -1419,6 +1484,8 @@ def collect_source(
             transport=transport,
             resolver=resolver,
             client_factory=client_factory,
+            backoff_base_seconds=backoff_base_seconds,
+            sleeper=sleeper or time.sleep,
             conditional_headers={
                 "if-none-match": latest_version.get("source_etag") or "",
                 "if-modified-since": latest_version.get("source_last_modified") or "",
@@ -1471,6 +1538,7 @@ def collect_source(
                 "source_id": source_id,
                 "fetch": {"status_code": http_status, "not_modified": False, "bytes_read": 0},
                 "version": None,
+                "policy": {"operational_enforced": bool(operational_policy), "terms_review": terms_review, "robots": robots_decision},
                 "refresh": {
                     "outcome": "changed",
                     "collection_outcome": "failed",
@@ -1544,6 +1612,7 @@ def collect_source(
             "source_id": source_id,
             "fetch": fetch_metadata,
             "version": None,
+            "policy": {"operational_enforced": bool(operational_policy), "terms_review": terms_review, "robots": robots_decision},
             "refresh": {
                 "outcome": "not_modified",
                 "content_hash": latest_hash,
@@ -1563,7 +1632,12 @@ def collect_source(
             details={"method": method, **fetch_metadata},
             after={"status_code": result.status_code, "final_url": result.final_url},
         )
-        return {"source_id": source_id, "fetch": fetch_metadata, "version": None}
+        return {
+            "source_id": source_id,
+            "fetch": fetch_metadata,
+            "version": None,
+            "policy": {"operational_enforced": bool(operational_policy), "terms_review": terms_review, "robots": robots_decision},
+        }
 
     policy = source.get("collection_policy") if isinstance(source.get("collection_policy"), dict) else {}
     version_payload = {
@@ -1648,6 +1722,7 @@ def collect_source(
         "source_id": source_id,
         "fetch": fetch_metadata,
         "version": version,
+        "policy": {"operational_enforced": bool(operational_policy), "terms_review": terms_review, "robots": robots_decision},
         "refresh": {
             "outcome": observation_outcome,
             "content_hash": version.get("content_hash") or "",
