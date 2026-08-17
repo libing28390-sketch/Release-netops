@@ -46,7 +46,7 @@ WHERE name IN ('vector', 'pg_trgm')
 ORDER BY name;
 ```
 
-如果 `vector` 不在 `pg_available_extensions` 中，需要先安装与 PostgreSQL 17 匹配的 Windows pgvector 二进制包，再重启 PostgreSQL 服务。即使 AI 开关默认关闭，当前 PostgreSQL 迁移仍会检查 `vector` 和 `pg_trgm`。
+如果 `vector` 不在 `pg_available_extensions` 中，需要先安装与 PostgreSQL 版本匹配的 Windows pgvector 二进制包，再重启 PostgreSQL 服务。详细安装与排错步骤请参考 [Windows pgvector 安装与配置手册](./windows_pgvector_guide.md)。即使 AI 开关默认关闭，当前 PostgreSQL 迁移仍会检查 `vector` 和 `pg_trgm`。
 
 ## 安装步骤
 

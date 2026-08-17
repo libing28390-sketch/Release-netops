@@ -702,6 +702,7 @@ def get_model_metric_profile_mapping(conn, profile_id: str) -> dict[str, Any]:
         matching.append({
             "device_id": str(device.get("id") or ""),
             "hostname": str(device.get("hostname") or device.get("ip_address") or device.get("id") or ""),
+            "ip_address": str(device.get("ip_address") or ""),
             "cpu_source": "device_override" if cpu_override else "model_profile",
             "memory_source": "device_override" if memory_override else "model_profile",
         })

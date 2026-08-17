@@ -126,7 +126,7 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-black/8 px-5 py-4 dark:border-white/8">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#00bceb]/10 text-[#008aad] dark:text-[#00bceb]">
               <Sparkles size={17} />
             </div>
             <div>
@@ -257,7 +257,7 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
                           {selectedPreset.model}
                         </h3>
                       </div>
-                      <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                      <span className="rounded-full bg-[#00bceb]/10 px-2.5 py-1 text-[10px] font-medium text-[#008aad] dark:text-[#00bceb]">
                         {categoryLabel(selectedPreset.category)}
                       </span>
                     </div>
@@ -319,7 +319,7 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
                     className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#00a9ce] py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1]"
                   >
                     <Check size={15} />
-                    {zh ? `应用此预置模板（${selectedPreset.vendor} ${selectedPreset.model}）` : `Apply Preset (${selectedPreset.vendor} ${selectedPreset.model})`}
+                    {zh ? `复制并自定义此预置（${selectedPreset.vendor} ${selectedPreset.model}）` : `Clone & Customize (${selectedPreset.vendor} ${selectedPreset.model})`}
                   </button>
                 </div>
               </div>

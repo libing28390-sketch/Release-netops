@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Search, X, Layers, Database, Check, Sparkles, Filter } from 'lucide-react';
 import { apiRequest } from '../../api/http';
+import { ALL_VENDOR_NAMES, NETWORK_VENDOR_GROUPS } from '../../pages/AssetManagement/constants';
 
 export interface MibNodeItem {
   id: string;
@@ -35,15 +36,9 @@ const OidPickerModal: React.FC<OidPickerModalProps> = ({
   language,
 }) => {
   const zh = language === 'zh';
-  const [query, setQuery] = useState(() => {
-    if (targetMetricName === 'cpu') return 'cpu';
-    if (targetMetricName === 'memory') return 'mem';
-    if (targetMetricName === 'temperature') return 'temp';
-    if (targetMetricName === 'fan') return 'fan';
-    if (targetMetricName === 'power' || targetMetricName === 'power_supply') return 'power';
-    return '';
-  });
+  const [query, setQuery] = useState('');
   const [vendorFilter, setVendorFilter] = useState(initialVendor || '');
+  const [extraVendors, setExtraVendors] = useState<string[]>([]);
   const [nodes, setNodes] = useState<MibNodeItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedNode, setSelectedNode] = useState<MibNodeItem | null>(null);
@@ -72,11 +67,47 @@ const OidPickerModal: React.FC<OidPickerModalProps> = ({
     }
   };
 
+  // Load extra MIB vendors from repository stats
   useEffect(() => {
     if (open) {
-      void fetchNodes(query, vendorFilter);
+      void (async () => {
+        try {
+          const res = await apiRequest<{ success: boolean; data?: { vendor_counts?: Record<string, number> } }>(
+            '/api/platform-registry/mibs/repository-stats'
+          );
+          if (res.data?.vendor_counts) {
+            const known = new Set((ALL_VENDOR_NAMES as readonly string[]).map(v => v.toLowerCase()));
+            const extras = Object.keys(res.data.vendor_counts)
+              .filter(v => v.trim() && !known.has(v.trim().toLowerCase()) && v.trim().toLowerCase() !== 'standard')
+              .sort((a, b) => a.localeCompare(b));
+            setExtraVendors(extras);
+          }
+        } catch {
+          // ignore
+        }
+      })();
     }
   }, [open]);
+
+  // Reset search query and vendor filter when opening
+  useEffect(() => {
+    if (open) {
+      let defaultQuery = '';
+      if (targetMetricName === 'cpu') defaultQuery = 'cpu';
+      else if (targetMetricName === 'memory') defaultQuery = 'mem';
+      else if (targetMetricName === 'temperature') defaultQuery = 'temp';
+      else if (targetMetricName === 'fan') defaultQuery = 'fan';
+      else if (targetMetricName === 'power' || targetMetricName === 'power_supply') defaultQuery = 'power';
+      else if (targetMetricName === 'storage') defaultQuery = 'storage';
+      else if (targetMetricName === 'voltage') defaultQuery = 'volt';
+      else if (targetMetricName === '__interface') defaultQuery = 'if';
+
+      setQuery(defaultQuery);
+      setVendorFilter(initialVendor || '');
+      setSelectedNode(null);
+      void fetchNodes(defaultQuery, initialVendor || '');
+    }
+  }, [open, targetMetricName, initialVendor]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,7 +137,7 @@ const OidPickerModal: React.FC<OidPickerModalProps> = ({
               </div>
               <div className="mt-0.5 text-[11px] text-black/45 dark:text-white/45">
                 {zh
-                  ? `支持搜索 OID 符号名（如 cpu / memory / temp）、点分数字或 MIB 模块${targetMetricName ? ` · 正在配置【${targetMetricName}】` : ''}`
+                  ? `支持搜索 OID 符号名（如 cpu / memory / temp）、点分数字或 MIB 模块${targetMetricName ? ` · 正在配置【${targetMetricName}】` : ''}${initialVendor ? ` · 当前厂商【${initialVendor}】` : ''}`
                   : `Search symbol name, numeric OID prefix or MIB module${targetMetricName ? ` for [${targetMetricName}]` : ''}`}
               </div>
             </div>
@@ -138,18 +169,32 @@ const OidPickerModal: React.FC<OidPickerModalProps> = ({
             <select
               value={vendorFilter}
               onChange={e => {
-                setVendorFilter(e.target.value);
-                void fetchNodes(query, e.target.value);
+                const nextVendor = e.target.value;
+                setVendorFilter(nextVendor);
+                void fetchNodes(query, nextVendor);
               }}
-              className="rounded-lg border border-black/10 bg-transparent px-2.5 py-1.5 text-xs outline-none dark:border-white/10"
+              className="max-w-[200px] rounded-lg border border-black/10 bg-transparent px-2.5 py-1.5 text-xs outline-none focus:border-[#00bceb]/60 dark:border-white/10"
             >
               <option value="">{zh ? '全部厂商' : 'All Vendors'}</option>
-              <option value="Cisco">Cisco</option>
-              <option value="Huawei">Huawei</option>
-              <option value="H3C">H3C</option>
-              <option value="Arista">Arista</option>
-              <option value="Ruijie">Ruijie</option>
-              <option value="Standard">{zh ? '标准 (RFC)' : 'Standard (RFC)'}</option>
+              <option value="Standard">{zh ? '标准 MIB (RFC)' : 'Standard (RFC)'}</option>
+              {NETWORK_VENDOR_GROUPS.map(group => (
+                <optgroup key={group.key} label={zh ? group.labelZh : group.labelEn}>
+                  {group.vendors.map(v => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+              {extraVendors.length > 0 && (
+                <optgroup label={zh ? 'MIB 库其他厂商' : 'Other MIB Vendors'}>
+                  {extraVendors.map(v => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
 
@@ -260,7 +305,7 @@ const OidPickerModal: React.FC<OidPickerModalProps> = ({
                   </div>
 
                   {selectedNode.recommended_mode && (
-                    <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[.04] p-2 text-[11px] text-emerald-700 dark:text-emerald-400">
+                    <div className="rounded-lg border border-[#00bceb]/25 bg-[#00bceb]/[0.05] p-2 text-[11px] text-[#008aad] dark:text-[#00bceb]">
                       <div className="font-medium">{zh ? '✨ 智能推导模式' : '✨ Recommended Mode'}</div>
                       <div className="mt-0.5 text-[10px] opacity-80">
                         {selectedNode.recommended_mode}
