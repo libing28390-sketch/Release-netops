@@ -7,7 +7,7 @@ Next Task: API-001（按原清单依赖继续）
 
 Completed: 271 / 359
 P0: 221 / 277
-Last Verified Commit: 待 KUI-018 功能提交后写入（不 push）
+Last Verified Commit: ba171dab（KUI-018 PASS；不 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
 Recent Build: KUI-018 frontend lint/build/Vitest PASS（19 files / 97 tests）；KUI-017 后端/PostgreSQL 探针仍 PASS；仅既有 large-chunk warning
