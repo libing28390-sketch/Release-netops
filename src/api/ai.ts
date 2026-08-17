@@ -1612,6 +1612,40 @@ export interface KnowledgeOfficialUrlImportPayload {
   idempotency_key?: string;
 }
 
+export interface KnowledgeMetadataPreviewRequest {
+  name: string;
+  content: string;
+  vendor?: string;
+  platform?: string | null;
+  knowledge_source_type?: string;
+  source_trust_level?: string;
+  chunk_size?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface KnowledgeMetadataPreview {
+  preview_id: string;
+  confirmation_token: string;
+  expires_at: number;
+  metadata_parse_status: string;
+  normalized: {
+    name: string;
+    vendor: string;
+    platform: string | null;
+    knowledge_source_type: string;
+    source_trust_level: string;
+    chunk_size: number;
+    metadata_parse_status: string;
+    metadata: Record<string, unknown>;
+    metadata_columns: Record<string, unknown>;
+    content_sha256: string;
+    content_bytes: number;
+    body_characters: number;
+  };
+  warnings: string[];
+  requires_confirmation: true;
+}
+
 export type KnowledgeIngestionExecutionState = 'all' | 'queued' | 'running' | 'retry_wait' | 'paused' | 'cancel_requested' | 'cancelled' | 'succeeded' | 'failed';
 
 export interface KnowledgeIngestionJobSummary {
@@ -1738,6 +1772,23 @@ export async function importKnowledgeOfficialUrl(payload: KnowledgeOfficialUrlIm
   });
 }
 
+export async function previewKnowledgeDocumentMetadata(payload: KnowledgeMetadataPreviewRequest): Promise<KnowledgeMetadataPreview> {
+  const response = await apiRequest<{ data: KnowledgeMetadataPreview }>('/api/ai/assistant/documents/metadata-preview', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: payload.name,
+      content: payload.content,
+      vendor: payload.vendor ?? 'all',
+      platform: payload.platform ?? null,
+      knowledge_source_type: payload.knowledge_source_type ?? 'user_document',
+      source_trust_level: payload.source_trust_level ?? 'internal',
+      chunk_size: payload.chunk_size ?? 800,
+      metadata: payload.metadata ?? {},
+    }),
+  });
+  return response.data;
+}
+
 export async function importKnowledgeEnterpriseSop(file: File, fields: {
   title: string;
   owner: string;
@@ -1764,6 +1815,8 @@ export async function addKnowledgeDocument(data: {
   platform?: string | null;
   knowledge_source_type?: string;
   metadata?: Record<string, unknown>;
+  metadata_confirmation_token?: string;
+  metadata_confirmed?: boolean;
 }): Promise<any> {
   return apiRequest('/api/ai/assistant/documents', {
     method: 'POST',

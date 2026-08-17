@@ -25,6 +25,11 @@ from ai.services.natural_query import natural_query_service
 from ai.services.ip_troubleshooting import ip_troubleshooting_service
 from ai.services.mac_troubleshooting import mac_troubleshooting_service
 from ai.services.knowledge_service import KnowledgeDocumentActionError, knowledge_service
+from ai.services.metadata_confirmation_service import (
+    MetadataConfirmationError,
+    preview_document_metadata,
+    validate_metadata_confirmation,
+)
 from ai.services.knowledge_reindex_service import knowledge_reindex_service
 from ai.services.conversation_service import append_message, get_context, set_conversation_model
 from ai.security.security_service import create_diagnostic_case, handoff_case, record_feedback
@@ -36,6 +41,7 @@ from api.knowledge_v2_contracts import (
     KnowledgeDirectoryCreateRequest,
     KnowledgeDirectoryRenameRequest,
     KnowledgeDocumentCreateRequest,
+    KnowledgeMetadataPreviewRequest,
     KnowledgeReindexRequest,
     SearchContract,
 )
@@ -660,6 +666,26 @@ def list_document_facets(
 def add_document(payload: KnowledgeDocumentCreateRequest, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Add document and perform automatic chunking + embedding."""
     tenant_id = user.get("tenant_id") or "tenant-default"
+    if payload.metadata_confirmation_token or payload.metadata_confirmed:
+        try:
+            validate_metadata_confirmation(
+                user=user,
+                token=payload.metadata_confirmation_token,
+                confirmed=payload.metadata_confirmed,
+                name=payload.name,
+                content=payload.content,
+                vendor=payload.vendor,
+                platform=payload.platform,
+                knowledge_source_type=payload.knowledge_source_type,
+                source_trust_level=payload.source_trust_level,
+                chunk_size=payload.chunk_size,
+                metadata=payload.metadata,
+            )
+        except MetadataConfirmationError as exc:
+            detail: dict[str, Any] = {"code": exc.code, "message": exc.message}
+            if exc.details is not None:
+                detail["details"] = exc.details
+            raise HTTPException(status_code=exc.status_code, detail=detail) from exc
     kb_list = knowledge_service.list_knowledge_bases(tenant_id=tenant_id)
     kb_id = kb_list[0]["id"] if kb_list else knowledge_service.create_knowledge_base("Default KB", tenant_id=tenant_id)["id"]
     return knowledge_service.add_document_and_chunk(
@@ -677,6 +703,33 @@ def add_document(payload: KnowledgeDocumentCreateRequest, user=Depends(require_a
         chunk_size=payload.chunk_size,
         metadata=payload.metadata,
     )
+
+
+@router.post("/documents/metadata-preview")
+def preview_document_metadata_endpoint(
+    payload: KnowledgeMetadataPreviewRequest,
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    """Preview canonical Metadata before a document is allowed to import."""
+
+    try:
+        preview = preview_document_metadata(
+            user=user,
+            name=payload.name,
+            content=payload.content,
+            vendor=payload.vendor,
+            platform=payload.platform,
+            knowledge_source_type=payload.knowledge_source_type,
+            source_trust_level=payload.source_trust_level,
+            chunk_size=payload.chunk_size,
+            metadata=payload.metadata,
+        )
+    except MetadataConfirmationError as exc:
+        detail: dict[str, Any] = {"code": exc.code, "message": exc.message}
+        if exc.details is not None:
+            detail["details"] = exc.details
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+    return {"success": True, "data": preview, "message": "Metadata preview ready for confirmation"}
 
 
 @router.post("/clear-sample-knowledge")

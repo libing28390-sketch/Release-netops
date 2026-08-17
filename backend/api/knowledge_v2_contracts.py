@@ -149,6 +149,23 @@ class KnowledgeDocumentCreateRequest(StrictContract):
     chunk_size: int = Field(default=800, ge=128, le=4096)
     acl: dict[str, object] = Field(default_factory=dict)
     metadata: dict[str, object] = Field(default_factory=dict)
+    # Optional ING-021 boundary.  Older V1 clients may omit these fields;
+    # the new Knowledge UI sends both values after a server-side preview.
+    metadata_confirmation_token: str | None = Field(default=None, max_length=8192)
+    metadata_confirmed: bool = False
+
+
+class KnowledgeMetadataPreviewRequest(StrictContract):
+    """Exact document inputs used to create a short-lived preview token."""
+
+    name: str = Field(default="Untitled Document", min_length=1, max_length=512)
+    content: str = Field(..., min_length=1, max_length=20_000_000)
+    vendor: str = Field(default="all", max_length=128)
+    platform: str | None = Field(default=None, max_length=128)
+    knowledge_source_type: str = Field(default="user_document", max_length=64)
+    source_trust_level: str = Field(default="internal", max_length=32)
+    chunk_size: int = Field(default=800, ge=128, le=4096)
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class KnowledgeReindexRequest(StrictContract):
@@ -371,7 +388,7 @@ __all__ = [
     "ProductSoftwareScope", "ProductPlatformBindingAdvisory", "ProductCatalogModelRequest", "ProductAliasRequest",
     "CatalogVersionBundleContract", "CatalogVersionImportContract", "CatalogVersionRollbackContract",
     "OfficialUrlImportContract", "ImportCancelContract", "ImportRetryContract", "KnowledgeBaseCreateRequest",
-    "KnowledgeDocumentCreateRequest", "KnowledgeReindexRequest", "KnowledgeDirectoryCreateRequest", "KnowledgeDirectoryRenameRequest",
+    "KnowledgeDocumentCreateRequest", "KnowledgeMetadataPreviewRequest", "KnowledgeReindexRequest", "KnowledgeDirectoryCreateRequest", "KnowledgeDirectoryRenameRequest",
     "RetrievalFilters", "SearchContract", "ChatHistoryMessage", "CopilotContext", "CopilotPlanItem",
     "SecurityMessage", "SecurityPolicyUpdateRequest", "SecurityTestPayloadRequest", "SecurityKillSwitchRequest",
     "TenantSecurityKillSwitchRequest", "SecurityIncidentRequest", "AttachmentCheckRequest",

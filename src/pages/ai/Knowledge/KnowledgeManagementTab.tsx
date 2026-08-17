@@ -35,7 +35,7 @@ import {
   Pencil,
   Info,
 } from 'lucide-react';
-import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison } from '../../../api/ai';
+import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, previewKnowledgeDocumentMetadata, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison, type KnowledgeMetadataPreview } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 import SourceRegistryPanel from './SourceRegistryPanel';
@@ -1026,6 +1026,27 @@ export const KnowledgeManagementTab: React.FC = () => {
       ? 'Ruijie'
       : 'all';
 
+    const directCandidates = pendingItems.map((item) => ({
+      key: item.id,
+      label: item.fileName,
+      name: getFileNameWithoutExt(item.fileName),
+      content: item.content.trim(),
+      vendor: directVendor,
+      platform: null,
+      knowledge_source_type: 'user_document',
+      metadata: buildKnowledgeMetadata({
+        category: node.path.split('/')[0] || node.path,
+        vendorSlug,
+        directoryPath: node.path,
+        fileName: item.fileName,
+        relativePath: item.relativePath,
+      }),
+    }));
+    const directPreviews = await previewAndConfirmMetadata(directCandidates, (key, message) => {
+      setFileQueue((items) => items.map((item) => item.id === key ? { ...item, error: message } : item));
+    });
+    if (!directPreviews) return;
+
     setDirectUploading(true);
     setDirectUploadStatus({
       directoryPath: node.path,
@@ -1039,18 +1060,23 @@ export const KnowledgeManagementTab: React.FC = () => {
     const failures: string[] = [];
     for (const item of pendingItems) {
       try {
+        const metadata = buildKnowledgeMetadata({
+          category: node.path.split('/')[0] || node.path,
+          vendorSlug,
+          directoryPath: node.path,
+          fileName: item.fileName,
+          relativePath: item.relativePath,
+        });
+        const metadataPreview = directPreviews.get(item.id);
+        if (!metadataPreview) throw new Error('Metadata 预览已失效，请重新提交');
         await addKnowledgeDocument({
           name: getFileNameWithoutExt(item.fileName),
           content: item.content.trim(),
           vendor: directVendor,
           knowledge_source_type: 'user_document',
-          metadata: buildKnowledgeMetadata({
-            category: node.path.split('/')[0] || node.path,
-            vendorSlug,
-            directoryPath: node.path,
-            fileName: item.fileName,
-            relativePath: item.relativePath,
-          }),
+          metadata,
+          metadata_confirmation_token: metadataPreview.confirmation_token,
+          metadata_confirmed: true,
         });
         completed += 1;
       } catch (error: any) {
@@ -1093,6 +1119,58 @@ export const KnowledgeManagementTab: React.FC = () => {
     return false;
   };
 
+  type MetadataPreviewCandidate = {
+    key: string;
+    label: string;
+    name: string;
+    content: string;
+    vendor: string;
+    platform?: string | null;
+    knowledge_source_type: string;
+    metadata: Record<string, unknown>;
+  };
+
+  /**
+   * ING-021 gate: ask the server to normalize every candidate, show a
+   * bounded, redacted summary to the operator, and only then return tokens
+   * that are bound to the exact bytes/metadata that will be imported.
+   */
+  const previewAndConfirmMetadata = async (
+    candidates: MetadataPreviewCandidate[],
+    onPreviewError?: (key: string, message: string) => void,
+  ): Promise<Map<string, KnowledgeMetadataPreview> | null> => {
+    const previews: Array<{ candidate: MetadataPreviewCandidate; preview: KnowledgeMetadataPreview }> = [];
+    for (const candidate of candidates) {
+      try {
+        const preview = await previewKnowledgeDocumentMetadata({
+          name: candidate.name,
+          content: candidate.content,
+          vendor: candidate.vendor,
+          platform: candidate.platform,
+          knowledge_source_type: candidate.knowledge_source_type,
+          metadata: candidate.metadata,
+        });
+        previews.push({ candidate, preview });
+      } catch (error: any) {
+        const message = error?.message || '服务端 Metadata 预览失败';
+        onPreviewError?.(candidate.key, message);
+        return null;
+      }
+    }
+    if (previews.length === 0) return null;
+    const visibleRows = previews.slice(0, 8).map(({ candidate, preview }) => {
+      const normalized = preview.normalized;
+      const warning = preview.warnings.length > 0 ? `；提示 ${preview.warnings.length} 项` : '';
+      return `${candidate.label}: Vendor=${normalized.vendor || 'UNKNOWN'} / Platform=${normalized.platform || 'UNKNOWN'} / 状态=${normalized.metadata_parse_status}${warning}`;
+    });
+    const remainder = previews.length > visibleRows.length ? `\n其余 ${previews.length - visibleRows.length} 个文件已在同一服务端预览中校验。` : '';
+    const confirmed = window.confirm(
+      `导入前 Metadata 预览（${previews.length} 个文件）\n\n${visibleRows.join('\n')}${remainder}\n\n确认以上规范化 Metadata，并继续导入？`,
+    );
+    if (!confirmed) return null;
+    return new Map(previews.map(({ candidate, preview }) => [candidate.key, preview]));
+  };
+
   /* ── Batch submit all pending files ── */
   const handleBatchSubmit = async () => {
     const pendingItems = fileQueue.filter(item => item.status === 'pending' && item.content.trim());
@@ -1110,6 +1188,27 @@ export const KnowledgeManagementTab: React.FC = () => {
       return;
     }
 
+    const preparedWithMetadata = preparedItems.map(({ item, metadata: itemMetadata }) => ({
+      key: item.id,
+      label: item.fileName,
+      name: getFileNameWithoutExt(item.fileName),
+      content: item.content.trim(),
+      vendor: itemMetadata.vendor,
+      platform: itemMetadata.platform && itemMetadata.platform.toLowerCase() !== 'all' ? itemMetadata.platform : null,
+      knowledge_source_type: itemMetadata.sourceType,
+      metadata: buildKnowledgeMetadata({
+        category: item.directoryCategory,
+        vendorSlug: getKnowledgeDirectoryVendor(itemMetadata.vendor) || item.directoryVendor,
+        directoryPath: itemMetadata.directoryPath,
+        fileName: item.fileName,
+        relativePath: item.relativePath,
+      }),
+    }));
+    const metadataPreviews = await previewAndConfirmMetadata(preparedWithMetadata, (key, message) => {
+      setFileQueue((items) => items.map((item) => item.id === key ? { ...item, error: message } : item));
+    });
+    if (!metadataPreviews) return;
+
     setBatchSubmitting(true);
     setBatchProgress({ done: 0, total: preparedItems.length });
 
@@ -1119,19 +1218,24 @@ export const KnowledgeManagementTab: React.FC = () => {
       setFileQueue(prev => prev.map(f => f.id === item.id ? { ...f, status: 'indexing' as FileQueueStatus } : f));
 
       try {
+        const metadata = buildKnowledgeMetadata({
+          category: item.directoryCategory,
+          vendorSlug: getKnowledgeDirectoryVendor(itemMetadata.vendor) || item.directoryVendor,
+          directoryPath: itemMetadata.directoryPath,
+          fileName: item.fileName,
+          relativePath: item.relativePath,
+        });
+        const metadataPreview = metadataPreviews.get(item.id);
+        if (!metadataPreview) throw new Error('Metadata 预览已失效，请重新提交');
         await addKnowledgeDocument({
           name: getFileNameWithoutExt(item.fileName),
           content: item.content.trim(),
           vendor: itemMetadata.vendor,
           ...(itemMetadata.platform && itemMetadata.platform.toLowerCase() !== 'all' ? { platform: itemMetadata.platform } : {}),
           knowledge_source_type: itemMetadata.sourceType,
-          metadata: buildKnowledgeMetadata({
-            category: item.directoryCategory,
-            vendorSlug: getKnowledgeDirectoryVendor(itemMetadata.vendor) || item.directoryVendor,
-            directoryPath: itemMetadata.directoryPath,
-            fileName: item.fileName,
-            relativePath: item.relativePath,
-          }),
+          metadata,
+          metadata_confirmation_token: metadataPreview.confirmation_token,
+          metadata_confirmed: true,
         });
         setFileQueue(prev => prev.map(f => f.id === item.id ? { ...f, status: 'done' as FileQueueStatus } : f));
       } catch (err: any) {
@@ -1161,6 +1265,20 @@ export const KnowledgeManagementTab: React.FC = () => {
     if (!docName.trim() || !content.trim()) return;
     if (!ensureAssetMetadataSelection()) return;
 
+    const metadata = buildKnowledgeMetadata({ fileName: docName.trim() });
+    const metadataPreviews = await previewAndConfirmMetadata([{
+      key: 'paste-document',
+      label: docName.trim(),
+      name: docName.trim(),
+      content: content.trim(),
+      vendor,
+      platform,
+      knowledge_source_type: sourceType,
+      metadata,
+    }]);
+    const metadataPreview = metadataPreviews?.get('paste-document');
+    if (!metadataPreview) return;
+
     setSubmitting(true);
     setIndexingStep(1);
 
@@ -1177,7 +1295,9 @@ export const KnowledgeManagementTab: React.FC = () => {
         vendor,
         platform,
         knowledge_source_type: sourceType,
-        metadata: buildKnowledgeMetadata({ fileName: docName.trim() }),
+        metadata,
+        metadata_confirmation_token: metadataPreview.confirmation_token,
+        metadata_confirmed: true,
       });
 
       setShowModal(false);
