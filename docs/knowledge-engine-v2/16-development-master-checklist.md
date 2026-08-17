@@ -511,7 +511,7 @@
 - [x] `EVAL-015` `P0/QA+BE/L`：覆盖成功、非法输入、权限拒绝、空数据和依赖失败。
 - [x] `EVAL-016` `P0/QA+NET/L`：使用 Mock/Fixture 验证 Cisco、Huawei、H3C 平台映射和只读命令。
 - [x] `EVAL-017` `P1/QA+FE/M`：完成 Copilot、Provider、Model、Knowledge、Security 浏览器关键路径测试。
-- [ ] `EVAL-018` `P1/QA+AI/M`：执行 10k/100k/1m 性能样本并记录 P50/P95/P99。
+- [x] `EVAL-018` `P1/QA+AI/M`：执行 10k/100k/1m 性能样本并记录 P50/P95/P99。
 - [ ] `EVAL-019` `P1/QA+OPS/M`：长时间运行导入、Reindex、SSE、Provider 故障和恢复稳定性测试。
 - [ ] `EVAL-020` `P1/QA+SEC/M`：执行依赖、Secret、权限、日志和错误响应安全检查。
 
