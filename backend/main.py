@@ -69,6 +69,7 @@ from api.textfsm_templates import router as textfsm_templates_router
 from api.parser_templates import router as parser_templates_router
 from api.platform_registry import router as platform_registry_router, device_registry_router
 from api.knowledge_sources import router as knowledge_sources_router
+from api.knowledge_v2_contract import router as knowledge_v2_contract_router
 from api.knowledge_evaluation import router as knowledge_evaluation_router
 from api.knowledge_traces import router as knowledge_traces_router
 from api.knowledge_documents import router as knowledge_documents_router
@@ -400,6 +401,38 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
+
+def rewrite_knowledge_v2_path(path: str) -> str | None:
+    """Map the canonical KB V2 prefix to the legacy route registration.
+
+    Resource routers keep their established `/api/knowledge-v2` paths for
+    backwards compatibility.  The public V2 contract is `/api/v2/kb`; this
+    narrow rewrite avoids duplicating handlers and keeps one authorization
+    implementation for both prefixes.
+    """
+    canonical = "/api/v2/kb"
+    legacy = "/api/knowledge-v2"
+    if path == canonical:
+        return legacy
+    if path.startswith(f"{canonical}/"):
+        return legacy + path[len(canonical):]
+    return None
+
+
+@app.middleware("http")
+async def knowledge_v2_boundary_alias(request: Request, call_next):
+    original_path = request.scope.get("path", "")
+    rewritten_path = rewrite_knowledge_v2_path(original_path)
+    if rewritten_path:
+        request.scope["kb_v2_original_path"] = original_path
+        request.scope["path"] = rewritten_path
+        request.scope["raw_path"] = rewritten_path.encode("utf-8")
+    response = await call_next(request)
+    if rewritten_path:
+        response.headers["X-API-Version"] = "nxa.kb.v2"
+        response.headers["X-API-Canonical-Path"] = original_path
+    return response
+
 @app.middleware("http")
 async def add_request_id_and_log(request: Request, call_next):
     start_time = time.perf_counter()
@@ -575,6 +608,7 @@ app.include_router(textfsm_templates_router, prefix="/api")
 app.include_router(parser_templates_router, prefix="/api")
 app.include_router(platform_registry_router, prefix="/api")
 app.include_router(knowledge_sources_router, prefix="/api")
+app.include_router(knowledge_v2_contract_router, prefix="/api")
 app.include_router(knowledge_evaluation_router, prefix="/api")
 app.include_router(knowledge_traces_router, prefix="/api")
 app.include_router(knowledge_documents_router, prefix="/api")

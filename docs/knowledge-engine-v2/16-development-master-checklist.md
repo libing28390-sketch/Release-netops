@@ -470,7 +470,7 @@
 
 ## 16. API、会话、任务与可观测性
 
-- [ ] `API-001` `P0/ARCH+BE/M`：统一 `/api/v2/kb` 与 `/api/v1/ai` 边界和版本策略。
+- [x] `API-001` `P0/ARCH+BE/M`：统一 `/api/v2/kb` 与 `/api/v1/ai` 边界和版本策略。
 - [ ] `API-002` `P0/BE/M`：为 Provider、Model、Source、Document、Product、Alias、Import、Search 定义 Pydantic 契约。
 - [ ] `API-003` `P0/BE/M`：禁止稳定合同继续使用无类型 Dict 请求。
 - [ ] `API-004` `P0/BE+FE/M`：统一分页、排序、筛选、错误码和权限拒绝响应。

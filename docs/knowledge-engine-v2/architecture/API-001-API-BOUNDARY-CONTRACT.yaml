@@ -1,0 +1,33 @@
+task_id: API-001
+title: Knowledge Engine API boundary and version strategy
+version: 1
+authority: PostgreSQL
+boundaries:
+  v1_ai:
+    prefix: /api/v1/ai
+    contract: nxa.ai.v1
+    owns: [chat, chat_stream, conversations, tasks]
+    compatibility: stable_until_explicit_deprecation
+    sse_events: [meta, progress, token, citation, done, error]
+  v2_knowledge:
+    prefix: /api/v2/kb
+    contract: nxa.kb.v2
+    owns: [sources, documents, catalog, collections, ingestion, evaluation, retrieval_traces]
+    tenant_scope: server_owned
+    request_id_header: X-Request-ID
+  legacy_knowledge_alias:
+    prefix: /api/knowledge-v2
+    contract: nxa.kb.v2
+    status: compatibility_alias
+    rewrite_target: /api/v2/kb
+    no_new_endpoints: true
+rules:
+  - v1_ai_and_v2_knowledge_have_no_cross_boundary_fallback
+  - v1_ai_does_not_expose_knowledge_storage_or_internal_paths
+  - v2_knowledge_does_not_change_nxa_ai_v1_response_or_sse_shapes
+  - request_id_is_preserved_across_alias_rewrite_and_response_header
+  - legacy_alias_is_removed_only_after_documented_cutover_and_client_migration
+verification:
+  manifest_endpoint: GET /api/v2/kb
+  compatibility_endpoint: GET /api/knowledge-v2
+  source_of_truth: backend/api/knowledge_v2_contract.py

@@ -866,12 +866,12 @@ export interface KnowledgeEvaluationReport {
 }
 
 export async function getKnowledgeEvaluation(includeCases = true): Promise<KnowledgeEvaluationReport> {
-  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeEvaluationReport>>(`/api/knowledge-v2/evaluation?include_cases=${includeCases ? 'true' : 'false'}`);
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeEvaluationReport>>(`/api/v2/kb/evaluation?include_cases=${includeCases ? 'true' : 'false'}`);
   return payload.data;
 }
 
 export async function runKnowledgeEvaluation(suite = 'v1_baseline_postgresql'): Promise<KnowledgeEvaluationReport> {
-  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeEvaluationReport>>('/api/knowledge-v2/evaluation/run', {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeEvaluationReport>>('/api/v2/kb/evaluation/run', {
     method: 'POST',
     body: JSON.stringify({ suite }),
   });
@@ -919,12 +919,12 @@ export interface KnowledgeRetrievalTrace {
 interface KnowledgeRetrievalTraceEnvelope<T> { success: boolean; data: T; message?: string }
 
 export async function listKnowledgeRetrievalTraces(status = 'all', limit = 50): Promise<{ items: KnowledgeRetrievalTrace[]; limit: number; status: string; redacted: boolean }> {
-  const payload = await apiRequest<KnowledgeRetrievalTraceEnvelope<{ items: KnowledgeRetrievalTrace[]; limit: number; status: string; redacted: boolean }>>(`/api/knowledge-v2/retrieval-traces?status=${encodeURIComponent(status)}&limit=${limit}`);
+  const payload = await apiRequest<KnowledgeRetrievalTraceEnvelope<{ items: KnowledgeRetrievalTrace[]; limit: number; status: string; redacted: boolean }>>(`/api/v2/kb/retrieval-traces?status=${encodeURIComponent(status)}&limit=${limit}`);
   return payload.data;
 }
 
 export async function getKnowledgeRetrievalTrace(traceId: string): Promise<KnowledgeRetrievalTrace> {
-  const payload = await apiRequest<KnowledgeRetrievalTraceEnvelope<KnowledgeRetrievalTrace>>(`/api/knowledge-v2/retrieval-traces/${encodeURIComponent(traceId)}`);
+  const payload = await apiRequest<KnowledgeRetrievalTraceEnvelope<KnowledgeRetrievalTrace>>(`/api/v2/kb/retrieval-traces/${encodeURIComponent(traceId)}`);
   return payload.data;
 }
 
@@ -1023,7 +1023,7 @@ export async function getKnowledgeCatalog(filters: { vendor_id?: string; family_
     if (value?.trim()) params.set(key, value.trim());
   });
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  const payload = await apiRequest<KnowledgeCatalogResponse | KnowledgeCatalogApiEnvelope<KnowledgeCatalogResponse>>(`/api/knowledge-v2/catalog${suffix}`);
+  const payload = await apiRequest<KnowledgeCatalogResponse | KnowledgeCatalogApiEnvelope<KnowledgeCatalogResponse>>(`/api/v2/kb/catalog${suffix}`);
   return unwrapKnowledgeCatalogPayload(payload);
 }
 
@@ -1033,12 +1033,12 @@ export async function getKnowledgeCatalogAliases(filters: { alias?: string; alia
     if (value?.trim()) params.set(key, value.trim());
   });
   const suffix = params.toString() ? `?${params.toString()}` : '';
-  const payload = await apiRequest<KnowledgeCatalogAliasesResponse | KnowledgeCatalogApiEnvelope<KnowledgeCatalogAliasesResponse>>(`/api/knowledge-v2/catalog/aliases${suffix}`);
+  const payload = await apiRequest<KnowledgeCatalogAliasesResponse | KnowledgeCatalogApiEnvelope<KnowledgeCatalogAliasesResponse>>(`/api/v2/kb/catalog/aliases${suffix}`);
   return unwrapKnowledgeCatalogPayload(payload);
 }
 
 export async function resolveKnowledgeCatalogAlias(query: string, limit = 20): Promise<KnowledgeCatalogResolveResponse> {
-  const payload = await apiRequest<KnowledgeCatalogResolveResponse | KnowledgeCatalogApiEnvelope<KnowledgeCatalogResolveResponse>>('/api/knowledge-v2/catalog/resolve', {
+  const payload = await apiRequest<KnowledgeCatalogResolveResponse | KnowledgeCatalogApiEnvelope<KnowledgeCatalogResolveResponse>>('/api/v2/kb/catalog/resolve', {
     method: 'POST',
     body: JSON.stringify({ query, limit }),
   });
@@ -1275,27 +1275,27 @@ export interface KnowledgeSourceRefreshStatus {
 interface KnowledgeSourceEnvelope<T> { success: boolean; data: T; message?: string }
 
 export async function listKnowledgeSources(status = 'all'): Promise<KnowledgeSourceRegistry[]> {
-  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRegistry[]>>(`/api/knowledge-v2/sources?status=${encodeURIComponent(status)}`);
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRegistry[]>>(`/api/v2/kb/sources?status=${encodeURIComponent(status)}`);
   return payload.data || [];
 }
 
 export async function getKnowledgeSourceRefreshStatus(sourceId: string): Promise<KnowledgeSourceRefreshStatus> {
-  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRefreshStatus>>(`/api/knowledge-v2/sources/${encodeURIComponent(sourceId)}/refresh-status`);
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRefreshStatus>>(`/api/v2/kb/sources/${encodeURIComponent(sourceId)}/refresh-status`);
   return payload.data;
 }
 
 export async function listKnowledgeSourceRefreshObservations(sourceId: string, limit = 50): Promise<KnowledgeSourceRefreshObservation[]> {
-  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRefreshObservation[]>>(`/api/knowledge-v2/sources/${encodeURIComponent(sourceId)}/refresh-observations?limit=${limit}`);
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRefreshObservation[]>>(`/api/v2/kb/sources/${encodeURIComponent(sourceId)}/refresh-observations?limit=${limit}`);
   return payload.data || [];
 }
 
 export async function validateKnowledgeSource(sourceId: string): Promise<Record<string, unknown>> {
-  const payload = await apiRequest<KnowledgeSourceEnvelope<Record<string, unknown>>>(`/api/knowledge-v2/sources/${encodeURIComponent(sourceId)}/validate`, { method: 'POST' });
+  const payload = await apiRequest<KnowledgeSourceEnvelope<Record<string, unknown>>>(`/api/v2/kb/sources/${encodeURIComponent(sourceId)}/validate`, { method: 'POST' });
   return payload.data;
 }
 
 export async function refreshKnowledgeSource(sourceId: string): Promise<Record<string, unknown>> {
-  const payload = await apiRequest<KnowledgeSourceEnvelope<Record<string, unknown>>>(`/api/knowledge-v2/sources/${encodeURIComponent(sourceId)}/fetch`, { method: 'POST', body: JSON.stringify({ method: 'GET' }) });
+  const payload = await apiRequest<KnowledgeSourceEnvelope<Record<string, unknown>>>(`/api/v2/kb/sources/${encodeURIComponent(sourceId)}/fetch`, { method: 'POST', body: JSON.stringify({ method: 'GET' }) });
   return payload.data;
 }
 
@@ -1418,24 +1418,24 @@ export async function getKnowledgeDocument(docId: string): Promise<KnowledgeDocu
 }
 
 export async function listKnowledgeDocumentVersions(docId: string): Promise<KnowledgeDocumentVersion[]> {
-  return apiRequest<KnowledgeDocumentVersion[]>(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions`);
+  return apiRequest<KnowledgeDocumentVersion[]>(`/api/v2/kb/documents/${encodeURIComponent(docId)}/versions`);
 }
 
 export async function compareKnowledgeDocumentVersions(docId: string, leftVersionId: string, rightVersionId: string): Promise<KnowledgeDocumentVersionComparison> {
   const params = new URLSearchParams({ left_version_id: leftVersionId, right_version_id: rightVersionId });
-  return apiRequest<KnowledgeDocumentVersionComparison>(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions/compare?${params.toString()}`);
+  return apiRequest<KnowledgeDocumentVersionComparison>(`/api/v2/kb/documents/${encodeURIComponent(docId)}/versions/compare?${params.toString()}`);
 }
 
 export async function publishKnowledgeDocumentVersion(docId: string, versionId: string, reason = 'published by knowledge administrator'): Promise<Record<string, unknown>> {
-  return apiRequest(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions/${encodeURIComponent(versionId)}/publish`, { method: 'POST', body: JSON.stringify({ confirm: true, reason }) });
+  return apiRequest(`/api/v2/kb/documents/${encodeURIComponent(docId)}/versions/${encodeURIComponent(versionId)}/publish`, { method: 'POST', body: JSON.stringify({ confirm: true, reason }) });
 }
 
 export async function supersedeKnowledgeDocumentVersion(docId: string, versionId: string, replacementVersionId: string, reason = 'superseded by knowledge administrator'): Promise<Record<string, unknown>> {
-  return apiRequest(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions/${encodeURIComponent(versionId)}/supersede`, { method: 'POST', body: JSON.stringify({ confirm: true, replacement_version_id: replacementVersionId, reason }) });
+  return apiRequest(`/api/v2/kb/documents/${encodeURIComponent(docId)}/versions/${encodeURIComponent(versionId)}/supersede`, { method: 'POST', body: JSON.stringify({ confirm: true, replacement_version_id: replacementVersionId, reason }) });
 }
 
 export async function rollbackKnowledgeDocumentVersion(docId: string, versionId: string, reason = 'rollback by knowledge administrator'): Promise<Record<string, unknown>> {
-  return apiRequest(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions/${encodeURIComponent(versionId)}/rollback`, { method: 'POST', body: JSON.stringify({ confirm: true, reason }) });
+  return apiRequest(`/api/v2/kb/documents/${encodeURIComponent(docId)}/versions/${encodeURIComponent(versionId)}/rollback`, { method: 'POST', body: JSON.stringify({ confirm: true, reason }) });
 }
 
 export interface KnowledgeOfficialUrlImportPayload {
@@ -1452,7 +1452,7 @@ export interface KnowledgeOfficialUrlImportPayload {
 }
 
 export async function importKnowledgeOfficialUrl(payload: KnowledgeOfficialUrlImportPayload): Promise<Record<string, unknown>> {
-  return apiRequest<Record<string, unknown>>('/api/knowledge-v2/ingestion/official-url', {
+  return apiRequest<Record<string, unknown>>('/api/v2/kb/ingestion/official-url', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -1471,7 +1471,7 @@ export async function importKnowledgeEnterpriseSop(file: File, fields: {
   form.append('department', fields.department);
   form.append('classification', 'INTERNAL');
   if (fields.description) form.append('description', fields.description);
-  return apiRequest<Record<string, unknown>>('/api/knowledge-v2/ingestion/enterprise-sop', {
+  return apiRequest<Record<string, unknown>>('/api/v2/kb/ingestion/enterprise-sop', {
     method: 'POST',
     body: form,
   });
