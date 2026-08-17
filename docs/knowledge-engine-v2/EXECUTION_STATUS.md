@@ -7,7 +7,7 @@ Next Task: ING-024（建立恶意 HTML、超大文件、损坏 PDF、重定向�
 
 Completed: 290 / 359
 P0: 234 / 277
-Last Verified Commit: dc7e8317（ING-023 采集运行控制实现与 PostgreSQL 探针门禁 PASS）
+Last Verified Commit: 358f9321（ING-023 采集运行控制与 PostgreSQL 告警读模型探针 PASS）
 
 Recent Migration: ING-023 m0149 PostgreSQL JSONB/tenant anomaly projection；事务 probe PASS 并 rollback，无生产探针写入
 Recent Build: ING-023 专项 9 passed；AI 267 passed；PostgreSQL probe PASS；lint/build/compile/diff PASS
