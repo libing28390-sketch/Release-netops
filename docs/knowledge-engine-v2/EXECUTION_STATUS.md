@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: OBS-003 (PENDING; OBS-002 PASS)
-Last Completed: OBS-002
-Next Task: OBS-003（按原清单依赖继续）
+Current Task: OBS-004 (PENDING; OBS-003 PASS)
+Last Completed: OBS-003
+Next Task: OBS-004（按原清单依赖继续）
 
-Completed: 282 / 359
-P0: 232 / 277
-Last Verified Commit: dc23b1d3（OBS-002 PASS；本地提交；未 push）
+Completed: 283 / 359
+P0: 233 / 277
+Last Verified Commit: b351f448（OBS-003 PASS；本地提交；未 push）
 
-Recent Migration: OBS-002 无 migration；PostgreSQL authoritative path 未写生产
-Recent Build: OBS-002 focused 9 passed；AI 237 passed；KUI 回归 6 passed；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
-Last Security Check: Trace 只保留 bounded/allowlisted runtime；Security block 终止外发，Provider/Model 仅保留标识，无凭据/正文；PASS
-Recovery Point: OBS-003
+Recent Migration: OBS-003 无 migration；PostgreSQL authoritative path 未写生产
+Recent Build: OBS-003 focused 10 passed；AI 238 passed；Database 188 + 2 skips；Catalog 192；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
+Last Security Check: Trace、AI Gateway/Assistant 与 root/console/file logger 写入前脱敏；raw query hash-only；凭据/Bearer/私钥/异常正文不落盘；PASS
+Recovery Point: OBS-004
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -40,6 +40,7 @@ KUI-001..008 证据：
 - API-009 task execution：m0147 additive counters/token/version 与执行索引；claim、取消/超时 reconcile、step/tool budget、complete/fail 采用 PostgreSQL 条件 UPDATE 并发保护；临时 PostgreSQL probe PASS，AI 234 passed，V1 10/10，lint/build/compile/diff PASS；未应用生产 DDL
 - OBS-001 retrieval observation：raw query 仅 request-scope captured/hash/length，normalized query、entities、filters、candidates、scores、final chunks 有界投影；focused 4，AI 236，KUI 回归与 V1 PostgreSQL baseline PASS；无 DDL
 - OBS-002 runtime observation：reranker、citation、latency、tokens、provider/model、security result 统一写入 non-stream/SSE Trace，嵌套更新不丢历史阶段；focused 9，AI 237，KUI 回归 6，lint/build/compile/diff 与 V1 PostgreSQL baseline PASS；无 DDL
+- OBS-003 trace/log redaction：Trace 文本、AI Gateway/Assistant 与 root/console/file logger 写入前脱敏，raw query 仅 hash/长度；Database 188+2 skips、Catalog 192、AI 238、focused 10，V1 PostgreSQL 10/10 与 lint/build/compile/diff PASS；无 DDL
 
 Blocked Tasks: none
 

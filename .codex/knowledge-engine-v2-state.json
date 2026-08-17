@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "OBS-003",
+  "current_task": "OBS-004",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T13:38:07+08:00",
-  "last_completed_task": "OBS-002",
+  "updated_at": "2026-08-17T13:45:00+08:00",
+  "last_completed_task": "OBS-003",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -390,7 +390,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "dc23b1d3",
+  "last_verified_commit": "b351f448",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -845,8 +845,15 @@
   "obs002_runtime_fields": "reranker, citation, latency, tokens, provider/model and security result; nested merge preserves prior stages",
   "obs002_v1_baseline": "PASS; PostgreSQL 10/10; no production write",
   "obs002_production_ddl": "NONE",
-  "last_verified_commit": "dc23b1d3",
-  "completed_count": 282,
-  "p0_completed_count": 232,
-  "resume_from": "OBS-003"
+  "obs003_status": "DONE_PASS",
+  "obs003_final_verified_at": "2026-08-17T13:45:00+08:00",
+  "obs003_evidence": "docs/knowledge-engine-v2/evidence/OBS-003.md",
+  "obs003_contract": "docs/knowledge-engine-v2/architecture/OBS-003-TRACE-LOG-REDACTION-CONTRACT.yaml",
+  "obs003_focused_tests": "OBS/API/KUI focused 10 passed; AI 238 passed; Security/KUI 12 passed",
+  "obs003_gate_summary": "Database 188 passed + 2 documented skips; Catalog 192 passed; DB-022/ING-019/CAT-004 regression PASS; V1 PostgreSQL 10/10; lint/build/compile/diff PASS",
+  "obs003_production_ddl": "NONE",
+  "last_verified_commit": "b351f448",
+  "completed_count": 283,
+  "p0_completed_count": 233,
+  "resume_from": "OBS-004"
 }
