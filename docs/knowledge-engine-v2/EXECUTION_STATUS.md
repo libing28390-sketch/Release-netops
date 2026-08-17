@@ -1,7 +1,7 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-017（ANALYZING）
+Current Task: EVAL-017（VERIFYING / USER_VERIFY_PENDING）
 Last Completed: EVAL-016
 Next Task: EVAL-017（完成 Copilot、Provider、Model、Knowledge、Security 浏览器关键路径测试）
 
@@ -10,11 +10,11 @@ P0: 250 / 277
 Last Verified Commit: 5c135b79（EVAL-016 platform/readonly fixture gate implementation PASS）
 
 Recent Migration: EVAL-012 复用 m0117/m0119/m0120/m0121/m0145/m0150；5 个 PostgreSQL 探针 rollback/cleanup PASS，无生产写入
-Recent Build: EVAL-016 Huawei/Cisco/H3C Mock/Fixture 123 passed；V1 PostgreSQL 10/10；wrapper 2 passed；py_compile/diff PASS
-Last Security Check: EVAL-016 read-only command guard、shell chaining block、enable secret boundary、unknown platform fail-closed PASS；SQLite 未作为证据
+Recent Build: EVAL-017 npm lint PASS；Vite build PASS（3680 modules）；前端关键路径 14 files / 52 tests PASS；SQLite 未作为证据
+Last Security Check: EVAL-017 Provider masked secret、permission 403 contract、Security fail-closed/dry-run、Copilot read-only UI PASS；SQLite 未作为证据
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: EVAL-017（当前分析）→ EVAL-018 → EVAL-019；ING-020/021 仍需认证浏览器会话补做可见验证
+Recovery Point: EVAL-017（自动化与已认证浏览器检查通过，等待用户可见确认）→ EVAL-018 → EVAL-019；ING-020/021 仍需认证浏览器会话补做可见验证
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -59,6 +59,8 @@ EVAL-014：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-014.md；Po
 EVAL-015：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-015.md；Provider ACL/Fallback、Reindex 成功与依赖失败原子性、重复内容非法输入、V1 空结果 PostgreSQL probes PASS；无数据库合约 69 passed；EVAL-015 wrapper 2 passed；V1 10/10；SQLite 硬编码 KUI-012 fixture 已明确排除，未作为验收证据。
 
 EVAL-016：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-016.md；Huawei VRP5、Cisco IOS/IOS-XE/NX-OS、H3C Comware v5/v7/v9 Mock/Fixture、TextFSM、只读命令和 UNKNOWN boundary 123 passed；EVAL-016 wrapper 2 passed；V1 PostgreSQL baseline 10/10；SQLite 未作为验收证据。
+
+EVAL-017：PASS_AUTOMATED_USER_VERIFY_PENDING；证据 docs/knowledge-engine-v2/evidence/EVAL-017.md；Copilot、Provider、Model、Knowledge、Security 前端关键路径 14 files / 52 tests；EVAL-017 wrapper 2 passed；npm lint/build PASS；已认证浏览器可见路径与窄屏无横向溢出检查 PASS；V1 PostgreSQL 10/10；等待用户完成一次可见确认后勾选。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

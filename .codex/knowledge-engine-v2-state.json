@@ -2,8 +2,8 @@
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
   "current_task": "EVAL-017",
-  "task_state": "ANALYZING",
-  "updated_at": "2026-08-17T20:30:00+08:00",
+  "task_state": "VERIFYING",
+  "updated_at": "2026-08-17T20:50:00+08:00",
   "last_completed_task": "EVAL-016",
   "completed_tasks": [
     "ADR-001",
@@ -1104,5 +1104,15 @@
   "eval016_manifest": "docs/knowledge-engine-v2/eval/eval-platform-readonly-v1.manifest.json",
   "eval016_focused_tests": "Huawei/Cisco/H3C Mock/Fixture 123 passed; V1 PostgreSQL baseline 10/10; EVAL-016 wrapper 2 passed; py_compile/diff PASS",
   "eval016_postgresql_policy": "PASS; fixture tests database=none; PostgreSQL V1 authority probe rollback=true; sqlite=not_used; production_database_write=false",
-  "eval016_production_ddl": "NONE"
+  "eval016_production_ddl": "NONE",
+  "eval017_status": "PASS_AUTOMATED_USER_VERIFY_PENDING",
+  "eval017_final_verified_at": "2026-08-17T20:50:00+08:00",
+  "eval017_evidence": "docs/knowledge-engine-v2/evidence/EVAL-017.md",
+  "eval017_contract": "docs/knowledge-engine-v2/architecture/EVAL-017-BROWSER-KEYPATH-CONTRACT.yaml",
+  "eval017_manifest": "docs/knowledge-engine-v2/eval/eval-browser-keypaths-v1.manifest.json",
+  "eval017_focused_tests": "frontend 14 files / 52 passed; EVAL-017 wrapper 2 passed; npm lint PASS; Vite build PASS; authenticated browser visible paths PASS",
+  "eval017_postgresql_policy": "PASS; V1 authority baseline PostgreSQL 10/10; frontend component tests database=none; sqlite=not_used; production_database_write=false",
+  "eval017_browser_status": "USER_VERIFY_PENDING",
+  "eval017_browser_paths": "/ai/providers, /ai/models, /ai/copilot, /ai/knowledge, /ai/security; narrow viewport bodyScrollWidth==innerWidth",
+  "eval017_production_ddl": "NONE"
 }
