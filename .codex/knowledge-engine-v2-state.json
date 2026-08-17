@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "API-003",
+  "current_task": "API-004",
   "task_state": "PENDING",
   "updated_at": "2026-08-17T13:05:00+08:00",
-  "last_completed_task": "API-002",
+  "last_completed_task": "API-003",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -278,7 +278,8 @@
     "KUI-017",
     "KUI-018",
     "API-001",
-    "API-002"
+    "API-002",
+    "API-003"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -312,7 +313,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "API-003",
     "API-004",
     "API-005",
     "API-006",
@@ -390,7 +390,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "c78b04b1",
+  "last_verified_commit": "049d64ea",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -778,7 +778,13 @@
   "api002_contract": "docs/knowledge-engine-v2/architecture/API-002-PYDANTIC-CONTRACT.yaml",
   "api002_focused_tests": "4 passed; CAT/RAG/pagination 14 passed; API boundary/catalog 8 passed",
   "api002_production_ddl": "NONE",
-  "completed_count": 273,
-  "p0_completed_count": 223,
-  "resume_from": "API-003"
+  "api003_status": "DONE_PASS",
+  "api003_final_verified_at": "2026-08-17T13:45:00+08:00",
+  "api003_evidence": "docs/knowledge-engine-v2/evidence/API-003.md",
+  "api003_contract": "docs/knowledge-engine-v2/architecture/API-003-TYPED-REQUEST-BOUNDARY.yaml",
+  "api003_focused_tests": "31 passed; API-002/API boundary/CAT-015 regression 11 passed",
+  "api003_production_ddl": "NONE",
+  "completed_count": 274,
+  "p0_completed_count": 224,
+  "resume_from": "API-004"
 }

@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: API-003 (PENDING; KUI-001..018, API-001..002 PASS)
-Last Completed: API-002
-Next Task: API-003（按原清单依赖继续）
+Current Task: API-004 (PENDING; KUI-001..018, API-001..003 PASS)
+Last Completed: API-003
+Next Task: API-004（按原清单依赖继续）
 
-Completed: 273 / 359
-P0: 223 / 277
-Last Verified Commit: API-002-local（API-002 PASS；不 push）
+Completed: 274 / 359
+P0: 224 / 277
+Last Verified Commit: 049d64ea（API-003 PASS；不 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
-Recent Build: API-002 focused contracts 4 passed；CAT/RAG/pagination regression 14 passed；API boundary/catalog regression 8 passed；py_compile/diff check PASS
-Last Security Check: API-002 extra-field rejection / secret response / bounded query-filter PASS
-Recovery Point: API-003
+Recent Build: API-003 typed request/security/diagnostic regression 31 passed；API-002/API boundary/CAT-015 regression 11 passed；py_compile/diff check PASS
+Last Security Check: API-003 AST body audit / extra-field rejection / diagnostic read-only invariant PASS
+Recovery Point: API-004
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -31,6 +31,7 @@ KUI-001..008 证据：
 - KUI-018 UI QA：知识文档/评测表格窄屏横向滚动与粘性表头、暗色变体、分页边界和中英文分页文案；响应式 QA 3 passed，全量前端 19 files / 97 tests，lint/build PASS
 - API-001 API boundary：canonical `/api/v2/kb`、兼容 `/api/knowledge-v2` 别名、V1 `/api/v1/ai` 隔离、请求 ID 回传和前端 canonical 路径；边界测试 2 passed，ASGI probe PASS，前端 19 files / 97 tests，lint/build PASS
 - API-002 Pydantic contracts：Provider/Model/Source/Document/Product/Alias/Import/Search 严格模型与路由落地；契约测试 4 passed，CAT/RAG/pagination 回归 14 passed，API boundary/catalog 回归 8 passed，py_compile/diff check PASS；无 DDL/生产写入
+- API-003 typed request boundary：Copilot/Security Gateway/Diagnostics 稳定请求边界移除裸 Dict；AST audit、Security/Copilot/Diagnostics 回归 31 passed，API-002/API boundary/CAT-015 回归 11 passed，py_compile/diff check PASS；诊断写操作 fail-closed
 
 Blocked Tasks: none
 

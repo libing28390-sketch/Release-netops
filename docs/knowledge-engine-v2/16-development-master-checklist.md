@@ -472,7 +472,7 @@
 
 - [x] `API-001` `P0/ARCH+BE/M`：统一 `/api/v2/kb` 与 `/api/v1/ai` 边界和版本策略。
 - [x] `API-002` `P0/BE/M`：为 Provider、Model、Source、Document、Product、Alias、Import、Search 定义 Pydantic 契约。
-- [ ] `API-003` `P0/BE/M`：禁止稳定合同继续使用无类型 Dict 请求。
+- [x] `API-003` `P0/BE/M`：禁止稳定合同继续使用无类型 Dict 请求。
 - [ ] `API-004` `P0/BE+FE/M`：统一分页、排序、筛选、错误码和权限拒绝响应。
 - [ ] `API-005` `P0/BE/M`：列表仅返回摘要，详情独立加载正文、Chunk、日志和 Trace。
 - [ ] `API-006` `P0/BE/M`：SSE 定义 meta、progress、token、citation、done、error 事件版本。
