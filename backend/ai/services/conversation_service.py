@@ -17,6 +17,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+TASK_TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "timeout", "budget_exceeded", "step_limit"})
+TASK_ACTIVE_STATES = frozenset({"queued", "running", "cancelling"})
+
+
 def _safe_message_content(content: str, *, tenant_id: str, scope_id: str) -> str:
     text = str(content or "")[:200_000]
     findings = classify_text(text)
@@ -248,28 +252,213 @@ def create_task(*, tenant_id: str, user_id: str, scene: str, conversation_id: st
     with get_db_connection() as conn:
         if conversation_id and not _get_conversation(conn, conversation_id, tenant_id=tenant_id, user_id=user_id):
             raise LookupError("conversation not found")
-        conn.execute(
-            """
-            INSERT INTO ai_tasks
-                (id, conversation_id, tenant_id, user_id_opaque, scene, state, max_steps, max_tool_calls, deadline_at, created_at)
-            VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
-            """,
-            (task_id, conversation_id, tenant_id, opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id), str(scene)[:80], max(1, min(int(max_steps), 100)), max(1, min(int(max_tool_calls), 200)), (now + timedelta(seconds=max(1, min(int(timeout_seconds), 86400)))).isoformat(), now.replace(microsecond=0).isoformat()),
-        )
+        bounded_steps = max(1, min(int(max_steps), 100))
+        bounded_tools = max(1, min(int(max_tool_calls), 200))
+        deadline = (now + timedelta(seconds=max(1, min(int(timeout_seconds), 86400)))).isoformat()
+        owner = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
+        try:
+            conn.execute(
+                """
+                INSERT INTO ai_tasks
+                    (id, conversation_id, tenant_id, user_id_opaque, scene, state,
+                     max_steps, max_tool_calls, deadline_at, cancel_requested,
+                     current_steps, current_tool_calls, version, updated_at, created_at)
+                VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, 0, 0, 0, 0, ?, ?)
+                """,
+                (task_id, conversation_id, tenant_id, owner, str(scene)[:80], bounded_steps, bounded_tools, deadline, now.replace(microsecond=0).isoformat(), now.replace(microsecond=0).isoformat()),
+            )
+        except Exception:
+            conn.rollback()
+            conn.execute(
+                """
+                INSERT INTO ai_tasks
+                    (id, conversation_id, tenant_id, user_id_opaque, scene, state, max_steps, max_tool_calls, deadline_at, created_at)
+                VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
+                """,
+                (task_id, conversation_id, tenant_id, owner, str(scene)[:80], bounded_steps, bounded_tools, deadline, now.replace(microsecond=0).isoformat()),
+            )
         conn.commit()
-    return {"id": task_id, "state": "queued", "scene": str(scene)[:80], "created_at": now.replace(microsecond=0).isoformat()}
+    return {"id": task_id, "state": "queued", "scene": str(scene)[:80], "max_steps": bounded_steps, "max_tool_calls": bounded_tools, "deadline_at": deadline, "created_at": now.replace(microsecond=0).isoformat()}
 
 
 def get_task(*, task_id: str, tenant_id: str, user_id: str) -> dict[str, Any] | None:
     opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
     with get_db_connection() as conn:
-        row = conn.execute("SELECT id, conversation_id, scene, state, max_steps, max_tool_calls, deadline_at, cancel_requested, started_at, finished_at, error_code, created_at FROM ai_tasks WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?", (task_id, tenant_id, opaque)).fetchone()
+        try:
+            row = conn.execute("""SELECT id, conversation_id, scene, state, max_steps, max_tool_calls,
+                                      current_steps, current_tool_calls, deadline_at, cancel_requested,
+                                      started_at, finished_at, error_code, version, updated_at,
+                                      cancel_requested_at, created_at
+                               FROM ai_tasks
+                               WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?""", (task_id, tenant_id, opaque)).fetchone()
+        except Exception:
+            conn.rollback()
+            row = conn.execute("SELECT id, conversation_id, scene, state, max_steps, max_tool_calls, deadline_at, cancel_requested, started_at, finished_at, error_code, created_at FROM ai_tasks WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?", (task_id, tenant_id, opaque)).fetchone()
     return dict(row) if row else None
 
 
 def request_cancel(*, task_id: str, tenant_id: str, user_id: str) -> bool:
     opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
+    now = _now()
     with get_db_connection() as conn:
-        result = conn.execute("UPDATE ai_tasks SET cancel_requested = 1, state = CASE WHEN state IN ('queued', 'running') THEN 'cancelling' ELSE state END WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?", (task_id, tenant_id, opaque))
+        try:
+            result = conn.execute(
+                """UPDATE ai_tasks
+                   SET cancel_requested = 1,
+                       cancel_requested_at = COALESCE(cancel_requested_at, ?),
+                       state = CASE WHEN state IN ('queued', 'running') THEN 'cancelling' ELSE state END,
+                       updated_at = ?, version = COALESCE(version, 0) + 1
+                   WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?
+                     AND state IN ('queued', 'running', 'cancelling')""",
+                (now, now, task_id, tenant_id, opaque),
+            )
+        except Exception:
+            conn.rollback()
+            result = conn.execute(
+                "UPDATE ai_tasks SET cancel_requested = 1, state = CASE WHEN state IN ('queued', 'running') THEN 'cancelling' ELSE state END WHERE id = ? AND tenant_id = ? AND user_id_opaque = ? AND state IN ('queued', 'running', 'cancelling')",
+                (task_id, tenant_id, opaque),
+            )
         conn.commit()
         return bool(result.rowcount)
+
+
+def claim_task(*, task_id: str, tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    """Atomically claim one queued task and return a private execution token."""
+    opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
+    now = _now()
+    token = f"exec_{uuid.uuid4().hex}"
+    with get_db_connection() as conn:
+        try:
+            result = conn.execute(
+                """UPDATE ai_tasks
+                   SET state = 'running', started_at = COALESCE(started_at, ?),
+                       execution_token = ?, updated_at = ?, version = COALESCE(version, 0) + 1
+                   WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?
+                     AND state = 'queued' AND COALESCE(cancel_requested, 0) = 0
+                     AND (deadline_at IS NULL OR deadline_at > ?)""",
+                (now, token, now, task_id, tenant_id, opaque, now),
+            )
+        except Exception as exc:
+            conn.rollback()
+            raise RuntimeError("task execution guards require m0147") from exc
+        if not result.rowcount:
+            # A queued task whose deadline elapsed is terminalized exactly once;
+            # cancellation wins when both signals race.
+            conn.execute(
+                """UPDATE ai_tasks
+                   SET state = CASE WHEN COALESCE(cancel_requested, 0) = 1 THEN 'cancelled' ELSE 'timeout' END,
+                       finished_at = COALESCE(finished_at, ?),
+                       error_code = CASE WHEN COALESCE(cancel_requested, 0) = 1 THEN 'TASK_CANCELLED' ELSE 'TASK_TIMEOUT' END,
+                       updated_at = ?, version = COALESCE(version, 0) + 1
+                   WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?
+                     AND state IN ('queued', 'cancelling')
+                     AND (COALESCE(cancel_requested, 0) = 1 OR (deadline_at IS NOT NULL AND deadline_at <= ?))""",
+                (now, now, task_id, tenant_id, opaque, now),
+            )
+            conn.commit()
+            return None
+        conn.commit()
+    return {"task_id": task_id, "execution_token": token, "state": "running", "started_at": now}
+
+
+def reconcile_task(*, task_id: str, tenant_id: str, user_id: str) -> dict[str, Any] | None:
+    """Apply cancellation/timeout terminal state with one atomic update."""
+    opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
+    now = _now()
+    with get_db_connection() as conn:
+        try:
+            conn.execute(
+                """UPDATE ai_tasks
+                   SET state = CASE WHEN COALESCE(cancel_requested, 0) = 1 THEN 'cancelled' ELSE 'timeout' END,
+                       finished_at = COALESCE(finished_at, ?),
+                       error_code = CASE WHEN COALESCE(cancel_requested, 0) = 1 THEN 'TASK_CANCELLED' ELSE 'TASK_TIMEOUT' END,
+                       updated_at = ?, version = COALESCE(version, 0) + 1
+                   WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?
+                     AND state IN ('queued', 'running', 'cancelling')
+                     AND (COALESCE(cancel_requested, 0) = 1 OR (deadline_at IS NOT NULL AND deadline_at <= ?))""",
+                (now, now, task_id, tenant_id, opaque, now),
+            )
+        except Exception as exc:
+            conn.rollback()
+            raise RuntimeError("task execution guards require m0147") from exc
+        conn.commit()
+    return get_task(task_id=task_id, tenant_id=tenant_id, user_id=user_id)
+
+
+def _consume_budget(*, task_id: str, tenant_id: str, user_id: str, execution_token: str, counter: str, limit_column: str, terminal_state: str, error_code: str) -> dict[str, Any] | None:
+    if counter not in {"current_steps", "current_tool_calls"} or limit_column not in {"max_steps", "max_tool_calls"}:
+        raise ValueError("unsupported task budget counter")
+    opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
+    now = _now()
+    with get_db_connection() as conn:
+        try:
+            result = conn.execute(
+                f"""UPDATE ai_tasks
+                    SET {counter} = COALESCE({counter}, 0) + 1,
+                        state = CASE WHEN COALESCE({counter}, 0) + 1 >= {limit_column} THEN ? ELSE state END,
+                        finished_at = CASE WHEN COALESCE({counter}, 0) + 1 >= {limit_column} THEN COALESCE(finished_at, ?) ELSE finished_at END,
+                        error_code = CASE WHEN COALESCE({counter}, 0) + 1 >= {limit_column} THEN ? ELSE error_code END,
+                        updated_at = ?, version = COALESCE(version, 0) + 1
+                    WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?
+                      AND state = 'running' AND execution_token = ?
+                      AND COALESCE(cancel_requested, 0) = 0
+                      AND (deadline_at IS NULL OR deadline_at > ?)
+                      AND COALESCE({counter}, 0) < {limit_column}""",
+                (terminal_state, now, error_code, now, task_id, tenant_id, opaque, execution_token, now),
+            )
+        except Exception as exc:
+            conn.rollback()
+            raise RuntimeError("task execution guards require m0147") from exc
+        conn.commit()
+    return get_task(task_id=task_id, tenant_id=tenant_id, user_id=user_id) if result.rowcount else reconcile_task(task_id=task_id, tenant_id=tenant_id, user_id=user_id)
+
+
+def consume_task_step(*, task_id: str, tenant_id: str, user_id: str, execution_token: str) -> dict[str, Any] | None:
+    return _consume_budget(task_id=task_id, tenant_id=tenant_id, user_id=user_id, execution_token=execution_token, counter="current_steps", limit_column="max_steps", terminal_state="step_limit", error_code="TASK_STEP_LIMIT")
+
+
+def consume_task_tool_call(*, task_id: str, tenant_id: str, user_id: str, execution_token: str) -> dict[str, Any] | None:
+    return _consume_budget(task_id=task_id, tenant_id=tenant_id, user_id=user_id, execution_token=execution_token, counter="current_tool_calls", limit_column="max_tool_calls", terminal_state="budget_exceeded", error_code="TASK_TOOL_LIMIT")
+
+
+def complete_task(*, task_id: str, tenant_id: str, user_id: str, execution_token: str, result: str = "") -> bool:
+    opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
+    now = _now()
+    with get_db_connection() as conn:
+        try:
+            update = conn.execute(
+                """UPDATE ai_tasks
+                   SET state = 'completed', finished_at = ?, error_code = NULL,
+                       updated_at = ?, version = COALESCE(version, 0) + 1
+                   WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?
+                     AND state = 'running' AND execution_token = ?
+                     AND COALESCE(cancel_requested, 0) = 0
+                     AND (deadline_at IS NULL OR deadline_at > ?)""",
+                (now, now, task_id, tenant_id, opaque, execution_token, now),
+            )
+        except Exception as exc:
+            conn.rollback()
+            raise RuntimeError("task execution guards require m0147") from exc
+        conn.commit()
+    return bool(update.rowcount)
+
+
+def fail_task(*, task_id: str, tenant_id: str, user_id: str, execution_token: str, error_code: str = "TASK_FAILED") -> bool:
+    opaque = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
+    now = _now()
+    with get_db_connection() as conn:
+        try:
+            update = conn.execute(
+                """UPDATE ai_tasks
+                   SET state = 'failed', finished_at = ?, error_code = ?,
+                       updated_at = ?, version = COALESCE(version, 0) + 1
+                   WHERE id = ? AND tenant_id = ? AND user_id_opaque = ?
+                     AND state = 'running' AND COALESCE(cancel_requested, 0) = 0
+                     AND execution_token = ?""",
+                (now, str(error_code or "TASK_FAILED")[:120], now, task_id, tenant_id, opaque, execution_token),
+            )
+        except Exception as exc:
+            conn.rollback()
+            raise RuntimeError("task execution guards require m0147") from exc
+        conn.commit()
+    return bool(update.rowcount)

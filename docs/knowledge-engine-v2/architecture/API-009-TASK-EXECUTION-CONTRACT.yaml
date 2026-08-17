@@ -1,0 +1,67 @@
+task_id: API-009
+title: Bounded task execution and concurrent state transitions
+status: verified
+contract_version: nxa.task.execution.v1
+authority:
+  database: PostgreSQL
+  production_migration: release-gated
+  migration: m0147_ai_task_execution_guards
+states:
+  non_terminal: [queued, running, cancelling]
+  terminal: [completed, failed, cancelled, timeout, budget_exceeded, step_limit]
+  transitions:
+    - from: queued
+      to: running
+      guard: atomic claim with tenant/user scope, cancel_requested=false, deadline not elapsed
+    - from: queued
+      to: cancelling
+      guard: scoped idempotent cancellation request
+    - from: running
+      to: cancelling
+      guard: scoped idempotent cancellation request
+    - from: running
+      to: completed
+      guard: execution token, no cancellation, deadline not elapsed
+    - from: running
+      to: failed
+      guard: execution token, no cancellation
+    - from: queued|running|cancelling
+      to: cancelled
+      guard: atomic reconciliation when cancel_requested=true
+    - from: queued|running|cancelling
+      to: timeout
+      guard: atomic reconciliation when deadline elapsed and cancellation is false
+    - from: running
+      to: step_limit
+      guard: atomic step counter reaches max_steps
+    - from: running
+      to: budget_exceeded
+      guard: atomic tool counter reaches max_tool_calls
+limits:
+  max_steps: server-bounded 1..100
+  max_tool_calls: server-bounded 1..200
+  timeout_seconds: server-bounded 1..86400 at creation; agent endpoint remains 5..3600
+  counters: current_steps and current_tool_calls increment only under running execution_token
+concurrency:
+  claim: one UPDATE queued-to-running succeeds; later claims return no token
+  optimistic_version: every guarded transition increments version atomically
+  stale_worker: completion/failure/budget writes require execution_token and current running state
+  cancellation_race: cancellation/timeout reconciliation wins before a stale worker can complete
+scope:
+  every_operation: tenant_id + task-bound opaque user id
+  cross_scope: returns no claim/update and API keeps not-found semantics
+migration:
+  additive_columns:
+    - ai_tasks.current_steps
+    - ai_tasks.current_tool_calls
+    - ai_tasks.execution_token
+    - ai_tasks.version
+    - ai_tasks.updated_at
+    - ai_tasks.cancel_requested_at
+  indexes:
+    - ix_ai_tasks_execution_scope
+    - ix_ai_tasks_execution_token
+  rollback: retain counters/tokens as audit evidence and disable guarded code path
+verification:
+  probe: scripts/knowledge_engine_v2_api009_pg_probe.py
+  result: PASS

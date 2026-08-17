@@ -478,7 +478,7 @@
 - [x] `API-006` `P0/BE/M`：SSE 定义 meta、progress、token、citation、done、error 事件版本。
 - [x] `API-007` `P0/BE+FE/M`：SSE 中断、取消和重连保持幂等，不产生重复消息。
 - [x] `API-008` `P0/BE+DBA/M`：会话、消息、任务、工具调用和证据保持租户与用户隔离。
-- [ ] `API-009` `P0/BE/M`：实现任务取消、超时、最大步骤、最大工具次数和状态转换并发保护。
+- [x] `API-009` `P0/BE/M`：实现任务取消、超时、最大步骤、最大工具次数和状态转换并发保护。
 - [ ] `OBS-001` `P0/BE+AI/M`：记录 raw query、normalized query、entities、filters、candidates、scores、final chunks。
 - [ ] `OBS-002` `P0/BE+AI/M`：记录 reranker、citation、latency、tokens、provider、model 和 security result。
 - [ ] `OBS-003` `P0/SEC+BE/M`：Trace 和日志写入前脱敏，限制原始查询保留。
