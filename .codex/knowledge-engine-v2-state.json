@@ -1,9 +1,9 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "ING-021",
+  "current_task": "ING-022",
   "task_state": "ANALYZING",
-  "updated_at": "2026-08-17T17:29:10+08:00",
+  "updated_at": "2026-08-17T17:48:00+08:00",
   "last_completed_task": "OBS-008",
   "completed_tasks": [
     "ADR-001",
@@ -296,7 +296,8 @@
     "OBS-008"
   ],
   "blocked_tasks": [
-    "ING-020: BLOCKED_AUTH_REQUIRED — local browser verification requires an authenticated admin session"
+    "ING-020: BLOCKED_AUTH_REQUIRED — local browser verification requires an authenticated admin session",
+    "ING-021: BLOCKED_AUTH_REQUIRED — authenticated browser verification of the preview/confirmation flow is still required"
   ],
   "blocker_revalidation_count": 2,
   "last_blocker_audit_at": "2026-08-09T13:37:47+08:00",
@@ -899,11 +900,21 @@
   "ing020_browser_status": "BLOCKED_AUTH_REQUIRED",
   "ing020_blocker_reason": "The local service is reachable but the browser has no authenticated session; credentials are user-provided and were not guessed or inspected.",
   "ing020_resume_from": "ING-020",
+  "ing021_status": "PASS_AUTOMATED_USER_VERIFY_PENDING",
+  "ing021_final_verified_at": "2026-08-17T17:48:00+08:00",
+  "ing021_evidence": "docs/knowledge-engine-v2/evidence/ING-021.md",
+  "ing021_contract": "docs/knowledge-engine-v2/architecture/ING-021-METADATA-PREVIEW-CONTRACT.yaml",
+  "ing021_focused_tests": "ING-021 5 passed; AI 267 passed; Catalog 192 passed; frontend 22 files/104 tests passed",
+  "ing021_gate_summary": "py_compile/lint/build/diff PASS; browser visible verification blocked at login on locally started service",
+  "ing021_production_ddl": "NONE",
+  "ing021_browser_status": "BLOCKED_AUTH_REQUIRED",
+  "ing021_blocker_reason": "The local browser session is unauthenticated; credentials are user-provided and were not guessed or inspected.",
+  "ing021_resume_from": "ING-021",
   "provider_tags_bugfix_status": "PASS_VERIFIED",
   "provider_tags_bugfix_commit": "b264fede",
   "provider_tags_bugfix_evidence": "docs/knowledge-engine-v2/evidence/BUG-PROVIDER-TAGS-001.md",
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
-  "last_verified_commit": "b264fede",
+  "last_verified_commit": "bd3684df",
   "completed_count": 288,
   "p0_completed_count": 234,
   "resume_from": "ING-020"

@@ -1,19 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: ING-021 (ANALYZING)
+Current Task: ING-022 (ANALYZING)
 Last Completed: OBS-008
-Next Task: ING-021（导入前 Metadata 预览与人工确认）
+Next Task: ING-022（官方 Seed URL 小规模批量采集与速率限制）
 
 Completed: 288 / 359
 P0: 234 / 277
-Last Verified Commit: b264fede（Provider tags 修复；浏览器重启后验证 PASS；本地提交；未 push）
+Last Verified Commit: bd3684df（ING-021 Metadata 预览与人工确认自动化门禁 PASS；浏览器可见验证待登录）
 
 Recent Migration: OBS-003 无 migration；PostgreSQL authoritative path 未写生产
-Recent Build: OBS-008 focused 4 passed；ING-020 backend 17 passed；AI 262 passed；frontend 22 files/104 tests；lint/build/compile/diff PASS；full backend 1649 passed with unrelated platform/SQLite fixture failures
-Last Security Check: ING-020 tenant predicate、权限边界、列表摘要脱敏和错误详情安全边界 PASS；无 tenant ID、原始错误、审计历史或 Worker fence 泄漏
+Recent Build: ING-021 专项 5 passed；AI 267 passed；Catalog 192 passed；frontend 22 files/104 tests；lint/build/compile/diff PASS；无新增 Migration
+Last Security Check: ING-021 令牌绑定 tenant/actor/content hash、过期/篡改/跨租户拒绝、Metadata secret/ACL/identity 字段拒绝 PASS；无原始正文回显
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021 ANALYZING
+Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ ING-022 ANALYZING
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -49,7 +50,7 @@ KUI-001..008 证据：
 - OBS-008 database observability：PostgreSQL 关系 bloat/index bytes、pg_stat_activity/pg_stat_statements 慢查询、缓存命中率、数据库容量及 Usage Dashboard 摘要；focused 4、AI 256、frontend 101 tests、V1 PostgreSQL 10/10、live probe PASS（relation bloat WARN 如实报告）；无 DDL；等待用户可见验证
 - Provider 页面修复：`tags_json={}` 导致 `AIProviderResponse.tags` 类型错误；m0148 已在当前 PostgreSQL 应用，Provider focused 12、AI 259、PG migration probe PASS；等待运行中后端重启后浏览器回归
 
-Blocked Tasks: none
+Blocked Tasks: ING-020, ING-021（均为浏览器认证阻断；自动化门禁已通过）
 
 Recent Tests:
 - Security/Copilot/Diagnostics PostgreSQL-only probe: PASS; 8 required tables, tenant isolation, metadata-only event/incident lifecycle, read-only diagnostic plan, adapter audit PASS
