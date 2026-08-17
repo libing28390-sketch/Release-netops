@@ -1,9 +1,9 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: ING-020 (USER_VERIFY_PENDING; automated PASS)
+Current Task: ING-021 (ANALYZING)
 Last Completed: OBS-008
-Next Task: ING-020（等待已认证浏览器完成 Import Job 列表可见验证）
+Next Task: ING-021（导入前 Metadata 预览与人工确认）
 
 Completed: 288 / 359
 P0: 234 / 277
@@ -12,7 +12,8 @@ Last Verified Commit: b264fede（Provider tags 修复；浏览器重启后验证
 Recent Migration: OBS-003 无 migration；PostgreSQL authoritative path 未写生产
 Recent Build: OBS-008 focused 4 passed；ING-020 backend 17 passed；AI 262 passed；frontend 22 files/104 tests；lint/build/compile/diff PASS；full backend 1649 passed with unrelated platform/SQLite fixture failures
 Last Security Check: ING-020 tenant predicate、权限边界、列表摘要脱敏和错误详情安全边界 PASS；无 tenant ID、原始错误、审计历史或 Worker fence 泄漏
-Recovery Point: ING-020 USER_VERIFY_PENDING（本地服务已启动但浏览器需要登录）
+Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021 ANALYZING
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

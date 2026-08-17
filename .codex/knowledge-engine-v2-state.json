@@ -1,8 +1,8 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "ING-020",
-  "task_state": "USER_VERIFY_PENDING",
+  "current_task": "ING-021",
+  "task_state": "ANALYZING",
   "updated_at": "2026-08-17T17:29:10+08:00",
   "last_completed_task": "OBS-008",
   "completed_tasks": [
@@ -295,7 +295,9 @@
     "OBS-007",
     "OBS-008"
   ],
-  "blocked_tasks": [],
+  "blocked_tasks": [
+    "ING-020: BLOCKED_AUTH_REQUIRED — local browser verification requires an authenticated admin session"
+  ],
   "blocker_revalidation_count": 2,
   "last_blocker_audit_at": "2026-08-09T13:37:47+08:00",
   "goal_resume_audit_count": 1,
@@ -895,6 +897,8 @@
   "ing020_gate_summary": "lint/build/py_compile/diff PASS; full backend 1649 passed with unrelated platform/SQLite fixture failures; browser blocked at login on locally started service",
   "ing020_production_ddl": "NONE",
   "ing020_browser_status": "BLOCKED_AUTH_REQUIRED",
+  "ing020_blocker_reason": "The local service is reachable but the browser has no authenticated session; credentials are user-provided and were not guessed or inspected.",
+  "ing020_resume_from": "ING-020",
   "provider_tags_bugfix_status": "PASS_VERIFIED",
   "provider_tags_bugfix_commit": "b264fede",
   "provider_tags_bugfix_evidence": "docs/knowledge-engine-v2/evidence/BUG-PROVIDER-TAGS-001.md",
