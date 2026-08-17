@@ -14,11 +14,11 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any, Awaitable, Callable, Iterable, Mapping
 
 from ai.security.minimizer import minimize_tool_result
 from ai.security.sanitizer import sanitize_text
+from core.enum_compat import StrEnum
 
 
 class DiagnosisState(StrEnum):
