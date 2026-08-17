@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: EVAL-003 (DONE_PASS)
-Last Completed: EVAL-003
-Next Task: EVAL-004（覆盖指定版本、未指定版本、冲突版本和未知版本）
+Current Task: EVAL-004 (DONE_PASS)
+Last Completed: EVAL-004
+Next Task: EVAL-005（定义 Recall@K、Precision@K、MRR、NDCG 和 Entity Resolution Accuracy）
 
-Completed: 298 / 359
-P0: 237 / 277
-Last Verified Commit: aa521cd5（EVAL-003 query type coverage PASS）
+Completed: 299 / 359
+P0: 238 / 277
+Last Verified Commit: 待提交（EVAL-004 PASS）
 
-Recent Migration: EVAL-003 无 migration；离线 Query 类型 coverage fixture 无数据库连接/写入
-Recent Build: EVAL-003 validator PASS；7 types each 12；EVAL-001/EVAL-002/EVAL-003 tests 3 passed；contract YAML/py_compile/diff PASS
-Last Security Check: EVAL-003 Query fixture 无凭据/租户/ACL；无外网；database=none；SQLite=not_used
+Recent Migration: EVAL-004 无 migration；离线版本 coverage fixture 无数据库连接/写入
+Recent Build: EVAL-004 validator PASS；四类版本各 12；EVAL-001～EVAL-004 tests 4 passed；contract YAML/py_compile/diff PASS
+Last Security Check: EVAL-004 版本 fixture 无凭据/租户/ACL；无外网；database=none；SQLite=not_used
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-004
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-005
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -33,6 +33,8 @@ EVAL-001：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-001.md；12
 EVAL-002：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-002.md；12 个厂商/意图 Track、36 条 CLI 示例、父数据集一致性 PASS；EVAL-001/EVAL-002 tests 2 passed；无数据库连接，SQLite 未作为验收证据。
 
 EVAL-003：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-003.md；7 类 Query 各 12 条；正向 answer、歧义 clarify、错误厂商/产品冲突 no_match 边界 PASS；EVAL-001/EVAL-002/EVAL-003 tests 3 passed；无数据库连接，SQLite 未作为验收证据。
+
+EVAL-004：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-004.md；specified/unspecified/conflict/unknown 各 12 条；未知版本 12 个厂商/意图组合 PASS；EVAL-001～EVAL-004 tests 4 passed；无数据库连接，SQLite 未作为验收证据。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
