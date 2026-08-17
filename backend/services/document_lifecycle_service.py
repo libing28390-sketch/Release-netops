@@ -160,10 +160,11 @@ def _audit(user: dict[str, Any], tenant_id: str, summary: dict[str, Any]) -> Non
             actor_id=_actor(user),
             actor_username=str(user.get("username") or _actor(user))[:256],
             actor_role=str(user.get("role") or "system")[:64],
-            resource_type="kb_document",
-            resource_id=summary["document_id"],
-            tenant_id=tenant_id,
+            target_type="kb_document",
+            target_id=summary["document_id"],
+            request_id=summary.get("request_id"),
             details={
+                "tenant_id": tenant_id,
                 "event_id": summary["event_id"],
                 "document_version_id": summary["document_version_id"],
                 "operation": summary["operation"],
@@ -331,6 +332,13 @@ def transition_document_lifecycle(
         document_fields.pop("approved_at", None)
         document_fields.pop("approved_by", None)
         document_fields["status"] = _projected_status(document_target)
+        # Publication/supersession changes the canonical version pointer.  The
+        # pointer is part of the same CAS transaction so a stale operator
+        # cannot publish a version while leaving the document on an older one.
+        if target == "published":
+            document_fields["current_version_id"] = version_id_value
+        elif target == "superseded":
+            document_fields["current_version_id"] = document_replacement
         document_fields["lifecycle_revision"] = int(document.get("lifecycle_revision") or 0) + 1
         doc_assignments = ", ".join(f"{key} = ?" for key in document_fields)
         doc_values = list(document_fields.values())
@@ -344,6 +352,7 @@ def transition_document_lifecycle(
         event_id = str(uuid.uuid4())
         operation = "publish" if target == "published" else target
         summary = _event_summary(event_id=event_id, document=document, version=selected_version, operation=operation, from_status=current, to_status=target)
+        summary["request_id"] = request
         cursor.execute(
             "INSERT INTO kb_document_lifecycle_event (id, tenant_id, document_id, document_version_id, request_id, operation, from_status, to_status, reason, actor_id, created_at, result_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (event_id, tenant_id, document_id, version_id_value, request, operation, current, target, reason, actor, now, _db_json(summary)),
@@ -358,6 +367,138 @@ def transition_document_lifecycle(
     return {"document": decoded_document, "document_version": decoded_version, "event": summary, "idempotent": False}
 
 
+def rollback_document_version(
+    document_id: str,
+    target_version_id: str,
+    user: dict[str, Any],
+    *,
+    reason: str = "",
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    """Atomically make an older immutable version the published version.
+
+    Rollback never rewrites source facts.  It appends lifecycle evidence,
+    supersedes the previously-current version when needed, and advances the
+    canonical pointer in one tenant-scoped transaction.
+    """
+    tenant_id = _tenant(user)
+    _authorize(user, tenant_id, "update")
+    document_id = _text(document_id, field="document_id", maximum=256, required=True)
+    target_version_id = _text(target_version_id, field="target_version_id", maximum=256, required=True)
+    reason = _text(reason, field="reason", maximum=2_000)
+    request = _text(request_id or str(uuid.uuid4()), field="request_id", maximum=256, required=True)
+    actor = _actor(user)
+    now = _now()
+    lock_suffix = " FOR UPDATE" if _database._USE_PG else ""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        prior = cursor.execute(
+            "SELECT result_json FROM kb_document_lifecycle_event WHERE tenant_id = ? AND request_id = ?",
+            (tenant_id, request),
+        ).fetchone()
+        if prior:
+            summary = _json_load(prior[0], {})
+            document = _row_dict(cursor.execute("SELECT * FROM kb_document WHERE tenant_id = ? AND id = ?", (tenant_id, document_id)).fetchone())
+            version = _row_dict(cursor.execute("SELECT * FROM kb_document_version WHERE tenant_id = ? AND id = ?", (tenant_id, target_version_id)).fetchone())
+            if not document or not version:
+                raise DocumentLifecycleError("DOCUMENT_NOT_FOUND", "document was not found", status_code=404)
+            summary["idempotent"] = True
+            return {"document": _decode(document), "document_version": _decode(version), "event": summary, "idempotent": True}
+
+        document = _row_dict(cursor.execute(f"SELECT * FROM kb_document WHERE tenant_id = ? AND id = ?{lock_suffix}", (tenant_id, document_id)).fetchone())
+        if not document:
+            raise DocumentLifecycleError("DOCUMENT_NOT_FOUND", "document was not found", status_code=404)
+        target = _row_dict(cursor.execute(
+            f"SELECT * FROM kb_document_version WHERE tenant_id = ? AND id = ? AND document_id = ?{lock_suffix}",
+            (tenant_id, target_version_id, document_id),
+        ).fetchone())
+        if not target:
+            raise DocumentLifecycleError("DOCUMENT_VERSION_NOT_FOUND", "document version was not found", status_code=404)
+        target_status = str(target.get("lifecycle_status") or target.get("status") or "draft").lower()
+        # A superseded version is a valid rollback target: supersession is a
+        # reversible lifecycle decision, while quarantine/disable/delete are
+        # explicit safety barriers that require a separate review transition.
+        if target_status in {"quarantined", "disabled", "deleted", "purged"}:
+            raise DocumentLifecycleError("DOCUMENT_ROLLBACK_TARGET_INVALID", "rollback target is not publishable", status_code=409)
+        current_id = str(document.get("current_version_id") or "")
+        current = None
+        if current_id and current_id != target_version_id:
+            current = _row_dict(cursor.execute(
+                f"SELECT * FROM kb_document_version WHERE tenant_id = ? AND id = ? AND document_id = ?{lock_suffix}",
+                (tenant_id, current_id, document_id),
+            ).fetchone())
+            if not current:
+                raise DocumentLifecycleError("DOCUMENT_CURRENT_VERSION_INVALID", "current document version was not found", status_code=409)
+            current_status = str(current.get("lifecycle_status") or current.get("status") or "draft").lower()
+            if current_status in _TERMINAL:
+                raise DocumentLifecycleError("DOCUMENT_LIFECYCLE_TERMINAL", "current lifecycle state cannot be changed", status_code=409)
+            old_revision = int(current.get("lifecycle_revision") or 0)
+            cursor.execute(
+                """UPDATE kb_document_version SET lifecycle_status = 'superseded', status = 'archived',
+                   lifecycle_changed_at = ?, lifecycle_changed_by = ?, lifecycle_reason = ?,
+                   superseded_at = ?, superseded_by = ?, superseded_by_version_id = ?,
+                   lifecycle_revision = ?, updated_at = ?, updated_by = ?
+                   WHERE tenant_id = ? AND id = ? AND lifecycle_revision = ?""",
+                (now, actor, reason, now, actor, target_version_id, old_revision + 1, now, actor,
+                 tenant_id, current_id, old_revision),
+            )
+            if cursor.rowcount != 1:
+                raise DocumentLifecycleError("DOCUMENT_LIFECYCLE_STALE", "current document version was changed by another request", status_code=409)
+
+        target_revision = int(target.get("lifecycle_revision") or 0)
+        cursor.execute(
+            """UPDATE kb_document_version SET lifecycle_status = 'published', status = 'active',
+               lifecycle_changed_at = ?, lifecycle_changed_by = ?, lifecycle_reason = ?,
+               published_at = ?, published_by = ?, approved_at = ?, approved_by = ?,
+               lifecycle_revision = ?, updated_at = ?, updated_by = ?
+               WHERE tenant_id = ? AND id = ? AND lifecycle_revision = ?""",
+            (now, actor, reason, now, actor, now, actor, target_revision + 1, now, actor,
+             tenant_id, target_version_id, target_revision),
+        )
+        if cursor.rowcount != 1:
+            raise DocumentLifecycleError("DOCUMENT_LIFECYCLE_STALE", "rollback target was changed by another request", status_code=409)
+
+        doc_revision = int(document.get("lifecycle_revision") or 0)
+        cursor.execute(
+            """UPDATE kb_document SET current_version_id = ?, lifecycle_status = 'published', status = 'active',
+               lifecycle_changed_at = ?, lifecycle_changed_by = ?, lifecycle_reason = ?,
+               published_at = ?, published_by = ?, lifecycle_revision = ?, updated_at = ?, updated_by = ?
+               WHERE tenant_id = ? AND id = ? AND lifecycle_revision = ?""",
+            (target_version_id, now, actor, reason, now, actor, doc_revision + 1, now, actor,
+             tenant_id, document_id, doc_revision),
+        )
+        if cursor.rowcount != 1:
+            raise DocumentLifecycleError("DOCUMENT_LIFECYCLE_STALE", "document was changed by another request", status_code=409)
+
+        event_id = str(uuid.uuid4())
+        summary = {
+            "event_id": event_id,
+            "request_id": request,
+            "document_id": document_id,
+            "document_version_id": target_version_id,
+            "operation": "rollback",
+            "from_version_id": current_id or None,
+            "to_status": "published",
+            "idempotent": False,
+        }
+        cursor.execute(
+            """INSERT INTO kb_document_lifecycle_event
+               (id, tenant_id, document_id, document_version_id, request_id, operation,
+                from_status, to_status, reason, actor_id, created_at, result_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (event_id, tenant_id, document_id, target_version_id, request, "rollback",
+             str((current or {}).get("lifecycle_status") or (current or {}).get("status") or "draft"),
+             "published", reason, actor, now, _db_json(summary)),
+        )
+        document = _row_dict(cursor.execute("SELECT * FROM kb_document WHERE tenant_id = ? AND id = ?", (tenant_id, document_id)).fetchone()) or document
+        target = _row_dict(cursor.execute("SELECT * FROM kb_document_version WHERE tenant_id = ? AND id = ?", (tenant_id, target_version_id)).fetchone()) or target
+        conn.commit()
+    decoded_document = _decode(document) or {}
+    decoded_version = _decode(target) or {}
+    _audit(user, tenant_id, summary)
+    return {"document": decoded_document, "document_version": decoded_version, "event": summary, "idempotent": False}
+
+
 def list_document_lifecycle_events(document_id: str, user: dict[str, Any]) -> list[dict[str, Any]]:
     result = get_document_lifecycle(document_id, user)
     return list(result.get("events") or [])
@@ -368,5 +509,6 @@ __all__ = [
     "LIFECYCLE_STATUSES",
     "get_document_lifecycle",
     "transition_document_lifecycle",
+    "rollback_document_version",
     "list_document_lifecycle_events",
 ]

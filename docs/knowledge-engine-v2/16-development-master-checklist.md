@@ -458,7 +458,7 @@
 - [x] `KUI-011` `P0/FE+BE/M`：批量上传前预览每个文件的 Metadata，不允许用一组错误 Metadata 覆盖不同文档。
 - [x] `KUI-012` `P0/FE+BE/M`：删除、禁用、Reparse、Rechunk、Reindex 使用独立动作和确认。
 - [x] `KUI-013` `P0/FE+BE/M`：危险操作显示影响文档、Chunk、Index、引用和恢复方式。
-- [ ] `KUI-014` `P1/FE+BE/M`：实现文档版本比较、发布、替代和回滚。
+- [x] `KUI-014` `P1/FE+BE/M`：实现文档版本比较、发布、替代和回滚。
 - [ ] `KUI-015` `P1/FE+BE/M`：实现 Source Registry 与刷新状态管理。
 - [ ] `KUI-016` `P1/FE+BE/M`：实现 RAG Evaluation 与回归结果页面。
 - [ ] `KUI-017` `P1/FE+BE/M`：实现 Retrieval Trace 管理员查看器，默认脱敏。

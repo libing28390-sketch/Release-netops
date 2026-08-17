@@ -127,6 +127,29 @@ actions:
     not_found: KNOWLEDGE_DOCUMENT_NOT_FOUND
     input_invalid: KNOWLEDGE_ACTION_INPUT_INVALID
     job_create_failed: KNOWLEDGE_ACTION_JOB_CREATE_FAILED
+version_management:
+  authority: kb_document_version
+  endpoints:
+    list: /api/knowledge-v2/documents/{document_id}/versions
+    compare: /api/knowledge-v2/documents/{document_id}/versions/compare
+    publish: /api/knowledge-v2/documents/{document_id}/versions/{version_id}/publish
+    supersede: /api/knowledge-v2/documents/{document_id}/versions/{version_id}/supersede
+    rollback: /api/knowledge-v2/documents/{document_id}/versions/{version_id}/rollback
+  compare:
+    tenant_scoped: true
+    returns: [hashes, metadata_keys, parser, trust_level, byte_size, bounded_line_counts]
+    raw_content_included: false
+  mutations:
+    confirmation_required: true
+    audit_required: true
+    immutable_source_facts: true
+    publish_updates_current_version_id: true
+    supersede_requires_published_replacement: true
+    rollback_atomic: true
+    rollback_preserves_version_facts: true
+  permissions:
+    read: knowledge_source.read
+    mutate: knowledge_source.update
 request_lifecycle:
   list_requests:
     cancel_previous_request: true

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import difflib
 import re
 import uuid
 from datetime import datetime, timezone
@@ -341,10 +342,10 @@ def _audit_document_version(*, user: dict[str, Any], tenant_id: str, document: d
             actor_id=_actor(user),
             actor_username=str(user.get("username") or _actor(user))[:256],
             actor_role=str(user.get("role") or "system")[:64],
-            resource_type="kb_document_version",
-            resource_id=str(version.get("id") or ""),
-            tenant_id=tenant_id,
+            target_type="kb_document_version",
+            target_id=str(version.get("id") or ""),
             details={
+                "tenant_id": tenant_id,
                 "decision": decision,
                 "document_id": str(document.get("id") or ""),
                 "document_version_id": str(version.get("id") or ""),
@@ -629,4 +630,102 @@ def list_document_versions(document_id: str, user: dict[str, Any]) -> list[dict[
         return [_decode(_row_dict(row) or {}) for row in rows]
 
 
-__all__ = ["DocumentVersionError", "record_document_version", "list_document_versions"]
+def compare_document_versions(
+    document_id: str,
+    left_version_id: str,
+    right_version_id: str,
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a bounded, metadata-only comparison for two tenant versions.
+
+    Bodies are intentionally never returned by this endpoint.  The UI gets
+    hashes, parser/size changes, and line-level counts sufficient to decide
+    whether a publish/supersede action is warranted without creating a new
+    content exfiltration surface.
+    """
+    tenant_id = _tenant(user)
+    if not authorize_resource(user, "knowledge_source", "read", tenant_id=tenant_id):
+        raise DocumentVersionError("DOCUMENT_PERMISSION_DENIED", "Insufficient permission for document version read", status_code=403)
+    document_id = _safe_text(document_id, field="document_id", maximum=256, required=True)
+    left_id = _safe_text(left_version_id, field="left_version_id", maximum=256, required=True)
+    right_id = _safe_text(right_version_id, field="right_version_id", maximum=256, required=True)
+    if left_id == right_id:
+        raise DocumentVersionError("DOCUMENT_COMPARE_SAME_VERSION", "two different versions are required", status_code=400)
+
+    def _summary(row: dict[str, Any]) -> dict[str, Any]:
+        metadata = _json_load(row.get("metadata_json"), {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        return {
+            "id": str(row.get("id") or ""),
+            "version_no": int(row.get("version_no") or 0),
+            "status": str(row.get("status") or ""),
+            "lifecycle_status": str(row.get("lifecycle_status") or row.get("status") or ""),
+            "content_hash": str(row.get("content_hash") or ""),
+            "metadata_hash": str(row.get("metadata_hash") or ""),
+            "normalized_content_hash": str(row.get("normalized_content_hash") or ""),
+            "byte_size": int(row.get("byte_size") or 0),
+            "parser_name": str(row.get("parser_name") or ""),
+            "parser_version": str(row.get("parser_version") or ""),
+            "trust_level": str(row.get("trust_level") or ""),
+            "metadata_keys": sorted(str(key) for key in metadata.keys())[:100],
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
+
+    with get_db_connection() as conn:
+        rows = []
+        for version_id in (left_id, right_id):
+            row = _row_dict(conn.execute(
+                "SELECT * FROM kb_document_version WHERE tenant_id = ? AND document_id = ? AND id = ?",
+                (tenant_id, document_id, version_id),
+            ).fetchone())
+            if not row:
+                raise DocumentVersionError("DOCUMENT_VERSION_NOT_FOUND", "document version was not found", status_code=404)
+            rows.append(row)
+
+    left, right = rows
+    left_summary, right_summary = _summary(left), _summary(right)
+    comparable_fields = (
+        "content_hash", "metadata_hash", "normalized_content_hash", "byte_size",
+        "parser_name", "parser_version", "trust_level", "metadata_keys",
+    )
+    changed_fields = [field for field in comparable_fields if left_summary.get(field) != right_summary.get(field)]
+    left_content = str(left.get("normalized_content") or "")
+    right_content = str(right.get("normalized_content") or "")
+    # Avoid unbounded diff work if a caller compares very large retained
+    # documents; hashes and sizes still provide an exact change signal.
+    max_diff_bytes = 2 * 1024 * 1024
+    if len(left_content.encode("utf-8")) <= max_diff_bytes and len(right_content.encode("utf-8")) <= max_diff_bytes:
+        left_lines, right_lines = left_content.splitlines(), right_content.splitlines()
+        matcher = difflib.SequenceMatcher(a=left_lines, b=right_lines, autojunk=False)
+        added = removed = 0
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag in {"replace", "delete"}:
+                removed += i2 - i1
+            if tag in {"replace", "insert"}:
+                added += j2 - j1
+        diff_available = True
+    else:
+        left_lines = right_lines = []
+        added = removed = 0
+        diff_available = False
+    return {
+        "document_id": document_id,
+        "left": left_summary,
+        "right": right_summary,
+        "changed_fields": changed_fields,
+        "content_changed": left_summary["content_hash"] != right_summary["content_hash"],
+        "metadata_changed": left_summary["metadata_hash"] != right_summary["metadata_hash"],
+        "line_diff": {
+            "available": diff_available,
+            "left_lines": len(left_lines),
+            "right_lines": len(right_lines),
+            "added_lines": added,
+            "removed_lines": removed,
+        },
+        "raw_content_included": False,
+    }
+
+
+__all__ = ["DocumentVersionError", "record_document_version", "list_document_versions", "compare_document_versions"]

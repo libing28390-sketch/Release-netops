@@ -1070,6 +1070,42 @@ export interface KnowledgeDocumentDetail extends KnowledgeDocument {
   chunks: KnowledgeDocumentChunk[];
 }
 
+export interface KnowledgeDocumentVersion {
+  id: string;
+  version_no: number;
+  source_version_id?: string | null;
+  content_hash?: string | null;
+  metadata_hash?: string | null;
+  normalized_content_hash?: string | null;
+  status?: string | null;
+  lifecycle_status?: string | null;
+  mime_type?: string | null;
+  byte_size?: number;
+  parser_name?: string | null;
+  parser_version?: string | null;
+  trust_level?: string | null;
+  metadata_keys?: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface KnowledgeDocumentVersionComparison {
+  document_id: string;
+  left: KnowledgeDocumentVersion;
+  right: KnowledgeDocumentVersion;
+  changed_fields: string[];
+  content_changed: boolean;
+  metadata_changed: boolean;
+  line_diff: {
+    available: boolean;
+    left_lines: number;
+    right_lines: number;
+    added_lines: number;
+    removed_lines: number;
+  };
+  raw_content_included: false;
+}
+
 export interface KnowledgeDocumentsResponse {
   items: KnowledgeDocument[];
   total: number;
@@ -1186,6 +1222,27 @@ export async function getKnowledgeDocumentFacets({
 
 export async function getKnowledgeDocument(docId: string): Promise<KnowledgeDocumentDetail> {
   return apiRequest<KnowledgeDocumentDetail>(`/api/ai/assistant/documents/${encodeURIComponent(docId)}`);
+}
+
+export async function listKnowledgeDocumentVersions(docId: string): Promise<KnowledgeDocumentVersion[]> {
+  return apiRequest<KnowledgeDocumentVersion[]>(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions`);
+}
+
+export async function compareKnowledgeDocumentVersions(docId: string, leftVersionId: string, rightVersionId: string): Promise<KnowledgeDocumentVersionComparison> {
+  const params = new URLSearchParams({ left_version_id: leftVersionId, right_version_id: rightVersionId });
+  return apiRequest<KnowledgeDocumentVersionComparison>(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions/compare?${params.toString()}`);
+}
+
+export async function publishKnowledgeDocumentVersion(docId: string, versionId: string, reason = 'published by knowledge administrator'): Promise<Record<string, unknown>> {
+  return apiRequest(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions/${encodeURIComponent(versionId)}/publish`, { method: 'POST', body: JSON.stringify({ confirm: true, reason }) });
+}
+
+export async function supersedeKnowledgeDocumentVersion(docId: string, versionId: string, replacementVersionId: string, reason = 'superseded by knowledge administrator'): Promise<Record<string, unknown>> {
+  return apiRequest(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions/${encodeURIComponent(versionId)}/supersede`, { method: 'POST', body: JSON.stringify({ confirm: true, replacement_version_id: replacementVersionId, reason }) });
+}
+
+export async function rollbackKnowledgeDocumentVersion(docId: string, versionId: string, reason = 'rollback by knowledge administrator'): Promise<Record<string, unknown>> {
+  return apiRequest(`/api/knowledge-v2/documents/${encodeURIComponent(docId)}/versions/${encodeURIComponent(versionId)}/rollback`, { method: 'POST', body: JSON.stringify({ confirm: true, reason }) });
 }
 
 export interface KnowledgeOfficialUrlImportPayload {

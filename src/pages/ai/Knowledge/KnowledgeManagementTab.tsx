@@ -35,7 +35,7 @@ import {
   Pencil,
   Info,
 } from 'lucide-react';
-import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact } from '../../../api/ai';
+import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 
@@ -489,6 +489,9 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [selectedDocument, setSelectedDocument] = useState<KnowledgeDocumentDetail | null>(null);
   const [documentDetailLoading, setDocumentDetailLoading] = useState(false);
   const [documentDetailError, setDocumentDetailError] = useState('');
+  const [versionAdminBusy, setVersionAdminBusy] = useState<string | null>(null);
+  const [versionAdminNotice, setVersionAdminNotice] = useState('');
+  const [versionCompareResult, setVersionCompareResult] = useState<KnowledgeDocumentVersionComparison | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const quickUploadInputRef = useRef<HTMLInputElement>(null);
@@ -1286,7 +1289,104 @@ export const KnowledgeManagementTab: React.FC = () => {
     setSelectedDocument(null);
     setDocumentDetailLoading(false);
     setDocumentDetailError('');
+    setVersionAdminNotice('');
+    setVersionCompareResult(null);
   };
+
+  const refreshSelectedDocument = async () => {
+    if (!selectedDocument) return;
+    await openDocument(selectedDocument);
+  };
+
+  const compareSelectedVersions = async (versionId: string) => {
+    if (!selectedDocument?.document_id) return;
+    const history = selectedDocument.source_version_history || [];
+    const latest = history[0];
+    if (!latest || latest.id === versionId) return;
+    setVersionAdminBusy(`compare:${versionId}`);
+    setVersionAdminNotice('');
+    try {
+      const comparison = await compareKnowledgeDocumentVersions(selectedDocument.document_id, versionId, latest.id);
+      setVersionCompareResult(comparison);
+    } catch (err: any) {
+      setVersionAdminNotice(err?.message || '版本比较失败');
+    } finally {
+      setVersionAdminBusy(null);
+    }
+  };
+
+  const runVersionAdminAction = async (action: 'publish' | 'supersede' | 'rollback', versionId: string, replacementVersionId?: string) => {
+    if (!selectedDocument?.document_id) return;
+    const history = selectedDocument.source_version_history || [];
+    const version = history.find((item) => item.id === versionId);
+    const label = action === 'publish' ? '发布' : action === 'supersede' ? '替代' : '回滚';
+    if (!version) return;
+    if (action === 'supersede' && !replacementVersionId) return;
+    const warning = action === 'rollback'
+      ? `确认将文档回滚到 v${version.version_no}？当前版本会被标记为 Superseded。`
+      : action === 'supersede'
+        ? `确认将 v${version.version_no} 标记为 Superseded，并使用新版本替代？`
+        : `确认发布文档 v${version.version_no}？发布后会成为当前检索版本。`;
+    if (!window.confirm(warning)) return;
+    setVersionAdminBusy(`${action}:${versionId}`);
+    setVersionAdminNotice('');
+    try {
+      if (action === 'publish') await publishKnowledgeDocumentVersion(selectedDocument.document_id, versionId);
+      if (action === 'supersede') await supersedeKnowledgeDocumentVersion(selectedDocument.document_id, versionId, replacementVersionId || '');
+      if (action === 'rollback') await rollbackKnowledgeDocumentVersion(selectedDocument.document_id, versionId);
+      setVersionAdminNotice(`${label}操作已完成，版本历史已刷新。`);
+      setVersionCompareResult(null);
+      await refreshSelectedDocument();
+      void fetchStatsAndDocs();
+    } catch (err: any) {
+      setVersionAdminNotice(err?.message || `${label}操作失败`);
+    } finally {
+      setVersionAdminBusy(null);
+    }
+  };
+
+  const versionManagementPanel = selectedDocument?.document_id && (selectedDocument.source_version_history?.length || 0) > 0 ? (() => {
+    const history = selectedDocument.source_version_history || [];
+    const latest = history[0];
+    return (
+      <section className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-4 shadow-sm dark:border-indigo-900/60 dark:bg-indigo-950/20">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-semibold text-indigo-900 dark:text-indigo-100">版本管理</div>
+            <div className="mt-1 text-[10px] text-indigo-700/75 dark:text-indigo-200/70">比较只返回哈希、元数据和行数；发布、替代、回滚都会写入生命周期审计。</div>
+          </div>
+          {versionAdminBusy && <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />}
+        </div>
+        <div className="mt-3 space-y-2">
+          {history.map((version) => {
+            const status = version.lifecycle_status || version.status || 'draft';
+            const isLatest = version.id === latest?.id;
+            return (
+              <div key={version.id} className="flex flex-wrap items-center gap-2 rounded-xl bg-white/80 px-3 py-2 text-[10px] dark:bg-slate-900/70">
+                <span className="font-semibold text-slate-800 dark:text-slate-100">v{version.version_no}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">{status}</span>
+                <span className="font-mono text-slate-500">{version.content_hash ? `${version.content_hash.slice(0, 10)}…` : 'hash 未记录'}</span>
+                <div className="ml-auto flex flex-wrap gap-1">
+                  {!isLatest && <button type="button" onClick={() => void compareSelectedVersions(version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-indigo-200 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:text-indigo-300">比较最新</button>}
+                  {status !== 'active' && status !== 'published' && <button type="button" onClick={() => void runVersionAdminAction('publish', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-emerald-200 px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300">发布</button>}
+                  {!isLatest && (latest?.lifecycle_status === 'published' || latest?.status === 'active') && status !== 'superseded' && <button type="button" onClick={() => void runVersionAdminAction('supersede', version.id, latest.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-amber-200 px-2 py-1 font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:text-amber-300">替代</button>}
+                  {!isLatest && status !== 'quarantined' && status !== 'disabled' && <button type="button" onClick={() => void runVersionAdminAction('rollback', version.id)} disabled={Boolean(versionAdminBusy)} className="rounded-lg border border-rose-200 px-2 py-1 font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-50 dark:border-rose-800 dark:text-rose-300">回滚</button>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {versionAdminNotice && <div className="mt-2 rounded-lg bg-white/80 px-3 py-2 text-[10px] text-indigo-800 dark:bg-slate-900/70 dark:text-indigo-200">{versionAdminNotice}</div>}
+        {versionCompareResult && (
+          <div className="mt-3 rounded-xl border border-indigo-200 bg-white/80 p-3 text-[10px] text-slate-700 dark:border-indigo-800 dark:bg-slate-900/70 dark:text-slate-200">
+            <div className="flex items-center justify-between gap-2 font-semibold"><span>v{versionCompareResult.left.version_no} → v{versionCompareResult.right.version_no}</span><button type="button" onClick={() => setVersionCompareResult(null)} className="text-slate-400 hover:text-slate-700" aria-label="关闭版本比较">×</button></div>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4"><span>内容：{versionCompareResult.content_changed ? '已变化' : '未变化'}</span><span>Metadata：{versionCompareResult.metadata_changed ? '已变化' : '未变化'}</span><span>新增行：{versionCompareResult.line_diff.added_lines}</span><span>删除行：{versionCompareResult.line_diff.removed_lines}</span></div>
+            <div className="mt-2 text-slate-500 dark:text-slate-400">变化字段：{versionCompareResult.changed_fields.join('、') || '无'}</div>
+          </div>
+        )}
+      </section>
+    );
+  })() : null;
 
   const documentActionLabels: Record<KnowledgeDocumentAction, string> = {
     delete: '删除',
@@ -1964,6 +2064,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                       </div>
                     </section>
                   </div>
+                  {versionManagementPanel}
                   {selectedDocument.original_content && <details className="rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40"><summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">查看原始正文（按需展开）</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-slate-100 px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:border-slate-800 dark:text-slate-300">{selectedDocument.original_content}</pre></details>}
                   <div className="rounded-2xl border border-dashed border-slate-300 px-5 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">当前文档没有可展示的内容切片。</div>
                 </div>
@@ -1987,21 +2088,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                       </div>
                     </section>
                   </div>
-                  {selectedDocument.source_version_history && selectedDocument.source_version_history.length > 0 && (
-                    <section className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
-                      <div className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-200">版本历史</div>
-                      <div className="space-y-2">
-                        {selectedDocument.source_version_history.map((version) => (
-                          <div key={version.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-slate-50 px-3 py-2 text-[10px] text-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                            <span className="font-semibold">v{version.version_no}</span>
-                            <span>{version.lifecycle_status || version.status || 'draft'}</span>
-                            <span className="font-mono">{version.content_hash ? `${version.content_hash.slice(0, 12)}…` : 'hash 未记录'}</span>
-                            <span>{version.byte_size || 0} bytes</span>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
+                  {versionManagementPanel}
                   {selectedDocument.original_content && (
                     <details className="rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
                       <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-slate-700 dark:text-slate-200">查看原始正文（按需展开）</summary>
