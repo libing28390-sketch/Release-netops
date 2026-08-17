@@ -1,18 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: OBS-005 (PENDING; OBS-004 PASS)
-Last Completed: OBS-004
-Next Task: OBS-005（按原清单依赖继续）
+Current Task: OBS-006 (PENDING; OBS-005 PASS)
+Last Completed: OBS-005
+Next Task: OBS-006（按原清单依赖继续）
 
-Completed: 284 / 359
+Completed: 285 / 359
 P0: 234 / 277
-Last Verified Commit: 34d3004f（OBS-004 PASS；本地提交；未 push）
+Last Verified Commit: 0d465aed（OBS-005 PASS；本地提交；未 push）
 
 Recent Migration: OBS-003 无 migration；PostgreSQL authoritative path 未写生产
-Recent Build: OBS-004 focused backend 5 passed；AI 243 passed；frontend HTTP/SSE 4 passed；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
-Last Security Check: request_id bounded/allowlisted；非法 header 注入拒绝；Trace/Gateway/Provider/SSE 全链路复用同一 ID；raw query/凭据不进入 request_id；PASS
-Recovery Point: OBS-005
+Recent Build: OBS-005 focused 10 passed；AI 245 passed；frontend 21 files/101 tests；Database 188 + 2 skips；Catalog 192；V1 PostgreSQL baseline 10/10；lint/build/compile/diff PASS
+Last Security Check: Provider metrics 仅保存低基数计数/延迟/Token/估算成本/稳定错误码；Prompt、Provider body、凭据和异常正文不落盘；PASS
+Recovery Point: OBS-006
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md
@@ -42,6 +42,7 @@ KUI-001..008 证据：
 - OBS-002 runtime observation：reranker、citation、latency、tokens、provider/model、security result 统一写入 non-stream/SSE Trace，嵌套更新不丢历史阶段；focused 9，AI 237，KUI 回归 6，lint/build/compile/diff 与 V1 PostgreSQL baseline PASS；无 DDL
 - OBS-003 trace/log redaction：Trace 文本、AI Gateway/Assistant 与 root/console/file logger 写入前脱敏，raw query 仅 hash/长度；Database 188+2 skips、Catalog 192、AI 238、focused 10，V1 PostgreSQL 10/10 与 lint/build/compile/diff PASS；无 DDL
 - OBS-004 request ID correlation：前端/API/RAG/Gateway/Provider/SSE 复用 bounded request_id，非法 header fail-closed，Provider 仅通过 X-Request-ID 传输；focused backend 5、AI 243、frontend 4、V1 PostgreSQL 10/10 与 lint/build/compile/diff PASS；无 DDL
+- OBS-005 provider metrics：按 Provider/Model 监控请求、错误率、avg/P95 延迟、Token、估算成本、限流/熔断和 Fallback；focused 10、AI 245、frontend 101 tests、Database 188+2 skips、Catalog 192、V1 PostgreSQL 10/10 与 lint/build/compile/diff PASS；无 DDL
 
 Blocked Tasks: none
 

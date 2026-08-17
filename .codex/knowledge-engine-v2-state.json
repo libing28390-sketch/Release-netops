@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "OBS-005",
+  "current_task": "OBS-006",
   "task_state": "PENDING",
-  "updated_at": "2026-08-17T14:05:00+08:00",
-  "last_completed_task": "OBS-004",
+  "updated_at": "2026-08-17T14:20:00+08:00",
+  "last_completed_task": "OBS-005",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -289,7 +289,8 @@
     "OBS-001",
     "OBS-002",
     "OBS-003",
-    "OBS-004"
+    "OBS-004",
+    "OBS-005"
   ],
   "blocked_tasks": [],
   "blocker_revalidation_count": 2,
@@ -323,7 +324,6 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
-    "OBS-005",
     "OBS-006",
     "OBS-007",
     "OBS-008",
@@ -859,8 +859,15 @@
   "obs004_focused_tests": "request-id focused 5 passed; AI 243 passed; frontend HTTP/SSE 4 passed",
   "obs004_gate_summary": "V1 PostgreSQL 10/10; lint/build/compile/diff PASS; no production DDL",
   "obs004_production_ddl": "NONE",
-  "last_verified_commit": "34d3004f",
-  "completed_count": 284,
+  "obs005_status": "DONE_PASS",
+  "obs005_final_verified_at": "2026-08-17T14:20:00+08:00",
+  "obs005_evidence": "docs/knowledge-engine-v2/evidence/OBS-005.md",
+  "obs005_contract": "docs/knowledge-engine-v2/architecture/OBS-005-PROVIDER-METRICS-CONTRACT.yaml",
+  "obs005_focused_tests": "provider metrics focused 10 passed; AI 245 passed; frontend 21 files/101 tests",
+  "obs005_gate_summary": "Catalog 192 passed; Database 188 passed + 2 documented skips; V1 PostgreSQL 10/10; lint/build/compile/diff PASS",
+  "obs005_production_ddl": "NONE",
+  "last_verified_commit": "0d465aed",
+  "completed_count": 285,
   "p0_completed_count": 234,
   "resume_from": "OBS-005"
 }
