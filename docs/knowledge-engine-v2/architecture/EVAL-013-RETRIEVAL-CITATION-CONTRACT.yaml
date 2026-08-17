@@ -1,0 +1,59 @@
+task_id: EVAL-013
+title: Retrieval, citation, No Match, Ambiguous and version-conflict coverage
+priority: P0
+status: executable
+authority: PostgreSQL
+scope:
+  retrieval:
+    probe: scripts/knowledge_engine_v2_ret_pg_probe.py
+    cases: [fts_candidates, trigram_candidates, vector_ranking, tenant_status_scope, explain_plan, rollback]
+  citation:
+    tests: backend/tests/ai/test_cit_001_010_grounding.py
+    cases: [identity_and_location, grounded_claim_mapping, allowlist_conflict, version_conflict, unpublished_rejection, missing_evidence_refusal, secret_redaction]
+  no_match:
+    pg_baseline: Q07
+    resolver: backend/tests/ai/test_ret_004_007_product_resolution.py::test_normalizer_and_resolver_preserve_unknown_product_as_unknown
+    expected: empty_result_and_explicit_none_metadata
+  ambiguous:
+    pg_baseline: Q05
+    resolver: backend/tests/ai/test_ret_004_007_product_resolution.py::test_canonical_alias_match_is_explicit_and_prefix_is_candidate_only
+    expected: bounded_candidates_and_ambiguous_true
+  version_conflict:
+    pg_baseline: [Q03, Q04]
+    contract: backend/tests/ai/test_ret_011_020_retrieval_contract.py::test_version_compatibility_is_fail_closed_on_conflict_and_explicit_on_match
+    citation: backend/tests/ai/test_cit_001_010_grounding.py::test_cit_003_validator_rejects_allowlist_version_and_published_conflicts
+    expected: conflict_excluded_and_conflict_rate_zero
+database_policy:
+  required_database: PostgreSQL
+  sqlite: forbidden
+  transaction_or_cleanup: required
+  production_write: false
+  external_network: forbidden
+verification:
+  coverage_validator: scripts/knowledge_engine_v2_eval013_retrieval_citation_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval013_retrieval_citation.py
+  pure_contract_tests:
+    - backend/tests/ai/test_ret_001_003_query_normalizer.py
+    - backend/tests/ai/test_ret_004_007_product_resolution.py
+    - backend/tests/ai/test_ret_011_020_retrieval_contract.py
+    - backend/tests/ai/test_cit_001_010_grounding.py
+  commands:
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval013_retrieval_citation_check.py"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe tests/knowledge_engine_v2/test_eval013_retrieval_citation.py -q -p no:cacheprovider"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\pytest.exe -p no:conftest backend/tests/ai/test_ret_001_003_query_normalizer.py backend/tests/ai/test_ret_004_007_product_resolution.py backend/tests/ai/test_ret_011_020_retrieval_contract.py backend/tests/ai/test_cit_001_010_grounding.py -q -p no:cacheprovider"
+    - "$env:DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/netops'; $env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_v1_baseline_pg.py"
+    - "git diff --check"
+required_results:
+  - retrieval_probe: PASS
+  - citation_contract_tests: PASS
+  - no_match: PASS
+  - ambiguous: PASS
+  - version_conflict: PASS
+  - all_persistence_evidence_database: PostgreSQL
+  - sqlite_acceptance_evidence: false
+  - rollback_or_cleanup: true
+  - v1_baseline: unchanged
+rollback:
+  application: keep retrieval and citation changes behind existing V2 gates
+  database: RET and V1 probes use transaction rollback and temporary fixtures
+  data_loss: forbidden

@@ -1,0 +1,273 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-013",
+  "database": "postgresql",
+  "sqlite": "not_used",
+  "coverage": {
+    "retrieval": true,
+    "citation": true,
+    "no_match": true,
+    "ambiguous": true,
+    "version_conflict": true
+  },
+  "persistent_probes": [
+    "scripts/knowledge_engine_v2_ret_pg_probe.py",
+    "scripts/knowledge_engine_v2_v1_baseline_pg.py"
+  ],
+  "pure_contract_tests": [
+    "backend/tests/ai/test_ret_001_003_query_normalizer.py",
+    "backend/tests/ai/test_ret_004_007_product_resolution.py",
+    "backend/tests/ai/test_ret_011_020_retrieval_contract.py",
+    "backend/tests/ai/test_cit_001_010_grounding.py"
+  ],
+  "production_write": false,
+  "source_sha256": {
+    "contract": "245f2fd7bf5c66904dc26747c1a988c739457086fde2e650ec94a26f2331a3b0",
+    "ret_probe": "08852073309bc3186668ac3400118504bcbd5c025ea4d67afad66d201c7164c3",
+    "v1_probe": "2bf33bdf46da4bfcd54a4d60f2f00be8777880ab9ddc92f75be1ac8b14f3453b"
+  },
+  "probe_results": {
+    "status": "PASS",
+    "task_id": "EVAL-013",
+    "database": "postgresql",
+    "sqlite": "not_used",
+    "retrieval_probe": {
+      "database": "PostgreSQL",
+      "explain": {
+        "captured": true,
+        "node_types": [
+          "Bitmap Heap Scan",
+          "Bitmap Index Scan"
+        ]
+      },
+      "extensions": {
+        "pg_trgm": "1.6",
+        "vector": "0.8.6"
+      },
+      "migration": {
+        "idempotent_columns": true,
+        "required_chunk_columns": [
+          "embedding_vector",
+          "retrieval_index_version",
+          "search_text"
+        ],
+        "required_chunk_indexes": [
+          "ix_ai_chunk_embedding_vector_hnsw",
+          "ix_ai_chunk_search_fts",
+          "ix_ai_chunk_search_trgm"
+        ],
+        "required_document_columns": [
+          "fts_text",
+          "retrieval_index_version"
+        ],
+        "version": 138
+      },
+      "retrieval": {
+        "fts_candidates": 2,
+        "tenant_status_scoped_ids": [
+          "__ret_pg_probe_chunk_t1"
+        ],
+        "trgm_candidates": 2,
+        "trgm_threshold": 0.2,
+        "vector_candidates": 2,
+        "vector_top_id": "__ret_pg_probe_chunk_t1"
+      },
+      "rollback": "PASS",
+      "server": "PostgreSQL 18.4 on x86_64-windows, compiled by msvc-19.44.35227, 64-bit",
+      "status": "PASS"
+    },
+    "v1_baseline": {
+      "baseline_id": "nexora-kb-v1-20260809",
+      "system_under_test": "current-local-rag-retrieval-path",
+      "database": "PostgreSQL",
+      "case_count": 10,
+      "metrics": {
+        "retrieval_accuracy": 1.0,
+        "wrong_vendor_rate": 0.0,
+        "version_conflict_rate": 0.0,
+        "citation_accuracy": 1.0,
+        "latency_ms": {
+          "average": 3.6755,
+          "p50": 2.9539,
+          "p95": 7.4142,
+          "max": 9.2499
+        }
+      },
+      "cases": [
+        {
+          "id": "Q01",
+          "query": "S5735-L-V2 V600 ARP",
+          "expected_ids": [
+            "arp-v600"
+          ],
+          "returned_ids": [
+            "arp-v600"
+          ],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 9.2499
+        },
+        {
+          "id": "Q02",
+          "query": "S5735-L-V2 V600 VLAN config",
+          "expected_ids": [
+            "vlan-v600"
+          ],
+          "returned_ids": [
+            "vlan-v600"
+          ],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 3.271
+        },
+        {
+          "id": "Q03",
+          "query": "Huawei V300 OSPF output",
+          "expected_ids": [
+            "ospf-v300"
+          ],
+          "returned_ids": [
+            "ospf-v300"
+          ],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 2.4456
+        },
+        {
+          "id": "Q04",
+          "query": "Huawei V600 OSPF output",
+          "expected_ids": [
+            "ospf-v600"
+          ],
+          "returned_ids": [
+            "ospf-v600"
+          ],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 2.6592
+        },
+        {
+          "id": "Q05",
+          "query": "display ospf peer meaning",
+          "expected_ids": [
+            "ospf-v300",
+            "ospf-v600"
+          ],
+          "returned_ids": [
+            "ospf-v300",
+            "ospf-v600"
+          ],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 5.1706
+        },
+        {
+          "id": "Q06",
+          "query": "CloudEngine 6800 hardware",
+          "expected_ids": [
+            "hw-ce-series",
+            "hw-ce-model"
+          ],
+          "returned_ids": [
+            "hw-ce-series",
+            "hw-ce-model"
+          ],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 3.2486
+        },
+        {
+          "id": "Q07",
+          "query": "CloudEngine 6800 OSPF config",
+          "expected_ids": [],
+          "returned_ids": [],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 1.733
+        },
+        {
+          "id": "Q08",
+          "query": "Cisco ARP",
+          "expected_ids": [
+            "cisco-arp"
+          ],
+          "returned_ids": [
+            "cisco-arp"
+          ],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 2.4625
+        },
+        {
+          "id": "Q09",
+          "query": "H3C OSPF command",
+          "expected_ids": [
+            "h3c-ospf"
+          ],
+          "returned_ids": [
+            "h3c-ospf"
+          ],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 2.3908
+        },
+        {
+          "id": "Q10",
+          "query": "S5735-L-V2 V600 ARP no vendor",
+          "expected_ids": [
+            "arp-v600"
+          ],
+          "returned_ids": [
+            "arp-v600"
+          ],
+          "retrieval_correct": true,
+          "citation_precision": 1.0,
+          "vendor_mismatch": false,
+          "version_conflict": false,
+          "latency_ms": 4.1239
+        }
+      ],
+      "external_network_call": false,
+      "production_database_write": false,
+      "rollback": "transaction_rollback"
+    },
+    "no_match": {
+      "case": "Q07",
+      "status": "PASS"
+    },
+    "ambiguous": {
+      "case": "Q05",
+      "candidate_count": 2,
+      "status": "PASS"
+    },
+    "version_conflict": {
+      "cases": [
+        "Q03",
+        "Q04"
+      ],
+      "rate": 0.0,
+      "status": "PASS"
+    },
+    "production_write": false,
+    "rollback_or_cleanup": true
+  },
+  "rollback_or_cleanup": true
+}
