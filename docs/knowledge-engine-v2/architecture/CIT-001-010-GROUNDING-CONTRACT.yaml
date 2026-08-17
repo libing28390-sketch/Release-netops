@@ -1,0 +1,23 @@
+contract: CIT-001-010
+version: 1
+authority: local_knowledge_only
+database_authority: postgresql
+contract_fields:
+  citation: [citation_id, vendor, product, os_family, software_version, document, document_id, document_version, url, section, chunk_id, source_type, status, trust, validation, updated_at]
+  answer: [contract_version, intent, grounded, no_match, sections, answer_marks, citation_ids, conclusion_citations, fact_mode]
+validation:
+  official_source: published_status_and_allowlisted_https_host_required
+  version: requested_release_must_match_document_release_or_applicable_versions
+  lifecycle: disabled_quarantined_deleted_archived_are_not_usable
+  urls: http_https_only; query_and_secret_material_removed
+answer_policy:
+  no_match: deterministic_refusal_and_supplemental_context_prompt
+  marks: fact_inference_recommendation_command
+  troubleshooting_sections: [judgement, facts, gaps, assumptions, next_steps, risk, remediation, verification]
+frontend:
+  source_card: clickable_url_and_section_location
+  badges: [source_type, product, os_family, software_version, updated_at]
+  warnings: [incomplete, version_conflict, stale, invalid_lifecycle, invalid_url]
+evaluation:
+  unit: backend/tests/ai/test_cit_001_010_grounding.py
+  manual_accuracy: per_conclusion_citation_id_and_applicability_review

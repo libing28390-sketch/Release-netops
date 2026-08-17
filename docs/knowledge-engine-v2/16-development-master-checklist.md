@@ -292,16 +292,16 @@
 
 ## 10. Grounding、引用与回答合同
 
-- [ ] `CIT-001` `P0/AI+BE/M`：定义 Citation 数据合同：vendor、product、OS、software version、document、version、URL、section、chunk。
-- [ ] `CIT-002` `P0/AI+BE/M`：实现关键结论与引用的映射，不只返回来源数量。
-- [ ] `CIT-003` `P0/AI/M`：实现 Citation Validator，校验 allowlist、版本、Published 状态和 URL。
-- [ ] `CIT-004` `P0/AI/M`：实现无足够证据时的标准拒答和补充信息提示。
-- [ ] `CIT-005` `P0/AI+NET/M`：定义事实、推断、建议、命令四种回答标记。
-- [ ] `CIT-006` `P0/AI+NET/M`：定义网络故障回答结构：判断、事实、缺口、假设、下一步、风险、修复、验证。
-- [ ] `CIT-007` `P1/FE/M`：实现可点击来源卡片和文档章节定位。
-- [ ] `CIT-008` `P1/FE/M`：展示来源类型、适用型号、OS、版本和更新时间。
-- [ ] `CIT-009` `P1/FE/M`：在引用不完整、版本冲突和知识过期时显示明确警告。
-- [ ] `CIT-010` `P1/QA+NET/L`：建立逐结论引用准确率人工评测。
+- [x] `CIT-001` `P0/AI+BE/M`：定义 Citation 数据合同：vendor、product、OS、software version、document、version、URL、section、chunk。
+- [x] `CIT-002` `P0/AI+BE/M`：实现关键结论与引用的映射，不只返回来源数量。
+- [x] `CIT-003` `P0/AI/M`：实现 Citation Validator，校验 allowlist、版本、Published 状态和 URL。
+- [x] `CIT-004` `P0/AI/M`：实现无足够证据时的标准拒答和补充信息提示。
+- [x] `CIT-005` `P0/AI+NET/M`：定义事实、推断、建议、命令四种回答标记。
+- [x] `CIT-006` `P0/AI+NET/M`：定义网络故障回答结构：判断、事实、缺口、假设、下一步、风险、修复、验证。
+- [x] `CIT-007` `P1/FE/M`：实现可点击来源卡片和文档章节定位。
+- [x] `CIT-008` `P1/FE/M`：展示来源类型、适用型号、OS、版本和更新时间。
+- [x] `CIT-009` `P1/FE/M`：在引用不完整、版本冲突和知识过期时显示明确警告。
+- [x] `CIT-010` `P1/QA+NET/L`：建立逐结论引用准确率人工评测。
 
 **退出标准**：工程师能从每个关键结论回到正确官方文档和适用版本。
 

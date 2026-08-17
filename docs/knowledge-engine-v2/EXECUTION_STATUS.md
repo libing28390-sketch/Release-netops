@@ -1,16 +1,18 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: CIT-001 (PENDING; RET-001..022 PASS)
-Last Completed: RET-022
-Next Task: CIT-001 Citation 数据合同
+Current Task: LLM-001 (PENDING; RET-001..022 and CIT-001..010 PASS)
+Last Completed: CIT-010
+Next Task: LLM-001 多 Provider Instance 架构确认
 
-Completed: 143 / 359
-P0: 128 / 277
+Completed: 153 / 359
+P0: 134 / 277
 
 Blocked Tasks: none
 
 Recent Tests:
+- CIT-001..010 grounding/citation contract: 17 backend tests passed; deterministic refusal, per-conclusion mapping, allowlist/version/lifecycle/URL validation, stale warning and secret redaction verified
+- CIT frontend source cards: `npm.cmd run lint` PASS; `npm.cmd run build` PASS (existing large-chunk warning only)
 - RET-022 PostgreSQL benchmark: PASS; 10k/100k/1m temporary fixtures, FTS/trigram/vector p50/p95, tenant leak=0, HNSW Top-K=10, rollback PASS; 1m trigram capacity warning recorded
 - RET-011..021 focused contract/RAG tests: 18 passed; version conflict, fused score, reranker timeout, parent/neighbor budget, cache key and explanation redaction verified
 - RET-021 frontend/admin surface: `npm.cmd run lint` PASS; `npm.cmd run build` PASS (existing large-chunk warning only)
@@ -113,6 +115,7 @@ Recent Migration:
 - ING-011: no migration or production DDL; DB-006/007/009 durable scope remains gated
 
 Recent Build:
+- CIT-007/008: `npm.cmd run lint` PASS; `npm.cmd run build` PASS (existing large-chunk warning only)
 - CHK-P0-12: `npm.cmd run lint` PASS; `npm.cmd run build` PASS (existing large-chunk warning only)
 - ING-019: `npm.cmd run lint` PASS; `npm.cmd run build` PASS (3658 modules; existing large-chunk warning only)
 - ING-018: `npm run lint` PASS; `npm run build` PASS (3658 modules; existing large-chunk warning only)
@@ -137,6 +140,7 @@ Last Security Check:
 - ING-011 production resolver secret-literal scan PASS; no raw body, URL, credential or exception text emitted
 
 - Resume Point:
+- CIT-001..010 Evidence PASS; continue from LLM-001 multi-provider adapter registry
 - CHK-P0-12 Evidence PASS: CHK-001..CHK-012 and the M1 gate are complete; continue from M2 RET-001.
 - ING-019 Evidence PASS: official source-change detection is durable, tenant/RBAC protected, redacted and release-gated; continue from ING-020.
 - ING-018 Evidence PASS: conditional freshness refresh and append-only observations are tenant-scoped, hash-only and release-gated; continue from ING-019.

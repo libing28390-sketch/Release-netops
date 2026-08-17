@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, SlidersHorizontal, Check, Clock3, ChevronDown, ChevronUp, ListChecks, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, SlidersHorizontal, Check, Clock3, ChevronDown, ChevronUp, ListChecks, Loader2, CheckCircle2, AlertCircle, ExternalLink, AlertTriangle } from 'lucide-react';
 import {
   AIConversationMessage,
   AssistantProcessStep,
@@ -26,8 +26,24 @@ import { CopilotInspectorDrawer } from './CopilotInspectorDrawer';
 import { formatCopilotDuration, upsertCopilotProcessStep } from './progress';
 
 interface CitationSource {
+  citation_id?: string;
   document: string;
-  section: string;
+  document_id?: string;
+  section?: string;
+  vendor?: string;
+  product?: string;
+  os_family?: string;
+  software_version?: string;
+  document_version?: string;
+  url?: string;
+  chunk_id?: string;
+  source_type?: string;
+  status?: string;
+  trust?: string;
+  validation?: string;
+  updated_at?: string;
+  claim_ids?: string[];
+  warnings?: string[];
 }
 
 interface ChatMessage {
@@ -61,8 +77,24 @@ const mapConversationMessage = (message: AIConversationMessage): ChatMessage => 
   created_at: message.created_at,
   sources: Array.isArray(message.citations)
     ? message.citations.map((item: any) => ({
+      citation_id: String(item?.citation_id || ''),
       document: String(item?.document || item?.document_name || 'Nexora'),
-      section: String(item?.section || ''),
+      document_id: item?.document_id ? String(item.document_id) : undefined,
+      section: item?.section ? String(item.section) : undefined,
+      vendor: item?.vendor ? String(item.vendor) : undefined,
+      product: item?.product ? String(item.product) : undefined,
+      os_family: item?.os_family ? String(item.os_family) : undefined,
+      software_version: item?.software_version ? String(item.software_version) : undefined,
+      document_version: item?.document_version ? String(item.document_version) : undefined,
+      url: item?.url ? String(item.url) : undefined,
+      chunk_id: item?.chunk_id ? String(item.chunk_id) : undefined,
+      source_type: item?.source_type ? String(item.source_type) : undefined,
+      status: item?.status ? String(item.status) : undefined,
+      trust: item?.trust ? String(item.trust) : undefined,
+      validation: item?.validation ? String(item.validation) : undefined,
+      updated_at: item?.updated_at ? String(item.updated_at) : undefined,
+      claim_ids: Array.isArray(item?.claim_ids) ? item.claim_ids.map(String) : undefined,
+      warnings: Array.isArray(item?.warnings) ? item.warnings.map(String) : undefined,
     }))
     : undefined,
 });
@@ -724,7 +756,7 @@ export const AssistantTab: React.FC = () => {
                     {/* Source References Pill & Popover (Tier 2) */}
                     {m.sources && m.sources.length > 0 && (() => {
                       const sourceList = m.sources as CitationSource[];
-                      const uniqueSources = Array.from(new Map(sourceList.map((s) => [s.document + s.section, s])).values());
+                      const uniqueSources = Array.from(new Map(sourceList.map((s) => [s.citation_id || s.document + (s.section || ''), s])).values());
                       const isExpanded = expandedSourcesId === m.id;
                       return (
                         <div className="pt-1 select-none">
@@ -744,9 +776,25 @@ export const AssistantTab: React.FC = () => {
                                 <span className="text-[10px] text-gray-400 font-normal">点击任意条目可查全篇</span>
                               </div>
                               {uniqueSources.map((src, sIdx) => (
-                                <div key={sIdx} className="flex items-center justify-between p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300">
-                                  <span className="font-medium truncate">{src.document}</span>
-                                  <span className="text-[11px] text-gray-400 font-mono flex-shrink-0 ml-2">{src.section}</span>
+                                <div key={src.citation_id || sIdx} className="rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300 space-y-1.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    {src.url ? (
+                                      <a href={src.url} target="_blank" rel="noreferrer" className="font-medium truncate text-indigo-700 dark:text-indigo-300 hover:underline inline-flex items-center gap-1">
+                                        <span className="truncate">{src.document}</span><ExternalLink className="w-3 h-3 shrink-0" />
+                                      </a>
+                                    ) : <span className="font-medium truncate">{src.document}</span>}
+                                    <span className="text-[11px] text-gray-400 font-mono flex-shrink-0 ml-2">{src.section || '未标注章节'}</span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1 text-[10px] text-gray-500">
+                                    {src.source_type && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">{src.source_type}</span>}
+                                    {src.product && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">{src.product}</span>}
+                                    {src.os_family && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">{src.os_family}</span>}
+                                    {src.software_version && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">{src.software_version}</span>}
+                                    {src.updated_at && <span className="rounded bg-white dark:bg-gray-900 px-1.5 py-0.5">更新 {src.updated_at}</span>}
+                                  </div>
+                                  {src.warnings && src.warnings.length > 0 && (
+                                    <div className="flex items-start gap-1 text-[10px] text-amber-600 dark:text-amber-300"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />{src.warnings.join('、')}</div>
+                                  )}
                                 </div>
                               ))}
                             </div>

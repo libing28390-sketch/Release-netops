@@ -18,6 +18,11 @@ from ai.services.mac_troubleshooting import mac_troubleshooting_service
 from ai.services.rag_retriever import rag_retriever, RetrievalRequest
 from ai.services.product_resolver import product_resolver, EntityResolution
 from ai.services.retrieval_contract import build_retrieval_explanation
+from ai.services.citation_service import (
+    answer_contract,
+    build_grounded_citations,
+    refusal_for_missing_evidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +208,7 @@ class AIAssistantService:
                 "未使用 CLI 输出替代故障排查文档。"
             )
         return (
-            "当前知识库没有与请求条件完全匹配的文档。\n\n"
+            refusal_for_missing_evidence(intent="knowledge") + "\n\n"
             f"精确检索条件：{criteria_text}\n"
             f"精确命中：{match_count} 份"
         )
@@ -460,6 +465,8 @@ class AIAssistantService:
                 "platform_candidates": resolution_data.get("platform_candidates") or [],
                 "evidence": resolution_data.get("evidence") or "none",
             },
+            "citations": knowledge_result.get("citations") or [],
+            "explanation": knowledge_result.get("explanation") or {},
         }
 
     async def chat(
@@ -492,6 +499,11 @@ class AIAssistantService:
                 "intent": intent,
                 "facts_retrieved": bool(report.get("matched_count", 0) or report.get("analysis")),
                 "citations": report.get("citations", []),
+                "answer_contract": answer_contract(
+                    intent=intent,
+                    citations=report.get("citations", []) or [],
+                    grounded=bool(report.get("matched_count", 0) or report.get("analysis")),
+                ),
                 "request_id": None,
             }
         if intent == "device_search":
@@ -547,7 +559,14 @@ class AIAssistantService:
                 }
                 for c in rag_chunks
             ]
-            citations = [{"document": c["document_name"], "document_id": c.get("document_id"), "section": c["section"], "trust": c.get("source_trust_level", "untrusted")} for c in rag_chunks]
+            citations, citation_warnings = build_grounded_citations(
+                rag_chunks,
+                request=knowledge_result.get("request") if intent == "knowledge" else None,
+            )
+            context_facts["citation_warnings"] = citation_warnings
+            if knowledge_trace is not None:
+                knowledge_trace["citations"] = citations
+                knowledge_trace["citation_warnings"] = citation_warnings
 
         if intent == "knowledge" and not rag_chunks:
             return {
@@ -555,6 +574,7 @@ class AIAssistantService:
                 "intent": intent,
                 "facts_retrieved": False,
                 "citations": [],
+                "answer_contract": answer_contract(intent=intent, citations=[], grounded=False, no_match=True),
                 "retrieval": knowledge_trace,
                 "request_id": None,
             }
@@ -571,6 +591,7 @@ class AIAssistantService:
                 "intent": intent,
                 "facts_retrieved": True,
                 "citations": citations,
+                "answer_contract": answer_contract(intent=intent, citations=citations, grounded=True),
                 "retrieval": knowledge_trace,
                 "request_id": None,
             }
@@ -610,6 +631,7 @@ class AIAssistantService:
             "intent": intent,
             "facts_retrieved": bool(context_facts),
             "citations": citations,
+            "answer_contract": answer_contract(intent=intent, citations=citations, grounded=bool(citations or context_facts), no_match=bool(intent == "knowledge" and not citations)),
             "retrieval": knowledge_trace,
             "request_id": res.get("request_id")
         }
@@ -748,7 +770,14 @@ class AIAssistantService:
                     }
                     for c in rag_chunks
                 ]
-                citations = [{"document": c["document_name"], "document_id": c.get("document_id"), "section": c["section"], "trust": c.get("source_trust_level", "untrusted")} for c in rag_chunks]
+                citations, citation_warnings = build_grounded_citations(
+                    rag_chunks,
+                    request=knowledge_result.get("request") if intent == "knowledge" else None,
+                )
+                context_facts["citation_warnings"] = citation_warnings
+                if knowledge_trace is not None:
+                    knowledge_trace["citations"] = citations
+                    knowledge_trace["citation_warnings"] = citation_warnings
             yield _progress_event(
                 active_step[0],
                 active_step[1],
@@ -761,6 +790,7 @@ class AIAssistantService:
                     "intent": intent,
                     "facts_retrieved": False,
                     "citations": [],
+                    "answer_contract": answer_contract(intent=intent, citations=[], grounded=False, no_match=True),
                     "retrieval": knowledge_trace,
                 }
                 yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
@@ -784,7 +814,13 @@ class AIAssistantService:
             return
 
         # Send SSE metadata
-        meta = {"intent": intent, "facts_retrieved": bool(context_facts), "citations": citations}
+        contract = answer_contract(
+            intent=intent,
+            citations=citations,
+            grounded=bool(citations or context_facts),
+            no_match=bool(intent == "knowledge" and not citations),
+        )
+        meta = {"intent": intent, "facts_retrieved": bool(context_facts), "citations": citations, "answer_contract": contract}
         if intent == "knowledge":
             meta["retrieval"] = knowledge_trace
         yield f"event: meta\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
