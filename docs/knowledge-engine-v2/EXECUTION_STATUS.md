@@ -7,6 +7,12 @@ Next Task: KUI-001（按原清单依赖继续）
 
 Completed: 253 / 359
 P0: 208 / 277
+Last Verified Commit: 6698156c
+
+Recent Migration: m0142/m0143/m0144 applied on PostgreSQL 18.4; rollback/tenant and JSONB contract probe PASS
+Recent Build: frontend lint/build PASS; Python compile PASS
+Last Security Check: metadata-only audit, tenant isolation, secret redaction and adapter bypass audit PASS
+Recovery Point: KUI-001
 
 Blocked Tasks: none
 
