@@ -384,6 +384,11 @@ async def test_provider_connection(provider_id: str, user=Depends(require_ai_per
             user_id=str(user.get("username") or "provider-test"),
             tenant_id=str(user.get("tenant_id") or "tenant-default"),
             max_tokens=16,
+            # The probe is a fixed, business-data-free public message.  Mark
+            # it explicitly so a Provider limited to PUBLIC does not get
+            # rejected merely because the generic classifier maps text with
+            # no findings to L1_GENERAL/INTERNAL.
+            data_classification="PUBLIC",
         )
         with get_db_connection() as conn:
             now_success = datetime.now(timezone.utc).isoformat()

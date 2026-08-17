@@ -27,6 +27,7 @@ const provider = {
   timeout: 30,
   max_retries: 2,
   enabled: true,
+  allowed_data_classification: 'PUBLIC',
   health_status: 'healthy',
   created_at: '2026-08-17T00:00:00Z',
   updated_at: '2026-08-17T00:00:00Z',
@@ -63,8 +64,9 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
     await user.type(screen.getByLabelText('Provider 名称'), '备用 OpenAI');
     await user.type(screen.getByLabelText('API Key'), 'sk-test-only');
+    await user.selectOptions(screen.getByLabelText('允许数据分类'), 'INTERNAL');
     await user.click(screen.getByRole('button', { name: '确认添加' }));
-    await waitFor(() => expect(createProvider).toHaveBeenCalledWith(expect.objectContaining({ name: '备用 OpenAI', api_key: 'sk-test-only' })));
+    await waitFor(() => expect(createProvider).toHaveBeenCalledWith(expect.objectContaining({ name: '备用 OpenAI', api_key: 'sk-test-only', allowed_data_classification: 'INTERNAL' })));
   });
 
   it('shows the empty state and a recoverable request error', async () => {
@@ -80,5 +82,20 @@ describe('ProviderManagementTab browser key paths', () => {
     render(<ProviderManagementTab />);
     expect(await screen.findByText('Provider 服务暂不可用')).toBeTruthy();
     expect(screen.getByRole('button', { name: '重试' })).toBeTruthy();
+  });
+
+  it('explains a Provider classification boundary error', async () => {
+    testProvider.mockResolvedValueOnce({
+      success: false,
+      message: 'provider connection test blocked or failed',
+      error_code: 'AI_SECURITY_CLASSIFICATION_DENIED',
+      latency_ms: 8,
+    } as any);
+    const user = userEvent.setup();
+    render(<ProviderManagementTab />);
+
+    await screen.findByText('DeepSeek 主供应商');
+    await user.click(screen.getByRole('button', { name: '测试连通性' }));
+    expect(await screen.findByText(/允许的数据分类级别不足/)).toBeTruthy();
   });
 });

@@ -449,6 +449,7 @@ class LLMGateway:
         department: Optional[str] = None,
         document_scope: Optional[str] = None,
         request_id: Optional[str] = None,
+        data_classification: Optional[str] = None,
     ) -> Dict[str, Any]:
         request_id = self._generate_request_id(request_id)
         start_time = time.perf_counter()
@@ -541,6 +542,7 @@ class LLMGateway:
                 provider_type=target_info.get("provider_type") or "deepseek",
                 provider_id=target_info.get("provider_id"),
                 model_id=target_info.get("id"),
+                data_classification=data_classification,
                 data_region=target_info.get("data_region"),
                 provider_allowed_classification=target_info.get("allowed_data_classification"),
                 workspace_id=workspace_id,
@@ -562,7 +564,7 @@ class LLMGateway:
                 output_tokens=0,
                 latency_ms=int((time.perf_counter() - start_time) * 1000),
                 status="blocked",
-                error_code="AI_SECURITY_BLOCKED",
+                error_code=getattr(exc, "reason_code", "AI_SECURITY_BLOCKED"),
                 error_message="policy_block",
             )
             self._log_security_audit(
@@ -576,9 +578,12 @@ class LLMGateway:
                 max_data_level=(f"L{max(int(item.level) for item in exc.findings)}" if exc.findings else None),
                 finding_categories=[item.category for item in exc.findings],
                 status="blocked",
-                error_code="AI_SECURITY_BLOCKED",
+                error_code=getattr(exc, "reason_code", "AI_SECURITY_BLOCKED"),
             )
-            blocked = AISecurityBlockedException("AI request blocked by security policy")
+            blocked = AISecurityBlockedException(
+                "AI request blocked by security policy",
+                code=getattr(exc, "reason_code", "AI_SECURITY_BLOCKED"),
+            )
             blocked.request_id = request_id
             raise blocked from exc
 
@@ -800,6 +805,7 @@ class LLMGateway:
         department: Optional[str] = None,
         document_scope: Optional[str] = None,
         request_id: Optional[str] = None,
+        data_classification: Optional[str] = None,
     ):
         request_id = self._generate_request_id(request_id)
         start_time = time.perf_counter()
@@ -877,6 +883,7 @@ class LLMGateway:
                 provider_type=model_info.get("provider_type") or "deepseek",
                 provider_id=model_info.get("provider_id"),
                 model_id=model_info.get("id"),
+                data_classification=data_classification,
                 data_region=model_info.get("data_region"),
                 provider_allowed_classification=model_info.get("allowed_data_classification"),
                 workspace_id=workspace_id,
@@ -886,10 +893,13 @@ class LLMGateway:
                 user_role=(roles or [None])[0],
             )
         except SecurityBlocked as exc:
-            blocked = AISecurityBlockedException("AI request blocked by security policy")
+            blocked = AISecurityBlockedException(
+                "AI request blocked by security policy",
+                code=getattr(exc, "reason_code", "AI_SECURITY_BLOCKED"),
+            )
             blocked.request_id = request_id
             if route_meta is not None:
-                route_meta.update({"status": "blocked", "security_result": "blocked", "security": {"decision": "block", "result_code": "AI_SECURITY_BLOCKED"}, "latency_ms": int((time.perf_counter() - start_time) * 1000), "input_tokens": 0, "output_tokens": 0})
+                route_meta.update({"status": "blocked", "security_result": "blocked", "security": {"decision": "block", "result_code": getattr(exc, "reason_code", "AI_SECURITY_BLOCKED")}, "latency_ms": int((time.perf_counter() - start_time) * 1000), "input_tokens": 0, "output_tokens": 0})
             self._log_request(
                 request_id=request_id,
                 user_id=opaque_user_id(user_id, tenant_id=tenant, task_id=task),
@@ -902,7 +912,7 @@ class LLMGateway:
                 output_tokens=0,
                 latency_ms=int((time.perf_counter() - start_time) * 1000),
                 status="blocked",
-                error_code="AI_SECURITY_BLOCKED",
+                error_code=getattr(exc, "reason_code", "AI_SECURITY_BLOCKED"),
                 error_message="policy_block",
             )
             self._log_security_audit(
@@ -916,7 +926,7 @@ class LLMGateway:
                 max_data_level=(f"L{max(int(item.level) for item in exc.findings)}" if exc.findings else None),
                 finding_categories=[item.category for item in exc.findings],
                 status="blocked",
-                error_code="AI_SECURITY_BLOCKED",
+                error_code=getattr(exc, "reason_code", "AI_SECURITY_BLOCKED"),
             )
             raise blocked from exc
 

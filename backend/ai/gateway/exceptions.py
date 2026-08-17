@@ -95,5 +95,14 @@ class AIBudgetExceededException(AIException):
 class AISecurityBlockedException(AIException):
     """External AI egress was refused by the fail-closed security gateway."""
 
-    def __init__(self, message: str = "AI request blocked by security policy", request_id: Optional[str] = None):
-        super().__init__("AI_SECURITY_BLOCKED", message, request_id, status.HTTP_403_FORBIDDEN)
+    def __init__(
+        self,
+        message: str = "AI request blocked by security policy",
+        request_id: Optional[str] = None,
+        *,
+        code: str = "AI_SECURITY_BLOCKED",
+    ):
+        # Keep the generic code as the compatibility default, while allowing
+        # the gateway to preserve a stable, more actionable policy reason when
+        # a request is blocked after provider/model resolution.
+        super().__init__(code, message, request_id, status.HTTP_403_FORBIDDEN)

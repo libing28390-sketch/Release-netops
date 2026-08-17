@@ -1116,5 +1116,7 @@
   "eval017_browser_paths": "/ai/providers, /ai/models, /ai/copilot, /ai/knowledge, /ai/security; narrow viewport bodyScrollWidth==innerWidth",
   "eval017_browser_recheck_at": "2026-08-17T21:15:00+08:00",
   "eval017_browser_recheck": "PASS; all five authenticated routes rendered after lazy-load wait; browser error/warn logs 0; Copilot narrow CSS viewport 433px with no horizontal overflow; read-only, no external Provider call or production write",
+  "eval017_provider_fix_status": "PASS_TESTED; fixed public probe classification, preserved specific security reason codes, and added Provider data-classification UI",
+  "eval017_provider_fix_evidence": "docs/walkthrough/20260817_provider_security_classification_fix.md",
   "eval017_production_ddl": "NONE"
 }

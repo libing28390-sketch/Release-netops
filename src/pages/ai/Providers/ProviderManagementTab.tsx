@@ -76,6 +76,18 @@ const getTestDescription = (result: ProviderTestResult, zh: boolean) => {
       : `The security gateway completed the model probe${result.model_tested ? ` · ${result.model_tested}` : ''}. The Provider is responding normally.`;
   }
 
+  if (result.error_code === 'AI_SECURITY_CLASSIFICATION_DENIED') {
+    return zh
+      ? '安全网关拒绝了本次请求：Provider 允许的数据分类级别不足，请在编辑 Provider 中提高允许分类。'
+      : 'The security gateway rejected this request because the Provider data-classification ceiling is too low. Edit the Provider to raise it.';
+  }
+
+  if (result.error_code === 'AI_SECURITY_POLICY_DISABLED') {
+    return zh
+      ? '安全网关当前未启用外部 AI 出口，请先在 AI 安全网关中启用。'
+      : 'The external AI egress is disabled. Enable it in AI Security Gateway first.';
+  }
+
   return zh
     ? '没有收到有效的模型响应，请检查 API Key、Base URL、绑定模型和安全网关策略。'
     : 'No valid model response was received. Check the API key, Base URL, bound model, and gateway policy.';
@@ -99,6 +111,7 @@ export const ProviderManagementTab: React.FC = () => {
   const [apiKey, setApiKey] = useState('');
   const [defaultModelCode, setDefaultModelCode] = useState('deepseek-v4-flash');
   const [timeout, setTimeout] = useState(30);
+  const [allowedDataClassification, setAllowedDataClassification] = useState('PUBLIC');
   const [submitting, setSubmitting] = useState(false);
 
   const fetchProviders = async () => {
@@ -198,6 +211,7 @@ export const ProviderManagementTab: React.FC = () => {
     setApiKey('');
     setDefaultModelCode('');
     setTimeout(provider.timeout || 30);
+    setAllowedDataClassification(provider.allowed_data_classification || 'PUBLIC');
     setShowModal(true);
   };
 
@@ -206,9 +220,9 @@ export const ProviderManagementTab: React.FC = () => {
     setSubmitting(true);
     try {
       if (editingId) {
-        await updateAIProvider(editingId, { name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, timeout });
+        await updateAIProvider(editingId, { name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, timeout, allowed_data_classification: allowedDataClassification });
       } else {
-        await createAIProvider({ name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, default_model_code: defaultModelCode || undefined, timeout, enabled: true });
+        await createAIProvider({ name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, default_model_code: defaultModelCode || undefined, timeout, enabled: true, allowed_data_classification: allowedDataClassification });
       }
       setShowModal(false);
       setEditingId(null);
@@ -217,6 +231,7 @@ export const ProviderManagementTab: React.FC = () => {
       setBaseUrl('https://api.deepseek.com');
       setDefaultModelCode('deepseek-v4-flash');
       setTimeout(30);
+      setAllowedDataClassification('PUBLIC');
       await fetchProviders();
       showToast(zh ? (editingId ? 'Provider 已更新' : 'Provider 已添加') : (editingId ? 'Provider updated' : 'Provider added'), 'success');
     } catch (err: unknown) {
@@ -274,7 +289,7 @@ export const ProviderManagementTab: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => { setEditingId(null); setShowModal(true); }}
+              onClick={() => { setEditingId(null); setAllowedDataClassification('PUBLIC'); setShowModal(true); }}
               className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-950"
             >
               <Plus className="h-4 w-4" />
@@ -371,7 +386,7 @@ export const ProviderManagementTab: React.FC = () => {
           <p className="relative mx-auto mt-1.5 max-w-md text-sm leading-6 text-slate-500 dark:text-slate-400">
             {zh ? '可添加多个供应商实例，并在模型管理与 Copilot 中自由切换。' : 'Add multiple provider instances and switch models from Model Management or Copilot.'}
           </p>
-          <button type="button" onClick={() => { setEditingId(null); setShowModal(true); }} className="relative mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
+          <button type="button" onClick={() => { setEditingId(null); setAllowedDataClassification('PUBLIC'); setShowModal(true); }} className="relative mt-5 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">
             <Plus className="h-4 w-4" />
             {zh ? '添加第一个 Provider' : 'Add your first Provider'}
           </button>
@@ -593,6 +608,21 @@ export const ProviderManagementTab: React.FC = () => {
                     <label htmlFor="provider-timeout" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? '超时（秒）' : 'Timeout (sec)'}</label>
                     <input id="provider-timeout" type="number" min={5} max={300} value={timeout} onChange={(e) => setTimeout(Number(e.target.value) || 30)} className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
                   </div>
+                </div>
+
+                <div>
+                  <label htmlFor="provider-allowed-data-classification" className="mb-1.5 block text-xs font-bold text-slate-700 dark:text-slate-300">{zh ? '允许数据分类' : 'Allowed data classification'}</label>
+                  <select
+                    id="provider-allowed-data-classification"
+                    value={allowedDataClassification}
+                    onChange={(e) => setAllowedDataClassification(e.target.value)}
+                    className="w-full rounded-xl border border-indigo-200 bg-indigo-50/70 px-3.5 py-2.5 text-sm font-semibold text-indigo-950 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-100"
+                  >
+                    <option value="PUBLIC">PUBLIC · 公开</option>
+                    <option value="INTERNAL">INTERNAL · 内部</option>
+                    <option value="CONFIDENTIAL">CONFIDENTIAL · 机密</option>
+                  </select>
+                  <p className="mt-1.5 text-[10px] text-slate-400">{zh ? '网关不会向该 Provider 发送高于此级别的数据。' : 'The gateway will not send data above this level to the Provider.'}</p>
                 </div>
               </div>
 

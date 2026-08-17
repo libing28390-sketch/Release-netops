@@ -59,6 +59,14 @@
 - Copilot 窄屏复查：请求 viewport 390×844，浏览器实际 CSS viewport 为 433px；`bodyScrollWidth=433`、`documentElement.scrollWidth=433`、`innerWidth=433`，无横向溢出。
 - 本轮只读查看，没有执行 Provider 连通性测试、真实外部 AI 请求、设备写操作或生产数据库写入。
 
+## Provider 连通性问题修复（2026-08-17）
+
+- 根因：PostgreSQL 中 DeepSeek Provider 的 `allowed_data_classification` 为 `PUBLIC`；固定探测文本没有敏感发现，通用分类器按安全默认归为 `L1_GENERAL/INTERNAL`，网关在外发前按 Provider 分类上限拒绝，导致 8 ms 的 `AI_SECURITY_BLOCKED`。
+- 修复：Provider 探测接口显式声明固定探测请求为 `PUBLIC`；网关保护链路接受可选 `data_classification`；保护阶段的稳定 `reason_code` 不再被统一丢失；Provider 编辑表单新增 PUBLIC/INTERNAL/CONFIDENTIAL 选择并提交到 API。
+- 回归：后端安全/Provider 聚焦 18 passed；LLM/Security/API/Provider 回归 21 passed；Provider 前端 3 passed；`npm run lint` PASS；`npm run build` PASS；`py_compile`/`git diff --check` PASS。
+- PostgreSQL 只读探针确认：安全策略启用、全局 Kill Switch 关闭、Provider/模型启用；本次探针 `production_write=false`，未发送外部 Provider 请求。
+- 当前 Provider 仍保持 `PUBLIC` 配置，未擅自扩大其数据外发范围；如需 Copilot 发送 INTERNAL 内容，应在 Provider 编辑中明确选择 `INTERNAL` 并保存。
+
 ## 数据库影响
 
 - 无生产 DDL、无生产数据写入。
