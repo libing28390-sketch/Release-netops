@@ -21,6 +21,7 @@ from ai.schemas.provider import (
     AIProviderUpdate,
     SUPPORTED_PROVIDER_TYPES,
 )
+from api.knowledge_v2_contracts import ProviderKeyInvalidationRequest, ProviderKeyRotationRequest
 from ai.gateway.exceptions import AIException
 from ai.gateway.llm_gateway import llm_gateway
 from core.config import settings
@@ -275,9 +276,9 @@ def provider_delete_preview(provider_id: str, user=Depends(require_ai_permission
 
 
 @router.post("/{provider_id}/rotate-key", response_model=AIProviderResponse)
-def rotate_provider_key(provider_id: str, payload: dict, user=Depends(require_ai_permission("ai.provider.manage"))):
+def rotate_provider_key(provider_id: str, payload: ProviderKeyRotationRequest, user=Depends(require_ai_permission("ai.provider.manage"))):
     """Rotate a provider key without returning plaintext or retiring history."""
-    api_key = str(payload.get("api_key") or "").strip()
+    api_key = payload.api_key
     if not api_key or len(api_key) > 4096 or re.search(r"[\r\n]", api_key):
         raise HTTPException(status_code=400, detail="A valid API key is required")
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -301,10 +302,10 @@ def rotate_provider_key(provider_id: str, payload: dict, user=Depends(require_ai
 
 
 @router.post("/{provider_id}/invalidate-key", response_model=AIProviderResponse)
-def invalidate_provider_key(provider_id: str, payload: dict | None = None, user=Depends(require_ai_permission("ai.provider.manage"))):
+def invalidate_provider_key(provider_id: str, payload: ProviderKeyInvalidationRequest | None = None, user=Depends(require_ai_permission("ai.provider.manage"))):
     """Immediately revoke the active provider key and retain an audit row."""
     now_iso = datetime.now(timezone.utc).isoformat()
-    reason = str((payload or {}).get("reason") or "manual_invalidation")[:80]
+    reason = (payload.reason if payload else "manual_invalidation")[:80]
     with get_db_connection() as conn:
         row = conn.execute("SELECT id FROM ai_provider WHERE id = ?", (provider_id,)).fetchone()
         if not row:

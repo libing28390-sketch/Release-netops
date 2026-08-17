@@ -19,6 +19,14 @@ from ai.services.knowledge_service import KnowledgeDocumentActionError, knowledg
 from ai.services.knowledge_reindex_service import knowledge_reindex_service
 from ai.services.conversation_service import append_message, get_context, set_conversation_model
 from ai.security.security_service import create_diagnostic_case, handoff_case, record_feedback
+from api.knowledge_v2_contracts import (
+    KnowledgeBaseCreateRequest,
+    KnowledgeDirectoryCreateRequest,
+    KnowledgeDirectoryRenameRequest,
+    KnowledgeDocumentCreateRequest,
+    KnowledgeReindexRequest,
+    SearchContract,
+)
 
 router = APIRouter(prefix="/assistant", tags=["AI Copilot & Knowledge"])
 
@@ -61,26 +69,8 @@ class MACLocationRequest(BaseModel):
     mac: str = Field(..., description="Target MAC Address to trace")
 
 
-class RetrievalTestRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=2000)
-    top_k: int = Field(5, ge=1, le=20)
-    filters: Dict[str, Any] = Field(default_factory=dict)
-
-
-class KnowledgeDocumentCreateRequest(BaseModel):
-    """Stable, additive contract for admin document ingestion."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(default="Untitled Document", min_length=1, max_length=512)
-    content: str = Field(..., min_length=1, max_length=20_000_000)
-    vendor: str = Field(default="all", max_length=128)
-    platform: Optional[str] = Field(default=None, max_length=128)
-    knowledge_source_type: str = Field(default="user_document", max_length=64)
-    source_trust_level: str = Field(default="internal", max_length=32)
-    chunk_size: int = Field(default=800, ge=128, le=4096)
-    acl: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+class RetrievalTestRequest(SearchContract):
+    """Admin search contract with an explicit allowlisted filter object."""
 
 
 class KnowledgeBatchDeleteRequest(BaseModel):
@@ -269,7 +259,7 @@ def knowledge_retrieval_test(
     metadata = intent_parser.parse_knowledge_metadata(payload.query)
     requested_filters = {
         key: value
-        for key, value in dict(payload.filters or {}).items()
+        for key, value in payload.filters.model_dump(exclude_none=True).items()
         if key in {
             "vendor", "product_family", "product_series", "product_model",
             "os_family", "os_generation", "software_train", "software_release",
@@ -350,14 +340,14 @@ def list_knowledge_bases(user=Depends(require_ai_permission("ai.view"))):
 
 
 @router.post("/knowledge-bases")
-def create_knowledge_base(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.knowledge.manage"))):
+def create_knowledge_base(payload: KnowledgeBaseCreateRequest, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Create a new Knowledge Base."""
     return knowledge_service.create_knowledge_base(
-        name=payload.get("name", "Default KB"),
-        description=payload.get("description"),
+        name=payload.name,
+        description=payload.description,
         created_by=user.get("username", "admin"),
         tenant_id=user.get("tenant_id") or "tenant-default",
-        acl=payload.get("acl") if isinstance(payload.get("acl"), dict) else {},
+        acl=payload.acl,
     )
 
 
@@ -374,20 +364,20 @@ def get_knowledge_options(user=Depends(require_ai_permission("ai.view"))):
 
 
 @router.post("/knowledge-reindex")
-def start_knowledge_reindex(payload: Dict[str, Any] | None = None, user=Depends(require_ai_permission("ai.knowledge.manage"))):
+def start_knowledge_reindex(payload: KnowledgeReindexRequest | None = None, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Start a metadata/chunk/embedding reindex without deleting source docs."""
-    payload = payload or {}
+    payload = payload or KnowledgeReindexRequest()
     scope = {
-        key: payload.get(key)
+        key: getattr(payload, key)
         for key in ("vendor", "directory_path", "document_id")
-        if payload.get(key)
+        if getattr(payload, key)
     }
     return knowledge_reindex_service.create_job(
         tenant_id=user.get("tenant_id") or "tenant-default",
         scope=scope,
-        dry_run=bool(payload.get("dry_run", False)),
-        run_async=bool(payload.get("run_async", True)),
-        batch_size=payload.get("batch_size", 250),
+        dry_run=payload.dry_run,
+        run_async=payload.run_async,
+        batch_size=payload.batch_size,
     )
 
 
@@ -426,7 +416,7 @@ def list_knowledge_directories(user=Depends(require_ai_permission("ai.view"))):
 
 
 @router.post("/knowledge-directories")
-def create_knowledge_directory(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.knowledge.manage"))):
+def create_knowledge_directory(payload: KnowledgeDirectoryCreateRequest, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Create a root directory or a child below an existing directory."""
     tenant_id = user.get("tenant_id") or "tenant-default"
     try:
@@ -436,8 +426,8 @@ def create_knowledge_directory(payload: Dict[str, Any], user=Depends(require_ai_
         )
         return knowledge_service.create_knowledge_directory(
             knowledge_base_id=knowledge_base["id"],
-            name=payload.get("name", ""),
-            parent_id=payload.get("parent_id") or None,
+            name=payload.name,
+            parent_id=payload.parent_id,
             tenant_id=tenant_id,
             created_by=user.get("username", "admin"),
         )
@@ -446,12 +436,12 @@ def create_knowledge_directory(payload: Dict[str, Any], user=Depends(require_ai_
 
 
 @router.patch("/knowledge-directories/{directory_id}")
-def rename_knowledge_directory(directory_id: str, payload: Dict[str, Any], user=Depends(require_ai_permission("ai.knowledge.manage"))):
+def rename_knowledge_directory(directory_id: str, payload: KnowledgeDirectoryRenameRequest, user=Depends(require_ai_permission("ai.knowledge.manage"))):
     """Rename a directory and update descendant paths."""
     try:
         return knowledge_service.rename_knowledge_directory(
             directory_id=directory_id,
-            name=payload.get("name", ""),
+            name=payload.name,
             tenant_id=user.get("tenant_id") or "tenant-default",
         )
     except ValueError as exc:

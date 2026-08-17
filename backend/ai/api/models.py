@@ -18,6 +18,7 @@ from ai.schemas.model import (
     AIModelRouteResponse,
     AIModelUpdate,
 )
+from api.knowledge_v2_contracts import DefaultModelRequest, ModelAccessRequest
 from ai.security.tokenization import opaque_user_id
 
 router = APIRouter(prefix="/models", tags=["AI Models & Routes"])
@@ -145,11 +146,11 @@ def update_model(model_id: str, payload: AIModelUpdate, user=Depends(require_ai_
 
 
 @router.post("/{model_id}/access")
-def set_model_access(model_id: str, payload: dict, user=Depends(require_ai_permission("ai.model.manage"))):
-    tenant_id = str(payload.get("tenant_id") or user.get("tenant_id") or "tenant-default")
-    subject_type = str(payload.get("subject_type") or "role")
-    subject_id = str(payload.get("subject_id") or "Operator")
-    allow_access = bool(payload.get("allow_access", True))
+def set_model_access(model_id: str, payload: ModelAccessRequest, user=Depends(require_ai_permission("ai.model.manage"))):
+    tenant_id = str(payload.tenant_id or user.get("tenant_id") or "tenant-default")
+    subject_type = payload.subject_type
+    subject_id = payload.subject_id
+    allow_access = payload.allow_access
     if subject_type not in {"role", "user", "tenant"}:
         raise HTTPException(status_code=400, detail='subject_type must be role, user or tenant')
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -166,8 +167,8 @@ def set_model_access(model_id: str, payload: dict, user=Depends(require_ai_permi
 
 
 @router.post("/preferences/default")
-def set_default_model(payload: dict, user=Depends(require_ai_permission("ai.assistant"))):
-    model_id = str(payload.get("model_id") or "")
+def set_default_model(payload: DefaultModelRequest, user=Depends(require_ai_permission("ai.assistant"))):
+    model_id = payload.model_id
     if not model_id:
         raise HTTPException(status_code=400, detail="model_id is required")
     tenant_id = str(user.get("tenant_id") or "tenant-default")

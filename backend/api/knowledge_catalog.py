@@ -8,6 +8,14 @@ from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.knowledge_v2_contracts import (
+    CatalogVersionBundleContract,
+    CatalogVersionImportContract,
+    CatalogVersionRollbackContract,
+    ProductAliasRequest,
+    ProductCatalogModelRequest,
+)
+
 from core.rbac import require_permission
 from database import get_db_connection
 from services.audit_service import log_audit_event
@@ -37,24 +45,22 @@ class CatalogResolveRequest(BaseModel):
     limit: int = Field(default=20, ge=1, le=50)
 
 
-class CatalogVersionBundleRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class CatalogVersionBundleRequest(CatalogVersionBundleContract):
+    """Typed Product and Alias import bundle for preview and review."""
 
-    version: str = Field(..., min_length=1, max_length=64)
-    models: list[dict[str, Any]] = Field(..., min_length=1, max_length=5000)
-    aliases: list[dict[str, Any]] = Field(..., max_length=10000)
-
-
-class CatalogVersionImportRequest(CatalogVersionBundleRequest):
-    expected_active_version_id: str = Field(default="", max_length=128)
-    confirm: bool = False
+    models: list[ProductCatalogModelRequest] = Field(..., min_length=1, max_length=5000)
+    aliases: list[ProductAliasRequest] = Field(default_factory=list, max_length=10000)
 
 
-class CatalogVersionRollbackRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class CatalogVersionImportRequest(CatalogVersionImportContract):
+    """Typed import request with optimistic concurrency confirmation."""
 
-    expected_active_version_id: str = Field(default="", max_length=128)
-    confirm: bool = False
+    models: list[ProductCatalogModelRequest] = Field(..., min_length=1, max_length=5000)
+    aliases: list[ProductAliasRequest] = Field(default_factory=list, max_length=10000)
+
+
+class CatalogVersionRollbackRequest(CatalogVersionRollbackContract):
+    """Typed rollback confirmation request."""
 
 
 def _call(fn, *args, **kwargs):
