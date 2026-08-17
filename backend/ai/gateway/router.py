@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Optional, Tuple
 from database.core import get_db_connection
 from ai.gateway.exceptions import AIModelNotFoundException
+from ai.security.sanitizer import sanitize_log_text
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,13 @@ class ModelRouter:
                     return any_row[0], None
 
         except Exception as exc:
-            logger.warning(f"Error resolving model route for scene '{scene}': {exc}")
+            # Exception text may contain provider URLs or connection details;
+            # keep the operational log bounded to a stable type name.
+            logger.warning(
+                "Error resolving model route for scene '%s': %s",
+                sanitize_log_text(scene, limit=64),
+                type(exc).__name__,
+            )
         
         return None, None
 

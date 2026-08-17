@@ -46,7 +46,12 @@ class AIRateLimiter:
                 _redis_client.incr(key)
                 return True, max_per_day - (val + 1)
             except Exception as exc:
-                logger.debug(f"Redis rate limit error, falling back to memory: {exc}")
+                # Redis errors can include a connection URL; never log the
+                # exception text or credentials.
+                logger.debug(
+                    "Redis rate limit error, falling back to memory: %s",
+                    type(exc).__name__,
+                )
 
         # 2. In-memory fallback
         now = time.time()

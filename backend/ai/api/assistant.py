@@ -542,7 +542,10 @@ def create_knowledge_directory(payload: KnowledgeDirectoryCreateRequest, user=De
             created_by=user.get("username", "admin"),
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "KNOWLEDGE_DIRECTORY_INVALID", "message": "Knowledge directory name or parent is invalid"},
+        ) from exc
 
 
 @router.patch("/knowledge-directories/{directory_id}")
@@ -555,7 +558,10 @@ def rename_knowledge_directory(directory_id: str, payload: KnowledgeDirectoryRen
             tenant_id=user.get("tenant_id") or "tenant-default",
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "KNOWLEDGE_DIRECTORY_INVALID", "message": "Knowledge directory name or scope is invalid"},
+        ) from exc
 
 
 @router.delete("/knowledge-directories/{directory_id}")
@@ -567,7 +573,10 @@ def delete_knowledge_directory(directory_id: str, user=Depends(require_ai_permis
             tenant_id=user.get("tenant_id") or "tenant-default",
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "KNOWLEDGE_DIRECTORY_NOT_FOUND", "message": "Knowledge directory was not found"},
+        ) from exc
 
 
 @router.get("/documents")

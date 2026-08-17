@@ -328,7 +328,10 @@ def get_security_incidents(
             offset=offset,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "SECURITY_INCIDENT_QUERY_INVALID", "message": "Security incident query is invalid"},
+        ) from exc
 
 
 @router.post("/incidents", response_model=Dict[str, Any])
@@ -344,7 +347,10 @@ def open_security_incident(payload: SecurityIncidentRequest, user=Depends(requir
             evidence=payload.evidence,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "SECURITY_INCIDENT_INVALID", "message": "Security incident fields are invalid"},
+        ) from exc
 
 
 @router.post("/incidents/{incident_id}/resolve", response_model=Dict[str, Any])

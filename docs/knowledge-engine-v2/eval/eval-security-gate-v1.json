@@ -1,0 +1,79 @@
+{
+  "status": "PASS",
+  "task_id": "EVAL-020",
+  "database": "PostgreSQL",
+  "sqlite": "forbidden",
+  "duration_seconds": 3.106,
+  "checks": {
+    "dependency": {
+      "status": "PASS",
+      "python_pip_check": {
+        "exit_code": 0,
+        "duration_seconds": 0.662,
+        "stdout_lines": 1,
+        "stderr_lines": 0
+      },
+      "package_lock": {
+        "present": true,
+        "valid_json": true,
+        "sha256": "9f36db3c8365f3ad0311a4045e43cd626de26f0cc8765383832996904608c63a"
+      },
+      "npm_lock_probe": {
+        "exit_code": 0,
+        "duration_seconds": 0.798,
+        "stdout_lines": 251,
+        "stderr_lines": 0
+      }
+    },
+    "secret": {
+      "status": "PASS",
+      "validator": {
+        "safe_config_pass": true,
+        "literal_secret_rejected": true,
+        "validator_outputs_not_collected": true
+      },
+      "scanned_files": 415,
+      "literal_findings": [],
+      "values_emitted": false
+    },
+    "permission": {
+      "status": "PASS",
+      "route_count": 96,
+      "protected_route_count": 96,
+      "coverage_percent": 100.0,
+      "missing_permission_routes": []
+    },
+    "logging": {
+      "status": "PASS",
+      "scanned_files": 97,
+      "raw_sensitive_logger_findings": [],
+      "values_emitted": false
+    },
+    "error_response": {
+      "status": "PASS",
+      "stable_error_schema": true,
+      "raw_exception_detail_findings": [],
+      "values_emitted": false
+    },
+    "v1_postgresql": {
+      "status": "PASS",
+      "command": "knowledge_engine_v2_v1_baseline_pg.py",
+      "probe": {
+        "exit_code": 0,
+        "duration_seconds": 0.521,
+        "stdout_lines": 173,
+        "stderr_lines": 0
+      },
+      "database": "PostgreSQL",
+      "sqlite": "forbidden",
+      "production_database_write": false,
+      "rollback": "transaction_rollback"
+    }
+  },
+  "failed_checks": [],
+  "external_calls": false,
+  "device_write_commands": false,
+  "production_database_write": false,
+  "rollback": "V1_probe_transaction_rollback; audit-only changes revert by commit",
+  "report_does_not_contain_secrets": true
+}
