@@ -57,3 +57,48 @@ def test_obs001_observation_remains_tenant_scoped_and_bounded():
     assert item is not None
     assert len(item["observation"]["candidates"]) == 100
     assert len(item["observation"]["scores"]) == 100
+
+
+def test_obs002_runtime_projection_records_reranker_citations_latency_tokens_provider_model_and_security():
+    from ai.services.retrieval_trace_store import clear_retrieval_traces, get_retrieval_trace, record_retrieval_trace, update_retrieval_trace
+
+    clear_retrieval_traces()
+    trace_id = record_retrieval_trace(
+        tenant_id="tenant-obs002",
+        user_id="alice",
+        query="show ospf",
+        trace={
+            "status": "hit",
+            "runtime": {
+                "reranker": {"stage": "applied", "name": "none", "candidate_count": 3, "timeout_ms": 120, "cost_units": 3},
+                "latency": {"retrieval_ms": 7},
+            },
+        },
+    )
+    update_retrieval_trace(
+        trace_id,
+        citations=[{"citation_id": "c1", "validation": "validated_official"}, {"citation_id": "c2", "validation": "failed"}],
+        citation_warnings=[{"code": "STALE"}],
+        runtime={
+            "provider_id": "provider-a",
+            "model_id": "model-a",
+            "requested_model_id": "model-a",
+            "route_reason": "user_default_model",
+            "fallback_used": False,
+            "security_result": "allow",
+            "security": {"decision": "allow", "result_code": "AI_SECURITY_ALLOWED"},
+            "latency": {"llm_ms": 18, "total_ms": 30},
+            "tokens": {"input": 100, "output": 25},
+        },
+    )
+    item = get_retrieval_trace(tenant_id="tenant-obs002", trace_id=trace_id)
+    assert item is not None
+    runtime = item["runtime"]
+    assert runtime["reranker"]["stage"] == "applied"
+    assert runtime["citation"] == {"count": 2, "warning_count": 1, "verified_count": 1, "failed_count": 1}
+    assert runtime["latency"]["retrieval_ms"] == 7
+    assert runtime["latency"]["llm_ms"] == 18
+    assert runtime["tokens"] == {"input": 100, "output": 25, "total": 125}
+    assert runtime["provider"]["provider_id"] == "provider-a"
+    assert runtime["provider"]["model_id"] == "model-a"
+    assert runtime["security"]["decision"] == "allow"

@@ -84,6 +84,68 @@ def _safe_mapping(value: Any, fields: tuple[str, ...], *, limit: int = 128) -> d
     return result
 
 
+def _runtime_projection(runtime: Any) -> dict[str, Any]:
+    runtime = runtime if isinstance(runtime, Mapping) else {}
+    reranker = runtime.get("reranker") if isinstance(runtime.get("reranker"), Mapping) else {}
+    latency = runtime.get("latency") if isinstance(runtime.get("latency"), Mapping) else {}
+    tokens = runtime.get("tokens") if isinstance(runtime.get("tokens"), Mapping) else {}
+    security = runtime.get("security") if isinstance(runtime.get("security"), Mapping) else {}
+    citation = runtime.get("citation") if isinstance(runtime.get("citation"), Mapping) else {}
+    token_projection = {
+        key: _nonnegative_int(tokens.get(key))
+        for key in ("input", "output", "total")
+        if tokens.get(key) is not None
+    }
+    if "total" not in token_projection and {"input", "output"}.issubset(token_projection):
+        token_projection["total"] = token_projection["input"] + token_projection["output"]
+    return {
+        "reranker": {
+            "stage": _text(reranker.get("stage"), 32),
+            "name": _text(reranker.get("name"), 64),
+            "candidate_count": _nonnegative_int(reranker.get("candidate_count")),
+            "timeout_ms": _nonnegative_int(reranker.get("timeout_ms")),
+            "cost_units": _nonnegative_int(reranker.get("cost_units")),
+            "reason": _text(reranker.get("reason"), 64),
+        },
+        "citation": {
+            "count": _nonnegative_int(citation.get("count")),
+            "warning_count": _nonnegative_int(citation.get("warning_count")),
+            "verified_count": _nonnegative_int(citation.get("verified_count")),
+            "failed_count": _nonnegative_int(citation.get("failed_count")),
+        },
+        "latency": {
+            key: _nonnegative_int(latency.get(key))
+            for key in ("retrieval_ms", "reranker_ms", "llm_ms", "total_ms")
+            if latency.get(key) is not None
+        },
+        "tokens": token_projection,
+        "provider": {
+            "provider_id": _text(runtime.get("provider_id"), 96),
+            "model_id": _text(runtime.get("model_id"), 128),
+            "requested_model_id": _text(runtime.get("requested_model_id"), 128),
+            "route_reason": _text(runtime.get("route_reason"), 64),
+            "fallback_used": bool(runtime.get("fallback_used")),
+        },
+        "security": {
+            "decision": _text(security.get("decision") or runtime.get("security_result") or "not_recorded", 32),
+            "policy_version": _text(security.get("policy_version"), 64),
+            "result_code": _text(security.get("result_code"), 64),
+        },
+    }
+
+
+def _merge_runtime(current: Mapping[str, Any] | None, update: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge runtime observations without dropping previously recorded stages."""
+
+    merged: dict[str, Any] = dict(current) if isinstance(current, Mapping) else {}
+    for key, value in update.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            merged[key] = {**dict(merged[key]), **dict(value)}
+        else:
+            merged[key] = value
+    return merged
+
+
 def _candidate_projection(item: Mapping[str, Any], rank: int) -> dict[str, Any]:
     identity = f"{item.get('storage_document_id') or item.get('document_id') or ''}:{item.get('chunk_id') or item.get('alias') or rank}"
     components = item.get("score_components") if isinstance(item.get("score_components"), Mapping) else {}
@@ -209,6 +271,7 @@ def _project(
             "evidence": _text(resolution.get("evidence") or "none", 64),
         },
         "observation": _observation_projection(query=query, observation=observation),
+        "runtime": _runtime_projection(trace.get("runtime")),
         "citations": [_citation_projection(item) for item in citations[:MAX_CITATIONS] if isinstance(item, Mapping)],
         "citation_warning_count": len(trace.get("citation_warnings") or []) if isinstance(trace.get("citation_warnings"), list) else 0,
         "redaction": {
@@ -229,7 +292,7 @@ def record_retrieval_trace(*, tenant_id: str, user_id: str | None, query: str, t
     return trace_id
 
 
-def update_retrieval_trace(trace_id: str, *, citations: list[Mapping[str, Any]] | None = None, citation_warnings: list[Mapping[str, Any]] | None = None) -> None:
+def update_retrieval_trace(trace_id: str, *, citations: list[Mapping[str, Any]] | None = None, citation_warnings: list[Mapping[str, Any]] | None = None, runtime: Mapping[str, Any] | None = None) -> None:
     with _LOCK:
         for item in _TRACES:
             if item.get("trace_id") != trace_id:
@@ -238,6 +301,21 @@ def update_retrieval_trace(trace_id: str, *, citations: list[Mapping[str, Any]] 
                 item["citations"] = [_citation_projection(value) for value in citations[:MAX_CITATIONS]]
             if citation_warnings is not None:
                 item["citation_warning_count"] = len(citation_warnings)
+            if citations is not None or citation_warnings is not None:
+                current_runtime = item.get("runtime") if isinstance(item.get("runtime"), Mapping) else {}
+                current_citation = current_runtime.get("citation") if isinstance(current_runtime.get("citation"), Mapping) else {}
+                item["runtime"] = _runtime_projection(_merge_runtime(current_runtime, {
+                    "citation": {
+                        **current_citation,
+                        "count": len(citations) if citations is not None else current_citation.get("count", 0),
+                        "warning_count": len(citation_warnings) if citation_warnings is not None else current_citation.get("warning_count", 0),
+                        "verified_count": sum(1 for value in (citations or []) if str(value.get("validation") or "").lower() in {"verified", "validated", "validated_official"}) if citations is not None else current_citation.get("verified_count", 0),
+                        "failed_count": sum(1 for value in (citations or []) if str(value.get("validation") or "").lower() in {"failed", "mismatch", "stale", "acl_denied"}) if citations is not None else current_citation.get("failed_count", 0),
+                    },
+                }))
+            if runtime is not None:
+                current_runtime = item.get("runtime") if isinstance(item.get("runtime"), Mapping) else {}
+                item["runtime"] = _runtime_projection(_merge_runtime(current_runtime, runtime))
             return
 
 

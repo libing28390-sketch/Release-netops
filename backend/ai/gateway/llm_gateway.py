@@ -445,6 +445,8 @@ class LLMGateway:
         if self.security_gateway.policy.kill_switch or not self.security_gateway.policy.external_ai_enabled:
             blocked = AISecurityBlockedException("AI request blocked by security policy")
             blocked.request_id = request_id
+            if route_meta is not None:
+                route_meta.update({"request_id": request_id, "status": "blocked", "security_result": "blocked", "security": {"decision": "block", "result_code": "AI_SECURITY_BLOCKED"}, "latency_ms": 0, "input_tokens": 0, "output_tokens": 0})
             self._log_request(
                 request_id=request_id,
                 user_id=opaque_user_id(user_id, tenant_id=tenant_id or "tenant-default", task_id=task_id or request_id),
@@ -851,6 +853,8 @@ class LLMGateway:
         except SecurityBlocked as exc:
             blocked = AISecurityBlockedException("AI request blocked by security policy")
             blocked.request_id = request_id
+            if route_meta is not None:
+                route_meta.update({"status": "blocked", "security_result": "blocked", "security": {"decision": "block", "result_code": "AI_SECURITY_BLOCKED"}, "latency_ms": int((time.perf_counter() - start_time) * 1000), "input_tokens": 0, "output_tokens": 0})
             self._log_request(
                 request_id=request_id,
                 user_id=opaque_user_id(user_id, tenant_id=tenant, task_id=task),
@@ -896,6 +900,8 @@ class LLMGateway:
             payload_bytes=len(secure_payload.as_provider_json().encode("utf-8")),
             status="prepared",
         )
+        if route_meta is not None:
+            route_meta.update({"status": "prepared", "security_result": str(secure_payload.action.value), "security": {"decision": str(secure_payload.action.value), "result_code": "AI_SECURITY_PREPARED"}})
 
         async def _stream_candidate(candidate_info: Dict[str, Any]):
             if self._budget_exceeded(provider_id=candidate_info["provider_id"], model_id=candidate_info["id"]):
@@ -966,7 +972,7 @@ class LLMGateway:
                 status="success"
             )
             if route_meta is not None:
-                route_meta.update({"model_id": model_info["id"], "provider_id": model_info["provider_id"], "fallback_used": False})
+                route_meta.update({"model_id": model_info["id"], "provider_id": model_info["provider_id"], "fallback_used": False, "status": "success", "security_result": str(secure_payload.action.value), "latency_ms": latency_ms, "input_tokens": in_tok, "output_tokens": out_tok})
         except Exception as exc:
             if fallback_model_id and not full_content:
                 try:
@@ -977,10 +983,12 @@ class LLMGateway:
                     async for chunk in _stream_candidate(fallback_info):
                         full_content.append(chunk)
                         yield self.security_gateway.resolve_output(chunk, tenant_id=tenant, task_id=task)
-                    if route_meta is not None:
-                        route_meta.update({"model_id": fallback_info["id"], "provider_id": fallback_info["provider_id"], "route_reason": "scene_route_fallback", "fallback_used": True})
                     latency_ms = int((time.perf_counter() - start_time) * 1000)
-                    self._log_request(request_id=request_id, user_id=secure_payload.user_id, scene=scene, provider_id=fallback_info["provider_id"], model_id=fallback_info["id"], prompt_id=None, prompt_version=None, input_tokens=max(1, sum(len(m.get("content", "")) for m in messages) // 3), output_tokens=max(1, len("".join(full_content)) // 3), latency_ms=latency_ms, status="success")
+                    fallback_input_tokens = max(1, sum(len(m.get("content", "")) for m in messages) // 3)
+                    fallback_output_tokens = max(1, len("".join(full_content)) // 3)
+                    if route_meta is not None:
+                        route_meta.update({"model_id": fallback_info["id"], "provider_id": fallback_info["provider_id"], "route_reason": "scene_route_fallback", "fallback_used": True, "status": "success", "security_result": str(secure_payload.action.value), "latency_ms": latency_ms, "input_tokens": fallback_input_tokens, "output_tokens": fallback_output_tokens})
+                    self._log_request(request_id=request_id, user_id=secure_payload.user_id, scene=scene, provider_id=fallback_info["provider_id"], model_id=fallback_info["id"], prompt_id=None, prompt_version=None, input_tokens=fallback_input_tokens, output_tokens=fallback_output_tokens, latency_ms=latency_ms, status="success")
                     return
                 except Exception:
                     logger.warning("LLM stream fallback failed", exc_info=True)
@@ -1000,6 +1008,8 @@ class LLMGateway:
                 error_code="STREAM_ERROR",
                 error_message="stream_request_failed"
             )
+            if route_meta is not None:
+                route_meta.update({"status": "error", "security_result": str(secure_payload.action.value), "latency_ms": latency_ms, "input_tokens": 0, "output_tokens": 0})
             raise exc
 
 

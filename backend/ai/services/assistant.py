@@ -181,6 +181,7 @@ class AIAssistantService:
         roles: Optional[List[str]] = None,
         site_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        retrieval_started_at = time.perf_counter()
         request, resolution = self.build_knowledge_request(
             message,
             intent_info,
@@ -211,6 +212,7 @@ class AIAssistantService:
             {"request": request, "resolution": resolution, **retrieval},
             retrieval.get("results") or [],
         )
+        trace_seed.setdefault("runtime", {}).setdefault("latency", {})["retrieval_ms"] = max(0, int((time.perf_counter() - retrieval_started_at) * 1000))
         retrieval["retrieval_trace_id"] = record_retrieval_trace(
             tenant_id=tenant_id or "tenant-default",
             user_id=user_id,
@@ -545,6 +547,12 @@ class AIAssistantService:
                 "platform_candidates": resolution_data.get("platform_candidates") or [],
                 "evidence": resolution_data.get("evidence") or "none",
             },
+            "runtime": {
+                "reranker": debug.get("reranker") or {},
+                "latency": {
+                    "retrieval_ms": as_int(debug.get("retrieval_latency_ms")),
+                },
+            },
             "citations": knowledge_result.get("citations") or [],
             "explanation": knowledge_result.get("explanation") or {},
         }
@@ -723,15 +731,48 @@ class AIAssistantService:
             user_content += f"Nexora Network Facts & Knowledge:\n{json.dumps(context_facts, ensure_ascii=False)}"
         messages.append({"role": "user", "content": user_content})
 
-        res = await llm_gateway.chat(
-            scene="chat",
-            messages=messages,
-            model_id=model_id,
-            user_id=user_id,
-            tenant_id=tenant_id,
-            roles=roles,
-            selection_source=model_selection_source,
-        )
+        llm_started_at = time.perf_counter()
+        try:
+            res = await llm_gateway.chat(
+                scene="chat",
+                messages=messages,
+                model_id=model_id,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                roles=roles,
+                selection_source=model_selection_source,
+            )
+        except AISecurityBlockedException:
+            if knowledge_trace is not None and knowledge_trace.get("trace_id"):
+                update_retrieval_trace(
+                    str(knowledge_trace["trace_id"]),
+                    runtime={
+                        "security_result": "blocked",
+                        "security": {"decision": "block", "result_code": "AI_SECURITY_BLOCKED"},
+                        "latency": {"llm_ms": max(0, int((time.perf_counter() - llm_started_at) * 1000))},
+                        "tokens": {"input": 0, "output": 0},
+                    },
+                )
+            raise
+
+        if knowledge_trace is not None and knowledge_trace.get("trace_id"):
+            update_retrieval_trace(
+                str(knowledge_trace["trace_id"]),
+                runtime={
+                    "provider_id": res.get("provider_id"),
+                    "model_id": res.get("model_id"),
+                    "requested_model_id": res.get("requested_model_id") or model_id,
+                    "route_reason": res.get("route_reason"),
+                    "fallback_used": bool(res.get("fallback_used")),
+                    "security_result": "allow",
+                    "security": {"decision": "allow", "result_code": "AI_SECURITY_ALLOWED"},
+                    "latency": {"llm_ms": max(0, int((time.perf_counter() - llm_started_at) * 1000))},
+                    "tokens": {
+                        "input": max(0, int(res.get("input_tokens") or 0)),
+                        "output": max(0, int(res.get("output_tokens") or 0)),
+                    },
+                },
+            )
 
         answer = res.get("content", "")
         if not answer and intent == "knowledge":
@@ -1067,6 +1108,20 @@ class AIAssistantService:
         except AISecurityBlockedException:
             # A security block is a terminal policy decision. Do not turn it
             # into a normal answer or try another external model.
+            if knowledge_trace is not None and knowledge_trace.get("trace_id"):
+                update_retrieval_trace(
+                    str(knowledge_trace["trace_id"]),
+                    runtime={
+                        "provider_id": route_meta.get("provider_id"),
+                        "model_id": route_meta.get("model_id"),
+                        "requested_model_id": route_meta.get("requested_model_id") or model_id,
+                        "route_reason": route_meta.get("route_reason"),
+                        "security_result": "blocked",
+                        "security": {"decision": "block", "result_code": "AI_SECURITY_BLOCKED"},
+                        "latency": {"llm_ms": max(0, int(route_meta.get("latency_ms") or 0))},
+                        "tokens": {"input": 0, "output": 0},
+                    },
+                )
             yield _progress_event(
                 llm_step[0],
                 llm_step[1],
@@ -1144,6 +1199,25 @@ class AIAssistantService:
                 "completed",
                 detail="回答生成完成",
                 operation=llm_step[2],
+            )
+
+        if knowledge_trace is not None and knowledge_trace.get("trace_id"):
+            output_tokens = max(0, int(route_meta.get("output_tokens") or 0))
+            if not output_tokens and tokens_emitted:
+                output_tokens = tokens_emitted
+            update_retrieval_trace(
+                str(knowledge_trace["trace_id"]),
+                runtime={
+                    "provider_id": route_meta.get("provider_id"),
+                    "model_id": route_meta.get("model_id"),
+                    "requested_model_id": route_meta.get("requested_model_id") or model_id,
+                    "route_reason": route_meta.get("route_reason"),
+                    "fallback_used": bool(route_meta.get("fallback_used")),
+                    "security_result": route_meta.get("security_result") or ("provider_error" if llm_failed else "allow"),
+                    "security": {"decision": route_meta.get("security_result") or ("provider_error" if llm_failed else "allow"), "result_code": "AI_PROVIDER_ERROR" if llm_failed else "AI_SECURITY_ALLOWED"},
+                    "latency": {"llm_ms": max(0, int(route_meta.get("latency_ms") or 0)), "total_ms": max(0, int((time.perf_counter() - started_at) * 1000))},
+                    "tokens": {"input": max(0, int(route_meta.get("input_tokens") or 0)), "output": output_tokens},
+                },
             )
 
         if route_meta:
