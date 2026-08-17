@@ -1,20 +1,20 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: CHK-016 (DONE_PASS)
-Last Completed: CHK-016
-Next Task: EVAL-001（建立首批 100～200 条固定 Query 数据集）
+Current Task: EVAL-001 (DONE_PASS)
+Last Completed: EVAL-001
+Next Task: EVAL-002（覆盖 Huawei/Cisco 的 VLAN、Interface、OSPF、SSH、NTP、Route）
 
-Completed: 295 / 359
-P0: 234 / 277
-Last Verified Commit: 6660ce70（CHK-016 offline experiment PASS）
+Completed: 296 / 359
+P0: 235 / 277
+Last Verified Commit: 待提交（EVAL-001 PASS）
 
-Recent Migration: CHK-016 无 migration；纯内存 Chunk 实验无数据库连接/写入
-Recent Build: CHK-016 offline report PASS；4 配置对比；deterministic repeat PASS；wrapper 1 passed；py_compile/diff PASS
-Last Security Check: CHK-016 固定语料无凭据；报告只写 hash/结构/有界延迟；PostgreSQL/SQLite 均未连接
+Recent Migration: EVAL-001 无 migration；离线固定 Query 数据集无数据库连接/写入
+Recent Build: EVAL-001 validator PASS；120 cases；10 query types each 12；focused test 1 passed；contract YAML PASS；py_compile/diff PASS
+Last Security Check: EVAL-001 fixture 无凭据/租户/ACL；无外网；database=none；SQLite=not_used
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-001
+Recovery Point: ING-020（完成登录后补做可见验证）→ ING-021（完成登录后补做可见验证）→ EVAL-002
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -27,6 +27,8 @@ CHK-014：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-014.md；Post
 CHK-015：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-015.md；PostgreSQL-only Chunk viewer probe PASS；PG wrapper 1 passed；frontend lint/build PASS；SQLite 未作为验收证据。
 
 CHK-016：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/CHK-016.md；4 配置离线 Chunk 实验 PASS；deterministic repeat PASS；wrapper 1 passed；无数据库连接，SQLite 未作为验收证据。
+
+EVAL-001：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/EVAL-001.md；120 条固定 Query 数据集；validator PASS；focused test 1 passed；无数据库连接，SQLite 未作为验收证据；后续持久化评测统一使用 PostgreSQL。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

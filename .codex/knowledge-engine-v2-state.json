@@ -1,10 +1,10 @@
 {
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
-  "current_task": "EVAL-001",
+  "current_task": "EVAL-002",
   "task_state": "ANALYZING",
-  "updated_at": "2026-08-17T21:00:00+08:00",
-  "last_completed_task": "CHK-016",
+  "updated_at": "2026-08-17T21:20:00+08:00",
+  "last_completed_task": "EVAL-001",
   "completed_tasks": [
     "ADR-001",
     "ADR-002",
@@ -134,6 +134,7 @@
     "CHK-014",
     "CHK-015",
     "CHK-016",
+    "EVAL-001",
     "RET-001",
     "RET-002",
     "RET-003",
@@ -330,7 +331,6 @@
   "pending_tasks": [
     "ING-020",
     "ING-021",
-    "EVAL-001",
     "EVAL-002",
     "EVAL-003",
     "EVAL-004",
@@ -393,7 +393,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "358f9321",
+  "last_verified_commit": "待提交（EVAL-001 PASS）",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -968,10 +968,19 @@
   "provider_tags_bugfix_commit": "b264fede",
   "provider_tags_bugfix_evidence": "docs/knowledge-engine-v2/evidence/BUG-PROVIDER-TAGS-001.md",
   "provider_tags_migration": "m0148 applied to current PostgreSQL; tags_json {} -> []",
-  "last_verified_commit": "6660ce70（CHK-016 offline experiment PASS）",
+  "last_verified_commit": "待提交（EVAL-001 PASS）",
   "total_count": 359,
-  "completed_count": 295,
+  "completed_count": 296,
   "p0_total_count": 277,
-  "p0_completed_count": 234,
-  "resume_from": "EVAL-001"
+  "p0_completed_count": 235,
+  "resume_from": "EVAL-002",
+  "eval001_status": "DONE_PASS",
+  "eval001_final_verified_at": "2026-08-17T21:20:00+08:00",
+  "eval001_evidence": "docs/knowledge-engine-v2/evidence/EVAL-001.md",
+  "eval001_contract": "docs/knowledge-engine-v2/architecture/EVAL-001-FIXED-QUERY-DATASET-CONTRACT.yaml",
+  "eval001_dataset": "docs/knowledge-engine-v2/eval/eval-query-dataset-v1.yaml",
+  "eval001_manifest": "docs/knowledge-engine-v2/eval/eval-query-dataset-v1.manifest.json",
+  "eval001_focused_tests": "validator PASS; focused test 1 passed; contract YAML PASS; py_compile/diff PASS",
+  "eval001_gate_summary": "offline fixture only; 120 cases; no PostgreSQL/SQLite connection; SQLite not_used",
+  "eval001_production_ddl": "NONE"
 }

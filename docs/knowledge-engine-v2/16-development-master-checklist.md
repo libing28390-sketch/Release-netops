@@ -494,7 +494,7 @@
 
 ## 17. Evaluation 与质量门禁
 
-- [ ] `EVAL-001` `P0/NET+AI+QA/L`：建立首批 100～200 条固定 Query 数据集。
+- [x] `EVAL-001` `P0/NET+AI+QA/L`：建立首批 100～200 条固定 Query 数据集。
 - [ ] `EVAL-002` `P0/NET+AI/M`：覆盖 Huawei/Cisco 的 VLAN、Interface、OSPF、SSH、NTP、Route。
 - [ ] `EVAL-003` `P0/NET+AI/M`：覆盖 Exact、Alias、Prefix、Ambiguous、Typo、Wrong Vendor、Product Conflict。
 - [ ] `EVAL-004` `P0/NET+AI/M`：覆盖指定版本、未指定版本、冲突版本和未知版本。

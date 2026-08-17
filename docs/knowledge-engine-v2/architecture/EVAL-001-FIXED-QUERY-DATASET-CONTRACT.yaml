@@ -1,0 +1,58 @@
+task_id: EVAL-001
+title: frozen fixed query dataset for evaluation
+priority: P0
+status: executable
+authority: offline_fixture
+scope:
+  - provide the first reproducible evaluation fixture before scoring or quality-gate work
+  - freeze 120 query identities covering Huawei and Cisco network operations intents
+  - preserve stable labels for answer, clarify, and no_match outcomes
+  - make the fixture safe to run without a production database or external network
+dataset:
+  path: docs/knowledge-engine-v2/eval/eval-query-dataset-v1.yaml
+  manifest: docs/knowledge-engine-v2/eval/eval-query-dataset-v1.manifest.json
+  dataset_id: nexora-kb-eval-v1-20260817
+  schema_version: 1
+  status: frozen
+  case_count: 120
+  identity_rule: case ids EVAL-Q001 through EVAL-Q120 are immutable after publication
+  matrix:
+    vendors: [Huawei, Cisco]
+    intents: [vlan, interface, ospf, ssh, ntp, route]
+    query_types: [exact, alias, prefix, ambiguous, typo, wrong_vendor, product_conflict, version_exact, version_conflict, no_match]
+    cases_per_intent: 20
+    explicit_vendor_cases_per_vendor_intent: 9
+    ambiguous_cases_per_intent: 2
+    cases_per_query_type: 12
+labels:
+  expected_outcome: [answer, clarify, no_match]
+  expected_version_relation: [exact, unspecified, conflict]
+  answer_requires: non_empty_gold_document_ids_and_citation_required
+  clarify_requires: at_least_two_gold_document_ids_and_citation_not_required
+  no_match_requires: empty_gold_document_ids_and_citation_not_required
+  unknown_or_ambiguous: ambiguous cases carry null vendor and require clarification; no vendor is guessed
+safety:
+  source_policy: fixture identities only; no external network calls
+  database: none
+  sqlite: not_used
+  secrets: forbidden
+  tenant_or_acl_payloads: forbidden
+verification:
+  validator: scripts/knowledge_engine_v2_eval_dataset_check.py
+  focused_test: tests/knowledge_engine_v2/test_eval001_query_dataset.py
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_eval_dataset_check.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_eval001_query_dataset.py -q -p no:cacheprovider"
+    - ".venv\\Scripts\\python.exe -m py_compile scripts/knowledge_engine_v2_eval_dataset_check.py tests/knowledge_engine_v2/test_eval001_query_dataset.py"
+    - "git diff --check"
+  required_results:
+    - status: PASS
+    - case_count: 120
+    - secrets: false
+    - database: none
+    - sqlite: not_used
+rollback:
+  runtime: remove the fixture from evaluation selection and retain no production rows
+  data: delete the fixture and generated manifest in a documentation-only commit if a replacement dataset is approved
+  database: none; this task creates no tables, rows, or migrations
+  compatibility: later EVAL-002 through EVAL-009 consume the frozen identities without changing V1 behavior

@@ -1,0 +1,2115 @@
+schema_version: 1
+dataset_id: nexora-kb-eval-v1-20260817
+status: frozen
+case_count: 120
+authority: offline_fixture
+purpose: "Fixed query set for EVAL-001; later EVAL tasks may add scoring without changing case identity."
+metric_inputs:
+  - query normalization and entity resolution
+  - retrieval and no-match boundaries
+  - version compatibility and wrong-vendor blocking
+  - citation and safety outcome labels
+label_schema:
+  expected_outcome: [answer, clarify, no_match]
+  query_type: [exact, alias, prefix, ambiguous, typo, wrong_vendor, product_conflict, version_exact, version_conflict, no_match]
+  expected_version_relation: [exact, unspecified, conflict]
+  gold_document_ids: "Stable fixture document identities; empty means no document may be returned."
+source_policy:
+  documents: "fixture identities only; no external network calls"
+  secrets: "none"
+  database: "none"
+  sqlite: "not used"
+coverage:
+  vendors: [Huawei, Cisco]
+  intents: [vlan, interface, ospf, ssh, ntp, route]
+  cases_per_vendor_intent: 10
+  total_cases: 120
+cases:
+  - id: EVAL-Q001
+    query: "Huawei CE6800 VLAN 100 configuration"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: vlan
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-vlan"]
+    citation_required: true
+  - id: EVAL-Q002
+    query: "Huawei access vlan CE6885-48YS8CQ"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: vlan
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-vlan"]
+    citation_required: true
+  - id: EVAL-Q003
+    query: "CE68 VLAN command"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: vlan
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-vlan"]
+    citation_required: true
+  - id: EVAL-Q004
+    query: "VLAN configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: vlan
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-vlan", "fixture-cisco-vlan"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q005
+    query: "Huawei VLAN commmand CE6800"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: vlan
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-vlan"]
+    citation_required: true
+  - id: EVAL-Q006
+    query: "Huawei CE6800 VLAN Cisco syntax"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: vlan
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q007
+    query: "Huawei CE6800 C9300-48P VLAN"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: vlan
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q008
+    query: "Huawei CE6800 VLAN version V300R023C10"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V300R023C10
+    intent: vlan
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-huawei-vlan"]
+    citation_required: true
+  - id: EVAL-Q009
+    query: "Huawei CE6800 VLAN version V600"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V600
+    intent: vlan
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q010
+    query: "Huawei CE6800 VLAN unsupported VXLAN-999"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: vlan
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q011
+    query: "Cisco C9300 VLAN 100 configuration"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: vlan
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-vlan"]
+    citation_required: true
+  - id: EVAL-Q012
+    query: "Cisco access vlan C9300-48P"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: vlan
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-vlan"]
+    citation_required: true
+  - id: EVAL-Q013
+    query: "C930 VLAN command"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: vlan
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-vlan"]
+    citation_required: true
+  - id: EVAL-Q014
+    query: "VLAN configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: vlan
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-vlan", "fixture-cisco-vlan"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q015
+    query: "Cisco VLAN commmand C9300"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: vlan
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-vlan"]
+    citation_required: true
+  - id: EVAL-Q016
+    query: "Cisco C9300 VLAN Huawei syntax"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: vlan
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q017
+    query: "Cisco C9300 CE6885-48YS8CQ VLAN"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: vlan
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q018
+    query: "Cisco C9300 VLAN version 17.9.4"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 17.9.4
+    intent: vlan
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-cisco-vlan"]
+    citation_required: true
+  - id: EVAL-Q019
+    query: "Cisco C9300 VLAN version 12.2"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 12.2
+    intent: vlan
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q020
+    query: "Cisco C9300 VLAN unsupported VXLAN-999"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: vlan
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q021
+    query: "Huawei CE6800 Interface uplink configuration"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: interface
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-interface"]
+    citation_required: true
+  - id: EVAL-Q022
+    query: "Huawei port status CE6885-48YS8CQ"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: interface
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-interface"]
+    citation_required: true
+  - id: EVAL-Q023
+    query: "CE68 Interface command"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: interface
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-interface"]
+    citation_required: true
+  - id: EVAL-Q024
+    query: "Interface configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: interface
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-interface", "fixture-cisco-interface"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q025
+    query: "Huawei Interface interfase CE6800"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: interface
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-interface"]
+    citation_required: true
+  - id: EVAL-Q026
+    query: "Huawei CE6800 Interface Cisco syntax"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: interface
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q027
+    query: "Huawei CE6800 C9300-48P Interface"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: interface
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q028
+    query: "Huawei CE6800 Interface version V300R023C10"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V300R023C10
+    intent: interface
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-huawei-interface"]
+    citation_required: true
+  - id: EVAL-Q029
+    query: "Huawei CE6800 Interface version V600"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V600
+    intent: interface
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q030
+    query: "Huawei CE6800 Interface unsupported ZX-999"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: interface
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q031
+    query: "Cisco C9300 Interface uplink configuration"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: interface
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-interface"]
+    citation_required: true
+  - id: EVAL-Q032
+    query: "Cisco port status C9300-48P"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: interface
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-interface"]
+    citation_required: true
+  - id: EVAL-Q033
+    query: "C930 Interface command"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: interface
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-interface"]
+    citation_required: true
+  - id: EVAL-Q034
+    query: "Interface configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: interface
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-interface", "fixture-cisco-interface"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q035
+    query: "Cisco Interface interfase C9300"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: interface
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-interface"]
+    citation_required: true
+  - id: EVAL-Q036
+    query: "Cisco C9300 Interface Huawei syntax"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: interface
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q037
+    query: "Cisco C9300 CE6885-48YS8CQ Interface"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: interface
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q038
+    query: "Cisco C9300 Interface version 17.9.4"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 17.9.4
+    intent: interface
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-cisco-interface"]
+    citation_required: true
+  - id: EVAL-Q039
+    query: "Cisco C9300 Interface version 12.2"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 12.2
+    intent: interface
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q040
+    query: "Cisco C9300 Interface unsupported ZX-999"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: interface
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q041
+    query: "Huawei CE6800 OSPF operations configuration"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ospf
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ospf"]
+    citation_required: true
+  - id: EVAL-Q042
+    query: "Huawei neighbor state CE6885-48YS8CQ"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ospf
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ospf"]
+    citation_required: true
+  - id: EVAL-Q043
+    query: "CE68 OSPF command"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ospf
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ospf"]
+    citation_required: true
+  - id: EVAL-Q044
+    query: "OSPF configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: ospf
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ospf", "fixture-cisco-ospf"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q045
+    query: "Huawei OSPF neigbor CE6800"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ospf
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ospf"]
+    citation_required: true
+  - id: EVAL-Q046
+    query: "Huawei CE6800 OSPF Cisco syntax"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ospf
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q047
+    query: "Huawei CE6800 C9300-48P OSPF"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ospf
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q048
+    query: "Huawei CE6800 OSPF version V300R023C10"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V300R023C10
+    intent: ospf
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-huawei-ospf"]
+    citation_required: true
+  - id: EVAL-Q049
+    query: "Huawei CE6800 OSPF version V600"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V600
+    intent: ospf
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q050
+    query: "Huawei CE6800 OSPF unsupported ZX-999"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ospf
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q051
+    query: "Cisco C9300 OSPF operations configuration"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ospf
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ospf"]
+    citation_required: true
+  - id: EVAL-Q052
+    query: "Cisco neighbor state C9300-48P"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ospf
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ospf"]
+    citation_required: true
+  - id: EVAL-Q053
+    query: "C930 OSPF command"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ospf
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ospf"]
+    citation_required: true
+  - id: EVAL-Q054
+    query: "OSPF configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: ospf
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ospf", "fixture-cisco-ospf"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q055
+    query: "Cisco OSPF neigbor C9300"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ospf
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ospf"]
+    citation_required: true
+  - id: EVAL-Q056
+    query: "Cisco C9300 OSPF Huawei syntax"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ospf
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q057
+    query: "Cisco C9300 CE6885-48YS8CQ OSPF"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ospf
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q058
+    query: "Cisco C9300 OSPF version 17.9.4"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 17.9.4
+    intent: ospf
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-cisco-ospf"]
+    citation_required: true
+  - id: EVAL-Q059
+    query: "Cisco C9300 OSPF version 12.2"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 12.2
+    intent: ospf
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q060
+    query: "Cisco C9300 OSPF unsupported ZX-999"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ospf
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q061
+    query: "Huawei CE6800 SSH operations configuration"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ssh
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ssh"]
+    citation_required: true
+  - id: EVAL-Q062
+    query: "Huawei stelnet CE6885-48YS8CQ"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ssh
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ssh"]
+    citation_required: true
+  - id: EVAL-Q063
+    query: "CE68 SSH command"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ssh
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ssh"]
+    citation_required: true
+  - id: EVAL-Q064
+    query: "SSH configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: ssh
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ssh", "fixture-cisco-ssh"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q065
+    query: "Huawei SSH commmand CE6800"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ssh
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ssh"]
+    citation_required: true
+  - id: EVAL-Q066
+    query: "Huawei CE6800 SSH Cisco syntax"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ssh
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q067
+    query: "Huawei CE6800 C9300-48P SSH"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ssh
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q068
+    query: "Huawei CE6800 SSH version V300R023C10"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V300R023C10
+    intent: ssh
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-huawei-ssh"]
+    citation_required: true
+  - id: EVAL-Q069
+    query: "Huawei CE6800 SSH version V600"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V600
+    intent: ssh
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q070
+    query: "Huawei CE6800 SSH unsupported ZX-999"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ssh
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q071
+    query: "Cisco C9300 SSH operations configuration"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ssh
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ssh"]
+    citation_required: true
+  - id: EVAL-Q072
+    query: "Cisco stelnet C9300-48P"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ssh
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ssh"]
+    citation_required: true
+  - id: EVAL-Q073
+    query: "C930 SSH command"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ssh
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ssh"]
+    citation_required: true
+  - id: EVAL-Q074
+    query: "SSH configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: ssh
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ssh", "fixture-cisco-ssh"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q075
+    query: "Cisco SSH commmand C9300"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ssh
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ssh"]
+    citation_required: true
+  - id: EVAL-Q076
+    query: "Cisco C9300 SSH Huawei syntax"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ssh
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q077
+    query: "Cisco C9300 CE6885-48YS8CQ SSH"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ssh
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q078
+    query: "Cisco C9300 SSH version 17.9.4"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 17.9.4
+    intent: ssh
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-cisco-ssh"]
+    citation_required: true
+  - id: EVAL-Q079
+    query: "Cisco C9300 SSH version 12.2"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 12.2
+    intent: ssh
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q080
+    query: "Cisco C9300 SSH unsupported ZX-999"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ssh
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q081
+    query: "Huawei CE6800 NTP operations configuration"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ntp
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ntp"]
+    citation_required: true
+  - id: EVAL-Q082
+    query: "Huawei time sync CE6885-48YS8CQ"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ntp
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ntp"]
+    citation_required: true
+  - id: EVAL-Q083
+    query: "CE68 NTP command"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ntp
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ntp"]
+    citation_required: true
+  - id: EVAL-Q084
+    query: "NTP configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: ntp
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ntp", "fixture-cisco-ntp"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q085
+    query: "Huawei NTP commmand CE6800"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ntp
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ntp"]
+    citation_required: true
+  - id: EVAL-Q086
+    query: "Huawei CE6800 NTP Cisco syntax"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ntp
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q087
+    query: "Huawei CE6800 C9300-48P NTP"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ntp
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q088
+    query: "Huawei CE6800 NTP version V300R023C10"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V300R023C10
+    intent: ntp
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-huawei-ntp"]
+    citation_required: true
+  - id: EVAL-Q089
+    query: "Huawei CE6800 NTP version V600"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V600
+    intent: ntp
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q090
+    query: "Huawei CE6800 NTP unsupported ZX-999"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: ntp
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q091
+    query: "Cisco C9300 NTP operations configuration"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ntp
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ntp"]
+    citation_required: true
+  - id: EVAL-Q092
+    query: "Cisco time sync C9300-48P"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ntp
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ntp"]
+    citation_required: true
+  - id: EVAL-Q093
+    query: "C930 NTP command"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ntp
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ntp"]
+    citation_required: true
+  - id: EVAL-Q094
+    query: "NTP configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: ntp
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-ntp", "fixture-cisco-ntp"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q095
+    query: "Cisco NTP commmand C9300"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ntp
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-ntp"]
+    citation_required: true
+  - id: EVAL-Q096
+    query: "Cisco C9300 NTP Huawei syntax"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ntp
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q097
+    query: "Cisco C9300 CE6885-48YS8CQ NTP"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ntp
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q098
+    query: "Cisco C9300 NTP version 17.9.4"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 17.9.4
+    intent: ntp
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-cisco-ntp"]
+    citation_required: true
+  - id: EVAL-Q099
+    query: "Cisco C9300 NTP version 12.2"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 12.2
+    intent: ntp
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q100
+    query: "Cisco C9300 NTP unsupported ZX-999"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: ntp
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q101
+    query: "Huawei CE6800 Route operations configuration"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: route
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-route"]
+    citation_required: true
+  - id: EVAL-Q102
+    query: "Huawei routing table CE6885-48YS8CQ"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: route
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-route"]
+    citation_required: true
+  - id: EVAL-Q103
+    query: "CE68 Route command"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: route
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-route"]
+    citation_required: true
+  - id: EVAL-Q104
+    query: "Route configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: route
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-route", "fixture-cisco-route"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q105
+    query: "Huawei Route routng CE6800"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: route
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-route"]
+    citation_required: true
+  - id: EVAL-Q106
+    query: "Huawei CE6800 Route Cisco syntax"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: route
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q107
+    query: "Huawei CE6800 C9300-48P Route"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: route
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q108
+    query: "Huawei CE6800 Route version V300R023C10"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V300R023C10
+    intent: route
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Huawei
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-huawei-route"]
+    citation_required: true
+  - id: EVAL-Q109
+    query: "Huawei CE6800 Route version V600"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: V600
+    intent: route
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q110
+    query: "Huawei CE6800 Route unsupported ZX-999"
+    vendor: Huawei
+    platform: huawei_vrp
+    product_family: CloudEngine
+    product_series: CE6800
+    product_model: CE6885-48YS8CQ
+    os_family: VRP
+    software_train: V300
+    software_release: null
+    intent: route
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Huawei
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
+  - id: EVAL-Q111
+    query: "Cisco C9300 Route operations configuration"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: route
+    query_type: exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-route"]
+    citation_required: true
+  - id: EVAL-Q112
+    query: "Cisco routing table C9300-48P"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: route
+    query_type: alias
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-route"]
+    citation_required: true
+  - id: EVAL-Q113
+    query: "C930 Route command"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: route
+    query_type: prefix
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-route"]
+    citation_required: true
+  - id: EVAL-Q114
+    query: "Route configuration command"
+    vendor: null
+    platform: null
+    product_family: null
+    product_series: null
+    product_model: null
+    os_family: null
+    software_train: null
+    software_release: null
+    intent: route
+    query_type: ambiguous
+    expected_outcome: clarify
+    expected_vendor: null
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-huawei-route", "fixture-cisco-route"]
+    citation_required: false
+    notes: "vendor intentionally omitted"
+  - id: EVAL-Q115
+    query: "Cisco Route routng C9300"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: route
+    query_type: typo
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: ["fixture-cisco-route"]
+    citation_required: true
+  - id: EVAL-Q116
+    query: "Cisco C9300 Route Huawei syntax"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: route
+    query_type: wrong_vendor
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "query vendor and product conflict with intentionally wrong vendor terms"
+  - id: EVAL-Q117
+    query: "Cisco C9300 CE6885-48YS8CQ Route"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: route
+    query_type: product_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "series/model conflict must fail closed"
+  - id: EVAL-Q118
+    query: "Cisco C9300 Route version 17.9.4"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 17.9.4
+    intent: route
+    query_type: version_exact
+    expected_outcome: answer
+    expected_vendor: Cisco
+    expected_version_relation: exact
+    gold_document_ids: ["fixture-cisco-route"]
+    citation_required: true
+  - id: EVAL-Q119
+    query: "Cisco C9300 Route version 12.2"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: 12.2
+    intent: route
+    query_type: version_conflict
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: conflict
+    gold_document_ids: []
+    citation_required: false
+  - id: EVAL-Q120
+    query: "Cisco C9300 Route unsupported ZX-999"
+    vendor: Cisco
+    platform: cisco_iosxe
+    product_family: Catalyst
+    product_series: C9300
+    product_model: C9300-48P
+    os_family: IOS XE
+    software_train: 17
+    software_release: null
+    intent: route
+    query_type: no_match
+    expected_outcome: no_match
+    expected_vendor: Cisco
+    expected_version_relation: unspecified
+    gold_document_ids: []
+    citation_required: false
+    notes: "unknown feature/model must not invent an answer"
