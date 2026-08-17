@@ -7,7 +7,7 @@ Next Task: API-002（按原清单依赖继续）
 
 Completed: 272 / 359
 P0: 222 / 277
-Last Verified Commit: 待 API-001 功能提交后写入（不 push）
+Last Verified Commit: 5223be39（API-001 PASS；不 push）
 
 Recent Migration: m0145 applied on PostgreSQL 18.4; KUI action ledger/operation columns and transaction rollback probe PASS
 Recent Build: API-001 frontend lint/build/Vitest PASS（19 files / 97 tests）；API-001 ASGI boundary probe/py_compile PASS；仅既有 large-chunk warning
