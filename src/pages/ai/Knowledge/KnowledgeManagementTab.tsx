@@ -2238,10 +2238,49 @@ export const KnowledgeManagementTab: React.FC = () => {
                     <section key={chunk.id} className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950/40">
                       <div className="flex items-start gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/70">
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{String(chunk.page || index + 1).padStart(2, '0')}</span>
-                        <div className="min-w-0"><h3 className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{chunk.section || 'General Overview'}</h3><p className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">Chunk {index + 1}</p></div>
-                        <ChevronRight className="ml-auto mt-1 h-4 w-4 shrink-0 text-slate-300" />
+                        <div className="min-w-0">
+                          <h3 className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{chunk.section || 'General Overview'}</h3>
+                          <p className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">Chunk {index + 1} · ordinal {chunk.ordinal ?? index}</p>
+                        </div>
+                        <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-1 text-[10px]">
+                          {chunk.chunk_role && <span className="rounded-full bg-indigo-100 px-2 py-0.5 font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">{chunk.chunk_role}</span>}
+                          {chunk.chunk_type && <span className="rounded-full bg-slate-200 px-2 py-0.5 font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{chunk.chunk_type}</span>}
+                        </div>
                       </div>
                       <pre className="whitespace-pre-wrap break-words px-4 py-4 font-mono text-xs leading-6 text-slate-700 dark:text-slate-300">{chunk.content}</pre>
+                      <div className="grid gap-2 border-t border-slate-100 bg-slate-50/50 px-4 py-3 text-[10px] dark:border-slate-800 dark:bg-slate-900/40 sm:grid-cols-2">
+                        <div className="flex flex-wrap items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                          <span className="font-semibold text-slate-600 dark:text-slate-300">可检索：</span>{chunk.is_retrieval_candidate === false ? '否' : '是'}
+                          <span className="ml-2 font-semibold text-slate-600 dark:text-slate-300">Token：</span>{chunk.token_count ?? 0}
+                          {chunk.content_hash && <span className="ml-2 font-mono" title={chunk.content_hash}>hash {chunk.content_hash.slice(0, 10)}…</span>}
+                        </div>
+                        <div className="text-right text-slate-400">{chunk.chunking_version || 'chunker 未记录'} · {chunk.parser_version || selectedDocument.parser_version || 'parser 未记录'}</div>
+                      </div>
+                      {(chunk.parent_chunk || (chunk.neighbors && chunk.neighbors.length > 0)) && (
+                        <div className="space-y-2 border-t border-slate-100 px-4 py-3 dark:border-slate-800">
+                          {chunk.parent_chunk && (
+                            <details className="rounded-xl border border-amber-200/80 bg-amber-50/50 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/20">
+                              <summary className="cursor-pointer text-[10px] font-semibold text-amber-800 dark:text-amber-200">Parent Chunk · {chunk.parent_chunk.section || chunk.parent_chunk.id}</summary>
+                              <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words border-t border-amber-200/60 pt-2 font-mono text-[10px] leading-5 text-amber-900/80 dark:border-amber-900/50 dark:text-amber-100/80">{chunk.parent_chunk.content || 'Parent 内容为空'}</pre>
+                            </details>
+                          )}
+                          {chunk.neighbors && chunk.neighbors.length > 0 && (
+                            <details className="rounded-xl border border-sky-200/80 bg-sky-50/50 px-3 py-2 dark:border-sky-900/60 dark:bg-sky-950/20">
+                              <summary className="cursor-pointer text-[10px] font-semibold text-sky-800 dark:text-sky-200">Neighbor Chunks · {chunk.neighbors.length}</summary>
+                              <div className="mt-2 space-y-2 border-t border-sky-200/60 pt-2 dark:border-sky-900/50">
+                                {chunk.neighbors.map((neighbor) => <div key={neighbor.id} className="rounded-lg bg-white/70 p-2 dark:bg-slate-950/40"><div className="font-semibold text-[10px] text-sky-800 dark:text-sky-200">{neighbor.section || neighbor.id} · ordinal {neighbor.ordinal ?? '—'}</div><pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-slate-600 dark:text-slate-300">{neighbor.content || 'Neighbor 内容为空'}</pre></div>)}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      )}
+                      <details className="border-t border-slate-100 px-4 py-3 dark:border-slate-800">
+                        <summary className="cursor-pointer text-[10px] font-semibold text-slate-600 dark:text-slate-300">Metadata / 来源定位 / 版本字段</summary>
+                        <div className="mt-2 grid gap-3 border-t border-slate-100 pt-2 dark:border-slate-800 sm:grid-cols-2">
+                          <div><div className="mb-1 text-[10px] font-semibold text-slate-400">Metadata</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-[10px] leading-5 text-slate-600 dark:bg-white/[0.04] dark:text-slate-300">{JSON.stringify(chunk.metadata || {}, null, 2)}</pre></div>
+                          <div><div className="mb-1 text-[10px] font-semibold text-slate-400">Source locator</div><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950/[0.03] p-2 font-mono text-[10px] leading-5 text-slate-600 dark:bg-white/[0.04] dark:text-slate-300">{JSON.stringify(chunk.source_locator || {}, null, 2)}</pre><div className="mt-2 text-[10px] text-slate-400">Document：{chunk.document_version || selectedDocument.document_version || '未记录'} · Index：{chunk.index_version || selectedDocument.index_version || '未记录'}</div></div>
+                        </div>
+                      </details>
                     </section>
                   ))}
                 </div>

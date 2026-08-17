@@ -59,6 +59,45 @@ _DIRECTORY_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 _OFFICIAL_KNOWLEDGE_TYPES = ("official_vendor", "official_url", "official_local")
 _ENTERPRISE_KNOWLEDGE_TYPES = ("internal_sop", "internal_standard", "case", "user_document", "sample")
 _DOCUMENT_ACTIONS = frozenset({"delete", "disable", "enable", "reparse", "rechunk", "reindex"})
+_CHUNK_DETAIL_SENSITIVE_KEY_RE = re.compile(
+    r"(?:secret|password|passwd|token|api[_-]?key|credential|authorization|cookie|private[_-]?key|tenant[_-]?id|user[_-]?id|acl|permission|identity)",
+    re.IGNORECASE,
+)
+_CHUNK_DETAIL_MAX_TEXT = 20_000
+
+
+def _decode_json_value(value: Any, default: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if value in (None, ""):
+        return default
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError):
+        return default
+    return parsed
+
+
+def _safe_chunk_detail_value(value: Any, *, depth: int = 0) -> Any:
+    """Bound metadata/source locator output and remove identity/secrets."""
+
+    if depth > 3:
+        return "[truncated]"
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in list(value.items())[:128]:
+            key_text = str(key)
+            if _CHUNK_DETAIL_SENSITIVE_KEY_RE.search(key_text):
+                continue
+            result[key_text[:120]] = _safe_chunk_detail_value(item, depth=depth + 1)
+        return result
+    if isinstance(value, (list, tuple, set)):
+        return [_safe_chunk_detail_value(item, depth=depth + 1) for item in list(value)[:128]]
+    if isinstance(value, str):
+        return value[:_CHUNK_DETAIL_MAX_TEXT]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:_CHUNK_DETAIL_MAX_TEXT]
 
 
 class KnowledgeDocumentActionError(ValueError):
@@ -850,25 +889,95 @@ class KnowledgeService:
                 except (TypeError, ValueError):
                     metadata_value = {}
 
+            chunk_columns = self._table_columns(cursor, "ai_document_chunk")
+            chunk_detail_fields = (
+                "id", "page", "section", "content", "created_at", "parent_chunk_id",
+                "chunk_role", "chunk_type", "ordinal", "metadata_json", "heading_path_json",
+                "token_count", "content_hash", "source_locator_json", "chunking_version",
+                "document_version", "index_version", "parser_version", "neighbor_chunk_ids_json",
+                "is_retrieval_candidate",
+            )
+            selected_chunk_fields = [field for field in chunk_detail_fields if field in chunk_columns]
+            chunk_select = ", ".join(
+                f"c.{field} AS {field}" for field in selected_chunk_fields
+            )
             cursor.execute(
-                """
-                SELECT c.id, c.page, c.section, c.content, c.created_at
-                FROM ai_document_chunk c
-                WHERE c.document_id = ?
-                ORDER BY c.page ASC, c.created_at ASC, c.id ASC
-                """,
+                f"SELECT {chunk_select} FROM ai_document_chunk c "
+                "WHERE c.document_id = ? "
+                "ORDER BY COALESCE(c.ordinal, 0) ASC, COALESCE(c.page, 0) ASC, c.created_at ASC, c.id ASC",
                 (doc_id,),
             )
-            chunks = [
-                {
-                    "id": chunk[0],
-                    "page": int(chunk[1] or index + 1),
-                    "section": chunk[2] or "General Overview",
-                    "content": chunk[3] or "",
-                    "created_at": chunk[4],
+            raw_chunk_rows = cursor.fetchall()
+            chunk_records: list[dict[str, Any]] = []
+            for index, raw_chunk in enumerate(raw_chunk_rows):
+                values = dict(zip(selected_chunk_fields, raw_chunk))
+                chunk_metadata = _decode_json_value(values.get("metadata_json"), {})
+                if not isinstance(chunk_metadata, dict):
+                    chunk_metadata = {}
+                heading_path = _decode_json_value(values.get("heading_path_json"), [])
+                if not isinstance(heading_path, list):
+                    heading_path = []
+                source_locator = _decode_json_value(values.get("source_locator_json"), {})
+                if not isinstance(source_locator, dict):
+                    source_locator = {}
+                neighbor_ids = _decode_json_value(values.get("neighbor_chunk_ids_json"), [])
+                if not isinstance(neighbor_ids, list):
+                    neighbor_ids = []
+                chunk_records.append({
+                    "id": values.get("id"),
+                    "page": int(values.get("page") or index + 1),
+                    "section": values.get("section") or "General Overview",
+                    "content": str(values.get("content") or "")[:_CHUNK_DETAIL_MAX_TEXT],
+                    "created_at": values.get("created_at"),
+                    "parent_chunk_id": values.get("parent_chunk_id"),
+                    "chunk_role": values.get("chunk_role") or "standalone",
+                    "chunk_type": values.get("chunk_type") or "concept",
+                    "ordinal": int(values.get("ordinal") or index),
+                    "metadata": _safe_chunk_detail_value(chunk_metadata),
+                    "heading_path": _safe_chunk_detail_value(heading_path),
+                    "token_count": int(values.get("token_count") or 0),
+                    "content_hash": values.get("content_hash"),
+                    "source_locator": _safe_chunk_detail_value(source_locator),
+                    "chunking_version": values.get("chunking_version"),
+                    "document_version": values.get("document_version") or row_values.get("document_version"),
+                    "index_version": values.get("index_version") or row_values.get("index_version"),
+                    "parser_version": values.get("parser_version") or row_values.get("parser_version"),
+                    "neighbor_chunk_ids": [str(item) for item in neighbor_ids[:8] if item not in (None, "")],
+                    "is_retrieval_candidate": bool(values.get("is_retrieval_candidate", 1)),
+                })
+            chunk_by_id = {str(item.get("id")): item for item in chunk_records if item.get("id")}
+
+            def compact_chunk(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+                if not item:
+                    return None
+                return {
+                    "id": item.get("id"),
+                    "page": item.get("page"),
+                    "section": item.get("section"),
+                    "ordinal": item.get("ordinal"),
+                    "chunk_role": item.get("chunk_role"),
+                    "content": str(item.get("content") or "")[:_CHUNK_DETAIL_MAX_TEXT],
                 }
-                for index, chunk in enumerate(cursor.fetchall())
-            ]
+
+            chunks = []
+            for index, item in enumerate(chunk_records):
+                explicit_neighbors = [
+                    chunk_by_id[neighbor_id]
+                    for neighbor_id in item.get("neighbor_chunk_ids", [])
+                    if neighbor_id in chunk_by_id and neighbor_id != str(item.get("id"))
+                ]
+                if not explicit_neighbors:
+                    explicit_neighbors = [
+                        candidate for candidate in (
+                            chunk_records[index - 1] if index > 0 else None,
+                            chunk_records[index + 1] if index + 1 < len(chunk_records) else None,
+                        ) if candidate is not None
+                    ]
+                enriched = dict(item)
+                enriched["parent_chunk"] = compact_chunk(chunk_by_id.get(str(item.get("parent_chunk_id") or "")))
+                enriched["neighbors"] = [compact_chunk(neighbor) for neighbor in explicit_neighbors[:2]]
+                enriched.pop("neighbor_chunk_ids", None)
+                chunks.append(enriched)
 
             source_version_history: List[Dict[str, Any]] = []
             raw_sources: List[Dict[str, Any]] = []
@@ -950,7 +1059,7 @@ class KnowledgeService:
                 "document_id": row_values.get("document_id"),
                 "original_content": row_values.get("original_content") or "",
                 "normalized_content": row_values.get("normalized_content") or "",
-                "metadata": metadata_value,
+                "metadata": _safe_chunk_detail_value(metadata_value),
                 "document_version": row_values.get("document_version"),
                 "index_version": row_values.get("index_version") or row_values.get("retrieval_index_version"),
                 "parser_version": row_values.get("parser_version"),

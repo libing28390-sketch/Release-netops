@@ -1,0 +1,54 @@
+task_id: CHK-015
+title: chunk viewer with parent neighbor metadata and source locator
+priority: P1
+status: executable
+authority: PostgreSQL
+scope:
+  - expose an on-demand tenant-safe document detail response with bounded chunk projections
+  - show Parent and Neighbor context without requiring a second client-side database query
+  - show chunk metadata, heading path, source locator and chunk/parser/document/index lineage
+  - keep document list responses summary-only and retain the existing detail route
+invariants:
+  query_and_tenant:
+    - detail lookup requires the authenticated tenant predicate
+    - a document from another tenant returns not-found semantics
+    - chunks are selected only through the authorized document identity
+    - parent and neighbor references stay inside the same document result set
+  projection:
+    - chunk content is bounded and ordered by ordinal/page/created_at/id
+    - parent_chunk is a compact context projection with id/section/ordinal/role/content
+    - neighbors are explicit neighbor ids when recorded, otherwise immediate ordered neighbors
+    - metadata and source_locator are JSON objects with bounded depth/keys/text
+    - content_hash, token_count, chunk_role/type and version lineage remain visible
+  security:
+    - embedding vectors, raw database columns and SQL are never returned
+    - secret/password/token/credential/identity/tenant/ACL/permission keys are removed from metadata/detail output
+    - list endpoints remain detail-free; the existing explicit detail route is required
+  compatibility:
+    - existing document fields and chunks id/page/section/content/created_at remain present
+    - missing optional V2 columns degrade to null/default values without breaking V1 detail
+implementation:
+  service: backend/ai/services/knowledge_service.py
+  route: backend/ai/api/assistant.py#/documents/{doc_id}
+  api_types: src/api/ai.ts
+  viewer: src/pages/ai/Knowledge/KnowledgeManagementTab.tsx
+verification:
+  postgresql_probe: scripts/knowledge_engine_v2_chk015_pg_probe.py
+  required_vectors:
+    - parent_relation_and_neighbor_relation
+    - metadata_source_locator_and_version_lineage
+    - sensitive_metadata_redaction
+    - cross_tenant_detail_rejection
+    - V1_chunk_rows_preserved
+    - probe_transaction_rolls_back
+  commands:
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe scripts/knowledge_engine_v2_chk015_pg_probe.py"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m pytest tests/knowledge_engine_v2/test_chk015_chunk_viewer_pg.py -q -p no:cacheprovider"
+    - "npm.cmd run lint"
+    - "npm.cmd run build"
+    - "$env:PYTHONPATH='backend'; .venv\\Scripts\\python.exe -m py_compile backend/ai/services/knowledge_service.py scripts/knowledge_engine_v2_chk015_pg_probe.py"
+    - "git diff --check"
+rollback:
+  runtime: hide new context panels while keeping existing chunk content viewer and detail route
+  data: no new persistent rows or DDL; V1 document/chunk projection remains authoritative
+  database: acceptance probe transaction rollback; no production database write

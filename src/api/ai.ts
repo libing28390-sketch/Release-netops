@@ -1313,6 +1313,31 @@ export interface KnowledgeDocumentChunk {
   section: string;
   content: string;
   created_at?: string;
+  parent_chunk_id?: string | null;
+  parent_chunk?: KnowledgeDocumentChunkContext | null;
+  neighbors?: KnowledgeDocumentChunkContext[];
+  chunk_role?: string | null;
+  chunk_type?: string | null;
+  ordinal?: number;
+  metadata?: Record<string, unknown>;
+  heading_path?: unknown[];
+  token_count?: number;
+  content_hash?: string | null;
+  source_locator?: Record<string, unknown>;
+  chunking_version?: string | null;
+  document_version?: string | null;
+  index_version?: string | null;
+  parser_version?: string | null;
+  is_retrieval_candidate?: boolean;
+}
+
+export interface KnowledgeDocumentChunkContext {
+  id: string;
+  page?: number;
+  section?: string;
+  ordinal?: number;
+  chunk_role?: string | null;
+  content?: string;
 }
 
 export interface KnowledgeDocumentDetail extends KnowledgeDocument {

@@ -252,7 +252,7 @@
 - [x] `CHK-012` `P0/AI+BE/M`：实现批量 Embedding、失败重试、幂等和限速。
 - [x] `CHK-013` `P1/AI+BE/M`：实现 Document 修改后的精确 Rechunk/Reembed/Reindex。
 - [x] `CHK-014` `P1/AI+BE/M`：实现双 Index、Shadow Index、切换和回滚。
-- [ ] `CHK-015` `P1/FE/M`：实现 Chunk 查看器，支持 Parent、Neighbor、Metadata 和来源定位。
+- [x] `CHK-015` `P1/FE/M`：实现 Chunk 查看器，支持 Parent、Neighbor、Metadata 和来源定位。
 - [ ] `CHK-016` `P2/AI+QA/L`：建立不同 Chunk 配置的离线对比实验。
 
 **退出标准**：任何 Chunk 都能追溯并重建；CLI 与版本前提没有被切断。
