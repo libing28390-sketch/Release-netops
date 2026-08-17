@@ -15,6 +15,7 @@ from services.diagnostic_orchestrator import (
     diagnostic_orchestrator,
     parse_cli_output,
 )
+from api.knowledge_v2_contracts import DiagnosticContext, DiagnosticPlanPayload
 
 router = APIRouter(prefix="/diagnostics", tags=["AI Read-only Diagnostics"])
 
@@ -26,13 +27,13 @@ class DiagnosticPlanRequest(BaseModel):
     platform: Optional[str] = Field(default=None, max_length=64)
     target: str = Field(..., min_length=1, max_length=160)
     device_id: Optional[str] = Field(default=None, max_length=120)
-    context: Dict[str, Any] = Field(default_factory=dict)
+    context: DiagnosticContext = Field(default_factory=DiagnosticContext)
 
 
 class DiagnosticRunRequest(BaseModel):
-    plan: Dict[str, Any]
+    plan: DiagnosticPlanPayload
     authorized_steps: List[int] = Field(default_factory=list, max_length=20)
-    context: Dict[str, Any] = Field(default_factory=dict)
+    context: DiagnosticContext = Field(default_factory=DiagnosticContext)
 
 
 class PastedCliRequest(BaseModel):
@@ -72,7 +73,7 @@ def create_diagnostic_plan(payload: DiagnosticPlanRequest, user=Depends(require_
         }
     # CMDB is authoritative for identity/platform; user-supplied context may
     # add alert/topology/change hints but cannot override those fields.
-    context = {**(payload.context or {}), **cmdb_context}
+    context = {**payload.context.model_dump(exclude_none=True), **cmdb_context}
     try:
         plan = diagnostic_orchestrator.build_plan(
             symptom=payload.symptom,
@@ -93,13 +94,14 @@ def create_diagnostic_plan(payload: DiagnosticPlanRequest, user=Depends(require_
 
 @router.post("/run")
 async def run_diagnostic_plan(payload: DiagnosticRunRequest, user=Depends(require_ai_permission("ai.diagnostics.run"))):
-    plan = dict(payload.plan)
+    plan = payload.plan.model_dump(exclude_none=True)
     plan["tenant_id"] = str(user.get("tenant_id") or "tenant-default")
-    result = await diagnostic_orchestrator.run(plan=plan, authorized_steps=payload.authorized_steps, context=payload.context)
+    context = payload.context.model_dump(exclude_none=True)
+    result = await diagnostic_orchestrator.run(plan=plan, authorized_steps=payload.authorized_steps, context=context)
     try:
         persist_diagnostic_run(
             tenant_id=plan["tenant_id"],
-            case_id=payload.context.get("case_id") if isinstance(payload.context, dict) else None,
+            case_id=payload.context.case_id,
             result=result,
             playbook_code=str(plan.get("playbook") or "unknown"),
             vendor=plan.get("vendor"), platform=plan.get("platform"), device_id=plan.get("device_id"),

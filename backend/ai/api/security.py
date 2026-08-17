@@ -25,6 +25,14 @@ from ai.security.security_service import (
 from ai.services.document_security_scan import scan_document_security
 from services.document_parser_adapters import ParsedBlock, ParsedDocument
 from ai.schemas.provider import SUPPORTED_PROVIDER_TYPES
+from api.knowledge_v2_contracts import (
+    AttachmentCheckRequest,
+    SecurityIncidentRequest,
+    SecurityKillSwitchRequest,
+    SecurityPolicyUpdateRequest,
+    SecurityTestPayloadRequest,
+    TenantSecurityKillSwitchRequest,
+)
 
 router = APIRouter(prefix="/security", tags=["AI Security Gateway"])
 
@@ -131,26 +139,26 @@ def get_security_policy(user=Depends(require_ai_permission("ai.audit.view"))):
 
 
 @router.put("/policy", response_model=Dict[str, Any])
-def update_security_policy(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.provider.manage"))):
-    allowed = tuple(str(item).lower().strip().replace('-', '_') for item in payload.get("allowed_provider_types", SUPPORTED_PROVIDER_TYPES))
+def update_security_policy(payload: SecurityPolicyUpdateRequest, user=Depends(require_ai_permission("ai.provider.manage"))):
+    allowed = tuple(str(item).lower().strip().replace('-', '_') for item in (payload.allowed_provider_types or SUPPORTED_PROVIDER_TYPES))
     if not allowed or any(item not in SUPPORTED_PROVIDER_TYPES for item in allowed):
         raise HTTPException(status_code=400, detail="Provider type is not in the approved adapter allowlist")
-    classifications = tuple(str(item).upper().strip() for item in payload.get("allowed_classifications", ("PUBLIC", "INTERNAL", "CONFIDENTIAL")))
+    classifications = tuple(str(item).upper().strip() for item in payload.allowed_classifications)
     if not classifications or any(normalize_classification(item) is None or item == DataClassification.SECRET.value for item in classifications):
         raise HTTPException(status_code=400, detail="SECRET cannot be enabled for external egress")
-    regions = tuple(str(item).lower().strip() for item in payload.get("allowed_data_regions", ("unknown", "global", "cn", "us", "eu")))
+    regions = tuple(str(item).lower().strip() for item in payload.allowed_data_regions)
     if not regions or any(not item or len(item) > 64 for item in regions):
         raise HTTPException(status_code=400, detail="allowed_data_regions must be explicit")
-    provider_kill_switches = {str(key): bool(value) for key, value in (payload.get("provider_kill_switches") or {}).items()}
-    tenant_kill_switches = {str(key): bool(value) for key, value in (payload.get("tenant_kill_switches") or {}).items()}
-    scope_rules = payload.get("scope_rules") if isinstance(payload.get("scope_rules"), dict) else {}
-    policy_version = str(payload.get("policy_version") or f"sec-{uuid.uuid4().hex[:8]}")[:64]
+    provider_kill_switches = {str(key): bool(value) for key, value in payload.provider_kill_switches.items()}
+    tenant_kill_switches = {str(key): bool(value) for key, value in payload.tenant_kill_switches.items()}
+    scope_rules = payload.scope_rules
+    policy_version = str(payload.policy_version or f"sec-{uuid.uuid4().hex[:8]}")[:64]
     policy = SecurityPolicy(
-        external_ai_enabled=bool(payload.get("external_ai_enabled", False)),
-        kill_switch=bool(payload.get("kill_switch", False)),
-        max_payload_bytes=max(1024, min(int(payload.get("max_payload_bytes", 256000)), 2_000_000)),
+        external_ai_enabled=payload.external_ai_enabled,
+        kill_switch=payload.kill_switch,
+        max_payload_bytes=payload.max_payload_bytes,
         identifiers_must_be_tokenized=True,
-        allow_sensitive_minimization=bool(payload.get("allow_sensitive_minimization", True)),
+        allow_sensitive_minimization=payload.allow_sensitive_minimization,
         allowed_provider_types=allowed,
         policy_version=policy_version,
         allowed_classifications=classifications,
@@ -192,26 +200,24 @@ def update_security_policy(payload: Dict[str, Any], user=Depends(require_ai_perm
 
 
 @router.post("/test-payload", response_model=Dict[str, Any])
-def test_payload(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.audit.view"))):
+def test_payload(payload: SecurityTestPayloadRequest, user=Depends(require_ai_permission("ai.audit.view"))):
     """Run the security pipeline without making an external provider call."""
-    messages = payload.get("messages")
-    if not isinstance(messages, list):
-        raise HTTPException(status_code=422, detail="messages must be a list")
-    tenant_id = str(payload.get("tenant_id") or user.get("tenant_id") or "tenant-default")
-    task_id = str(payload.get("task_id") or "dry-run")
+    messages = [item.model_dump() for item in payload.messages]
+    tenant_id = str(payload.tenant_id or user.get("tenant_id") or "tenant-default")
+    task_id = payload.task_id
     try:
         result = ai_security_gateway.protect(
             messages,
             tenant_id=tenant_id,
             task_id=task_id,
             user_id=str(user.get("username") or "anonymous"),
-            tools=payload.get("tools") if isinstance(payload.get("tools"), list) else None,
-            provider_type=str(payload.get("provider_type") or "deepseek"),
-            data_classification=payload.get("data_classification"),
-            data_region=payload.get("data_region"),
-            workspace_id=payload.get("workspace_id"),
-            site_id=payload.get("site_id"),
-            document_scope=payload.get("document_scope"),
+            tools=[item for item in payload.tools] if payload.tools is not None else None,
+            provider_type=payload.provider_type,
+            data_classification=payload.data_classification,
+            data_region=payload.data_region,
+            workspace_id=payload.workspace_id,
+            site_id=payload.site_id,
+            document_scope=payload.document_scope,
         )
         return {
             "decision": result.action.value,
@@ -234,8 +240,8 @@ def test_payload(payload: Dict[str, Any], user=Depends(require_ai_permission("ai
 
 
 @router.post("/kill-switch", response_model=Dict[str, Any])
-def set_kill_switch(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.provider.manage"))):
-    enabled = bool(payload.get("enabled", True))
+def set_kill_switch(payload: SecurityKillSwitchRequest, user=Depends(require_ai_permission("ai.provider.manage"))):
+    enabled = payload.enabled
     current = ai_security_gateway.policy
     ai_security_gateway.policy = SecurityPolicy(
         external_ai_enabled=current.external_ai_enabled,
@@ -254,16 +260,16 @@ def set_kill_switch(payload: Dict[str, Any], user=Depends(require_ai_permission(
     with get_db_connection() as conn:
         conn.execute(
             "UPDATE ai_kill_switch SET enabled = ?, reason = ?, changed_by = ?, changed_at = ? WHERE id = 1",
-            (int(enabled), str(payload.get("reason") or "operator change"), user.get("username", "admin"), _now()),
+            (int(enabled), payload.reason, user.get("username", "admin"), _now()),
         )
         conn.commit()
     return {"enabled": enabled}
 
 
 @router.post("/tenant-kill-switch", response_model=Dict[str, Any])
-def set_tenant_kill_switch(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.security.manage"))):
-    tenant_id = str(payload.get("tenant_id") or user.get("tenant_id") or "tenant-default")
-    enabled = bool(payload.get("enabled", True))
+def set_tenant_kill_switch(payload: TenantSecurityKillSwitchRequest, user=Depends(require_ai_permission("ai.security.manage"))):
+    tenant_id = str(payload.tenant_id or user.get("tenant_id") or "tenant-default")
+    enabled = payload.enabled
     current = ai_security_gateway.policy
     switches = dict(current.tenant_kill_switches)
     switches[tenant_id] = enabled
@@ -288,7 +294,7 @@ def set_tenant_kill_switch(payload: Dict[str, Any], user=Depends(require_ai_perm
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT (tenant_id) DO UPDATE SET kill_switch = excluded.kill_switch, reason = excluded.reason, changed_by = excluded.changed_by, changed_at = excluded.changed_at
             """,
-            (f"tenant_sec_{uuid.uuid4().hex[:12]}", tenant_id, int(enabled), str(payload.get("reason") or "operator change"), user.get("username", "admin"), _now()),
+            (f"tenant_sec_{uuid.uuid4().hex[:12]}", tenant_id, int(enabled), payload.reason, user.get("username", "admin"), _now()),
         )
         conn.commit()
     return {"tenant_id": tenant_id, "enabled": enabled}
@@ -326,16 +332,16 @@ def get_security_incidents(
 
 
 @router.post("/incidents", response_model=Dict[str, Any])
-def open_security_incident(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.security.incident"))):
+def open_security_incident(payload: SecurityIncidentRequest, user=Depends(require_ai_permission("ai.security.incident"))):
     try:
         return create_security_incident(
             tenant_id=str(user.get("tenant_id") or "tenant-default"),
-            incident_type=str(payload.get("incident_type") or "policy_violation"),
-            severity=str(payload.get("severity") or "high"),
-            category=str(payload.get("category") or "policy"),
-            task_id=str(payload.get("task_id") or "") or None,
-            request_id=str(payload.get("request_id") or "") or None,
-            evidence=payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {},
+            incident_type=payload.incident_type,
+            severity=payload.severity,
+            category=payload.category,
+            task_id=payload.task_id,
+            request_id=payload.request_id,
+            evidence=payload.evidence,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -359,13 +365,13 @@ def get_provider_adapter_audit(user=Depends(require_ai_permission("ai.security.i
 
 
 @router.post("/attachment-check", response_model=Dict[str, Any])
-def check_attachment(payload: Dict[str, Any], user=Depends(require_ai_permission("ai.assistant"))):
+def check_attachment(payload: AttachmentCheckRequest, user=Depends(require_ai_permission("ai.assistant"))):
     """Dry-run attachment scan before a file is placed in Copilot context."""
-    text = str(payload.get("text") or "")
+    text = payload.text
     if len(text.encode("utf-8")) > 2_000_000:
         return {"decision": "BLOCK", "reason_code": "ATTACHMENT_TOO_LARGE", "user_message": "附件超过安全大小限制。"}
     document = ParsedDocument(
-        format=str(payload.get("format") or "txt"),
+        format=payload.format,
         text=text,
         blocks=(ParsedBlock(text=text),),
         metadata={},

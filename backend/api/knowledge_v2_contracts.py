@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ai.schemas.model import (
     AIModelCreate,
@@ -195,6 +195,149 @@ class SearchContract(StrictContract):
     filters: RetrievalFilters = Field(default_factory=RetrievalFilters)
 
 
+class ChatHistoryMessage(StrictContract):
+    role: str = Field(..., min_length=1, max_length=32)
+    content: str = Field(..., min_length=1, max_length=200_000)
+
+
+class CopilotContext(StrictContract):
+    device_id: str | None = Field(default=None, max_length=128)
+    interface: str | None = Field(default=None, max_length=256)
+    site_id: str | None = Field(default=None, max_length=128)
+    time_range: str | None = Field(default=None, max_length=128)
+    vendor: str | None = Field(default=None, max_length=128)
+    platform: str | None = Field(default=None, max_length=128)
+    model: str | None = Field(default=None, max_length=256)
+    product_model: str | None = Field(default=None, max_length=256)
+    version: str | None = Field(default=None, max_length=128)
+    software_version: str | None = Field(default=None, max_length=128)
+    os: str | None = Field(default=None, max_length=128)
+    os_family: str | None = Field(default=None, max_length=128)
+    workspace_id: str | None = Field(default=None, max_length=128)
+    department: str | None = Field(default=None, max_length=128)
+    impact_scope: str | None = Field(default=None, max_length=512)
+    scope: str | None = Field(default=None, max_length=512)
+    case_id: str | None = Field(default=None, max_length=128)
+    alert_ids: list[str] = Field(default_factory=list, max_length=100)
+    topology_neighbors: list[str] = Field(default_factory=list, max_length=100)
+    recent_changes: list[str] = Field(default_factory=list, max_length=100)
+    metrics: dict[str, object] = Field(default_factory=dict)
+    document_scope: dict[str, object] = Field(default_factory=dict)
+
+
+class CopilotPlanItem(StrictContract):
+    purpose: str = Field(..., min_length=1, max_length=256)
+    status: str = Field(default="planned", max_length=32)
+    read_only: bool = True
+    step_no: int | None = Field(default=None, ge=1, le=100)
+    command: str | None = Field(default=None, max_length=512)
+
+
+class SecurityMessage(StrictContract):
+    role: str = Field(..., min_length=1, max_length=32)
+    content: str = Field(..., min_length=1, max_length=200_000)
+
+
+class SecurityPolicyUpdateRequest(StrictContract):
+    external_ai_enabled: bool = False
+    kill_switch: bool = False
+    max_payload_bytes: int = Field(default=256_000, ge=1_024, le=2_000_000)
+    identifiers_must_be_tokenized: bool = True
+    allow_sensitive_minimization: bool = True
+    allowed_provider_types: list[str] = Field(default_factory=list, min_length=1, max_length=32)
+    allowed_classifications: list[str] = Field(default_factory=lambda: ["PUBLIC", "INTERNAL", "CONFIDENTIAL"], min_length=1, max_length=8)
+    allowed_data_regions: list[str] = Field(default_factory=lambda: ["unknown", "global", "cn", "us", "eu"], min_length=1, max_length=32)
+    provider_kill_switches: dict[str, bool] = Field(default_factory=dict, max_length=64)
+    tenant_kill_switches: dict[str, bool] = Field(default_factory=dict, max_length=256)
+    scope_rules: dict[str, object] = Field(default_factory=dict, max_length=64)
+    policy_version: str | None = Field(default=None, max_length=64)
+
+
+class SecurityTestPayloadRequest(StrictContract):
+    messages: list[SecurityMessage] = Field(..., min_length=1, max_length=1000)
+    tenant_id: str | None = Field(default=None, max_length=128)
+    task_id: str = Field(default="dry-run", max_length=128)
+    tools: list[dict[str, object]] | None = Field(default=None, max_length=100)
+    provider_type: str = Field(default="deepseek", max_length=64)
+    data_classification: str | None = Field(default=None, max_length=32)
+    data_region: str | None = Field(default=None, max_length=64)
+    workspace_id: str | None = Field(default=None, max_length=128)
+    site_id: str | None = Field(default=None, max_length=128)
+    document_scope: dict[str, object] | None = Field(default=None, max_length=64)
+
+
+class SecurityKillSwitchRequest(StrictContract):
+    enabled: bool = True
+    reason: str = Field(default="operator change", max_length=512)
+
+
+class TenantSecurityKillSwitchRequest(SecurityKillSwitchRequest):
+    tenant_id: str | None = Field(default=None, max_length=128)
+
+
+class SecurityIncidentRequest(StrictContract):
+    incident_type: str = Field(default="policy_violation", max_length=64)
+    severity: str = Field(default="high", max_length=32)
+    category: str = Field(default="policy", max_length=64)
+    task_id: str | None = Field(default=None, max_length=128)
+    request_id: str | None = Field(default=None, max_length=256)
+    evidence: dict[str, object] = Field(default_factory=dict, max_length=64)
+
+
+class AttachmentCheckRequest(StrictContract):
+    text: str = Field(default="", max_length=2_000_000)
+    format: str = Field(default="txt", min_length=1, max_length=32)
+
+
+class DiagnosticStepPayload(StrictContract):
+    step_no: int = Field(..., ge=1, le=100)
+    purpose: str = Field(..., min_length=1, max_length=128)
+    command: str | None = Field(default=None, max_length=512)
+    target: str = Field(..., min_length=1, max_length=160)
+    status: str = Field(default="planned", max_length=32)
+    evidence: list[dict[str, object]] = Field(default_factory=list, max_length=100)
+    duration_ms: int = Field(default=0, ge=0, le=3_600_000)
+    error_code: str | None = Field(default=None, max_length=128)
+    authorization_required: bool = True
+    evidence_hash: str | None = Field(default=None, max_length=128)
+
+
+class DiagnosticPlanPayload(StrictContract):
+    run_id: str = Field(..., min_length=1, max_length=128)
+    state: str = Field(default="symptom", max_length=32)
+    symptom: str = Field(..., min_length=1, max_length=2000)
+    playbook: str = Field(..., min_length=1, max_length=64)
+    vendor: str | None = Field(default=None, max_length=64)
+    platform: str | None = Field(default=None, max_length=64)
+    device_id: str | None = Field(default=None, max_length=128)
+    read_only: bool = True
+    steps: list[DiagnosticStepPayload] = Field(default_factory=list, max_length=100)
+    write_operations_enabled: bool = False
+    context_sources: list[str] = Field(default_factory=list, max_length=32)
+    scope: dict[str, object] = Field(default_factory=dict, max_length=32)
+
+    @model_validator(mode="after")
+    def enforce_read_only(self) -> "DiagnosticPlanPayload":
+        if not self.read_only or self.write_operations_enabled:
+            raise ValueError("diagnostic plans are read-only and cannot enable write operations")
+        return self
+
+
+class DiagnosticContext(StrictContract):
+    device_id: str | None = Field(default=None, max_length=128)
+    site_id: str | None = Field(default=None, max_length=128)
+    vendor: str | None = Field(default=None, max_length=64)
+    platform: str | None = Field(default=None, max_length=64)
+    model: str | None = Field(default=None, max_length=256)
+    version: str | None = Field(default=None, max_length=128)
+    interface: str | None = Field(default=None, max_length=256)
+    time_range: str | None = Field(default=None, max_length=128)
+    case_id: str | None = Field(default=None, max_length=128)
+    alert_ids: list[str] = Field(default_factory=list, max_length=100)
+    topology_neighbors: list[str] = Field(default_factory=list, max_length=100)
+    recent_changes: list[str] = Field(default_factory=list, max_length=100)
+
+
 # Public names used by contract tests and API documentation.  The underlying
 # source/document/import models remain defined next to their routers so the
 # existing response and permission behaviour stays unchanged.
@@ -229,5 +372,8 @@ __all__ = [
     "CatalogVersionBundleContract", "CatalogVersionImportContract", "CatalogVersionRollbackContract",
     "OfficialUrlImportContract", "ImportCancelContract", "ImportRetryContract", "KnowledgeBaseCreateRequest",
     "KnowledgeDocumentCreateRequest", "KnowledgeReindexRequest", "KnowledgeDirectoryCreateRequest", "KnowledgeDirectoryRenameRequest",
-    "RetrievalFilters", "SearchContract",
+    "RetrievalFilters", "SearchContract", "ChatHistoryMessage", "CopilotContext", "CopilotPlanItem",
+    "SecurityMessage", "SecurityPolicyUpdateRequest", "SecurityTestPayloadRequest", "SecurityKillSwitchRequest",
+    "TenantSecurityKillSwitchRequest", "SecurityIncidentRequest", "AttachmentCheckRequest",
+    "DiagnosticStepPayload", "DiagnosticPlanPayload", "DiagnosticContext",
 ]

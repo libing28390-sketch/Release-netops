@@ -20,6 +20,9 @@ from ai.services.knowledge_reindex_service import knowledge_reindex_service
 from ai.services.conversation_service import append_message, get_context, set_conversation_model
 from ai.security.security_service import create_diagnostic_case, handoff_case, record_feedback
 from api.knowledge_v2_contracts import (
+    ChatHistoryMessage,
+    CopilotContext,
+    CopilotPlanItem,
     KnowledgeBaseCreateRequest,
     KnowledgeDirectoryCreateRequest,
     KnowledgeDirectoryRenameRequest,
@@ -32,11 +35,13 @@ router = APIRouter(prefix="/assistant", tags=["AI Copilot & Knowledge"])
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     message: str = Field(..., description="User question or prompt")
-    history: Optional[List[Dict[str, str]]] = None
+    history: Optional[List[ChatHistoryMessage]] = None
     conversation_id: Optional[str] = None
     model_id: Optional[str] = None
-    context: Dict[str, Any] = Field(default_factory=dict)
+    context: CopilotContext = Field(default_factory=CopilotContext)
 
 
 class CopilotFeedbackRequest(BaseModel):
@@ -48,11 +53,13 @@ class CopilotFeedbackRequest(BaseModel):
 
 
 class DiagnosticCaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(..., min_length=1, max_length=160)
     symptom: str = Field(default="", max_length=2000)
     conversation_id: Optional[str] = Field(default=None, max_length=120)
-    context: Dict[str, Any] = Field(default_factory=dict)
-    plan: List[Dict[str, Any]] = Field(default_factory=list, max_length=20)
+    context: CopilotContext = Field(default_factory=CopilotContext)
+    plan: List[CopilotPlanItem] = Field(default_factory=list, max_length=20)
 
 
 class DiagnosticHandoffRequest(BaseModel):
@@ -95,7 +102,7 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
     """AI Assistant Copilot Chat Endpoint."""
     user_id = user.get("username", "user")
     tenant_id = user.get("tenant_id") or "tenant-default"
-    history = req.history
+    history = [item.model_dump() for item in req.history] if req.history else None
     requested_model_id = req.model_id
     model_selection_source = "message_explicit_model" if req.model_id else None
     if req.conversation_id:
@@ -125,7 +132,7 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
         site_ids=user.get("site_ids") or [],
         model_id=requested_model_id,
         model_selection_source=model_selection_source,
-        context=req.context,
+        context=req.context.model_dump(exclude_none=True),
     )
     if req.conversation_id:
         try:
@@ -142,7 +149,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
     """AI Assistant Copilot Real-time Streaming SSE Endpoint."""
     user_id = user.get("username", "user")
     tenant_id = user.get("tenant_id") or "tenant-default"
-    history = req.history
+    history = [item.model_dump() for item in req.history] if req.history else None
     requested_model_id = req.model_id
     model_selection_source = "message_explicit_model" if req.model_id else None
     if req.conversation_id:
@@ -175,7 +182,7 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
             site_ids=user.get("site_ids") or [],
             model_id=requested_model_id,
             model_selection_source=model_selection_source,
-            context=req.context,
+            context=req.context.model_dump(exclude_none=True),
         ):
             if req.conversation_id:
                 for line in event.splitlines():
@@ -222,8 +229,8 @@ def create_copilot_case(payload: DiagnosticCaseRequest, user=Depends(require_ai_
         title=payload.title,
         symptom=payload.symptom,
         conversation_id=payload.conversation_id,
-        scope=payload.context,
-        plan=payload.plan,
+        scope=payload.context.model_dump(exclude_none=True),
+        plan=[item.model_dump(exclude_none=True) for item in payload.plan],
     )
 
 
