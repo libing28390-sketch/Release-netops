@@ -7,7 +7,7 @@ Next Task: EVAL-003（覆盖 Exact、Alias、Prefix、Ambiguous、Typo、Wrong V
 
 Completed: 297 / 359
 P0: 236 / 277
-Last Verified Commit: 待提交（EVAL-002 PASS）
+Last Verified Commit: eb9c8486（EVAL-002 intent coverage PASS）
 
 Recent Migration: EVAL-002 无 migration；离线厂商/意图 coverage fixture 无数据库连接/写入
 Recent Build: EVAL-002 validator PASS；12 tracks；36 examples；父数据集每 Track 9 cases；EVAL-001/EVAL-002 tests 2 passed；contract YAML/py_compile/diff PASS
