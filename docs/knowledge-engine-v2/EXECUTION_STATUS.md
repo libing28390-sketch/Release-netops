@@ -7,7 +7,7 @@ Next Task: CHK-014（实现双 Index、Shadow Index、切换和回滚）
 
 Completed: 292 / 359
 P0: 234 / 277
-Last Verified Commit: <pending CHK-013 commit>（CHK-013 PostgreSQL precise rebuild probe PASS）
+Last Verified Commit: 25ca5444（CHK-013 PostgreSQL precise rebuild probe PASS）
 
 Recent Migration: CHK-013 无新增 migration；PostgreSQL ai_document/ai_document_chunk 精确重建探针 PASS 并 rollback，无生产探针写入
 Recent Build: CHK-013 PostgreSQL probe PASS；CHK-P0 chunk/embedding/API contract regression 15 passed；py_compile/diff PASS
