@@ -1,0 +1,77 @@
+{
+  "status": "PASS",
+  "task_id": "MIG-008",
+  "authority": "PostgreSQL",
+  "sqlite": "forbidden",
+  "duration_seconds": 0.248,
+  "audit_status": "BLOCKED",
+  "reason_codes": [
+    "CHUNK_HASH_UNVERIFIABLE",
+    "CHUNK_METADATA_IDENTITY_LEAK",
+    "DOCUMENT_HASH_UNVERIFIABLE"
+  ],
+  "counts": {
+    "chunk_duplicate_content_hash_groups": 52,
+    "chunk_duplicate_ordinal_groups": 0,
+    "chunk_embedding_unavailable": 2,
+    "chunk_hash_unverifiable": 2,
+    "chunk_metadata_identity_leak": 472,
+    "chunks": 474,
+    "document_hash_unverifiable": 2,
+    "documents": 156,
+    "expected_documents": 156
+  },
+  "audit_digest": "d396043aa3a66b0c66179a9dd053404f14bd7d094be73635137688ab4f705d8e",
+  "probe": {
+    "database": "PostgreSQL",
+    "transaction_read_only": true,
+    "status": "PASS",
+    "document_schema_fields_present": {
+      "id": true,
+      "tenant_id": true,
+      "content_hash": true,
+      "normalized_content": true,
+      "document_version": true,
+      "index_version": true,
+      "embedding_model": true,
+      "embedding_dimensions": true,
+      "acl_json": true
+    },
+    "chunk_schema_fields_present": {
+      "id": true,
+      "document_id": true,
+      "tenant_id": false,
+      "content_hash": true,
+      "ordinal": true,
+      "document_version": true,
+      "index_version": true,
+      "embedding_model": true,
+      "embedding_dimensions": true,
+      "embedding": true,
+      "metadata_json": true
+    },
+    "sqlite": "forbidden"
+  },
+  "production_database_write": false,
+  "report_redacted": true,
+  "rollback": "discard_local_audit_and_keep_v1_projection",
+  "contract_sha256": "4008a6d3c32be7f88bc940ee03458da0e13a048536e81467e66fca31e59f94a9",
+  "contract_layers": [
+    "acceptance",
+    "authority",
+    "blocking_findings",
+    "checks",
+    "compatibility",
+    "milestone",
+    "outcomes",
+    "owner",
+    "priority",
+    "production_database_write",
+    "purpose",
+    "security",
+    "sqlite",
+    "status",
+    "task_id",
+    "title"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "manifest_version": "nexora-knowledge-engine-v2-consistency-audit-manifest/v1",
+  "task_id": "MIG-008",
+  "authority": "PostgreSQL",
+  "audit_status": "BLOCKED",
+  "reason_codes": [
+    "CHUNK_HASH_UNVERIFIABLE",
+    "CHUNK_METADATA_IDENTITY_LEAK",
+    "DOCUMENT_HASH_UNVERIFIABLE"
+  ],
+  "counts": {
+    "chunk_duplicate_content_hash_groups": 52,
+    "chunk_duplicate_ordinal_groups": 0,
+    "chunk_embedding_unavailable": 2,
+    "chunk_hash_unverifiable": 2,
+    "chunk_metadata_identity_leak": 472,
+    "chunks": 474,
+    "document_hash_unverifiable": 2,
+    "documents": 156,
+    "expected_documents": 156
+  },
+  "audit_digest": "d396043aa3a66b0c66179a9dd053404f14bd7d094be73635137688ab4f705d8e",
+  "redaction": {
+    "raw_content": "omitted",
+    "acl_values": "omitted",
+    "credentials": "omitted",
+    "secrets": "omitted",
+    "dsn": "omitted",
+    "exception_text": "omitted"
+  }
+}
