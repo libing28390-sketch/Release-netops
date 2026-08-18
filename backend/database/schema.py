@@ -989,9 +989,15 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     ensure_column('config_snapshots', 'task_id', "TEXT DEFAULT ''")
     ensure_column('config_snapshots', 'policy_id', "TEXT DEFAULT ''")
     ensure_column('config_snapshots', 'config_type', "TEXT DEFAULT 'running'")
+    ensure_column('config_snapshots', 'has_unsaved_changes', 'INTEGER DEFAULT 0')
+    ensure_column('config_snapshots', 'unsaved_diff_summary', "TEXT DEFAULT ''")
     cursor.execute(
         'CREATE INDEX IF NOT EXISTS idx_config_snapshots_policy_device_time '
         'ON config_snapshots(policy_id, device_id, timestamp DESC)'
+    )
+    cursor.execute(
+        'CREATE INDEX IF NOT EXISTS idx_config_snapshots_dev_type_ts '
+        'ON config_snapshots(device_id, config_type, timestamp DESC)'
     )
 
     # Persistent backup policies. The default row is imported lazily from the
@@ -1013,12 +1019,22 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         concurrency INTEGER NOT NULL DEFAULT 10,
         retry_count INTEGER NOT NULL DEFAULT 1,
         timeout_seconds INTEGER NOT NULL DEFAULT 30,
+        collect_startup_config INTEGER NOT NULL DEFAULT 0,
+        tftp_enabled INTEGER NOT NULL DEFAULT 0,
+        tftp_server TEXT NOT NULL DEFAULT '',
+        tftp_port INTEGER NOT NULL DEFAULT 69,
+        tftp_path_prefix TEXT NOT NULL DEFAULT 'backups',
         created_by TEXT NOT NULL DEFAULT '',
         updated_by TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
     ''')
+    ensure_column('config_backup_policies', 'collect_startup_config', 'INTEGER NOT NULL DEFAULT 0')
+    ensure_column('config_backup_policies', 'tftp_enabled', 'INTEGER NOT NULL DEFAULT 0')
+    ensure_column('config_backup_policies', 'tftp_server', "TEXT NOT NULL DEFAULT ''")
+    ensure_column('config_backup_policies', 'tftp_port', 'INTEGER NOT NULL DEFAULT 69')
+    ensure_column('config_backup_policies', 'tftp_path_prefix', "TEXT NOT NULL DEFAULT 'backups'")
     cursor.execute(
         'CREATE INDEX IF NOT EXISTS idx_config_backup_policies_enabled_priority '
         'ON config_backup_policies(enabled, priority, name)'

@@ -94,6 +94,34 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
 
+def get_asyncssh_compatible_algorithms() -> dict[str, list[str]]:
+    """Return comprehensive algorithm suites supported by AsyncSSH.
+
+    Modern and secure algorithms are prioritized first in negotiation order,
+    while all supported legacy algorithms (such as hmac-md5, hmac-sha1,
+    diffie-hellman-group1-sha1, CBC ciphers, ssh-rsa, ssh-dss) are retained
+    so that multi-vendor legacy hardware (Cisco, Huawei, H3C, Ruijie, etc.)
+    can be accessed smoothly without algorithm mismatch errors.
+    """
+    try:
+        import asyncssh.encryption
+        import asyncssh.kex
+        import asyncssh.mac
+        import asyncssh.public_key
+
+        def _decode_algs(items) -> list[str]:
+            return [item.decode('ascii') if isinstance(item, bytes) else str(item) for item in items]
+
+        return {
+            'encryption_algs': _decode_algs(asyncssh.encryption.get_encryption_algs()),
+            'kex_algs': _decode_algs(asyncssh.kex.get_kex_algs()),
+            'mac_algs': _decode_algs(asyncssh.mac.get_mac_algs()),
+            'server_host_key_algs': _decode_algs(asyncssh.public_key.get_public_key_algs()),
+        }
+    except Exception:
+        return {}
+
+
 def recover_stale_sessions_on_startup():
     """
     One-time recovery at server startup: close sessions that were left
@@ -870,24 +898,7 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
             return client
 
         logger.info(f"[PAM] Attempting SSH connection to {ip}:{port} as {username}...")
-        legacy_ssh = bool(getattr(settings, 'PAM_ALLOW_LEGACY_SSH', False))
-        encryption_algs = [
-            'chacha20-poly1305@openssh.com', 'aes256-gcm@openssh.com', 'aes128-gcm@openssh.com',
-            'aes256-ctr', 'aes192-ctr', 'aes128-ctr',
-        ]
-        kex_algs = [
-            'curve25519-sha256', 'curve25519-sha256@libssh.org',
-            'ecdh-sha2-nistp256', 'ecdh-sha2-nistp384', 'ecdh-sha2-nistp521',
-            'diffie-hellman-group-exchange-sha256', 'diffie-hellman-group14-sha1',
-        ]
-        mac_algs = [
-            'hmac-sha2-256-etm@openssh.com', 'hmac-sha2-512-etm@openssh.com',
-            'hmac-sha2-256', 'hmac-sha2-512',
-        ]
-        if legacy_ssh:
-            encryption_algs.extend(['aes256-cbc', 'aes192-cbc', 'aes128-cbc', '3des-cbc'])
-            kex_algs.append('diffie-hellman-group1-sha1')
-            mac_algs.extend(['hmac-sha1-etm@openssh.com', 'hmac-sha1', 'hmac-md5'])
+        ssh_algs = get_asyncssh_compatible_algorithms()
         ssh_conn = await asyncssh.connect(
             ip, port=port, username=username, password=password,
             # PAM Web login intentionally does not require per-asset host-key
@@ -898,11 +909,10 @@ async def pam_terminal_ws(websocket: WebSocket, session_token: str):
             client_factory=custom_client_factory,
             login_timeout=15,
             agent_path=None, client_keys=[],
-            # Support legacy devices that only use CBC ciphers
-            encryption_algs=encryption_algs,
-            # Also support legacy KEX and MACs often found on older switches
-            kex_algs=kex_algs,
-            mac_algs=mac_algs,
+            encryption_algs=ssh_algs.get('encryption_algs'),
+            kex_algs=ssh_algs.get('kex_algs'),
+            mac_algs=ssh_algs.get('mac_algs'),
+            server_host_key_algs=ssh_algs.get('server_host_key_algs'),
         )
         logger.info(f"[PAM] SSH connection established to {ip}:{port}")
         

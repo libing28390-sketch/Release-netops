@@ -24,6 +24,12 @@ import {
   Tag,
   X,
   Zap,
+  Maximize2,
+  Minimize2,
+  ChevronUp,
+  ChevronDown,
+  PanelRightClose,
+  PanelRightOpen,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { DiffLine } from '../types';
@@ -299,6 +305,23 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   const [rollbackPlan, setRollbackPlan] = useState<RollbackPlan | null>(null);
   const [rollbackLoading, setRollbackLoading] = useState(false);
 
+  /* ── Diff viewer layout & readability state ── */
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [metricsCollapsed, setMetricsCollapsed] = useState(false);
+  const [changeMapVisible, setChangeMapVisible] = useState(true);
+  const [fontSize, setFontSize] = useState<'xs' | 'sm' | 'base'>('xs');
+  const [wrapLines, setWrapLines] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen]);
+
   /* ── Load devices ── */
   const loadDevices = useCallback(async (q = '', pg = devPage, ps = devPageSize, branch = deviceBranch) => {
     deviceAbortRef.current?.abort();
@@ -362,25 +385,28 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
   }, [preSelectedDeviceId, devices]);
 
   /* ── Load snapshots for selected device ── */
-  const loadSnapshots = useCallback(async (deviceId: string, autoCompare = true) => {
+  const loadSnapshots = useCallback(async (deviceId: string, autoCompare = false) => {
     setSnapshotsLoading(true);
     try {
       const data = await apiRequest<DiffSnapshot[]>(`/api/config-drift/device/${encodeURIComponent(deviceId)}/snapshots`);
       const sorted = data.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       setSnapshots(sorted);
-      if (autoCompare) {
-        const valid = sorted.filter((snapshot) => (
-          !['invalid', 'corrupt'].includes(String(snapshot.integrity_status || '').toLowerCase())
-          && !['invalid', 'empty', 'command_error', 'permission_denied', 'connection_interrupted'].includes(String(snapshot.validation_status || '').toLowerCase())
-          && (snapshot.config_type || 'running') === 'running'
-        ));
-        if (valid.length >= 2) {
-          const latest = valid[0];
-          const previous = valid[1];
-          setPickLeft(previous.id);
-          setPickRight(latest.id);
+      
+      const valid = sorted.filter((snapshot) => (
+        !['invalid', 'corrupt'].includes(String(snapshot.integrity_status || '').toLowerCase())
+        && !['invalid', 'empty', 'command_error', 'permission_denied', 'connection_interrupted'].includes(String(snapshot.validation_status || '').toLowerCase())
+        && (snapshot.config_type || 'running') === 'running'
+      ));
+      if (valid.length >= 2) {
+        const latest = valid[0];
+        const previous = valid[1];
+        setPickLeft(previous.id);
+        setPickRight(latest.id);
+        if (autoCompare) {
           await onSelectSnapshotPair(previous.id, latest.id);
         }
+      } else if (valid.length === 1) {
+        setPickRight(valid[0].id);
       }
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : (zh ? '快照加载失败' : 'Failed to load snapshots'));
@@ -388,7 +414,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
     finally { setSnapshotsLoading(false); }
   }, [onSelectSnapshotPair, zh]);
 
-  const handleSelectDevice = (dev: BackupDevice) => {
+  const handleSelectDevice = (dev: BackupDevice, autoCompare = false) => {
     setSelectedDevice(dev);
     setPickLeft(null);
     setPickRight(null);
@@ -396,7 +422,7 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
     setAnalysisError('');
     setRollbackPlan(null);
     onReset();
-    void loadSnapshots(dev.id);
+    void loadSnapshots(dev.id, autoCompare);
   };
 
   const handleBackToDevices = () => {
@@ -593,9 +619,21 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
     (analysis?.risks || []).filter((item) => riskFilter === 'all' || item.severity === riskFilter)
   ), [analysis?.risks, riskFilter]);
 
+  const parseIsoDate = (ts?: string | null): Date | null => {
+    if (!ts) return null;
+    let s = String(ts).trim();
+    if (!s) return null;
+    if (s.includes('T') && !s.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+      s = s + 'Z';
+    }
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
   const formatTime = (ts: string) => {
     if (!ts) return '--';
-    try { return new Date(ts).toLocaleString(); } catch { return ts; }
+    const d = parseIsoDate(ts);
+    return d ? d.toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : ts;
   };
 
   const formatSize = (size?: number) => {
@@ -607,8 +645,10 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
 
   const timeSince = (ts: string) => {
     if (!ts) return '';
+    const d = parseIsoDate(ts);
+    if (!d) return '';
     try {
-      const diff = Date.now() - new Date(ts).getTime();
+      const diff = Date.now() - d.getTime();
       const hours = Math.floor(diff / 3600000);
       if (hours < 1) return zh ? '刚刚' : 'Just now';
       if (hours < 24) return zh ? `${hours}h前` : `${hours}h ago`;
@@ -659,300 +699,284 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <PageHero
-        icon={GitCompare}
-        eyebrow={zh ? '配置管理 / 配置差异分析' : 'Config / Difference Analysis'}
-        title={zh ? '配置差异分析' : t('diffCompare')}
-        subtitle={showDiffViewer
-          ? (zh ? `${configDiffLeft.hostname} · 识别高风险变更、合规偏差与变更来源` : `Risk, compliance, and source analysis for ${configDiffLeft.hostname}`)
-          : (zh ? '自动对比最近两个有效快照，识别高风险变更并生成回滚依据' : 'Automatically compare the latest valid snapshots and identify risky changes')}
-        actions={
-          (selectedDevice || showDiffViewer) ? (
-            <button
-              onClick={showDiffViewer ? () => { onReset(); } : handleBackToDevices}
-              className="text-xs text-black/40 hover:text-black transition px-3 py-1.5 border border-black/10 rounded-xl hover:bg-black/[0.03]"
-            >
-              {showDiffViewer ? (zh ? '重新选择' : 'Re-select') : (zh ? '返回设备列表' : 'Back to devices')}
-            </button>
-          ) : undefined
-        }
-      />
-
-      <div className="flex-1 overflow-hidden px-6 py-5 flex flex-col">
-      <div className="flex-1 overflow-hidden rounded-[28px] border border-black/5 bg-white shadow-[0_16px_36px_rgba(11,35,64,0.06)] flex flex-col">
+      <div className="flex-1 overflow-hidden p-1.5 sm:p-2.5 flex flex-col">
+      <div className="flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs flex flex-col">
         {/* ════════ Step 1 + 2: Selection area ════════ */}
         {!showDiffViewer && (
           <div className="flex-1 overflow-auto">
             {!selectedDevice ? (
-              /* ──── Step 1: Device list ──── */
+              /* ──── Step 1: Streamlined Device list ──── */
               <div className="flex flex-col h-full bg-[#f7fbfc]">
-                <div className="px-6 pt-6 pb-5 bg-gradient-to-br from-[#f0fbfc] via-white to-white border-b border-cyan-100/70">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-[#0891b2]">
-                        <Server size={14} /> {zh ? '配置审计工作台' : 'Configuration audit workspace'}
-                      </div>
-                      <h2 className="mt-2 text-xl font-bold tracking-tight text-[#123b50]">{zh ? '选择要对比的设备' : 'Choose a device to compare'}</h2>
-                      <p className="mt-1 text-xs text-slate-500">{zh ? '先定位设备，再从正式基线或历史快照中选择两个版本。' : 'Locate a device first, then choose two versions from its baseline or history.'}</p>
+                {/* ── Sleek Compact Header (~42px) ── */}
+                <div className="flex h-11 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 text-xs shrink-0">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-50 text-cyan-700">
+                      <Server size={14} />
                     </div>
-                    <div className="hidden md:flex items-center gap-1.5 rounded-xl border border-white bg-white/80 p-1 shadow-sm">
-                      {[zh ? '设备' : 'Device', zh ? '快照' : 'Snapshots', zh ? '差异' : 'Diff'].map((step, idx) => (
-                        <div key={step} className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold ${idx === 0 ? 'bg-[#123b50] text-white' : 'text-slate-400'}`}>
-                          <span className="font-mono opacity-70">0{idx + 1}</span>{step}
-                        </div>
-                      ))}
-                    </div>
+                    <span className="font-sans text-xs font-black text-[#123b50]">{zh ? '选择审计设备' : 'Select Device'}</span>
+                    <span className="rounded-full bg-cyan-50 px-2 py-0.5 font-sans text-[10px] font-bold text-cyan-700 tabular-nums">
+                      {devicesTotal} {zh ? '台设备' : 'devices'}
+                    </span>
                   </div>
-                  <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    <div className="rounded-xl border border-white bg-white/80 px-3.5 py-3 shadow-sm">
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{zh ? '可审计设备' : 'Auditable devices'}</div>
-                      <div className="mt-1 text-lg font-bold tabular-nums text-[#123b50]">{devicesTotal}</div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-48 sm:w-72">
+                      <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        value={deviceSearchDraft}
+                        onChange={(e) => setDeviceSearchDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') submitDeviceSearch(); }}
+                        placeholder={zh ? '搜索主机名或 IP (回车)' : 'Search hostname / IP (Enter)'}
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1 pl-8 pr-7 text-xs text-[#123b50] outline-none placeholder:text-slate-400 focus:border-cyan-300 focus:bg-white"
+                      />
+                      {deviceSearchDraft && (
+                        <button onClick={() => { setDeviceSearchDraft(''); setDeviceSearch(''); setDevPage(1); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700">
+                          <X size={12} />
+                        </button>
+                      )}
                     </div>
-                    <div className="rounded-xl border border-white bg-white/80 px-3.5 py-3 shadow-sm">
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{zh ? '当前页结果' : 'Current page'}</div>
-                      <div className="mt-1 text-lg font-bold tabular-nums text-[#0891b2]">{devices.length}<span className="ml-1 text-xs font-medium text-slate-400">/ {devPageSize}</span></div>
-                    </div>
-                    <div className="rounded-xl border border-white bg-white/80 px-3.5 py-3 shadow-sm">
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{zh ? '对比方式' : 'Compare mode'}</div>
-                      <div className="mt-1 flex items-center gap-1.5 text-sm font-bold text-[#123b50]"><ShieldCheck size={14} className="text-emerald-500" />{diffMode === 'normalized' ? (zh ? '标准化审阅' : 'Normalized review') : (zh ? '原始文本' : 'Raw text')}</div>
+                    <button onClick={submitDeviceSearch} className="inline-flex items-center gap-1 rounded-lg bg-[#123b50] px-2.5 py-1 text-xs font-bold text-white hover:bg-[#0b2d3e] transition-colors">
+                      <Search size={11} />{zh ? '搜索' : 'Search'}
+                    </button>
+                    <div className="h-4 w-px bg-slate-200" />
+                    <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-[9px]">
+                      {(['normalized', 'raw'] as const).map((mode) => (
+                        <button key={mode} type="button" onClick={() => onDiffModeChange(mode)} className={`rounded px-1.5 py-0.5 font-bold transition-colors ${diffMode === mode ? 'bg-[#123b50] text-white shadow-xs' : 'text-slate-500 hover:text-[#123b50]'}`}>
+                          {mode === 'normalized' ? (zh ? '标准化' : 'Norm') : (zh ? '原始' : 'Raw')}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-auto px-6 py-5">
-                  <div className={`mb-4 grid gap-4 ${deviceTreeCollapsed ? 'xl:grid-cols-[56px_minmax(0,1fr)]' : 'xl:grid-cols-[290px_minmax(0,1fr)]'}`}>
-                    <aside className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${deviceTreeCollapsed ? 'p-2' : 'p-3'}`}>
-                      <div className={`mb-3 flex items-center border-b border-slate-100 pb-3 ${deviceTreeCollapsed ? 'justify-center' : 'justify-between px-2'}`}>
-                        {!deviceTreeCollapsed && <div><div className="text-sm font-bold text-slate-800">{zh ? '资产分类树' : 'Asset tree'}</div><div className="mt-0.5 text-[11px] text-slate-400">{zh ? '站点 → 类型 → 分类 → 角色' : 'Site → type → category → role'}</div></div>}
-                        <button type="button" onClick={() => setDeviceTreeCollapsed((current) => !current)} className="rounded-lg p-1.5 text-slate-400 hover:bg-cyan-50 hover:text-cyan-700" title={deviceTreeCollapsed ? (zh ? '展开资产分类树' : 'Expand asset tree') : (zh ? '折叠资产分类树' : 'Collapse asset tree')}>
-                          {deviceTreeCollapsed ? <FolderTree size={15} /> : <ChevronRight size={15} className="rotate-180" />}
-                        </button>
-                      </div>
-                      {!deviceTreeCollapsed && <div className="max-h-[280px] overflow-y-auto">{deviceScopeTree.length ? deviceScopeTree.map((node) => renderDeviceScopeNode(node)) : <p className="px-2 py-8 text-center text-xs text-slate-400">{zh ? '暂无资产分类' : 'No asset groups'}</p>}</div>}
-                    </aside>
-                    <div className="min-w-0">
-                  <div className="rounded-2xl border border-slate-200 bg-white shadow-[0_12px_30px_rgba(18,59,80,0.06)] overflow-hidden">
-                    <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 bg-white">
-                      <div className="flex items-center gap-2 text-xs font-bold text-[#123b50]"><SlidersHorizontal size={14} className="text-[#0891b2]" />{zh ? '设备范围' : 'Device scope'}</div>
-                      <div className="relative flex-1 min-w-[220px] max-w-xl">
-                        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <input
-                          value={deviceSearchDraft}
-                          onChange={(e) => setDeviceSearchDraft(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') submitDeviceSearch(); }}
-                          placeholder={zh ? '搜索主机名或管理 IP，按回车执行' : 'Search hostname or management IP, press Enter'}
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-9 text-xs text-[#123b50] outline-none placeholder:text-slate-400 focus:border-cyan-300 focus:bg-white focus:ring-4 focus:ring-cyan-50 transition-all"
-                        />
-                        {deviceSearchDraft && <button onClick={() => { setDeviceSearchDraft(''); setDeviceSearch(''); setDevPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"><X size={13} /></button>}
-                      </div>
-                      <button onClick={submitDeviceSearch} className="inline-flex items-center gap-1.5 rounded-xl bg-[#123b50] px-3.5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-[#0b2d3e] transition-colors"><Search size={13} />{zh ? '搜索' : 'Search'}</button>
-                      {deviceSearch && <span className="rounded-full bg-cyan-50 px-2.5 py-1 text-[10px] font-bold text-cyan-700">{zh ? `已筛选：${deviceSearch}` : `Filter: ${deviceSearch}`}</span>}
+                {/* ── Main Layout: Asset Tree + Device Table ── */}
+                <div className="flex-1 min-h-0 overflow-hidden p-2.5 flex gap-3">
+                  <aside className={`rounded-xl border border-slate-200 bg-white shadow-xs flex flex-col shrink-0 overflow-hidden transition-all ${deviceTreeCollapsed ? 'w-12' : 'w-64'}`}>
+                    <div className="flex h-9 items-center justify-between border-b border-slate-100 px-3 shrink-0">
+                      {!deviceTreeCollapsed && <span className="font-sans text-[11px] font-bold text-slate-700">{zh ? '资产分类' : 'Asset Tree'}</span>}
+                      <button type="button" onClick={() => setDeviceTreeCollapsed((c) => !c)} className="rounded p-1 text-slate-400 hover:bg-cyan-50 hover:text-cyan-700 ml-auto" title={deviceTreeCollapsed ? (zh ? '展开资产树' : 'Expand') : (zh ? '折叠资产树' : 'Collapse')}>
+                        {deviceTreeCollapsed ? <FolderTree size={14} /> : <ChevronRight size={14} className="rotate-180" />}
+                      </button>
                     </div>
-
-                    <div className="grid grid-cols-[minmax(210px,1.8fr)_minmax(130px,1fr)_90px_120px_32px] items-center gap-x-4 px-5 py-2.5 bg-slate-50/80 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                      <span>{zh ? '设备资产' : 'Device asset'}</span><span>{zh ? '平台' : 'Platform'}</span><span>{zh ? '快照' : 'Snapshots'}</span><span>{zh ? '最近备份' : 'Last backup'}</span><span />
-                    </div>
-
-                    {devicesLoading ? (
-                      <div className="py-20 text-center text-sm text-slate-400 flex items-center justify-center gap-2"><RotateCcw size={15} className="animate-spin text-cyan-500" />{zh ? '正在加载设备资产...' : 'Loading device assets...'}</div>
-                    ) : devices.length === 0 ? (
-                      <div className="py-20 text-center text-slate-400"><div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-50"><Database size={28} strokeWidth={1.4} className="text-slate-300" /></div><p className="text-sm font-bold text-slate-600">{deviceSearch ? (zh ? '没有匹配的设备' : 'No matching devices') : (zh ? '暂无配置备份' : 'No config backups yet')}</p><p className="mt-1 text-xs">{deviceSearch ? (zh ? '请调整关键词后重试。' : 'Adjust the search and try again.') : (zh ? '请先到备份中心执行一次配置备份。' : 'Run a configuration backup from Backup Center first.')}</p></div>
-                    ) : (
-                      <div>
-                        {devices.map((dev) => {
-                          const online = dev.status === 'online';
-                          return <button key={dev.id} onClick={() => handleSelectDevice(dev)} className="group w-full text-left grid grid-cols-[minmax(210px,1.8fr)_minmax(130px,1fr)_90px_120px_32px] items-center gap-x-4 px-5 py-3.5 border-b border-slate-100 last:border-b-0 hover:bg-cyan-50/50 transition-colors">
-                            <div className="flex items-center gap-3 min-w-0"><div className={`flex h-9 w-9 items-center justify-center rounded-xl ${online ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}><Server size={15} /></div><div className="min-w-0"><div className="flex items-center gap-2"><span className="truncate text-[13px] font-bold text-[#123b50]">{dev.hostname}</span><span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-emerald-500' : 'bg-amber-400'}`} /></div><span className="mt-0.5 block truncate text-[10px] font-mono text-slate-400">{dev.ip_address}</span></div></div>
-                            <span className="truncate rounded-lg bg-slate-50 px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 max-w-[150px]">{dev.platform || '--'}</span>
-                            <span className="inline-flex w-fit items-center gap-1 rounded-full bg-cyan-50 px-2.5 py-1 text-[10px] font-bold text-cyan-700 tabular-nums"><Database size={11} />{dev.backup_count}</span>
-                            <span className="text-[11px] text-slate-500 whitespace-nowrap"><span className="block font-semibold text-slate-600">{timeSince(dev.latest_backup) || '--'}</span><span className="block text-[9px] text-slate-400">{formatTime(dev.latest_backup).split(',')[0]}</span></span>
-                            <ChevronRight size={16} className="text-slate-300 group-hover:translate-x-0.5 group-hover:text-cyan-600 transition-all" />
-                          </button>;
-                        })}
+                    {!deviceTreeCollapsed && (
+                      <div className="flex-1 overflow-y-auto p-1.5">
+                        {deviceScopeTree.length ? deviceScopeTree.map((node) => renderDeviceScopeNode(node)) : <p className="py-8 text-center text-[10px] text-slate-400">{zh ? '暂无分类' : 'No categories'}</p>}
                       </div>
                     )}
-                  </div>
-                  {devicesTotal > devPageSize && <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-2.5"><Pagination currentPage={devPage} totalItems={devicesTotal} itemsPerPage={devPageSize} onPageChange={setDevPage} onItemsPerPageChange={(v) => { setDevPage(1); setDevPageSize(v); }} language={language} /></div>}
+                  </aside>
+
+                  <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden">
+                    <div className="grid grid-cols-[minmax(200px,1.8fr)_minmax(120px,1fr)_80px_130px_110px] items-center gap-x-3 px-4 py-2 bg-slate-50/90 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 shrink-0">
+                      <span>{zh ? '设备资产' : 'Device'}</span>
+                      <span>{zh ? '平台' : 'Platform'}</span>
+                      <span>{zh ? '快照数' : 'Snapshots'}</span>
+                      <span>{zh ? '最近备份' : 'Last backup'}</span>
+                      <span className="text-right">{zh ? '操作' : 'Actions'}</span>
                     </div>
+
+                    <div className="flex-1 overflow-y-auto">
+                      {devicesLoading ? (
+                        <div className="py-20 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                          <RotateCcw size={14} className="animate-spin text-cyan-500" />{zh ? '正在加载设备资产...' : 'Loading devices...'}
+                        </div>
+                      ) : devices.length === 0 ? (
+                        <div className="py-20 text-center text-slate-400">
+                          <Database size={24} className="mx-auto mb-2 text-slate-300" />
+                          <p className="text-xs font-bold text-slate-600">{deviceSearch ? (zh ? '没有匹配的设备' : 'No matching devices') : (zh ? '暂无配置备份' : 'No config backups')}</p>
+                        </div>
+                      ) : (
+                        devices.map((dev) => {
+                          const online = dev.status === 'online';
+                          return (
+                            <div
+                              key={dev.id}
+                              onClick={() => handleSelectDevice(dev, false)}
+                              className="group w-full text-left grid grid-cols-[minmax(200px,1.8fr)_minmax(120px,1fr)_80px_130px_110px] items-center gap-x-3 px-4 py-2.5 border-b border-slate-100 last:border-b-0 hover:bg-cyan-50/40 transition-colors cursor-pointer"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className={`flex h-7 w-7 items-center justify-center rounded-lg ${online ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'} shrink-0`}>
+                                  <Server size={13} />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="truncate text-xs font-bold text-[#123b50]">{dev.hostname}</span>
+                                    <span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+                                  </div>
+                                  <span className="block truncate text-[10px] font-mono text-slate-400">{dev.ip_address}</span>
+                                </div>
+                              </div>
+                              <span className="truncate rounded bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-600 max-w-[130px]">{dev.platform || '--'}</span>
+                              <span className="inline-flex w-fit items-center gap-1 rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700 tabular-nums">
+                                <Database size={10} />{dev.backup_count}
+                              </span>
+                              <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                                <span className="block font-semibold text-slate-600">{timeSince(dev.latest_backup) || '--'}</span>
+                              </span>
+                              <div className="flex items-center justify-end gap-1.5">
+                                {dev.backup_count >= 2 && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSelectDevice(dev, true);
+                                    }}
+                                    className="inline-flex items-center gap-0.5 rounded-md border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[9px] font-bold text-cyan-700 hover:bg-cyan-100 transition-colors"
+                                    title={zh ? '一键直接对比最近两次快照' : 'Directly compare latest 2'}
+                                  >
+                                    <Zap size={10} />
+                                    {zh ? '对比最新' : 'Compare'}
+                                  </button>
+                                )}
+                                <ChevronRight size={14} className="text-slate-300 group-hover:translate-x-0.5 group-hover:text-cyan-600 transition-all" />
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {devicesTotal > devPageSize && (
+                      <div className="border-t border-slate-100 bg-white px-3 py-2 shrink-0">
+                        <Pagination currentPage={devPage} totalItems={devicesTotal} itemsPerPage={devPageSize} onPageChange={setDevPage} onItemsPerPageChange={(v) => { setDevPage(1); setDevPageSize(v); }} language={language} />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
             ) : (
-              /* ──── Step 2: Snapshot selection ──── */
-              <div className="flex flex-col h-full">
-                {/* ── Top bar: back + device info + quick action ── */}
-                <div className="flex items-center gap-3 px-5 pt-4 pb-3 border-b border-black/[0.04]">
-                  <button onClick={handleBackToDevices} className="inline-flex items-center gap-1 text-xs text-[#0e7490] hover:text-[#06b6d4] transition font-medium">
-                    <ChevronLeft size={14} /> {zh ? '设备列表' : 'Devices'}
-                  </button>
-                  <div className="h-4 w-px bg-black/10" />
-                  <div className={`h-2 w-2 rounded-full flex-shrink-0 ${selectedDevice.status === 'online' ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                  <span className="text-sm font-bold text-[#164e63]">{selectedDevice.hostname}</span>
-                  <span className="text-xs font-mono text-black/35">{selectedDevice.ip_address}</span>
-                  <span className="text-[11px] text-black/30">{selectedDevice.platform || ''}</span>
-                  {snapshots.length >= 2 && (
-                    <button
-                      onClick={() => void handleQuickCompare()}
-                      className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#06b6d4] to-[#0891b2] px-3.5 text-[11px] font-bold text-white shadow-[0_2px_10px_rgba(6,182,212,0.2)] hover:shadow-[0_4px_16px_rgba(6,182,212,0.3)] transition-all active:scale-[0.97]"
-                    >
-                      <Zap size={12} />
-                      {zh ? '快速对比最近两次' : 'Compare Latest 2'}
+              /* ──── Step 2: Streamlined Snapshot selection ──── */
+              <div className="flex flex-col h-full bg-[#f7fbfc]">
+                {/* ── Compact Header (~40px) ── */}
+                <div className="flex h-10 items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 text-xs shrink-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button onClick={handleBackToDevices} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-100 transition-colors shrink-0">
+                      <ChevronLeft size={13} /> {zh ? '返回设备' : 'Devices'}
                     </button>
-                  )}
+                    <div className="h-3.5 w-px bg-slate-200 shrink-0" />
+                    <span className="text-xs font-bold text-[#123b50] truncate">{selectedDevice.hostname}</span>
+                    <span className="text-[10px] font-mono text-slate-400 hidden sm:inline">{selectedDevice.ip_address}</span>
+                    <span className="text-[9px] font-semibold text-slate-500 rounded bg-slate-100 px-1.5 py-0.5 hidden md:inline">{selectedDevice.platform || ''}</span>
+                    <span className="rounded-full bg-cyan-50 px-2 py-0.2 text-[9px] font-bold text-cyan-700">{snapshots.length} {zh ? '份快照' : 'snapshots'}</span>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const runningSnap = snapshots.find(s => (s.config_type || 'running') === 'running');
+                        const startupSnap = snapshots.find(s => s.config_type === 'startup');
+                        if (runningSnap && startupSnap) {
+                          setPickLeft(startupSnap.id);
+                          setPickRight(runningSnap.id);
+                          await onSelectSnapshotPair(startupSnap.id, runningSnap.id);
+                        } else {
+                          setAnalysisError(zh ? '该设备暂无启动配置快照，请在备份策略中开启“启动配置采集”后执行备份。' : 'No startup config snapshot found.');
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[10px] font-bold text-cyan-700 hover:bg-cyan-100 transition-colors"
+                      title={zh ? '对比启动配置与运行配置' : 'Compare Startup vs Running'}
+                    >
+                      <ArrowLeftRight size={11} />
+                      {zh ? '启动 vs 运行' : 'Startup vs Running'}
+                    </button>
+
+                    {snapshots.length >= 2 && (
+                      <button
+                        onClick={() => void handleQuickCompare()}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <Zap size={11} className="text-amber-500" />
+                        {zh ? '最新两次' : 'Latest 2'}
+                      </button>
+                    )}
+
+                    <button
+                      disabled={!pickLeft || !pickRight}
+                      onClick={() => void handleStartCompare()}
+                      className="inline-flex items-center gap-1 rounded-lg bg-[#123b50] px-3.5 py-1 text-[11px] font-bold text-white shadow-xs hover:bg-[#0b2d3e] transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ArrowLeftRight size={12} />
+                      {zh ? '开始对比 (A vs B)' : 'Start Diff (A vs B)'}
+                    </button>
+                  </div>
                 </div>
 
                 {snapshotsLoading ? (
                   <div className="flex-1 flex items-center justify-center">
-                    <div className="text-sm text-black/40 flex items-center gap-2">
-                      <RotateCcw size={14} className="animate-spin" /> {zh ? '加载快照...' : 'Loading...'}
+                    <div className="text-xs text-slate-400 flex items-center gap-2">
+                      <RotateCcw size={14} className="animate-spin text-cyan-500" /> {zh ? '正在加载快照...' : 'Loading snapshots...'}
                     </div>
                   </div>
                 ) : snapshots.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center">
                     <div className="text-center">
-                      <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-black/[0.03]">
-                        <Clock size={28} strokeWidth={1.2} className="text-black/20" />
-                      </div>
-                      <p className="text-sm font-semibold text-[#164e63]">{zh ? '该设备暂无配置备份' : 'No backups yet'}</p>
-                      <p className="text-xs mt-1.5 text-black/30">{zh ? '请先到备份中心执行备份操作' : 'Go to Backup Center first'}</p>
+                      <Clock size={24} className="mx-auto mb-2 text-slate-300" />
+                      <p className="text-xs font-bold text-slate-600">{zh ? '该设备暂无配置备份' : 'No backups yet'}</p>
                     </div>
                   </div>
                 ) : snapshots.length < 2 ? (
-                  /* ── Insufficient snapshots ── */
                   <div className="flex-1 flex items-center justify-center px-5">
-                    <div className="text-center max-w-md">
-                      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-50 ring-1 ring-amber-200/60">
-                        <ArrowLeftRight size={24} className="text-amber-500" />
-                      </div>
-                      <p className="text-sm font-semibold text-[#164e63]">
-                        {zh ? '需要至少 2 份备份才能对比' : 'Need ≥ 2 Backups'}
-                      </p>
-                      <p className="mt-2 text-xs text-black/40 leading-relaxed">
-                        {zh
-                          ? '当前仅有 1 份快照，请在「备份中心」再次备份或等待定时任务。'
-                          : 'Only 1 snapshot exists. Back up again or wait for the next scheduled backup.'}
-                      </p>
-                      <div className="mt-5 inline-flex items-center gap-2.5 rounded-xl border border-black/5 bg-[#fafbfc] px-4 py-3">
-                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#ecfeff]">
-                          <Database size={13} className="text-[#0e7490]" />
-                        </div>
-                        <div className="text-left">
-                          <div className="text-xs font-medium text-[#164e63]">{formatTime(snapshots[0].timestamp)}</div>
-                          <div className="text-[10px] text-black/30">{snapshots[0].trigger || 'manual'} · {snapshots[0].vendor || ''} · {formatSize(snapshots[0].size)}</div>
-                        </div>
-                      </div>
+                    <div className="text-center max-w-sm">
+                      <ArrowLeftRight size={24} className="mx-auto mb-2 text-amber-500" />
+                      <p className="text-xs font-bold text-slate-700">{zh ? '需要至少 2 份备份才能对比' : 'Need ≥ 2 Backups'}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">{zh ? '当前仅有 1 份快照，请在备份中心再次备份。' : 'Only 1 snapshot exists.'}</p>
                     </div>
                   </div>
                 ) : (
-                  /* ── Main: A/B staging + timeline ── */
+                  /* ── Staging bar + Timeline ── */
                   <div className="flex-1 flex flex-col min-h-0">
-                    {/* ━━ A vs B staging area ━━ */}
-                    <div className="px-5 py-4 border-b border-black/[0.04] bg-gradient-to-b from-[#fafffe] to-white">
-                      <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-3">
-                        {/* Card A */}
-                        {(() => {
-                          const snapA = pickLeft ? snapshots.find(s => s.id === pickLeft) : null;
-                          return (
-                            <div className={`relative rounded-xl border-2 border-dashed px-4 py-3 transition-all min-h-[68px] flex items-center ${
-                              snapA
-                                ? 'border-[#06b6d4] bg-[#ecfeff]/60 border-solid'
-                                : 'border-black/10 bg-black/[0.01]'
+                    {/* ━━ A vs B compact staging strip ━━ */}
+                    {(() => {
+                      const snapA = pickLeft ? snapshots.find(s => s.id === pickLeft) : null;
+                      const snapB = pickRight ? snapshots.find(s => s.id === pickRight) : null;
+                      return (
+                        <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-cyan-50/50 via-white to-sky-50/50 px-4 py-2 text-xs shrink-0">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            {/* Pill A */}
+                            <div className={`flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs transition-all ${
+                              snapA ? 'border-cyan-300 bg-cyan-50/80 text-[#123b50]' : 'border-dashed border-slate-300 bg-slate-50 text-slate-400'
                             }`}>
-                              <div className="absolute -top-2.5 left-3 px-1.5 bg-white">
-                                <span className={`text-[10px] font-bold uppercase tracking-wider ${snapA ? 'text-[#06b6d4]' : 'text-black/25'}`}>
-                                  {zh ? '基准 A' : 'Baseline A'}
-                                </span>
-                              </div>
+                              <span className="flex h-5 w-5 items-center justify-center rounded bg-cyan-600 text-[10px] font-bold text-white">A</span>
                               {snapA ? (
-                                <div className="flex items-center gap-3 w-full">
-                                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#06b6d4] text-white text-sm font-bold flex-shrink-0">A</div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-semibold text-[#164e63] truncate">{formatTime(snapA.timestamp)}</div>
-                                    <div className="text-[10px] text-black/35">{snapA.trigger || 'manual'} · {snapA.vendor || ''} · {formatSize(snapA.size)}</div>
-                                  </div>
-                                  <button onClick={() => setPickLeft(null)} className="p-1 rounded-md text-black/25 hover:text-red-400 hover:bg-red-50 transition flex-shrink-0">
-                                    <X size={12} />
-                                  </button>
-                                </div>
+                                <>
+                                  <span className="font-semibold text-xs truncate">{formatTime(snapA.timestamp)}</span>
+                                  <span className="text-[10px] text-slate-400">({snapA.config_type === 'startup' ? (zh ? '启动' : 'startup') : (zh ? '运行' : 'running')})</span>
+                                  <button type="button" onClick={() => setPickLeft(null)} className="text-slate-400 hover:text-red-500"><X size={12} /></button>
+                                </>
                               ) : (
-                                <div className="flex items-center gap-2 text-black/25">
-                                  <div className="flex h-9 w-9 items-center justify-center rounded-lg border-2 border-dashed border-black/10 text-[11px] font-bold">A</div>
-                                  <span className="text-xs">{zh ? '点击下方快照选择基准' : 'Select a baseline snapshot'}</span>
-                                </div>
+                                <span className="text-[11px] text-slate-400">{zh ? '选择基准快照 A' : 'Select Baseline A'}</span>
                               )}
                             </div>
-                          );
-                        })()}
 
-                        {/* VS divider */}
-                        <div className="flex flex-col items-center gap-1">
-                          <div className="h-8 w-8 rounded-full bg-[#164e63]/5 flex items-center justify-center">
-                            <ArrowLeftRight size={14} className="text-[#164e63]/40" />
-                          </div>
-                        </div>
+                            <ArrowLeftRight size={13} className="text-slate-400 shrink-0" />
 
-                        {/* Card B */}
-                        {(() => {
-                          const snapB = pickRight ? snapshots.find(s => s.id === pickRight) : null;
-                          return (
-                            <div className={`relative rounded-xl border-2 border-dashed px-4 py-3 transition-all min-h-[68px] flex items-center ${
-                              snapB
-                                ? 'border-[#164e63] bg-[#f0f9ff]/60 border-solid'
-                                : 'border-black/10 bg-black/[0.01]'
+                            {/* Pill B */}
+                            <div className={`flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs transition-all ${
+                              snapB ? 'border-sky-300 bg-sky-50/80 text-[#123b50]' : 'border-dashed border-slate-300 bg-slate-50 text-slate-400'
                             }`}>
-                              <div className="absolute -top-2.5 left-3 px-1.5 bg-white">
-                                <span className={`text-[10px] font-bold uppercase tracking-wider ${snapB ? 'text-[#164e63]' : 'text-black/25'}`}>
-                                  {zh ? '对比 B' : 'Compare B'}
-                                </span>
-                              </div>
+                              <span className="flex h-5 w-5 items-center justify-center rounded bg-[#123b50] text-[10px] font-bold text-white">B</span>
                               {snapB ? (
-                                <div className="flex items-center gap-3 w-full">
-                                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#164e63] text-white text-sm font-bold flex-shrink-0">B</div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-semibold text-[#164e63] truncate">{formatTime(snapB.timestamp)}</div>
-                                    <div className="text-[10px] text-black/35">{snapB.trigger || 'manual'} · {snapB.vendor || ''} · {formatSize(snapB.size)}</div>
-                                  </div>
-                                  <button onClick={() => setPickRight(null)} className="p-1 rounded-md text-black/25 hover:text-red-400 hover:bg-red-50 transition flex-shrink-0">
-                                    <X size={12} />
-                                  </button>
-                                </div>
+                                <>
+                                  <span className="font-semibold text-xs truncate">{formatTime(snapB.timestamp)}</span>
+                                  <span className="text-[10px] text-slate-400">({snapB.config_type === 'startup' ? (zh ? '启动' : 'startup') : (zh ? '运行' : 'running')})</span>
+                                  <button type="button" onClick={() => setPickRight(null)} className="text-slate-400 hover:text-red-500"><X size={12} /></button>
+                                </>
                               ) : (
-                                <div className="flex items-center gap-2 text-black/25">
-                                  <div className="flex h-9 w-9 items-center justify-center rounded-lg border-2 border-dashed border-black/10 text-[11px] font-bold">B</div>
-                                  <span className="text-xs">{zh ? '点击下方快照选择对比' : 'Select a compare snapshot'}</span>
-                                </div>
+                                <span className="text-[11px] text-slate-400">{zh ? '选择对比快照 B' : 'Select Compare B'}</span>
                               )}
                             </div>
-                          );
-                        })()}
+                          </div>
 
-                        {/* Compare button */}
-                        <button
-                          disabled={!pickLeft || !pickRight}
-                          onClick={() => void handleStartCompare()}
-                          className="h-12 w-12 rounded-xl bg-gradient-to-br from-[#164e63] to-[#155e75] text-white shadow-[0_4px_16px_rgba(22,78,99,0.25)] flex items-center justify-center transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(22,78,99,0.35)] active:scale-95 disabled:opacity-25 disabled:cursor-not-allowed disabled:translate-y-0 disabled:shadow-none"
-                          title={zh ? '开始对比' : 'Start Compare'}
-                        >
-                          <ArrowLeftRight size={18} />
-                        </button>
-                      </div>
-
-                      {/* hint text */}
-                      {!pickLeft && !pickRight && (
-                        <p className="mt-3 text-center text-[11px] text-black/30">
-                          {zh ? '↓ 点击快照行自动选择 A → B，也可点击行内 A / B 按钮手动指定' : '↓ Click rows to auto-assign A then B, or use A/B buttons'}
-                        </p>
-                      )}
-                    </div>
+                          <span className="text-[10px] text-slate-400 hidden md:inline">
+                            {zh ? '提示: 点击快照行自动分配 A → B，或点击行内 A / B 按钮指定' : 'Click row to assign A then B'}
+                          </span>
+                        </div>
+                      );
+                    })()}
 
                     {/* ━━ Snapshot timeline ━━ */}
-                    <div className="flex-1 overflow-auto px-5 py-3">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-black/25 mb-3">{zh ? `${snapshots.length} 份配置快照` : `${snapshots.length} Snapshots`}</div>
-                      <div className="relative">
-                        {/* Timeline rail */}
-                        <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-gradient-to-b from-[#06b6d4]/25 via-[#06b6d4]/10 to-transparent rounded-full" />
-
-                        <div className="space-y-px">
+                    <div className="flex-1 overflow-y-auto px-4 py-2.5">
+                      <div className="space-y-1">
                           {snapshots.map((snap, idx) => {
                             const isLeft = pickLeft === snap.id;
                             const isRight = pickRight === snap.id;
@@ -1002,6 +1026,15 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                                 {/* Time + meta inline */}
                                 <span className="text-[12px] font-semibold text-[#164e63] tabular-nums">{formatTime(snap.timestamp)}</span>
                                 <span className="text-[10px] text-black/20">{timeSince(snap.timestamp)}</span>
+                                {snap.config_type === 'startup' ? (
+                                  <span className="rounded bg-blue-50 px-1.5 py-px text-[8px] font-bold text-blue-600 border border-blue-100">
+                                    {zh ? '启动配置' : 'Startup'}
+                                  </span>
+                                ) : (
+                                  <span className="rounded bg-emerald-50 px-1.5 py-px text-[8px] font-bold text-emerald-600 border border-emerald-100">
+                                    {zh ? '运行配置' : 'Running'}
+                                  </span>
+                                )}
                                 {isNewest && (
                                   <span className="rounded bg-emerald-50 px-1 py-px text-[8px] font-bold text-emerald-600">
                                     {zh ? '最新' : 'NEW'}
@@ -1050,138 +1083,188 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                         </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
               </div>
             )}
           </div>
         )}
 
-        {/* ════════ Step 3: Diff viewer ════════ */}
+        {/* ════════ Step 3: Diff viewer (Ultra-compact 2-row header & max viewport) ════════ */}
         {showDiffViewer && (
-          <div className="flex-1 overflow-auto font-mono text-xs leading-6 bg-[#f7fbfc]">
-            <div className="h-full flex flex-col">
-              <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-5 py-3 text-xs">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700"><Server size={15} /></div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate font-sans text-sm font-black text-[#123b50]">{analysis?.device.hostname || configDiffRight.hostname}</span>
-                      {analysis?.device.ip_address && <code className="text-[10px] text-slate-400">{analysis.device.ip_address}</code>}
-                      {analysis?.device.platform && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">{analysis.device.platform}</span>}
-                      <span className={`rounded-full px-1.5 py-0.5 text-[8px] font-bold ${analysis?.device.status === 'online' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{analysis?.device.status || '—'}</span>
-                    </div>
-                    <p className="mt-0.5 font-sans text-[9px] text-slate-400">
-                      {zh ? '变化方向' : 'Direction'}：A {formatTime(configDiffLeft.timestamp)} → B {formatTime(configDiffRight.timestamp)}
-                      {analysis?.direction_reversed && <span className="ml-2 font-bold text-amber-600">{zh ? '时间方向已反转' : 'Time direction reversed'}</span>}
-                    </p>
+          <div className={`flex-1 min-h-0 flex flex-col font-mono bg-[#f7fbfc] ${
+            isFullscreen ? 'fixed inset-0 z-50 bg-white' : ''
+          }`}>
+            <div className="h-full flex flex-col min-h-0">
+              {/* ── Row 1: Compact Device Info & Global Action Bar (~38px) ── */}
+              <div className="flex h-10 items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 text-xs shrink-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { onReset(); }}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors shrink-0"
+                    title={zh ? '重新选择设备或快照' : 'Re-select device or snapshots'}
+                  >
+                    <ChevronLeft size={13} />
+                    {zh ? '重选' : 'Re-select'}
+                  </button>
+                  <div className="h-3.5 w-px bg-slate-200 shrink-0" />
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-sans text-xs font-black text-[#123b50]">{analysis?.device.hostname || configDiffRight.hostname}</span>
+                    {analysis?.device.ip_address && <code className="hidden sm:inline text-[10px] text-slate-400 font-mono">{analysis.device.ip_address}</code>}
+                    {analysis?.device.platform && <span className="hidden md:inline rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">{analysis.device.platform}</span>}
+                    <span className={`rounded-full px-1.5 py-0.2 text-[8px] font-bold ${analysis?.device.status === 'online' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{analysis?.device.status || '—'}</span>
+                  </div>
+                  <div className="hidden xl:flex items-center gap-1 font-sans text-[10px] text-slate-400 ml-2">
+                    <span>{zh ? '对比:' : 'Diff:'}</span>
+                    <span className="text-slate-600 font-bold">A ({formatTime(configDiffLeft.timestamp)})</span>
+                    <ArrowLeftRight size={10} className="text-slate-300 mx-0.5" />
+                    <span className="text-slate-600 font-bold">B ({formatTime(configDiffRight.timestamp)})</span>
+                    {analysis?.direction_reversed && <span className="font-bold text-amber-600 ml-1">({zh ? '反向' : 'reversed'})</span>}
                   </div>
                 </div>
-                <div className="ml-auto flex flex-wrap items-center gap-1.5">
-                  {analysisLoading && <span className="inline-flex items-center gap-1 text-[9px] text-cyan-700"><Loader2 size={11} className="animate-spin" />{zh ? '对象分析中' : 'Analyzing'}</span>}
-                  <button type="button" onClick={() => void onSelectSnapshotPair(configDiffRight.id, configDiffLeft.id)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:border-cyan-300 hover:text-cyan-700" title={zh ? '交换 A/B' : 'Swap A/B'}><ArrowLeftRight size={12} /></button>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {analysisLoading && <span className="inline-flex items-center gap-1 text-[9px] text-cyan-700 mr-1"><Loader2 size={11} className="animate-spin" />{zh ? '解析中' : 'Parsing'}</span>}
+                  <button type="button" onClick={() => void onSelectSnapshotPair(configDiffRight.id, configDiffLeft.id)} className="rounded-lg border border-slate-200 p-1 text-slate-500 hover:border-cyan-300 hover:text-cyan-700 transition-colors" title={zh ? '交换 A/B 对比方向' : 'Swap A/B'}><ArrowLeftRight size={12} /></button>
                   <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
                     {(['normalized', 'raw'] as const).map((mode) => (
-                      <button key={mode} type="button" onClick={() => onDiffModeChange(mode)} className={`rounded px-2 py-0.5 text-[9px] transition-colors ${diffMode === mode ? 'bg-[#123b50] text-white shadow-sm' : 'text-slate-500 hover:text-[#123b50]'}`}>
-                        {mode === 'normalized' ? (zh ? '标准化' : 'Normalized') : (zh ? '原始' : 'Raw')}
+                      <button key={mode} type="button" onClick={() => onDiffModeChange(mode)} className={`rounded px-1.5 py-0.5 text-[9px] font-bold transition-colors ${diffMode === mode ? 'bg-[#123b50] text-white shadow-xs' : 'text-slate-500 hover:text-[#123b50]'}`}>
+                        {mode === 'normalized' ? (zh ? '标准化' : 'Norm') : (zh ? '原始' : 'Raw')}
                       </button>
                     ))}
                   </div>
                   {(['markdown', 'html', 'json'] as const).map((format) => (
-                    <button key={format} type="button" disabled={Boolean(exporting)} onClick={() => void exportAnalysis(format)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-[8px] font-bold uppercase text-slate-500 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-40">
-                      {exporting === format ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}{format === 'markdown' ? 'MD' : format}
+                    <button key={format} type="button" disabled={Boolean(exporting)} onClick={() => void exportAnalysis(format)} className="hidden sm:inline-flex items-center gap-0.5 rounded-lg border border-slate-200 px-1.5 py-1 text-[8px] font-bold uppercase text-slate-500 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-40">
+                      {exporting === format ? <Loader2 size={9} className="animate-spin" /> : <Download size={9} />}{format === 'markdown' ? 'MD' : format}
                     </button>
                   ))}
-                  <button type="button" disabled={confirming} onClick={() => void confirmAnalysis()} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[9px] font-bold text-emerald-700 disabled:opacity-40">
-                    {confirming ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle2 size={10} />}{zh ? '标记已确认' : 'Confirm'}
+                  <button type="button" disabled={confirming} onClick={() => void confirmAnalysis()} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[9px] font-bold text-emerald-700 disabled:opacity-40">
+                    {confirming ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle2 size={10} />}{zh ? '确认' : 'Confirm'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsFullscreen((prev) => !prev)}
+                    className={`rounded-lg border p-1 transition-colors ${
+                      isFullscreen
+                        ? 'bg-[#123b50] border-[#123b50] text-white shadow-sm'
+                        : 'border-slate-200 text-slate-600 hover:border-cyan-400 hover:text-cyan-700'
+                    }`}
+                    title={isFullscreen ? (zh ? '退出全屏 (Esc)' : 'Exit Fullscreen (Esc)') : (zh ? '全屏沉浸对比' : 'Fullscreen')}
+                  >
+                    {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
                   </button>
                 </div>
               </div>
-              {analysis && (
-                <div className="shrink-0 border-b border-slate-200 bg-gradient-to-r from-slate-50 via-white to-cyan-50/40 px-5 py-3">
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-                    {[
-                      { label: zh ? '新增行' : 'Added', value: analysis.summary.added_lines, cls: 'text-emerald-700 bg-emerald-50' },
-                      { label: zh ? '删除行' : 'Removed', value: analysis.summary.removed_lines, cls: 'text-rose-700 bg-rose-50' },
-                      { label: zh ? '变更对象' : 'Objects', value: analysis.summary.changed_objects, cls: 'text-cyan-700 bg-cyan-50' },
-                      { label: zh ? '影响模块' : 'Modules', value: analysis.summary.affected_modules, cls: 'text-blue-700 bg-blue-50' },
-                      { label: zh ? '高风险' : 'High risk', value: analysis.summary.high_risk_changes, cls: 'text-orange-700 bg-orange-50' },
-                      { label: zh ? '合规率' : 'Compliance', value: `${analysis.compliance.compliance_rate}%`, cls: 'text-violet-700 bg-violet-50' },
-                    ].map((item) => (
-                      <div key={item.label} className="flex items-center justify-between rounded-xl border border-white bg-white/80 px-3 py-2 shadow-sm">
-                        <span className="font-sans text-[9px] font-bold text-slate-400">{item.label}</span>
-                        <span className={`rounded-lg px-2 py-0.5 font-sans text-sm font-black ${item.cls}`}>{item.value}</span>
+
+              {/* ── Row 2: View Switcher + Tools + Inline Metrics Badge Capsule (~36px) ── */}
+              <div className="flex h-9 items-center justify-between gap-2 border-b border-slate-200 bg-slate-50/90 px-3 text-xs shrink-0">
+                <div className="flex items-center gap-2 overflow-x-auto py-0.5">
+                  <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shrink-0">
+                    {([
+                      ['text', zh ? '统一 Diff' : 'Unified diff', GitBranch],
+                      ['objects', zh ? '对象视图' : 'Object view', Boxes],
+                      ['risks', zh ? '风险与合规' : 'Risk & compliance', ShieldAlert],
+                    ] as const).map(([view, label, Icon]) => (
+                      <button
+                        type="button"
+                        key={view}
+                        onClick={() => setAnalysisView(view)}
+                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[9px] font-bold transition-all ${
+                          analysisView === view ? 'bg-[#123b50] text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <Icon size={10} />
+                        {label}
+                        {view === 'objects' && analysis && <span className="opacity-75 tabular-nums">({analysis.objects.length})</span>}
+                        {view === 'risks' && analysis && <span className="opacity-75 tabular-nums">({analysis.risks.length})</span>}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Tools when view === 'text' */}
+                  {analysisView === 'text' && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      {activeChangeLineIndexes.length > 0 && <span className="rounded bg-slate-200/80 px-1.5 py-0.5 text-[9px] font-bold text-slate-600 tabular-nums">{safeFocusIdx + 1}/{activeChangeLineIndexes.length}</span>}
+                      <button onClick={() => onJumpToDiff('prev')} disabled={activeChangeLineIndexes.length === 0} className="rounded border border-slate-200 bg-white p-1 text-slate-500 hover:border-cyan-300 disabled:opacity-30" title={zh ? '上一处变更' : 'Previous'}><ChevronLeft size={10} /></button>
+                      <button onClick={() => onJumpToDiff('next')} disabled={activeChangeLineIndexes.length === 0} className="rounded border border-slate-200 bg-white p-1 text-slate-500 hover:border-cyan-300 disabled:opacity-30" title={zh ? '下一处变更' : 'Next'}><ChevronRight size={10} /></button>
+                      <button onClick={onToggleOnlyChanges} className={`rounded border px-1.5 py-0.5 text-[9px] font-bold transition-colors ${diffOnlyChanges ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}>{zh ? '仅变更' : 'Only diff'}</button>
+                      <button onClick={onToggleFullBoth} className={`rounded border px-1.5 py-0.5 text-[9px] font-bold transition-colors ${diffShowFullBoth ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}>{zh ? '左右并排' : 'Side-by-side'}</button>
+                      <button onClick={() => setWrapLines((w) => !w)} className={`rounded border px-1.5 py-0.5 text-[9px] font-bold transition-colors ${wrapLines ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`} title={zh ? '长行自动换行' : 'Wrap lines'}>{zh ? '换行' : 'Wrap'}</button>
+                      <div className="inline-flex rounded border border-slate-200 bg-white p-0.5 text-[9px]">
+                        <button onClick={() => setFontSize('xs')} className={`px-1 py-0.5 rounded font-bold ${fontSize === 'xs' ? 'bg-[#123b50] text-white' : 'text-slate-500'}`} title={zh ? '紧凑字号' : 'Compact'}>A-</button>
+                        <button onClick={() => setFontSize('sm')} className={`px-1 py-0.5 rounded font-bold ${fontSize === 'sm' ? 'bg-[#123b50] text-white' : 'text-slate-500'}`} title={zh ? '标准字号' : 'Standard'}>A</button>
+                        <button onClick={() => setFontSize('base')} className={`px-1 py-0.5 rounded font-bold ${fontSize === 'base' ? 'bg-[#123b50] text-white' : 'text-slate-500'}`} title={zh ? '大字号' : 'Large'}>A+</button>
                       </div>
-                    ))}
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {Object.entries(analysis.summary.object_counts).map(([name, count]) => (
-                      <button type="button" key={name} onClick={() => {
-                        setAnalysisView('objects');
-                        setObjectFilter(name);
-                      }} className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-sans text-[8px] font-bold text-slate-500 hover:border-cyan-200 hover:text-cyan-700">{name} {count}</button>
-                    ))}
-                    {analysis.source_correlation.out_of_band_suspected && (
-                      <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 font-sans text-[8px] font-black text-rose-700"><FileWarning size={10} />{zh ? '疑似带外变更' : 'Possible out-of-band change'}</span>
-                    )}
-                    {analysis.requires_mfa && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-sans text-[8px] font-black text-amber-700"><ShieldAlert size={10} />MFA</span>}
-                    {analysis.cache.hit && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-sans text-[8px] text-slate-500">{zh ? '缓存命中' : 'Cache hit'}</span>}
-                  </div>
+                      <button onClick={() => setChangeMapVisible((v) => !v)} className={`hidden xl:inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[9px] font-bold transition-colors ${changeMapVisible ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`} title={zh ? '切换变更目录' : 'Change Map'}>
+                        {changeMapVisible ? <PanelRightClose size={10} /> : <PanelRightOpen size={10} />}
+                        {zh ? '目录' : 'Map'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Filters when view === 'objects' */}
+                  {analysisView === 'objects' && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button type="button" onClick={() => setObjectFilter('all')} className={`rounded-full px-2 py-0.5 font-sans text-[8px] font-bold ${objectFilter === 'all' ? 'bg-[#123b50] text-white' : 'border border-slate-200 bg-white text-slate-500'}`}>
+                        {zh ? '全部' : 'All'} {analysis?.objects.length || 0}
+                      </button>
+                      {Object.entries(analysis?.summary.object_counts || {}).map(([name, count]) => (
+                        <button type="button" key={name} onClick={() => setObjectFilter(name)} className={`rounded-full px-2 py-0.5 font-sans text-[8px] font-bold ${objectFilter === name ? 'bg-cyan-600 text-white' : 'border border-slate-200 bg-white text-slate-500 hover:border-cyan-200 hover:text-cyan-700'}`}>
+                          {name} {count}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Filters when view === 'risks' */}
+                  {analysisView === 'risks' && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      {['all', 'critical', 'high', 'medium', 'low'].map((level) => (
+                        <button type="button" key={level} onClick={() => setRiskFilter(level)} className={`rounded-full px-2 py-0.5 font-sans text-[8px] font-bold ${riskFilter === level ? 'bg-[#123b50] text-white' : 'border border-slate-200 bg-white text-slate-500'}`}>
+                          {level === 'all' ? (zh ? '全部' : 'All') : level}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
+
+                {/* Right side: Inline Metrics Badge Capsule */}
+                {analysis && (
+                  <div className="hidden md:flex items-center gap-1 text-[9px] shrink-0 font-sans">
+                    <span className="rounded bg-emerald-50 text-emerald-700 font-bold px-1.5 py-0.5 border border-emerald-100" title={zh ? '新增行' : 'Added'}>+{analysis.summary.added_lines}</span>
+                    <span className="rounded bg-rose-50 text-rose-700 font-bold px-1.5 py-0.5 border border-rose-100" title={zh ? '删除行' : 'Removed'}>-{analysis.summary.removed_lines}</span>
+                    <span className="rounded bg-cyan-50 text-cyan-700 font-bold px-1.5 py-0.5 border border-cyan-100" title={zh ? '变更对象数' : 'Objects'}>{analysis.summary.changed_objects} {zh ? '对象' : 'objs'}</span>
+                    {analysis.summary.high_risk_changes > 0 && (
+                      <span className="rounded bg-orange-50 text-orange-700 font-bold px-1.5 py-0.5 border border-orange-100" title={zh ? '高风险变更' : 'High risk'}>{analysis.summary.high_risk_changes} {zh ? '高风险' : 'risks'}</span>
+                    )}
+                    <span className="rounded bg-violet-50 text-violet-700 font-bold px-1.5 py-0.5 border border-violet-100" title={zh ? '合规率' : 'Compliance'}>{analysis.compliance.compliance_rate}% {zh ? '合规' : 'comp'}</span>
+                    {analysis.source_correlation.out_of_band_suspected && (
+                      <span className="rounded bg-rose-100 text-rose-800 font-black px-1.5 py-0.5" title={zh ? '疑似带外变更' : 'Possible out-of-band change'}>! {zh ? '带外' : 'OOB'}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {analysisError && (
-                <div className="flex shrink-0 items-center gap-2 border-b border-rose-100 bg-rose-50 px-5 py-2 font-sans text-[10px] text-rose-700">
+                <div className="flex shrink-0 items-center gap-2 border-b border-rose-100 bg-rose-50 px-3 py-1.5 font-sans text-[10px] text-rose-700">
                   <AlertTriangle size={12} /><span className="flex-1">{analysisError}</span>
                   <button type="button" onClick={() => void loadStructuredAnalysis(true)} className="font-bold underline">{zh ? '重试' : 'Retry'}</button>
                   <button type="button" onClick={() => setAnalysisError('')}><X size={12} /></button>
                 </div>
               )}
-              <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-5 py-2 font-sans text-[10px] text-slate-500">
-                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
-                  {([
-                    ['text', zh ? '统一 Diff' : 'Unified diff', GitBranch],
-                    ['objects', zh ? '对象视图' : 'Object view', Boxes],
-                    ['risks', zh ? '风险与合规' : 'Risk & compliance', ShieldAlert],
-                  ] as const).map(([view, label, Icon]) => (
-                    <button type="button" key={view} onClick={() => setAnalysisView(view)} className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[9px] font-bold ${analysisView === view ? 'bg-[#123b50] text-white' : 'text-slate-500 hover:text-slate-800'}`}>
-                      <Icon size={10} />{label}
-                    </button>
-                  ))}
-                </div>
-                {analysisView === 'text' && (
-                  <>
-                    {activeChangeLineIndexes.length > 0 && <span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold text-slate-500 tabular-nums">{safeFocusIdx + 1}/{activeChangeLineIndexes.length}</span>}
-                    <button onClick={() => onJumpToDiff('prev')} disabled={activeChangeLineIndexes.length === 0} className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 disabled:opacity-30"><ChevronLeft size={11} /></button>
-                    <button onClick={() => onJumpToDiff('next')} disabled={activeChangeLineIndexes.length === 0} className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 disabled:opacity-30"><ChevronRight size={11} /></button>
-                    <button onClick={onToggleOnlyChanges} className={`rounded-lg border px-2 py-1 text-[9px] font-bold ${diffOnlyChanges ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-white text-slate-500'}`}>{zh ? '仅变更' : 'Changes only'}</button>
-                    <button onClick={onToggleFullBoth} className={`rounded-lg border px-2 py-1 text-[9px] font-bold ${diffShowFullBoth ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 bg-white text-slate-500'}`}>{zh ? '左右对照' : 'Side by side'}</button>
-                  </>
-                )}
-                <span className="ml-auto hidden items-center gap-1 font-semibold text-emerald-600 sm:inline-flex"><ShieldCheck size={11} />{diffMode === 'normalized' ? (zh ? '已隐藏采集噪声' : 'Collection noise hidden') : (zh ? '原始审计文本' : 'Raw audit text')}</span>
-              </div>
-              <div className="flex-1 min-h-0 overflow-hidden p-4">
+
+              {/* ── Main Viewport Content Area ── */}
+              <div className="flex-1 min-h-0 overflow-hidden p-2 sm:p-2.5">
                 {analysisView === 'objects' ? (
-                  <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                    <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-3">
-                      <span className="font-sans text-[10px] font-black uppercase tracking-wider text-[#123b50]">{zh ? '结构化变更对象' : 'Structured change objects'}</span>
-                      <button type="button" onClick={() => setObjectFilter('all')} className={`rounded-full px-2.5 py-1 font-sans text-[9px] font-bold ${objectFilter === 'all' ? 'bg-[#123b50] text-white' : 'border border-slate-200 bg-white text-slate-500'}`}>
-                        {zh ? '全部' : 'All'} {analysis?.objects.length || 0}
-                      </button>
-                      {Object.entries(analysis?.summary.object_counts || {}).map(([name, count]) => (
-                        <button type="button" key={name} onClick={() => setObjectFilter(name)} className={`rounded-full px-2.5 py-1 font-sans text-[9px] font-bold ${objectFilter === name ? 'bg-cyan-600 text-white' : 'border border-slate-200 bg-white text-slate-500 hover:border-cyan-200 hover:text-cyan-700'}`}>
-                          {name} {count}
-                        </button>
-                      ))}
-                      {analysisLoading && <Loader2 size={13} className="ml-auto animate-spin text-cyan-600" />}
-                    </div>
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
                     <div className="flex-1 overflow-auto p-3">
                       {filteredObjects.length > 0 ? (
                         <div className="grid gap-3 xl:grid-cols-2">
                           {filteredObjects.map((item) => (
-                            <article key={item.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                              <div className="flex items-start gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3">
-                                <span className={`mt-0.5 rounded-lg px-2 py-1 font-sans text-[8px] font-black uppercase ${
-                                  item.change_type === 'added' ? 'bg-emerald-50 text-emerald-700' : item.change_type === 'deleted' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'
+                            <article key={item.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+                              <div className="flex items-start gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
+                                <span className={`mt-0.5 rounded-md px-1.5 py-0.5 font-sans text-[8px] font-black uppercase ${
+                                  item.change_type === 'added' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60' : item.change_type === 'deleted' ? 'bg-rose-50 text-rose-700 border border-rose-200/60' : 'bg-amber-50 text-amber-700 border border-amber-200/60'
                                 }`}>{item.change_type === 'added' ? (zh ? '新增' : 'Added') : item.change_type === 'deleted' ? (zh ? '删除' : 'Deleted') : (zh ? '修改' : 'Modified')}</span>
                                 <div className="min-w-0 flex-1">
                                   <div className="truncate font-sans text-xs font-black text-[#123b50]">{item.object_name}</div>
@@ -1191,11 +1274,11 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                                   item.risk_level === 'critical' || item.risk_level === 'high' ? 'bg-rose-50 text-rose-700' : item.risk_level === 'medium' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-500'
                                 }`}>{item.risk_level || 'low'}</span>
                               </div>
-                              <div className="space-y-3 px-4 py-3">
+                              <div className="space-y-2.5 px-4 py-2.5">
                                 {item.field_changes.length > 0 && (
                                   <div className="overflow-hidden rounded-lg border border-slate-100">
                                     {item.field_changes.map((field, index) => (
-                                      <div key={`${field.field}-${index}`} className="grid grid-cols-[100px_1fr_18px_1fr] items-start gap-2 border-b border-slate-100 px-3 py-2 font-sans text-[9px] last:border-b-0">
+                                      <div key={`${field.field}-${index}`} className="grid grid-cols-[100px_1fr_18px_1fr] items-start gap-2 border-b border-slate-100 px-3 py-1.5 font-sans text-[9px] last:border-b-0">
                                         <span className="font-bold text-slate-500">{field.field}</span>
                                         <code className="break-all text-rose-600">{String(field.before ?? '--')}</code>
                                         <ArrowLeftRight size={10} className="mt-0.5 text-slate-300" />
@@ -1205,17 +1288,17 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                                   </div>
                                 )}
                                 <div className="grid gap-2 md:grid-cols-2">
-                                  <div className="rounded-lg bg-rose-50/70 p-2.5">
+                                  <div className="rounded-lg bg-rose-50/70 p-2">
                                     <div className="font-sans text-[8px] font-black uppercase text-rose-500">{zh ? '变更前' : 'Before'}</div>
-                                    <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-all font-mono text-[8px] leading-4 text-rose-800">{item.before_lines.join('\n') || '--'}</pre>
+                                    <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-[9px] leading-4 text-rose-800">{item.before_lines.join('\n') || '--'}</pre>
                                   </div>
-                                  <div className="rounded-lg bg-emerald-50/70 p-2.5">
+                                  <div className="rounded-lg bg-emerald-50/70 p-2">
                                     <div className="font-sans text-[8px] font-black uppercase text-emerald-500">{zh ? '变更后' : 'After'}</div>
-                                    <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-all font-mono text-[8px] leading-4 text-emerald-800">{item.after_lines.join('\n') || '--'}</pre>
+                                    <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-[9px] leading-4 text-emerald-800">{item.after_lines.join('\n') || '--'}</pre>
                                   </div>
                                 </div>
                                 {(item.risk_reason || item.potential_impact) && (
-                                  <div className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2 font-sans text-[9px] leading-4 text-amber-800">
+                                  <div className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-1.5 font-sans text-[9px] leading-4 text-amber-800">
                                     <span className="font-black">{item.risk_reason || (zh ? '风险提示' : 'Risk')}</span>
                                     {item.potential_impact && <span> · {item.potential_impact}</span>}
                                   </div>
@@ -1233,33 +1316,28 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                     </div>
                   </div>
                 ) : analysisView === 'risks' ? (
-                  <div className="grid h-full min-h-0 gap-4 overflow-auto xl:grid-cols-[1.15fr_0.85fr]">
-                    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/70 px-4 py-3">
+                  <div className="grid h-full min-h-0 gap-3 overflow-auto xl:grid-cols-[1.15fr_0.85fr]">
+                    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs flex flex-col min-h-0">
+                      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/70 px-3 py-2 shrink-0">
                         <ShieldAlert size={13} className="text-rose-600" />
-                        <span className="font-sans text-[10px] font-black uppercase tracking-wider text-[#123b50]">{zh ? '变更风险' : 'Change risks'}</span>
-                        {['all', 'critical', 'high', 'medium', 'low'].map((level) => (
-                          <button type="button" key={level} onClick={() => setRiskFilter(level)} className={`rounded-full px-2 py-1 font-sans text-[8px] font-bold ${riskFilter === level ? 'bg-[#123b50] text-white' : 'border border-slate-200 bg-white text-slate-500'}`}>
-                            {level === 'all' ? (zh ? '全部' : 'All') : level}
-                          </button>
-                        ))}
+                        <span className="font-sans text-[10px] font-black uppercase tracking-wider text-[#123b50]">{zh ? '变更风险清单' : 'Change risks'}</span>
                       </div>
-                      <div className="max-h-full space-y-2 overflow-auto p-3">
+                      <div className="flex-1 space-y-2 overflow-auto p-3">
                         {filteredRisks.map((risk, index) => (
-                          <div key={`${risk.rule_id}-${risk.object_name}-${index}`} className={`rounded-xl border p-3 ${
+                          <div key={`${risk.rule_id}-${risk.object_name}-${index}`} className={`rounded-xl border p-2.5 ${
                             risk.severity === 'critical' || risk.severity === 'high' ? 'border-rose-200 bg-rose-50/60' : risk.severity === 'medium' ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-slate-50'
                           }`}>
                             <div className="flex items-start gap-2">
-                              <span className="rounded-md bg-white px-2 py-0.5 font-sans text-[8px] font-black uppercase text-slate-600 shadow-sm">{risk.severity}</span>
+                              <span className="rounded-md bg-white px-1.5 py-0.5 font-sans text-[8px] font-black uppercase text-slate-600 shadow-xs">{risk.severity}</span>
                               <div className="min-w-0 flex-1">
                                 <div className="font-sans text-[10px] font-black text-[#123b50]">{risk.message}</div>
-                                <div className="mt-1 font-sans text-[9px] text-slate-500">{risk.object_type} · {risk.object_name}</div>
-                                {risk.potential_impact && <p className="mt-2 font-sans text-[9px] leading-4 text-slate-600">{risk.potential_impact}</p>}
+                                <div className="mt-0.5 font-sans text-[9px] text-slate-500">{risk.object_type} · {risk.object_name}</div>
+                                {risk.potential_impact && <p className="mt-1 font-sans text-[9px] leading-4 text-slate-600">{risk.potential_impact}</p>}
                               </div>
                               {(risk.requires_mfa || risk.requires_secondary_approval) && (
-                                <div className="flex flex-col items-end gap-1">
-                                  {risk.requires_mfa && <span className="rounded bg-amber-100 px-1.5 py-0.5 font-sans text-[7px] font-black text-amber-700">MFA</span>}
-                                  {risk.requires_secondary_approval && <span className="rounded bg-violet-100 px-1.5 py-0.5 font-sans text-[7px] font-black text-violet-700">{zh ? '复核' : 'Review'}</span>}
+                                <div className="flex flex-col items-end gap-0.5">
+                                  {risk.requires_mfa && <span className="rounded bg-amber-100 px-1.5 py-0.2 font-sans text-[7px] font-black text-amber-700">MFA</span>}
+                                  {risk.requires_secondary_approval && <span className="rounded bg-violet-100 px-1.5 py-0.2 font-sans text-[7px] font-black text-violet-700">{zh ? '复核' : 'Review'}</span>}
                                 </div>
                               )}
                             </div>
@@ -1268,33 +1346,33 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                         {filteredRisks.length === 0 && <p className="py-12 text-center font-sans text-xs font-bold text-slate-400">{zh ? '未发现匹配风险' : 'No matching risks found'}</p>}
                       </div>
                     </section>
-                    <div className="space-y-4 overflow-auto">
-                      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-                        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                    <div className="space-y-3 overflow-auto">
+                      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+                        <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
                           <span className="inline-flex items-center gap-1.5 font-sans text-[10px] font-black text-[#123b50]"><FileCheck2 size={12} className="text-violet-600" />{zh ? '合规检查' : 'Compliance checks'}</span>
                           <span className="font-sans text-xs font-black text-violet-700">{analysis?.compliance.compliance_rate ?? 0}%</span>
                         </div>
-                        <div className="space-y-2 p-3">
+                        <div className="space-y-1.5 p-2.5">
                           {(analysis?.compliance.findings || []).map((finding) => (
-                            <div key={finding.rule_id} className={`rounded-lg border px-3 py-2 ${finding.status === 'compliant' ? 'border-emerald-100 bg-emerald-50/50' : 'border-rose-100 bg-rose-50/50'}`}>
+                            <div key={finding.rule_id} className={`rounded-lg border px-2.5 py-1.5 ${finding.status === 'compliant' ? 'border-emerald-100 bg-emerald-50/50' : 'border-rose-100 bg-rose-50/50'}`}>
                               <div className="flex items-center gap-2 font-sans text-[9px]">
                                 {finding.status === 'compliant' ? <CheckCircle2 size={11} className="text-emerald-600" /> : <AlertTriangle size={11} className="text-rose-600" />}
                                 <span className="flex-1 font-black text-slate-700">{finding.name}</span>
                                 <span className="text-slate-400">{finding.observed_count}/{finding.expected_count}</span>
                               </div>
-                              {finding.status !== 'compliant' && finding.remediation && <p className="mt-1.5 pl-5 font-sans text-[8px] leading-4 text-rose-700">{finding.remediation}</p>}
+                              {finding.status !== 'compliant' && finding.remediation && <p className="mt-1 pl-5 font-sans text-[8px] leading-4 text-rose-700">{finding.remediation}</p>}
                             </div>
                           ))}
                         </div>
                       </section>
-                      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-xs">
                         <div className="font-sans text-[10px] font-black text-[#123b50]">{zh ? '变更来源关联' : 'Change source correlation'}</div>
-                        <p className={`mt-2 rounded-lg px-3 py-2 font-sans text-[9px] leading-4 ${analysis?.source_correlation.out_of_band_suspected ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                        <p className={`mt-1.5 rounded-lg px-2.5 py-1.5 font-sans text-[9px] leading-4 ${analysis?.source_correlation.out_of_band_suspected ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
                           {analysis?.source_correlation.message || (zh ? '暂无关联结果' : 'No correlation result')}
                         </p>
-                        <div className="mt-2 space-y-1.5">
+                        <div className="mt-1.5 space-y-1">
                           {(analysis?.source_correlation.correlations || []).map((source) => (
-                            <div key={`${source.source_type}-${source.source_id}`} className="flex items-center gap-2 rounded-lg border border-slate-100 px-3 py-2 font-sans text-[8px] text-slate-500">
+                            <div key={`${source.source_type}-${source.source_id}`} className="flex items-center gap-2 rounded-lg border border-slate-100 px-2.5 py-1.5 font-sans text-[8px] text-slate-500">
                               <Link2 size={10} className="text-cyan-600" />
                               <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold">{source.source_type}</span>
                               <span className="min-w-0 flex-1 truncate font-bold text-slate-700">{source.label}</span>
@@ -1306,27 +1384,29 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                     </div>
                   </div>
                 ) : (
-                <div className="flex h-full min-h-0 gap-4 overflow-hidden">
-                <div className="flex-1 overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className={`flex h-full min-h-0 gap-3 overflow-hidden ${
+                  fontSize === 'xs' ? 'text-[11px] leading-5' : fontSize === 'sm' ? 'text-[13px] leading-6' : 'text-[14px] leading-7'
+                }`}>
+                <div className="flex-1 overflow-auto rounded-xl border border-slate-200 bg-white shadow-xs">
                   {diffShowFullBoth ? (
                     <div className="min-w-[960px]">
-                      <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
-                        <div className="px-4 py-2 border-r border-slate-200">{zh ? '左侧配置 (A)' : 'Left Config (A)'}</div>
-                        <div className="px-4 py-1.5">{zh ? '右侧配置 (B)' : 'Right Config (B)'}</div>
+                      <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-slate-200 bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                        <div className="px-4 py-1.5 border-r border-slate-200 bg-rose-50/40 text-rose-700">{zh ? '左侧基准配置 (A)' : 'Left Baseline Config (A)'}</div>
+                        <div className="px-4 py-1.5 bg-emerald-50/40 text-emerald-700">{zh ? '右侧目标配置 (B)' : 'Right Target Config (B)'}</div>
                       </div>
                       {fullSideBySideRows.map((row) => {
                         const isFocused = focusedLineIndex !== undefined && row.originalIndex === focusedLineIndex;
                         return (
-                          <div key={row.originalIndex} ref={(el) => { diffLineRefs.current[row.originalIndex] = el; }} className={`grid grid-cols-2 ${isFocused ? 'ring-1 ring-cyan-300 bg-cyan-50' : ''}`}>
-                            <div className={`flex items-start px-4 py-0.5 border-r border-slate-100 ${row.rowType === 'remove' ? 'bg-red-50' : ''}`}>
-                              <span className="w-10 text-right text-slate-300 pr-3 select-none flex-shrink-0">{row.leftLine || ''}</span>
-                              <span className="w-4 select-none flex-shrink-0 text-red-400">{row.rowType === 'remove' ? '−' : ' '}</span>
-                              <span className={`${row.rowType === 'remove' ? 'text-red-700' : 'text-slate-600'} whitespace-pre`}>{row.leftContent}</span>
+                          <div key={row.originalIndex} ref={(el) => { diffLineRefs.current[row.originalIndex] = el; }} className={`grid grid-cols-2 ${isFocused ? 'ring-2 ring-cyan-400 bg-cyan-50/80' : ''}`}>
+                            <div className={`flex items-start px-3 py-[2px] border-r border-slate-100 ${row.rowType === 'remove' ? 'bg-red-50/90 text-red-800' : ''}`}>
+                              <span className="w-9 text-right text-slate-300 pr-2.5 select-none flex-shrink-0 font-mono">{row.leftLine || ''}</span>
+                              <span className="w-3.5 select-none flex-shrink-0 text-red-500 font-bold">{row.rowType === 'remove' ? '−' : ' '}</span>
+                              <span className={`${row.rowType === 'remove' ? 'text-red-800 font-semibold' : 'text-slate-700'} ${wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>{row.leftContent}</span>
                             </div>
-                            <div className={`flex items-start px-4 py-0.5 ${row.rowType === 'add' ? 'bg-emerald-50' : ''}`}>
-                              <span className="w-10 text-right text-slate-300 pr-3 select-none flex-shrink-0">{row.rightLine || ''}</span>
-                              <span className="w-4 select-none flex-shrink-0 text-emerald-400">{row.rowType === 'add' ? '+' : ' '}</span>
-                              <span className={`${row.rowType === 'add' ? 'text-emerald-700' : 'text-slate-600'} whitespace-pre`}>{row.rightContent}</span>
+                            <div className={`flex items-start px-3 py-[2px] ${row.rowType === 'add' ? 'bg-emerald-50/90 text-emerald-800' : ''}`}>
+                              <span className="w-9 text-right text-slate-300 pr-2.5 select-none flex-shrink-0 font-mono">{row.rightLine || ''}</span>
+                              <span className="w-3.5 select-none flex-shrink-0 text-emerald-500 font-bold">{row.rowType === 'add' ? '+' : ' '}</span>
+                              <span className={`${row.rowType === 'add' ? 'text-emerald-800 font-semibold' : 'text-slate-700'} ${wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>{row.rightContent}</span>
                             </div>
                           </div>
                         );
@@ -1339,61 +1419,66 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                         <div
                           key={originalIndex}
                           ref={(el) => { diffLineRefs.current[originalIndex] = el; }}
-                           className={`flex items-start px-4 py-0.5 ${line.type === 'add' ? 'bg-emerald-50' : line.type === 'remove' ? 'bg-red-50' : ''} ${isFocused ? 'ring-1 ring-cyan-300 bg-cyan-50' : ''}`}
+                           className={`flex items-start px-3 py-[2px] ${line.type === 'add' ? 'bg-emerald-50/90' : line.type === 'remove' ? 'bg-red-50/90' : ''} ${isFocused ? 'ring-2 ring-cyan-400 bg-cyan-50/80' : ''}`}
                         >
-                           <span className="w-10 text-right text-slate-300 pr-3 select-none flex-shrink-0">{line.lineA || ''}</span>
-                           <span className="w-10 text-right text-slate-300 pr-3 select-none flex-shrink-0">{line.lineB || ''}</span>
-                           <span className={`w-4 select-none flex-shrink-0 ${line.type === 'add' ? 'text-emerald-600' : line.type === 'remove' ? 'text-red-600' : 'text-slate-300'}`}>
+                           <span className="w-9 text-right text-slate-300 pr-2 select-none flex-shrink-0 font-mono">{line.lineA || ''}</span>
+                           <span className="w-9 text-right text-slate-300 pr-2 select-none flex-shrink-0 font-mono">{line.lineB || ''}</span>
+                           <span className={`w-3.5 select-none flex-shrink-0 font-bold ${line.type === 'add' ? 'text-emerald-600' : line.type === 'remove' ? 'text-red-600' : 'text-slate-300'}`}>
                             {line.type === 'add' ? '+' : line.type === 'remove' ? '−' : ' '}
                           </span>
-                           <span className={`${line.type === 'add' ? 'text-emerald-700' : line.type === 'remove' ? 'text-red-700' : 'text-slate-600'} whitespace-pre`}>{line.content}</span>
+                           <span className={`${line.type === 'add' ? 'text-emerald-800 font-semibold' : line.type === 'remove' ? 'text-red-800 font-semibold' : 'text-slate-700'} ${wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>{line.content}</span>
                         </div>
                       );
                     })
                   )}
                 </div>
-                {diffChangeBlocks.length > 0 && (
-                  <aside className="hidden xl:block w-64 rounded-xl border border-slate-200 bg-white overflow-auto shadow-sm">
-                    <div className="px-3 py-3 border-b border-slate-100">
-                      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{zh ? '变更目录' : 'Change Map'}</div>
+                {diffChangeBlocks.length > 0 && changeMapVisible && (
+                  <aside className="hidden xl:block w-60 rounded-xl border border-slate-200 bg-white overflow-auto shadow-xs shrink-0">
+                    <div className="px-3 py-2 border-b border-slate-100">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{zh ? '变更目录' : 'Change Map'}</div>
+                        <button onClick={() => setChangeMapVisible(false)} className="text-slate-400 hover:text-slate-600" title={zh ? '收起目录' : 'Hide'}>
+                          <PanelRightClose size={11} />
+                        </button>
+                      </div>
                       <input
                         value={diffBlockQuery}
                         onChange={(e) => onDiffBlockQueryChange(e.target.value)}
-                        placeholder={zh ? '过滤: interface / route / acl' : 'Filter: interface / route / acl'}
-                        className="mt-2 w-full px-2.5 py-2 rounded-lg border border-slate-200 bg-slate-50 text-[10px] text-slate-700 placeholder:text-slate-400 outline-none focus:border-cyan-300 focus:bg-white"
+                        placeholder={zh ? '过滤: interface / route' : 'Filter: interface / route'}
+                        className="mt-1.5 w-full px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[10px] text-slate-700 placeholder:text-slate-400 outline-none focus:border-cyan-300 focus:bg-white"
                       />
-                      <div className="mt-2 flex flex-wrap gap-1">
+                      <div className="mt-1.5 flex flex-wrap gap-1">
                         {['interface', 'route', 'acl', 'bgp', 'ospf', 'vlan'].map((kw) => (
                           <button
                             key={kw}
                             onClick={() => onToggleQuickKeyword(kw)}
-                            className={`px-1.5 py-0.5 rounded text-[9px] border transition-colors ${diffBlockQuery.toLowerCase() === kw ? 'border-cyan-300 text-cyan-700 bg-cyan-50' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300'}`}
+                            className={`px-1 py-0.5 rounded text-[8px] border transition-colors ${diffBlockQuery.toLowerCase() === kw ? 'border-cyan-300 text-cyan-700 bg-cyan-50' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300'}`}
                           >
                             {kw}
                           </button>
                         ))}
                       </div>
                     </div>
-                    <div className="p-2 space-y-1.5">
+                    <div className="p-1.5 space-y-1">
                       {filteredDiffChangeBlocks.map((block, idx) => {
                         const isActive = diffFocusChangeIdx >= block.startChangeIdx && diffFocusChangeIdx <= block.endChangeIdx;
                         return (
                           <button
                             key={`${block.startChangeIdx}-${block.endChangeIdx}`}
                             onClick={() => onFocusDiffChangeAt(block.startChangeIdx)}
-                            className={`w-full text-left px-2.5 py-2 rounded-lg border transition-all ${isActive ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300 hover:bg-slate-50'}`}
+                            className={`w-full text-left px-2 py-1.5 rounded-lg border transition-all ${isActive ? 'border-cyan-300 bg-cyan-50 text-cyan-800' : 'border-slate-200 text-slate-500 hover:text-[#123b50] hover:border-slate-300 hover:bg-slate-50'}`}
                             title={block.label}
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[10px] font-bold">#{idx + 1}</span>
-                              <span className="text-[10px] font-mono text-slate-400">{block.startChangeIdx + 1}-{block.endChangeIdx + 1}</span>
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[9px] font-bold">#{idx + 1}</span>
+                              <span className="text-[9px] font-mono text-slate-400">{block.startChangeIdx + 1}-{block.endChangeIdx + 1}</span>
                             </div>
-                            <div className="mt-1 text-[10px] leading-4 truncate">{block.label}</div>
+                            <div className="mt-0.5 text-[9px] leading-3.5 truncate">{block.label}</div>
                           </button>
                         );
                       })}
                       {filteredDiffChangeBlocks.length === 0 && (
-                        <p className="px-2 py-2 text-[10px] text-slate-400">{zh ? '没有匹配的变更块' : 'No matching change block'}</p>
+                        <p className="px-2 py-2 text-[9px] text-slate-400">{zh ? '没有匹配的变更块' : 'No matching change block'}</p>
                       )}
                     </div>
                   </aside>
@@ -1401,32 +1486,35 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                 </div>
                 )}
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-100 bg-white px-5 py-3">
-                <div className="mr-auto font-sans text-[9px] text-slate-400">
-                  {zh ? '任何回滚都只生成受控恢复方案，不会从差异页直接下发设备。' : 'Rollback actions only create a governed recovery plan; this page never pushes commands directly.'}
+
+              {/* ── Row 4: Slim Compact Bottom Bar (~36px) ── */}
+              <div className="flex h-10 shrink-0 flex-wrap items-center gap-2 border-t border-slate-200 bg-white px-3 text-xs">
+                <div className="mr-auto font-sans text-[9px] text-slate-400 truncate">
+                  {zh ? '任何回滚都只生成受控恢复方案，不会从差异页直接下发设备。' : 'Rollback actions only create a governed recovery plan.'}
                 </div>
                 {configDiffRight && (
-                  <button type="button" onClick={() => void handleSetBaseline(configDiffRight.id)} disabled={baselineSaving === configDiffRight.id} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-[9px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-50">
-                    {baselineSaving === configDiffRight.id ? <Loader2 size={11} className="animate-spin" /> : <Database size={11} />}{zh ? '设 B 为基准' : 'Set B as baseline'}
+                  <button type="button" onClick={() => void handleSetBaseline(configDiffRight.id)} disabled={baselineSaving === configDiffRight.id} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 font-sans text-[9px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-50">
+                    {baselineSaving === configDiffRight.id ? <Loader2 size={10} className="animate-spin" /> : <Database size={10} />}{zh ? '设 B 为基准' : 'Set B as baseline'}
                   </button>
                 )}
-                <button type="button" onClick={() => void prepareRollback()} disabled={rollbackLoading} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 font-sans text-[9px] font-bold text-amber-700 disabled:opacity-50">
-                  {rollbackLoading ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}{zh ? '生成回滚预案' : 'Prepare rollback'}
+                <button type="button" onClick={() => void prepareRollback()} disabled={rollbackLoading} className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 font-sans text-[9px] font-bold text-amber-700 disabled:opacity-50">
+                  {rollbackLoading ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}{zh ? '生成回滚预案' : 'Prepare rollback'}
                 </button>
-                <button type="button" onClick={() => navigate(`/change-orders?device_id=${encodeURIComponent(analysisDeviceId)}&snapshot_a=${encodeURIComponent(configDiffLeft?.id || '')}&snapshot_b=${encodeURIComponent(configDiffRight?.id || '')}`)} className="inline-flex items-center gap-1.5 rounded-lg bg-[#123b50] px-3 py-2 font-sans text-[9px] font-bold text-white hover:bg-[#0b2d3e]">
-                  <Zap size={11} />{zh ? '创建变更工单' : 'Create change order'}
+                <button type="button" onClick={() => navigate(`/change-orders?device_id=${encodeURIComponent(analysisDeviceId)}&snapshot_a=${encodeURIComponent(configDiffLeft?.id || '')}&snapshot_b=${encodeURIComponent(configDiffRight?.id || '')}`)} className="inline-flex items-center gap-1 rounded-lg bg-[#123b50] px-2.5 py-1 font-sans text-[9px] font-bold text-white hover:bg-[#0b2d3e]">
+                  <Zap size={10} />{zh ? '创建工单' : 'Create order'}
                 </button>
               </div>
+
               {rollbackPlan && (
-                <div className="shrink-0 border-t border-amber-100 bg-amber-50/70 px-5 py-3">
-                  <div className="flex flex-wrap items-start gap-3">
-                    <ShieldAlert size={14} className="mt-0.5 text-amber-700" />
+                <div className="shrink-0 border-t border-amber-100 bg-amber-50/80 px-3 py-2">
+                  <div className="flex flex-wrap items-start gap-2">
+                    <ShieldAlert size={13} className="mt-0.5 text-amber-700" />
                     <div className="min-w-0 flex-1">
-                      <div className="font-sans text-[10px] font-black text-amber-900">{zh ? '受控回滚预案已生成' : 'Governed rollback plan prepared'} · {rollbackPlan.plan_id}</div>
-                      <p className="mt-1 font-sans text-[9px] leading-4 text-amber-800">{rollbackPlan.warning || (zh ? `目标 ${rollbackPlan.line_count} 行配置；必须经过变更工单、MFA、恢复前备份和回滚计时器。` : `${rollbackPlan.line_count} target lines; change order, MFA, pre-restore backup, and rollback timer are required.`)}</p>
-                      {rollbackPlan.blockers.length > 0 && <p className="mt-1 font-sans text-[8px] font-bold text-rose-700">{zh ? '阻断项：' : 'Blockers: '}{rollbackPlan.blockers.join('；')}</p>}
+                      <div className="font-sans text-[9px] font-black text-amber-900">{zh ? '受控回滚预案已生成' : 'Governed rollback plan prepared'} · {rollbackPlan.plan_id}</div>
+                      <p className="mt-0.5 font-sans text-[8px] leading-3.5 text-amber-800">{rollbackPlan.warning || (zh ? `目标 ${rollbackPlan.line_count} 行配置；必须经过工单、MFA 和回滚计时器。` : `${rollbackPlan.line_count} target lines; change order required.`)}</p>
+                      {rollbackPlan.blockers.length > 0 && <p className="mt-0.5 font-sans text-[8px] font-bold text-rose-700">{zh ? '阻断项：' : 'Blockers: '}{rollbackPlan.blockers.join('；')}</p>}
                     </div>
-                    <button type="button" onClick={() => setRollbackPlan(null)} className="text-amber-700"><X size={13} /></button>
+                    <button type="button" onClick={() => setRollbackPlan(null)} className="text-amber-700"><X size={12} /></button>
                   </div>
                 </div>
               )}

@@ -36,6 +36,11 @@ interface BackupPolicy {
   concurrency: number;
   retry_count: number;
   timeout_seconds: number;
+  collect_startup_config?: boolean;
+  tftp_enabled?: boolean;
+  tftp_server?: string;
+  tftp_port?: number;
+  tftp_path_prefix?: string;
   updated_at: string;
 }
 
@@ -43,6 +48,11 @@ interface PolicyDraft extends Omit<BackupPolicy, 'id' | 'updated_at' | 'scope'> 
   id?: string;
   scope: BackupScope;
   tagFilter: TagFilterConfig;
+  collect_startup_config: boolean;
+  tftp_enabled: boolean;
+  tftp_server: string;
+  tftp_port: number;
+  tftp_path_prefix: string;
 }
 
 interface PreviewDevice {
@@ -113,10 +123,20 @@ const newDraft = (): PolicyDraft => ({
   concurrency: 10,
   retry_count: 1,
   timeout_seconds: 30,
+  collect_startup_config: false,
+  tftp_enabled: false,
+  tftp_server: '',
+  tftp_port: 69,
+  tftp_path_prefix: 'backups',
 });
 
 const toDraft = (policy: BackupPolicy): PolicyDraft => ({
   ...policy,
+  collect_startup_config: Boolean(policy.collect_startup_config),
+  tftp_enabled: Boolean(policy.tftp_enabled),
+  tftp_server: policy.tftp_server || '',
+  tftp_port: policy.tftp_port || 69,
+  tftp_path_prefix: policy.tftp_path_prefix || 'backups',
   scope: {
     ...emptyScope(),
     ...policy.scope,
@@ -342,38 +362,38 @@ const BackupPolicyManager: React.FC<BackupPolicyManagerProps> = ({
   };
 
   return (
-    <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-        <button type="button" onClick={() => setExpanded((value) => !value)} className="flex items-center gap-3 text-left">
-          <span className="rounded-2xl bg-cyan-50 p-2.5 text-cyan-600"><ShieldCheck size={20} /></span>
-          <span>
-            <span className="block text-sm font-bold text-slate-800">{zh ? '备份策略中心' : 'Backup policy center'}</span>
-            <span className="block text-[11px] text-slate-400">
-              {zh ? `${policies.length} 条策略 · 范围预览与实际执行使用同一筛选规则` : `${policies.length} policies · preview and execution share one resolver`}
-            </span>
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+      <div className="flex h-11 items-center justify-between gap-3 px-3.5 border-b border-slate-100">
+        <button type="button" onClick={() => setExpanded((value) => !value)} className="flex items-center gap-2 text-left">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-50 text-cyan-600">
+            <ShieldCheck size={15} />
+          </div>
+          <span className="text-xs font-bold text-slate-800">{zh ? '备份策略中心' : 'Backup Policies'}</span>
+          <span className="rounded-full bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700 tabular-nums">
+            {policies.length} {zh ? '条策略' : 'policies'}
           </span>
-          {expanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+          {expanded ? <ChevronUp size={14} className="text-slate-400" /> : <ChevronDown size={14} className="text-slate-400" />}
         </button>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={() => void loadPolicies()} className="rounded-xl border border-slate-200 p-2 text-slate-500 hover:bg-slate-50" title={zh ? '刷新' : 'Refresh'}>
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+        <div className="flex items-center gap-1.5">
+          <button type="button" onClick={() => void loadPolicies()} className="rounded-lg border border-slate-200 p-1 text-slate-500 hover:bg-slate-50 transition-colors" title={zh ? '刷新' : 'Refresh'}>
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
           <button
             type="button"
             onClick={() => { setDraft(newDraft()); setPreview(null); }}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-700"
+            className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-cyan-700 shadow-xs transition-colors"
           >
-            <Plus size={14} />{zh ? '新建策略' : 'New policy'}
+            <Plus size={13} />{zh ? '新建策略' : 'New Policy'}
           </button>
         </div>
       </div>
 
       {expanded && (
-        <div className="border-t border-slate-100 p-4">
+        <div className="p-3">
           {loading ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-xs text-slate-400"><Loader2 size={16} className="animate-spin" />{zh ? '加载策略...' : 'Loading...'}</div>
+            <div className="flex items-center justify-center gap-2 py-4 text-xs text-slate-400"><Loader2 size={14} className="animate-spin text-cyan-500" />{zh ? '加载策略...' : 'Loading...'}</div>
           ) : (
-            <div className="grid gap-3 xl:grid-cols-2">
+            <div className="grid gap-2.5 xl:grid-cols-2">
               {policies.map((policy) => {
                 const scopeCount = policy.scope.site_ids.length
                   + policy.scope.roles.length
@@ -381,32 +401,48 @@ const BackupPolicyManager: React.FC<BackupPolicyManagerProps> = ({
                   + policy.scope.vendors.length
                   + (policy.scope.tag_expression ? 1 : 0);
                 return (
-                  <article key={policy.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className={`h-2 w-2 rounded-full ${policy.enabled ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                          <h4 className="truncate text-sm font-bold text-slate-800">{policy.name}</h4>
-                        </div>
-                        <p className="mt-1 line-clamp-2 text-[11px] text-slate-400">{policy.description || (zh ? '暂无说明' : 'No description')}</p>
+                  <article key={policy.id} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 hover:bg-white hover:border-cyan-200 transition-all">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`h-2 w-2 rounded-full shrink-0 ${policy.enabled ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                        <h4 className="truncate text-xs font-bold text-slate-800">{policy.name}</h4>
+                        <span className={`shrink-0 rounded-full px-2 py-0.2 text-[9px] font-bold ${policy.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                          {policy.enabled ? (zh ? '已启用' : 'Active') : (zh ? '已停用' : 'Disabled')}
+                        </span>
                       </div>
-                      <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${policy.enabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-                        {policy.enabled ? (zh ? '已启用' : 'Enabled') : (zh ? '已停用' : 'Disabled')}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button type="button" onClick={() => void handleRun(policy)} disabled={runningId === policy.id} className="inline-flex items-center gap-1 rounded-md border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700 hover:bg-cyan-100 disabled:opacity-50 transition-colors">
+                          {runningId === policy.id ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}{zh ? '立即执行' : 'Run'}
+                        </button>
+                        <button type="button" onClick={() => { setDraft(toDraft(policy)); setPreview(null); }} className="rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:text-cyan-700" title={zh ? '编辑' : 'Edit'}><Pencil size={11} /></button>
+                        {policy.id !== 'backup-policy-default' && (
+                          <button type="button" onClick={() => void handleDelete(policy)} className="rounded-md border border-slate-200 bg-white p-1 text-slate-400 hover:border-rose-200 hover:text-rose-600" title={zh ? '删除' : 'Delete'}><Trash2 size={11} /></button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-white border border-slate-200 px-2 py-0.5 font-mono font-medium text-slate-700">
+                        <Clock3 size={11} className="text-cyan-500" />{policy.cron_expr}
                       </span>
-                    </div>
-                    <div className="mt-3 grid grid-cols-4 gap-2">
-                      <div className="rounded-xl bg-white px-2 py-2"><Clock3 size={12} className="mb-1 text-cyan-500" /><p className="truncate font-mono text-[10px] text-slate-600">{policy.cron_expr}</p></div>
-                      <div className="rounded-xl bg-white px-2 py-2"><Server size={12} className="mb-1 text-violet-500" /><p className="text-[10px] text-slate-600">{scopeCount ? `${scopeCount} ${zh ? '项范围' : 'filters'}` : (zh ? '全网' : 'All')}</p></div>
-                      <div className="rounded-xl bg-white px-2 py-2"><CalendarClock size={12} className="mb-1 text-amber-500" /><p className="text-[10px] text-slate-600">{policy.retention_days} {zh ? '天' : 'days'}</p></div>
-                      <div className="rounded-xl bg-white px-2 py-2"><Check size={12} className="mb-1 text-emerald-500" /><p className="text-[10px] text-slate-600">{policy.change_only ? (zh ? '仅变更' : 'Changed') : (zh ? '每次归档' : 'Every run')}</p></div>
-                    </div>
-                    <div className="mt-3 flex justify-end gap-1.5">
-                      <button type="button" onClick={() => void handleRun(policy)} disabled={runningId === policy.id} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] text-slate-600 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-50">
-                        {runningId === policy.id ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}{zh ? '立即执行' : 'Run'}
-                      </button>
-                      <button type="button" onClick={() => { setDraft(toDraft(policy)); setPreview(null); }} className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:text-cyan-700" title={zh ? '编辑' : 'Edit'}><Pencil size={13} /></button>
-                      {policy.id !== 'backup-policy-default' && (
-                        <button type="button" onClick={() => void handleDelete(policy)} className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-400 hover:border-rose-200 hover:text-rose-600" title={zh ? '删除' : 'Delete'}><Trash2 size={13} /></button>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-white border border-slate-200 px-2 py-0.5 font-medium text-slate-700">
+                        <Server size={11} className="text-violet-500" />{scopeCount ? `${scopeCount} ${zh ? '项过滤' : 'filters'}` : (zh ? '全网设备' : 'All assets')}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-white border border-slate-200 px-2 py-0.5 font-medium text-slate-700">
+                        <CalendarClock size={11} className="text-amber-500" />{policy.retention_days} {zh ? '天保留' : 'd retention'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-white border border-slate-200 px-2 py-0.5 font-medium text-slate-700">
+                        <Check size={11} className="text-emerald-500" />{policy.change_only ? (zh ? '仅变更' : 'Diff only') : (zh ? '每次' : 'Full')}
+                      </span>
+                      {policy.collect_startup_config && (
+                        <span className="inline-flex items-center gap-0.5 rounded-md bg-blue-50 border border-blue-200 px-1.5 py-0.5 font-bold text-blue-700">
+                          {zh ? '启动配置' : 'Startup'}
+                        </span>
+                      )}
+                      {policy.tftp_enabled && (
+                        <span className="inline-flex items-center gap-0.5 rounded-md bg-cyan-50 border border-cyan-200 px-1.5 py-0.5 font-bold text-cyan-700">
+                          TFTP
+                        </span>
                       )}
                     </div>
                   </article>
@@ -500,7 +536,74 @@ const BackupPolicyManager: React.FC<BackupPolicyManagerProps> = ({
                         <input type="checkbox" checked={draft.change_only} onChange={(event) => updateDraft({ change_only: event.target.checked })} className="accent-cyan-600" />
                         {zh ? '配置未变化时不重复归档' : 'Archive only changes'}
                       </label>
+                      <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-xs text-slate-600 sm:col-span-2">
+                        <input
+                          type="checkbox"
+                          checked={draft.collect_startup_config}
+                          onChange={(event) => updateDraft({
+                            collect_startup_config: event.target.checked,
+                            config_types: event.target.checked ? ['running', 'startup'] : ['running'],
+                          })}
+                          className="accent-cyan-600"
+                        />
+                        <span className="font-medium text-slate-700">
+                          {zh ? '同时采集启动配置 (Startup-Config) 并比对未保存变更 (Unsaved Drift)' : 'Collect startup config and detect unsaved changes'}
+                        </span>
+                      </label>
                     </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-700">{zh ? '远端 TFTP 自动转储归档 (方案 A)' : 'TFTP Remote Offload'}</h4>
+                        <p className="mt-0.5 text-[10px] text-slate-400">{zh ? '备份成功后自动推送配置文件与批次日志至指定 TFTP 服务器' : 'Auto-push .cfg and batch logs to TFTP server'}</p>
+                      </div>
+                      <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={draft.tftp_enabled}
+                          onChange={(event) => updateDraft({ tftp_enabled: event.target.checked })}
+                          className="accent-cyan-600"
+                        />
+                        <span className="font-medium text-slate-700">{zh ? '启用' : 'Enable'}</span>
+                      </label>
+                    </div>
+                    {draft.tftp_enabled && (
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <label className="text-[11px] font-semibold text-slate-500 sm:col-span-2">
+                          {zh ? 'TFTP 服务器 IP *' : 'TFTP Server IP *'}
+                          <input
+                            type="text"
+                            placeholder="192.168.1.100"
+                            value={draft.tftp_server}
+                            onChange={(event) => updateDraft({ tftp_server: event.target.value })}
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-400"
+                          />
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500">
+                          {zh ? '端口' : 'Port'}
+                          <input
+                            type="number"
+                            min={1}
+                            max={65535}
+                            value={draft.tftp_port}
+                            onChange={(event) => updateDraft({ tftp_port: Number(event.target.value) })}
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-400"
+                          />
+                        </label>
+                        <label className="text-[11px] font-semibold text-slate-500 sm:col-span-3">
+                          {zh ? '远端目录前缀' : 'Remote Path Prefix'}
+                          <input
+                            type="text"
+                            placeholder="backups"
+                            value={draft.tftp_path_prefix}
+                            onChange={(event) => updateDraft({ tftp_path_prefix: event.target.value })}
+                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-cyan-400"
+                          />
+                        </label>
+                      </div>
+                    )}
                   </div>
 
                   <div className={`rounded-2xl border p-4 ${preview ? 'border-cyan-200 bg-cyan-50/50' : 'border-dashed border-slate-300 bg-white'}`}>

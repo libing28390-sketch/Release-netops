@@ -405,3 +405,18 @@ export const NETWORK_IMPORT_PLATFORM_VALUES = Array.from(new Set([
     .filter(([, value]) => networkPlatformCodes.has(value))
     .map(([label]) => label),
 ]));
+
+export const isValidIpAddress = (ip: string): boolean => {
+  if (!ip || !ip.trim()) return false;
+  const trimmed = ip.trim();
+  const parts = trimmed.split('.');
+  if (parts.length === 4) {
+    return parts.every(part => {
+      if (!/^\d+$/.test(part)) return false;
+      const n = parseInt(part, 10);
+      return n >= 0 && n <= 255 && (part === '0' || !part.startsWith('0'));
+    });
+  }
+  const ipv6Regex = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^(([0-9a-fA-F]{1,4}:){1,7}|:):((:[0-9a-fA-F]{1,4}){1,7}|:)$/;
+  return ipv6Regex.test(trimmed);
+};

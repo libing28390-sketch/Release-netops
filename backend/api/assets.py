@@ -888,6 +888,18 @@ def _delete_linked_device(conn, asset_id: str) -> None:
 
 # ── Pydantic Models ──────────────────────────────────────────────────
 
+def _validate_asset_ip_address(raw_value: object, field_name: str = '管理IP') -> str:
+    raw = str(raw_value or '').strip()
+    if not raw:
+        return ''
+    import ipaddress
+    try:
+        ipaddress.ip_address(raw)
+        return raw
+    except ValueError:
+        raise ValueError(f"{field_name} '{raw}' 不是有效的 IPv4 或 IPv6 地址")
+
+
 class AssetCreate(BaseModel):
     asset_type: str  # 'server' | 'network_device'
     asset_tag: str = ''
@@ -939,6 +951,12 @@ class AssetCreate(BaseModel):
     tag_ids: list[str] = []
     tag_codes: str = ''
     web_profiles: list[WebAccessProfileInput] = Field(default_factory=list)
+
+    @field_validator('management_ip', 'business_ip', mode='before')
+    @classmethod
+    def validate_ips(cls, v, info):
+        label = '管理IP' if info.field_name == 'management_ip' else '业务IP'
+        return _validate_asset_ip_address(v, label)
 
     @field_validator('connection_method', mode='before')
     @classmethod
@@ -1054,6 +1072,14 @@ class AssetUpdate(BaseModel):
     tag_ids: Optional[list[str]] = None
     tag_codes: Optional[str] = None
     web_profiles: Optional[list[WebAccessProfileInput]] = None
+
+    @field_validator('management_ip', 'business_ip', mode='before')
+    @classmethod
+    def validate_ips_update(cls, v, info):
+        if v is None:
+            return None
+        label = '管理IP' if info.field_name == 'management_ip' else '业务IP'
+        return _validate_asset_ip_address(v, label)
 
     @field_validator('connection_method', mode='before')
     @classmethod

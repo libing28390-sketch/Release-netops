@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable
 
 from services import tag_service
@@ -23,7 +23,7 @@ DEFAULT_SCOPE = {
 
 
 def _now() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _json_object(value: object, fallback: dict) -> dict:
@@ -81,6 +81,11 @@ def _row_to_policy(row) -> dict:
     item["change_only"] = bool(item.get("change_only"))
     item["scope"] = normalize_scope(_json_object(item.pop("scope_json", "{}"), DEFAULT_SCOPE))
     item["config_types"] = _json_list(item.pop("config_types_json", '["running"]'), ["running"])
+    item["collect_startup_config"] = bool(item.get("collect_startup_config", 0))
+    item["tftp_enabled"] = bool(item.get("tftp_enabled", 0))
+    item["tftp_server"] = str(item.get("tftp_server") or "")
+    item["tftp_port"] = int(item.get("tftp_port") or 69)
+    item["tftp_path_prefix"] = str(item.get("tftp_path_prefix") or "backups")
     return item
 
 
@@ -106,8 +111,9 @@ def ensure_default_policy(conn) -> dict:
         (id, name, description, enabled, cron_expr, timezone, priority,
          scope_json, config_types_json, change_only, retention_days,
          max_versions_per_device, concurrency, retry_count, timeout_seconds,
+         collect_startup_config, tftp_enabled, tftp_server, tftp_port, tftp_path_prefix,
          created_by, updated_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             DEFAULT_POLICY_ID,
@@ -125,6 +131,11 @@ def ensure_default_policy(conn) -> dict:
             10,
             1,
             30,
+            0,
+            0,
+            "",
+            69,
+            "backups",
             "system",
             "system",
             now,
@@ -195,8 +206,9 @@ def create_policy(conn, payload: dict, *, actor: str) -> dict:
         (id, name, description, enabled, cron_expr, timezone, priority,
          scope_json, config_types_json, change_only, retention_days,
          max_versions_per_device, concurrency, retry_count, timeout_seconds,
+         collect_startup_config, tftp_enabled, tftp_server, tftp_port, tftp_path_prefix,
          created_by, updated_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             policy_id,
@@ -214,6 +226,11 @@ def create_policy(conn, payload: dict, *, actor: str) -> dict:
             int(payload.get("concurrency", 10)),
             int(payload.get("retry_count", 1)),
             int(payload.get("timeout_seconds", 30)),
+            1 if payload.get("collect_startup_config") else 0,
+            1 if payload.get("tftp_enabled") else 0,
+            str(payload.get("tftp_server") or "").strip(),
+            int(payload.get("tftp_port") or 69),
+            str(payload.get("tftp_path_prefix") or "backups").strip(),
             actor,
             actor,
             now,
@@ -236,7 +253,9 @@ def update_policy(conn, policy_id: str, payload: dict, *, actor: str) -> dict | 
         SET name = ?, description = ?, enabled = ?, cron_expr = ?, timezone = ?,
             priority = ?, scope_json = ?, config_types_json = ?, change_only = ?,
             retention_days = ?, max_versions_per_device = ?, concurrency = ?,
-            retry_count = ?, timeout_seconds = ?, updated_by = ?, updated_at = ?
+            retry_count = ?, timeout_seconds = ?,
+            collect_startup_config = ?, tftp_enabled = ?, tftp_server = ?, tftp_port = ?, tftp_path_prefix = ?,
+            updated_by = ?, updated_at = ?
         WHERE id = ?
         """,
         (
@@ -254,6 +273,11 @@ def update_policy(conn, policy_id: str, payload: dict, *, actor: str) -> dict | 
             int(merged.get("concurrency", 10)),
             int(merged.get("retry_count", 1)),
             int(merged.get("timeout_seconds", 30)),
+            1 if merged.get("collect_startup_config") else 0,
+            1 if merged.get("tftp_enabled") else 0,
+            str(merged.get("tftp_server") or "").strip(),
+            int(merged.get("tftp_port") or 69),
+            str(merged.get("tftp_path_prefix") or "backups").strip(),
             actor,
             _now(),
             policy_id,

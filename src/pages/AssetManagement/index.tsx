@@ -36,6 +36,7 @@ import {
   NETWORK_TOPOLOGY_ROLE_OPTIONS,
   TOPOLOGY_FUNCTION_OPTIONS,
   TOPOLOGY_ZONE_OPTIONS,
+  isValidIpAddress,
 } from './constants';
 import { statusMeta, typeMeta, severityOf } from './helpers';
 import {
@@ -549,6 +550,16 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   const handleSave = async () => {
     if (!form.hostname.trim() && !form.asset_tag.trim()) {
       setModalError(zh ? '主机名和资产编号至少填写一项' : 'Hostname or Asset Tag is required');
+      return;
+    }
+    const mgmtIp = String(form.management_ip || '').trim();
+    if (mgmtIp && !isValidIpAddress(mgmtIp)) {
+      setModalError(zh ? `管理IP "${mgmtIp}" 格式不正确，请输入有效的 IPv4 或 IPv6 地址` : `Management IP "${mgmtIp}" is not a valid IP address`);
+      return;
+    }
+    const bizIp = String(form.business_ip || '').trim();
+    if (bizIp && !isValidIpAddress(bizIp)) {
+      setModalError(zh ? `业务IP "${bizIp}" 格式不正确，请输入有效的 IPv4 或 IPv6 地址` : `Business IP "${bizIp}" is not a valid IP address`);
       return;
     }
     const oldLifecycle = editingAsset ? (editingAsset.lifecycle_status || 'staging') : 'staging';

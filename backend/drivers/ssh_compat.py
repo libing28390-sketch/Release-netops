@@ -13,6 +13,7 @@ LEGACY_KEX_ALGORITHMS: List[str] = [
 
 LEGACY_HOST_KEY_ALGORITHMS: List[str] = [
     "ssh-rsa",
+    "ssh-dss",
 ]
 
 LEGACY_CIPHERS: List[str] = [
@@ -23,13 +24,24 @@ LEGACY_CIPHERS: List[str] = [
     "aes192-cbc",
     "aes256-cbc",
     "3des-cbc",
+    "blowfish-cbc",
+    "cast128-cbc",
+    "arcfour256",
+    "arcfour128",
+    "arcfour",
 ]
 
 LEGACY_MAC_ALGORITHMS: List[str] = [
+    "hmac-sha2-256-etm@openssh.com",
+    "hmac-sha2-512-etm@openssh.com",
+    "hmac-sha1-etm@openssh.com",
+    "hmac-md5-etm@openssh.com",
     "hmac-sha2-256",
     "hmac-sha2-512",
     "hmac-sha1",
+    "hmac-md5",
     "hmac-sha1-96",
+    "hmac-md5-96",
 ]
 
 LEGACY_SSH_ERROR_CODE = "legacy_ssh_algorithms"
@@ -95,7 +107,7 @@ def build_netmiko_compatibility_kwargs() -> Dict[str, Any]:
         "use_keys": False,
         "allow_agent": False,
         "disable_sha2_fix": True,
-        "conn_timeout": 20,
+        "conn_timeout": 60,
     }
 
 
@@ -206,6 +218,7 @@ def is_legacy_ssh_negotiation_error(error_text: str) -> bool:
         "no matching host key type",
         "no matching cipher found",
         "no matching mac found",
+        "no matching mac algorithm found",
         "incompatible ssh peer",
         "kexalgorithm",
         "hostkeyalgorithms",
@@ -214,6 +227,11 @@ def is_legacy_ssh_negotiation_error(error_text: str) -> bool:
         "diffie-hellman-group-exchange-sha1",
         "diffie-hellman-group1-sha1",
         "ssh-rsa",
+        "ssh-dss",
+        "hmac-md5",
+        "hmac-sha1",
+        "hmac-sha1-96",
+        "hmac-md5-96",
     ]
     return any(indicator in normalized for indicator in indicators)
 
@@ -223,11 +241,7 @@ def build_legacy_ssh_guidance(error_text: str) -> str:
     if not is_legacy_ssh_negotiation_error(error_text):
         return error_text
 
-    return (
-        "设备 SSH 算法较旧，平台已自动尝试兼容常见的 legacy KEX、ssh-rsa、旧 cipher 和 MAC。"
-        " 如果仍然失败，通常说明该设备镜像过旧，或底层 SSH 库与设备支持集合仍无交集。"
-        " 建议优先核对设备 SSH 配置、升级镜像，或临时放宽客户端算法策略后再重试。"
-    )
+    return "SSH 算法不匹配。建议检查设备 SSH 服务版本或平台驱动类型。"
 
 
 def is_ssh_authentication_error(error_text: str) -> bool:
@@ -248,11 +262,7 @@ def build_ssh_authentication_guidance(error_text: str) -> str:
     if not is_ssh_authentication_error(error_text):
         return error_text
 
-    return (
-        "设备已可达，SSH 协商也已经开始，但认证被设备拒绝。"
-        " 这通常不是算法兼容问题，而是用户名或密码错误，或者设备 AAA、VTY、login local 配置不接受当前账号。"
-        " 建议先用同一组账号在终端手工 SSH 登录验证，再检查设备本地用户、AAA 策略和 VTY 配置。"
-    )
+    return "凭据被拒绝。建议检查：1. 绑定的登录用户名与密码；2. 设备 AAA 与 Enable 特权密码。"
 
 
 def is_ssh_timeout_error(error_text: str) -> bool:
@@ -271,11 +281,7 @@ def build_ssh_timeout_guidance(error_text: str) -> str:
     if not is_ssh_timeout_error(error_text):
         return error_text
 
-    return (
-        "设备管理端口看起来可达，但 SSH 会话在建立或读取阶段超时。"
-        " 这通常意味着设备 CPU 忙、VTY/AAA 响应慢、管理平面被限速，或者中间防火墙对 SSH 流量做了会话拦截。"
-        " 建议先确认设备负载、VTY 空闲会话、ACL/防火墙策略，再重试 SSH 登录。"
-    )
+    return "SSH 响应超时。建议检查：1. IP/端口是否通畅；2. 设备负载与 VTY 线路空闲状态。"
 
 
 def is_ssh_transport_error(error_text: str) -> bool:
@@ -287,7 +293,12 @@ def is_ssh_transport_error(error_text: str) -> bool:
         "network is unreachable",
         "no route to host",
         "connection reset by peer",
+        "connection reset",
+        "connection lost",
+        "connection closed",
+        "closed by remote host",
         "error reading ssh protocol banner",
+        "broken pipe",
     ]
     return any(indicator in normalized for indicator in indicators)
 
@@ -296,11 +307,7 @@ def build_ssh_transport_guidance(error_text: str) -> str:
     if not is_ssh_transport_error(error_text):
         return error_text
 
-    return (
-        "设备 IP 可能可达，但 SSH 传输层没有正常建立。"
-        " 常见原因是 22 端口未开放、VTY 没启用 SSH、ACL/防火墙拦截，或目标主机直接拒绝连接。"
-        " 建议先核对管理端口开放状态、设备 SSH 配置和中间安全策略。"
-    )
+    return "连接失败或被拒绝。建议检查：1. 目标 IP 与 22 端口；2. 设备 VTY 是否启用 SSH 及防火墙策略。"
 
 
 def is_ssh_host_key_error(error_text: str) -> bool:
@@ -324,8 +331,7 @@ def build_ssh_host_key_guidance(error_text: str) -> str:
         return error_text
 
     return (
-        "SSH 主机密钥未登记或与已登记指纹不一致。请管理员先核对设备的 SHA256 主机密钥指纹，"
-        "再在资产的 PAM Host Key 设置中登记；不要用关闭 Host Key 校验的方式绕过。"
+        "SSH 主机密钥未登记或指纹不符。请核对设备的 SHA256 主机密钥指纹，不要关闭 Host Key 校验。"
     )
 
 
@@ -358,6 +364,77 @@ def build_ssh_error_guidance(error_text: str) -> str:
     if error_code == SSH_HOST_KEY_ERROR_CODE:
         return build_ssh_host_key_guidance(error_text)
     return error_text
+
+
+def diagnose_ssh_failure(error_text: str, ip: str = "") -> tuple[str, str]:
+    """根据具体报错日志智能分析根因，返回 (分类短原因, 精准排查建议)。"""
+    raw = str(error_text or "").strip()
+    low = raw.lower()
+    ip_str = str(ip or "").strip()
+
+    # 1. 检查 IP 地址格式是否非法 / DNS 解析失败
+    if ip_str:
+        import ipaddress
+        parts = ip_str.split('.')
+        is_numeric_like = len(parts) == 4 and all(part.isdigit() for part in parts)
+        if is_numeric_like:
+            try:
+                ipaddress.ip_address(ip_str)
+            except ValueError:
+                return "IP地址无效", f"IP 格式错误（'{ip_str}' 不是有效 IPv4 地址，每段数值须在 0-255），请修正资产 IP。"
+
+    if any(m in low for m in ["getaddrinfo failed", "nodename nor servname", "name or service not known", "11001", "gaierror"]):
+        target = f"'{ip_str}'" if ip_str else "目标主机"
+        return "地址解析失败", f"{target} 无法解析或格式不合法，请核对资产 IP 地址。"
+
+    # 2. SSH 算法协商失败（Legacy Algorithm Mismatch）
+    if is_legacy_ssh_negotiation_error(raw):
+        if "no matching mac" in low or "mac algorithm" in low:
+            return "MAC算法不兼容", "设备支持的 MAC 算法与客户端无交集，请检查设备 SSH 配置。"
+        if "no matching cipher" in low or "cipher" in low:
+            return "加密算法不兼容", "设备加密算法（Cipher）不匹配，请检查设备 SSH 加密配置。"
+        if "no matching key exchange" in low or "kex" in low:
+            return "KEX算法不兼容", "密钥交换算法（KEX）协商失败，请检查设备 SSH 协议版本。"
+        return "SSH算法不兼容", "设备 SSH 算法过旧或与客户端无交集，建议检查设备 SSH 服务或平台类型。"
+
+    # 3. 认证失败 / 凭据错误
+    if is_ssh_authentication_error(raw):
+        if "permission denied" in low:
+            return "权限不足", "登录成功但权限不足以读取配置，或密码被拒绝。"
+        return "认证失败", "用户名或密码被拒绝，请检查绑定的 SSH 凭据与 Enable 特权密码。"
+
+    # 4. 主机密钥未受信 / 变更
+    if is_ssh_host_key_error(raw):
+        return "主机密钥未受信", "SSH 主机密钥未登记或指纹不符。请核对设备的 SHA256 指纹，不要关闭 Host Key 校验。"
+
+    # 5. 连接被拒绝（Connection Refused）
+    if any(m in low for m in ["connection refused", "actively refused", "10061", "errno 111", "wsaeconnrefused"]):
+        return "连接被拒绝", "目标端口拒绝连接。请检查设备 22 端口是否开放，以及 VTY 是否启用 SSH。"
+
+    # 6. 网络不可达 / 路由不可达 / 主机下线
+    if any(m in low for m in ["no route to host", "network is unreachable", "host unreachable", "10065", "errno 113", "wsaehostunreach"]):
+        return "网络不可达", "无法路由到目标设备。请检查管理网络链路、路由及网关配置。"
+
+    # 7. Prompt 提示符未识别 / 超时
+    if any(m in low for m in ["pattern not detected", "unable to find prompt", "prompt not found", "search_pattern"]):
+        return "提示符未识别", "已连接但未能识别命令行提示符。请检查平台驱动是否匹配，或确认分页是否关闭。"
+
+    # 8. 特权提权失败
+    if any(m in low for m in ["enable failed", "unable to enter enable", "bad enable password"]):
+        return "特权提权失败", "进入特权模式失败，请核对设备凭据中的 Enable 密码。"
+
+    # 9. TCP 握手超时 / 会话超时
+    if is_ssh_timeout_error(raw):
+        if "timed-out reading channel" in low:
+            return "读取响应超时", "发送备份命令后未在超时时间内收到回包，请检查设备负载或命令执行耗时。"
+        return "连接超时", "TCP 连接建立超时。请检查网络丢包延迟，或确认防火墙是否放行 22 端口。"
+
+    # 10. CLI 命令报错
+    if any(m in low for m in ["% invalid input", "% permission denied", "syntax error", "unrecognized command"]):
+        return "命令执行报错", "设备不支持当前下发的备份命令或权限不足，请核对平台类型与驱动。"
+
+    # 兜底
+    return "无法获取配置", f"连接异常：{raw[:80]}" if raw and raw != 'Unknown error' else "无法建立 SSH 连接或获取到有效配置。"
 
 
 def is_ssh_port_open(ip: str, port: int = 22, timeout: float = 1.0) -> bool:
@@ -406,4 +483,3 @@ try:
 
 except ImportError:
     pass
-

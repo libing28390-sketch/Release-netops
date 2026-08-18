@@ -23,7 +23,8 @@ RUN apt-get update -qq && \
         pkg-config \
         libffi-dev \
         libssl-dev \
-        libcap2-bin && \
+        libcap2-bin \
+        tzdata && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -68,6 +69,7 @@ RUN mkdir -p /app/data /app/backup /app/data/logs
 ENV NODE_ENV=production
 ENV PYTHONPATH=/app/backend
 ENV ENVIRONMENT=production
+ENV TZ=Asia/Shanghai
 # CREDENTIAL_ENCRYPTION_KEY must be set via .env or docker-compose environment
 # Do NOT hardcode secrets here
 

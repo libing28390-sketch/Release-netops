@@ -11,7 +11,8 @@ import gzip
 import logging
 import hashlib
 import re
-from datetime import datetime, timedelta
+import asyncio
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -25,6 +26,14 @@ from services import config_backup_policy_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _build_device_scope_tree(rows: list[dict]) -> list[dict]:
@@ -151,11 +160,12 @@ def _resolve_backup_dir(vendor: str, hostname: str, ts: datetime) -> str:
     )
 
 
-def _write_config_file(vendor: str, hostname: str, ts: datetime, trigger: str, content: str) -> str:
+def _write_config_file(vendor: str, hostname: str, ts: datetime, trigger: str, content: str, config_type: str = 'running') -> str:
     """Write config to disk (gzip compressed, optionally encrypted); return relative file path from BACKUP_ROOT."""
     dir_path = _resolve_backup_dir(vendor, hostname, ts)
     os.makedirs(dir_path, exist_ok=True)
-    filename = f"{ts.strftime('%Y%m%d_%H%M%S')}_{trigger}.cfg"
+    suffix = "_startup" if config_type == "startup" else ""
+    filename = f"{ts.strftime('%Y%m%d_%H%M%S')}_{trigger}{suffix}.cfg"
     abs_path = os.path.join(dir_path, filename)
     data = gzip.compress(content.encode('utf-8'))
     # Configuration snapshots are raw sensitive output; fail closed if the
@@ -230,7 +240,7 @@ def _create_backup_run(
     policy_snapshot: str = '',
 ) -> dict[str, str]:
     """Persist a run and its planned device outcomes before network work starts."""
-    now = datetime.now().isoformat()
+    now = _utc_now_iso()
     device_rows: dict[str, str] = {}
     conn = get_db_connection()
     try:
@@ -286,7 +296,7 @@ def _record_backup_run_device(
                    finished_at = ?, duration_ms = ?
                WHERE id = ?''',
             (
-                result.get('status') or 'failed',
+                result.get('status') or 'unknown',
                 result.get('reason') or '',
                 result.get('detail') or '',
                 result.get('snapshot_id') or None,
@@ -300,7 +310,15 @@ def _record_backup_run_device(
         conn.close()
 
 
-def _finish_backup_run(run_id: str, *, error_message: str = '') -> None:
+def _finish_backup_run(
+    run_id: str,
+    *,
+    error_message: str = '',
+    tftp_status: str = 'none',
+    tftp_server: str = '',
+    tftp_log: str = '',
+    tftp_uploaded_count: int = 0,
+) -> None:
     conn = get_db_connection()
     try:
         counts = conn.execute(
@@ -321,15 +339,21 @@ def _finish_backup_run(run_id: str, *, error_message: str = '') -> None:
             '''UPDATE config_backup_runs
                SET status = ?, finished_at = ?, total_devices = ?,
                    success_count = ?, failed_count = ?, skipped_count = ?,
-                   error_message = ? WHERE id = ?''',
+                   error_message = ?,
+                   tftp_status = ?, tftp_server = ?, tftp_log = ?, tftp_uploaded_count = ?
+               WHERE id = ?''',
             (
                 status,
-                datetime.now().isoformat(),
+                _utc_now_iso(),
                 total,
                 success_count,
                 failed_count,
                 skipped_count,
                 error_message,
+                tftp_status,
+                tftp_server,
+                tftp_log,
+                tftp_uploaded_count,
                 run_id,
             ),
         )
@@ -451,7 +475,13 @@ def list_devices_with_backups(
 
 
 @router.get('/configs/snapshots')
-def list_snapshots(device_id: str = None, hostname: str = None, ip_address: str = None, q: str = None):
+def list_snapshots(
+    device_id: str = None,
+    hostname: str = None,
+    ip_address: str = None,
+    config_type: str = Query(default=None, description="Filter by config_type: running | startup"),
+    q: str = None,
+):
     """List all snapshot metadata (no content)."""
     conn = get_db_connection()
     try:
@@ -461,6 +491,10 @@ def list_snapshots(device_id: str = None, hostname: str = None, ip_address: str 
         if device_id:
             where_clauses.append('cs.device_id = ?')
             params.append(device_id)
+
+        if config_type and config_type.strip() and config_type.strip().lower() != 'all':
+            where_clauses.append('cs.config_type = ?')
+            params.append(config_type.strip().lower())
 
         if hostname and hostname.strip():
             where_clauses.append('LOWER(cs.hostname) LIKE ?')
@@ -598,7 +632,7 @@ def list_backup_runs(
                 raise HTTPException(status_code=400, detail='date must use YYYY-MM-DD') from exc
             if parsed_date.strftime('%Y-%m-%d') != date_filter:
                 raise HTTPException(status_code=400, detail='date must use YYYY-MM-DD')
-            if parsed_date.date() > datetime.now().date():
+            if parsed_date.date() > datetime.now(timezone.utc).date():
                 raise HTTPException(status_code=400, detail='backup date cannot be in the future')
             parsed_dates.append(parsed_date)
         if parsed_dates[0] and parsed_dates[1] and parsed_dates[0] > parsed_dates[1]:
@@ -767,7 +801,7 @@ def get_backup_run(
 @router.post('/configs/snapshots', status_code=201)
 def create_snapshot(body: SnapshotCreate):
     """Save a config snapshot to file + DB."""
-    ts = datetime.now()
+    ts = _utc_now()
     snap_id = f"snap-{uuid.uuid4().hex[:12]}"
     rel_path = _write_config_file(body.vendor, body.hostname, ts, body.trigger, body.content)
     size = len(body.content.encode('utf-8'))
@@ -939,7 +973,7 @@ def get_backup_stats():
     """Return aggregated backup execution statistics for the schedule dashboard."""
     conn = get_db_connection()
     try:
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
         # Today's backups
@@ -1282,7 +1316,7 @@ def preview_schedule(n: int = Query(default=10, ge=1, le=50)):
     # 计算未来 N 次执行时间
     upcoming: list[str] = []
     if enabled:
-        cron = croniter(cron_expr, datetime.now())
+        cron = croniter(cron_expr, datetime.now(timezone.utc))
         for _ in range(n):
             upcoming.append(cron.get_next(datetime).isoformat())
 
@@ -1382,7 +1416,7 @@ def _cleanup_expired_snapshots(
     conn = get_db_connection()
     try:
         # 1. Delete snapshots older than max_days
-        cutoff = (datetime.now() - timedelta(days=max_days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_days)).replace(microsecond=0).isoformat()
         old = conn.execute(
             f'SELECT id, file_path FROM config_snapshots WHERE timestamp < ?{policy_clause}',
             (cutoff, policy_id) if policy_id else (cutoff,),
@@ -1549,7 +1583,7 @@ async def run_scheduled_backup(
 
     run_concurrency = int((policy or {}).get('concurrency') or BACKUP_CONCURRENCY)
     run_retry_count = int((policy or {}).get('retry_count') or 0)
-    run_timeout_seconds = int((policy or {}).get('timeout_seconds') or 30)
+    run_timeout_seconds = int((policy or {}).get('timeout_seconds') or 60)
     change_only = bool((policy or {}).get('change_only', False))
     logger.info(
         "[Scheduled Backup] Starting policy=%s targets=%d concurrency=%d",
@@ -1564,6 +1598,14 @@ async def run_scheduled_backup(
         'juniper', 'junos',
         'huawei', 'vrp',
         'h3c', 'comware',
+        'zte', 'zxros',
+        'maipu',
+        'raisecom',
+        'dptech',
+        'fortinet',
+        'hillstone',
+        'sonic',
+        'centec',
     )
 
     def _is_network_device(platform: str) -> bool:
@@ -1627,7 +1669,12 @@ async def run_scheduled_backup(
 
     success_count = 0
     failed_count = 0
+    created_backup_items: list[dict] = []
     sem = asyncio.Semaphore(run_concurrency)
+
+    collect_startup_config = bool((policy or {}).get('collect_startup_config')) or (
+        'startup' in (policy or {}).get('config_types', [])
+    )
 
     def _looks_like_error(raw: str) -> bool:
         if not raw or not raw.strip():
@@ -1644,17 +1691,23 @@ async def run_scheduled_backup(
         return any(m in low for m in markers)
 
     async def _backup_one(device) -> dict:
-        """Back up a single device; returns a result dict."""
-        nonlocal success_count, failed_count
+        """Back up a single device (running-config and optionally startup-config); returns a result dict."""
+        nonlocal success_count, failed_count, created_backup_items
 
         from core.platform_utils import normalize_device_platform
         _platform = normalize_device_platform(device.get('vendor'), device.get('platform'))
-        if 'cisco' in _platform or 'arista' in _platform or 'rgos' in _platform or 'ruijie' in _platform:
-            _backup_cmd = 'show running-config'
+        if any(k in _platform for k in ('cisco', 'arista', 'rgos', 'ruijie', 'zte', 'zxros', 'maipu', 'raisecom', 'sonic', 'centec')):
+            _running_cmd = 'show running-config'
+            _startup_cmd = 'show startup-config'
         elif 'juniper' in _platform or 'junos' in _platform:
-            _backup_cmd = 'show configuration'
+            _running_cmd = 'show configuration'
+            _startup_cmd = 'show configuration'
+        elif 'fortinet' in _platform:
+            _running_cmd = 'show full-configuration'
+            _startup_cmd = 'show full-configuration'
         else:
-            _backup_cmd = 'display current-configuration'
+            _running_cmd = 'display current-configuration'
+            _startup_cmd = 'display saved-configuration'
 
         d = dict(device)
         d['platform'] = _platform
@@ -1672,7 +1725,7 @@ async def run_scheduled_backup(
                 'hostname': device['hostname'],
                 'status': 'failed',
                 'reason': '缺失凭证',
-                'detail': '该设备没有配置可用的用户名或密码凭证。'
+                'detail': '未配置可用凭证，请在资产中绑定登录账号。'
             }
 
         d['username'] = username
@@ -1687,7 +1740,7 @@ async def run_scheduled_backup(
         async with sem:
             for attempt in range(run_retry_count + 1):
                 try:
-                    commands = [_backup_cmd]
+                    commands = [_running_cmd]
                     if d.get('platform_profile_id'):
                         from services.platform_registry_service import execute_platform_action
                         registry_result = await asyncio.to_thread(
@@ -1711,8 +1764,6 @@ async def run_scheduled_backup(
                     else:
                         driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
                         service = AutomationService(driver_type=driver_type)
-                        # Use the shared execution pool so policy concurrency and the
-                        # global SSH limiter both remain effective.
                         results = await asyncio.get_event_loop().run_in_executor(
                             service.orchestrator.executor,
                             lambda: service.execute_commands(d, commands, is_config=False)
@@ -1765,27 +1816,14 @@ async def run_scheduled_backup(
                 f"no valid config obtained (output length={len(output)})"
             )
             
-            # Determine error reason
             err_str = 'Unknown error'
             if results and results[0]:
                 err_str = results[0].get('error') or results[0].get('stderr') or 'No config output'
             elif results is None:
                 err_str = 'No connection could be established'
 
-            from drivers.ssh_compat import get_ssh_error_code, build_ssh_error_guidance
-            err_code = get_ssh_error_code(str(err_str))
-            detail_reason = build_ssh_error_guidance(str(err_str))
-
-            if err_code == 'legacy_ssh_algorithms':
-                short_reason = 'SSH协商失败'
-            elif err_code == 'ssh_authentication_failed':
-                short_reason = '认证失败'
-            elif err_code == 'ssh_transport_timeout':
-                short_reason = '网络超时'
-            elif err_code == 'ssh_transport_unreachable':
-                short_reason = '连接被拒'
-            else:
-                short_reason = '无法获取配置'
+            from drivers.ssh_compat import diagnose_ssh_failure
+            short_reason, detail_reason = diagnose_ssh_failure(str(err_str), device.get('ip_address', ''))
 
             return {
                 'hostname': device['hostname'],
@@ -1798,11 +1836,17 @@ async def run_scheduled_backup(
             metadata = _config_snapshot_metadata(output)
             if metadata['integrity_status'] != 'verified':
                 failed_count += 1
+                detail_map = {
+                    'empty_output': '设备返回内容为空',
+                    'command_error_output': '执行配置命令报错（权限不足或命令不支持）',
+                    'suspiciously_short': '配置输出行数过少，未通过完整性校验',
+                }
+                detail_msg = detail_map.get(metadata.get('truncation_reason', ''), '配置内容未通过完整性校验')
                 return {
                     'hostname': device['hostname'],
                     'status': 'failed',
                     'reason': '完整性校验失败',
-                    'detail': metadata['truncation_reason'],
+                    'detail': detail_msg,
                 }
             if change_only:
                 conn_latest = get_db_connection()
@@ -1846,24 +1890,109 @@ async def run_scheduled_backup(
             else:
                 vendor = str(device.get('vendor') or 'Other')
 
-            ts = datetime.now()
-            rel_path = _write_config_file(vendor, device['hostname'], ts, run_trigger, output)
+            ts = _utc_now()
+            rel_path = _write_config_file(vendor, device['hostname'], ts, run_trigger, output, config_type='running')
             size = len(output.encode('utf-8'))
             snap_id = f"snap-{uuid.uuid4().hex[:12]}"
+            
+            created_backup_items.append({
+                'local_path': os.path.join(BACKUP_ROOT, rel_path.replace('/', os.sep).replace('\\', os.sep)),
+                'remote_name': os.path.basename(rel_path),
+                'hostname': device['hostname'],
+            })
+
+            # Optional Startup Config collection & Unsaved Drift Detection
+            has_unsaved = 0
+            unsaved_summary = ''
+            startup_snap_id = None
+            if collect_startup_config:
+                startup_output = ''
+                try:
+                    async with sem:
+                        if d.get('platform_profile_id'):
+                            from services.platform_registry_service import execute_platform_action
+                            st_res = await asyncio.to_thread(
+                                execute_platform_action,
+                                str(d['id']),
+                                'get_startup_config',
+                                user={
+                                    'id': f"config-backup:{d['id']}",
+                                    'username': 'config-backup',
+                                    'role': 'Administrator',
+                                    'tenant_id': d.get('tenant_id') or '',
+                                },
+                                include_raw_output=True,
+                            )
+                            startup_output = str(st_res.get('raw_output') or '')
+                        else:
+                            driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
+                            st_service = AutomationService(driver_type=driver_type)
+                            st_results = await asyncio.get_event_loop().run_in_executor(
+                                st_service.orchestrator.executor,
+                                lambda: st_service.execute_commands(d, [_startup_cmd], is_config=False)
+                            )
+                            if st_results and st_results[0].get('success'):
+                                startup_output = st_results[0].get('output') or st_results[0].get('stdout') or ''
+
+                    if startup_output and not _looks_like_error(startup_output) and not startup_output.startswith('% '):
+                        st_metadata = _config_snapshot_metadata(startup_output)
+                        if st_metadata['integrity_status'] == 'verified':
+                            if metadata['normalized_hash'] != st_metadata['normalized_hash']:
+                                has_unsaved = 1
+                                unsaved_summary = f"未保存运行配置差异 (运行 {metadata['line_count']} 行 vs 启动 {st_metadata['line_count']} 行)"
+                            else:
+                                has_unsaved = 0
+                                unsaved_summary = "运行配置与启动配置一致"
+
+                            st_rel_path = _write_config_file(vendor, device['hostname'], ts, run_trigger, startup_output, config_type='startup')
+                            startup_snap_id = f"snap-{uuid.uuid4().hex[:12]}"
+                            st_size = len(startup_output.encode('utf-8'))
+
+                            conn_st = get_db_connection()
+                            try:
+                                conn_st.execute(
+                                    '''INSERT INTO config_snapshots
+                                       (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
+                                        raw_hash, normalized_hash, line_count, section_count, integrity_status,
+                                        lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type,
+                                        has_unsaved_changes, unsaved_diff_summary)
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                    (startup_snap_id, device['id'], device['hostname'], vendor,
+                                     ts.isoformat(), run_trigger, run_author, '', st_rel_path, st_size,
+                                     st_metadata['raw_hash'], st_metadata['normalized_hash'], st_metadata['line_count'],
+                                     st_metadata['section_count'], st_metadata['integrity_status'],
+                                     st_metadata['lifecycle_status'], st_metadata['normalizer_version'],
+                                     ts.isoformat(), persisted_run_id, policy_id or '', 'startup',
+                                     has_unsaved, unsaved_summary)
+                                )
+                                conn_st.commit()
+                            finally:
+                                conn_st.close()
+
+                            created_backup_items.append({
+                                'local_path': os.path.join(BACKUP_ROOT, st_rel_path.replace('/', os.sep).replace('\\', os.sep)),
+                                'remote_name': os.path.basename(st_rel_path),
+                                'hostname': device['hostname'],
+                            })
+                except Exception as st_err:
+                    logger.warning(f"[Scheduled Backup] Startup config fetch error for {device['hostname']}: {st_err}")
+
             conn2 = get_db_connection()
             try:
                 conn2.execute(
                     '''INSERT INTO config_snapshots
                        (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
                         raw_hash, normalized_hash, line_count, section_count, integrity_status,
-                        lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                        lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type,
+                        has_unsaved_changes, unsaved_diff_summary)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     (snap_id, device['id'], device['hostname'], vendor,
                      ts.isoformat(), run_trigger, run_author, '', rel_path, size,
                      metadata['raw_hash'], metadata['normalized_hash'], metadata['line_count'],
                      metadata['section_count'], metadata['integrity_status'],
                      metadata['lifecycle_status'], metadata['normalizer_version'],
-                     ts.isoformat(), persisted_run_id, policy_id or '', 'running')
+                     ts.isoformat(), persisted_run_id, policy_id or '', 'running',
+                     has_unsaved, unsaved_summary)
                 )
                 conn2.commit()
             finally:
@@ -1875,6 +2004,9 @@ async def run_scheduled_backup(
                 'status': 'success',
                 'size': size,
                 'snapshot_id': snap_id,
+                'startup_snapshot_id': startup_snap_id,
+                'has_unsaved_changes': bool(has_unsaved),
+                'unsaved_diff_summary': unsaved_summary,
                 'raw_hash': metadata['raw_hash'],
                 'normalized_hash': metadata['normalized_hash'],
                 'integrity_status': metadata['integrity_status'],
@@ -1893,7 +2025,7 @@ async def run_scheduled_backup(
     async def _run_with_progress(device):
         device_started = _time.perf_counter()
         result = await _backup_one(device)
-        device_finished = datetime.now().isoformat()
+        device_finished = _utc_now_iso()
         row_id = run_device_rows.get(str(device['id']))
         if row_id:
             _record_backup_run_device(
@@ -1912,8 +2044,52 @@ async def run_scheduled_backup(
 
     await asyncio.gather(*[_run_with_progress(dev) for dev in eligible])
 
+    # TFTP Remote Offloading (Scheme A)
+    tftp_enabled = bool((policy or {}).get('tftp_enabled'))
+    tftp_server = str((policy or {}).get('tftp_server') or '').strip()
+    tftp_port = int((policy or {}).get('tftp_port') or 69)
+    tftp_path_prefix = str((policy or {}).get('tftp_path_prefix') or 'backups').strip()
+
+    tftp_status = 'none'
+    tftp_log = ''
+    tftp_uploaded_count = 0
+
+    if tftp_enabled and tftp_server:
+        try:
+            from services.tftp_service import batch_upload_configs_to_tftp
+            summary_text = (
+                f"Nexora Config Backup Batch Summary\n"
+                f"Run ID: {persisted_run_id}\n"
+                f"Policy: {(policy or {}).get('name', 'Manual/Legacy')}\n"
+                f"Finished At: {_utc_now_iso()}\n"
+                f"Total Devices: {len(devices)}, Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}\n"
+                f"Files Uploaded: {len(created_backup_items)}\n"
+            )
+            tftp_res = await asyncio.to_thread(
+                batch_upload_configs_to_tftp,
+                server_ip=tftp_server,
+                items=created_backup_items,
+                server_port=tftp_port,
+                path_prefix=tftp_path_prefix,
+                summary_log=summary_text,
+            )
+            tftp_status = tftp_res.get('status', 'failed')
+            tftp_uploaded_count = tftp_res.get('uploaded', 0)
+            tftp_log = "\n".join(tftp_res.get('details', []))
+            logger.info(f"[Scheduled Backup] TFTP offload completed with status={tftp_status} ({tftp_uploaded_count} files)")
+        except Exception as tftp_exc:
+            tftp_status = 'failed'
+            tftp_log = f"TFTP upload exception: {tftp_exc}"
+            logger.error(f"[Scheduled Backup] TFTP offload error: {tftp_exc}")
+
     try:
-        _finish_backup_run(persisted_run_id)
+        _finish_backup_run(
+            persisted_run_id,
+            tftp_status=tftp_status,
+            tftp_server=tftp_server,
+            tftp_log=tftp_log,
+            tftp_uploaded_count=tftp_uploaded_count,
+        )
     except Exception:
         logger.exception("[Scheduled Backup] Could not finalize backup run %s", persisted_run_id)
 
@@ -1942,3 +2118,235 @@ async def run_scheduled_backup(
         )
     except Exception as e:
         logger.error(f"[Retention Cleanup] Error: {e}")
+
+
+# ──────────────────────────────────────────────
+# TFTP Manual Sync & Test Endpoints
+# ──────────────────────────────────────────────
+
+class TFTPTestPayload(BaseModel):
+    server_ip: str
+    server_port: int = 69
+    path_prefix: str = "backups"
+
+
+class TFTPSettingsPayload(BaseModel):
+    enabled: bool = False
+    server_ip: str = ""
+    server_port: int = 69
+    path_prefix: str = "backups"
+
+
+class TFTPSyncSnapshotPayload(BaseModel):
+    snapshot_id: str
+    server_ip: str = ""
+    server_port: int = 69
+    path_prefix: str = "backups"
+
+
+class TFTPSyncBatchPayload(BaseModel):
+    run_id: str
+    server_ip: str = ""
+    server_port: int = 69
+    path_prefix: str = "backups"
+
+
+@router.get('/configs/tftp/settings')
+def get_tftp_settings():
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT value FROM global_vars WHERE key = 'tftp_backup_settings'").fetchone()
+        if row:
+            try:
+                return {"success": True, "data": json.loads(row['value'])}
+            except Exception:
+                pass
+        return {"success": True, "data": {"enabled": False, "server_ip": "", "server_port": 69, "path_prefix": "backups"}}
+    finally:
+        conn.close()
+
+
+@router.put('/configs/tftp/settings')
+def save_tftp_settings(payload: TFTPSettingsPayload):
+    conn = get_db_connection()
+    try:
+        val = json.dumps(payload.model_dump(), ensure_ascii=False)
+        row = conn.execute("SELECT id FROM global_vars WHERE key = 'tftp_backup_settings'").fetchone()
+        now_ts = _utc_now_iso()
+        if row:
+            conn.execute("UPDATE global_vars SET value = ?, updated_at = ? WHERE key = 'tftp_backup_settings'", (val, now_ts))
+        else:
+            var_id = f"gv-{uuid.uuid4().hex[:12]}"
+            conn.execute("INSERT INTO global_vars (id, key, value, created_at, updated_at) VALUES (?, 'tftp_backup_settings', ?, ?, ?)",
+                         (var_id, val, now_ts, now_ts))
+        conn.commit()
+        return {"success": True, "message": "TFTP 配置已保存", "data": payload.model_dump()}
+    finally:
+        conn.close()
+
+
+@router.post('/configs/tftp/test')
+async def test_tftp_connectivity(payload: TFTPTestPayload):
+    if not payload.server_ip.strip():
+        raise HTTPException(status_code=400, detail="TFTP 服务器 IP 不能为空")
+    from services.tftp_service import upload_bytes_to_tftp
+    probe_name = f"{payload.path_prefix.strip('/')}/_probe_test_{uuid.uuid4().hex[:6]}.tmp" if payload.path_prefix.strip() else f"_probe_test_{uuid.uuid4().hex[:6]}.tmp"
+    probe_data = f"Nexora TFTP Probe Test\nTimestamp: {_utc_now_iso()}\nServer: {payload.server_ip}\n".encode('utf-8')
+    ok, msg = await asyncio.to_thread(
+        upload_bytes_to_tftp,
+        server_ip=payload.server_ip.strip(),
+        data=probe_data,
+        remote_filename=probe_name,
+        server_port=payload.server_port,
+        timeout=3.0,
+        retries=2,
+    )
+    if not ok:
+        return {"success": False, "message": f"TFTP 连接探测失败: {msg}"}
+    return {"success": True, "message": f"TFTP 服务器连接探测成功！({msg})"}
+
+
+@router.post('/configs/tftp/sync-snapshot')
+async def sync_snapshot_to_tftp(payload: TFTPSyncSnapshotPayload):
+    conn = get_db_connection()
+    try:
+        snap = conn.execute("SELECT * FROM config_snapshots WHERE id = ?", (payload.snapshot_id,)).fetchone()
+        if not snap:
+            raise HTTPException(status_code=404, detail="快照不存在")
+        file_path = snap['file_path']
+        hostname = snap['hostname']
+        config_type = snap['config_type'] if 'config_type' in snap.keys() else 'running'
+    finally:
+        conn.close()
+
+    server_ip = payload.server_ip.strip()
+    server_port = payload.server_port
+    path_prefix = payload.path_prefix.strip()
+
+    if not server_ip:
+        conn = get_db_connection()
+        try:
+            row = conn.execute("SELECT value FROM global_vars WHERE key = 'tftp_backup_settings'").fetchone()
+            if row:
+                saved = json.loads(row['value'])
+                server_ip = saved.get('server_ip', '')
+                server_port = int(saved.get('server_port', 69))
+                path_prefix = saved.get('path_prefix', 'backups')
+        finally:
+            conn.close()
+
+    if not server_ip:
+        raise HTTPException(status_code=400, detail="未指定 TFTP 服务器 IP，请先在 TFTP 归档面板中配置")
+
+    abs_path = os.path.join(BACKUP_ROOT, file_path.replace('/', os.sep).replace('\\', os.sep))
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="底层配置文件不存在")
+
+    remote_name = os.path.basename(file_path)
+    target_path = f"{path_prefix.strip('/')}/{remote_name}" if path_prefix.strip() else remote_name
+
+    from services.tftp_service import upload_file_to_tftp
+    ok, msg = await asyncio.to_thread(
+        upload_file_to_tftp,
+        server_ip=server_ip,
+        local_file_path=abs_path,
+        remote_filename=target_path,
+        server_port=server_port,
+    )
+
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"TFTP 上传失败: {msg}")
+
+    return {
+        "success": True,
+        "message": f"成功将 {hostname} 的 {config_type} 配置上传至 TFTP ({server_ip}:{server_port}/{target_path})",
+        "remote_path": target_path,
+    }
+
+
+@router.post('/configs/tftp/sync-batch')
+async def sync_batch_to_tftp(payload: TFTPSyncBatchPayload):
+    conn = get_db_connection()
+    try:
+        run = conn.execute("SELECT * FROM config_backup_runs WHERE id = ?", (payload.run_id,)).fetchone()
+        if not run:
+            raise HTTPException(status_code=404, detail="备份批次不存在")
+        snapshots = conn.execute("SELECT file_path, hostname FROM config_snapshots WHERE task_id = ?", (payload.run_id,)).fetchall()
+    finally:
+        conn.close()
+
+    server_ip = payload.server_ip.strip()
+    server_port = payload.server_port
+    path_prefix = payload.path_prefix.strip()
+
+    if not server_ip:
+        conn = get_db_connection()
+        try:
+            row = conn.execute("SELECT value FROM global_vars WHERE key = 'tftp_backup_settings'").fetchone()
+            if row:
+                saved = json.loads(row['value'])
+                server_ip = saved.get('server_ip', '')
+                server_port = int(saved.get('server_port', 69))
+                path_prefix = saved.get('path_prefix', 'backups')
+        finally:
+            conn.close()
+
+    if not server_ip:
+        raise HTTPException(status_code=400, detail="未指定 TFTP 服务器 IP，请先在 TFTP 归档面板中配置")
+
+    items = []
+    for s in snapshots:
+        rel_path = s['file_path']
+        abs_path = os.path.join(BACKUP_ROOT, rel_path.replace('/', os.sep).replace('\\', os.sep))
+        if os.path.isfile(abs_path):
+            items.append({
+                'local_path': abs_path,
+                'remote_name': os.path.basename(rel_path),
+                'hostname': s['hostname'],
+            })
+
+    if not items:
+        raise HTTPException(status_code=400, detail="该批次没有可上传的有效备份快照文件")
+
+    from services.tftp_service import batch_upload_configs_to_tftp
+    summary_text = (
+        f"Nexora Config Backup Manual TFTP Sync Summary\n"
+        f"Run ID: {payload.run_id}\n"
+        f"Triggered At: {_utc_now_iso()}\n"
+        f"Total Files: {len(items)}\n"
+    )
+    tftp_res = await asyncio.to_thread(
+        batch_upload_configs_to_tftp,
+        server_ip=server_ip,
+        items=items,
+        server_port=server_port,
+        path_prefix=path_prefix,
+        summary_log=summary_text,
+    )
+
+    tftp_status = tftp_res.get('status', 'failed')
+    tftp_uploaded_count = tftp_res.get('uploaded', 0)
+    tftp_log = "\n".join(tftp_res.get('details', []))
+
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE config_backup_runs
+            SET tftp_status = ?, tftp_server = ?, tftp_log = ?, tftp_uploaded_count = ?
+            WHERE id = ?
+            """,
+            (tftp_status, server_ip, tftp_log, tftp_uploaded_count, payload.run_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "success": tftp_status in ('success', 'partial'),
+        "status": tftp_status,
+        "uploaded": tftp_uploaded_count,
+        "total": len(items),
+        "details": tftp_res.get('details', []),
+        "message": f"TFTP 同步完成: 成功 {tftp_uploaded_count} / {len(items)} 个文件至 {server_ip}:{server_port}",
+    }

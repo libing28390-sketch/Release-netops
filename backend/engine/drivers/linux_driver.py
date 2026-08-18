@@ -34,7 +34,8 @@ class LinuxDriver(BaseDriver):
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         self.ssh.connect(
             hostname=self.ip, port=self.port, username=self.username,
-            password=self.password, timeout=10, allow_agent=False, look_for_keys=False
+            password=self.password, timeout=10, allow_agent=False, look_for_keys=False,
+            disabled_algorithms={},
         )
         if use_pool:
             pool.set_connection(self.device_info, self.ssh)

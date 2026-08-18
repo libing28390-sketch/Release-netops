@@ -43,6 +43,11 @@ class BackupPolicyPayload(BaseModel):
     concurrency: int = Field(default=10, ge=1, le=50)
     retry_count: int = Field(default=1, ge=0, le=5)
     timeout_seconds: int = Field(default=30, ge=5, le=300)
+    collect_startup_config: bool = False
+    tftp_enabled: bool = False
+    tftp_server: str = ""
+    tftp_port: int = Field(default=69, ge=1, le=65535)
+    tftp_path_prefix: str = Field(default="backups", max_length=200)
 
     @field_validator("cron_expr")
     @classmethod
@@ -66,9 +71,9 @@ class BackupPolicyPayload(BaseModel):
     @classmethod
     def validate_config_types(cls, value: list[str]) -> list[str]:
         normalized = list(dict.fromkeys(str(item).strip().lower() for item in value if str(item).strip()))
-        unsupported = set(normalized).difference({"running"})
+        unsupported = set(normalized).difference({"running", "startup"})
         if unsupported or not normalized:
-            raise ValueError("Only running configuration backup is currently supported")
+            raise ValueError("Supported configuration types are 'running' and 'startup'")
         return normalized
 
 

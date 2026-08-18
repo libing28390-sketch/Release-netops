@@ -9,6 +9,7 @@ services:
     container_name: nexora-db
     environment:
       # These variables can be overridden in the .env file
+      - TZ=${TZ:-Asia/Shanghai}
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=${POSTGRES_DB:-netops}
@@ -42,6 +43,7 @@ services:
     expose:
       - "8003"
     environment:
+      - TZ=${TZ:-Asia/Shanghai}
       - NODE_ENV=production
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-netops}
@@ -97,6 +99,7 @@ services:
     pids_limit: 128
     stop_grace_period: 15s
     environment:
+      - TZ=${TZ:-Asia/Shanghai}
       - TLS_COMMON_NAME=${TLS_COMMON_NAME:-localhost}
     ports:
       - "80:80"

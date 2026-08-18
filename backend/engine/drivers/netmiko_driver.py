@@ -101,8 +101,8 @@ class NetmikoDriver(BaseDriver):
         )
 
         from drivers.ssh_compat import build_netmiko_compatibility_kwargs
-        conn_timeout = int(self.device_info.get('timeout') or self.device_info.get('conn_timeout') or 10)
-        blocking_timeout = int(self.device_info.get('blocking_timeout') or 10)
+        conn_timeout = int(self.device_info.get('timeout') or self.device_info.get('conn_timeout') or 60)
+        blocking_timeout = int(self.device_info.get('blocking_timeout') or 30)
         device_params = {
             'device_type': self.device_type,
             'host': self.ip,

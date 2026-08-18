@@ -266,11 +266,11 @@ class NetmikoDriver(BaseDriver):
             'username':           self.username,
             'password':           self.password,
             'port':               self.port,
-            'timeout':            int(self.device_info.get('conn_timeout') or self.device_info.get('timeout') or 10),
-            'session_timeout':    60,
+            'timeout':            int(self.device_info.get('conn_timeout') or self.device_info.get('timeout') or 60),
+            'session_timeout':    120,
             'fast_cli':           not is_slow,         # 慢速平台禁用 fast_cli
             'global_delay_factor':1.5 if is_slow else 0.5,
-            'blocking_timeout':   int(self.device_info.get('blocking_timeout') or 10),
+            'blocking_timeout':   int(self.device_info.get('blocking_timeout') or 30),
         }
         logger.info(f"Login to {self.host} as username={self.username!r} pwd_len={len(self.password or '')}")
         device_params.update(build_netmiko_compatibility_kwargs())

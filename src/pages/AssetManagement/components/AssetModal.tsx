@@ -16,6 +16,7 @@ import {
   NETWORK_TOPOLOGY_ROLE_OPTIONS,
   TOPOLOGY_FUNCTION_OPTIONS,
   TOPOLOGY_ZONE_OPTIONS,
+  isValidIpAddress,
 } from '../constants';
 import { AssetTagPicker } from './AssetTagPicker';
 import { isReservedSystemSite } from '../../../utils/siteIdentity';
@@ -69,6 +70,12 @@ export const AssetModal: React.FC<AssetModalProps> = ({
   const [legacyExemptReason, setLegacyExemptReason] = React.useState('');
   const [credentials, setCredentials] = React.useState<any[]>([]);
   const [credMode, setCredMode] = React.useState<'manual' | 'existing'>('manual');
+
+  const mgmtIpError = React.useMemo(() => {
+    const ip = String(form.management_ip || '').trim();
+    if (!ip) return null;
+    return isValidIpAddress(ip) ? null : (zh ? 'IP 格式不正确' : 'Invalid IP format');
+  }, [form.management_ip, zh]);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -347,7 +354,7 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                   />
                 </div>
               )}
-              <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" />
+              <Field label={zh ? '管理IP' : 'Mgmt IP'} value={form.management_ip} onChange={v => setForm(f => ({ ...f, management_ip: v }))} placeholder="e.g. 10.0.1.10" error={mgmtIpError} />
               <Field label={zh ? '主通道端口' : 'Primary channel port'} value={form.management_port} onChange={v => setForm(f => ({ ...f, management_port: v }))} placeholder={form.connection_method === 'web' || form.connection_method === 'none' ? '-' : '22'} />
 
               <div className="col-span-2 rounded-xl border border-cyan-100 bg-cyan-50/30 p-3">
@@ -1005,19 +1012,24 @@ export const AssetModal: React.FC<AssetModalProps> = ({
 };
 
 /* --- Form field --- */
-function Field({ label, value, onChange, placeholder, type = 'text', list }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; list?: string;
+function Field({ label, value, onChange, placeholder, type = 'text', list, error }: {
+  label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; list?: string; error?: string | null;
 }) {
   return (
     <div>
-      <label className="block text-[10px] text-black/30 mb-0.5">{label}</label>
+      <div className="flex items-center justify-between mb-0.5">
+        <label className="block text-[10px] text-black/30">{label}</label>
+        {error && <span className="text-[9px] text-red-500 font-medium">{error}</span>}
+      </div>
       <input
         type={type}
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
         list={list}
-        className="w-full bg-white border border-black/8 rounded-lg px-2.5 py-1.5 text-xs text-black/65 placeholder:text-black/12 focus:outline-none focus:border-[#00bceb]/25"
+        className={`w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs text-black/65 placeholder:text-black/12 focus:outline-none ${
+          error ? 'border-red-400 bg-red-50/20 focus:border-red-500' : 'border-black/8 focus:border-[#00bceb]/25'
+        }`}
       />
     </div>
   );
