@@ -537,7 +537,7 @@
 - [x] `MIG-003` `P0/DBA+AI/M`：建立旧 ID 到 V2 ID 映射和迁移 Manifest。
 - [x] `MIG-004` `P0/DBA+BE/M`：迁移脚本支持 dry-run、断点续跑、幂等和批次回滚。
 - [x] `MIG-005` `P0/DBA+AI/M`：为旧 Metadata 建立可信、需验证、不可用三个等级。
-- [ ] `MIG-006` `P0/NET+AI/L`：从官方来源重新验证厂商、产品、OS 和版本字段。
+- [x] `MIG-006` `P0/NET+AI/L`：从官方来源重新验证厂商、产品、OS 和版本字段。
 - [ ] `MIG-007` `P0/AI+BE/L`：对迁移文档重新 Parse、Chunk、Embed、Index。
 - [ ] `MIG-008` `P0/QA+DBA/M`：核对文档数量、哈希、版本、Chunk 和权限一致性。
 - [ ] `MIG-009` `P0/BE+AI/M`：实现 V1/V2 双检索 Shadow Mode，不向用户展示双答案。

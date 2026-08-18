@@ -1,0 +1,101 @@
+task_id: MIG-006
+title: Official source entity validation for migration
+priority: P0
+milestone: M2
+owner: NET+AI
+status: implemented_pending_gate
+authority: PostgreSQL
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+purpose:
+  - Re-validate migrated vendor, product, OS, platform, and software-version fields against reviewed official source scope.
+  - Preserve the V1 metadata and fail closed when official evidence or a unique catalog match is unavailable.
+  - Produce a redacted, deterministic validation manifest for the next migration wave.
+
+source_authority:
+  contract: docs/knowledge-engine-v2/architecture/CAT-001-OFFICIAL-SOURCE-ALLOWLIST.yaml
+  evidence_required: [active_source_registry, verified_source_version, reviewed_catalog_snapshot]
+  unverified_upload_source: needs_validation
+  body_text_inference: forbidden
+  external_fetch: disabled_in_gate
+
+fields:
+  vendor: canonical_vendor_only
+  product_family: active_catalog_family_or_reviewed_scope
+  product_series: active_catalog_series_or_reviewed_scope
+  product_model: unique_active_model_or_reviewed_scope
+  os_family: explicit_catalog_scope
+  os_generation: explicit_catalog_scope
+  software_train: explicit_release_train
+  software_release: exact_reviewed_version_or_explicit_range
+  cli_platform: explicit_platform_binding_after_product_scope_match
+
+outcomes:
+  verified:
+    retrieval_eligible: true
+    action: eligible_for_v2_migration
+  needs_validation:
+    retrieval_eligible: false
+    action: review_or_source_revalidation
+  unusable:
+    retrieval_eligible: false
+    action: quarantine_and_exclude
+
+decision_rules:
+  - source_registry_and_source_version_must_be_resolved_to_the_same_tenant
+  - source_registry_must_be_active_and_validation_valid
+  - official_source_must_match_registered_host_and_path_scope
+  - exact_or_canonical_catalog_match_must_be_unique
+  - prefix_or_trigram_match_is_candidate_only
+  - unknown_null_or_ambiguous_values_never_become_verified
+  - vendor_conflict_is_unusable
+  - os_product_or_version_scope_conflict_is_unusable
+  - missing_official_evidence_is_needs_validation
+  - software_version_ranges_are_not_exact_versions
+
+reason_codes:
+  - SOURCE_REGISTRY_UNRESOLVED
+  - SOURCE_NOT_ACTIVE_OR_VALID
+  - OFFICIAL_EVIDENCE_MISSING
+  - CATALOG_SNAPSHOT_UNAVAILABLE
+  - VENDOR_UNKNOWN
+  - VENDOR_NOT_CANONICAL
+  - VENDOR_CONFLICT
+  - PRODUCT_UNKNOWN
+  - PRODUCT_NOT_CANONICAL
+  - PRODUCT_AMBIGUOUS
+  - OS_UNKNOWN
+  - OS_NOT_CANONICAL
+  - OS_SCOPE_CONFLICT
+  - SOFTWARE_VERSION_UNKNOWN
+  - SOFTWARE_VERSION_NOT_CANONICAL
+  - SOFTWARE_VERSION_AMBIGUOUS
+  - VERSION_SCOPE_UNVERIFIED
+  - PLATFORM_UNKNOWN
+  - PLATFORM_NOT_BOUND
+  - METADATA_INVALID
+  - SECURITY_VALUE_REJECTED
+
+security:
+  manifest_fields: [legacy_id, tenant_id_hash, metadata_hash, validation_grade, reason_codes, action]
+  forbidden_manifest_fields: [raw_metadata, original_content, normalized_content, source_url, endpoint, acl, credential, secret, exception_text]
+  tenant_scope: exact_tenant_match_required
+  production_device_access: forbidden
+  driver_selection: forbidden
+
+compatibility:
+  v1_tables_read_only: [ai_document, ai_document_chunk]
+  original_fields_preserved: true
+  no_legacy_rewrite: true
+  rollback: retain_v1_metadata_and_disable_v2_migration_wave
+
+acceptance:
+  - PostgreSQL_read_only_transaction_is_verified
+  - official_source_scope_is_loaded_without_network_fetch
+  - exact_verified_fixture_is_verified
+  - unknown_and_ambiguous_fixture_is_not_verified
+  - vendor_and_scope_conflict_fails_closed
+  - unresolved_upload_rows_are_needs_validation
+  - manifest_is_redacted_and_deterministic
+  - V1_baseline_is_unchanged
