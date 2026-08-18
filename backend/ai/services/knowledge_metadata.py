@@ -64,6 +64,29 @@ HIGH_FREQUENCY_METADATA_FIELDS = (
     "status",
 )
 
+# These values belong to the server-owned document/ACL boundary.  They may
+# remain on the parent row for authorization, but must never be copied into a
+# searchable Chunk metadata projection (including nested mappings).
+CHUNK_METADATA_FORBIDDEN_KEYS = frozenset(
+    {
+        "tenant_id",
+        "workspace_id",
+        "user_id",
+        "created_by",
+        "updated_by",
+        "acl",
+        "acl_json",
+        "permissions",
+        "roles",
+        "authorization",
+        "api_key",
+        "password",
+        "secret",
+        "token",
+        "private_key",
+    }
+)
+
 
 class MetadataParseError(ValueError):
     """Raised when a document starts as Front Matter but contains invalid YAML."""
@@ -243,6 +266,32 @@ def merge_metadata(frontmatter: Mapping[str, Any], source_metadata: Mapping[str,
 
 def json_safe_metadata(value: Mapping[str, Any]) -> str:
     return json.dumps(dict(value), ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def chunk_projection_metadata(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove server-owned identity and credential keys from Chunk metadata.
+
+    Chunk rows inherit tenant/ACL from their parent document.  Keeping those
+    values in JSONB makes them searchable and can create a second, stale
+    authorization surface.  The sanitizer is deterministic, recursive and
+    leaves semantic fields/arrays intact.
+    """
+
+    def clean(item: Any) -> Any:
+        if isinstance(item, Mapping):
+            return {
+                str(key): clean(child)
+                for key, child in item.items()
+                if str(key).casefold() not in CHUNK_METADATA_FORBIDDEN_KEYS
+            }
+        if isinstance(item, list):
+            return [clean(child) for child in item]
+        if isinstance(item, tuple):
+            return [clean(child) for child in item]
+        return item
+
+    result = clean(dict(value))
+    return result if isinstance(result, dict) else {}
 
 
 def metadata_columns(metadata: Mapping[str, Any]) -> dict[str, Any]:

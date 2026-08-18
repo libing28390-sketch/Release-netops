@@ -32,6 +32,7 @@ from ai.services.knowledge_metadata import (
     json_safe_metadata,
     merge_metadata,
     metadata_columns,
+    chunk_projection_metadata,
     parse_markdown_document,
     validate_metadata,
 )
@@ -613,6 +614,7 @@ class KnowledgeReindexService:
                 chunk_metadata = dict(merged)
                 chunk_metadata.update(chunk.metadata)
                 chunk_metadata.update({"chunk_index": index, "chunk_idx": index, "section": section})
+                chunk_metadata = chunk_projection_metadata(chunk_metadata)
                 chunk_values = {
                     "id": chunk.chunk_id,
                     "document_id": document["id"],

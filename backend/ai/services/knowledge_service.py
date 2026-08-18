@@ -28,6 +28,7 @@ from ai.services.knowledge_metadata import (
     json_safe_metadata,
     merge_metadata,
     metadata_columns,
+    chunk_projection_metadata,
     parse_markdown_document,
     validate_metadata,
 )
@@ -1622,6 +1623,7 @@ class KnowledgeService:
                         "section": section_name,
                     }
                 )
+                chunk_metadata = chunk_projection_metadata(chunk_metadata)
                 chunk_values = {
                     "id": chk.chunk_id,
                     "document_id": doc_id,
