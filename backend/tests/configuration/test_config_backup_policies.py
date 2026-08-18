@@ -10,6 +10,24 @@ def _connection() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.executescript(
         """
+        CREATE TABLE action_definitions (
+            action_code TEXT PRIMARY KEY,
+            name_zh TEXT NOT NULL,
+            name_en TEXT NOT NULL,
+            purpose TEXT NOT NULL DEFAULT '',
+            risk_level TEXT NOT NULL DEFAULT 'low',
+            device_types_json TEXT NOT NULL DEFAULT '[]',
+            required_fields_json TEXT NOT NULL DEFAULT '[]',
+            optional_fields_json TEXT NOT NULL DEFAULT '[]',
+            field_types_json TEXT NOT NULL DEFAULT '{}',
+            max_output_bytes INTEGER NOT NULL DEFAULT 2000000,
+            max_records INTEGER NOT NULL DEFAULT 1000,
+            timeout_seconds INTEGER NOT NULL DEFAULT 30,
+            sensitive_level TEXT NOT NULL DEFAULT 'normal',
+            consumers_json TEXT NOT NULL DEFAULT '[]',
+            read_only INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        );
         CREATE TABLE global_vars (
             id TEXT PRIMARY KEY,
             key TEXT NOT NULL UNIQUE,
@@ -62,12 +80,19 @@ def test_migration_is_idempotent_and_adds_policy_attribution() -> None:
         policy_indexes = {
             row["name"] for row in conn.execute("PRAGMA index_list(config_backup_policies)")
         }
+        action = conn.execute(
+            "SELECT risk_level, consumers_json FROM action_definitions "
+            "WHERE action_code = 'get_startup_config'"
+        ).fetchone()
     finally:
         conn.close()
 
     assert "policy_id" in run_columns
     assert {"policy_id", "config_type"}.issubset(snapshot_columns)
     assert "idx_config_backup_policies_enabled_priority" in policy_indexes
+    assert action is not None
+    assert action["risk_level"] == "sensitive"
+    assert "configuration" in action["consumers_json"]
 
 
 def test_default_policy_imports_legacy_schedule_and_retention() -> None:

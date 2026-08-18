@@ -167,9 +167,16 @@ def upgrade(cursor, use_pg: bool) -> None:
     # full template refresh can collide with scoped unique indexes on existing
     # templates unrelated to Raisecom.
     del use_pg
+    # Migration 151 runs before the startup-config feature migration.  Seed
+    # the catalog first so the FK on platform_release_actions is satisfied for
+    # databases upgraded from a version that predates get_startup_config.
+    from database.migrations.m0072_platform_registry_p0 import (
+        _seed_action_definitions,
+    )
     from database.migrations.m0101_split_platform_profiles import _ensure_system_profiles
 
     now = _now()
+    _seed_action_definitions(cursor)
     profile_ids = _ensure_system_profiles(cursor, now)
     profile_id = profile_ids.get("raisecom_ros")
     if not profile_id:

@@ -10,6 +10,19 @@ def test_m0151_is_idempotent_on_postgresql_registry(isolated_db):
     try:
         cursor = conn.cursor()
 
+        # Simulate a production database that reached version 150 before the
+        # startup-config action was added to the catalog.  Migration 151 must
+        # repair the definition before inserting FK-constrained release rows.
+        cursor.execute(
+            "DELETE FROM platform_release_actions WHERE action_code = ?",
+            ("get_startup_config",),
+        )
+        cursor.execute(
+            "DELETE FROM action_definitions WHERE action_code = ?",
+            ("get_startup_config",),
+        )
+        conn.commit()
+
         # Recreate the legacy H3C row that caused the original production
         # failure: migration 151 must not refresh unrelated templates and hit
         # this PostgreSQL expression-based unique index.
@@ -68,6 +81,22 @@ def test_m0151_is_idempotent_on_postgresql_registry(isolated_db):
                  AND parser_template_version_id IS NOT NULL"""
         ).fetchone()[0]
         assert get_version_binding == 1
+
+        startup_definition = conn.execute(
+            "SELECT risk_level, consumers_json FROM action_definitions "
+            "WHERE action_code = ?",
+            ("get_startup_config",),
+        ).fetchone()
+        assert startup_definition is not None
+        assert startup_definition[0] == "sensitive"
+        assert "configuration" in startup_definition[1]
+
+        raisecom_startup_binding = conn.execute(
+            """SELECT COUNT(*) FROM platform_release_actions
+               WHERE release_id = 'system-release-raisecom_ros-v1'
+                 AND action_code = 'get_startup_config'"""
+        ).fetchone()[0]
+        assert raisecom_startup_binding == 1
 
         h3c_template_count = conn.execute(
             """SELECT COUNT(*)
