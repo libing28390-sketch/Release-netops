@@ -1,13 +1,13 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: MIG-008（ANALYZING）
+Current Task: MIG-008（BLOCKED）
 Last Completed: MIG-006
-Next Task: MIG-008（核对文档数量、哈希、版本、Chunk 和权限一致性）
+Next Task: MIG-008 修复/复核（解除 CHUNK_METADATA_IDENTITY_LEAK、HASH_UNVERIFIABLE 后重跑审计）
 
 Completed: 321 / 359
 P0: 256 / 277
-Last Verified Commit: 2e5e77f3（MIG-006 official entity validation PASS）
+Last Verified Commit: d536498d（MIG-008 consistency audit gate；审计发现阻断）
 
 Recent Migration: MIG-006 DONE_PASS；156 条 legacy 文档全部保守分级：verified=0、needs_validation=156、unusable=0；官方来源未绑定、reviewed catalog snapshot 不存在；PostgreSQL READ ONLY；无生产 DDL/写入；SQLite 未作为证据
 Recent Build: MIG-006 focused 6 passed、MIG-001..006 regression 21 passed；V1 PostgreSQL baseline 10/10；EVAL-014 临时 PostgreSQL fresh/repeat/backfill/constraints/rollback/recovery PASS；npm lint PASS；Vite build PASS（3680 modules，既有 chunk-size warning）；git diff --check PASS
@@ -15,7 +15,7 @@ Last Security Check: MIG-006 manifest 仅含 legacy ID、tenant hash、metadata 
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
 Blocked Task: MIG-007 — BLOCKED_NO_VERIFIED_SOURCE_ENTITIES（MIG-006 verified=0；156 行 needs_validation；需要官方 source registry/version 与 reviewed catalog snapshot）
-Recovery Point: MIG-007 阻断解除后重跑 Parse→Chunk→Embed→Index；当前转 MIG-008 一致性核对；ING-020/021 仍需认证浏览器会话补做可见验证
+Recovery Point: MIG-008 修复/复核（先清理或隔离 Chunk metadata 身份键并处理 2 条不可验证 hash/Embedding，再重跑 PG 审计）；MIG-007 仍受 verified=0 阻断；ING-020/021 仍需认证浏览器会话补做可见验证
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -82,6 +82,8 @@ MIG-005：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-005.md；Meta
 MIG-006：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-006.md；CAT-001 官方来源范围与 ING-011 fail-closed 边界冻结；156 条 PostgreSQL READ ONLY 实体校验（verified=0、needs_validation=156、unusable=0），未进行外网抓取或生产写入；manifest digest 可复现；MIG-001..006 regression 21 passed；V1 10/10；EVAL-014 临时 PostgreSQL 迁移恢复矩阵 PASS；lint/build/compile/diff PASS；SQLite 未作为验收证据。
 
 MIG-007：BLOCKED；证据 docs/knowledge-engine-v2/evidence/MIG-007.md；PG 只读重建门禁与 Parse→Normalize→Classify→Chunk→Embed→Index→Validate→Commit 阶段顺序已实现；现场 156 行全部跳过、verified=0、Provider 调用=0、生产写入=0；专项测试 5 passed；阻断码 BLOCKED_NO_VERIFIED_SOURCE_ENTITIES；未勾选清单，继续执行不依赖重建的 MIG-008。
+
+MIG-008：BLOCKED；证据 docs/knowledge-engine-v2/evidence/MIG-008.md；PG 只读核对 156 文档/474 Chunk，数量与版本关系通过；2 条文档 hash、2 条 Chunk hash/Embedding 不可验证，472 个 Chunk metadata 携带 tenant/identity 键；专项测试 5 passed、MIG-001..008 regression 31 passed、V1 10/10；阻断码 CHUNK_HASH_UNVERIFIABLE、CHUNK_METADATA_IDENTITY_LEAK、DOCUMENT_HASH_UNVERIFIABLE；未改写生产数据，未勾选清单。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

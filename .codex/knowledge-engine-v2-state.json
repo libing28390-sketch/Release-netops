@@ -2,8 +2,8 @@
   "project": "Nexora Knowledge Engine V2",
   "current_milestone": "M2",
   "current_task": "MIG-008",
-  "task_state": "ANALYZING",
-  "updated_at": "2026-08-18T00:50:00+08:00",
+  "task_state": "BLOCKED",
+  "updated_at": "2026-08-18T01:05:00+08:00",
   "last_completed_task": "MIG-006",
   "completed_tasks": [
     "ADR-001",
@@ -331,7 +331,8 @@
   "blocked_tasks": [
     "ING-020: BLOCKED_AUTH_REQUIRED — local browser verification requires an authenticated admin session",
     "ING-021: BLOCKED_AUTH_REQUIRED — authenticated browser verification of the preview/confirmation flow is still required",
-    "MIG-007: BLOCKED_NO_VERIFIED_SOURCE_ENTITIES — MIG-006 verified=0; 156 rows need official source registry/version and reviewed catalog snapshot"
+    "MIG-007: BLOCKED_NO_VERIFIED_SOURCE_ENTITIES — MIG-006 verified=0; 156 rows need official source registry/version and reviewed catalog snapshot",
+    "MIG-008: CHUNK_METADATA_IDENTITY_LEAK + HASH_UNVERIFIABLE — 472 chunk metadata rows carry tenant/identity keys; 2 document and 2 chunk hash/embedding rows are unverifiable"
   ],
   "blocker_revalidation_count": 2,
   "last_blocker_audit_at": "2026-08-09T13:37:47+08:00",
@@ -394,7 +395,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "90c979cd（MIG-007 rebuild safety gate BLOCKED）",
+  "last_verified_commit": "d536498d（MIG-008 consistency audit gate BLOCKED）",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -972,7 +973,7 @@
   "completed_count": 321,
   "p0_total_count": 277,
   "p0_completed_count": 256,
-  "resume_from": "MIG-007",
+  "resume_from": "MIG-008",
   "eval001_status": "DONE_PASS",
   "eval001_final_verified_at": "2026-08-17T21:20:00+08:00",
   "eval001_evidence": "docs/knowledge-engine-v2/evidence/EVAL-001.md",
@@ -1229,4 +1230,15 @@
   ,"mig007_gate_summary": "PostgreSQL 18.4 READ ONLY rebuild gate PASS; plan BLOCKED_NO_VERIFIED_SOURCE_ENTITIES; 156 skipped, 0 eligible, 0 provider calls, 0 production writes; V1 projection preserved"
   ,"mig007_postgresql_policy": "PASS; read-only transaction rollback; SQLite forbidden; production_database_write=false; external_provider_request=false"
   ,"mig007_production_ddl": "NONE"
+  ,"mig008_status": "BLOCKED"
+  ,"mig008_final_verified_at": "2026-08-18T01:05:00+08:00"
+  ,"mig008_evidence": "docs/knowledge-engine-v2/evidence/MIG-008.md"
+  ,"mig008_contract": "docs/knowledge-engine-v2/architecture/MIG-008-CONSISTENCY-AUDIT-CONTRACT.yaml"
+  ,"mig008_report": "docs/knowledge-engine-v2/eval/mig-008-consistency-audit-report-v1.json"
+  ,"mig008_manifest": "docs/knowledge-engine-v2/eval/mig-008-consistency-audit-manifest-v1.json"
+  ,"mig008_runner": "scripts/knowledge_engine_v2_mig008_consistency_audit_check.py"
+  ,"mig008_focused_tests": "MIG-008 focused 5 passed; MIG-001..008 regression 31 passed"
+  ,"mig008_gate_summary": "PostgreSQL 18.4 READ ONLY consistency audit; 156 docs/474 chunks; count and version relations pass; 2 document hashes and 2 chunk hash/embedding rows unverifiable; 472 chunk metadata identity leaks; audit BLOCKED"
+  ,"mig008_postgresql_policy": "PASS; read-only transaction rollback; SQLite forbidden; production_database_write=false"
+  ,"mig008_production_ddl": "NONE"
 }
