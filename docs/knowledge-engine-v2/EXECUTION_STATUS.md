@@ -83,7 +83,7 @@ MIG-006：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-006.md；CAT-
 
 MIG-007：BLOCKED；证据 docs/knowledge-engine-v2/evidence/MIG-007.md；PG 只读重建门禁与 Parse→Normalize→Classify→Chunk→Embed→Index→Validate→Commit 阶段顺序已实现；现场 156 行全部跳过、verified=0、Provider 调用=0、生产写入=0；专项测试 5 passed；阻断码 BLOCKED_NO_VERIFIED_SOURCE_ENTITIES；未勾选清单，继续执行不依赖重建的 MIG-008。
 
-MIG-008：BLOCKED；证据 docs/knowledge-engine-v2/evidence/MIG-008.md；PG 只读核对 156 文档/474 Chunk，数量与版本关系通过；2 条文档 hash、2 条 Chunk hash/Embedding 不可验证，472 个 Chunk metadata 携带 tenant/identity 键；专项测试 5 passed、MIG-001..008 regression 31 passed、V1 10/10；阻断码 CHUNK_HASH_UNVERIFIABLE、CHUNK_METADATA_IDENTITY_LEAK、DOCUMENT_HASH_UNVERIFIABLE；未改写生产数据，未勾选清单。
+MIG-008：BLOCKED；证据 docs/knowledge-engine-v2/evidence/MIG-008.md；PG 只读核对 156 文档/474 Chunk，数量与版本关系通过；2 条文档 hash、2 条 Chunk hash/Embedding 不可验证，472 个 Chunk metadata 携带 tenant/identity 键；已修复新建/重建投影的递归 server-owned key sanitizer，专项安全测试 2 passed、Chunk ingestion/action 回归 13 passed；MIG-001..008 regression 31 passed、V1 10/10；阻断码仍需 PG 数据修复/隔离后重跑，未改写生产数据，未勾选清单。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

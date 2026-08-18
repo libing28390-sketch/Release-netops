@@ -395,7 +395,7 @@
     "DOC-009",
     "DOC-010"
   ],
-  "last_verified_commit": "d536498d（MIG-008 consistency audit gate BLOCKED）",
+  "last_verified_commit": "34c3e66d（MIG-008 chunk metadata sanitizer；旧数据审计仍 BLOCKED）",
   "baseline_branch": "main",
   "baseline_note": "Existing uncommitted changes are preserved; no reset, checkout, or overwrite cleanup is performed.",
   "m1_gate_status": "PASS",
@@ -1241,4 +1241,6 @@
   ,"mig008_gate_summary": "PostgreSQL 18.4 READ ONLY consistency audit; 156 docs/474 chunks; count and version relations pass; 2 document hashes and 2 chunk hash/embedding rows unverifiable; 472 chunk metadata identity leaks; audit BLOCKED"
   ,"mig008_postgresql_policy": "PASS; read-only transaction rollback; SQLite forbidden; production_database_write=false"
   ,"mig008_production_ddl": "NONE"
+  ,"mig008_remediation_commit": "34c3e66d"
+  ,"mig008_remediation": "PASS; new/rebuild Chunk metadata recursively removes server-owned identity/ACL/credential keys; existing 472 rows untouched and require separate PostgreSQL repair/rollback gate"
 }
