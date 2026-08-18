@@ -199,10 +199,12 @@ backup_release_state() {
     local snapshot_partial="${snapshot_path}.partial"
 
     [[ -f .env ]] || die "Cannot create release backup: .env is missing"
-    # shellcheck disable=SC1091
-    set -a
-    source .env
-    set +a
+    # Read only the database identifiers needed by pg_dump.  Do not source the
+    # whole dotenv file: cron expressions and other values may contain spaces
+    # or shell metacharacters and must remain data, not executable shell code.
+    local postgres_user postgres_db
+    postgres_user="$(env_value POSTGRES_USER)"
+    postgres_db="$(env_value POSTGRES_DB)"
     mkdir -p "$backup_dir"
     chmod 700 "$backup_dir"
 
@@ -210,8 +212,8 @@ backup_release_state() {
     # never interpolated into the command line or written to a log.
     if docker compose exec -T db pg_dump \
         --format=custom --no-owner \
-        --username="${POSTGRES_USER:-postgres}" \
-        --dbname="${POSTGRES_DB:-netops}" > "$dump_partial"; then
+        --username="${postgres_user:-postgres}" \
+        --dbname="${postgres_db:-netops}" > "$dump_partial"; then
         [[ -s "$dump_partial" ]] || die "Release backup failed: empty PostgreSQL dump"
         mv -f "$dump_partial" "$dump_path"
     else
