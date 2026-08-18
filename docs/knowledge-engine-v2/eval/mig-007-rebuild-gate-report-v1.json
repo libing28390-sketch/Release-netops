@@ -1,0 +1,75 @@
+{
+  "status": "PASS",
+  "task_id": "MIG-007",
+  "authority": "PostgreSQL",
+  "sqlite": "forbidden",
+  "duration_seconds": 0.283,
+  "probe": {
+    "status": "PASS",
+    "database": "PostgreSQL",
+    "transaction_read_only": true,
+    "legacy_document_rows": 156,
+    "legacy_chunk_rows": 474,
+    "required_document_columns_present": {
+      "original_content": true,
+      "normalized_content": true,
+      "metadata_json": true,
+      "content_hash": true
+    },
+    "required_chunk_columns_present": {
+      "content": true,
+      "content_hash": true,
+      "embedding": true,
+      "embedding_model": true,
+      "embedding_dimensions": true,
+      "index_version": true
+    },
+    "provider_calls": 0,
+    "production_database_write": false,
+    "rollback": "read_only_transaction_rollback",
+    "sqlite": "forbidden"
+  },
+  "plan_status": "BLOCKED",
+  "blocked_reason": "BLOCKED_NO_VERIFIED_SOURCE_ENTITIES",
+  "counts": {
+    "total_manifest_rows": 156,
+    "eligible_rows": 0,
+    "skipped_rows": 156,
+    "provider_calls": 0
+  },
+  "phase_order": [
+    "parsed",
+    "normalized",
+    "classified",
+    "chunked",
+    "embedded",
+    "indexed",
+    "validated",
+    "committed",
+    "completed"
+  ],
+  "manifest_entry_digest": "38ec2aab6c727fa426f0273111b0ae3965b5ddb5dbed65859041735b3a9cb227",
+  "production_database_write": false,
+  "external_provider_request": false,
+  "report_redacted": true,
+  "rollback": "stop_rebuild_worker_and_route_reads_to_v1_projection",
+  "contract_layers": [
+    "acceptance",
+    "authority",
+    "compatibility",
+    "eligibility",
+    "input",
+    "milestone",
+    "owner",
+    "phase_order",
+    "phase_rules",
+    "priority",
+    "production_database_write",
+    "purpose",
+    "security",
+    "sqlite",
+    "status",
+    "task_id",
+    "title"
+  ]
+}

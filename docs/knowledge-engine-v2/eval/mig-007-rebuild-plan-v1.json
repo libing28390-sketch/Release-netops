@@ -1,0 +1,24 @@
+{
+  "status": "BLOCKED",
+  "blocked_reason": "BLOCKED_NO_VERIFIED_SOURCE_ENTITIES",
+  "total_manifest_rows": 156,
+  "eligible_rows": 0,
+  "skipped_rows": 156,
+  "phase_order": [
+    "parsed",
+    "normalized",
+    "classified",
+    "chunked",
+    "embedded",
+    "indexed",
+    "validated",
+    "committed",
+    "completed"
+  ],
+  "entries": [],
+  "provider_calls": 0,
+  "production_database_write": false,
+  "rollback": "stop_rebuild_worker_and_route_reads_to_v1_projection",
+  "manifest_entry_digest": "38ec2aab6c727fa426f0273111b0ae3965b5ddb5dbed65859041735b3a9cb227",
+  "contract_sha256": "5a69a47fceb01a8948597d981f29201811d524196f681e4d47d40d17414a750e"
+}
