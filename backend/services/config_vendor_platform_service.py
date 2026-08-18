@@ -16,6 +16,7 @@ VENDOR_PLATFORM_CATALOG: dict[str, tuple[str, ...]] = {
     "Juniper": ("juniper_junos",),
     "Ruijie": ("ruijie_rgos", "ruijie_os"),
     "ZTE": ("zte_zxros",),
+    "Raisecom": ("raisecom_ros",),
     "Maipu": ("maipu", "maipu_network", "maipu_mypower"),
     "DPtech": ("dptech_ios", "dptech_conplat", "dptech_conplat_fw"),
     "Fortinet": ("fortinet",),
@@ -31,6 +32,9 @@ VENDOR_PLATFORM_CATALOG: dict[str, tuple[str, ...]] = {
 # new platform.  Patterns are intentionally conservative: they are hints for
 # matching and pre-checks, never permission to skip device-side validation.
 PLATFORM_PROFILES: dict[str, tuple[dict[str, object], ...]] = {
+    "raisecom_ros": (
+        {"series": "ISCOM S5600-EI", "model_patterns": (r"^(?:ISCOM\s*)?S5600(?:-28C-EI)?",), "roles": ("switch",)},
+    ),
     "ruijie_rgos": (
         {"series": "RG-S switching", "model_patterns": (r"^RG-(?:S|CS|NBS)",), "roles": ("switch",)},
         {"series": "RG-R / RSR routing", "model_patterns": (r"^(?:RG-R|RSR)",), "roles": ("router",)},
@@ -71,6 +75,9 @@ _VENDOR_ALIASES = {
     "锐捷": "Ruijie",
     "zte": "ZTE",
     "中兴": "ZTE",
+    "raisecom": "Raisecom",
+    "瑞斯康达": "Raisecom",
+    "瑞斯康达通信": "Raisecom",
     "maipu": "Maipu",
     "迈普": "Maipu",
     "dptech": "DPtech",
@@ -102,6 +109,10 @@ _PLATFORM_ALIASES = {
     "rgos": "ruijie_rgos",
     "zte zxros": "zte_zxros",
     "中兴 zxros": "zte_zxros",
+    "raisecom ros": "raisecom_ros",
+    "瑞斯康达 ros": "raisecom_ros",
+    "raisecom_ros5": "raisecom_ros",
+    "raisecom ros 5.2": "raisecom_ros",
     "mypower": "maipu",
     "dptech": "dptech_conplat",
     "dptech conplat": "dptech_conplat",

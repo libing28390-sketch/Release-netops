@@ -824,6 +824,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   ruijie_rgos: 'Ruijie RGOS',
   ruijie_os: 'Ruijie RGOS (legacy)',
   zte_zxros: 'ZTE ZXROS',
+  raisecom_ros: 'Raisecom ROS',
   maipu: 'Maipu Network OS',
 };
 
@@ -839,6 +840,7 @@ export const getVendorFromPlatform = (platform: string) => {
   if (p.includes('arista')) return 'Arista';
   if (p.includes('ruijie') || p.includes('rgos')) return 'Ruijie';
   if (p.includes('zte') || p.includes('zxros')) return 'ZTE';
+  if (p.includes('raisecom') || p.includes('瑞斯康达')) return 'Raisecom';
   if (p.includes('maipu')) return 'Maipu';
   return 'Other';
 };

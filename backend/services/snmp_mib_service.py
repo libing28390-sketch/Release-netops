@@ -96,6 +96,7 @@ STANDARD_ROOT_OIDS: dict[str, str] = {
     "ruijieModules": "1.3.6.1.4.1.4881.1.1",
     # Other Vendors
     "zte": "1.3.6.1.4.1.3902",
+    "raisecom": "1.3.6.1.4.1.8886",
     "fortinet": "1.3.6.1.4.1.12356",
     "fnCoreMib": "1.3.6.1.4.1.12356.100",
     "fnFortiGateMib": "1.3.6.1.4.1.12356.101",
@@ -131,6 +132,8 @@ def detect_vendor_from_name(name: str, content: str = "") -> str:
         return "Ruijie"
     if "ZTE" in text or "ZXROS" in text:
         return "ZTE"
+    if "RAISECOM" in text or "ROS_5." in text or "ISCOM" in text:
+        return "Raisecom"
     if "FORTINET" in text or "FORTIOS" in text:
         return "Fortinet"
     if "DPTECH" in text:

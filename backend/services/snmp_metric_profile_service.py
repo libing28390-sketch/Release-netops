@@ -72,6 +72,8 @@ _PLATFORM_VENDOR_NAMES = {
     "fortios": "Fortinet",
     "ruijie": "Ruijie",
     "zte": "ZTE",
+    "raisecom": "Raisecom",
+    "瑞斯康达": "Raisecom",
     "maipu": "Maipu",
 }
 
@@ -103,7 +105,12 @@ def vendor_name_from_platform(platform: Any) -> str:
 
 def normalize_vendor_name(vendor: Any, platform: Any = "") -> str:
     display = _clean_text(vendor, 128) or vendor_name_from_platform(platform)
-    return display or "Unknown"
+    aliases = {
+        "raisecom": "Raisecom",
+        "瑞斯康达": "Raisecom",
+        "瑞斯康达通信": "Raisecom",
+    }
+    return aliases.get(display.casefold(), display) or "Unknown"
 
 
 def normalize_vendor_key(vendor: Any, platform: Any = "") -> str:

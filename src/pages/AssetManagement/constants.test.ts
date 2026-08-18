@@ -16,6 +16,7 @@ describe('asset vendor catalog', () => {
   it('contains network and security vendor groups used by asset forms', () => {
     expect(NETWORK_VENDOR_GROUPS.map((group) => group.key)).toEqual(['network', 'security']);
     expect(ALL_VENDOR_NAMES).toContain('FiberHome');
+    expect(ALL_VENDOR_NAMES).toContain('Raisecom');
     expect(ALL_VENDOR_NAMES).toContain('Hillstone');
     expect(ALL_VENDOR_NAMES).toContain('Sangfor');
     expect(ALL_VENDOR_NAMES).toContain('Check Point');
@@ -25,11 +26,14 @@ describe('asset vendor catalog', () => {
 
   it('provides a platform identity for the newly catalogued vendors', () => {
     expect(VENDOR_PLATFORMS.DCN[0].value).toBe('dcn_network');
+    expect(VENDOR_PLATFORMS.Raisecom[0].value).toBe('raisecom_ros');
     expect(VENDOR_PLATFORMS.FiberHome[0].value).toBe('fiberhome_fengine');
     expect(VENDOR_PLATFORMS.Hillstone[0].value).toBe('hillstone_stoneos');
     expect(VENDOR_PLATFORMS['Qi An Xin'][0].value).toBe('qianxin_firewall');
     expect(NETWORK_IMPORT_PLATFORM_VALUES).toContain('hillstone_stoneos');
     expect(IMPORT_VALUE_MAP.vendor['山石']).toBe('Hillstone');
+    expect(IMPORT_VALUE_MAP.vendor['瑞斯康达']).toBe('Raisecom');
+    expect(IMPORT_VALUE_MAP.platform['瑞斯康达 ROS']).toBe('raisecom_ros');
     expect(IMPORT_VALUE_MAP.platform['Hillstone StoneOS']).toBe('hillstone_stoneos');
   });
 });

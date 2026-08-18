@@ -53,6 +53,8 @@ TEXTFSM_PLATFORM_MAP = {
     'zxros': 'zte_zxros',
     '中兴 zxros': 'zte_zxros',
     'zte_zxros': 'zte_zxros',
+    'raisecom': 'raisecom_ros',
+    'raisecom_ros': 'raisecom_ros',
 }
 
 def resolve_textfsm_platform(platform: str | None) -> str | None:
@@ -1147,6 +1149,7 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
         'ruijie_os',
         'ruijie_rgos',
         'zte_zxros',
+        'raisecom_ros',
         'maipu',
         'dcn_dcnos',
         'dptech_ios',

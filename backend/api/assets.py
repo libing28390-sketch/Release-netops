@@ -128,6 +128,8 @@ def _platform_from_vendor(vendor: str, asset_type: str = 'network_device') -> st
         return 'ruijie_rgos'
     if 'zte' in v or 'zhongxing' in v or '中兴' in v:
         return 'zte_zxros'
+    if 'raisecom' in v or '瑞斯康达' in v:
+        return 'raisecom_ros'
     if 'maipu' in v or '迈普' in v:
         return 'maipu'
     if 'dptech' in v or '迪普' in v:
@@ -151,6 +153,8 @@ _VENDOR_PLATFORM_RULES: tuple[tuple[str, set[str], str], ...] = (
     ('juniper', {'juniper', 'juniper_junos', 'junos'}, 'juniper_junos'),
     ('ruijie', {'ruijie', 'ruijie_os', 'ruijie_rgos', 'rgos'}, 'ruijie_rgos'),
     ('zte', {'zte', 'zte_zxros', 'zxros'}, 'zte_zxros'),
+    ('raisecom', {'raisecom', 'raisecom_ros', 'raisecom_ros5', 'raisecom_ros_5'}, 'raisecom_ros'),
+    ('瑞斯康达', {'raisecom', 'raisecom_ros', 'raisecom_ros5', 'raisecom_ros_5'}, 'raisecom_ros'),
     ('maipu', {'maipu', 'maipu_network', 'maipu_mypower', 'mypower'}, 'maipu'),
     ('dptech', {'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw', 'conplat'}, 'dptech_conplat'),
 )

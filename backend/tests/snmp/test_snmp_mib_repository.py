@@ -241,6 +241,10 @@ def test_official_presets_service_and_api() -> None:
     assert fortinet_fg["vendor"] == "Fortinet"
     assert "cpu" in fortinet_fg["metric_definitions"]
 
+    raisecom_s5600 = next(p for p in presets if p["model"] == "ISCOM S5600-28C-EI")
+    assert raisecom_s5600["vendor"] == "Raisecom"
+    assert raisecom_s5600["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.2.1.25.3.3.1.2"
+
     # Test API endpoint
     api_res = get_official_model_presets(user={"role": "Viewer"})
     assert api_res["success"] is True
@@ -455,3 +459,12 @@ def test_auto_match_model_mibs() -> None:
     ce_inferred = auto_match_model_mibs(vendor="Huawei", model="CE6850-48T6Q-HI", user={"role": "Viewer"})
     assert ce_inferred["matched"] is True
     assert ce_inferred["data"]["preset"]["model"] == "CE6800"
+
+    raisecom_exact = auto_match_model_mibs(
+        vendor="瑞斯康达",
+        model="ISCOM S5600-28C-EI",
+        user={"role": "Viewer"},
+    )
+    assert raisecom_exact["matched"] is True
+    assert raisecom_exact["data"]["match_type"] == "exact"
+    assert raisecom_exact["data"]["preset"]["vendor"] == "Raisecom"

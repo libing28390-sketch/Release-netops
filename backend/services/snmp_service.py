@@ -1,6 +1,7 @@
 """
 SNMP 采集服务 — 多厂商 CPU / 内存 / 温度 / 风扇 / 电源 / 接口监控
-支持: Cisco IOS/NX-OS/IOS-XR, Huawei VRP, H3C Comware, Arista EOS, Juniper Junos
+支持: Cisco IOS/NX-OS/IOS-XR, Huawei VRP, H3C Comware, Arista EOS, Juniper Junos,
+Raisecom ROS（接口使用 IF-MIB，CPU/内存优先使用 HOST-RESOURCES-MIB）
 
 标准 MIB-2 OID 用于接口监控 (RFC 1213 / IF-MIB):
   ifDescr       .1.3.6.1.2.1.2.2.1.2
@@ -299,6 +300,17 @@ VENDOR_OIDS = {
         'psu': '1.3.6.1.2.1.99.1.1.1.4',                   # entPhySensorValue (filter type=3 volts)
         'psu_type': '1.3.6.1.2.1.99.1.1.1.1',
     },
+    # ── Raisecom ROS ──
+    # Raisecom model-specific environmental OIDs differ by series and are
+    # intentionally left to a verified model SNMP profile.  The S5600-EI
+    # baseline uses standard IF-MIB plus HOST-RESOURCES-MIB where exposed.
+    'raisecom_ros': {
+        'cpu': HR_PROCESSOR_LOAD,
+        'mem_descr': HR_STORAGE_DESCR,
+        'mem_used': HR_STORAGE_USED,
+        'mem_size': HR_STORAGE_SIZE,
+        'mem_units': HR_STORAGE_UNITS,
+    },
     # ── Juniper Junos ──
     'juniper_junos': {
         'cpu': '1.3.6.1.4.1.2636.3.1.13.1.8',             # jnxOperatingCPU
@@ -338,6 +350,8 @@ def _resolve_platform(platform: str) -> str:
         return 'h3c_comware'
     if 'arista' in p:
         return 'arista_eos'
+    if 'raisecom' in p or '瑞斯康达' in p:
+        return 'raisecom_ros'
     if 'juniper' in p or 'junos' in p:
         return 'juniper_junos'
     if 'forti' in p:
@@ -539,7 +553,7 @@ async def _collect_default_cpu_metric(
     oids: dict[str, str],
     port: int,
 ) -> int | None:
-    if vendor == 'arista_eos':
+    if vendor in ('arista_eos', 'raisecom_ros'):
         rows = await _snmp_walk(ip, community, oids['cpu'], port)
         values = [
             int(parsed)
@@ -589,7 +603,7 @@ async def _collect_default_memory_metric(
                 return _as_percent(parsed)
         return None
 
-    if vendor == 'arista_eos':
+    if vendor in ('arista_eos', 'raisecom_ros'):
         descr_rows = await _snmp_walk(ip, community, oids['mem_descr'], port)
         used_rows = await _snmp_walk(ip, community, oids['mem_used'], port)
         size_rows = await _snmp_walk(ip, community, oids['mem_size'], port)

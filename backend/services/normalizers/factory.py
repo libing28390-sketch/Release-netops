@@ -6,6 +6,7 @@ from services.normalizers.h3c import H3CNormalizer
 from services.normalizers.huawei import HuaweiNormalizer
 from services.normalizers.juniper import JuniperNormalizer
 from services.normalizers.ruijie import RuijieNormalizer
+from services.normalizers.raisecom import RaisecomNormalizer
 from services.normalizers.zte import ZTENormalizer
 
 class NormalizerFactory:
@@ -18,6 +19,7 @@ class NormalizerFactory:
         "juniper_junos": JuniperNormalizer,
         "arista_eos": AristaNormalizer,
         "ruijie_rgos": RuijieNormalizer,
+        "raisecom_ros": RaisecomNormalizer,
         "zte_zxros": ZTENormalizer,
     }
 
@@ -41,6 +43,8 @@ class NormalizerFactory:
             platform_lower = "ruijie_rgos"
         elif "zte" in platform_lower or "zxros" in platform_lower:
             platform_lower = "zte_zxros"
+        elif "raisecom" in platform_lower or "瑞斯康达" in platform_lower:
+            platform_lower = "raisecom_ros"
             
         normalizer_cls = cls._normalizers.get(platform_lower)
         if not normalizer_cls:

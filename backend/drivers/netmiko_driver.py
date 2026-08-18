@@ -32,7 +32,7 @@ _CLI_ERROR_PATTERNS = re.compile(
 )
 
 # 慢速平台（Huawei/H3C）不适合 fast_cli，需要保守的时序参数
-_SLOW_PLATFORMS = {'huawei_vrp', 'h3c_comware', 'ruijie_rgos', 'zte_zxros', 'maipu', 'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'}
+_SLOW_PLATFORMS = {'huawei_vrp', 'h3c_comware', 'ruijie_rgos', 'zte_zxros', 'raisecom_ros', 'maipu', 'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'}
 
 # ── IP 地址前缀长度 → 点分十进制子网掩码 自动归一化 ─────────────────────────
 # 华为 VRP / H3C Comware 支持 `ip address X.X.X.X 24` 写法；
@@ -212,6 +212,8 @@ class NetmikoDriver(BaseDriver):
             'rgos': 'ruijie_rgos',
             'zte': 'zte_zxros',
             'zxros': 'zte_zxros',
+            'raisecom': 'raisecom_ros',
+            '瑞斯康达': 'raisecom_ros',
             'maipu_network': 'maipu',
             'dptech': 'dptech_ios',
             'dptech_ios': 'dptech_ios',
@@ -229,6 +231,7 @@ class NetmikoDriver(BaseDriver):
             'arista_eos':   'arista_eos',
             'ruijie_rgos':  'ruijie_os',
             'zte_zxros': 'zte_zxros',
+            'raisecom_ros': 'raisecom_ros',
             'maipu': 'maipu',
             'dptech_ios': 'dptech_ios',
             'linux':        'linux',

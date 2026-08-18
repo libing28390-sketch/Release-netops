@@ -59,6 +59,8 @@ VENDOR_DIR_MAP: dict[str, str] = {
     "f5": "F5",
     "checkpoint": "Check Point",
     "zte": "ZTE",
+    "raisecom": "Raisecom",
+    "raisecom-mibs": "Raisecom",
     "dlink": "D-Link",
     "zyxel": "Zyxel",
     "netgear": "Netgear",

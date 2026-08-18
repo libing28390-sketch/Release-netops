@@ -65,6 +65,11 @@ COMMAND_PROFILES = {
         'brief': 'show ip interface brief', 'neighbors': 'show lldp neighbor',
         'normalizer': 'zte_zxros',
     },
+    'raisecom_ros': {
+        'version': 'show version', 'interfaces': 'show interface',
+        'brief': 'show ip interface brief', 'neighbors': 'show lldp remote',
+        'normalizer': 'raisecom_ros',
+    },
 }
 
 PLATFORM_ALIASES = {
@@ -75,6 +80,7 @@ PLATFORM_ALIASES = {
     'arista': 'arista_eos', 'eos': 'arista_eos',
     'zte': 'zte_zxros', 'zxros': 'zte_zxros', 'zte_zxros': 'zte_zxros',
     'ruijie': 'ruijie_rgos', 'ruijie_os': 'ruijie_rgos', 'rgos': 'ruijie_rgos',
+    'raisecom': 'raisecom_ros', '瑞斯康达': 'raisecom_ros',
 }
 
 

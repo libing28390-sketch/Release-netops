@@ -1,7 +1,7 @@
 """SNMP Preset Profiles and Built-in MIB Seeder.
 
 Provides out-of-the-box model metric templates for major network vendors (Cisco,
-Huawei, H3C, Arista, Ruijie, Juniper, Fortinet) and seeds standard RFC / vendor MIB definitions.
+Huawei, H3C, Arista, Ruijie, Juniper, Fortinet, Raisecom) and seeds standard RFC / vendor MIB definitions.
 """
 
 from __future__ import annotations
@@ -740,6 +740,31 @@ OFFICIAL_MODEL_PRESETS: list[dict[str, Any]] = [
             "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
             "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
             "counter_mode": "64",
+        },
+    },
+    # ── Raisecom ISCOM S5600-EI ──
+    # The supplied ROS output identifies the software/model, but does not
+    # prove a proprietary sensor OID.  Keep the preset on standard MIBs;
+    # vendor-specific temperature/fan/PSU metrics require a verified model
+    # profile after an SNMP walk.
+    {
+        "vendor": "Raisecom",
+        "model": "ISCOM S5600-28C-EI",
+        "category": "Campus Switch",
+        "description": "Raisecom ISCOM S5600-28C-EI (ROS 5.2.1 baseline; standard IF-MIB/HOST-RESOURCES-MIB)",
+        "metric_definitions": {
+            "cpu": {
+                "mode": "direct_percent",
+                "oid": "1.3.6.1.2.1.25.3.3.1.2",
+                "aggregation": "average",
+                "unit": "%",
+                "scale": 1,
+                "offset": 0,
+            },
+        },
+        "interface_config": {
+            "enabled": True,
+            "counter_mode": "auto",
         },
     },
 ]
@@ -1491,6 +1516,11 @@ def match_profile_for_model(vendor: str, model: str) -> dict[str, Any] | None:
     v_clean = vendor.strip().lower()
     m_clean = model.strip().lower()
 
+    # Asset imports may retain the Chinese display name.  Canonicalize only
+    # this known alias so the exact/series matching below shares one preset.
+    if v_clean in {"瑞斯康达", "瑞斯康达通信"}:
+        v_clean = "raisecom"
+
     if not v_clean and not m_clean:
         return None
 
@@ -1596,6 +1626,19 @@ def match_profile_for_model(vendor: str, model: str) -> dict[str, Any] | None:
         target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "RG-S5750"), None)
         if target:
             return {"match_type": "vendor_default", "confidence": 0.90, "matched_series": "Ruijie RGOS Series", "preset": target}
+
+    # Raisecom ROS rules.  Keep the exact S5600-28C-EI preset authoritative;
+    # other S5600-EI model suffixes receive the same standard-MIB baseline but
+    # are marked as inferred rather than claiming a verified model OID.
+    if "raisecom" in v_clean or "iscom s5600" in m_clean:
+        target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "ISCOM S5600-28C-EI"), None)
+        if target and "s5600" in m_clean:
+            return {
+                "match_type": "series_inferred",
+                "confidence": 0.90,
+                "matched_series": "Raisecom ISCOM S5600-EI (ROS)",
+                "preset": target,
+            }
 
     # Juniper rules
     if "juniper" in v_clean or any(kw in m_clean for kw in ["ex43", "qfx", "mx240", "ex2"]):

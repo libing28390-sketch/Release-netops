@@ -30,6 +30,7 @@ IDENTIFICATION_COMMANDS: dict[str, tuple[str, ...]] = {
     "ruijie_os": ("show version",),
     "dptech_ios": ("show version",),
     "maipu": ("show version",),
+    "raisecom_ros": ("show version",),
 }
 
 _IDENTIFICATION_DRIVER_ALIASES = {
@@ -43,6 +44,7 @@ _IDENTIFICATION_DRIVER_ALIASES = {
     "ruijie_eg_rgos11": "ruijie_os",
     "dptech_fw_s211": "dptech_ios",
     "maipu_s3330_v9": "maipu",
+    "raisecom": "raisecom_ros",
 }
 
 

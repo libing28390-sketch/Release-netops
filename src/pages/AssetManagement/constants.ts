@@ -102,7 +102,7 @@ export const TOPOLOGY_ZONE_OPTIONS = [
  * profile selected below it.
  */
 export const NETWORK_VENDOR_NAMES = [
-  'Cisco', 'Huawei', 'H3C', 'Arista', 'Juniper', 'Ruijie', 'ZTE', 'Maipu',
+  'Cisco', 'Huawei', 'H3C', 'Arista', 'Juniper', 'Ruijie', 'ZTE', 'Raisecom', 'Maipu',
   'DPtech', 'DCN', 'FiberHome', 'Nokia', 'Aruba', 'Extreme Networks',
   'Ruckus', 'MikroTik', 'Ubiquiti', 'D-Link', 'TP-Link', 'Dell', 'Brocade',
   'Ciena', 'Alcatel-Lucent Enterprise', 'Allied Telesis', 'Edgecore',
@@ -133,6 +133,8 @@ export const VENDOR_IMPORT_ALIASES: Record<string, string> = {
   '瞻博': 'Juniper',
   '锐捷': 'Ruijie',
   '中兴': 'ZTE',
+  '瑞斯康达': 'Raisecom',
+  '瑞斯康达通信': 'Raisecom',
   '迈普': 'Maipu',
   '迪普': 'DPtech',
   '神州数码': 'DCN',
@@ -175,6 +177,7 @@ export const VENDOR_PLATFORMS: Record<string, { value: string; label: string }[]
   Topsec:     [{ value: 'topsec_firewall', label: 'Topsec Firewall' }],
   'Qi An Xin': [{ value: 'qianxin_firewall', label: 'Qi An Xin Firewall' }],
   ZTE:        [{ value: 'zte_zxros', label: 'ZTE ZXROS' }],
+  Raisecom:   [{ value: 'raisecom_ros', label: 'Raisecom ROS' }],
   Maipu:      [{ value: 'maipu', label: 'Maipu Network OS' }],
   DPtech:     [
     { value: 'dptech_conplat', label: 'DPTech Conplat (Switch)' },
@@ -357,7 +360,7 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     '华为 VRPv5': 'huawei_vrp', '华为 VRPv8': 'huawei_vrpv8',
     '华三 Comware V5': 'h3c_comware', '华三 Comware V7': 'h3c_comware', '华三 Comware V9': 'h3c_comware',
     '阿里斯塔 EOS': 'arista_eos', '瞻博 JunOS': 'juniper_junos', '锐捷 RGOS': 'ruijie_rgos',
-    '飞塔 FortiOS': 'fortinet', '帕洛阿尔托 PAN-OS': 'paloalto_panos', '中兴 ZXROS': 'zte_zxros', '迈普网络系统': 'maipu',
+    '飞塔 FortiOS': 'fortinet', '帕洛阿尔托 PAN-OS': 'paloalto_panos', '中兴 ZXROS': 'zte_zxros', '瑞斯康达 ROS': 'raisecom_ros', '迈普网络系统': 'maipu',
     '迪普 Conplat': 'dptech_conplat', '迪普 Conplat FW': 'dptech_conplat_fw',
     '迪普交换机': 'dptech_conplat', '迪普防火墙': 'dptech_conplat_fw',
     'DPTech Conplat (Switch)': 'dptech_conplat', 'DPTech Conplat FW (Firewall)': 'dptech_conplat_fw',
@@ -369,7 +372,7 @@ export const IMPORT_VALUE_MAP: Record<string, Record<string, string>> = {
     'Huawei VRPv5': 'huawei_vrp', 'Huawei VRPv8': 'huawei_vrpv8',
     'H3C Comware': 'h3c_comware', 'H3C Comware V5': 'h3c_comware', 'H3C Comware V7': 'h3c_comware', 'H3C Comware V9': 'h3c_comware',
     'Juniper JunOS': 'juniper_junos', 'Arista EOS': 'arista_eos', 'Ruijie RGOS': 'ruijie_rgos',
-    FortiOS: 'fortinet', 'ZTE ZXROS': 'zte_zxros', 'Maipu Network OS': 'maipu',
+    FortiOS: 'fortinet', 'ZTE ZXROS': 'zte_zxros', 'Raisecom ROS': 'raisecom_ros', 'Maipu Network OS': 'maipu',
     'Windows Server': 'windows', 'VMware ESXi': 'esxi',
   },
   device_category: {

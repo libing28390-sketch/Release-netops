@@ -37,6 +37,8 @@ _VENDOR_NAMES = {
     "fortinet": "Fortinet",
     "mikrotik": "MikroTik",
     "zte": "ZTE",
+    "raisecom": "Raisecom",
+    "raisecom-mibs": "Raisecom",
     "zyxel": "Zyxel",
 }
 

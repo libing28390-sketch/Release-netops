@@ -45,7 +45,7 @@ PAGING_PROMPT_RE = re.compile(
 
 
 def ensure_netmiko_custom_platforms() -> None:
-    """Ensure custom platforms like dptech_ios are registered in Netmiko 4.x's ssh_dispatcher."""
+    """Register custom Nexora platform keys in Netmiko's SSH dispatcher."""
     try:
         from netmiko import ssh_dispatcher as sd
         g = getattr(sd, '__globals__', None)
@@ -59,16 +59,18 @@ def ensure_netmiko_custom_platforms() -> None:
                 mapper['dptech_ios'] = cisco_cls
                 mapper['dptech_conplat'] = cisco_cls
                 mapper['dptech_conplat_fw'] = cisco_cls
+                mapper['raisecom_ros'] = cisco_cls
             if mapper_base is not None and cisco_cls:
                 mapper_base['dptech_ios'] = cisco_cls
                 mapper_base['dptech_conplat'] = cisco_cls
                 mapper_base['dptech_conplat_fw'] = cisco_cls
+                mapper_base['raisecom_ros'] = cisco_cls
             if isinstance(platforms, list):
-                for p_key in ('dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'):
+                for p_key in ('dptech_ios', 'dptech_conplat', 'dptech_conplat_fw', 'raisecom_ros'):
                     if p_key not in platforms:
                         platforms.append(p_key)
             if 'platforms_str' in g:
-                for p_key in ('dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'):
+                for p_key in ('dptech_ios', 'dptech_conplat', 'dptech_conplat_fw', 'raisecom_ros'):
                     if p_key not in g['platforms_str']:
                         g['platforms_str'] += f"\n{p_key}"
     except Exception:

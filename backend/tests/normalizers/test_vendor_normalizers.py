@@ -9,6 +9,7 @@ from services.normalizers.factory import NormalizerFactory
 from services.normalizers.h3c import H3CNormalizer
 from services.normalizers.juniper import JuniperNormalizer
 from services.normalizers.ruijie import RuijieNormalizer
+from services.normalizers.raisecom import RaisecomNormalizer
 
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "cli"
@@ -32,6 +33,7 @@ class NormalizerFactoryTests(unittest.TestCase):
             "juniper_junos": "JuniperNormalizer",
             "arista_eos": "AristaNormalizer",
             "ruijie_os": "RuijieNormalizer",
+            "raisecom_ros": "RaisecomNormalizer",
         }
         for platform, class_name in expected.items():
             with self.subTest(platform=platform):
@@ -51,6 +53,7 @@ class NormalizerFactoryTests(unittest.TestCase):
             "juniper_junos": "juniper_junos",
             "arista_eos": "arista_eos",
             "ruijie_rgos": "ruijie_rgos",
+            "raisecom_ros": "raisecom_ros",
         }
         for platform, normalizer in expected.items():
             with self.subTest(platform=platform):
@@ -64,13 +67,14 @@ class NormalizerFactoryTests(unittest.TestCase):
             "juniper": "juniper_junos",
             "eos": "arista_eos",
             "ruijie_os": "ruijie_rgos",
+            "raisecom": "raisecom_ros",
         }
         for alias, platform in expected.items():
             with self.subTest(alias=alias):
                 self.assertEqual(aliases[alias], platform)
 
     def test_empty_output_is_safe_for_new_normalizers(self):
-        normalizers = (H3CNormalizer(), JuniperNormalizer(), AristaNormalizer(), RuijieNormalizer())
+        normalizers = (H3CNormalizer(), JuniperNormalizer(), AristaNormalizer(), RuijieNormalizer(), RaisecomNormalizer())
         for normalizer in normalizers:
             with self.subTest(normalizer=type(normalizer).__name__):
                 device = normalizer.parse_device_info("device-id", "")
@@ -232,6 +236,30 @@ System Name: access-02
         self.assertEqual(len(neighbors), 1)
         self.assertEqual(neighbors[0].local_interface, "gi0/1")
         self.assertEqual(neighbors[0].remote_interface, "gi0/24")
+
+
+class RaisecomNormalizerTests(unittest.TestCase):
+    def test_s5600_ros_version_output(self):
+        raw = """Raisecom Operating System Software
+Copyright (c) 2006-2021 Raisecom Science & Technology Development Co.,Ltd
+
+Product Name: ISCOM S5600-28C-EI
+Hardware Version: A.00
+Software Version: 3.60.317(Compiled Apr 28 2020 12:42:15)
+ROS Version: ROS_5.2.1_20200428
+REAP Version:3.0
+Bootrom Version: 1.4.9
+
+System MAC Address:
+Protocol MAC Address:
+Serial number:
+"""
+        device = RaisecomNormalizer().parse_device_info("dev-raisecom", raw)
+        self.assertEqual(device.vendor, "Raisecom")
+        self.assertEqual(device.platform, "raisecom_ros")
+        self.assertEqual(device.model, "ISCOM S5600-28C-EI")
+        self.assertEqual(device.version, "3.60.317")
+        self.assertEqual(device.hostname, "dev-raisecom")
 
 
 if __name__ == "__main__":

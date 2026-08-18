@@ -29,11 +29,13 @@ TEMPLATE_CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 ALLOWED_CONNECTION_DRIVERS = {
     "netmiko", "scrapli", "mock", "cisco_ios", "huawei_vrp", "hp_comware",
     "juniper_junos", "arista_eos", "zte_zxros", "ruijie_os", "dptech_ios", "maipu",
+    "raisecom_ros",
 }
 CONNECTION_DRIVER_TO_IMPLEMENTATION = {
     "cisco_ios": "netmiko", "huawei_vrp": "netmiko", "hp_comware": "netmiko",
     "juniper_junos": "netmiko", "arista_eos": "netmiko", "zte_zxros": "netmiko",
     "ruijie_os": "netmiko", "dptech_ios": "netmiko", "maipu": "netmiko",
+    "raisecom_ros": "netmiko",
 }
 
 ACTION_DEFINITIONS: tuple[dict[str, Any], ...] = (
@@ -109,6 +111,7 @@ SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
     {"platform_code": "arista_eos", "name_zh": "Arista EOS", "name_en": "Arista EOS", "vendor": "Arista", "connection_driver": "arista_eos", "parser_platform": "arista_eos"},
     {"platform_code": "zte_5900_v6", "name_zh": "中兴 5900 V6", "name_en": "ZTE 5900 V6", "vendor": "ZTE", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},
     {"platform_code": "zte_zsrv2_v3", "name_zh": "中兴 ZSRV2 V3", "name_en": "ZTE ZSRV2 V3", "vendor": "ZTE", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},
+    {"platform_code": "raisecom_ros", "name_zh": "瑞斯康达 ROS", "name_en": "Raisecom ROS", "vendor": "Raisecom", "connection_driver": "raisecom_ros", "parser_platform": "raisecom_ros"},
     {"platform_code": "ruijie_s6k_rgos12", "name_zh": "锐捷 S6K RGOS 12", "name_en": "Ruijie S6K RGOS 12", "vendor": "Ruijie", "connection_driver": "ruijie_os", "parser_platform": "ruijie_rgos"},
     {"platform_code": "ruijie_eg_rgos11", "name_zh": "锐捷 EG RGOS 11", "name_en": "Ruijie EG RGOS 11", "vendor": "Ruijie", "connection_driver": "ruijie_os", "parser_platform": "ruijie_rgos"},
     {"platform_code": "dptech_fw_s211", "name_zh": "迪普 FW S211", "name_en": "DPtech FW S211", "vendor": "DPtech", "connection_driver": "dptech_ios", "parser_platform": "dptech_ios"},
@@ -124,6 +127,7 @@ PLATFORM_ALIASES = {
     "zte_zxros": "zte_5900_v6", "ruijie": "ruijie_s6k_rgos12", "ruijie_os": "ruijie_s6k_rgos12",
     "ruijie_rgos": "ruijie_s6k_rgos12", "dptech": "dptech_fw_s211", "dptech_ios": "dptech_fw_s211",
     "maipu": "maipu_s3330_v9",
+    "raisecom": "raisecom_ros", "瑞斯康达": "raisecom_ros",
 }
 
 # The commands are explicit data, never inferred from a requested vendor and
@@ -136,6 +140,7 @@ PLATFORM_ACTION_COMMANDS: dict[str, dict[str, str]] = {
     "arista_eos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors detail", "get_interface_brief": "show ip interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface", "get_link_aggregation": "show port-channel summary", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show interfaces transceiver", "get_cpu": "show processes top once", "get_memory": "show version", "get_clock": "show clock", "get_running_config": "show running-config"},
     "ruijie_rgos": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_interfaces": "show interfaces", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show interfaces transceiver", "get_cpu": "show cpu", "get_memory": "show memory", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature", "get_clock": "show clock"},
     "zte_zxros": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbor", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac table", "get_route_table": "show ip forwarding route", "get_bgp_neighbors": "show ip bgp neighbors", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show opticalinfo brief", "get_fans": "show fan", "get_power": "show power", "get_temperature": "show temperature detail", "get_clock": "show clock"},
+    "raisecom_ros": {"get_version": "show version", "get_lldp_neighbors": "show lldp remote", "get_interface_brief": "show interface brief", "get_interfaces": "show interface", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_stp": "show spanning-tree", "get_clock": "show clock"},
     "dptech_ios": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp all", "get_mac_table": "show mac address-table", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_cpu": "show cpu usage", "get_memory": "show memory", "get_clock": "show clock"},
     "maipu": {"get_version": "show version", "get_lldp_neighbors": "show lldp neighbors", "get_interface_brief": "show interface brief", "get_ip_interfaces": "show ip interface brief", "get_arp_table": "show arp", "get_mac_table": "show mac address all", "get_vlan_table": "show vlan", "get_route_table": "show ip route", "get_bgp_neighbors": "show ip bgp summary", "get_ospf_neighbors": "show ip ospf neighbor", "get_isis_neighbors": "show isis neighbors", "get_stp": "show spanning-tree", "get_transceivers": "show optical all", "get_cpu": "show cpu monitor", "get_memory": "show memory utilization", "get_fans": "show system fan", "get_power": "show system power", "get_clock": "show clock"},
 }

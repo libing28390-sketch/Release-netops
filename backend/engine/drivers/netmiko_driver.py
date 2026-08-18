@@ -53,6 +53,8 @@ class NetmikoDriver(BaseDriver):
             'rgos': 'ruijie_rgos',
             'zte': 'zte_zxros',
             'zxros': 'zte_zxros',
+            'raisecom': 'raisecom_ros',
+            '瑞斯康达': 'raisecom_ros',
             'maipu_network': 'maipu',
             'dptech': 'dptech_ios',
             'dptech_ios': 'dptech_ios',
@@ -68,6 +70,7 @@ class NetmikoDriver(BaseDriver):
             'arista_eos': 'arista_eos',
             'ruijie_rgos': 'ruijie_os',
             'zte_zxros': 'zte_zxros',
+            'raisecom_ros': 'raisecom_ros',
             'maipu': 'maipu',
             'dptech_ios': 'dptech_ios',
         }

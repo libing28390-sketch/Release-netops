@@ -3,8 +3,8 @@ from typing import Dict, Any
 def normalize_device_platform(vendor: str, platform: str) -> str:
     """
     Ensure vendor and platform are aligned and prevent silent fallback to Cisco
-    when the vendor is H3C, Huawei, Ruijie, ZTE, Maipu, DCN, DPtech,
-    FiberHome, Juniper, or Arista.
+    when the vendor is H3C, Huawei, Ruijie, ZTE, Raisecom, Maipu, DCN,
+    DPtech, FiberHome, Juniper, or Arista.
     """
     v = str(vendor or '').strip().lower()
     p = str(platform or '').strip().lower()
@@ -18,6 +18,8 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         v_key = 'ruijie'
     elif 'zte' in v or 'zxros' in v or '中兴' in v:
         v_key = 'zte'
+    elif 'raisecom' in v or '瑞斯康达' in v:
+        v_key = 'raisecom'
     elif 'maipu' in v or '迈普' in v:
         v_key = 'maipu'
     elif 'dptech' in v or '迪普' in v:
@@ -39,6 +41,7 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         'h3c_comware', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9',
         'ruijie_rgos', 'ruijie_os', 'zte_zxros', 'maipu', 'maipu_network', 'maipu_mypower',
         'dptech_ios', 'dptech', 'dptech_conplat', 'dptech_conplat_fw',
+        'raisecom_ros', 'raisecom_ros5', 'raisecom_ros_5',
     }
     if p in explicit_platforms:
         if p in {'vrp8', 'vrpv8'}:
@@ -70,6 +73,9 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
     elif v_key == 'zte':
         if not p or 'cisco' in p or p == 'generic':
             return 'zte_zxros'
+    elif v_key == 'raisecom':
+        if not p or 'cisco' in p or p == 'generic':
+            return 'raisecom_ros'
     elif v_key == 'maipu':
         if not p or 'cisco' in p or p == 'generic':
             return 'maipu'
@@ -94,6 +100,8 @@ def normalize_device_platform(vendor: str, platform: str) -> str:
         return 'ruijie_rgos'
     elif 'zte' in p or 'zxros' in p or '中兴' in p:
         return 'zte_zxros'
+    elif 'raisecom' in p or '瑞斯康达' in p:
+        return 'raisecom_ros'
     elif 'maipu' in p or '迈普' in p or 'mypower' in p:
         return 'maipu'
     elif 'dptech' in p or 'conplat' in p or '迪普' in p:

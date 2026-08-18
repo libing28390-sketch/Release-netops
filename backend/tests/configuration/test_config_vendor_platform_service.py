@@ -21,6 +21,7 @@ def test_known_vendor_platforms_are_catalogued() -> None:
     assert allowed_platforms("H3C") == ("h3c_comware",)
     assert "paloalto_panos" in allowed_platforms("Palo Alto")
     assert "fiberhome_fengine" in allowed_platforms("FiberHome")
+    assert allowed_platforms("瑞斯康达") == ("raisecom_ros",)
 
 
 def test_vendor_platform_is_normalized_and_aliases_are_supported() -> None:
@@ -34,3 +35,8 @@ def test_vendor_platform_is_normalized_and_aliases_are_supported() -> None:
 def test_mismatched_known_vendor_platform_is_rejected() -> None:
     with pytest.raises(ValueError, match="不支持平台"):
         validate_vendor_platform("Huawei", "cisco_nxos")
+
+
+def test_raisecom_model_profile_uses_ros_platform() -> None:
+    vendor, platform = validate_vendor_platform("瑞斯康达", "瑞斯康达 ROS")
+    assert (vendor, platform) == ("Raisecom", "raisecom_ros")

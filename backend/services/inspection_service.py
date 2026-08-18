@@ -57,7 +57,7 @@ _NETWORK_PLATFORMS = {
     'juniper_junos', 'juniper',
     'arista_eos',
     'paloalto_panos', 'fortinet', 'checkpoint_gaia',
-    'hillstone_stoneos', 'ruijie_os', 'ruijie_rgos', 'zte_zxros', 'maipu',
+    'hillstone_stoneos', 'ruijie_os', 'ruijie_rgos', 'zte_zxros', 'raisecom_ros', 'maipu',
 }
 
 # 识别为"服务器/Linux 主机"的 platform（走 Shell 脚本采集）
@@ -195,6 +195,7 @@ def _netmiko_platform_type(platform: str) -> str:
         'ruijie_os': 'ruijie_os',
         'ruijie_rgos': 'ruijie_os',
         'zte_zxros': 'zte_zxros',
+        'raisecom_ros': 'raisecom_ros',
         'maipu': 'maipu',
         'dptech': 'dptech_ios',
         'dptech_ios': 'dptech_ios',
@@ -250,7 +251,7 @@ def _netmiko_collect(device: dict[str, Any], commands: list[str], use_admin_cred
         return registry_outputs
 
     platform = (device.get('platform') or 'cisco_ios').lower()
-    is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware'}
+    is_slow = platform in {'huawei_vrp', 'huawei_vrpv8', 'h3c_comware', 'raisecom_ros'}
 
     # 统一使用 Vault 凭据解析服务
     creds = resolve_device_credentials(device)
