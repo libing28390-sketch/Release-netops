@@ -7,7 +7,7 @@ Next Task: MIG-008 修复/复核（解除 CHUNK_METADATA_IDENTITY_LEAK、HASH_UN
 
 Completed: 321 / 359
 P0: 256 / 277
-Last Verified Commit: d536498d（MIG-008 consistency audit gate；审计发现阻断）
+Last Verified Commit: 34c3e66d（MIG-008 chunk metadata sanitizer；旧数据审计仍 BLOCKED）
 
 Recent Migration: MIG-006 DONE_PASS；156 条 legacy 文档全部保守分级：verified=0、needs_validation=156、unusable=0；官方来源未绑定、reviewed catalog snapshot 不存在；PostgreSQL READ ONLY；无生产 DDL/写入；SQLite 未作为证据
 Recent Build: MIG-006 focused 6 passed、MIG-001..006 regression 21 passed；V1 PostgreSQL baseline 10/10；EVAL-014 临时 PostgreSQL fresh/repeat/backfill/constraints/rollback/recovery PASS；npm lint PASS；Vite build PASS（3680 modules，既有 chunk-size warning）；git diff --check PASS
@@ -15,6 +15,7 @@ Last Security Check: MIG-006 manifest 仅含 legacy ID、tenant hash、metadata 
 Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
 Blocked Task: MIG-007 — BLOCKED_NO_VERIFIED_SOURCE_ENTITIES（MIG-006 verified=0；156 行 needs_validation；需要官方 source registry/version 与 reviewed catalog snapshot）
+Blocked Task: MIG-008 — CHUNK_METADATA_IDENTITY_LEAK + HASH_UNVERIFIABLE（472 行旧 Chunk metadata 携带 tenant/identity 键；2 条文档与 2 条 Chunk hash/Embedding 不可验证）
 Recovery Point: MIG-008 修复/复核（先清理或隔离 Chunk metadata 身份键并处理 2 条不可验证 hash/Embedding，再重跑 PG 审计）；MIG-007 仍受 verified=0 阻断；ING-020/021 仍需认证浏览器会话补做可见验证
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
