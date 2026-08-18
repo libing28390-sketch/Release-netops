@@ -50,6 +50,12 @@ SSH_TIMEOUT_ERROR_CODE = "ssh_transport_timeout"
 SSH_TRANSPORT_ERROR_CODE = "ssh_transport_unreachable"
 SSH_HOST_KEY_ERROR_CODE = "ssh_host_key_untrusted"
 
+# Netmiko/Paramiko use separate timers for TCP connect, SSH banner, auth,
+# channel blocking, and the established session. Keep the transport stages
+# aligned instead of extending only conn_timeout.
+DEFAULT_SSH_TIMEOUT_SECONDS = 60
+DEFAULT_SSH_SESSION_TIMEOUT_SECONDS = 120
+
 PAGING_PROMPT_RE = re.compile(
     r"(?:----\s*More\s*----|--\s*More\s*--|--More--|<---\s*More\s*--->|Press\s+any\s+key\s+to\s+continue)",
     re.IGNORECASE,
@@ -91,7 +97,7 @@ def ensure_netmiko_custom_platforms() -> None:
 ensure_netmiko_custom_platforms()
 
 
-def build_netmiko_compatibility_kwargs() -> Dict[str, Any]:
+def build_netmiko_compatibility_kwargs(timeout: int | float | None = None) -> Dict[str, Any]:
     """
     Netmiko/Paramiko 兼容老设备的连接参数。
 
@@ -99,15 +105,26 @@ def build_netmiko_compatibility_kwargs() -> Dict[str, Any]:
       从而保留 diffie-hellman-group14-sha1、ssh-rsa 等 legacy 算法
     - use_keys/allow_agent 关闭本地 SSH agent 干扰
     - disable_sha2_fix 打开旧 Cisco/旧 Paramiko 兼容路径
-    - conn_timeout: 增加 SSH 连接/协商超时时间以防止慢速设备超时 (R2.7)
+    - conn/banner/auth/blocking: 使用一致的 60 秒预算，避免只放宽 TCP
+      连接却在 SSH Banner 或 channel 阶段仍按 Netmiko 短默认值失败
+    - session_timeout: 给慢速设备保留更长的已建立会话生命周期
     """
     ensure_netmiko_custom_platforms()
+    try:
+        requested_timeout = int(float(timeout)) if timeout is not None else DEFAULT_SSH_TIMEOUT_SECONDS
+    except (TypeError, ValueError):
+        requested_timeout = DEFAULT_SSH_TIMEOUT_SECONDS
+    transport_timeout = max(DEFAULT_SSH_TIMEOUT_SECONDS, requested_timeout)
     return {
         "disabled_algorithms": {},
         "use_keys": False,
         "allow_agent": False,
         "disable_sha2_fix": True,
-        "conn_timeout": 60,
+        "conn_timeout": transport_timeout,
+        "banner_timeout": transport_timeout,
+        "auth_timeout": transport_timeout,
+        "blocking_timeout": transport_timeout,
+        "session_timeout": max(DEFAULT_SSH_SESSION_TIMEOUT_SECONDS, transport_timeout),
     }
 
 

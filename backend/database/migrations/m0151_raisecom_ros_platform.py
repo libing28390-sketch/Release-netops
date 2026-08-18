@@ -188,6 +188,12 @@ def upgrade(cursor, use_pg: bool) -> None:
         now,
     )
     if parser_template_version_id:
+        release_row = cursor.execute(
+            "SELECT id FROM platform_releases WHERE profile_id = ? AND release_number = ?",
+            (str(profile_id), 1),
+        ).fetchone()
+        if not release_row:
+            raise RuntimeError("Raisecom system release was not materialized")
         cursor.execute(
             """
             UPDATE platform_release_actions
@@ -198,7 +204,7 @@ def upgrade(cursor, use_pg: bool) -> None:
             (
                 parser_template_version_id,
                 now,
-                "system-release-raisecom_ros-v1",
+                str(release_row[0]),
                 "get_version",
             ),
         )

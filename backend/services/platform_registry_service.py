@@ -1862,6 +1862,7 @@ def execute_platform_action(
     *,
     user: dict[str, Any],
     parameters: dict[str, Any] | None = None,
+    connection_options: dict[str, Any] | None = None,
     driver_factory=None,
     include_raw_output: bool = False,
     _session: PlatformActionSession | None = None,
@@ -1986,6 +1987,24 @@ def execute_platform_action(
             driver_type = CONNECTION_DRIVER_TO_IMPLEMENTATION.get(device.get("connection_driver"), device.get("connection_driver"))
             device["driver_type"] = driver_type
             device["platform"] = device.get("connection_driver") or device.get("platform")
+            # Scheduled configuration backup supplies one effective transport
+            # budget. The registry action re-reads the device row, so preserve
+            # those options explicitly instead of losing them at this
+            # boundary.
+            if connection_options:
+                for key in (
+                    "conn_timeout",
+                    "timeout",
+                    "banner_timeout",
+                    "auth_timeout",
+                    "blocking_timeout",
+                    "session_timeout",
+                    "read_timeout",
+                    "command_read_timeout",
+                ):
+                    value = connection_options.get(key)
+                    if value is not None:
+                        device[key] = int(value)
             driver = driver_factory.get_driver(driver_type, device)
             with driver:
                 result = driver.send_command(resolved_command)

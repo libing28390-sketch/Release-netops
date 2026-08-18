@@ -101,8 +101,12 @@ class NetmikoDriver(BaseDriver):
         )
 
         from drivers.ssh_compat import build_netmiko_compatibility_kwargs
-        conn_timeout = int(self.device_info.get('timeout') or self.device_info.get('conn_timeout') or 60)
-        blocking_timeout = int(self.device_info.get('blocking_timeout') or 30)
+        requested_timeout = self.device_info.get('timeout') or self.device_info.get('conn_timeout') or 60
+        try:
+            conn_timeout = max(60, int(float(requested_timeout)))
+        except (TypeError, ValueError):
+            conn_timeout = 60
+        blocking_timeout = max(60, int(self.device_info.get('blocking_timeout') or 60))
         device_params = {
             'device_type': self.device_type,
             'host': self.ip,
@@ -115,7 +119,7 @@ class NetmikoDriver(BaseDriver):
         }
         if enable_pwd:
             device_params['secret'] = enable_pwd
-        device_params.update(build_netmiko_compatibility_kwargs())
+        device_params.update(build_netmiko_compatibility_kwargs(timeout=conn_timeout))
         self.conn = ConnectHandler(**device_params)
         # Only attempt privilege escalation when an explicit Enable secret is
         # configured. Without one, sending ``enable`` would trigger a device
@@ -134,7 +138,12 @@ class NetmikoDriver(BaseDriver):
 
     def execute(self, mode: ExecutionMode, content: Any, **kwargs) -> Dict[str, Any]:
         start_time = time.perf_counter()
-        exec_read_timeout = int(kwargs.get('read_timeout') or self.device_info.get('read_timeout') or self.device_info.get('command_read_timeout') or 10)
+        exec_read_timeout = int(
+            kwargs.get('read_timeout')
+            or self.device_info.get('read_timeout')
+            or self.device_info.get('command_read_timeout')
+            or 60
+        )
         try:
             self.connect()
             

@@ -506,14 +506,27 @@ def test_execute_uses_published_release_and_returns_traceability(isolated_db):
             return SimpleNamespace(success=True, output="", error=None)
 
     class FakeFactory:
+        captured_device = {}
+
         @classmethod
-        def get_driver(cls, *_args, **_kwargs):
+        def get_driver(cls, _driver_type, device_info):
+            cls.captured_device = dict(device_info)
             return FakeDriver()
 
     result = execute_platform_action(
         "device-1",
         "get_clock",
         user={"id": "operator-1", "username": "operator", "role": "Operator", "tenant_id": "tenant-1"},
+        connection_options={
+            "conn_timeout": 60,
+            "timeout": 60,
+            "banner_timeout": 60,
+            "auth_timeout": 60,
+            "blocking_timeout": 60,
+            "session_timeout": 120,
+            "read_timeout": 60,
+            "command_read_timeout": 60,
+        },
         driver_factory=FakeFactory,
     )
     assert result["success"] is True
@@ -522,6 +535,8 @@ def test_execute_uses_published_release_and_returns_traceability(isolated_db):
     assert result["release_number"] == 1
     assert result["command"] == "show clock"
     assert result["raw_output"] is None
+    assert FakeFactory.captured_device["banner_timeout"] == 60
+    assert FakeFactory.captured_device["command_read_timeout"] == 60
 
     telemetry = isolated_db["module"].get_db_connection()
     try:

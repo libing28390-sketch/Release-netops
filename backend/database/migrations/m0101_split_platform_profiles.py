@@ -83,7 +83,7 @@ def _ensure_system_profiles(cursor, now: str) -> dict[str, str]:
             ),
         )
 
-        release_id = f"system-release-{profile_code}-v1"
+        desired_release_id = f"system-release-{profile_code}-v1"
         cursor.execute(
             """INSERT INTO platform_releases
                (id, profile_id, release_number, status, connection_driver,
@@ -92,13 +92,17 @@ def _ensure_system_profiles(cursor, now: str) -> dict[str, str]:
                 created_at, updated_at, lock_version)
                VALUES (?, ?, 1, 'PUBLISHED', ?, ?, ?, ?, 'PASSED',
                        '{"seed":true}', 'system', 'system', 'system', ?, ?, 1)
-               ON CONFLICT(id) DO UPDATE SET
-                 profile_id=excluded.profile_id,
+               ON CONFLICT(profile_id, release_number) DO UPDATE SET
                  connection_driver=excluded.connection_driver,
                  parser_platform=excluded.parser_platform,
+                 status=excluded.status,
+                 safety_policy_json=excluded.safety_policy_json,
+                 checksum=excluded.checksum,
+                 validation_status=excluded.validation_status,
+                 validation_result_json=excluded.validation_result_json,
                  updated_at=excluded.updated_at""",
             (
-                release_id,
+                desired_release_id,
                 profile_id,
                 profile["connection_driver"],
                 profile["parser_platform"],
@@ -108,8 +112,15 @@ def _ensure_system_profiles(cursor, now: str) -> dict[str, str]:
                 now,
             ),
         )
+        release_row = cursor.execute(
+            "SELECT id FROM platform_releases WHERE profile_id = ? AND release_number = ?",
+            (profile_id, 1),
+        ).fetchone()
+        if not release_row:
+            raise RuntimeError(f"System release seed was not materialized for profile {profile_code}")
+        release_id = str(release_row[0])
         cursor.execute(
-            "UPDATE platform_profiles SET current_release_id = ? WHERE id = ? AND (current_release_id IS NULL OR current_release_id = '')",
+            "UPDATE platform_profiles SET current_release_id = ? WHERE id = ?",
             (release_id, profile_id),
         )
         for action_code, command in get_profile_action_commands(profile).items():
@@ -119,7 +130,7 @@ def _ensure_system_profiles(cursor, now: str) -> dict[str, str]:
                    (id, release_id, action_code, command, field_contract_json,
                     command_checksum, created_at, updated_at)
                    VALUES (?, ?, ?, ?, '{}', ?, ?, ?)
-                   ON CONFLICT(id) DO UPDATE SET
+                   ON CONFLICT(release_id, action_code) DO UPDATE SET
                      command=excluded.command,
                      command_checksum=excluded.command_checksum,
                      updated_at=excluded.updated_at""",

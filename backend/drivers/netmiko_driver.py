@@ -258,6 +258,12 @@ class NetmikoDriver(BaseDriver):
         import logging
         logger = logging.getLogger(__name__)
 
+        requested_timeout = self.device_info.get('conn_timeout') or self.device_info.get('timeout') or 60
+        try:
+            connection_timeout = max(60, int(float(requested_timeout)))
+        except (TypeError, ValueError):
+            connection_timeout = 60
+
         # Huawei / H3C 等慢速设备需要关闭 fast_cli 并增大延迟因子
         is_slow = self.platform in _SLOW_PLATFORMS or self.device_type in ('hp_comware', 'huawei')
         device_params = {
@@ -266,21 +272,21 @@ class NetmikoDriver(BaseDriver):
             'username':           self.username,
             'password':           self.password,
             'port':               self.port,
-            'timeout':            int(self.device_info.get('conn_timeout') or self.device_info.get('timeout') or 60),
-            'session_timeout':    120,
+            'timeout':            connection_timeout,
+            'session_timeout':    max(120, connection_timeout),
             'fast_cli':           not is_slow,         # 慢速平台禁用 fast_cli
             'global_delay_factor':1.5 if is_slow else 0.5,
-            'blocking_timeout':   int(self.device_info.get('blocking_timeout') or 30),
+            'blocking_timeout':   max(60, int(self.device_info.get('blocking_timeout') or 60)),
         }
         logger.info(f"Login to {self.host} as username={self.username!r} pwd_len={len(self.password or '')}")
-        device_params.update(build_netmiko_compatibility_kwargs())
+        device_params.update(build_netmiko_compatibility_kwargs(timeout=connection_timeout))
         
         # Override connection timeout if specified in device_info
         custom_timeout = self.device_info.get('conn_timeout') or self.device_info.get('timeout')
         if custom_timeout:
-            device_params['timeout'] = custom_timeout
-            device_params['conn_timeout'] = custom_timeout
-            logger.info(f"Using custom connection timeout: {custom_timeout}s")
+            device_params['timeout'] = connection_timeout
+            device_params['conn_timeout'] = connection_timeout
+            logger.info(f"Using custom connection timeout: {connection_timeout}s")
             
         # enable secret: only use an explicitly configured enable_password.
         # Do NOT fall back to the login password — if the device has no enable
@@ -412,7 +418,11 @@ class NetmikoDriver(BaseDriver):
                 'cmd_verify': False,
                 'strip_prompt': True,
                 'strip_command': True,
-                'read_timeout': self.device_info.get('command_read_timeout', 10),
+                'read_timeout': int(
+                    self.device_info.get('command_read_timeout')
+                    or self.device_info.get('read_timeout')
+                    or 60
+                ),
                 'delay_factor': 2
             }
             # Override with kwargs (e.g. expect_string)

@@ -1583,7 +1583,20 @@ async def run_scheduled_backup(
 
     run_concurrency = int((policy or {}).get('concurrency') or BACKUP_CONCURRENCY)
     run_retry_count = int((policy or {}).get('retry_count') or 0)
-    run_timeout_seconds = int((policy or {}).get('timeout_seconds') or 60)
+    # Existing policies may still persist the historical 20/30 second value.
+    # The effective SSH budget must cover every transport stage, so keep it at
+    # a minimum of 60 seconds until the policy is explicitly updated.
+    run_timeout_seconds = max(60, int((policy or {}).get('timeout_seconds') or 60))
+    ssh_timeout_options = {
+        'conn_timeout': run_timeout_seconds,
+        'timeout': run_timeout_seconds,
+        'banner_timeout': run_timeout_seconds,
+        'auth_timeout': run_timeout_seconds,
+        'blocking_timeout': run_timeout_seconds,
+        'session_timeout': max(120, run_timeout_seconds),
+        'read_timeout': run_timeout_seconds,
+        'command_read_timeout': run_timeout_seconds,
+    }
     change_only = bool((policy or {}).get('change_only', False))
     logger.info(
         "[Scheduled Backup] Starting policy=%s targets=%d concurrency=%d",
@@ -1711,7 +1724,7 @@ async def run_scheduled_backup(
 
         d = dict(device)
         d['platform'] = _platform
-        d['conn_timeout'] = run_timeout_seconds
+        d.update(ssh_timeout_options)
         from services.vault_service import resolve_device_credentials
         creds = resolve_device_credentials(d)
         username = creds.get('admin_username') or creds.get('username') or ''
@@ -1753,6 +1766,7 @@ async def run_scheduled_backup(
                                 'role': 'Administrator',
                                 'tenant_id': d.get('tenant_id') or '',
                             },
+                            connection_options=ssh_timeout_options,
                             include_raw_output=True,
                         )
                         output = str(registry_result.get('raw_output') or '')
@@ -1921,6 +1935,7 @@ async def run_scheduled_backup(
                                     'role': 'Administrator',
                                     'tenant_id': d.get('tenant_id') or '',
                                 },
+                                connection_options=ssh_timeout_options,
                                 include_raw_output=True,
                             )
                             startup_output = str(st_res.get('raw_output') or '')

@@ -59,7 +59,14 @@ def test_netmiko_compatibility_kwargs_timeout():
     from drivers.ssh_compat import build_netmiko_compatibility_kwargs
     kwargs = build_netmiko_compatibility_kwargs()
     assert kwargs.get("conn_timeout") == 60
+    assert kwargs.get("banner_timeout") == 60
+    assert kwargs.get("auth_timeout") == 60
+    assert kwargs.get("blocking_timeout") == 60
+    assert kwargs.get("session_timeout") == 120
     assert kwargs.get("disabled_algorithms") == {}
+    expanded = build_netmiko_compatibility_kwargs(180)
+    assert expanded.get("banner_timeout") == 180
+    assert expanded.get("session_timeout") == 180
 
 
 def test_diagnose_ssh_failure_scenarios():
