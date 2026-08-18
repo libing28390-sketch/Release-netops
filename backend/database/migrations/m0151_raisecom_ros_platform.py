@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 VERSION = 151
@@ -14,22 +16,186 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def upgrade(cursor, use_pg: bool) -> None:
-    # Reuse the idempotent profile/template repair path so existing installs
-    # receive the new SYSTEM profile just like fresh installs do.
-    from database.migrations.m0101_split_platform_profiles import upgrade as refresh_profiles
+def _checksum(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    refresh_profiles(cursor, use_pg)
 
-    profile = cursor.execute(
-        "SELECT id FROM platform_profiles WHERE tenant_id IS NULL AND source = 'SYSTEM' AND platform_code = ?",
-        ("raisecom_ros",),
+def _ensure_raisecom_show_version_template(
+    cursor,
+    profile_id: str,
+    now: str,
+) -> str | None:
+    """Reconcile only Raisecom's template by its scoped business key."""
+
+    template_path = (
+        Path(__file__).resolve().parents[3]
+        / "data"
+        / "textfsm_templates"
+        / "raisecom_ros_show_version.textfsm"
+    )
+    if not template_path.exists():
+        return None
+
+    content = template_path.read_text(encoding="utf-8")
+    template_code = "RAISECOM_ROS_SHOW_VERSION"
+    source_filename = template_path.name
+    row = cursor.execute(
+        """
+        SELECT id
+        FROM parser_templates
+        WHERE tenant_id IS NULL
+          AND platform_code = ?
+          AND platform_profile_id = ?
+          AND template_code = ?
+        """,
+        ("raisecom_ros", profile_id, template_code),
     ).fetchone()
-    if not profile:
-        return
+
+    if row:
+        template_id = str(row[0])
+        cursor.execute(
+            """
+            UPDATE parser_templates
+            SET source_filename = ?,
+                command = ?,
+                name = ?,
+                source = ?,
+                status = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                source_filename,
+                "show version",
+                "Raisecom ROS show version",
+                "SYSTEM",
+                "ACTIVE",
+                now,
+                template_id,
+            ),
+        )
+    else:
+        template_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"nexora:system-template:{source_filename}",
+            )
+        )
+        cursor.execute(
+            """
+            INSERT INTO parser_templates (
+                id, tenant_id, platform_profile_id, platform_code,
+                template_code, source_filename, command, name, source,
+                status, created_by, created_at, updated_at, lock_version
+            )
+            VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                template_id,
+                profile_id,
+                "raisecom_ros",
+                template_code,
+                source_filename,
+                "show version",
+                "Raisecom ROS show version",
+                "SYSTEM",
+                "ACTIVE",
+                "system",
+                now,
+                now,
+                1,
+            ),
+        )
+
+    checksum = _checksum(content)
+    version_row = cursor.execute(
+        """
+        SELECT id
+        FROM parser_template_versions
+        WHERE template_id = ?
+          AND version_number = ?
+        """,
+        (template_id, 1),
+    ).fetchone()
+
+    if version_row:
+        version_id = str(version_row[0])
+        cursor.execute(
+            """
+            UPDATE parser_template_versions
+            SET status = ?, content = ?, checksum = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            ("PUBLISHED", content, checksum, now, version_id),
+        )
+    else:
+        version_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"nexora:system-template-version:{source_filename}:1",
+            )
+        )
+        cursor.execute(
+            """
+            INSERT INTO parser_template_versions (
+                id, template_id, version_number, status, content, checksum,
+                field_contract_json, test_summary_json, created_by, created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                version_id,
+                template_id,
+                1,
+                "PUBLISHED",
+                content,
+                checksum,
+                "{}",
+                '{"imported": true}',
+                "system",
+                now,
+                now,
+            ),
+        )
+
+    return version_id
+
+
+def upgrade(cursor, use_pg: bool) -> None:
+    # Reuse only the profile/release/action seed. Re-running the historical
+    # full template refresh can collide with scoped unique indexes on existing
+    # templates unrelated to Raisecom.
+    del use_pg
+    from database.migrations.m0101_split_platform_profiles import _ensure_system_profiles
 
     now = _now()
-    profile_id = str(profile[0])
+    profile_ids = _ensure_system_profiles(cursor, now)
+    profile_id = profile_ids.get("raisecom_ros")
+    if not profile_id:
+        return
+
+    parser_template_version_id = _ensure_raisecom_show_version_template(
+        cursor,
+        str(profile_id),
+        now,
+    )
+    if parser_template_version_id:
+        cursor.execute(
+            """
+            UPDATE platform_release_actions
+            SET parser_template_version_id = ?, updated_at = ?
+            WHERE release_id = ?
+              AND action_code = ?
+            """,
+            (
+                parser_template_version_id,
+                now,
+                "system-release-raisecom_ros-v1",
+                "get_version",
+            ),
+        )
+
     patterns = (
         "Raisecom Operating System Software",
         "Product Name: ISCOM S5600-28C-EI",
