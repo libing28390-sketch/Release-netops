@@ -1,0 +1,64 @@
+task_id: REL-003
+priority: P0
+milestone: M2
+status: contract_frozen
+authority: repository_configuration_contract
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+objective: >-
+  Keep provider, AI Security Gateway, embedding, and V2 rollout settings
+  discoverable in .env.example with safe disabled defaults and no real secret.
+
+required_sections:
+  provider_security:
+    - AI_ENABLED
+    - EXTERNAL_AI_ENABLED
+    - AI_KILL_SWITCH
+    - AI_PROVIDER_ALLOWLIST
+    - AI_MAX_PAYLOAD_BYTES
+    - AI_DEBUG_PAYLOAD
+    - AI_OUTBOUND_PROXY_URL
+    - AI_PROVIDER_MAX_CONCURRENCY
+    - AI_TENANT_MAX_CONCURRENCY
+    - AI_USER_MAX_CONCURRENCY
+    - AI_CIRCUIT_FAILURE_THRESHOLD
+    - AI_CIRCUIT_COOLDOWN_SECONDS
+    - AI_HEALTH_BACKOFF_SECONDS
+    - AI_DAILY_BUDGET_USD
+  embedding_retrieval:
+    - AI_EMBEDDING_MODE
+    - AI_EMBEDDING_DIMENSIONS
+    - AI_RETRIEVAL_CACHE_ENABLED
+    - AI_RETRIEVAL_TRGM_THRESHOLD
+  feature_flags:
+    - KNOWLEDGE_V2_ENABLED
+    - KNOWLEDGE_V2_SHADOW_READ
+    - KNOWLEDGE_V2_ROLLOUT_PERCENT
+    - KNOWLEDGE_V2_WRITE_ENABLED
+    - NETWORK_WRITE_ENABLED
+    - PRODUCTION_CREDENTIALS_ALLOWED
+
+safe_defaults:
+  disabled_or_zero: [AI_ENABLED, EXTERNAL_AI_ENABLED, AI_KILL_SWITCH, AI_DEBUG_PAYLOAD, AI_RETRIEVAL_CACHE_ENABLED, KNOWLEDGE_V2_ENABLED, KNOWLEDGE_V2_SHADOW_READ, KNOWLEDGE_V2_ROLLOUT_PERCENT, KNOWLEDGE_V2_WRITE_ENABLED, NETWORK_WRITE_ENABLED, PRODUCTION_CREDENTIALS_ALLOWED]
+  embedding_mode: local
+  embedding_dimensions: 1536
+  gateway_mode: offline
+  data_classification: synthetic
+  credential_source: fixture
+
+secret_rules:
+  forbidden_keys: [OPENAI_API_KEY, DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, API_KEY, PROVIDER_API_KEY, VAULT_TOKEN]
+  placeholder_required: [POSTGRES_PASSWORD, SECRET_KEY, CREDENTIAL_ENCRYPTION_KEY]
+  no_real_secret_patterns: [sk_live_, sk-proj-, Bearer_, gho_, github_pat_]
+  provider_keys: injected_by_secret_manager_or_encrypted_provider_ui
+
+verification:
+  runner: scripts/knowledge_engine_v2_rel003_env_contract.py
+  tests: tests/knowledge_engine_v2/test_rel003_env_contract.py
+  source_of_truth: [.env.example, backend/core/config.py, backend/ai/providers/embedding.py, backend/ai/services/rag_retriever.py]
+  required: [all_required_keys, safe_defaults, placeholder_scan, tracked_file_scan, no_runtime_secret_output]
+
+rollback:
+  method: restore_last_verified_env_example
+  runtime: V1_defaults_and_V2_flags_off

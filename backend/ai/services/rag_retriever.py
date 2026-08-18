@@ -8,9 +8,11 @@ never make an incompatible platform or document category eligible.
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -29,6 +31,7 @@ from ai.services.retrieval_contract import (
     version_compatibility,
 )
 from ai.services.retrieval_index_service import retrieval_index_service
+from core.config import settings
 
 
 @dataclass
@@ -520,10 +523,21 @@ class RAGRetriever:
         expanded.update(context)
         return expanded
 
-    def search(self, request: RetrievalRequest, min_relevance: float = 0.20) -> Dict[str, Any]:
+    def _search_once(
+        self,
+        request: RetrievalRequest,
+        min_relevance: float = 0.20,
+        *,
+        active_generation: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Execute one bounded retrieval against V1 or a supplied V2 generation.
+
+        The caller owns the choice of source.  Keeping this seam explicit is
+        what lets MIG-009 execute a V2 read for comparison without allowing
+        the shadow result to replace the V1 user answer.
+        """
         top_k = max(1, int(request.top_k or 3))
         candidate_hint = max(top_k * 30, 100)
-        active_generation = self._active_index_generation(request.tenant_id)
         cache_key = retrieval_cache_key(
             request,
             index_version=str((active_generation or {}).get("index_version") or "retrieval-v1"),
@@ -704,6 +718,23 @@ class RAGRetriever:
                 self._expand_document_context(item, chunks_by_document.get(str(item["storage_document_id"]), [item]))
                 for item in reranked_documents[:top_k]
             ]
+            candidate_snapshot = []
+            if self._setting_flag("KNOWLEDGE_V2_SHADOW_READ"):
+                ordered_candidates = sorted(
+                    scored,
+                    key=lambda item: (
+                        item.get("relevance_score", 0.0),
+                        item.get("source_trust_rank", 0),
+                        str(item.get("storage_document_id") or ""),
+                        str(item.get("chunk_id") or ""),
+                    ),
+                    reverse=True,
+                )[:100]
+                candidate_snapshot = [
+                    projected
+                    for index, item in enumerate(ordered_candidates, 1)
+                    if (projected := self._shadow_candidate(item, index)) is not None
+                ]
             debug.update({
                 "dedup_document_count": len(best_by_document),
                 "incompatible_embedding_chunks": incompatible_vectors,
@@ -715,6 +746,8 @@ class RAGRetriever:
                 "cache": {"hit": False, "key": cache_key, "enabled": self.cache_enabled},
                 "outcome": "matched" if final_results else "no_match",
             })
+            if candidate_snapshot:
+                debug["candidate_snapshot"] = candidate_snapshot
             explanation = build_retrieval_explanation(request, debug, final_results)
             self.last_debug = debug
             payload = {"results": final_results, "debug": debug, "explanation": explanation}
@@ -726,9 +759,244 @@ class RAGRetriever:
                     tenant_id=request.tenant_id,
                 )
             return payload
-        except Exception as exc:
-            self.last_debug = {"error": str(exc), "candidate_count": 0, "vector_top_n": candidate_hint}
+        except Exception:
+            # Never expose dependency/SQL/provider exception text through the
+            # retrieval debug contract.  The stable code is sufficient for an
+            # operator to correlate the request with server-side logs.
+            self.last_debug = {
+                "error_code": "RETRIEVAL_EXECUTION_FAILED",
+                "candidate_count": 0,
+                "vector_top_n": candidate_hint,
+            }
             return {"results": [], "debug": self.last_debug, "explanation": build_retrieval_explanation(request, self.last_debug, [])}
+
+    @staticmethod
+    def _setting_flag(name: str, default: bool = False) -> bool:
+        value = getattr(settings, name, None)
+        if value is None:
+            value = os.environ.get(name, default)
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _shadow_identity(item: Any) -> str:
+        if not isinstance(item, dict):
+            return ""
+        return f"{item.get('storage_document_id') or item.get('document_id') or ''}:{item.get('chunk_id') or ''}"
+
+    @classmethod
+    def _shadow_hashes(cls, results: Any) -> list[str]:
+        if not isinstance(results, list):
+            return []
+        return [
+            hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+            for identity in (cls._shadow_identity(item) for item in results[:20])
+            if identity
+        ]
+
+    @staticmethod
+    def _shadow_score(item: Any, key: str) -> float | None:
+        if not isinstance(item, dict):
+            return None
+        value = item.get(key)
+        try:
+            return round(max(0.0, min(1.0, float(value))), 4)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _shadow_candidate(cls, item: Any, rank: int) -> dict[str, Any] | None:
+        """Project one candidate without exposing document/chunk identifiers."""
+
+        if not isinstance(item, dict):
+            return None
+        identity = cls._shadow_identity(item)
+        supplied_hash = str(item.get("candidate_hash") or "").strip()
+        if identity:
+            candidate_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+        elif supplied_hash:
+            candidate_hash = hashlib.sha256(supplied_hash.encode("utf-8")).hexdigest()[:32]
+        else:
+            return None
+        components = item.get("score_components") if isinstance(item.get("score_components"), dict) else {}
+        return {
+            "rank": max(1, int(rank or 1)),
+            "candidate_hash": candidate_hash,
+            "relevance_score": cls._shadow_score(item, "relevance_score"),
+            "keyword_score": cls._shadow_score(item, "keyword_score"),
+            "vector_score": cls._shadow_score(item, "vector_score"),
+            "metadata_score": cls._shadow_score(item, "metadata_score"),
+            "trust_score": cls._shadow_score(item, "trust_score"),
+            "version_score": cls._shadow_score(item, "version_score"),
+            "score_components": {
+                key: cls._shadow_score(components, key)
+                for key in ("lexical", "vector", "metadata", "trust", "version", "total")
+                if components.get(key) is not None
+            },
+        }
+
+    @classmethod
+    def _shadow_final_chunk(cls, item: Any, rank: int) -> dict[str, Any] | None:
+        """Project one final result to a hash-only chunk observation."""
+
+        if not isinstance(item, dict):
+            return None
+        identity = cls._shadow_identity(item)
+        supplied_hash = str(item.get("chunk_hash") or "").strip()
+        if identity:
+            chunk_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+        elif supplied_hash:
+            chunk_hash = hashlib.sha256(supplied_hash.encode("utf-8")).hexdigest()[:32]
+        else:
+            return None
+        context_ids = item.get("context_chunk_ids") if isinstance(item.get("context_chunk_ids"), list) else []
+        return {
+            "rank": max(1, int(rank or 1)),
+            "chunk_hash": chunk_hash,
+            "relevance_score": cls._shadow_score(item, "relevance_score"),
+            "context_chunk_count": max(0, int(item.get("context_chunk_count") or len(context_ids))),
+            "context_chunk_hashes": [
+                hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:32]
+                for value in context_ids[:20]
+                if value not in (None, "")
+            ],
+        }
+
+    @classmethod
+    def _shadow_rows(cls, payload: Any, key: str, fallback: Any) -> list[dict[str, Any]]:
+        debug = payload.get("debug") if isinstance(payload, dict) else {}
+        rows = debug.get(key) if isinstance(debug, dict) else None
+        if not isinstance(rows, list) or not rows:
+            rows = fallback if isinstance(fallback, list) else []
+        return [row for row in rows[:100] if isinstance(row, dict)]
+
+    @staticmethod
+    def _shadow_only_hashes(rows: list[dict[str, Any]], other: list[dict[str, Any]], key: str) -> list[str]:
+        other_hashes = {str(row.get(key) or "") for row in other}
+        return [str(row.get(key)) for row in rows if row.get(key) and str(row.get(key)) not in other_hashes][:20]
+
+    @classmethod
+    def _shadow_score_deltas(cls, v1_rows: list[dict[str, Any]], v2_rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+        v1_by_hash = {str(row.get(key)): row for row in v1_rows if row.get(key)}
+        v2_by_hash = {str(row.get(key)): row for row in v2_rows if row.get(key)}
+        deltas: list[dict[str, Any]] = []
+        for opaque_hash in [str(row.get(key)) for row in v1_rows if row.get(key) in v2_by_hash][:20]:
+            left = v1_by_hash.get(opaque_hash) or {}
+            right = v2_by_hash.get(opaque_hash) or {}
+            v1_score = cls._shadow_score(left, "relevance_score")
+            v2_score = cls._shadow_score(right, "relevance_score")
+            if v1_score is None and v2_score is None:
+                continue
+            delta = round((v2_score or 0.0) - (v1_score or 0.0), 4)
+            if delta:
+                deltas.append({
+                    "chunk_hash": opaque_hash,
+                    "v1_score": v1_score,
+                    "v2_score": v2_score,
+                    "delta": delta,
+                })
+        return deltas[:20]
+
+    @classmethod
+    def _shadow_compare(
+        cls,
+        v1: Dict[str, Any],
+        v2: Dict[str, Any],
+        *,
+        v1_latency_ms: int,
+        v2_latency_ms: int,
+        generation: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        v1_results = v1.get("results") if isinstance(v1.get("results"), list) else []
+        v2_results = v2.get("results") if isinstance(v2.get("results"), list) else []
+        v1_ids = {cls._shadow_identity(item) for item in v1_results if cls._shadow_identity(item)}
+        v2_ids = {cls._shadow_identity(item) for item in v2_results if cls._shadow_identity(item)}
+        v2_error = bool((v2.get("debug") or {}).get("error_code") or (v2.get("debug") or {}).get("error"))
+        v1_candidate_rows = [
+            projected
+            for index, item in enumerate(cls._shadow_rows(v1, "candidate_snapshot", v1_results), 1)
+            if (projected := cls._shadow_candidate(item, index)) is not None
+        ]
+        v2_candidate_rows = [
+            projected
+            for index, item in enumerate(cls._shadow_rows(v2, "candidate_snapshot", v2_results), 1)
+            if (projected := cls._shadow_candidate(item, index)) is not None
+        ]
+        v1_final_rows = [
+            projected
+            for index, item in enumerate(v1_results[:50], 1)
+            if (projected := cls._shadow_final_chunk(item, index)) is not None
+        ]
+        v2_final_rows = [
+            projected
+            for index, item in enumerate(v2_results[:50], 1)
+            if (projected := cls._shadow_final_chunk(item, index)) is not None
+        ]
+        return {
+            "mode": "v1_primary_v2_shadow",
+            "status": "degraded" if v2_error else "ok",
+            "user_answer_source": "v1",
+            "v1_result_count": len(v1_results),
+            "v2_result_count": len(v2_results),
+            "overlap_count": len(v1_ids & v2_ids),
+            "v1_only_count": len(v1_ids - v2_ids),
+            "v2_only_count": len(v2_ids - v1_ids),
+            "v1_top_hashes": cls._shadow_hashes(v1_results),
+            "v2_top_hashes": cls._shadow_hashes(v2_results),
+            "v1_latency_ms": max(0, int(v1_latency_ms)),
+            "v2_latency_ms": max(0, int(v2_latency_ms)),
+            "index_version": str(generation.get("index_version") or "")[:128],
+            "error_code": "RETRIEVAL_V2_SHADOW_FAILED" if v2_error else None,
+            "v1_candidates": v1_candidate_rows[:20],
+            "v2_candidates": v2_candidate_rows[:20],
+            "v1_final_chunks": v1_final_rows[:20],
+            "v2_final_chunks": v2_final_rows[:20],
+            "difference": {
+                "added_hashes": cls._shadow_only_hashes(v2_final_rows, v1_final_rows, "chunk_hash"),
+                "removed_hashes": cls._shadow_only_hashes(v1_final_rows, v2_final_rows, "chunk_hash"),
+                "candidate_added_hashes": cls._shadow_only_hashes(v2_candidate_rows, v1_candidate_rows, "candidate_hash"),
+                "candidate_removed_hashes": cls._shadow_only_hashes(v1_candidate_rows, v2_candidate_rows, "candidate_hash"),
+                "score_deltas": cls._shadow_score_deltas(v1_final_rows, v2_final_rows, "chunk_hash"),
+            },
+        }
+
+    def search(self, request: RetrievalRequest, min_relevance: float = 0.20) -> Dict[str, Any]:
+        """Return one user-visible V1 answer and optionally compare V2 in shadow.
+
+        V2 is never selected merely because an active generation exists.  A
+        rollout flag must explicitly enable it.  In shadow mode the V2 call is
+        read-only and its results are reduced to bounded, hashed metrics.
+        """
+        generation = self._active_index_generation(request.tenant_id)
+        shadow_enabled = self._setting_flag("KNOWLEDGE_V2_SHADOW_READ")
+        v2_enabled = self._setting_flag("KNOWLEDGE_V2_ENABLED")
+        if not generation:
+            return self._search_once(request, min_relevance, active_generation=None)
+        if shadow_enabled:
+            started = time.perf_counter()
+            v1 = self._search_once(request, min_relevance, active_generation=None)
+            v1_elapsed = int((time.perf_counter() - started) * 1000)
+            v2_started = time.perf_counter()
+            try:
+                v2 = self._search_once(request, min_relevance, active_generation=generation)
+            except Exception:
+                v2 = {"results": [], "debug": {"error_code": "RETRIEVAL_V2_SHADOW_FAILED"}}
+            v2_elapsed = int((time.perf_counter() - v2_started) * 1000)
+            debug = dict(v1.get("debug") or {})
+            debug["index_source"] = "v1"
+            debug["shadow"] = self._shadow_compare(
+                v1,
+                v2,
+                v1_latency_ms=v1_elapsed,
+                v2_latency_ms=v2_elapsed,
+                generation=generation,
+            )
+            v1["debug"] = debug
+            return v1
+        if v2_enabled:
+            return self._search_once(request, min_relevance, active_generation=generation)
+        return self._search_once(request, min_relevance, active_generation=None)
 
     def retrieve(
         self,

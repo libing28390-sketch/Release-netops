@@ -1,0 +1,19 @@
+{
+  "task_id": "REL-005",
+  "status": "PASS",
+  "reason_codes": [],
+  "checks": {
+    "nginx_v2_sse_location": true,
+    "nginx_v1_sse_location": true,
+    "application_v2_no_buffer_header": true,
+    "application_v1_no_buffer_header": true,
+    "docker_backend_entrypoint": true,
+    "nginx_docker_image": true,
+    "desktop_direct_uvicorn": true,
+    "sqlite_not_used": true
+  },
+  "database": "none",
+  "production_database_write": false,
+  "external_provider_request": false,
+  "sqlite": "forbidden_for_acceptance"
+}

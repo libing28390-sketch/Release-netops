@@ -23,6 +23,7 @@ Usage:
   bash scripts/deploy-docker.sh update [deployment-directory] [--force]
   bash scripts/deploy-docker.sh save-images [archive-path]
   bash scripts/deploy-docker.sh load-images <archive-path>
+  bash scripts/deploy-docker.sh backup-release [deployment-directory]
   bash scripts/deploy-docker.sh start-offline
   bash scripts/deploy-docker.sh reset-data [deployment-directory] [--yes]
 
@@ -35,6 +36,8 @@ Commands:
              write a SHA-256 checksum alongside it.
   load-images Load a previously saved image archive and verify all required
              Compose image tags are available locally.
+  backup-release Create a PostgreSQL custom dump, redacted Source Manifest,
+             and private configuration/config-snapshot archives before release.
   start-offline Start the stack without building or pulling any image.
   reset-data Stop the stack and delete this Compose project's volumes, local
              build images, and generated TLS files. It does not affect other
@@ -44,6 +47,7 @@ Environment:
   NETOPS_RELEASE_REPO    Override the public release URL.
   NETOPS_RELEASE_BRANCH  Override the release branch (default: main).
   NETOPS_DIR              Default deployment directory (default: current dir).
+  RELEASE_BACKUP_DIR      Backup destination (default: ../netops-release-backups).
 EOF
 }
 
@@ -181,6 +185,84 @@ backup_env() {
     fi
 }
 
+backup_release_state() {
+    local backup_root="${RELEASE_BACKUP_DIR:-../netops-release-backups}"
+    local stamp="$(date +%Y%m%d-%H%M%S)"
+    local backup_dir="${backup_root%/}/release-${stamp}"
+    local dump_path="${backup_dir}/database.dump"
+    local dump_partial="${dump_path}.partial"
+    local manifest_path="${backup_dir}/source-manifest.json"
+    local manifest_partial="${manifest_path}.partial"
+    local config_path="${backup_dir}/deployment-config.tar.gz"
+    local config_partial="${config_path}.partial"
+    local snapshot_path="${backup_dir}/config-snapshots.tar.gz"
+    local snapshot_partial="${snapshot_path}.partial"
+
+    [[ -f .env ]] || die "Cannot create release backup: .env is missing"
+    # shellcheck disable=SC1091
+    set -a
+    source .env
+    set +a
+    mkdir -p "$backup_dir"
+    chmod 700 "$backup_dir"
+
+    # The database service supplies its own local credentials; the password is
+    # never interpolated into the command line or written to a log.
+    if docker compose exec -T db pg_dump \
+        --format=custom --no-owner \
+        --username="${POSTGRES_USER:-postgres}" \
+        --dbname="${POSTGRES_DB:-netops}" > "$dump_partial"; then
+        [[ -s "$dump_partial" ]] || die "Release backup failed: empty PostgreSQL dump"
+        mv -f "$dump_partial" "$dump_path"
+    else
+        rm -f "$dump_partial"
+        die "Release backup failed: PostgreSQL pg_dump did not complete"
+    fi
+
+    # Export the manifest through the running application so it uses the same
+    # PostgreSQL connection and metadata authority as production.
+    if docker compose exec -T netops sh -c \
+        'set -eu; rm -f /tmp/nexora-source-manifest.json; PYTHONPATH=/app/backend python -m database.backup manifest --output /tmp/nexora-source-manifest.json >/dev/null; cat /tmp/nexora-source-manifest.json' \
+        > "$manifest_partial"; then
+        [[ -s "$manifest_partial" ]] || die "Release backup failed: empty Source Manifest"
+        mv -f "$manifest_partial" "$manifest_path"
+    else
+        rm -f "$manifest_partial"
+        die "Release backup failed: Source Manifest export did not complete"
+    fi
+
+    # Keep runtime configuration private. This archive may contain the
+    # encrypted .env and TLS material and is therefore never committed.
+    local config_entries=(.env)
+    [[ -f .env.example ]] && config_entries+=(.env.example)
+    [[ -d nginx/ssl ]] && config_entries+=(nginx/ssl)
+    [[ -f desktop/desktop_settings.ini ]] && config_entries+=(desktop/desktop_settings.ini)
+    if tar -czf "$config_partial" -C . "${config_entries[@]}"; then
+        [[ -s "$config_partial" ]] || die "Release backup failed: empty deployment configuration archive"
+        chmod 600 "$config_partial"
+        mv -f "$config_partial" "$config_path"
+    else
+        rm -f "$config_partial"
+        die "Release backup failed: deployment configuration archive did not complete"
+    fi
+
+    # The Docker backup volume contains device configuration snapshots. Keep a
+    # separate private archive so a database restore is never mistaken for a
+    # device-config restore.
+    if docker compose exec -T netops tar -czf - -C /app/backup . > "$snapshot_partial"; then
+        [[ -s "$snapshot_partial" ]] || die "Release backup failed: empty configuration snapshot archive"
+        chmod 600 "$snapshot_partial"
+        mv -f "$snapshot_partial" "$snapshot_path"
+    else
+        rm -f "$snapshot_partial"
+        die "Release backup failed: configuration snapshot archive did not complete"
+    fi
+
+    chmod 600 "$dump_path" "$manifest_path"
+    log "Release backup complete: $backup_dir"
+    log "  PostgreSQL dump, Source Manifest, deployment config, and config snapshots are present"
+}
+
 validate_compose() {
     docker compose config --quiet || die "Docker Compose configuration is invalid"
 }
@@ -299,6 +381,7 @@ case "$COMMAND" in
         require_command git
         [[ -d "$DEPLOYMENT_DIR/.git" ]] || die "Not a Git deployment: $DEPLOYMENT_DIR"
         cd "$DEPLOYMENT_DIR"
+        backup_release_state
         backup_env
         sync_release
         initialize_env
@@ -319,6 +402,12 @@ case "$COMMAND" in
     load-images)
         require_docker
         load_images "$ARCHIVE_PATH"
+        ;;
+    backup-release)
+        require_docker
+        [[ -d "$DEPLOYMENT_DIR/.git" ]] || die "Not a Git deployment: $DEPLOYMENT_DIR"
+        cd "$DEPLOYMENT_DIR"
+        backup_release_state
         ;;
     start-offline)
         require_docker

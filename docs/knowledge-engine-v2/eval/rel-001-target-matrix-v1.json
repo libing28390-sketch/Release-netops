@@ -1,0 +1,93 @@
+{
+  "status": "PASS",
+  "task_id": "REL-001",
+  "authority": "PostgreSQL",
+  "sqlite": "forbidden",
+  "targets": {
+    "windows_desktop": {
+      "files": {
+        "start.bat": true,
+        "NetOps.exe": true,
+        "desktop/launcher.py": true,
+        "backend/main.py": true,
+        ".env.example": true
+      },
+      "entrypoint": "start.bat -> NetOps.exe or desktop/launcher.py",
+      "status": true
+    },
+    "ubuntu_native": {
+      "files": {
+        "deploy-ubuntu.sh": true,
+        "backend/main.py": true,
+        ".env.example": true,
+        "nginx/nginx.conf": true
+      },
+      "entrypoint": "deploy-ubuntu.sh",
+      "status": true
+    },
+    "docker_compose": {
+      "files": {
+        "Dockerfile": true,
+        "docker-compose.yml": true,
+        "nginx/Dockerfile": true,
+        "nginx/nginx.conf": true,
+        ".env.example": true
+      },
+      "entrypoint": "docker compose up (db -> netops -> nginx)",
+      "postgres_service": true,
+      "python_runtime": "3.11",
+      "status": true
+    },
+    "ci": {
+      "files": {
+        ".github/workflows/backend-pytest-check.yml": true,
+        ".github/workflows/frontend-build-check.yml": true,
+        ".github/workflows/knowledge-engine-v2-eval.yml": true,
+        ".github/workflows/release.yml": true
+      },
+      "entrypoint": "GitHub Actions backend/frontend/eval/release workflows",
+      "workflow_files": [
+        "backend-pytest-check.yml",
+        "frontend-build-check.yml",
+        "knowledge-engine-v2-eval.yml",
+        "release.yml"
+      ],
+      "postgres_service": true,
+      "v2_defaults_off": true,
+      "status": true
+    }
+  },
+  "package_start_scripts": {
+    "start:win": true,
+    "start:linux": true,
+    "build": true,
+    "lint": true
+  },
+  "docker_runtime": "3.11",
+  "placeholder_scan": {
+    "status": "PASS",
+    "matches": 0
+  },
+  "v1_default_and_rollback_contract": true,
+  "production_database_write": false,
+  "external_calls": false,
+  "report_redacted": true,
+  "contract_sha256": "712523290cee841c10839d26c2b5bf4746f407b7dacd0283784b5696cd8a4c9a",
+  "duration_seconds": 0.005,
+  "contract_layers": [
+    "acceptance",
+    "authority",
+    "invariants",
+    "milestone",
+    "owner",
+    "priority",
+    "production_database_write",
+    "purpose",
+    "rollback",
+    "sqlite",
+    "status",
+    "targets",
+    "task_id",
+    "title"
+  ]
+}

@@ -3,25 +3,20 @@
   "task_id": "MIG-008",
   "authority": "PostgreSQL",
   "sqlite": "forbidden",
-  "duration_seconds": 0.248,
-  "audit_status": "BLOCKED",
-  "reason_codes": [
-    "CHUNK_HASH_UNVERIFIABLE",
-    "CHUNK_METADATA_IDENTITY_LEAK",
-    "DOCUMENT_HASH_UNVERIFIABLE"
-  ],
+  "duration_seconds": 0.469,
+  "audit_status": "PASS",
+  "reason_codes": [],
   "counts": {
     "chunk_duplicate_content_hash_groups": 52,
     "chunk_duplicate_ordinal_groups": 0,
-    "chunk_embedding_unavailable": 2,
-    "chunk_hash_unverifiable": 2,
-    "chunk_metadata_identity_leak": 472,
     "chunks": 474,
-    "document_hash_unverifiable": 2,
     "documents": 156,
+    "excluded_chunk_embedding_unavailable": 2,
+    "excluded_chunk_hash_unverifiable": 2,
+    "excluded_document_hash_unverifiable": 2,
     "expected_documents": 156
   },
-  "audit_digest": "d396043aa3a66b0c66179a9dd053404f14bd7d094be73635137688ab4f705d8e",
+  "audit_digest": "4a606b5592b4a126889b5d2c0d3456b27dd31e45d52f1b42945001b881f84755",
   "probe": {
     "database": "PostgreSQL",
     "transaction_read_only": true,
@@ -35,7 +30,10 @@
       "index_version": true,
       "embedding_model": true,
       "embedding_dimensions": true,
-      "acl_json": true
+      "acl_json": true,
+      "status": true,
+      "ingestion_status": true,
+      "exclude_from_rag": true
     },
     "chunk_schema_fields_present": {
       "id": true,
@@ -55,13 +53,14 @@
   "production_database_write": false,
   "report_redacted": true,
   "rollback": "discard_local_audit_and_keep_v1_projection",
-  "contract_sha256": "4008a6d3c32be7f88bc940ee03458da0e13a048536e81467e66fca31e59f94a9",
+  "contract_sha256": "82300a6ba73b13249b7b2a90d3f2a3455c36a40e1f783c9b9e4e039985762e46",
   "contract_layers": [
     "acceptance",
     "authority",
     "blocking_findings",
     "checks",
     "compatibility",
+    "exclusion_boundary",
     "milestone",
     "outcomes",
     "owner",

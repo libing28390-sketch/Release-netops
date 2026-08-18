@@ -7,10 +7,12 @@ COPY . .
 RUN npm run build
 
 # ── Stage 2: Python Runtime ──────────────────────────────────────────
-# Pin the runtime to Python 3.10 for the supported backend environment.
-FROM python:3.10-slim
+# Pin the production runtime to Python 3.11.  The backend uses the standard
+# library StrEnum contract and CI/release gates are already aligned to 3.11;
+# local Python 3.10 tooling remains supported through core.enum_compat.
+FROM python:3.11-slim
 LABEL maintainer="NetOps Team"
-LABEL python.version="3.10"
+LABEL python.version="3.11"
 LABEL description="Nexora NetOps Platform"
 
 # System dependencies. Build images on a connected build host, then transfer

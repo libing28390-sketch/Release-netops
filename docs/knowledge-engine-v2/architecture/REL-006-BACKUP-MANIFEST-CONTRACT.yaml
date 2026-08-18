@@ -1,0 +1,62 @@
+task_id: REL-006
+priority: P0
+owner: OPS+DBA
+milestone: M2
+status: implemented_release_backup_gate
+contract_version: v1.0
+authority: PostgreSQL
+depends_on: [DB-023, REL-002, REL-003]
+
+decision:
+  choice: pre_release_postgres_custom_dump_plus_redacted_manifest_plus_private_config_archives
+  summary: >-
+    Every release update must create a complete, private backup set before
+    source synchronization: a PostgreSQL custom-format dump, the deterministic
+    redacted Knowledge Engine Source Manifest, the deployment configuration,
+    and the Docker configuration-snapshot volume. Missing or empty members are
+    a hard failure; a partial set is never treated as a release backup.
+
+required_artifacts:
+  database:
+    tool: pg_dump
+    format: custom
+    flags: [--format=custom, --no-owner]
+    credential_source: environment_or_compose_service_only
+    atomic_write: partial_file_then_rename
+    restore: pg_restore_to_explicit_isolated_rehearsal_database_only
+  source_manifest:
+    command: python -m database.backup manifest
+    format: nexora-knowledge-source-manifest/v2
+    redaction: raw_values_and_credentials_omitted
+    required_with_database_dump: true
+  deployment_configuration:
+    archive: tar.gz
+    private_mode: 0600
+    includes: [.env, .env.example, nginx/ssl, desktop/desktop_settings.ini]
+    secrets_logged: false
+  configuration_snapshots:
+    archive: tar.gz
+    source: docker_volume_nexora-backup
+    private_mode: 0600
+    required_with_database_dump: true
+
+release_flow:
+  precondition: backup_release_state_before_sync_release
+  failure_policy: fail_closed_and_preserve_existing_release
+  command: bash scripts/deploy-docker.sh backup-release
+  update_hook: bash scripts/deploy-docker.sh update
+  retention: operator_or_backup_service_policy
+
+security:
+  production_restore: forbidden
+  database_url_in_logs: forbidden
+  raw_source_values_in_manifest: forbidden
+  external_provider_request: forbidden
+  network_device_write: forbidden
+  sqlite_acceptance: forbidden
+
+verification:
+  static_gate: scripts/knowledge_engine_v2_rel006_backup_gate.py
+  focused_tests: tests/knowledge_engine_v2/test_rel006_backup_gate.py
+  live_probe: PostgreSQL_READ_ONLY_source_manifest_export
+  required_checks: [contract, daily_job, release_hook, custom_dump, manifest_redaction, config_archive, fail_closed]

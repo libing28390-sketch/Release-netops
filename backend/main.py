@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from core.config import settings
+from core.config import settings, validate_production_security
 from core.textfsm import configure_ntc_templates
 from core.logging import setup_logging, classify_request_log_level
 from api.health import router as health_router, record_host_resource_snapshot
@@ -137,6 +137,7 @@ async def _bg_init():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── startup ──
+    validate_production_security()
     logger.info(f"Starting up {settings.PROJECT_NAME} in {settings.ENVIRONMENT} mode...")
     if settings.EXTERNAL_AI_ENABLED:
         from ai.security.crypto import require_configured_master_key
@@ -433,6 +434,37 @@ async def knowledge_v2_boundary_alias(request: Request, call_next):
         response.headers["X-API-Version"] = "nxa.kb.v2"
         response.headers["X-API-Canonical-Path"] = original_path
     return response
+
+
+@app.middleware("http")
+async def enforce_request_body_limit(request: Request, call_next):
+    """Reject oversized HTTP bodies before FastAPI/Pydantic buffers them.
+
+    Nginx remains the outer boundary for chunked uploads.  This application
+    guard protects direct Uvicorn deployments and keeps the limit explicit in
+    the runtime contract.  Endpoint-specific models/upload handlers can use a
+    smaller limit.
+    """
+
+    limit = max(1, int(getattr(settings, "REQUEST_BODY_MAX_BYTES", 150 * 1024 * 1024)))
+    raw_length = request.headers.get("content-length", "").strip()
+    if raw_length:
+        try:
+            if int(raw_length) > limit:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": "request body exceeds the configured limit",
+                        "code": "REQUEST_BODY_TOO_LARGE",
+                        "limit_bytes": limit,
+                    },
+                )
+        except ValueError:
+            # Let the route/parser produce its normal validation response for
+            # malformed Content-Length; do not guess a body size.
+            pass
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def add_request_id_and_log(request: Request, call_next):

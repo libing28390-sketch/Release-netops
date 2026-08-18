@@ -1,0 +1,263 @@
+{
+  "task_id": "REL-007",
+  "status": "BLOCKED",
+  "static_checks": {
+    "contract": true,
+    "compose_yaml_parse": true,
+    "compose_health_dependency": true,
+    "frontend_lint_script": true,
+    "frontend_build_script": true,
+    "pytest_path": true,
+    "python_backend": true,
+    "sqlite_acceptance_excluded": true
+  },
+  "runtime": {
+    "v1_postgresql_baseline": {
+      "status": "PASS",
+      "label": "v1_postgresql_baseline",
+      "returncode": 0,
+      "duration_seconds": 0.394,
+      "stdout_tail": "   \"ospf-v300\",\n        \"ospf-v600\"\n      ],\n      \"retrieval_correct\": true,\n      \"citation_precision\": 1.0,\n      \"vendor_mismatch\": false,\n      \"version_conflict\": false,\n      \"latency_ms\": 2.882\n    },\n    {\n      \"id\": \"Q06\",\n      \"query\": \"CloudEngine 6800 hardware\",\n      \"expected_ids\": [\n        \"hw-ce-series\",\n        \"hw-ce-model\"\n      ],\n      \"returned_ids\": [\n        \"hw-ce-series\",\n        \"hw-ce-model\"\n      ],\n      \"retrieval_correct\": true,\n      \"citation_precision\": 1.0,\n      \"vendor_mismatch\": false,\n      \"version_conflict\": false,\n      \"latency_ms\": 3.5099\n    },\n    {\n      \"id\": \"Q07\",\n      \"query\": \"CloudEngine 6800 OSPF config\",\n      \"expected_ids\": [],\n      \"returned_ids\": [],\n      \"retrieval_correct\": true,\n      \"citation_precision\": 1.0,\n      \"vendor_mismatch\": false,\n      \"version_conflict\": false,\n      \"latency_ms\": 2.9395\n    },\n    {\n      \"id\": \"Q08\",\n      \"query\": \"Cisco ARP\",\n      \"expected_ids\": [\n        \"cisco-arp\"\n      ],\n      \"returned_ids\": [\n        \"cisco-arp\"\n      ],\n      \"retrieval_correct\": true,\n      \"citation_precision\": 1.0,\n      \"vendor_mismatch\": false,\n      \"version_conflict\": false,\n      \"latency_ms\": 2.3625\n    },\n    {\n      \"id\": \"Q09\",\n      \"query\": \"H3C OSPF command\",\n      \"expected_ids\": [\n        \"h3c-ospf\"\n      ],\n      \"returned_ids\": [\n        \"h3c-ospf\"\n      ],\n      \"retrieval_correct\": true,\n      \"citation_precision\": 1.0,\n      \"vendor_mismatch\": false,\n      \"version_conflict\": false,\n      \"latency_ms\": 2.2292\n    },\n    {\n      \"id\": \"Q10\",\n      \"query\": \"S5735-L-V2 V600 ARP no vendor\",\n      \"expected_ids\": [\n        \"arp-v600\"\n      ],\n      \"returned_ids\": [\n        \"arp-v600\"\n      ],\n      \"retrieval_correct\": true,\n      \"citation_precision\": 1.0,\n      \"vendor_mismatch\": false,\n      \"version_conflict\": false,\n      \"latency_ms\": 2.6217\n    }\n  ],\n  \"external_network_call\": false,\n  \"production_database_write\": false,\n  \"rollback\": \"transaction_rollback\"\n}\n",
+      "stderr_tail": "",
+      "structured": {
+        "status": "FAILED",
+        "reason": "PROBE_JSON_MISSING"
+      }
+    },
+    "mig008_postgresql_audit": {
+      "status": "PASS",
+      "label": "mig008_postgresql_audit",
+      "returncode": 0,
+      "duration_seconds": 0.607,
+      "stdout_tail": "{\"audit_digest\": \"4a606b5592b4a126889b5d2c0d3456b27dd31e45d52f1b42945001b881f84755\", \"audit_status\": \"PASS\", \"authority\": \"PostgreSQL\", \"contract_layers\": [\"acceptance\", \"authority\", \"blocking_findings\", \"checks\", \"compatibility\", \"exclusion_boundary\", \"milestone\", \"outcomes\", \"owner\", \"priority\", \"production_database_write\", \"purpose\", \"security\", \"sqlite\", \"status\", \"task_id\", \"title\"], \"contract_sha256\": \"82300a6ba73b13249b7b2a90d3f2a3455c36a40e1f783c9b9e4e039985762e46\", \"counts\": {\"chunk_duplicate_content_hash_groups\": 52, \"chunk_duplicate_ordinal_groups\": 0, \"chunks\": 474, \"documents\": 156, \"excluded_chunk_embedding_unavailable\": 2, \"excluded_chunk_hash_unverifiable\": 2, \"excluded_document_hash_unverifiable\": 2, \"expected_documents\": 156}, \"duration_seconds\": 0.469, \"probe\": {\"chunk_schema_fields_present\": {\"content_hash\": true, \"document_id\": true, \"document_version\": true, \"embedding\": true, \"embedding_dimensions\": true, \"embedding_model\": true, \"id\": true, \"index_version\": true, \"metadata_json\": true, \"ordinal\": true, \"tenant_id\": false}, \"database\": \"PostgreSQL\", \"document_schema_fields_present\": {\"acl_json\": true, \"content_hash\": true, \"document_version\": true, \"embedding_dimensions\": true, \"embedding_model\": true, \"exclude_from_rag\": true, \"id\": true, \"index_version\": true, \"ingestion_status\": true, \"normalized_content\": true, \"status\": true, \"tenant_id\": true}, \"sqlite\": \"forbidden\", \"status\": \"PASS\", \"transaction_read_only\": true}, \"production_database_write\": false, \"reason_codes\": [], \"report_redacted\": true, \"rollback\": \"discard_local_audit_and_keep_v1_projection\", \"sqlite\": \"forbidden\", \"status\": \"PASS\", \"task_id\": \"MIG-008\"}\n",
+      "stderr_tail": "",
+      "structured": {
+        "audit_digest": "4a606b5592b4a126889b5d2c0d3456b27dd31e45d52f1b42945001b881f84755",
+        "audit_status": "PASS",
+        "authority": "PostgreSQL",
+        "contract_layers": [
+          "acceptance",
+          "authority",
+          "blocking_findings",
+          "checks",
+          "compatibility",
+          "exclusion_boundary",
+          "milestone",
+          "outcomes",
+          "owner",
+          "priority",
+          "production_database_write",
+          "purpose",
+          "security",
+          "sqlite",
+          "status",
+          "task_id",
+          "title"
+        ],
+        "contract_sha256": "82300a6ba73b13249b7b2a90d3f2a3455c36a40e1f783c9b9e4e039985762e46",
+        "counts": {
+          "chunk_duplicate_content_hash_groups": 52,
+          "chunk_duplicate_ordinal_groups": 0,
+          "chunks": 474,
+          "documents": 156,
+          "excluded_chunk_embedding_unavailable": 2,
+          "excluded_chunk_hash_unverifiable": 2,
+          "excluded_document_hash_unverifiable": 2,
+          "expected_documents": 156
+        },
+        "duration_seconds": 0.469,
+        "probe": {
+          "chunk_schema_fields_present": {
+            "content_hash": true,
+            "document_id": true,
+            "document_version": true,
+            "embedding": true,
+            "embedding_dimensions": true,
+            "embedding_model": true,
+            "id": true,
+            "index_version": true,
+            "metadata_json": true,
+            "ordinal": true,
+            "tenant_id": false
+          },
+          "database": "PostgreSQL",
+          "document_schema_fields_present": {
+            "acl_json": true,
+            "content_hash": true,
+            "document_version": true,
+            "embedding_dimensions": true,
+            "embedding_model": true,
+            "exclude_from_rag": true,
+            "id": true,
+            "index_version": true,
+            "ingestion_status": true,
+            "normalized_content": true,
+            "status": true,
+            "tenant_id": true
+          },
+          "sqlite": "forbidden",
+          "status": "PASS",
+          "transaction_read_only": true
+        },
+        "production_database_write": false,
+        "reason_codes": [],
+        "report_redacted": true,
+        "rollback": "discard_local_audit_and_keep_v1_projection",
+        "sqlite": "forbidden",
+        "status": "PASS",
+        "task_id": "MIG-008"
+      }
+    },
+    "ret_postgresql_probe": {
+      "status": "PASS",
+      "label": "ret_postgresql_probe",
+      "returncode": 0,
+      "duration_seconds": 0.416,
+      "stdout_tail": "{\n  \"database\": \"PostgreSQL\",\n  \"explain\": {\n    \"captured\": true,\n    \"node_types\": [\n      \"Bitmap Heap Scan\",\n      \"Bitmap Index Scan\"\n    ]\n  },\n  \"extensions\": {\n    \"pg_trgm\": \"1.6\",\n    \"vector\": \"0.8.6\"\n  },\n  \"migration\": {\n    \"idempotent_columns\": true,\n    \"required_chunk_columns\": [\n      \"embedding_vector\",\n      \"retrieval_index_version\",\n      \"search_text\"\n    ],\n    \"required_chunk_indexes\": [\n      \"ix_ai_chunk_embedding_vector_hnsw\",\n      \"ix_ai_chunk_search_fts\",\n      \"ix_ai_chunk_search_trgm\"\n    ],\n    \"required_document_columns\": [\n      \"fts_text\",\n      \"retrieval_index_version\"\n    ],\n    \"version\": 138\n  },\n  \"retrieval\": {\n    \"fts_candidates\": 2,\n    \"tenant_status_scoped_ids\": [\n      \"__ret_pg_probe_chunk_t1\"\n    ],\n    \"trgm_candidates\": 2,\n    \"trgm_threshold\": 0.2,\n    \"vector_candidates\": 2,\n    \"vector_top_id\": \"__ret_pg_probe_chunk_t1\"\n  },\n  \"rollback\": \"PASS\",\n  \"server\": \"PostgreSQL 18.4 on x86_64-windows, compiled by msvc-19.44.35227, 64-bit\",\n  \"status\": \"PASS\"\n}\n",
+      "stderr_tail": "",
+      "structured": {
+        "database": "PostgreSQL",
+        "explain": {
+          "captured": true,
+          "node_types": [
+            "Bitmap Heap Scan",
+            "Bitmap Index Scan"
+          ]
+        },
+        "extensions": {
+          "pg_trgm": "1.6",
+          "vector": "0.8.6"
+        },
+        "migration": {
+          "idempotent_columns": true,
+          "required_chunk_columns": [
+            "embedding_vector",
+            "retrieval_index_version",
+            "search_text"
+          ],
+          "required_chunk_indexes": [
+            "ix_ai_chunk_embedding_vector_hnsw",
+            "ix_ai_chunk_search_fts",
+            "ix_ai_chunk_search_trgm"
+          ],
+          "required_document_columns": [
+            "fts_text",
+            "retrieval_index_version"
+          ],
+          "version": 138
+        },
+        "retrieval": {
+          "fts_candidates": 2,
+          "tenant_status_scoped_ids": [
+            "__ret_pg_probe_chunk_t1"
+          ],
+          "trgm_candidates": 2,
+          "trgm_threshold": 0.2,
+          "vector_candidates": 2,
+          "vector_top_id": "__ret_pg_probe_chunk_t1"
+        },
+        "rollback": "PASS",
+        "server": "PostgreSQL 18.4 on x86_64-windows, compiled by msvc-19.44.35227, 64-bit",
+        "status": "PASS"
+      }
+    },
+    "rel006_manifest_postgresql_probe": {
+      "status": "PASS",
+      "label": "rel006_manifest_postgresql_probe",
+      "returncode": 0,
+      "duration_seconds": 0.532,
+      "stdout_tail": "{\n  \"task_id\": \"REL-006\",\n  \"status\": \"PASS\",\n  \"reason_codes\": [],\n  \"checks\": {\n    \"contract_postgresql_authority\": true,\n    \"daily_custom_dump\": true,\n    \"daily_manifest_companion\": true,\n    \"daily_config_archive\": true,\n    \"daily_atomic_and_retention\": true,\n    \"release_backup_command\": true,\n    \"release_custom_dump\": true,\n    \"release_manifest_and_snapshots\": true,\n    \"release_fail_closed\": true,\n    \"credential_free_plan\": true,\n    \"sqlite_not_used_for_acceptance\": true\n  },\n  \"postgres_manifest_probe\": {\n    \"status\": \"PASS\",\n    \"database_backend\": \"postgresql\",\n    \"schema_version\": 152,\n    \"document_count\": 156,\n    \"chunk_count\": 474,\n    \"source_manifest_digest\": \"5213bb31b74bba827b79c5b71d08a444204258b89946eef12bf329d01383bb0c\",\n    \"redaction_ok\": true,\n    \"transaction_read_only\": true\n  },\n  \"production_database_write\": false,\n  \"pg_dump_executed_by_gate\": false,\n  \"production_restore\": \"forbidden\",\n  \"sqlite\": \"forbidden_for_acceptance\",\n  \"external_provider_request\": false\n}\n",
+      "stderr_tail": "",
+      "structured": {
+        "task_id": "REL-006",
+        "status": "PASS",
+        "reason_codes": [],
+        "checks": {
+          "contract_postgresql_authority": true,
+          "daily_custom_dump": true,
+          "daily_manifest_companion": true,
+          "daily_config_archive": true,
+          "daily_atomic_and_retention": true,
+          "release_backup_command": true,
+          "release_custom_dump": true,
+          "release_manifest_and_snapshots": true,
+          "release_fail_closed": true,
+          "credential_free_plan": true,
+          "sqlite_not_used_for_acceptance": true
+        },
+        "postgres_manifest_probe": {
+          "status": "PASS",
+          "database_backend": "postgresql",
+          "schema_version": 152,
+          "document_count": 156,
+          "chunk_count": 474,
+          "source_manifest_digest": "5213bb31b74bba827b79c5b71d08a444204258b89946eef12bf329d01383bb0c",
+          "redaction_ok": true,
+          "transaction_read_only": true
+        },
+        "production_database_write": false,
+        "pg_dump_executed_by_gate": false,
+        "production_restore": "forbidden",
+        "sqlite": "forbidden_for_acceptance",
+        "external_provider_request": false
+      }
+    },
+    "postgres_contract_tests": {
+      "status": "PASS",
+      "label": "postgres_contract_tests",
+      "returncode": 0,
+      "duration_seconds": 6.645,
+      "stdout_tail": ".....................................                                    [100%]\n37 passed in 6.05s\n",
+      "stderr_tail": ""
+    },
+    "frontend_lint": {
+      "status": "PASS",
+      "label": "frontend_lint",
+      "returncode": 0,
+      "duration_seconds": 37.778,
+      "stdout_tail": "\n> nexora@0.1.1 lint\n> tsc --noEmit\n\n",
+      "stderr_tail": ""
+    },
+    "frontend_build": {
+      "status": "PASS",
+      "label": "frontend_build",
+      "returncode": 0,
+      "duration_seconds": 12.836,
+      "stdout_tail": "78 kB\ndist/assets/AutomationHistoryTab-DfaJpdFc.js     45.41 kB │ gzip:  12.96 kB\ndist/assets/AlertRulesTab-DrG9qBOX.js            46.60 kB │ gzip:  12.17 kB\ndist/assets/ConfigDiffViewTab-BwGmgg5j.js        52.02 kB │ gzip:  13.26 kB\ndist/assets/PrefixManagementTab-DBkANWTB.js      54.81 kB │ gzip:  13.30 kB\ndist/assets/ConfigBackupTab-cEQObpDg.js          55.88 kB │ gzip:  15.03 kB\ndist/assets/MonitoringCenter-Bwv5n5YB.js         66.10 kB │ gzip:  16.55 kB\ndist/assets/PlatformRegistryTab-EGMRPaPQ.js      66.59 kB │ gzip:  17.86 kB\ndist/assets/PlatformSettingsTab-CmdqpTDT.js      73.20 kB │ gzip:  21.14 kB\ndist/assets/ParserRegistryTab-BtvlCuMp.js        78.63 kB │ gzip:  21.73 kB\ndist/assets/ScheduledJobsTab-BE9NAbvj.js         84.05 kB │ gzip:  21.54 kB\ndist/assets/AutomationExecuteTab-C59nCy0J.js     91.04 kB │ gzip:  24.52 kB\ndist/assets/ExecutionScheduleTab-CRJTRCBo.js    108.09 kB │ gzip:  28.26 kB\ndist/assets/SnmpMetricTemplatesTab-HpUlExYo.js  120.27 kB │ gzip:  30.63 kB\ndist/assets/OutboundHealthPage-DJZkOvx1.js      123.27 kB │ gzip:  29.24 kB\ndist/assets/ui-vendor-CsyYQ2-z.js               124.26 kB │ gzip:  41.03 kB\ndist/assets/RackManagementTab-D9Fx_wBB.js       132.25 kB │ gzip:  36.13 kB\ndist/assets/AssetManagementTab-BNj-wlRQ.js      142.28 kB │ gzip:  41.55 kB\ndist/assets/CmdbManagementTab-CysHb3Zn.js       156.21 kB │ gzip:  47.53 kB\ndist/assets/ChangeOrderTab-Ce1IR_L5.js          157.88 kB │ gzip:  40.18 kB\ndist/assets/IPLocatorPage-wQIoz0U7.js           159.41 kB │ gzip:  35.81 kB\ndist/assets/TopologyPage-Dg3Bj0yz.js            202.82 kB │ gzip:  49.48 kB\ndist/assets/export-vendor-DYZi3TlU.js           437.86 kB │ gzip: 146.80 kB\ndist/assets/charts-vendor-BU8264LT.js           454.36 kB │ gzip: 132.67 kB\ndist/assets/react-vendor-1B7sMyNn.js            484.26 kB │ gzip: 143.75 kB\ndist/assets/AiCenterPage-BqOu0WAm.js            520.68 kB │ gzip: 133.54 kB\ndist/assets/index-CH_AfQ45.js                   851.00 kB │ gzip: 227.99 kB\n✓ built in 11.73s\n",
+      "stderr_tail": "\n(!) Some chunks are larger than 500 kB after minification. Consider:\n- Using dynamic import() to code-split the application\n- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\n"
+    },
+    "python_compile": {
+      "status": "PASS",
+      "label": "python_compile",
+      "returncode": 0,
+      "duration_seconds": 0.449,
+      "stdout_tail": "",
+      "stderr_tail": ""
+    },
+    "git_diff_check": {
+      "status": "PASS",
+      "label": "git_diff_check",
+      "returncode": 0,
+      "duration_seconds": 0.046,
+      "stdout_tail": "",
+      "stderr_tail": " time Git touches it\nwarning: in the working copy of 'backend/core/config.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'backend/main.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'dist/assets/pagination-VRGE7yY0.js', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'dist/index.html', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docker-compose.yml', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/knowledge-engine-v2/16-development-master-checklist.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/knowledge-engine-v2/EXECUTION_STATUS.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/knowledge-engine-v2/architecture/MIG-008-CONSISTENCY-AUDIT-CONTRACT.yaml', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/knowledge-engine-v2/evidence/MIG-007.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/knowledge-engine-v2/evidence/MIG-008.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'docs/walkthrough/20260818_mig008_consistency_audit.md', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'nginx/nginx.conf', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'scripts/deploy-docker.sh', CRLF will be replaced by LF the next time Git touches it\nwarning: in the working copy of 'scripts/knowledge_engine_v2_mig008_consistency_audit_check.py', LF will be replaced by CRLF the next time Git touches it\nwarning: in the working copy of 'tests/knowledge_engine_v2/test_mig008_consistency_audit.py', LF will be replaced by CRLF the next time Git touches it\n"
+    },
+    "docker_compose_syntax": {
+      "status": "BLOCKED",
+      "reason": "DOCKER_CLI_NOT_INSTALLED"
+    },
+    "nginx_syntax": {
+      "status": "BLOCKED",
+      "reason": "NGINX_BINARY_NOT_INSTALLED"
+    }
+  },
+  "blocked_checks": [
+    "docker_compose_syntax",
+    "nginx_syntax"
+  ],
+  "failed_checks": [],
+  "database": "PostgreSQL_only",
+  "sqlite": "forbidden_for_acceptance",
+  "production_database_write": false,
+  "external_provider_request": false
+}

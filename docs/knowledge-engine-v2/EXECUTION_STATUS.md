@@ -1,22 +1,26 @@
 # Current Execution Status
 
 Current Milestone: M2
-Current Task: MIG-008（BLOCKED）
-Last Completed: MIG-006
-Next Task: MIG-008 修复/复核（解除 CHUNK_METADATA_IDENTITY_LEAK、HASH_UNVERIFIABLE 后重跑审计）
+Current Task: MIG-010（ANALYZING）
+Last Completed: MIG-009
+Next Task: MIG-010 记录同 Query 的实体、候选、最终 Chunk、引用、延迟和差异
 
-Completed: 321 / 359
-P0: 256 / 277
-Last Verified Commit: 34c3e66d（MIG-008 chunk metadata sanitizer；旧数据审计仍 BLOCKED）
+Completed: 329 / 359
+P0: 264 / 277
+Last Verified Commit: working-tree（本轮 MIG-008/REL-001/REL-002/REL-003/REL-004/REL-005/REL-006 修改尚未提交）
 
 Recent Migration: MIG-006 DONE_PASS；156 条 legacy 文档全部保守分级：verified=0、needs_validation=156、unusable=0；官方来源未绑定、reviewed catalog snapshot 不存在；PostgreSQL READ ONLY；无生产 DDL/写入；SQLite 未作为证据
-Recent Build: MIG-006 focused 6 passed、MIG-001..006 regression 21 passed；V1 PostgreSQL baseline 10/10；EVAL-014 临时 PostgreSQL fresh/repeat/backfill/constraints/rollback/recovery PASS；npm lint PASS；Vite build PASS（3680 modules，既有 chunk-size warning）；git diff --check PASS
+Recent Build: MIG-009 focused shadow 3 passed；combined MIG-009/trace regression 8 passed；MIG-009 static gate 1 passed；MIG-009 PostgreSQL READ ONLY shadow-generation probe PASS；V1 PostgreSQL baseline 10/10（retrieval/citation=1.0、wrong-vendor=0、version-conflict=0、production write=false）；py_compile/diff PASS；REL-010 focused gate 1 passed；AI security/provider/auth regression 27 passed；DB-022 static contract 1 passed、5 个 SQLite fixture 未作为验收证据；REL-010 PostgreSQL READ ONLY control probe PASS（5 张控制表存在、global row=1、running reindex=0、active lease=0）；REL-006 focused 1 passed；静态备份门禁 12/12 PASS；PostgreSQL READ ONLY Source Manifest probe PASS（schema_version=152、documents=156、chunks=474、redaction=true）；REL-005 focused 1 passed、8/8 streaming gate；REL-004 focused 1、10/10 static gate；REL-003 focused 1；REL-002 focused 2（现场 gate 仍因 migration name drift BLOCKED）；MIG-008 focused 6、MIG-001..008 regression 32、Chunk metadata security 2；npm lint PASS；Vite build PASS（3680 modules，既有 chunk-size warning）
 Last Security Check: MIG-006 manifest 仅含 legacy ID、tenant hash、metadata hash、validation grade、原因码和动作；原 metadata、原文、来源 URL、ACL、Secret、DSN 和异常原文未落盘；正文推断、驱动选择和设备写操作均禁用；PostgreSQL read-only；SQLite forbidden
-Blocked Task: ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
+Blocked Task: REL-007 — BLOCKED_TARGET_TOOLS_MISSING（Docker CLI 与 Nginx binary 缺失，无法执行原生 config syntax gate）；REL-009 — BLOCKED_AUTH_REQUIRED（当前工作区 `.env` 的生产密钥和数据库密码仍为占位符）；ING-020 — BLOCKED_AUTH_REQUIRED（本地服务已启动但浏览器需要登录）
 Blocked Task: ING-021 — BLOCKED_AUTH_REQUIRED（预览/确认可见验证需要已认证浏览器会话）
-Blocked Task: MIG-007 — BLOCKED_NO_VERIFIED_SOURCE_ENTITIES（MIG-006 verified=0；156 行 needs_validation；需要官方 source registry/version 与 reviewed catalog snapshot）
-Blocked Task: MIG-008 — CHUNK_METADATA_IDENTITY_LEAK + HASH_UNVERIFIABLE（472 行旧 Chunk metadata 携带 tenant/identity 键；2 条文档与 2 条 Chunk hash/Embedding 不可验证）
-Recovery Point: MIG-008 修复/复核（先清理或隔离 Chunk metadata 身份键并处理 2 条不可验证 hash/Embedding，再重跑 PG 审计）；MIG-007 仍受 verified=0 阻断；ING-020/021 仍需认证浏览器会话补做可见验证
+Blocked Task: MIG-007 — BLOCKED_NO_VERIFIED_SOURCE_ENTITIES（来源/目录 Seed 预检：候选只在内存合同层 verified；PG 同租户 active/valid source=0、verified version=0、精确版本 legacy row=0；需要 owner review、Source Version 事实和合法绑定）
+Blocked Task: REL-002 — MIGRATION_NAME_DRIFT（PG version 152 记录名 retrieval_rollout_flags，仓库期望 config_backup_tftp_and_startup；不得改写 schema_migrations）
+Recovery Point: REL-003 环境契约；REL-002 需维护负责人确认 version 152 历史模块或提供新的有序 migration；MIG-007 仍需 verified Source Registry/Version 与 reviewed catalog snapshot；ING-020/021 仍需认证浏览器会话补做可见验证
+
+REL-010：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/REL-010.md；Kill Switch、Provider Disable、V2 Disable 和 Reindex Pause Runbook、静态门禁与 PostgreSQL READ ONLY 控制表探针通过；SQLite 未作为验收证据；继续 MIG-009。
+
+MIG-009：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-009.md；V1 主检索 + V2 影子比较、同租户隔离、稳定失败码、哈希化差异和 Trace 投影通过；V1 PostgreSQL baseline 10/10；SQLite 未作为验收证据；继续 MIG-010。
 
 ING-023：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/ING-023.md；PostgreSQL-only database probe PASS；SQLite 未作为验收证据。
 
@@ -82,9 +86,25 @@ MIG-005：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-005.md；Meta
 
 MIG-006：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-006.md；CAT-001 官方来源范围与 ING-011 fail-closed 边界冻结；156 条 PostgreSQL READ ONLY 实体校验（verified=0、needs_validation=156、unusable=0），未进行外网抓取或生产写入；manifest digest 可复现；MIG-001..006 regression 21 passed；V1 10/10；EVAL-014 临时 PostgreSQL 迁移恢复矩阵 PASS；lint/build/compile/diff PASS；SQLite 未作为验收证据。
 
-MIG-007：BLOCKED；证据 docs/knowledge-engine-v2/evidence/MIG-007.md；PG 只读重建门禁与 Parse→Normalize→Classify→Chunk→Embed→Index→Validate→Commit 阶段顺序已实现；现场 156 行全部跳过、verified=0、Provider 调用=0、生产写入=0；专项测试 5 passed；阻断码 BLOCKED_NO_VERIFIED_SOURCE_ENTITIES；未勾选清单，继续执行不依赖重建的 MIG-008。
+MIG-007：BLOCKED；证据 docs/knowledge-engine-v2/evidence/MIG-007.md；PG 只读重建门禁与来源/目录 Seed 预检通过，候选 CE6885/CloudEngine 6800/VRP8/V300 仅在内存合同层 verified；现场 156 行全部跳过、verified=0、Provider 调用=0、生产写入=0；同租户 active/valid Source Registry=0、verified Source Version=0；专项测试 5 + 2 passed；阻断码 BLOCKED_NO_VERIFIED_SOURCE_ENTITIES；未勾选清单。
 
-MIG-008：BLOCKED；证据 docs/knowledge-engine-v2/evidence/MIG-008.md；PG 只读核对 156 文档/474 Chunk，数量与版本关系通过；2 条文档 hash、2 条 Chunk hash/Embedding 不可验证，472 个 Chunk metadata 携带 tenant/identity 键；已修复新建/重建投影的递归 server-owned key sanitizer，专项安全测试 2 passed、Chunk ingestion/action 回归 13 passed；MIG-001..008 regression 31 passed、V1 10/10；阻断码仍需 PG 数据修复/隔离后重跑，未改写生产数据，未勾选清单。
+MIG-008：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/MIG-008.md；PG 只读核对 156 文档/474 Chunk，数量、版本、父子和权限边界通过；2 条已 quarantined fixture 的 hash/Embedding 缺失以 excluded_* 计数保留，活动数据 blocking reason code=0；MIG-008 focused 6、MIG-001..008 regression 32、Chunk metadata security 2、V1 PostgreSQL 10/10；无生产写入。
+
+REL-001：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/REL-001.md；Windows、Ubuntu、Docker Compose、CI 四类目标静态矩阵 4/4，通过 PostgreSQL authority、Python 3.11 Docker runtime、CI V2 defaults off、V1 rollback 和占位符检查；focused 2 passed，lint/build/compile/diff PASS；真实 Docker 启动仍留给目标环境发布门禁。
+
+REL-002：BLOCKED；证据 docs/knowledge-engine-v2/evidence/REL-002.md；代码级 PostgreSQL 扩展 allowlist、strict migration 顺序和 startup fail-closed 检查通过；现场 PostgreSQL READ ONLY 探针显示 vector 0.8.6、pg_trgm 1.6、pending=0、unknown=0，但 version 152 存在 name drift（retrieval_rollout_flags → config_backup_tftp_and_startup）；focused 2 passed；未执行生产写入；未勾选清单。
+
+REL-003：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/REL-003.md；`.env.example` 已集中 Provider/Security Gateway/Embedding/V2 flags，AI/V2/网络写入默认关闭，PostgreSQL URL 与 Secret placeholder 明确；tracked deployment config secret scan 5 files / 0 matches；focused 1 passed、py_compile PASS；未连接数据库、未请求外部 Provider；已勾选清单。
+
+REL-004：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/REL-004.md；FastAPI `/static` 与 SPA fallback、AI/V1 SSE headers、Nginx 300s API timeout/150m body limit、FastAPI 413 request limit、Compose wiring 全部通过；static gate 10/10、focused 1 passed、py_compile PASS；未连接数据库/外部 Provider；已勾选清单。
+
+REL-005：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/REL-005.md；Nginx V2/V1 SSE 专用 location 显式关闭 response/request buffering 与 cache、HTTP/1.1/3600s timeout；Docker exec Uvicorn、Windows desktop direct Uvicorn、应用 `X-Accel-Buffering: no` 均通过；streaming gate 8/8、focused 1 passed、py_compile PASS；无数据库/外部请求；已勾选清单。
+
+REL-006：DONE_PASS；证据 docs/knowledge-engine-v2/evidence/REL-006.md；每日备份与 Docker 发布更新均在代码同步前失败关闭；PostgreSQL `pg_dump --format=custom`、脱敏 Source Manifest、部署配置和 `nexora-backup` 配置快照同批次生成；静态检查 12/12、focused 1 passed、PostgreSQL READ ONLY manifest probe PASS（schema_version=152、documents=156、chunks=474、digest=5213bb31b74bba827b79c5b71d08a444204258b89946eef12bf329d01383bb0c）；生产数据库无写入、未执行生产 dump/restore、SQLite 未作为验收证据；已勾选清单。
+
+REL-007：BLOCKED；证据 docs/knowledge-engine-v2/evidence/REL-007.md；PostgreSQL V1/MIG-008/RET/REL-006 probes PASS，PG contract wrappers 37 passed，npm lint/build、Python compile、git diff PASS；Compose YAML 静态解析 PASS；但目标环境缺少 Docker CLI 和 Nginx binary，原生 `docker compose config --quiet`/`nginx -t` 未执行，未勾选清单；解除条件：目标发布环境安装对应工具后重跑同一门禁。
+
+REL-009：BLOCKED；证据 docs/knowledge-engine-v2/evidence/REL-009.md；静态安全门禁 15/15、focused 1 passed、py_compile PASS；Compose 已移除已知默认密码，生产启动新增 PostgreSQL/密钥 fail-closed，日志脱敏和路径边界 PASS；当前 `.env` 的 SECRET_KEY、CREDENTIAL_ENCRYPTION_KEY 和数据库密码仍为占位符，未勾选清单；解除条件：目标环境注入真实凭据后重跑 runtime gate。
 
 KUI-001..008 证据：
 - docs/knowledge-engine-v2/evidence/KUI-001.md..KUI-008.md

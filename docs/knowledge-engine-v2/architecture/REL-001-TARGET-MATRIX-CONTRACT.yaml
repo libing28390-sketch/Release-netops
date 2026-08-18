@@ -1,0 +1,35 @@
+task_id: REL-001
+title: Release target impact matrix
+priority: P0
+milestone: M5
+owner: OPS+ARCH
+status: implemented_pending_gate
+authority: PostgreSQL
+sqlite: forbidden_for_acceptance
+production_database_write: false
+
+purpose:
+  - Confirm the supported Windows, Ubuntu, Docker Compose and CI entry points.
+  - Keep PostgreSQL as the only release database authority across targets.
+  - Preserve V1 as the default path and retain an explicit V2 rollback boundary.
+
+targets: [windows_desktop, ubuntu_native, docker_compose, ci]
+invariants:
+  - every_target_has_a_documented_entrypoint
+  - every_target_uses_postgresql_or_explicitly_fails_closed
+  - docker_runtime_is_python_311_or_newer
+  - ci_uses_isolated_postgresql_service_and_v2_defaults_off
+  - release_target_does_not_embed_real_credentials
+  - v1_default_and_v2_rollback_are_preserved
+
+acceptance:
+  - static_target_matrix_is_deterministic
+  - required_files_and_scripts_are_present
+  - runtime_and_database_contracts_are_consistent
+  - secret_placeholder_scan_is_clean
+  - no_database_write_or_external_request
+  - V1_baseline_is_unchanged
+
+rollback:
+  runtime: keep_v1_default_and_disable_v2_rollouts
+  data: no_release_task_database_mutation

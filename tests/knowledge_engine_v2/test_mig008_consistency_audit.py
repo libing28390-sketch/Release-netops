@@ -15,7 +15,7 @@ SPEC.loader.exec_module(MODULE := importlib.util.module_from_spec(SPEC))
 
 
 def _doc(**overrides: object) -> dict:
-    row = {"id": "doc-1", "tenant_id": "tenant-1", "content_hash": "", "normalized_content": "body", "document_version": "v1", "index_version": "idx1", "embedding_model": "model", "embedding_dimensions": 3, "acl_json": {}}
+    row = {"id": "doc-1", "tenant_id": "tenant-1", "content_hash": "", "normalized_content": "body", "document_version": "v1", "index_version": "idx1", "embedding_model": "model", "embedding_dimensions": 3, "acl_json": {}, "status": "active", "ingestion_status": "ready", "exclude_from_rag": False}
     row["content_hash"] = MODULE._sha256("body")
     row.update(overrides)
     return row
@@ -53,6 +53,19 @@ def test_hash_version_orphan_and_permission_findings_block() -> None:
     assert result["counts"].get("chunk_metadata_identity_leak", 0) == 0
 
 
+def test_quarantined_document_missing_derived_facts_is_reported_but_not_blocking() -> None:
+    result = MODULE.audit_rows(
+        [_doc(content_hash="", normalized_content="", status="quarantined", ingestion_status="quarantined")],
+        [_chunk(content_hash="", embedding=None, embedding_model="", embedding_dimensions=None)],
+        expected_documents=1,
+    )
+    assert result["status"] == "PASS"
+    assert result["reason_codes"] == []
+    assert result["counts"]["excluded_document_hash_unverifiable"] == 1
+    assert result["counts"]["excluded_chunk_hash_unverifiable"] == 1
+    assert result["counts"]["excluded_chunk_embedding_unavailable"] == 1
+
+
 def test_chunk_identity_metadata_leak_is_blocking_and_values_are_not_echoed() -> None:
     result = MODULE.audit_rows([_doc()], [_chunk(metadata_json={"tenant_id": "secret-tenant", "acl_json": {"role": "admin"}})], expected_documents=1)
     assert result["status"] == "BLOCKED"
@@ -69,5 +82,8 @@ def test_live_postgresql_probe_reports_current_audit_without_sqlite() -> None:
     assert result["probe"]["status"] == "PASS"
     assert result["counts"]["documents"] == 156
     assert result["counts"]["chunks"] == 474
-    assert result["status"] == "BLOCKED"
-    assert "CHUNK_METADATA_IDENTITY_LEAK" in result["reason_codes"]
+    assert result["status"] == "PASS"
+    assert result["reason_codes"] == []
+    assert result["counts"]["excluded_document_hash_unverifiable"] == 2
+    assert result["counts"]["excluded_chunk_hash_unverifiable"] == 2
+    assert result["counts"]["excluded_chunk_embedding_unavailable"] == 2

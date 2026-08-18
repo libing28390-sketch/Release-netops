@@ -253,6 +253,7 @@ class AIAssistantService:
                 },
                 "candidates": [*(resolution.candidates or []), *(retrieval.get("results") or [])],
                 "final_chunks": retrieval.get("results") or [],
+                "shadow": (retrieval.get("debug") or {}).get("shadow") or {},
             },
             request_id=request_id,
         )
@@ -619,6 +620,7 @@ class AIAssistantService:
                     "retrieval_ms": as_int(debug.get("retrieval_latency_ms")),
                 },
                 "quality": debug.get("quality") or {},
+                "shadow": debug.get("shadow") or {},
             },
             "citations": knowledge_result.get("citations") or [],
             "explanation": knowledge_result.get("explanation") or {},

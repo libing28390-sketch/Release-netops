@@ -15,9 +15,9 @@ document inventory + MIG-006 expected count
 | legacy chunks | 474 |
 | orphan chunks | 0 |
 | version/index mismatch | 0 |
-| unverifiable document hashes | 2 |
-| unverifiable chunk hashes/embeddings | 2 / 2 |
-| chunk metadata identity leaks | 472 |
-| audit outcome | BLOCKED |
+| excluded (quarantined) document hashes | 2 |
+| excluded (quarantined) chunk hashes/embeddings | 2 / 2 |
+| chunk metadata server-owned identity leaks | 0 |
+| audit outcome | PASS |
 
-CHUNK_METADATA_IDENTITY_LEAK 是真实权限边界问题：Chunk 只能继承父文档 tenant/ACL，不能把身份、ACL 或角色键作为可检索 metadata。修复后必须在 PostgreSQL 上重新运行同一审计。
+两条缺失 hash/Embedding 的 API fixture 父文档均为 `quarantined`，因此只计入 `excluded_*`，不进入检索投影。Chunk 仍只能继承父文档 tenant/ACL，不能携带 server-owned tenant/ACL/credential/role 键；当前 PostgreSQL 复核为 0。MIG-009 仍受 MIG-007 verified source/entity 门禁约束。

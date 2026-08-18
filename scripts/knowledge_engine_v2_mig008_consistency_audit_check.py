@@ -19,6 +19,7 @@ MIG006_MANIFEST_PATH = ROOT / "docs" / "knowledge-engine-v2" / "eval" / "mig-006
 REPORT_PATH = ROOT / "docs" / "knowledge-engine-v2" / "eval" / "mig-008-consistency-audit-report-v1.json"
 MANIFEST_PATH = ROOT / "docs" / "knowledge-engine-v2" / "eval" / "mig-008-consistency-audit-manifest-v1.json"
 FORBIDDEN_CHUNK_METADATA_KEYS = {"tenant_id", "workspace_id", "user_id", "created_by", "updated_by", "acl", "acl_json", "permissions", "roles", "authorization", "api_key", "password", "secret", "token", "private_key"}
+EXCLUDED_LIFECYCLE_STATUSES = {"quarantined", "disabled", "archived", "deleted"}
 
 
 def _text(value: Any) -> str:
@@ -49,6 +50,28 @@ def _json_object(value: Any) -> tuple[dict[str, Any] | None, bool]:
 def _metadata_keys(value: Any) -> set[str]:
     decoded, valid = _json_object(value)
     return {str(key).casefold() for key in decoded} if valid and decoded else set()
+
+
+def _is_excluded_document(row: Mapping[str, Any]) -> bool:
+    """Return whether a document is already excluded from retrieval.
+
+    MIG-008 must not turn quarantined test/legacy rows into false production
+    failures: they are deliberately not retrieval eligible and therefore do
+    not require a usable hash or embedding.  This exemption is narrow and
+    lifecycle-based; active/ready rows remain fully blocking when facts are
+    missing.  The parent lifecycle is used for its chunks because chunks do
+    not own authorization or lifecycle state.
+    """
+    statuses = {
+        _text(row.get("status")).casefold(),
+        _text(row.get("ingestion_status")).casefold(),
+    }
+    if statuses.intersection(EXCLUDED_LIFECYCLE_STATUSES):
+        return True
+    value = row.get("exclude_from_rag")
+    if isinstance(value, bool):
+        return value
+    return _text(value).casefold() in {"1", "true", "yes", "on"}
 
 
 def load_contract() -> dict[str, Any]:
@@ -87,10 +110,11 @@ def audit_rows(documents: Iterable[Mapping[str, Any]], chunks: Iterable[Mapping[
             counts["document_tenant_missing"] += 1
         declared_hash = _text(row.get("content_hash"))
         normalized = row.get("normalized_content")
+        excluded = _is_excluded_document(row)
         if not declared_hash or normalized in (None, ""):
-            counts["document_hash_unverifiable"] += 1
+            counts["excluded_document_hash_unverifiable" if excluded else "document_hash_unverifiable"] += 1
         elif _sha256(str(normalized)) != declared_hash:
-            counts["document_hash_mismatch"] += 1
+            counts["excluded_document_hash_mismatch" if excluded else "document_hash_mismatch"] += 1
         _, acl_valid = _json_object(row.get("acl_json"))
         if not acl_valid:
             counts["document_acl_invalid"] += 1
@@ -102,9 +126,10 @@ def audit_rows(documents: Iterable[Mapping[str, Any]], chunks: Iterable[Mapping[
             counts["chunk_orphan"] += 1
             continue
         parent = doc_by_id[document_id]
+        parent_excluded = _is_excluded_document(parent)
         declared_chunk_hash = _text(row.get("content_hash"))
         if not declared_chunk_hash:
-            counts["chunk_hash_unverifiable"] += 1
+            counts["excluded_chunk_hash_unverifiable" if parent_excluded else "chunk_hash_unverifiable"] += 1
         ordinal_keys[(document_id, _text(row.get("ordinal")))] += 1
         if declared_chunk_hash:
             content_hash_keys[(document_id, declared_chunk_hash)] += 1
@@ -113,7 +138,7 @@ def audit_rows(documents: Iterable[Mapping[str, Any]], chunks: Iterable[Mapping[
             if child_value and parent_value and child_value != parent_value:
                 counts[counter_name] += 1
         if row.get("embedding") in (None, "") or not _text(row.get("embedding_model")) or row.get("embedding_dimensions") is None:
-            counts["chunk_embedding_unavailable"] += 1
+            counts["excluded_chunk_embedding_unavailable" if parent_excluded else "chunk_embedding_unavailable"] += 1
         if _text(row.get("tenant_id")) and _text(row.get("tenant_id")) != _text(parent.get("tenant_id")):
             counts["chunk_tenant_inheritance_mismatch"] += 1
         if _metadata_keys(row.get("metadata_json")).intersection(FORBIDDEN_CHUNK_METADATA_KEYS):
@@ -139,7 +164,7 @@ def _postgres_probe(expected_documents: int) -> dict[str, Any]:
         read_only = _text(conn.execute("SHOW transaction_read_only").fetchone()[0]).casefold() == "on"
         doc_columns = {str(row[0]) for row in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='ai_document'").fetchall()}
         chunk_columns = {str(row[0]) for row in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='ai_document_chunk'").fetchall()}
-        doc_fields = ["id", "tenant_id", "content_hash", "normalized_content", "document_version", "index_version", "embedding_model", "embedding_dimensions", "acl_json"]
+        doc_fields = ["id", "tenant_id", "content_hash", "normalized_content", "document_version", "index_version", "embedding_model", "embedding_dimensions", "acl_json", "status", "ingestion_status", "exclude_from_rag"]
         chunk_fields = ["id", "document_id", "tenant_id", "content_hash", "ordinal", "document_version", "index_version", "embedding_model", "embedding_dimensions", "embedding", "metadata_json"]
         selected_doc_fields = [field for field in doc_fields if field in doc_columns]
         selected_chunk_fields = [field for field in chunk_fields if field in chunk_columns]

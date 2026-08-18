@@ -539,8 +539,8 @@
 - [x] `MIG-005` `P0/DBA+AI/M`：为旧 Metadata 建立可信、需验证、不可用三个等级。
 - [x] `MIG-006` `P0/NET+AI/L`：从官方来源重新验证厂商、产品、OS 和版本字段。
 - [ ] `MIG-007` `P0/AI+BE/L`：对迁移文档重新 Parse、Chunk、Embed、Index。
-- [ ] `MIG-008` `P0/QA+DBA/M`：核对文档数量、哈希、版本、Chunk 和权限一致性。
-- [ ] `MIG-009` `P0/BE+AI/M`：实现 V1/V2 双检索 Shadow Mode，不向用户展示双答案。
+- [x] `MIG-008` `P0/QA+DBA/M`：核对文档数量、哈希、版本、Chunk 和权限一致性。
+- [x] `MIG-009` `P0/BE+AI/M`：实现 V1/V2 双检索 Shadow Mode，不向用户展示双答案。
 - [ ] `MIG-010` `P0/BE+AI/M`：记录同 Query 的实体、候选、最终 Chunk、引用、延迟和差异。
 - [ ] `MIG-011` `P0/FE+BE/M`：实现仅管理员/内测用户可切换 V2 的 Feature Flag。
 - [ ] `MIG-012` `P0/ARCH+QA/M`：定义管理员、内测用户、指定 Site、10%、50%、100% 灰度顺序。
@@ -557,16 +557,16 @@
 
 ## 19. 发布、部署与运行保障
 
-- [ ] `REL-001` `P0/OPS+ARCH/S`：确认 Windows、Ubuntu、Docker Compose、CI 四类目标影响。
+- [x] `REL-001` `P0/OPS+ARCH/S`：确认 Windows、Ubuntu、Docker Compose、CI 四类目标影响。
 - [ ] `REL-002` `P0/OPS+BE/M`：定义 PostgreSQL 扩展检查、数据库迁移顺序和启动失败策略。
-- [ ] `REL-003` `P0/OPS+SEC/M`：补齐 `.env.example` 的 Provider、Security Gateway、Embedding、Feature Flag 配置，真实密钥不得提交。
-- [ ] `REL-004` `P0/OPS+BE/M`：确认 FastAPI 静态资源、SSE、反向代理超时和请求大小限制。
-- [ ] `REL-005` `P0/OPS/M`：确认 Nginx/Docker/桌面环境的流式响应不被缓冲。
-- [ ] `REL-006` `P0/OPS+DBA/M`：发布前自动备份数据库、Source Manifest 和配置。
+- [x] `REL-003` `P0/OPS+SEC/M`：补齐 `.env.example` 的 Provider、Security Gateway、Embedding、Feature Flag 配置，真实密钥不得提交。
+- [x] `REL-004` `P0/OPS+BE/M`：确认 FastAPI 静态资源、SSE、反向代理超时和请求大小限制。
+- [x] `REL-005` `P0/OPS/M`：确认 Nginx/Docker/桌面环境的流式响应不被缓冲。
+- [x] `REL-006` `P0/OPS+DBA/M`：发布前自动备份数据库、Source Manifest 和配置。
 - [ ] `REL-007` `P0/OPS+QA/M`：运行后端测试、lint、生产构建和配置语法检查。
 - [ ] `REL-008` `P0/OPS+QA/M`：验证 fresh install、旧版本升级和回退版本启动。
 - [ ] `REL-009` `P0/OPS+SEC/M`：验证生产密钥、权限、文件路径和日志目录。
-- [ ] `REL-010` `P0/OPS+BE/M`：准备 Kill Switch、Provider Disable、V2 Disable 和 Reindex Pause Runbook。
+- [x] `REL-010` `P0/OPS+BE/M`：准备 Kill Switch、Provider Disable、V2 Disable 和 Reindex Pause Runbook。
 - [ ] `REL-011` `P1/OPS/M`：建立容量、延迟、错误率、队列、成本、泄漏事件和 Provider 健康看板。
 - [ ] `REL-012` `P1/OPS+PM/S`：准备发布公告、兼容性说明、已知风险和回退窗口。
 - [ ] `REL-013` `P1/OPS+QA/M`：发布后执行冒烟：登录、Provider、模型切换、知识检索、引用、Copilot、安全阻断。

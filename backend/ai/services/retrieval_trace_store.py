@@ -9,6 +9,7 @@ projected through an allowlist before it enters the store.
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 import uuid
 from collections import deque
@@ -71,6 +72,15 @@ def _safe_hash(value: Any) -> str:
     return _hash(value)[:32]
 
 
+def _opaque_hash(value: Any) -> str:
+    """Keep an existing opaque hash or hash an untrusted identity value."""
+
+    text = str(value or "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{32,64}", text):
+        return text.lower()[:32]
+    return _safe_hash(text)
+
+
 def _safe_mapping(value: Any, fields: tuple[str, ...], *, limit: int = 128) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
@@ -86,6 +96,129 @@ def _safe_mapping(value: Any, fields: tuple[str, ...], *, limit: int = 128) -> d
     return result
 
 
+MAX_SHADOW_ROWS = 20
+
+
+def _shadow_candidate_projection(item: Any, rank: int) -> dict[str, Any] | None:
+    if not isinstance(item, Mapping):
+        return None
+    identity = f"{item.get('storage_document_id') or item.get('document_id') or ''}:{item.get('chunk_id') or ''}"
+    candidate_hash = _opaque_hash(item.get("candidate_hash") or identity)
+    components = item.get("score_components") if isinstance(item.get("score_components"), Mapping) else {}
+    if not candidate_hash:
+        return None
+    return {
+        "rank": max(1, _nonnegative_int(rank) or 1),
+        "candidate_hash": candidate_hash,
+        "relevance_score": _safe_score(item.get("relevance_score")),
+        "keyword_score": _safe_score(item.get("keyword_score")),
+        "vector_score": _safe_score(item.get("vector_score")),
+        "metadata_score": _safe_score(item.get("metadata_score")),
+        "trust_score": _safe_score(item.get("trust_score")),
+        "version_score": _safe_score(item.get("version_score")),
+        "score_components": {
+            key: _safe_score(components.get(key))
+            for key in ("lexical", "vector", "metadata", "trust", "version", "total")
+            if components.get(key) is not None
+        },
+    }
+
+
+def _shadow_final_projection(item: Any, rank: int) -> dict[str, Any] | None:
+    if not isinstance(item, Mapping):
+        return None
+    identity = f"{item.get('storage_document_id') or item.get('document_id') or ''}:{item.get('chunk_id') or ''}"
+    chunk_hash = _opaque_hash(item.get("chunk_hash") or identity)
+    context_ids = item.get("context_chunk_ids") if isinstance(item.get("context_chunk_ids"), list) else []
+    if not chunk_hash:
+        return None
+    return {
+        "rank": max(1, _nonnegative_int(rank) or 1),
+        "chunk_hash": chunk_hash,
+        "relevance_score": _safe_score(item.get("relevance_score")),
+        "context_chunk_count": _nonnegative_int(item.get("context_chunk_count") or len(context_ids)),
+        "context_chunk_hashes": [_opaque_hash(value) for value in context_ids[:20] if value not in (None, "")],
+    }
+
+
+def _shadow_hash_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [_opaque_hash(entry) for entry in list(value)[:MAX_SHADOW_ROWS] if entry not in (None, "")]
+
+
+def _shadow_difference_projection(value: Any) -> dict[str, Any]:
+    value = value if isinstance(value, Mapping) else {}
+    score_deltas: list[dict[str, Any]] = []
+    raw_deltas = value.get("score_deltas") if isinstance(value.get("score_deltas"), list) else []
+    for row in raw_deltas[:MAX_SHADOW_ROWS]:
+        if not isinstance(row, Mapping):
+            continue
+        left = _safe_score(row.get("v1_score"))
+        right = _safe_score(row.get("v2_score"))
+        if left is None and right is None:
+            continue
+        score_deltas.append({
+            "chunk_hash": _opaque_hash(row.get("chunk_hash")),
+            "v1_score": left,
+            "v2_score": right,
+            "delta": round(max(-1.0, min(1.0, float(row.get("delta") or (right or 0.0) - (left or 0.0)))), 4),
+        })
+    return {
+        "added_hashes": _shadow_hash_list(value.get("added_hashes")),
+        "removed_hashes": _shadow_hash_list(value.get("removed_hashes")),
+        "candidate_added_hashes": _shadow_hash_list(value.get("candidate_added_hashes")),
+        "candidate_removed_hashes": _shadow_hash_list(value.get("candidate_removed_hashes")),
+        "score_deltas": score_deltas,
+    }
+
+
+def _shadow_projection(value: Any) -> dict[str, Any]:
+    value = value if isinstance(value, Mapping) else {}
+    v1_candidates = [
+        projected
+        for index, row in enumerate(value.get("v1_candidates") if isinstance(value.get("v1_candidates"), list) else [], 1)
+        if (projected := _shadow_candidate_projection(row, index)) is not None
+    ][:MAX_SHADOW_ROWS]
+    v2_candidates = [
+        projected
+        for index, row in enumerate(value.get("v2_candidates") if isinstance(value.get("v2_candidates"), list) else [], 1)
+        if (projected := _shadow_candidate_projection(row, index)) is not None
+    ][:MAX_SHADOW_ROWS]
+    v1_final_chunks = [
+        projected
+        for index, row in enumerate(value.get("v1_final_chunks") if isinstance(value.get("v1_final_chunks"), list) else [], 1)
+        if (projected := _shadow_final_projection(row, index)) is not None
+    ][:MAX_SHADOW_ROWS]
+    v2_final_chunks = [
+        projected
+        for index, row in enumerate(value.get("v2_final_chunks") if isinstance(value.get("v2_final_chunks"), list) else [], 1)
+        if (projected := _shadow_final_projection(row, index)) is not None
+    ][:MAX_SHADOW_ROWS]
+    return {
+        "mode": _text(value.get("mode"), 64),
+        "status": _text(value.get("status"), 32),
+        "user_answer_source": _text(value.get("user_answer_source"), 16),
+        "v1_result_count": _nonnegative_int(value.get("v1_result_count")),
+        "v2_result_count": _nonnegative_int(value.get("v2_result_count")),
+        "overlap_count": _nonnegative_int(value.get("overlap_count")),
+        "v1_only_count": _nonnegative_int(value.get("v1_only_count")),
+        "v2_only_count": _nonnegative_int(value.get("v2_only_count")),
+        "v1_latency_ms": _nonnegative_int(value.get("v1_latency_ms")),
+        "v2_latency_ms": _nonnegative_int(value.get("v2_latency_ms")),
+        "index_version": _text(value.get("index_version"), 128),
+        "error_code": _text(value.get("error_code"), 64),
+        "citation_source": _text(value.get("citation_source"), 16),
+        "v1_citation_count": _nonnegative_int(value.get("v1_citation_count")),
+        "v2_citation_count": _nonnegative_int(value.get("v2_citation_count")),
+        "v1_candidates": v1_candidates,
+        "v2_candidates": v2_candidates,
+        "v1_final_chunks": v1_final_chunks,
+        "v2_final_chunks": v2_final_chunks,
+        "difference": _shadow_difference_projection(value.get("difference")),
+    }
+
+
 def _runtime_projection(runtime: Any) -> dict[str, Any]:
     runtime = runtime if isinstance(runtime, Mapping) else {}
     reranker = runtime.get("reranker") if isinstance(runtime.get("reranker"), Mapping) else {}
@@ -94,6 +227,7 @@ def _runtime_projection(runtime: Any) -> dict[str, Any]:
     security = runtime.get("security") if isinstance(runtime.get("security"), Mapping) else {}
     citation = runtime.get("citation") if isinstance(runtime.get("citation"), Mapping) else {}
     quality = runtime.get("quality") if isinstance(runtime.get("quality"), Mapping) else {}
+    shadow = runtime.get("shadow") if isinstance(runtime.get("shadow"), Mapping) else {}
     token_projection = {
         key: _nonnegative_int(tokens.get(key))
         for key in ("input", "output", "total")
@@ -143,6 +277,7 @@ def _runtime_projection(runtime: Any) -> dict[str, Any]:
             "top_relevance_score": _safe_score(quality.get("top_relevance_score")),
             "error": bool(quality.get("error")),
         },
+        "shadow": _shadow_projection(shadow),
     }
 
 
@@ -225,6 +360,7 @@ def _observation_projection(*, query: str, observation: Mapping[str, Any] | None
             for index, item in enumerate(final_chunks[:MAX_OBSERVATION_CHUNKS])
             if isinstance(item, Mapping)
         ],
+        "shadow": _shadow_projection(observation.get("shadow")),
     }
 
 
@@ -318,6 +454,7 @@ def update_retrieval_trace(trace_id: str, *, citations: list[Mapping[str, Any]] 
             if citations is not None or citation_warnings is not None:
                 current_runtime = item.get("runtime") if isinstance(item.get("runtime"), Mapping) else {}
                 current_citation = current_runtime.get("citation") if isinstance(current_runtime.get("citation"), Mapping) else {}
+                current_shadow = current_runtime.get("shadow") if isinstance(current_runtime.get("shadow"), Mapping) else {}
                 item["runtime"] = _runtime_projection(_merge_runtime(current_runtime, {
                     "citation": {
                         **current_citation,
@@ -325,6 +462,12 @@ def update_retrieval_trace(trace_id: str, *, citations: list[Mapping[str, Any]] 
                         "warning_count": len(citation_warnings) if citation_warnings is not None else current_citation.get("warning_count", 0),
                         "verified_count": sum(1 for value in (citations or []) if str(value.get("validation") or "").lower() in {"verified", "validated", "validated_official"}) if citations is not None else current_citation.get("verified_count", 0),
                         "failed_count": sum(1 for value in (citations or []) if str(value.get("validation") or "").lower() in {"failed", "mismatch", "stale", "acl_denied"}) if citations is not None else current_citation.get("failed_count", 0),
+                    },
+                    "shadow": {
+                        **current_shadow,
+                        "citation_source": "v1",
+                        "v1_citation_count": len(citations) if citations is not None else current_shadow.get("v1_citation_count", 0),
+                        "v2_citation_count": 0,
                     },
                 }))
             if runtime is not None:

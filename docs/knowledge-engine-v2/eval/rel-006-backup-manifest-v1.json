@@ -1,0 +1,27 @@
+{
+  "task_id": "REL-006",
+  "status": "PASS",
+  "reason_codes": [],
+  "checks": {
+    "contract_postgresql_authority": true,
+    "daily_custom_dump": true,
+    "daily_manifest_companion": true,
+    "daily_config_archive": true,
+    "daily_atomic_and_retention": true,
+    "release_backup_command": true,
+    "release_custom_dump": true,
+    "release_manifest_and_snapshots": true,
+    "release_fail_closed": true,
+    "credential_free_plan": true,
+    "sqlite_not_used_for_acceptance": true
+  },
+  "postgres_manifest_probe": {
+    "status": "NOT_RUN",
+    "reason": "static_gate_only"
+  },
+  "production_database_write": false,
+  "pg_dump_executed_by_gate": false,
+  "production_restore": "forbidden",
+  "sqlite": "forbidden_for_acceptance",
+  "external_provider_request": false
+}

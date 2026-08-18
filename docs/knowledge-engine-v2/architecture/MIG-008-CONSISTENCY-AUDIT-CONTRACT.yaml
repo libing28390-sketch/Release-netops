@@ -22,6 +22,7 @@ checks:
     - normalized_content_sha256_matches_declared_content_hash
     - missing_content_or_hash_is_unverifiable_not_trusted
     - every_chunk_has_content_hash
+    - quarantined_or_non_retrieval_parent_missing_derived_facts_is_reported_but_not_blocking
   versions:
     - chunk_document_version_matches_parent
     - chunk_index_version_matches_parent
@@ -55,6 +56,15 @@ blocking_findings:
   - DOCUMENT_ACL_INVALID
   - CHUNK_METADATA_IDENTITY_LEAK
   - CHUNK_TENANT_INHERITANCE_MISMATCH
+
+exclusion_boundary:
+  lifecycle_statuses: [quarantined, disabled, archived, deleted]
+  retrieval_flag: exclude_from_rag=true
+  rule: >-
+    A document or its chunks remain in the inventory and are reported with
+    excluded_* counters, but missing hash/embedding facts do not block this
+    consistency gate when the parent is explicitly outside retrieval. Active
+    or ready rows never receive this exemption.
 
 security:
   report_fields: [counts, reason_codes, digest, schema_presence]

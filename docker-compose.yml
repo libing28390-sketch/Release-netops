@@ -11,7 +11,7 @@ services:
       # These variables can be overridden in the .env file
       - TZ=${TZ:-Asia/Shanghai}
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a non-default secret}
       - POSTGRES_DB=${POSTGRES_DB:-netops}
     volumes:
       - nexora-pgdata:/var/lib/postgresql/data
@@ -46,8 +46,10 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
       - NODE_ENV=production
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-netops}
-      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:-change-me-to-a-random-secret}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a non-default secret}@db:5432/${POSTGRES_DB:-netops}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set to a non-default secret}
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set to a non-default secret}
+      - REQUEST_BODY_MAX_BYTES=${REQUEST_BODY_MAX_BYTES:-157286400}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Windows browsers download the one-click EXE from the Windows release
       # branch; Ubuntu browsers download the local systemd installer.

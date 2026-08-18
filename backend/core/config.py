@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # HTTP access records are emitted at DEBUG; warnings/errors remain visible.
     LOG_LEVEL: str = "INFO"
     LOG_SLOW_REQUEST_MS: float = 500.0
+    # Keep the application boundary aligned with nginx's 150m limit.  Route
+    # models and upload handlers may impose smaller limits for their payloads.
+    REQUEST_BODY_MAX_BYTES: int = 150 * 1024 * 1024
     SESSION_TTL_SECONDS: int = 7200
     TELEMETRY_RAW_RETENTION_HOURS: int = 48
     TELEMETRY_ROLLUP_RETENTION_DAYS: int = 365
@@ -82,6 +85,14 @@ class Settings(BaseSettings):
     AI_HEALTH_BACKOFF_SECONDS: int = 30
     AI_DAILY_BUDGET_USD: float = 0.0
 
+    # Knowledge Engine V2 remains V1-compatible by default.  Shadow reads
+    # execute a second, read-only retrieval for comparison while the user
+    # answer continues to come from V1 until an explicit rollout gate.
+    KNOWLEDGE_V2_ENABLED: bool = False
+    KNOWLEDGE_V2_SHADOW_READ: bool = False
+    KNOWLEDGE_V2_ROLLOUT_PERCENT: int = 0
+    KNOWLEDGE_V2_WRITE_ENABLED: bool = False
+
     # PAM Web terminal compatibility control. Host-key registration is not a
     # login prerequisite; legacy algorithms still require explicit opt-in.
     PAM_ALLOW_LEGACY_SSH: bool = False
@@ -115,3 +126,33 @@ settings = Settings()
 # 便于其他模块快速判断当前环境
 IS_PRODUCTION = settings.ENVIRONMENT.lower() == "production"
 IS_DEVELOPMENT = not IS_PRODUCTION
+
+
+def validate_production_security() -> None:
+    """Fail closed when production would start with default credentials or SQLite.
+
+    Development/test callers retain the existing local defaults.  Production
+    startup must receive real values through the environment/secret manager;
+    the exception contains stable codes only and never echoes a secret.
+    """
+
+    if not IS_PRODUCTION:
+        return
+    errors: list[str] = []
+    database_url = str(settings.DATABASE_URL or "").strip().lower()
+    if not database_url.startswith(("postgresql://", "postgres://")):
+        errors.append("PRODUCTION_POSTGRES_REQUIRED")
+    forbidden = {
+        "",
+        "supersecret",
+        "change-me-to-a-random-secret",
+        "change-me-to-a-32-char-random-secret-key",
+        "replace-with-a-very-secret-key",
+        "replace-with-a-32-char-random-secret-key",
+    }
+    for field_name in ("SECRET_KEY", "CREDENTIAL_ENCRYPTION_KEY"):
+        value = str(getattr(settings, field_name, "") or "").strip()
+        if value.lower() in forbidden or len(value) < 16:
+            errors.append(f"{field_name}_REQUIRED")
+    if errors:
+        raise RuntimeError("PRODUCTION_SECURITY_CONFIGURATION_INVALID:" + ",".join(errors))
