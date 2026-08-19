@@ -27,26 +27,6 @@ import { connectionCheckBadgeMeta, formatConnectionCheckTime } from '../utils/co
 import { useChartTheme } from '../hooks/useChartTheme';
 import { apiRequest } from '../api/http';
 
-interface DeviceOperationalCategory {
-  key: string;
-  success?: boolean;
-  count?: number;
-  commands?: string[];
-  error?: string;
-  records?: unknown[];
-  raw_outputs?: Array<{ command?: string; output?: string }>;
-}
-
-interface DeviceOperationalData {
-  summary?: {
-    successful_categories?: number;
-    failed_categories?: number;
-    total_records?: number;
-  };
-  collected_at?: string;
-  categories?: DeviceOperationalCategory[];
-}
-
 interface PlatformProfileOption {
   id: string;
   platform_code: string;
@@ -75,9 +55,6 @@ interface DeviceDetailModalProps {
   onDeviceTrendRangeHoursChange: (hours: number) => void;
   deviceHealthTrend: DeviceHealthTrendResponse | null;
   deviceHealthTrendLoading: boolean;
-  deviceOperationalData: DeviceOperationalData | null;
-  deviceOperationalDataLoading: boolean;
-  onLoadOperationalData: (deviceId: string) => void;
   onTestConnection: (device: Device, mode: 'quick' | 'deep') => void;
   isTestingConnection: boolean;
   onSnmpTest: (deviceId: string) => void;
@@ -87,29 +64,149 @@ interface DeviceDetailModalProps {
   onGoToAutomation: (device: Device) => void;
 }
 
-const operationalCategoryLabelMap: Record<string, { zh: string; en: string }> = {
-  interfaces: { zh: '接口信息', en: 'Interfaces' },
-  neighbors: { zh: '邻居信息', en: 'Neighbors' },
-  arp: { zh: 'ARP', en: 'ARP' },
-  mac_table: { zh: 'MAC 地址表', en: 'MAC Table' },
-  routing_table: { zh: '路由表', en: 'Routing Table' },
-  bgp: { zh: 'BGP', en: 'BGP' },
-  ospf: { zh: 'OSPF', en: 'OSPF' },
-  bfd: { zh: 'BFD', en: 'BFD' },
-  ntp: { zh: 'NTP', en: 'NTP' },
-  environment: { zh: '温度环境', en: 'Environment' },
-  fan: { zh: '风扇', en: 'Fans' },
-  power: { zh: '电源', en: 'Power' },
-  stack: { zh: '堆叠/IRF', en: 'Stack/IRF' },
-  transceiver: { zh: '光模块', en: 'Transceiver' },
-  eth_trunk: { zh: '链路聚合', en: 'Link Aggregation' },
-};
-
 const getHealthToneClass = (status?: string) => {
   if (status === 'critical') return 'bg-red-100 text-red-700';
   if (status === 'warning') return 'bg-amber-100 text-amber-700';
   if (status === 'healthy') return 'bg-emerald-100 text-emerald-700';
   return 'bg-slate-100 text-slate-600';
+};
+
+const isHardwareStatusNormal = (value: unknown) => {
+  if (value === true || value === 1) return true;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return ['true', '1', 'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready'].includes(normalized);
+};
+
+const DEVICE_ROLE_ZH: Record<string, string> = {
+  core: '核心',
+  distribution: '汇聚',
+  access: '接入',
+  firewall: '防火墙',
+  router: '路由器',
+  switch: '交换机',
+  server: '服务器',
+  wireless: '无线',
+  unassigned: '未分配',
+};
+
+const formatRoleLabel = (value: unknown, language: string) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '—';
+  if (language !== 'zh') return raw;
+  return DEVICE_ROLE_ZH[raw.toLowerCase()] || raw;
+};
+
+const formatStatusLabel = (value: unknown, language: string) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '—';
+  if (language !== 'zh') return raw;
+  const labels: Record<string, string> = {
+    online: '在线',
+    offline: '离线',
+    pending: '待确认',
+    unknown: '未知',
+    normal: '正常',
+    abnormal: '异常',
+    healthy: '健康',
+    warning: '告警',
+    critical: '严重',
+    major: '重要',
+    minor: '次要',
+    up: '正常',
+    down: '异常',
+  };
+  return labels[raw.toLowerCase()] || raw;
+};
+
+const formatPlatformLabel = (value: unknown, language: string) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '—';
+  if (language !== 'zh') return raw;
+  const labels: Record<string, string> = {
+    h3c_comware: '华三 Comware',
+    hp_comware: '华三 Comware',
+    huawei_vrp: '华为 VRP',
+    cisco_ios: 'Cisco IOS',
+    cisco_nxos: 'Cisco NX-OS',
+    generic: '通用平台',
+    unknown: '未知平台',
+  };
+  return labels[raw.toLowerCase()] || raw;
+};
+
+const formatUptime = (value: unknown, language: string) => {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '—';
+
+  // H3C sysUpTime is sometimes exposed by the API as HH:MM:SS.microseconds.
+  const clock = raw.match(/^(?:(\d+):)?(\d+):(\d+)(?:\.\d+)?$/);
+  if (clock) {
+    const hours = Number(clock[1] || 0);
+    const minutes = Number(clock[2] || 0);
+    const seconds = Number(clock[3] || 0);
+    if (language === 'zh') {
+      return [hours ? `${hours}小时` : '', minutes ? `${minutes}分钟` : '', `${seconds}秒`]
+        .filter(Boolean)
+        .join('');
+    }
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+
+  const days = raw.match(/^(\d+)d\s+(\d+)h\s+(\d+)m(?:\s+(\d+)s)?$/i);
+  if (days) {
+    const [day, hour, minute, second] = days.slice(1).map((item) => Number(item || 0));
+    if (language === 'zh') {
+      return [day ? `${day}天` : '', hour ? `${hour}小时` : '', minute ? `${minute}分钟` : '', second ? `${second}秒` : '']
+        .filter(Boolean)
+        .join('') || '0秒';
+    }
+    return `${day}d ${hour}h ${minute}m${second ? ` ${second}s` : ''}`;
+  }
+
+  return raw;
+};
+
+const localizeHealthText = (value: unknown, language: string) => {
+  const raw = String(value ?? '').trim();
+  if (!raw || language !== 'zh') return raw;
+  if (/^no (?:active )?health issues detected$/i.test(raw) || /^no material health issue is currently detected\.?$/i.test(raw)) {
+    return '未检测到健康问题';
+  }
+  if (/^fan status indicates a hardware failure$/i.test(raw)) return '风扇状态显示存在硬件故障';
+  if (/^power supply status indicates a failure$/i.test(raw)) return '电源状态显示存在故障';
+  if (/^power supply lost redundancy$/i.test(raw)) return '电源失去冗余';
+  const temperature = raw.match(/^temperature is (?:high|elevated) at\s+([\d.]+)\s*°?C$/i);
+  if (temperature) return `温度过高：${temperature[1]}℃`;
+  const cpu = raw.match(/^CPU usage is (?:(?:high|elevated at)\s+)?([\d.]+)%$/i);
+  if (cpu) return `CPU 使用率过高：${cpu[1]}%`;
+  const memory = raw.match(/^Memory usage is (?:(?:high|elevated at)\s+)?([\d.]+)%$/i);
+  if (memory) return `内存使用率过高：${memory[1]}%`;
+  const interfaceP95 = raw.match(/^Interface (.+) P95 is ([\d.]+)%$/i);
+  if (interfaceP95) return `接口 ${interfaceP95[1]} P95 利用率为 ${interfaceP95[2]}%`;
+  const openAlerts = raw.match(/^(\d+)\s+major alert\(s\) are still open$/i);
+  if (openAlerts) return `${openAlerts[1]} 个重要告警仍未恢复`;
+  return raw;
+};
+
+const SNMP_PROFILE_STATUS_ZH: Record<string, string> = {
+  verified: '已验证',
+  unverified: '待验证',
+  failed: '验证失败',
+  none: '未配置',
+};
+const SNMP_PROFILE_SOURCE_ZH: Record<string, string> = {
+  model_profile: '型号模板',
+  device_override: '单台覆盖',
+  mixed: '模板 + 单台覆盖',
+  template_blocked: '模板未生效',
+  builtin_default: '内置默认',
+};
+const SNMP_PROFILE_SOURCE_EN: Record<string, string> = {
+  model_profile: 'Model template',
+  device_override: 'Device override',
+  mixed: 'Template + override',
+  template_blocked: 'Template blocked',
+  builtin_default: 'Built-in default',
 };
 
 const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
@@ -125,9 +222,6 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   onDeviceTrendRangeHoursChange,
   deviceHealthTrend,
   deviceHealthTrendLoading,
-  deviceOperationalData,
-  deviceOperationalDataLoading,
-  onLoadOperationalData,
   onTestConnection,
   isTestingConnection,
   onSnmpTest,
@@ -145,6 +239,18 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const [platformError, setPlatformError] = useState('');
   const [selectedPlatformProfileId, setSelectedPlatformProfileId] = useState(viewingDevice.platform_profile_id || '');
   const [lockPlatformBinding, setLockPlatformBinding] = useState(Boolean(viewingDevice.platform_locked));
+  const snmpProfile = viewingDevice.snmp_metric_profile;
+  const snmpProfileStatus = snmpProfile?.status || 'none';
+  const snmpProfileSource = snmpProfile?.source || 'builtin_default';
+  const snmpProfileName = snmpProfile?.id
+    ? [snmpProfile.vendor, snmpProfile.model].filter(Boolean).join(' · ') || snmpProfile.id
+    : (language === 'zh' ? '未关联型号模板' : 'No model template');
+  const snmpMetricLabels: Record<string, string> = language === 'zh'
+    ? { cpu: 'CPU', memory: '内存', temperature: '温度', fan: '风扇', power_supply: '电源' }
+    : { cpu: 'CPU', memory: 'Memory', temperature: 'Temp', fan: 'Fan', power_supply: 'PSU' };
+  const snmpHealthMetrics = (snmpProfile?.metric_keys || [])
+    .map((key) => snmpMetricLabels[key] || key)
+    .join(' / ');
   const compatiblePlatformProfiles = useMemo(() => {
     const rawPlatform = String(viewingDevice.platform || '').trim().toLowerCase();
     if (!rawPlatform || rawPlatform === 'unknown' || rawPlatform === 'generic') return platformProfiles;
@@ -238,7 +344,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
       <motion.div
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-[1400px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
       >
         <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-black/5 bg-black/[0.02] px-5 py-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
@@ -283,8 +389,8 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <div className="grid grid-cols-1 gap-6 p-5 sm:p-6 xl:grid-cols-[1fr_1fr_0.95fr] xl:gap-8 xl:p-8">
-            <div className="space-y-6 self-start xl:sticky xl:top-0">
+          <div className="grid grid-cols-1 gap-5 p-4 sm:p-5 xl:grid-cols-[1.05fr_1.05fr_0.95fr] xl:items-start xl:gap-5 xl:p-6">
+            <div className="space-y-4 self-start xl:sticky xl:top-0">
               <div>
                 <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '健康概览' : 'Health Overview'}</h4>
                 <div className="space-y-3 rounded-2xl border border-black/5 bg-[linear-gradient(180deg,rgba(0,0,0,0.01),rgba(0,0,0,0.03))] p-4">
@@ -304,7 +410,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                             : (language === 'zh' ? '未知' : 'Unknown')}
                     </span>
                   </div>
-                  <p className="text-sm text-black/60">{viewingDevice.health_summary || (language === 'zh' ? '当前没有检测到明显健康问题。' : 'No material health issue is currently detected.')}</p>
+                  <p className="text-sm text-black/60">{localizeHealthText(viewingDevice.health_summary, language) || (language === 'zh' ? '未检测到健康问题。' : 'No material health issue is currently detected.')}</p>
                   <div className="grid grid-cols-2 gap-3 text-xs text-black/50">
                     <div className="rounded-xl border border-black/5 bg-white px-3 py-2">{language === 'zh' ? '开放告警' : 'Open alerts'} <span className="ml-1 font-semibold text-[#00172D]">{Number(viewingDevice.open_alert_count || 0)}</span></div>
                     <div className="rounded-xl border border-black/5 bg-white px-3 py-2">{language === 'zh' ? '接口 Down' : 'Interfaces down'} <span className="ml-1 font-semibold text-[#00172D]">{Number(viewingDevice.interface_down_count || 0)}</span></div>
@@ -317,13 +423,50 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
               <div>
                 <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{t('basicInfo')}</h4>
                 <div className="space-y-3">
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('hostname')}</span><span className="font-medium">{viewingDevice.hostname}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('ipAddress')}</span><span className="font-mono">{viewingDevice.ip_address}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('platform')}</span><span className="font-medium">{viewingDevice.platform}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('status')}</span><span className={`text-[10px] font-bold uppercase ${viewingDevice.status === 'online' ? 'text-emerald-600' : 'text-red-600'}`}>{viewingDevice.status}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '主机名' : t('hostname')}</span><span className="font-medium">{viewingDevice.hostname}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '管理 IP' : t('ipAddress')}</span><span className="font-mono">{viewingDevice.ip_address}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '平台' : t('platform')}</span><span className="font-medium">{formatPlatformLabel(viewingDevice.platform, language)}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '状态' : t('status')}</span><span className={`text-[10px] font-bold ${viewingDevice.status === 'online' ? 'text-emerald-600' : 'text-red-600'}`}>{formatStatusLabel(viewingDevice.status, language)}</span></div>
                 </div>
               </div>
 
+              {/* ── Tags Section ── */}
+              {viewingDevice.tags && viewingDevice.tags.length > 0 && (
+                <div>
+                  <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '标签' : 'Tags'}</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {viewingDevice.tags.map(tag => (
+                      <span
+                        key={tag.id}
+                        className="inline-flex items-center gap-1 rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[11px]"
+                        title={tag.description || tag.code}
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tag.color || '#06b6d4' }} />
+                        <span className="font-medium text-black/70">{language === 'zh' ? (tag.label_zh || tag.label) : tag.label}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{t('locationRole')}</h4>
+                <div className="space-y-3">
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '站点（资产）' : 'Asset site'}</span><span className="font-medium">{viewingDevice.site || '—'}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '角色（资产）' : 'Asset role'}</span><span className="font-medium">{formatRoleLabel(viewingDevice.role, language)}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? 'SNMP 系统名称' : 'SNMP sysName'}</span><span className="font-medium">{viewingDevice.sys_name || '—'}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? 'SNMP 位置（设备 MIB）' : 'SNMP sysLocation'}</span><span className="max-w-[180px] truncate text-right font-medium" title={viewingDevice.sys_location || ''}>{viewingDevice.sys_location || '—'}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? 'SNMP 联系人' : 'SNMP sysContact'}</span><span className="font-medium">{viewingDevice.sys_contact || '—'}</span></div>
+                </div>
+                <p className="mt-2 text-[11px] leading-5 text-black/40">
+                  {language === 'zh'
+                    ? '资产站点/角色来自资产台账；SNMP 名称、位置和联系人来自设备标准 MIB，是设备自报信息。'
+                    : 'Asset site/role come from inventory; SNMP name, location and contact are device-reported standard MIB values.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
               <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div>
@@ -350,54 +493,22 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 </div>
               </div>
 
-              {/* ── Tags Section ── */}
-              {viewingDevice.tags && viewingDevice.tags.length > 0 && (
-                <div>
-                  <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '标签' : 'Tags'}</h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {viewingDevice.tags.map(tag => (
-                      <span
-                        key={tag.id}
-                        className="inline-flex items-center gap-1 rounded-full border border-black/5 bg-black/[0.03] px-2 py-0.5 text-[11px]"
-                        title={tag.description || tag.code}
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tag.color || '#06b6d4' }} />
-                        <span className="font-medium text-black/70">{language === 'zh' ? (tag.label_zh || tag.label) : tag.label}</span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{t('locationRole')}</h4>
-                <div className="space-y-3">
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('site')}</span><span className="font-medium">{viewingDevice.site}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('role')}</span><span className="font-medium">{viewingDevice.role}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">SNMP Name</span><span className="font-medium">{viewingDevice.sys_name || '-'}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? 'SNMP 位置' : 'SNMP Location'}</span><span className="max-w-[180px] truncate text-right font-medium" title={viewingDevice.sys_location || ''}>{viewingDevice.sys_location || '-'}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '联系人' : 'Contact'}</span><span className="font-medium">{viewingDevice.sys_contact || '-'}</span></div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-6">
               <div>
                 <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{t('hardwareInfo')}</h4>
                 <div className="space-y-3">
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('model')}</span><span className="font-medium">{viewingDevice.model}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('serialNumber')}</span><span className="font-mono">{viewingDevice.sn}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('version')}</span><span className="font-medium">{viewingDevice.version}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">{t('uptime')}</span><span className="font-medium">{viewingDevice.uptime}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '硬件型号' : t('model')}</span><span className="font-medium">{viewingDevice.model || '—'}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '序列号' : t('serialNumber')}</span><span className="font-mono">{viewingDevice.sn || '—'}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '系统版本' : t('version')}</span><span className="font-medium">{viewingDevice.version || '—'}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '运行时间' : t('uptime')}</span><span className="font-medium">{formatUptime(viewingDevice.uptime, language)}</span></div>
                 </div>
               </div>
 
               <div>
-                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">Environmental Health</h4>
+                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '硬件健康' : 'Hardware Health'}</h4>
                 <div className="space-y-3">
-                  <div className="flex justify-between text-sm"><span className="text-black/40">Temperature</span><span className={`font-medium ${viewingDevice.temp == null ? 'text-black/30' : viewingDevice.temp > 50 ? 'text-orange-600' : 'text-emerald-600'}`}>{viewingDevice.temp != null ? `${viewingDevice.temp}°C` : 'N/A'}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">Fan Status</span><span className={`text-[10px] font-bold uppercase ${viewingDevice.fan_status == null ? 'text-black/30' : (viewingDevice.fan_status === true || viewingDevice.fan_status === 1 || viewingDevice.fan_status === 'ok') ? 'text-emerald-600' : 'text-red-600'}`}>{viewingDevice.fan_status == null ? 'N/A' : (viewingDevice.fan_status === true || viewingDevice.fan_status === 1 || viewingDevice.fan_status === 'ok') ? 'NORMAL' : 'ABNORMAL'}</span></div>
-                  <div className="flex justify-between text-sm"><span className="text-black/40">PSU Status</span><span className={`text-[10px] font-bold uppercase ${viewingDevice.psu_status == null ? 'text-black/30' : (viewingDevice.psu_status === true || viewingDevice.psu_status === 1 || viewingDevice.psu_status === 'redundant' || viewingDevice.psu_status === 'single') ? 'text-emerald-600' : 'text-red-600'}`}>{viewingDevice.psu_status == null ? 'N/A' : (viewingDevice.psu_status === true || viewingDevice.psu_status === 1 || viewingDevice.psu_status === 'redundant' || viewingDevice.psu_status === 'single') ? 'NORMAL' : 'ABNORMAL'}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '设备温度' : 'Temperature'}</span><span className={`font-medium ${viewingDevice.temp == null ? 'text-black/30' : viewingDevice.temp > 50 ? 'text-orange-600' : 'text-emerald-600'}`}>{viewingDevice.temp != null ? `${viewingDevice.temp}°C` : (language === 'zh' ? '无数据' : 'N/A')}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '风扇状态' : 'Fan Status'}</span><span className={`text-[10px] font-bold ${viewingDevice.fan_status == null ? 'text-black/30' : isHardwareStatusNormal(viewingDevice.fan_status) ? 'text-emerald-600' : 'text-red-600'}`}>{viewingDevice.fan_status == null ? (language === 'zh' ? '无数据' : 'N/A') : isHardwareStatusNormal(viewingDevice.fan_status) ? (language === 'zh' ? '正常' : 'NORMAL') : (language === 'zh' ? '异常' : 'ABNORMAL')}</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-black/40">{language === 'zh' ? '电源状态' : 'PSU Status'}</span><span className={`text-[10px] font-bold ${viewingDevice.psu_status == null ? 'text-black/30' : isHardwareStatusNormal(viewingDevice.psu_status) ? 'text-emerald-600' : 'text-red-600'}`}>{viewingDevice.psu_status == null ? (language === 'zh' ? '无数据' : 'N/A') : isHardwareStatusNormal(viewingDevice.psu_status) ? (language === 'zh' ? '正常' : 'NORMAL') : (language === 'zh' ? '异常' : 'ABNORMAL')}</span></div>
                 </div>
               </div>
 
@@ -405,7 +516,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '健康原因' : 'Health Reasons'}</h4>
                 <div className="space-y-2 rounded-2xl border border-black/5 bg-black/[0.01] p-4">
                   {Array.isArray(viewingDevice.health_reasons) && viewingDevice.health_reasons.length > 0 ? viewingDevice.health_reasons.slice(0, 6).map((reason, index) => (
-                    <div key={`${reason}-${index}`} className="rounded-xl border border-black/5 bg-white px-3 py-2 text-sm text-black/60">{reason}</div>
+                    <div key={`${reason}-${index}`} className="rounded-xl border border-black/5 bg-white px-3 py-2 text-sm text-black/60">{localizeHealthText(reason, language)}</div>
                   )) : (
                     <div className="rounded-xl border border-dashed border-black/10 bg-white px-3 py-4 text-sm text-black/40">
                       {language === 'zh' ? '当前没有需要升级处理的健康原因。' : 'There are no escalated health reasons right now.'}
@@ -413,9 +524,19 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                   )}
                 </div>
               </div>
+
+              <div className="rounded-2xl border border-cyan-100 bg-cyan-50/50 p-3">
+                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-cyan-900/60">{language === 'zh' ? 'SNMP 健康模板' : 'SNMP Health Template'}</h4>
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '关联模板' : 'Profile'}</span><span className="max-w-[190px] truncate text-right font-medium text-cyan-950" title={snmpProfileName}>{snmpProfileName}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '来源' : 'Source'}</span><span className="text-right font-medium text-cyan-950">{language === 'zh' ? SNMP_PROFILE_SOURCE_ZH[snmpProfileSource] || snmpProfileSource : SNMP_PROFILE_SOURCE_EN[snmpProfileSource] || snmpProfileSource}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '状态' : 'Status'}</span><span className={`text-right font-semibold ${snmpProfileStatus === 'verified' ? 'text-emerald-700' : snmpProfileStatus === 'failed' ? 'text-red-600' : 'text-amber-700'}`}>{language === 'zh' ? SNMP_PROFILE_STATUS_ZH[snmpProfileStatus] || snmpProfileStatus : snmpProfileStatus}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '健康指标' : 'Health metrics'}</span><span className="max-w-[190px] truncate text-right font-medium text-cyan-950" title={snmpHealthMetrics || 'Built-in health metrics'}>{snmpHealthMetrics || (language === 'zh' ? '内置健康指标' : 'Built-in health metrics')}</span></div>
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-6">
+            <div className="space-y-4">
               <div>
                 <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '开放告警' : 'Open Alerts'}</h4>
                 <div className="max-h-[520px] space-y-2 overflow-auto rounded-2xl border border-black/5 bg-black/[0.01] p-4">
@@ -424,11 +545,11 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                     return (
                       <div key={alert.id} className="rounded-xl border border-black/5 bg-white p-3">
                         <div className="flex items-center justify-between gap-2">
-                          <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${tone}`}>{String(alert.severity || '').toUpperCase()}</span>
+                          <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${tone}`}>{formatStatusLabel(alert.severity, language)}</span>
                           <span className="text-[11px] text-black/40">{new Date(alert.created_at).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}</span>
                         </div>
-                        <p className="mt-2 text-sm font-semibold text-[#0b2340]">{alert.title}</p>
-                        <p className="mt-1 text-[11px] text-black/55">{alert.message}</p>
+                        <p className="mt-2 text-sm font-semibold text-[#0b2340]">{localizeHealthText(alert.title, language)}</p>
+                        <p className="mt-1 text-[11px] text-black/55">{localizeHealthText(alert.message, language)}</p>
                         {alert.interface_name && <p className="mt-2 text-[11px] font-mono text-black/35">{alert.interface_name}</p>}
                       </div>
                     );
@@ -504,7 +625,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                         <div key={point.ts} className="rounded-xl border border-black/5 bg-white px-3 py-2">
                           <div className="flex items-center justify-between gap-3">
                             <span className="font-medium text-[#00172D]">{new Date(point.ts).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}</span>
-                            <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${getHealthToneClass(point.health_status)}`}>{point.health_status}</span>
+                            <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${getHealthToneClass(point.health_status)}`}>{formatStatusLabel(point.health_status, language)}</span>
                           </div>
                           <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-black/45">
                             <span>{language === 'zh' ? '健康分' : 'Score'} {Number(point.health_score || 0)}</span>
@@ -541,7 +662,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-red-600">{language === 'zh' ? '新增风险原因' : 'New risk reasons'}</p>
                             <div className="mt-2 space-y-2">
                               {deviceTrendInsights.addedReasons.length > 0 ? deviceTrendInsights.addedReasons.slice(0, 4).map((reason) => (
-                                <div key={reason} className="rounded-lg border border-red-100 bg-white px-3 py-2 text-xs text-red-700">{reason}</div>
+                                <div key={reason} className="rounded-lg border border-red-100 bg-white px-3 py-2 text-xs text-red-700">{localizeHealthText(reason, language)}</div>
                               )) : (
                                 <div className="rounded-lg border border-dashed border-red-200 bg-white/80 px-3 py-2 text-xs text-red-400">{language === 'zh' ? '最近一次采样没有新增风险原因。' : 'No new risk reasons appeared in the latest sample.'}</div>
                               )}
@@ -551,7 +672,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">{language === 'zh' ? '已缓解原因' : 'Cleared reasons'}</p>
                             <div className="mt-2 space-y-2">
                               {deviceTrendInsights.removedReasons.length > 0 ? deviceTrendInsights.removedReasons.slice(0, 4).map((reason) => (
-                                <div key={reason} className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs text-emerald-700">{reason}</div>
+                                <div key={reason} className="rounded-lg border border-emerald-100 bg-white px-3 py-2 text-xs text-emerald-700">{localizeHealthText(reason, language)}</div>
                               )) : (
                                 <div className="rounded-lg border border-dashed border-emerald-200 bg-white/80 px-3 py-2 text-xs text-emerald-500">{language === 'zh' ? '最近一次采样没有观察到已缓解原因。' : 'No reasons were cleared in the latest sample.'}</div>
                               )}
@@ -568,79 +689,6 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
             </div>
           </div>
 
-          <div className="px-5 pb-5 sm:px-6 xl:px-8">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <h4 className="text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '运行数据视图' : 'Operational Data'}</h4>
-                <p className="mt-1 text-xs text-black/40">{language === 'zh' ? '采集接口、邻居、ARP、MAC、路由表、BGP 和 OSPF 的结构化结果。' : 'Collect structured views for interfaces, neighbors, ARP, MAC, routing, BGP, and OSPF.'}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onLoadOperationalData(viewingDevice.id)}
-                disabled={deviceOperationalDataLoading}
-                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition-all ${deviceOperationalDataLoading ? 'bg-slate-400' : 'bg-[#00172D] hover:bg-[#0b2849]'}`}
-              >
-                <RotateCcw size={15} className={deviceOperationalDataLoading ? 'animate-spin' : ''} />
-                {deviceOperationalDataLoading
-                  ? (language === 'zh' ? '采集中...' : 'Collecting...')
-                  : (deviceOperationalData ? (language === 'zh' ? '重新采集' : 'Refresh') : (language === 'zh' ? '开始采集' : 'Collect'))}
-              </button>
-            </div>
-
-            {!deviceOperationalData ? (
-              <div className="rounded-2xl border border-dashed border-black/10 bg-black/[0.015] px-4 py-5 text-sm text-black/40">{language === 'zh' ? '点击“开始采集”后，会按平台命令模板抓取这 6 类运行数据，并用 ntc-templates 解析后展示。' : 'Click Collect to run platform-specific commands for these six categories and display ntc-templates parsing results.'}</div>
-            ) : (
-              <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <div className="rounded-xl border border-black/5 bg-white px-4 py-3 text-sm text-black/55"><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{language === 'zh' ? '成功分类' : 'Successful'}</p><p className="mt-1 text-xl font-semibold text-[#00172D]">{Number(deviceOperationalData.summary?.successful_categories || 0)}</p></div>
-                  <div className="rounded-xl border border-black/5 bg-white px-4 py-3 text-sm text-black/55"><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{language === 'zh' ? '失败分类' : 'Failed'}</p><p className="mt-1 text-xl font-semibold text-[#00172D]">{Number(deviceOperationalData.summary?.failed_categories || 0)}</p></div>
-                  <div className="rounded-xl border border-black/5 bg-white px-4 py-3 text-sm text-black/55"><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{language === 'zh' ? '结构化记录' : 'Records'}</p><p className="mt-1 text-xl font-semibold text-[#00172D]">{Number(deviceOperationalData.summary?.total_records || 0)}</p></div>
-                  <div className="rounded-xl border border-black/5 bg-white px-4 py-3 text-sm text-black/55"><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{language === 'zh' ? '采集时间' : 'Collected'}</p><p className="mt-1 text-sm font-semibold text-[#00172D]">{new Date(String(deviceOperationalData.collected_at || '')).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}</p></div>
-                </div>
-
-                <div className="grid gap-4 xl:grid-cols-2">
-                  {(Array.isArray(deviceOperationalData.categories) ? deviceOperationalData.categories : []).map((category) => {
-                    const records = Array.isArray(category.records) ? category.records : [];
-                    const rawOutputs = Array.isArray(category.raw_outputs) ? category.raw_outputs : [];
-                    const toneClass = category.success ? 'border-emerald-100' : 'border-red-100';
-                    const label = operationalCategoryLabelMap[category.key]?.[language === 'zh' ? 'zh' : 'en'] || category.key;
-                    return (
-                      <div key={category.key} className={`overflow-hidden rounded-2xl border bg-white ${toneClass}`}>
-                        <div className="flex items-center justify-between gap-3 border-b border-black/5 bg-black/[0.02] px-4 py-3">
-                          <div>
-                            <p className="text-sm font-semibold text-[#00172D]">{label}</p>
-                            <p className="mt-1 text-[11px] text-black/40">{Array.isArray(category.commands) ? category.commands.join(' | ') : '-'}</p>
-                          </div>
-                          <div className="text-right">
-                            <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ${category.success ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{category.success ? (language === 'zh' ? '成功' : 'OK') : (language === 'zh' ? '失败' : 'Fail')}</span>
-                            <p className="mt-1 text-[11px] font-medium text-black/45">{Number(category.count || 0)} {language === 'zh' ? '条' : 'rows'}</p>
-                          </div>
-                        </div>
-                        <div className="space-y-3 p-4">
-                          {category.error && <div className="rounded-xl border border-red-100 bg-red-50/60 px-3 py-2 text-xs text-red-700">{category.error}</div>}
-                          {records.length > 0 ? (
-                            <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-black/[0.025] p-3 text-[11px] text-black/65">{JSON.stringify(records.slice(0, 12), null, 2)}</pre>
-                          ) : rawOutputs.length > 0 ? (
-                            <div className="space-y-2">
-                              {rawOutputs.slice(0, 2).map((item, index) => (
-                                <div key={`${category.key}-raw-${index}`} className="rounded-xl border border-black/5 bg-black/[0.015] p-3">
-                                  <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-black/35">{item.command}</p>
-                                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-[11px] text-black/60">{String(item.output || '').slice(0, 3000)}</pre>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="rounded-xl border border-dashed border-black/10 bg-black/[0.015] px-3 py-4 text-sm text-black/40">{language === 'zh' ? '已执行命令，但没有得到可展示的结构化记录。' : 'Commands ran, but no displayable structured records were returned.'}</div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-
           {viewingDevice.interface_data && viewingDevice.interface_data.length > 0 && (
             <div className="px-5 pb-5 sm:px-6 sm:pb-6 xl:px-8 xl:pb-6">
               <h4 className="mb-3 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '接口监控' : 'Interface Monitoring'} ({viewingDevice.interface_data.length})</h4>
@@ -654,7 +702,8 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                       <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">IN</th>
                       <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">OUT</th>
                       <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '带宽' : 'BW%'}</th>
-                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '错误' : 'Err'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '通用错误' : 'Generic Err'}</th>
+                      <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">CRC/FCS</th>
                       <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '丢包' : 'Drop'}</th>
                       <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '描述' : 'Desc'}</th>
                     </tr>
@@ -671,17 +720,19 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                       };
                       const totalErr = (intf.in_errors || 0) + (intf.out_errors || 0);
                       const totalDrop = (intf.in_discards || 0) + (intf.out_discards || 0);
+                      const fcsErrors = Number(intf.fcs_errors || 0);
                       const maxBw = (intf.bw_in_pct != null || intf.bw_out_pct != null) ? Math.max(intf.bw_in_pct || 0, intf.bw_out_pct || 0) : null;
 
                       return (
                         <tr key={index} className="hover:bg-black/[0.01]">
                           <td className="px-3 py-1.5 font-mono text-[11px]">{intf.name}</td>
-                          <td className="px-3 py-1.5"><span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase ${intf.status === 'up' ? 'text-emerald-600' : 'text-red-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${intf.status === 'up' ? 'bg-emerald-500' : 'bg-red-500'}`} />{intf.status}</span></td>
+                          <td className="px-3 py-1.5"><span className={`inline-flex items-center gap-1 text-[10px] font-bold ${intf.status === 'up' ? 'text-emerald-600' : 'text-red-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${intf.status === 'up' ? 'bg-emerald-500' : 'bg-red-500'}`} />{formatStatusLabel(intf.status, language)}</span></td>
                           <td className="px-3 py-1.5 text-right text-black/60">{intf.speed_mbps > 0 ? `${intf.speed_mbps >= 1000 ? `${intf.speed_mbps / 1000}G` : `${intf.speed_mbps}M`}` : '-'}</td>
                           <td className="px-3 py-1.5 text-right font-mono text-[10px]"><div className="text-blue-600">{fmtRate(intf.in_bps)}</div><div className="text-black/30">{fmtBytes(intf.in_octets || 0)}</div></td>
                           <td className="px-3 py-1.5 text-right font-mono text-[10px]"><div className="text-orange-600">{fmtRate(intf.out_bps)}</div><div className="text-black/30">{fmtBytes(intf.out_octets || 0)}</div></td>
                           <td className="px-3 py-1.5 text-right font-mono text-[10px]">{maxBw != null ? <span className={maxBw > 80 ? 'text-red-600' : maxBw > 50 ? 'text-orange-600' : 'text-black/50'}>{maxBw.toFixed(1)}%</span> : <span className="text-black/20">-</span>}</td>
                           <td className="px-3 py-1.5 text-right font-mono text-[10px]"><span className={totalErr > 0 ? 'font-bold text-red-600' : 'text-black/30'}>{totalErr}</span></td>
+                          <td className="px-3 py-1.5 text-right font-mono text-[10px]" title={intf.fcs_source || 'EtherLike-MIB'}><span className={fcsErrors > 0 ? 'font-bold text-red-600' : 'text-black/30'}>{fcsErrors}</span></td>
                           <td className="px-3 py-1.5 text-right font-mono text-[10px]"><span className={totalDrop > 0 ? 'font-bold text-orange-600' : 'text-black/30'}>{totalDrop}</span></td>
                           <td className="max-w-[120px] truncate px-3 py-1.5 text-black/40">{intf.description || '-'}</td>
                         </tr>
@@ -697,11 +748,11 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
         <div className="shrink-0 border-t border-black/5 bg-black/[0.01] px-5 py-4 sm:px-6">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex flex-wrap gap-3">
-              <button onClick={() => onTestConnection(viewingDevice, 'quick')} disabled={isTestingConnection} className="flex items-center gap-2 rounded-xl bg-blue-50 px-6 py-2 text-sm font-medium text-blue-600 transition-all hover:bg-blue-100 disabled:opacity-50"><Activity size={16} />{isTestingConnection ? 'Testing...' : (language === 'zh' ? '快速连通性' : 'Reachability Check')}</button>
-              <button onClick={() => onTestConnection(viewingDevice, 'deep')} disabled={isTestingConnection} className="flex items-center gap-2 rounded-xl bg-violet-50 px-6 py-2 text-sm font-medium text-violet-700 transition-all hover:bg-violet-100 disabled:opacity-50"><ShieldCheck size={16} />{isTestingConnection ? 'Testing...' : (language === 'zh' ? 'SSH 登录校验' : 'SSH Login Check')}</button>
-              <button onClick={() => onSnmpTest(viewingDevice.id)} disabled={snmpTestingId === viewingDevice.id} className="flex items-center gap-2 rounded-xl bg-emerald-50 px-6 py-2 text-sm font-medium text-emerald-600 transition-all hover:bg-emerald-100 disabled:opacity-50"><Activity size={16} />{snmpTestingId === viewingDevice.id ? 'Testing...' : 'SNMP Test'}</button>
+              <button onClick={() => onTestConnection(viewingDevice, 'quick')} disabled={isTestingConnection} className="flex items-center gap-2 rounded-xl bg-blue-50 px-6 py-2 text-sm font-medium text-blue-600 transition-all hover:bg-blue-100 disabled:opacity-50"><Activity size={16} />{isTestingConnection ? (language === 'zh' ? '检测中…' : 'Testing...') : (language === 'zh' ? '快速连通性' : 'Reachability Check')}</button>
+              <button onClick={() => onTestConnection(viewingDevice, 'deep')} disabled={isTestingConnection} className="flex items-center gap-2 rounded-xl bg-violet-50 px-6 py-2 text-sm font-medium text-violet-700 transition-all hover:bg-violet-100 disabled:opacity-50"><ShieldCheck size={16} />{isTestingConnection ? (language === 'zh' ? '检测中…' : 'Testing...') : (language === 'zh' ? 'SSH 登录校验' : 'SSH Login Check')}</button>
+              <button onClick={() => onSnmpTest(viewingDevice.id)} disabled={snmpTestingId === viewingDevice.id} className="flex items-center gap-2 rounded-xl bg-emerald-50 px-6 py-2 text-sm font-medium text-emerald-600 transition-all hover:bg-emerald-100 disabled:opacity-50"><Activity size={16} />{snmpTestingId === viewingDevice.id ? (language === 'zh' ? '检测中…' : 'Testing...') : (language === 'zh' ? 'SNMP 检测' : 'SNMP Test')}</button>
               <button onClick={() => onSnmpSyncNow(viewingDevice.id)} disabled={snmpSyncingId === viewingDevice.id} className="flex items-center gap-2 rounded-xl bg-cyan-50 px-6 py-2 text-sm font-medium text-cyan-700 transition-all hover:bg-cyan-100 disabled:opacity-50"><RotateCcw size={16} className={snmpSyncingId === viewingDevice.id ? 'animate-spin' : ''} />{snmpSyncingId === viewingDevice.id ? (language === 'zh' ? '同步中...' : 'Syncing...') : (language === 'zh' ? '立即同步SNMP' : 'SNMP Sync Now')}</button>
-              <button onClick={() => onGoToAutomation(viewingDevice)} className="flex items-center gap-2 rounded-xl border border-black/10 px-6 py-2 text-sm font-medium text-black transition-all hover:bg-black/5"><Zap size={16} />Go to Automation</button>
+              <button onClick={() => onGoToAutomation(viewingDevice)} className="flex items-center gap-2 rounded-xl border border-black/10 px-6 py-2 text-sm font-medium text-black transition-all hover:bg-black/5"><Zap size={16} />{language === 'zh' ? '进入自动化' : 'Go to Automation'}</button>
             </div>
             <div className="flex justify-end"><button onClick={onClose} className="rounded-xl bg-black px-8 py-2 text-sm font-medium text-white shadow-lg shadow-black/20 transition-all hover:bg-black/80">{t('close')}</button></div>
           </div>

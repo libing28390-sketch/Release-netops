@@ -71,12 +71,33 @@ const child = spawn(process.execPath, ['node_modules/vite/bin/vite.js'], {
   },
 });
 
+let shuttingDown = false;
+
+const stopChild = () => {
+  if (child.exitCode === null && !child.killed) {
+    child.kill();
+  }
+};
+
+process.once('SIGINT', () => {
+  shuttingDown = true;
+  stopChild();
+});
+
+process.once('SIGTERM', () => {
+  shuttingDown = true;
+  stopChild();
+});
+
 child.on('error', (error) => {
   console.error(`[dev:frontend] Failed to start Vite: ${error.message}`);
   process.exit(1);
 });
 
 child.on('exit', (code, signal) => {
+  if (shuttingDown) {
+    process.exit(0);
+  }
   if (signal) {
     process.kill(process.pid, signal);
   } else {

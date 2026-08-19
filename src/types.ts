@@ -9,6 +9,19 @@ export interface ConfigVersion {
   description: string;
 }
 
+export interface SnmpMetricProfileAssociation {
+  id?: string | null;
+  vendor?: string | null;
+  model?: string | null;
+  status?: string;
+  source?: string;
+  metric_keys?: string[];
+  metric_sources?: Record<string, string>;
+  interface_source?: string;
+  interface_status?: string;
+  collection_mode?: string;
+}
+
 export interface Device {
   id: string;
   hostname: string;
@@ -76,6 +89,8 @@ export interface Device {
   /** Optional device-specific OIDs that return CPU/memory usage percentages. */
   snmp_cpu_oid?: string;
   snmp_memory_oid?: string;
+  /** Effective vendor/model SNMP template association used by health polling. */
+  snmp_metric_profile?: SnmpMetricProfileAssociation;
   management_port?: number;
   /** True when the linked asset has at least one enabled HTTP(S) entry. */
   web_access_enabled?: boolean;
@@ -133,6 +148,10 @@ export interface Device {
     in_errors?: number; out_errors?: number;
     in_discards?: number; out_discards?: number;
     in_ucast_pkts?: number; out_ucast_pkts?: number;
+    in_packets_total?: number; out_packets_total?: number;
+    fcs_errors?: number; frame_too_long_errors?: number;
+    mac_rx_errors?: number; symbol_errors?: number;
+    packet_counter_source?: string; fcs_source?: string;
     bw_in_pct?: number; bw_out_pct?: number;
     last_change_secs?: number; flapping?: boolean;
   }[];
@@ -513,6 +532,19 @@ export type AlertRuleScopeType = 'global' | 'site' | 'device' | 'interface';
 
 export type AlertRuleScopeMatchMode = 'exact' | 'contains' | 'prefix' | 'glob';
 
+export interface AlertRuleCollectionBinding {
+  collection_source: string;
+  collection_label: string;
+  collection_label_en?: string;
+  template_linked: boolean;
+  template_section?: string;
+  template_metric?: string;
+  oid_paths: string[];
+  default_oids?: Record<string, string>;
+  description?: string;
+  description_en?: string;
+}
+
 export interface AlertRuleSettings {
   id?: string;
   name: string;
@@ -533,6 +565,7 @@ export interface AlertRuleSettings {
   created_at?: string;
   updated_by?: string;
   updated_at?: string;
+  collection?: AlertRuleCollectionBinding;
 }
 
 export interface AlertRuleListResponse {
@@ -540,6 +573,7 @@ export interface AlertRuleListResponse {
   total: number;
   page: number;
   page_size: number;
+  collection_catalog?: Record<string, AlertRuleCollectionBinding>;
 }
 
 export interface AlertRulePreview {

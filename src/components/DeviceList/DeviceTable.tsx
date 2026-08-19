@@ -190,6 +190,11 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             const testing = connectionTestingDeviceId === device.id;
             const cpu = clampPercent(device.cpu_usage);
             const mem = clampPercent(device.memory_usage);
+            // Zero is a valid health value.  Only hide the bars when the
+            // collection status says there is no usable snapshot.
+            const metricsAvailable = device.collection_status === 'healthy'
+              || Boolean(device.collection_last_success_at)
+              || (!device.collection_status && (device.cpu_usage !== 0 || device.memory_usage !== 0));
 
             return (
               <React.Fragment key={device.id}>
@@ -309,7 +314,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   {/* CPU / MEM */}
                   {columns.cpuMem && (
                     <td className="px-3 py-2">
-                      <CpuMemBar cpu={cpu} mem={mem} language={language} />
+                      <CpuMemBar cpu={cpu} mem={mem} language={language} empty={!metricsAvailable} />
                     </td>
                   )}
                   {/* Actions */}

@@ -4,6 +4,7 @@ interface CpuMemBarProps {
   cpu: number;
   mem: number;
   language?: string;
+  empty?: boolean;
 }
 
 const barColor = (v: number) =>
@@ -12,7 +13,7 @@ const barColor = (v: number) =>
 const textColor = (v: number) =>
   v > 80 ? 'text-red-500' : v > 60 ? 'text-amber-500' : 'text-black/40 dark:text-white/40';
 
-const CpuMemBar: React.FC<CpuMemBarProps> = ({ cpu, mem, language }) => {
+const CpuMemBar: React.FC<CpuMemBarProps> = ({ cpu, mem, language, empty = false }) => {
   const zh = language === 'zh';
   const [mounted, setMounted] = useState(false);
 
@@ -21,7 +22,7 @@ const CpuMemBar: React.FC<CpuMemBarProps> = ({ cpu, mem, language }) => {
     return () => cancelAnimationFrame(frame);
   }, []);
 
-  if (cpu === 0 && mem === 0) {
+  if (empty) {
     return (
       <span className="text-[10px] text-black/20 dark:text-white/15">
         —

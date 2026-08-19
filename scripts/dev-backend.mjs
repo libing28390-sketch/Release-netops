@@ -54,12 +54,33 @@ const child = spawn(python, ['backend/main.py'], {
   },
 });
 
+let shuttingDown = false;
+
+const stopChild = () => {
+  if (child.exitCode === null && !child.killed) {
+    child.kill();
+  }
+};
+
+process.once('SIGINT', () => {
+  shuttingDown = true;
+  stopChild();
+});
+
+process.once('SIGTERM', () => {
+  shuttingDown = true;
+  stopChild();
+});
+
 child.on('error', (error) => {
   console.error(`[dev:backend] Failed to start Python backend: ${error.message}`);
   process.exit(1);
 });
 
 child.on('exit', (code, signal) => {
+  if (shuttingDown) {
+    process.exit(0);
+  }
   if (signal) {
     process.kill(process.pid, signal);
   } else {

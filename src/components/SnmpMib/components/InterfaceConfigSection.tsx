@@ -22,6 +22,17 @@ export interface InterfaceOidConfig {
   if_out_discards_oid: string;
   if_in_ucast_oid: string;
   if_out_ucast_oid: string;
+  if_hc_in_ucast_pkts_oid: string;
+  if_hc_in_multicast_pkts_oid: string;
+  if_hc_in_broadcast_pkts_oid: string;
+  if_hc_out_ucast_pkts_oid: string;
+  if_hc_out_multicast_pkts_oid: string;
+  if_hc_out_broadcast_pkts_oid: string;
+  dot3_hc_fcs_errors_oid: string;
+  dot3_hc_frame_too_long_oid: string;
+  dot3_hc_internal_mac_rx_errors_oid: string;
+  dot3_hc_symbol_errors_oid: string;
+  dot3_fcs_errors_oid: string;
   counter_mode: InterfaceCounterMode;
 }
 
@@ -44,6 +55,17 @@ export const DEFAULT_INTERFACE_CONFIG: InterfaceOidConfig = {
   if_out_discards_oid: '1.3.6.1.2.1.2.2.1.19',
   if_in_ucast_oid: '1.3.6.1.2.1.2.2.1.11',
   if_out_ucast_oid: '1.3.6.1.2.1.2.2.1.17',
+  if_hc_in_ucast_pkts_oid: '1.3.6.1.2.1.31.1.1.1.7',
+  if_hc_in_multicast_pkts_oid: '1.3.6.1.2.1.31.1.1.1.8',
+  if_hc_in_broadcast_pkts_oid: '1.3.6.1.2.1.31.1.1.1.9',
+  if_hc_out_ucast_pkts_oid: '1.3.6.1.2.1.31.1.1.1.11',
+  if_hc_out_multicast_pkts_oid: '1.3.6.1.2.1.31.1.1.1.12',
+  if_hc_out_broadcast_pkts_oid: '1.3.6.1.2.1.31.1.1.1.13',
+  dot3_hc_fcs_errors_oid: '1.3.6.1.2.1.10.7.11.1.2',
+  dot3_hc_frame_too_long_oid: '1.3.6.1.2.1.10.7.11.1.4',
+  dot3_hc_internal_mac_rx_errors_oid: '1.3.6.1.2.1.10.7.11.1.5',
+  dot3_hc_symbol_errors_oid: '1.3.6.1.2.1.10.7.11.1.6',
+  dot3_fcs_errors_oid: '1.3.6.1.2.1.10.7.2.1.3',
   counter_mode: 'auto',
 };
 
@@ -67,8 +89,19 @@ export const INTERFACE_OID_FIELDS: Array<{
   { key: 'if_out_errors_oid', labelZh: '出方向错包', labelEn: 'ifOutErrors' },
   { key: 'if_in_discards_oid', labelZh: '入方向丢弃', labelEn: 'ifInDiscards' },
   { key: 'if_out_discards_oid', labelZh: '出方向丢弃', labelEn: 'ifOutDiscards' },
-  { key: 'if_in_ucast_oid', labelZh: '入方向单播包', labelEn: 'ifInUcastPkts' },
-  { key: 'if_out_ucast_oid', labelZh: '出方向单播包', labelEn: 'ifOutUcastPkts' },
+  { key: 'if_in_ucast_oid', labelZh: '入方向单播包（32位回退）', labelEn: 'ifInUcastPkts (32 fallback)' },
+  { key: 'if_out_ucast_oid', labelZh: '出方向单播包（32位回退）', labelEn: 'ifOutUcastPkts (32 fallback)' },
+  { key: 'if_hc_in_ucast_pkts_oid', labelZh: '入单播包（64位）', labelEn: 'ifHCInUcastPkts (64)' },
+  { key: 'if_hc_in_multicast_pkts_oid', labelZh: '入组播包（64位）', labelEn: 'ifHCInMulticastPkts (64)' },
+  { key: 'if_hc_in_broadcast_pkts_oid', labelZh: '入广播包（64位）', labelEn: 'ifHCInBroadcastPkts (64)' },
+  { key: 'if_hc_out_ucast_pkts_oid', labelZh: '出单播包（64位）', labelEn: 'ifHCOutUcastPkts (64)' },
+  { key: 'if_hc_out_multicast_pkts_oid', labelZh: '出组播包（64位）', labelEn: 'ifHCOutMulticastPkts (64)' },
+  { key: 'if_hc_out_broadcast_pkts_oid', labelZh: '出广播包（64位）', labelEn: 'ifHCOutBroadcastPkts (64)' },
+  { key: 'dot3_hc_fcs_errors_oid', labelZh: 'CRC/FCS（64位）', labelEn: 'dot3HCStatsFCSErrors (64)' },
+  { key: 'dot3_hc_frame_too_long_oid', labelZh: '超长帧错误（64位）', labelEn: 'dot3HCStatsFrameTooLongs (64)' },
+  { key: 'dot3_hc_internal_mac_rx_errors_oid', labelZh: 'MAC接收错误（64位）', labelEn: 'dot3HCStatsInternalMacReceiveErrors (64)' },
+  { key: 'dot3_hc_symbol_errors_oid', labelZh: '符号错误（64位）', labelEn: 'dot3HCStatsSymbolErrors (64)' },
+  { key: 'dot3_fcs_errors_oid', labelZh: 'CRC/FCS（32位回退）', labelEn: 'dot3StatsFCSErrors (32 fallback)' },
 ];
 
 const inputClass =
@@ -112,8 +145,8 @@ export const InterfaceConfigSection: React.FC<InterfaceConfigSectionProps> = Rea
             </div>
             <div className="mt-1 text-[9px] leading-4 text-black/45 dark:text-white/45">
               {zh
-                ? '启用后，接口表、状态、速率、错包丢弃与流量计数器都从此处配置读取；不启用时自动使用内置标准 IF-MIB。'
-                : 'When enabled, interface table, speed, errors, and traffic counters read from these OIDs.'}
+                ? '启用后，接口表、流量 Counter64、通用错误/丢弃和 CRC/FCS 明细都从此处配置读取；不启用时自动使用内置标准映射。'
+                : 'When enabled, interface identity, Counter64 traffic, generic errors/discards, and CRC/FCS details read from these OIDs.'}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -121,7 +154,7 @@ export const InterfaceConfigSection: React.FC<InterfaceConfigSectionProps> = Rea
               type="button"
               onClick={handleResetStandard}
               className="inline-flex items-center gap-1 rounded-md border border-[#00bceb]/30 bg-white/70 px-2 py-1 text-[9px] font-medium text-[#008aad] shadow-sm hover:bg-white dark:bg-white/[.08] dark:text-[#00bceb] dark:hover:bg-white/[.12]"
-              title={zh ? '重置所有 17 个字段为标准 RFC 1213 / IF-MIB 默认值' : 'Reset all 17 fields to standard RFC values'}
+              title={zh ? `重置所有 ${INTERFACE_OID_FIELDS.length} 个字段为标准 IF-MIB / EtherLike-MIB 默认值` : `Reset all ${INTERFACE_OID_FIELDS.length} fields to standard IF-MIB / EtherLike-MIB values`}
             >
               <RotateCcw size={10} />
               {zh ? '恢复标准 IF-MIB' : 'Reset to Standard IF-MIB'}
@@ -168,6 +201,7 @@ export const InterfaceConfigSection: React.FC<InterfaceConfigSectionProps> = Rea
           <label className="block">
             <span className={tinyLabelClass}>{zh ? '流量计数器位宽策略' : 'Traffic counter width policy'}</span>
             <select
+              aria-label={zh ? '流量计数器位宽策略' : 'Traffic counter width'}
               value={config.counter_mode}
               onChange={event =>
                 onChange({

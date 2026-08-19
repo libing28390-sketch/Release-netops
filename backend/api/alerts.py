@@ -613,6 +613,14 @@ def read_alert_rules(
     )
 
 
+@router.get('/alerts/rules/catalog')
+def read_alert_rule_collection_catalog(user=require_role("Viewer")):
+    """Describe each rule's collector and its SNMP-template/OID ownership."""
+    return {
+        'items': alert_rule_service.list_alert_metric_collections(),
+    }
+
+
 @router.post('/alerts/rules')
 def create_alert_rule(payload: dict = Body(...), user=require_role("Operator")):
     actor_username = user.get("username", "unknown")

@@ -176,10 +176,12 @@ interface UseTopologyArgs {
   devices: Device[];
   language: Language;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+  isAuthenticated: boolean;
+  enabled: boolean;
   refreshDevices?: () => Promise<unknown>;
 }
 
-export const useTopology = ({ devices, language, showToast, refreshDevices }: UseTopologyArgs) => {
+export const useTopology = ({ devices, language, showToast, isAuthenticated, enabled, refreshDevices }: UseTopologyArgs) => {
   const [topologyLinks, setTopologyLinks] = useState<any[]>([]);
   const [topologySearch, setTopologySearch] = useState('');
   const [topologyStatusFilter, setTopologyStatusFilter] = useState<'all' | 'online' | 'offline' | 'pending'>('all');
@@ -212,8 +214,21 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
   const [hideStaleLinks, setHideStaleLinks] = useState(true);
   const [hideOrphanDevices, setHideOrphanDevices] = useState(false);
   const topologyRef = React.useRef<HTMLDivElement>(null);
+  const authExpiredSignaledRef = React.useRef(false);
+  // Keep the latest inventory available to the refresh callback without
+  // making the callback/effect restart every time background polling updates
+  // one device field.
+  const devicesRef = React.useRef(devices);
+  devicesRef.current = devices;
 
   const refreshTopologyData = useCallback(async () => {
+    // App renders hooks before the login screen, so this hook must not issue
+    // anonymous requests while authentication is still being resolved (or
+    // after a cross-tab logout).  Otherwise the 401 response can cause a
+    // request/remount loop in the shell.
+    const headers = topologyAuthHeaders();
+    if (!enabled || !isAuthenticated || !headers.Authorization) return;
+
     // The topology canvas is intentionally capped at the backend's normal
     // graph page size; requesting 10k rows only increases payload and render
     // work for a view that already filters to one site when needed.
@@ -227,10 +242,18 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     });
     if (topologySiteFilter !== 'all') graphParams.set('site_id', topologySiteFilter);
     const [linksResponse, sitesResponse, graphResponse] = await Promise.all([
-      fetch(`/api/topology/links?${params.toString()}`, { headers: topologyAuthHeaders() }),
-      fetch('/api/topology/sites', { headers: topologyAuthHeaders() }),
-      fetch(`/api/topology/graph?${graphParams.toString()}`, { headers: topologyAuthHeaders() }),
+      fetch(`/api/topology/links?${params.toString()}`, { headers }),
+      fetch('/api/topology/sites', { headers }),
+      fetch(`/api/topology/graph?${graphParams.toString()}`, { headers }),
     ]);
+    if ([linksResponse, sitesResponse, graphResponse].some((response) => response.status === 401)) {
+      if (!authExpiredSignaledRef.current) {
+        authExpiredSignaledRef.current = true;
+        window.dispatchEvent(new Event('netops:auth-expired'));
+      }
+      return;
+    }
+    authExpiredSignaledRef.current = false;
     if (!linksResponse.ok) throw new Error(`topology_links_${linksResponse.status}`);
     const linksPayload = await linksResponse.json();
     const legacyLinks = Array.isArray(linksPayload?.links) ? linksPayload.links : [];
@@ -366,7 +389,7 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     // are not present in the stale local list. Reconcile the device inventory
     // before publishing the new graph data.
     if (refreshDevices) {
-      const currentDeviceIds = new Set(devices.map((device) => String(device.id)));
+      const currentDeviceIds = new Set(devicesRef.current.map((device) => String(device.id)));
       const hasUnknownEndpoint = nextLinks.some((link: any) => (
         !currentDeviceIds.has(String(link.source_device_id || ''))
         || !currentDeviceIds.has(String(link.target_device_id || ''))
@@ -382,9 +405,17 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
     setTopologyDataError(
       sitesResponse.ok && graphResponse.ok ? '' : `topology_${!sitesResponse.ok ? 'sites' : 'graph'}_fetch_failed`,
     );
-  }, [devices, hideStaleLinks, refreshDevices, topologyGraphView, topologySiteFilter]);
+  }, [enabled, hideStaleLinks, isAuthenticated, refreshDevices, topologyGraphView, topologySiteFilter]);
 
   React.useEffect(() => {
+    if (!enabled || !isAuthenticated || !topologyAuthHeaders().Authorization) {
+      setTopologyLinks([]);
+      setTopologySites([]);
+      setTopologyNodeMetadata({});
+      setTopologyGraphNodeDevices([]);
+      setTopologyDataError('');
+      return;
+    }
     let active = true;
     const refresh = async () => {
       try {
@@ -399,7 +430,7 @@ export const useTopology = ({ devices, language, showToast, refreshDevices }: Us
       active = false;
       window.clearInterval(timer);
     };
-  }, [refreshTopologyData]);
+  }, [enabled, isAuthenticated, refreshTopologyData]);
 
   const evaluateTopologyInterfaceSnapshot = useCallback(
     (device: Device | null | undefined, port?: string): TopologyInterfaceSnapshot | null => {

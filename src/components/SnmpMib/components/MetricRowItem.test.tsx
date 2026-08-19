@@ -46,10 +46,12 @@ describe('MetricRowItem & InterfaceConfig tests', () => {
     expect(payload.mode).toBe('direct_percent');
   });
 
-  it('should define all 17 interface OID fields with default IF-MIB', () => {
-    expect(INTERFACE_OID_FIELDS.length).toBe(17);
+  it('should define all interface traffic/error OID fields with IF-MIB defaults', () => {
+    expect(INTERFACE_OID_FIELDS.length).toBe(28);
     expect(DEFAULT_INTERFACE_CONFIG.if_name_oid).toBe('1.3.6.1.2.1.31.1.1.1.1');
     expect(DEFAULT_INTERFACE_CONFIG.if_hc_in_octets_oid).toBe('1.3.6.1.2.1.31.1.1.1.6');
+    expect(DEFAULT_INTERFACE_CONFIG.if_hc_in_ucast_pkts_oid).toBe('1.3.6.1.2.1.31.1.1.1.7');
+    expect(DEFAULT_INTERFACE_CONFIG.dot3_hc_fcs_errors_oid).toBe('1.3.6.1.2.1.10.7.11.1.2');
     expect(DEFAULT_INTERFACE_CONFIG.if_oper_status_oid).toBe('1.3.6.1.2.1.2.2.1.8');
   });
 });

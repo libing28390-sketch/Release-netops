@@ -5,6 +5,10 @@ from typing import Any
 import uuid
 
 from database import get_db_connection
+from services.snmp_metric_profile_service import (
+    get_alert_metric_collection,
+    list_alert_metric_collections,
+)
 
 
 METRIC_TYPES = {
@@ -68,6 +72,9 @@ def _normalize_rule_row(row) -> dict[str, Any]:
     item['created_at'] = str(item.get('created_at') or _utc_now_iso())
     item['updated_by'] = str(item.get('updated_by') or 'system')
     item['updated_at'] = str(item.get('updated_at') or _utc_now_iso())
+    # OIDs are owned by the SNMP metric template. Expose the read-only
+    # binding without persisting a duplicate OID in alert_rules.
+    item['collection'] = get_alert_metric_collection(item['metric_type'])
     return item
 
 
@@ -266,6 +273,7 @@ def list_rules_paginated(
         'page': current_page,
         'page_size': current_page_size,
         'category_counts': category_counts,
+        'collection_catalog': list_alert_metric_collections(),
     }
 
 
@@ -291,6 +299,7 @@ def create_rule(payload: dict[str, Any]) -> dict[str, Any]:
         'updated_by': created_by,
         'updated_at': now,
     }
+    created['collection'] = get_alert_metric_collection(created['metric_type'])
     conn = get_db_connection()
     try:
         conn.execute(
@@ -345,6 +354,7 @@ def update_rule(rule_id: str, payload: dict[str, Any]) -> dict[str, Any]:
             'updated_by': str(payload.get('updated_by') or existing.get('updated_by') or 'system').strip() or 'system',
             'updated_at': _utc_now_iso(),
         }
+        updated['collection'] = get_alert_metric_collection(updated['metric_type'])
         conn.execute(
             '''
             UPDATE alert_rules

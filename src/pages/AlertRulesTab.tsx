@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, ChevronRight, Copy, Edit3, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, X, Search, Check, Shield } from 'lucide-react';
-import type { AlertRuleHistoryItem, AlertRuleListResponse, AlertRulePreview, AlertRuleSettings } from '../types';
+import type { AlertRuleCollectionBinding, AlertRuleHistoryItem, AlertRuleListResponse, AlertRulePreview, AlertRuleSettings } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { useSystem } from '../hooks/useSystem';
@@ -173,6 +173,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
   const [metricFilter, setMetricFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'network' | 'host' | 'server'>('all');
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({ all: 0, network: 0, host: 0, server: 0 });
+  const [collectionCatalog, setCollectionCatalog] = useState<Record<string, AlertRuleCollectionBinding>>({});
   const [ruleDraft, setRuleDraft] = useState<AlertRuleSettings | null>(null);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -422,6 +423,9 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
       setTotal(data.total && data.total > 0 ? data.total : items.length);
       if (data.category_counts) {
         setCategoryCounts(data.category_counts);
+      }
+      if (data.collection_catalog) {
+        setCollectionCatalog(data.collection_catalog);
       }
       setSelectedIds(new Set());
       if (editingRuleId && !items.some((item) => item.id === editingRuleId)) {
@@ -742,6 +746,12 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
 
   const allSelected = alertRules.length > 0 && alertRules.every((r) => r.id && selectedIds.has(r.id));
   const someSelected = selectedIds.size > 0;
+  const collectionFor = (metricType: AlertRuleSettings['metric_type'], fallback?: AlertRuleCollectionBinding) => (
+    collectionCatalog[metricType] || fallback
+  );
+  const collectionBadgeClass = (source?: string) => source?.startsWith('snmp')
+    ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
+    : 'bg-slate-50 text-slate-600 border-slate-200';
 
   return (
     <>
@@ -932,6 +942,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 </th>
                 <th className="px-5 py-3">{language === 'zh' ? '规则名称' : 'Rule'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '监控类型' : 'Metric'}</th>
+                <th className="px-5 py-3">{language === 'zh' ? '采集来源' : 'Collector'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '范围' : 'Scope'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '阈值' : 'Threshold'}</th>
                 <th className="px-5 py-3">{language === 'zh' ? '级别' : 'Severity'}</th>
@@ -943,7 +954,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '正在加载规则...' : 'Loading rules...'}
                   </td>
                 </tr>
@@ -990,6 +1001,22 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       </div>
                     </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{metricTypeLabel(rule.metric_type, language)}</td>
+                    <td className="px-5 py-4 align-top">
+                      {rule.collection ? (
+                        <div className="min-w-[150px]">
+                          <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold ${collectionBadgeClass(rule.collection.collection_source)}`}>
+                            {language === 'zh' ? rule.collection.collection_label : (rule.collection.collection_label_en || rule.collection.collection_label)}
+                          </span>
+                          {rule.collection.template_section && (
+                            <p className="mt-1 max-w-[210px] text-[10px] leading-4 text-black/40" title={rule.collection.description}>
+                              {rule.collection.template_section}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-black/30">{language === 'zh' ? '未定义' : 'Undefined'}</span>
+                      )}
+                    </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">
                       {scopeTypeLabel(rule.scope_type, language)}
                       {rule.scope_value ? ` / ${rule.scope_value}` : ''}
@@ -1058,7 +1085,7 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                 ))
               ) : (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-black/40">
+                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-black/40">
                     {language === 'zh' ? '当前没有规则。' : 'No rules found.'}
                   </td>
                 </tr>
@@ -1161,6 +1188,45 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     )}
                   </label>
                 </div>
+
+                {(() => {
+                  const collection = collectionFor(ruleDraft.metric_type, ruleDraft.collection);
+                  if (!collection) return null;
+                  const defaultOids = Object.entries(collection.default_oids || {});
+                  return (
+                    <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-bold text-[#164e63]">{language === 'zh' ? '采集来源与 SNMP 模板关联' : 'Collector and SNMP template binding'}</span>
+                        <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold ${collectionBadgeClass(collection.collection_source)}`}>
+                          {language === 'zh' ? collection.collection_label : (collection.collection_label_en || collection.collection_label)}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-600">
+                        {language === 'zh' ? collection.description : (collection.description_en || collection.description)}
+                      </p>
+                      {collection.template_linked && collection.oid_paths.length > 0 && (
+                        <p className="mt-1 text-[10px] leading-5 text-cyan-800">
+                          {language === 'zh' ? '模板字段：' : 'Template fields: '}
+                          <code className="break-words">{collection.oid_paths.join('、')}</code>
+                        </p>
+                      )}
+                      {defaultOids.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {defaultOids.map(([key, oid]) => (
+                            <span key={key} className="rounded-lg border border-cyan-100 bg-white/80 px-2 py-1 font-mono text-[10px] text-slate-500" title={key}>
+                              {key}: {oid}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {collection.template_linked && (
+                        <p className="mt-2 text-[10px] font-medium text-cyan-700">
+                          {language === 'zh' ? '告警规则只引用模板指标，不在本表保存第二份 OID。' : 'The rule references the template metric and does not store a second OID copy.'}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <label className="text-sm text-black/65">

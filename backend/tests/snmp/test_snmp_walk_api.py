@@ -152,6 +152,220 @@ def test_snmp_walk_test_rejects_ambiguous_asset_match(monkeypatch) -> None:
     assert 'multiple' in str(error.value.detail)
 
 
+def test_snmp_hardware_test_returns_metric_results_without_oid_rows(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    monkeypatch.setattr(
+        devices_api,
+        '_find_snmp_walk_targets',
+        lambda **_kwargs: [{
+            'id': 'device-1',
+            'hostname': 'edge-01',
+            'ip_address': '10.254.0.1',
+            'platform': 'h3c_comware',
+        }],
+    )
+    monkeypatch.setattr(
+        devices_api,
+        'resolve_collector_credentials',
+        lambda _device: {'snmp': {'server': '10.254.0.1', 'community': 'secret', 'port': 161}},
+    )
+
+    async def fake_collect(
+        _ip,
+        _platform,
+        _community,
+        _port,
+        *,
+        custom_metrics=None,
+        device_id='',
+        metric_profile_id='',
+        bypass_cache=False,
+        version='2c',
+    ):
+        calls.append({
+            'custom_metrics': custom_metrics,
+            'device_id': device_id,
+            'metric_profile_id': metric_profile_id,
+            'bypass_cache': bypass_cache,
+            'version': version,
+        })
+        return {
+            'cpu_usage': 18,
+            'memory_usage': 42,
+            'temp': 32,
+            'fan_status': True,
+            'psu_status': True,
+            'hardware_metrics': {
+                'cpu': 18,
+                'memory': 42,
+                'temperature': 32,
+                'fan': True,
+                'power_supply': True,
+            },
+            'metric_details': {
+                'temperature': {
+                    'value': 32,
+                    'raw_value': 32,
+                    'status': 'ok',
+                    'passed': True,
+                    'mode': 'direct_value',
+                    'oid': '1.3.6.1.4.1.7',
+                    'unit': '°C',
+                },
+                'cpu': {
+                    'value': 18,
+                    'raw_value': 18,
+                    'status': 'ok',
+                    'passed': True,
+                    'mode': 'direct_percent',
+                    'oid': '1.3.6.1.4.1.8',
+                    'unit': '%',
+                },
+            },
+        }
+
+    monkeypatch.setattr(devices_api, 'collect_device_metrics', fake_collect)
+    from api.devices import test_snmp_hardware_metrics
+
+    response = asyncio.run(
+        test_snmp_hardware_metrics(
+            {
+                'device_id': 'device-1',
+                'version': '2c',
+                'metric_definitions': {
+                    'temperature': {
+                        'mode': 'direct_value',
+                        'oid': '1.3.6.1.4.1.7',
+                        'unit': '°C',
+                    },
+                    'cpu': {
+                        'mode': 'direct_percent',
+                        'oid': '1.3.6.1.4.1.8',
+                    },
+                },
+            },
+            user={'role': 'Operator'},
+        )
+    )
+
+    assert response['success'] is True
+    assert response['data']['status'] == 'ok'
+    assert response['data']['metric_count'] == 5
+    assert set(response['data']['metrics']) == {'temperature', 'cpu', 'memory', 'fan', 'power_supply'}
+    assert response['data']['metrics']['temperature']['source'] == 'template_definition'
+    assert response['data']['metrics']['fan']['source'] == 'builtin_vendor_collector'
+    assert 'rows' not in response['data']
+    assert calls[0]['version'] == '2c'
+    assert calls[0]['bypass_cache'] is True
+    assert calls[0]['device_id'] == 'device-1'
+    assert set(calls[0]['custom_metrics']) == {'temperature', 'cpu'}
+
+
+def test_snmp_interface_test_validates_submitted_template_and_returns_samples(monkeypatch) -> None:
+    calls: list[dict] = []
+    interface_config = {
+        'enabled': True,
+        'counter_mode': '64',
+        'if_name_oid': '1.3.6.1.2.1.31.1.1.1.1',
+        'if_hc_in_octets_oid': '1.3.6.1.2.1.31.1.1.1.6',
+        'if_hc_out_octets_oid': '1.3.6.1.2.1.31.1.1.1.10',
+    }
+
+    monkeypatch.setattr(
+        devices_api,
+        '_find_snmp_walk_targets',
+        lambda **_kwargs: [{
+            'id': 'device-1',
+            'hostname': 'edge-01',
+            'ip_address': '10.254.0.1',
+        }],
+    )
+    monkeypatch.setattr(
+        devices_api,
+        'resolve_collector_credentials',
+        lambda _device: {'snmp': {'server': '10.254.0.9', 'community': 'asset-secret', 'port': 1161}},
+    )
+
+    async def fake_probe(ip, community, config, *, port=161, version='2c'):
+        calls.append({
+            'ip': ip,
+            'community': community,
+            'config': config,
+            'port': port,
+            'version': version,
+        })
+        return {
+            'passed': True,
+            'status': 'ok',
+            'message': 'Interface table and paired Counter64 counters passed validation',
+            'checks': {
+                'identity': {
+                    'oid': '1.3.6.1.2.1.31.1.1.1.1',
+                    'passed': True,
+                    'rows': 1,
+                    'sample': [{'index': '55', 'value': 'FortyGigE1/0/54'}],
+                },
+            },
+            'counter_mode': '64',
+            'selected_counter_bits': 64,
+            'interfaces': 1,
+            'counter_supported': 1,
+        }
+
+    monkeypatch.setattr('services.snmp_service.probe_interface_definition', fake_probe)
+
+    response = asyncio.run(
+        devices_api.test_snmp_interface_oids(
+            {
+                'device_id': 'device-1',
+                'version': '1',
+                'interface_config': interface_config,
+            },
+            user={'role': 'Operator'},
+        )
+    )
+
+    assert response['success'] is True
+    assert response['data']['passed'] is True
+    assert response['data']['checks']['identity']['sample'][0]['value'] == 'FortyGigE1/0/54'
+    assert response['data']['version'] == '1'
+    assert response['data']['target_source'] == 'asset'
+    assert 'community' not in response['data']
+    from services.snmp_service import DEFAULT_INTERFACE_CONFIG
+
+    expected_config = {**DEFAULT_INTERFACE_CONFIG, **interface_config}
+    assert calls == [{
+        'ip': '10.254.0.9',
+        'community': 'asset-secret',
+        'config': expected_config,
+        'port': 1161,
+        'version': '1',
+    }]
+
+
+def test_snmp_interface_test_rejects_invalid_submitted_oid(monkeypatch) -> None:
+    monkeypatch.setattr(
+        devices_api,
+        '_find_snmp_walk_targets',
+        lambda **_kwargs: [{'id': 'device-1', 'hostname': 'edge-01', 'ip_address': '10.254.0.1'}],
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(
+            devices_api.test_snmp_interface_oids(
+                {
+                    'device_id': 'device-1',
+                    'interface_config': {'enabled': True, 'if_name_oid': 'not-an-oid'},
+                },
+                user={'role': 'Operator'},
+            )
+        )
+
+    assert error.value.status_code == 400
+    assert 'if_name_oid' in str(error.value.detail)
+
+
 def test_snmp_target_query_supports_regex_matching(monkeypatch) -> None:
     class Result:
         def __init__(self, rows=()):

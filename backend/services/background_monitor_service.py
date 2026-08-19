@@ -23,7 +23,7 @@ from services.snmp_counter_service import (
     load_interface_counter_sample,
     save_interface_counter_sample,
 )
-from services.snmp_metric_profile_service import resolve_metric_profiles
+from services.snmp_metric_profile_service import HEALTH_METRIC_KEYS, resolve_health_metric_profiles
 from services.operational_data_service import collect_operational_data
 from services.network_access_limiter import get_network_access_limiter
 from services.collection_status_service import record_collection_result
@@ -257,7 +257,7 @@ def _run_telemetry_maintenance():
             avg_in_bps, max_in_bps, avg_out_bps, max_out_bps,
             avg_bw_in_pct, max_bw_in_pct, avg_bw_out_pct, max_bw_out_pct,
             in_pkts_sum, out_pkts_sum,
-            err_delta_sum, discard_delta_sum
+            err_delta_sum, discard_delta_sum, fcs_sum
         )
         SELECT
             substr(ts, 1, 16) || ':00+00:00' AS ts_minute,
@@ -275,9 +275,10 @@ def _run_telemetry_maintenance():
             SUM(COALESCE(in_pkts, 0)),
             SUM(COALESCE(out_pkts, 0)),
             SUM(COALESCE(in_errors, 0) + COALESCE(out_errors, 0)),
-            SUM(COALESCE(in_discards, 0) + COALESCE(out_discards, 0))
+            SUM(COALESCE(in_discards, 0) + COALESCE(out_discards, 0)),
+            SUM(COALESCE(fcs_errors, 0))
         FROM interface_telemetry_raw
-        WHERE ts >= ?
+        WHERE ts >= ? AND LOWER(COALESCE(status, '')) = 'up'
         GROUP BY ts_minute, device_id, interface_name
         ON CONFLICT (ts_minute, device_id, interface_name) DO UPDATE SET
           samples=excluded.samples,
@@ -286,7 +287,8 @@ def _run_telemetry_maintenance():
           avg_bw_in_pct=excluded.avg_bw_in_pct, max_bw_in_pct=excluded.max_bw_in_pct,
           avg_bw_out_pct=excluded.avg_bw_out_pct, max_bw_out_pct=excluded.max_bw_out_pct,
           in_pkts_sum=excluded.in_pkts_sum, out_pkts_sum=excluded.out_pkts_sum,
-          err_delta_sum=excluded.err_delta_sum, discard_delta_sum=excluded.discard_delta_sum
+          err_delta_sum=excluded.err_delta_sum, discard_delta_sum=excluded.discard_delta_sum,
+          fcs_sum=excluded.fcs_sum
     ''', (recent_window,))
 
     _db_quick('DELETE FROM interface_telemetry_raw WHERE ts < ?', (raw_cutoff,))
@@ -1191,9 +1193,9 @@ async def _process_device_raw(device, cycle_tick: int):
         fan = None
         psu = None
         hardware_metrics: dict[str, Any] = {}
+        resolved_metrics = resolve_health_metric_profiles(device)
         if snmp_community:
             try:
-                resolved_metrics = resolve_metric_profiles(device)
                 metrics = await collect_device_metrics(
                     snmp_ip,
                     platform,
@@ -1210,7 +1212,10 @@ async def _process_device_raw(device, cycle_tick: int):
                 temp = metrics.get('temp')
                 fan = metrics.get('fan_status')
                 psu = metrics.get('psu_status')
-                snmp_available = any(value is not None for value in hardware_metrics.values())
+                snmp_available = any(
+                    hardware_metrics.get(metric) is not None
+                    for metric in HEALTH_METRIC_KEYS
+                )
             except Exception as snmp_err:
                 snmp_error_code = 'snmp_metrics_failed'
                 snmp_error_message = type(snmp_err).__name__
@@ -1376,6 +1381,11 @@ async def _process_device_raw(device, cycle_tick: int):
                 interface_config_hash = hashlib.sha256(
                     json.dumps(interface_config or {}, sort_keys=True, separators=(',', ':'), default=str).encode('utf-8')
                 ).hexdigest()[:32]
+                # Device health uses the lightweight identity/status collector,
+                # but the monitoring page needs real IF-MIB counters to derive
+                # throughput and utilization.  Keep these two collection paths
+                # separate so health polling stays cheap without making the
+                # traffic view look empty.
                 intf_data = await collect_interface_data(
                     snmp_ip,
                     snmp_community,
@@ -1408,8 +1418,18 @@ async def _process_device_raw(device, cycle_tick: int):
                             and row.get('out_octets') is not None
                         ),
                         metadata={
-                            'counter_mode': (interface_config or {}).get('counter_mode', 'auto'),
-                            'counter_widths': sorted({row.get('counter_width') for row in intf_data if row.get('counter_width') in (32, 64)}),
+                            'collection_mode': 'traffic',
+                            'counter_collection': 'counter64_preferred_counter32_fallback',
+                            'counter_widths': sorted({
+                                row.get('counter_width')
+                                for row in intf_data
+                                if row.get('counter_width') in (32, 64)
+                            }),
+                            'status_rows': sum(
+                                1 for row in intf_data
+                                if row.get('status') in {'up', 'down', 'testing'}
+                            ),
+                            'interface_source': resolved_metrics.get('interface_source', 'builtin_if_mib'),
                         },
                     )
                     topology_ports = load_topology_ports(dev_id)
@@ -1447,17 +1467,31 @@ async def _process_device_raw(device, cycle_tick: int):
                         effective_prev_status = str(prev.get(interface_key, {}).get('status', '') or persisted_statuses.get(iname, '')).lower()
                         cur_snapshot[interface_key] = {
                             'name': iname,
-                            'in_octets': iface['in_octets'],
-                            'out_octets': iface['out_octets'],
+                            'in_octets': iface.get('in_octets'),
+                            'out_octets': iface.get('out_octets'),
                             'counter_width': iface.get('counter_width'),
+                            'counter_source': iface.get('counter_source'),
+                            'counter_quality': iface.get('counter_quality'),
+                            'counter_quality_reason': iface.get('counter_quality_reason'),
+                            'counter_mode': iface.get('counter_mode'),
                             'speed_mbps': iface.get('speed_mbps', 0),
                             'device_uptime_cs': iface.get('device_uptime_cs'),
+                            # Preserve the values returned by SNMP for both
+                            # the persisted sample and the next delta baseline.
                             'in_ucast_pkts': iface.get('in_ucast_pkts', 0),
                             'out_ucast_pkts': iface.get('out_ucast_pkts', 0),
+                            'in_packets_total': iface.get('in_packets_total', iface.get('in_ucast_pkts', 0)),
+                            'out_packets_total': iface.get('out_packets_total', iface.get('out_ucast_pkts', 0)),
+                            'packet_counter_source': iface.get('packet_counter_source', 'not_collected'),
                             'in_errors': iface.get('in_errors', 0),
                             'out_errors': iface.get('out_errors', 0),
                             'in_discards': iface.get('in_discards', 0),
                             'out_discards': iface.get('out_discards', 0),
+                            'fcs_errors': iface.get('fcs_errors', 0),
+                            'frame_too_long_errors': iface.get('frame_too_long_errors', 0),
+                            'mac_rx_errors': iface.get('mac_rx_errors', 0),
+                            'symbol_errors': iface.get('symbol_errors', 0),
+                            'fcs_source': iface.get('fcs_source', 'not_collected'),
                             'status': iface.get('status', 'unknown'),
                             'ts': now_ts,
                         }
@@ -1531,8 +1565,16 @@ async def _process_device_raw(device, cycle_tick: int):
                                     delta_error_events += max(0, iface.get('out_errors', 0) - previous.get('out_errors', 0))
                                     delta_error_events += max(0, iface.get('in_discards', 0) - previous.get('in_discards', 0))
                                     delta_error_events += max(0, iface.get('out_discards', 0) - previous.get('out_discards', 0))
-                                    delta_packets = max(0, iface.get('in_ucast_pkts', 0) - previous.get('in_ucast_pkts', 0))
-                                    delta_packets += max(0, iface.get('out_ucast_pkts', 0) - previous.get('out_ucast_pkts', 0))
+                                    delta_packets = max(
+                                        0,
+                                        iface.get('in_packets_total', iface.get('in_ucast_pkts', 0))
+                                        - previous.get('in_packets_total', previous.get('in_ucast_pkts', 0)),
+                                    )
+                                    delta_packets += max(
+                                        0,
+                                        iface.get('out_packets_total', iface.get('out_ucast_pkts', 0))
+                                        - previous.get('out_packets_total', previous.get('out_ucast_pkts', 0)),
+                                    )
                                     if delta_packets > 0:
                                         iface['error_rate_pct'] = round((delta_error_events / delta_packets) * 100, 3)
 
@@ -1547,12 +1589,18 @@ async def _process_device_raw(device, cycle_tick: int):
                             iface.get('out_bps'),
                             iface.get('bw_in_pct'),
                             iface.get('bw_out_pct'),
-                            iface.get('in_ucast_pkts', 0),
-                            iface.get('out_ucast_pkts', 0),
-                            iface.get('in_errors', 0),
-                            iface.get('out_errors', 0),
-                            iface.get('in_discards', 0),
-                            iface.get('out_discards', 0),
+                            iface.get('in_packets_total', iface.get('in_ucast_pkts')),
+                            iface.get('out_packets_total', iface.get('out_ucast_pkts')),
+                            iface.get('in_errors'),
+                            iface.get('out_errors'),
+                            iface.get('in_discards'),
+                            iface.get('out_discards'),
+                            iface.get('fcs_errors'),
+                            iface.get('frame_too_long_errors'),
+                            iface.get('mac_rx_errors'),
+                            iface.get('symbol_errors'),
+                            iface.get('packet_counter_source'),
+                            iface.get('fcs_source'),
                         ))
 
                         # Basic alert rules: interface down / high utilization.
@@ -1667,8 +1715,10 @@ async def _process_device_raw(device, cycle_tick: int):
                             ts, device_id, interface_name, status, speed_mbps,
                             in_bps, out_bps, bw_in_pct, bw_out_pct,
                             in_pkts, out_pkts,
-                            in_errors, out_errors, in_discards, out_discards
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            in_errors, out_errors, in_discards, out_discards,
+                            fcs_errors, frame_too_long_errors, mac_rx_errors, symbol_errors,
+                            packet_counter_source, fcs_source
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', raw_rows)
 
                     # Update interfaces table with discovered interfaces
@@ -1726,7 +1776,9 @@ async def _process_device_raw(device, cycle_tick: int):
         if is_server_asset:
             snmp_available = True  # Linux 服务器采用 SSH 巡检，免除传统 SNMP 可达性告警监控
 
-        metric_values = tuple(hardware_metrics.values()) or (cpu_usage, memory_usage, temp, fan, psu)
+        metric_values = tuple(hardware_metrics.get(metric) for metric in HEALTH_METRIC_KEYS)
+        if not any(value is not None for value in metric_values):
+            metric_values = (cpu_usage, memory_usage, temp, fan, psu)
         if is_server_asset:
             record_collection_result(
                 dev_id,
@@ -1749,7 +1801,14 @@ async def _process_device_raw(device, cycle_tick: int):
                 coverage_supported=sum(value is not None for value in metric_values),
                 error_code='' if snmp_available else (snmp_error_code or 'snmp_no_response'),
                 error_message='' if snmp_available else (snmp_error_message or 'SNMP collection returned no data'),
-                metadata={'metric_details': metric_details} if metric_details else None,
+                metadata={
+                    'collection_mode': 'health_only',
+                    'metric_profile_id': resolved_metrics.get('profile_id') or None,
+                    'metric_profile_status': resolved_metrics.get('profile_status') or 'none',
+                    'metric_profile_source': resolved_metrics.get('profile_source') or 'builtin_default',
+                    'metric_sources': resolved_metrics.get('metric_sources') or {},
+                    'metric_details': metric_details,
+                },
             )
 
         snmp_rule = resolve_alert_rule('snmp_unreachable', device_row=device, ip_address=ip)

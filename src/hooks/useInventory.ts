@@ -2,7 +2,9 @@ import React, { useState, useCallback, useRef } from 'react';
 import type { Device } from '../types';
 import { displaySiteLabel } from '../utils/deviceUtils';
 
-export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
+export type DeviceFetchMode = 'light' | 'full' | 'paged-light';
+
+export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
   const [devices, setDevices] = useState<Device[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [devicesLastUpdatedAt, setDevicesLastUpdatedAt] = useState<number>(0);
@@ -40,6 +42,16 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
       sn: typeof raw?.sn === 'string' ? raw.sn : '',
       uptime: typeof raw?.uptime === 'string' ? raw.uptime : '',
       connection_method: raw?.connection_method === 'netconf' ? 'netconf' : 'ssh',
+      fan_status: raw?.fan_status === true || raw?.fan_status === 1 || ['true', '1', 'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready'].includes(String(raw?.fan_status || '').trim().toLowerCase())
+        ? true
+        : raw?.fan_status === false || raw?.fan_status === 0 || ['false', '0', 'fail', 'failed', 'warning', 'error', 'down', 'offline', 'alarm'].includes(String(raw?.fan_status || '').trim().toLowerCase())
+          ? false
+          : null,
+      psu_status: raw?.psu_status === true || raw?.psu_status === 1 || ['true', '1', 'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready'].includes(String(raw?.psu_status || '').trim().toLowerCase())
+        ? true
+        : raw?.psu_status === false || raw?.psu_status === 0 || ['false', '0', 'fail', 'failed', 'warning', 'error', 'down', 'offline', 'alarm'].includes(String(raw?.psu_status || '').trim().toLowerCase())
+          ? false
+          : null,
       web_access_enabled: raw?.web_access_enabled === true || raw?.web_access_enabled === 1,
       web_http_enabled: raw?.web_http_enabled === true || raw?.web_http_enabled === 1,
       web_https_enabled: raw?.web_https_enabled === true || raw?.web_https_enabled === 1,
@@ -47,6 +59,19 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
       interface_data: safeJsonArray(raw?.interface_data),
       cpu_history: safeJsonArray(raw?.cpu_history),
       memory_history: safeJsonArray(raw?.memory_history),
+      snmp_metric_profile:
+        raw?.snmp_metric_profile && typeof raw.snmp_metric_profile === 'object'
+          ? {
+              ...raw.snmp_metric_profile,
+              metric_keys: Array.isArray(raw.snmp_metric_profile.metric_keys)
+                ? raw.snmp_metric_profile.metric_keys
+                : [],
+              metric_sources:
+                raw.snmp_metric_profile.metric_sources && typeof raw.snmp_metric_profile.metric_sources === 'object'
+                  ? raw.snmp_metric_profile.metric_sources
+                  : {},
+            }
+          : undefined,
       health_status: ['healthy', 'warning', 'critical', 'unknown'].includes(String(raw?.health_status)) ? raw.health_status : 'unknown',
       health_score: typeof raw?.health_score === 'number' ? raw.health_score : Number(raw?.health_score || 0),
       health_summary: typeof raw?.health_summary === 'string' ? raw.health_summary : '',
@@ -67,8 +92,17 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
   const fetchDevicesData = useCallback(async (assetType: string = 'all') => {
     const fetchId = ++lastFetchId.current;
     try {
-      const params = new URLSearchParams({ mode: deviceFetchMode });
-      if (assetType !== 'all') params.append('asset_type', assetType);
+      const requestMode = deviceFetchMode === 'paged-light' ? 'light' : deviceFetchMode;
+      const params = new URLSearchParams({ mode: requestMode });
+      if (deviceFetchMode === 'paged-light') {
+        params.set('page', '1');
+        params.set('page_size', '30');
+      }
+      if (assetType !== 'all') {
+        params.set('asset_type', assetType);
+      } else if (deviceFetchMode === 'paged-light') {
+        params.set('asset_type', 'network_device');
+      }
       
       const devicesRes = await fetch(`/api/devices?${params.toString()}`);
       if (!devicesRes.ok) return;
@@ -79,7 +113,7 @@ export const useInventory = (deviceFetchMode: 'light' | 'full' = 'full') => {
 
       setDevices((Array.isArray(devs) ? devs : []).map((d: any) => {
         const normalized = normalizeDeviceRecord(d);
-        if (deviceFetchMode === 'light') {
+        if (deviceFetchMode !== 'full') {
           return {
             ...normalized,
             config_history: [],

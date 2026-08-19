@@ -162,6 +162,23 @@ IF_OUT_DISCARDS = '1.3.6.1.2.1.2.2.1.19'
 IF_IN_UCAST     = '1.3.6.1.2.1.2.2.1.11'
 IF_OUT_UCAST    = '1.3.6.1.2.1.2.2.1.17'
 
+# IF-MIB high-capacity packet counters.  These are Counter64 and are the
+# correct denominator for error-rate calculations on high-speed H3C ports.
+IF_HC_IN_UCAST       = '1.3.6.1.2.1.31.1.1.1.7'
+IF_HC_IN_MULTICAST    = '1.3.6.1.2.1.31.1.1.1.8'
+IF_HC_IN_BROADCAST    = '1.3.6.1.2.1.31.1.1.1.9'
+IF_HC_OUT_UCAST      = '1.3.6.1.2.1.31.1.1.1.11'
+IF_HC_OUT_MULTICAST  = '1.3.6.1.2.1.31.1.1.1.12'
+IF_HC_OUT_BROADCAST  = '1.3.6.1.2.1.31.1.1.1.13'
+
+# EtherLike-MIB error details.  FCS is the CRC-equivalent receive counter;
+# the other counters explain the remaining hardware receive-error classes.
+DOT3_HC_FCS_ERRORS          = '1.3.6.1.2.1.10.7.11.1.2'
+DOT3_HC_FRAME_TOO_LONG      = '1.3.6.1.2.1.10.7.11.1.4'
+DOT3_HC_INTERNAL_MAC_RX     = '1.3.6.1.2.1.10.7.11.1.5'
+DOT3_HC_SYMBOL_ERRORS       = '1.3.6.1.2.1.10.7.11.1.6'
+DOT3_FCS_ERRORS_32          = '1.3.6.1.2.1.10.7.2.1.3'
+
 # The interface template deliberately mirrors the complete IF-MIB contract
 # used by the collector.  Keeping the defaults in one place lets a model
 # profile replace only the OIDs that differ on a vendor while preserving the
@@ -185,6 +202,17 @@ DEFAULT_INTERFACE_CONFIG = {
     'if_out_discards_oid': IF_OUT_DISCARDS,
     'if_in_ucast_oid': IF_IN_UCAST,
     'if_out_ucast_oid': IF_OUT_UCAST,
+    'if_hc_in_ucast_pkts_oid': IF_HC_IN_UCAST,
+    'if_hc_in_multicast_pkts_oid': IF_HC_IN_MULTICAST,
+    'if_hc_in_broadcast_pkts_oid': IF_HC_IN_BROADCAST,
+    'if_hc_out_ucast_pkts_oid': IF_HC_OUT_UCAST,
+    'if_hc_out_multicast_pkts_oid': IF_HC_OUT_MULTICAST,
+    'if_hc_out_broadcast_pkts_oid': IF_HC_OUT_BROADCAST,
+    'dot3_hc_fcs_errors_oid': DOT3_HC_FCS_ERRORS,
+    'dot3_hc_frame_too_long_oid': DOT3_HC_FRAME_TOO_LONG,
+    'dot3_hc_internal_mac_rx_errors_oid': DOT3_HC_INTERNAL_MAC_RX,
+    'dot3_hc_symbol_errors_oid': DOT3_HC_SYMBOL_ERRORS,
+    'dot3_fcs_errors_oid': DOT3_FCS_ERRORS_32,
     'counter_mode': 'auto',
 }
 
@@ -211,6 +239,23 @@ _INTERFACE_OID_ALIASES = {
     'if_out_discards': 'if_out_discards_oid',
     'if_in_ucast': 'if_in_ucast_oid',
     'if_out_ucast': 'if_out_ucast_oid',
+    'if_hc_in_ucast': 'if_hc_in_ucast_pkts_oid',
+    'if_hc_in_ucast_pkts': 'if_hc_in_ucast_pkts_oid',
+    'if_hc_in_multicast': 'if_hc_in_multicast_pkts_oid',
+    'if_hc_in_multicast_pkts': 'if_hc_in_multicast_pkts_oid',
+    'if_hc_in_broadcast': 'if_hc_in_broadcast_pkts_oid',
+    'if_hc_in_broadcast_pkts': 'if_hc_in_broadcast_pkts_oid',
+    'if_hc_out_ucast': 'if_hc_out_ucast_pkts_oid',
+    'if_hc_out_ucast_pkts': 'if_hc_out_ucast_pkts_oid',
+    'if_hc_out_multicast': 'if_hc_out_multicast_pkts_oid',
+    'if_hc_out_multicast_pkts': 'if_hc_out_multicast_pkts_oid',
+    'if_hc_out_broadcast': 'if_hc_out_broadcast_pkts_oid',
+    'if_hc_out_broadcast_pkts': 'if_hc_out_broadcast_pkts_oid',
+    'dot3_hc_fcs_errors': 'dot3_hc_fcs_errors_oid',
+    'dot3_hc_frame_too_long': 'dot3_hc_frame_too_long_oid',
+    'dot3_hc_internal_mac_rx_errors': 'dot3_hc_internal_mac_rx_errors_oid',
+    'dot3_hc_symbol_errors': 'dot3_hc_symbol_errors_oid',
+    'dot3_fcs_errors': 'dot3_fcs_errors_oid',
     'name_oid': 'if_name_oid',
     'descr_oid': 'if_descr_oid',
     'alias_oid': 'if_alias_oid',
@@ -281,8 +326,12 @@ VENDOR_OIDS = {
         'cpu': '1.3.6.1.4.1.25506.2.6.1.1.1.1.6',        # hh3cEntityExtCpuUsage
         'mem': '1.3.6.1.4.1.25506.2.6.1.1.1.1.8',         # hh3cEntityExtMemUsage (percentage)
         'temp': '1.3.6.1.4.1.25506.2.6.1.1.1.1.12',       # hh3cEntityExtTemperature
-        'fan': '1.3.6.1.4.1.25506.2.6.1.1.1.1.19',        # hh3cEntityExtFanStatus
-        'psu': '1.3.6.1.4.1.25506.2.6.1.1.1.1.21',        # hh3cEntityExtPowerStatus
+        # HH3C-ENTITY-EXT-MIB .19 is ErrorStatus.  It is shared by fan and
+        # power-supply entities; the entity class column below is required to
+        # keep the two health metrics from being mixed together.
+        'fan': '1.3.6.1.4.1.25506.2.6.1.1.1.1.19',        # hh3cEntityExtErrorStatus
+        'psu': '1.3.6.1.4.1.25506.2.6.1.1.1.1.19',        # hh3cEntityExtErrorStatus
+        'entity_class': '1.3.6.1.2.1.47.1.1.1.1.5',       # entPhysicalClass
     },
     # ── Arista EOS ──
     'arista_eos': {
@@ -523,6 +572,7 @@ async def _collect_custom_percent_metric(
     community: str,
     oid: str,
     port: int,
+    version: str = '2c',
 ) -> int | None:
     """Read a user-supplied percentage OID as a scalar or a small table.
 
@@ -530,12 +580,12 @@ async def _collect_custom_percent_metric(
     a table/root, WALK is used and the valid 0-100 values are averaged.  This
     keeps one device-level setting useful for both common SNMP layouts.
     """
-    value = await _snmp_get(ip, community, oid, port)
+    value = await _snmp_get_versioned(ip, community, oid, port, version)
     direct = _as_percent(_parse_snmp_number(value))
     if direct is not None:
         return direct
 
-    rows = await _snmp_walk(ip, community, oid, port)
+    rows = await _snmp_walk_versioned(ip, community, oid, port, version)
     values = [
         parsed
         for _, raw in rows
@@ -552,9 +602,10 @@ async def _collect_default_cpu_metric(
     vendor: str,
     oids: dict[str, str],
     port: int,
+    version: str = '2c',
 ) -> int | None:
     if vendor in ('arista_eos', 'raisecom_ros'):
-        rows = await _snmp_walk(ip, community, oids['cpu'], port)
+        rows = await _snmp_walk_versioned(ip, community, oids['cpu'], port, version)
         values = [
             int(parsed)
             for _, raw in rows
@@ -562,9 +613,19 @@ async def _collect_default_cpu_metric(
         ]
         return int(sum(values) / len(values)) if values else None
 
-    rows = await _snmp_walk(ip, community, oids['cpu'], port)
+    rows = await _snmp_walk_versioned(ip, community, oids['cpu'], port, version)
     if not rows:
         return None
+    if vendor == 'h3c_comware':
+        # HH3C-ENTITY-EXT-MIB exposes one CPU value per processing entity.
+        # The first row is not a device-level health value; use the highest
+        # active entity load so a table cannot be diluted or selected by index.
+        values = [
+            int(parsed)
+            for _, raw in rows
+            if (parsed := _parse_snmp_number(raw)) is not None and 0 <= parsed <= 100
+        ]
+        return max(values) if values else None
     if vendor in ('huawei_vrp', 'h3c_comware', 'juniper_junos'):
         for _, raw in rows:
             parsed = _parse_snmp_number(raw)
@@ -585,18 +646,27 @@ async def _collect_default_memory_metric(
     vendor: str,
     oids: dict[str, str],
     port: int,
+    version: str = '2c',
 ) -> int | None:
     if vendor == 'cisco_nxos':
         mem_pct_oid = oids.get('mem_pct')
         if not mem_pct_oid:
             return None
-        return _as_percent(_parse_snmp_number(await _snmp_get(ip, community, mem_pct_oid, port)))
+        return _as_percent(_parse_snmp_number(await _snmp_get_versioned(ip, community, mem_pct_oid, port, version)))
 
     if vendor in ('huawei_vrp', 'h3c_comware', 'juniper_junos', 'fortinet_fortios'):
         mem_oid = oids.get('mem')
         if not mem_oid:
             return None
-        rows = await _snmp_walk(ip, community, mem_oid, port)
+        rows = await _snmp_walk_versioned(ip, community, mem_oid, port, version)
+        if vendor == 'h3c_comware':
+            values = [
+                _as_percent(parsed)
+                for _, raw in rows
+                if (parsed := _parse_snmp_number(raw)) is not None
+            ]
+            valid = [value for value in values if value is not None]
+            return max(valid) if valid else None
         for _, raw in rows:
             parsed = _parse_snmp_number(raw)
             if parsed is not None and parsed > 0:
@@ -604,9 +674,9 @@ async def _collect_default_memory_metric(
         return None
 
     if vendor in ('arista_eos', 'raisecom_ros'):
-        descr_rows = await _snmp_walk(ip, community, oids['mem_descr'], port)
-        used_rows = await _snmp_walk(ip, community, oids['mem_used'], port)
-        size_rows = await _snmp_walk(ip, community, oids['mem_size'], port)
+        descr_rows = await _snmp_walk_versioned(ip, community, oids['mem_descr'], port, version)
+        used_rows = await _snmp_walk_versioned(ip, community, oids['mem_used'], port, version)
+        size_rows = await _snmp_walk_versioned(ip, community, oids['mem_size'], port, version)
         used_map = {
             idx: int(parsed)
             for idx, raw in used_rows
@@ -632,18 +702,18 @@ async def _collect_default_memory_metric(
     if vendor in ('cisco_ios', 'cisco_iosxr'):
         cemp_used = oids.get('mem_used_enhanced')
         cemp_free = oids.get('mem_free_enhanced')
-        used_raw = await _snmp_walk(ip, community, cemp_used, port) if cemp_used else []
-        free_raw = await _snmp_walk(ip, community, cemp_free, port) if cemp_free else []
+        used_raw = await _snmp_walk_versioned(ip, community, cemp_used, port, version) if cemp_used else []
+        free_raw = await _snmp_walk_versioned(ip, community, cemp_free, port, version) if cemp_free else []
         if not used_raw or not free_raw:
-            used_raw = await _snmp_walk(ip, community, oids['mem_used'], port)
-            free_raw = await _snmp_walk(ip, community, oids['mem_free'], port)
+            used_raw = await _snmp_walk_versioned(ip, community, oids['mem_used'], port, version)
+            free_raw = await _snmp_walk_versioned(ip, community, oids['mem_free'], port, version)
     else:
         used_oid = oids.get('mem_used')
         free_oid = oids.get('mem_free')
         if not used_oid or not free_oid:
             return None
-        used_raw = await _snmp_walk(ip, community, used_oid, port)
-        free_raw = await _snmp_walk(ip, community, free_oid, port)
+        used_raw = await _snmp_walk_versioned(ip, community, used_oid, port, version)
+        free_raw = await _snmp_walk_versioned(ip, community, free_oid, port, version)
 
     if not used_raw or not free_raw:
         return None
@@ -703,12 +773,21 @@ async def _safe_send_udp(endpoint, packet: bytes, timeout: int = 1, loop=None, r
     raise Timeout(f'{timeout} second timeout exceeded on UDP transport.')
 
 
-async def _snmp_get(ip: str, community: str, oid: str, port: int = 161, timeout: float = 3) -> Optional[str]:
-    """GET a single OID value via puresnmp (SNMPv2c)."""
+async def _snmp_get(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int = 161,
+    timeout: float = 3,
+    version: str = '2c',
+) -> Optional[str]:
+    """GET a single OID value via puresnmp (SNMPv1/v2c)."""
     async with get_network_access_limiter().async_snmp():
       try:
-        from puresnmp import Client, V2C, PyWrapper
-        client = PyWrapper(Client(ip, V2C(community), port=port, sender=_safe_send_udp))
+        from puresnmp import Client, V1, V2C, PyWrapper
+        version_key = str(version or '2c').strip().lower()
+        auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
+        client = PyWrapper(Client(ip, auth, port=port, sender=_safe_send_udp))
         result = await asyncio.wait_for(client.get(oid), timeout=timeout)
         if result is None:
             return None
@@ -769,19 +848,48 @@ async def _snmp_walk(
     return results
 
 
+async def _snmp_get_versioned(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int,
+    version: str,
+) -> Optional[str]:
+    """Call the scalar helper without changing the v2c monkeypatch contract."""
+    if str(version or '2c').strip().lower() in {'v2c', '2c', '2', ''}:
+        return await _snmp_get(ip, community, oid, port)
+    return await _snmp_get(ip, community, oid, port, version=version)
+
+
+async def _snmp_walk_versioned(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int,
+    version: str,
+) -> list[tuple[str, str]]:
+    """Call the walk helper while preserving legacy v2c test doubles."""
+    if str(version or '2c').strip().lower() in {'v2c', '2c', '2', ''}:
+        return await _snmp_walk(ip, community, oid, port)
+    return await _snmp_walk(ip, community, oid, port, version=version)
+
+
 async def _snmp_get_typed(
     ip: str,
     community: str,
     oid: str,
     port: int = 161,
     timeout: float = 3,
+    version: str = '2c',
 ) -> Optional[SnmpTypedValue]:
     """GET one OID while preserving its puresnmp ASN.1 type."""
     async with get_network_access_limiter().async_snmp():
         try:
-            from puresnmp import Client, ObjectIdentifier, V2C
+            from puresnmp import Client, ObjectIdentifier, V1, V2C
 
-            client = Client(ip, V2C(community), port=port, sender=_safe_send_udp)
+            version_key = str(version or '2c').strip().lower()
+            auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
+            client = Client(ip, auth, port=port, sender=_safe_send_udp)
             result = await asyncio.wait_for(
                 client.get(ObjectIdentifier(oid)),
                 timeout=timeout,
@@ -801,15 +909,18 @@ async def _snmp_walk_typed(
     port: int = 161,
     timeout: float = 5,
     max_rows: int = 200,
+    version: str = '2c',
 ) -> list[tuple[str, SnmpTypedValue]]:
     """WALK one OID subtree and preserve each row's ASN.1 type."""
     results: list[tuple[str, SnmpTypedValue]] = []
     base_oid = oid.rstrip(".")
 
     async def _collect():
-        from puresnmp import Client, ObjectIdentifier, V2C
+        from puresnmp import Client, ObjectIdentifier, V1, V2C
 
-        client = Client(ip, V2C(community), port=port, sender=_safe_send_udp)
+        version_key = str(version or '2c').strip().lower()
+        auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
+        client = Client(ip, auth, port=port, sender=_safe_send_udp)
         async for varbind in client.walk(ObjectIdentifier(base_oid)):
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + ".") else oid_str
@@ -837,15 +948,18 @@ async def _snmp_bulk_walk_typed(
     timeout: float = 5,
     max_repetitions: int = 20,
     max_rows: int = 2000,
+    version: str = '2c',
 ) -> list[tuple[str, SnmpTypedValue]]:
     """Typed GETBULK walk used for interface counters."""
     results: list[tuple[str, SnmpTypedValue]] = []
     base_oid = oid.rstrip(".")
 
     async def _collect():
-        from puresnmp import Client, ObjectIdentifier, V2C
+        from puresnmp import Client, ObjectIdentifier, V1, V2C
 
-        client = Client(ip, V2C(community), port=port, sender=_safe_send_udp)
+        version_key = str(version or '2c').strip().lower()
+        auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
+        client = Client(ip, auth, port=port, sender=_safe_send_udp)
         async for varbind in client.bulkwalk([ObjectIdentifier(base_oid)], bulk_size=max_repetitions):
             oid_str = str(varbind.oid)
             suffix = oid_str[len(base_oid) + 1:] if oid_str.startswith(base_oid + ".") else oid_str
@@ -863,18 +977,36 @@ async def _snmp_bulk_walk_typed(
         except Exception as exc:
             logger.debug("Typed SNMP BULK_WALK %s %s failed: %s", ip, oid, exc)
     if not results:
-        return await _snmp_walk_typed(ip, community, oid, port, timeout=timeout, max_rows=max_rows)
+        return await _snmp_walk_typed(
+            ip,
+            community,
+            oid,
+            port,
+            timeout=timeout,
+            max_rows=max_rows,
+            version=version,
+        )
     return results
 
 
-async def _snmp_bulk_walk(ip: str, community: str, oid: str, port: int = 161, timeout: float = 5, max_repetitions: int = 20) -> list[tuple[str, str]]:
+async def _snmp_bulk_walk(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int = 161,
+    timeout: float = 5,
+    max_repetitions: int = 20,
+    version: str = '2c',
+) -> list[tuple[str, str]]:
     """Bulk Walk an OID subtree via puresnmp, using GETBULK for high performance."""
     results: list[tuple[str, str]] = []
     base_oid = oid.rstrip('.')
 
     async def _collect():
-        from puresnmp import Client, V2C, PyWrapper
-        client = PyWrapper(Client(ip, V2C(community), port=port, sender=_safe_send_udp))
+        from puresnmp import Client, V1, V2C, PyWrapper
+        version_key = str(version or '2c').strip().lower()
+        auth = V1(community) if version_key in {'v1', '1'} else V2C(community)
+        client = PyWrapper(Client(ip, auth, port=port, sender=_safe_send_udp))
         # bulkwalk significantly reduces UDP round-trips
         async for varbind in client.bulkwalk([base_oid], bulk_size=max_repetitions):
             oid_str = str(varbind.oid)
@@ -893,7 +1025,7 @@ async def _snmp_bulk_walk(ip: str, community: str, oid: str, port: int = 161, ti
         logger.debug(f"SNMP BULK_WALK {ip} {oid} failed: {e}")
     if not results:
         logger.debug(f"SNMP BULK_WALK returned no results for {ip} {oid}. Falling back to standard WALK.")
-        results = await _snmp_walk(ip, community, oid, port, timeout=timeout)
+        results = await _snmp_walk(ip, community, oid, port, timeout=timeout, version=version)
     return results
 
 
@@ -958,14 +1090,16 @@ async def _read_typed_points(
     oid: str,
     port: int,
     selector: str = "",
+    version: str = '2c',
 ) -> list[tuple[str, SnmpTypedValue]]:
     if not oid:
         return []
+    version_kwargs = {} if str(version or '2c').strip().lower() in {'', 'v2c', '2c', '2'} else {'version': version}
     if not selector:
-        direct = await _snmp_get_typed(ip, community, oid, port)
+        direct = await _snmp_get_typed(ip, community, oid, port, **version_kwargs)
         if direct is not None:
             return [("", direct)]
-        return await _snmp_walk_typed(ip, community, oid, port)
+        return await _snmp_walk_typed(ip, community, oid, port, **version_kwargs)
 
     # A selector identifies a table instance, so a GET on the column root is
     # not enough.  The old implementation fetched the root, then discarded
@@ -975,10 +1109,10 @@ async def _read_typed_points(
     # GETBULK.  The returned empty suffix keeps downstream pairing stable.
     normalized_selector = str(selector).strip().strip('.')
     instance_oid = oid if oid.endswith(f'.{normalized_selector}') else f'{oid}.{normalized_selector}'
-    instance = await _snmp_get_typed(ip, community, instance_oid, port)
+    instance = await _snmp_get_typed(ip, community, instance_oid, port, **version_kwargs)
     if instance is not None:
         return [(normalized_selector, instance)]
-    points = await _snmp_walk_typed(ip, community, oid, port)
+    points = await _snmp_walk_typed(ip, community, oid, port, **version_kwargs)
     return [
         (suffix, value)
         for suffix, value in points
@@ -1058,6 +1192,7 @@ def _definition_result(
     config: Mapping[str, Any],
     *,
     value: Any,
+    raw_value: Any = None,
     status: str,
     passed: bool,
     message: str = "",
@@ -1069,8 +1204,12 @@ def _definition_result(
     output = value
     if isinstance(output, (int, float)) and not isinstance(output, bool) and math.isfinite(output):
         output = round(float(output), 3)
+    raw_output = raw_value
+    if isinstance(raw_output, (int, float)) and not isinstance(raw_output, bool) and math.isfinite(raw_output):
+        raw_output = round(float(raw_output), 3)
     return {
         "value": output,
+        "raw_value": raw_output,
         "status": status,
         "passed": passed,
         "message": message,
@@ -1094,14 +1233,23 @@ async def _collect_metric_definition(
     profile_id: str = "",
     metric_name: str = "",
     persist_counter: bool = True,
+    version: str = '2c',
+    aggregation_override: str | None = None,
 ) -> dict[str, Any]:
     """Collect one typed metric definition without implicit reinterpretation."""
     normalized = _runtime_metric_config(config)
+    if aggregation_override:
+        # Some vendor OIDs are entity tables rather than one scalar.  The
+        # caller may select a health-oriented aggregation without mutating the
+        # saved template definition (the template remains the source of truth
+        # for the OID and interpretation mode).
+        normalized = dict(normalized)
+        normalized["aggregation"] = aggregation_override
     mode = normalized["mode"]
     aggregation = normalized["aggregation"]
 
     if mode == "direct_percent":
-        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"])
+        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"], version=version)
         if not points:
             return _definition_result(normalized, value=None, status="missing", passed=False, message="OID returned no numeric value")
         types = [point.snmp_type for _, point in points]
@@ -1116,7 +1264,8 @@ async def _collect_metric_definition(
                 counter_bits=next((point.counter_bits for _, point in points if point.counter_bits), None),
                 rows=len(points),
             )
-        values = [_scaled(float(point.number), normalized) for _, point in points if point.number is not None]
+        raw_values = [float(point.number) for _, point in points if point.number is not None]
+        values = [_scaled(raw, normalized) for raw in raw_values]
         if any(value is None or value < 0 or value > 100 for value in values) or not values:
             return _definition_result(
                 normalized,
@@ -1130,6 +1279,7 @@ async def _collect_metric_definition(
         return _definition_result(
             normalized,
             value=_aggregate([float(value) for value in values], aggregation),
+            raw_value=_aggregate(raw_values, aggregation),
             status="ok",
             passed=True,
             snmp_types=types,
@@ -1137,7 +1287,7 @@ async def _collect_metric_definition(
         )
 
     if mode == "direct_value":
-        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"])
+        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"], version=version)
         if not points:
             return _definition_result(normalized, value=None, status="missing", passed=False, message="OID returned no numeric value")
         types = [point.snmp_type for _, point in points]
@@ -1152,12 +1302,39 @@ async def _collect_metric_definition(
                 counter_bits=next((point.counter_bits for _, point in points if point.counter_bits), None),
                 rows=len(points),
             )
-        values = [_scaled(float(point.number), normalized) for _, point in points if point.number is not None]
+        raw_values = [float(point.number) for _, point in points if point.number is not None]
+        values = [_scaled(raw, normalized) for raw in raw_values]
         if any(value is None for value in values) or not values:
             return _definition_result(normalized, value=None, status="invalid_value", passed=False, message="Hardware value is not finite", snmp_types=types, rows=len(points))
+
+        # Several Comware entity tables use 65535 (and similar sentinel
+        # values) when a sensor column is unsupported or not populated.  It
+        # is not a real temperature and must never become a high-temperature
+        # alert.  Apply the range after scale/offset so profiles using tenths
+        # of a degree remain valid.
+        if metric_name == "temperature":
+            valid_pairs = [
+                (raw, scaled)
+                for raw, scaled in zip(raw_values, values)
+                if scaled is not None and -80 <= scaled <= 200
+            ]
+            if not valid_pairs:
+                return _definition_result(
+                    normalized,
+                    value=None,
+                    raw_value=raw_values[0] if len(raw_values) == 1 else _aggregate(raw_values, aggregation),
+                    status="invalid_value",
+                    passed=False,
+                    message="Temperature returned an unsupported or sentinel value; expected -80..200°C",
+                    snmp_types=types,
+                    rows=len(points),
+                )
+            raw_values = [raw for raw, _ in valid_pairs]
+            values = [scaled for _, scaled in valid_pairs]
         return _definition_result(
             normalized,
             value=_aggregate([float(value) for value in values], aggregation),
+            raw_value=_aggregate(raw_values, aggregation),
             status="ok",
             passed=True,
             snmp_types=types,
@@ -1165,7 +1342,7 @@ async def _collect_metric_definition(
         )
 
     if mode == "status_code":
-        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"])
+        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"], version=version)
         if not points:
             return _definition_result(normalized, value=None, status="missing", passed=False, message="Status OID returned no numeric value")
         types = [point.snmp_type for _, point in points]
@@ -1190,6 +1367,7 @@ async def _collect_metric_definition(
         return _definition_result(
             normalized,
             value=boolean_value,
+            raw_value=codes[0] if len(codes) == 1 else codes,
             status=status,
             passed=boolean_value is not None,
             message="" if boolean_value is not None else "Device returned an unmapped hardware status code",
@@ -1198,9 +1376,9 @@ async def _collect_metric_definition(
         )
 
     if mode in {"used_total_percent", "used_free_percent"}:
-        used_points = await _read_typed_points(ip, community, normalized["used_oid"], port, normalized["selector"])
+        used_points = await _read_typed_points(ip, community, normalized["used_oid"], port, normalized["selector"], version=version)
         denominator_oid = normalized["total_oid"] if mode == "used_total_percent" else normalized["free_oid"]
-        denominator_points = await _read_typed_points(ip, community, denominator_oid, port, normalized["selector"])
+        denominator_points = await _read_typed_points(ip, community, denominator_oid, port, normalized["selector"], version=version)
         pairs = _pair_points(used_points, denominator_points)
         types = [point.snmp_type for _, used, total in pairs for point in (used, total)]
         if not pairs:
@@ -1233,8 +1411,8 @@ async def _collect_metric_definition(
     if mode != "counter_rate_percent":
         return _definition_result(normalized, value=None, status="unsupported_mode", passed=False, message="Unsupported metric mode")
 
-    points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"])
-    capacity_points = await _read_typed_points(ip, community, normalized["capacity_oid"], port, normalized["selector"])
+    points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"], version=version)
+    capacity_points = await _read_typed_points(ip, community, normalized["capacity_oid"], port, normalized["selector"], version=version)
     pairs = _pair_points(points, capacity_points)
     configured_bits = normalized.get("counter_bits")
     try:
@@ -1335,9 +1513,26 @@ async def probe_metric_definition(
     community: str,
     config: Mapping[str, Any],
     port: int = 161,
+    *,
+    metric_name: str = "",
+    version: str = '2c',
+    platform: str = "",
 ) -> dict[str, Any]:
     """Read and validate a definition without changing a device baseline."""
-    return await _collect_metric_definition(ip, community, config, port, persist_counter=False)
+    return await _collect_metric_definition(
+        ip,
+        community,
+        config,
+        port,
+        metric_name=metric_name,
+        persist_counter=False,
+        version=version,
+        aggregation_override=(
+            'max'
+            if _resolve_platform(platform) == 'h3c_comware' and metric_name in {'cpu', 'memory'}
+            else None
+        ),
+    )
 
 # ═══════════════════════════════════════════════════════════════
 # High-level collection functions
@@ -1379,6 +1574,66 @@ async def collect_device_info(ip: str, community: str = 'public', port: int = 16
     return result
 
 
+async def _collect_h3c_fan_psu_status(
+    ip: str,
+    community: str,
+    oids: Mapping[str, str],
+    port: int,
+    version: str = '2c',
+) -> tuple[str | None, str | None]:
+    """Read H3C entity error status and split fan/PSU entities by class.
+
+    HH3C-ENTITY-EXT-MIB exposes one shared error-status column for multiple
+    entity types.  A raw walk cannot be interpreted as a fan-only or PSU-only
+    table; the ENTITY-MIB class column is part of the correlation contract.
+    Codes are ``normal(2)`` and component-specific error codes such as
+    ``fanError(41)`` and ``psuError(51)``.  Unsupported entity rows are kept
+    unknown instead of being converted into a hardware failure.
+    """
+    status_oid = oids.get('fan') or oids.get('psu')
+    class_oid = oids.get('entity_class')
+    if not status_oid or not class_oid:
+        return None, None
+    try:
+        status_rows, class_rows = await asyncio.gather(
+            _snmp_walk_versioned(ip, community, status_oid, port, version),
+            _snmp_walk_versioned(ip, community, class_oid, port, version),
+        )
+    except Exception as exc:
+        logger.debug("H3C entity health collection failed for %s: %s", ip, type(exc).__name__)
+        return None, None
+
+    class_map: dict[str, int] = {}
+    for index, raw_class in class_rows:
+        try:
+            class_map[str(index)] = int(str(raw_class).strip())
+        except (TypeError, ValueError):
+            continue
+
+    component_codes: dict[str, list[int]] = {'fan': [], 'psu': []}
+    for index, raw_status in status_rows:
+        try:
+            code = int(str(raw_status).strip())
+        except (TypeError, ValueError):
+            continue
+        entity_class = class_map.get(str(index))
+        # ENTITY-MIB entPhysicalClass: powerSupply(6), fan(7).
+        if entity_class == 7:
+            component_codes['fan'].append(code)
+        elif entity_class == 6:
+            component_codes['psu'].append(code)
+
+    def _status(codes: list[int]) -> str | None:
+        # 1 = notSupported is not evidence of a failure.  It is excluded;
+        # an all-unsupported/empty component set remains unknown.
+        supported = [code for code in codes if code != 1]
+        if not supported:
+            return None
+        return 'ok' if all(code == 2 for code in supported) else 'fail'
+
+    return _status(component_codes['fan']), _status(component_codes['psu'])
+
+
 async def collect_device_metrics(
     ip: str,
     platform: str,
@@ -1389,6 +1644,8 @@ async def collect_device_metrics(
     custom_metrics: Mapping[str, Mapping[str, Any]] | None = None,
     device_id: str = '',
     metric_profile_id: str = '',
+    bypass_cache: bool = False,
+    version: str = '2c',
 ) -> dict:
     """
     Collect the standard hardware set (CPU, memory, temperature, fan, PSU,
@@ -1398,6 +1655,13 @@ async def collect_device_metrics(
     different vendor OID and present a misleading value.
     """
     vendor = _resolve_platform(platform)
+    version_key = str(version or '2c').strip().lower()
+    if version_key in {'v1', '1'}:
+        version_key = '1'
+    elif version_key in {'v2c', '2c', '2', ''}:
+        version_key = '2c'
+    else:
+        raise ValueError('Unsupported SNMP version; use 1 or 2c')
     custom_oids = custom_oids or {}
     custom_cpu_oid = _safe_metric_oid(custom_oids.get('cpu') or custom_oids.get('cpu_oid'))
     custom_memory_oid = _safe_metric_oid(
@@ -1422,12 +1686,13 @@ async def collect_device_metrics(
         ).encode('utf-8')
     ).hexdigest()[:16]
     cache_key = (
-        f"metrics:{ip}:{port}:{vendor}:{community_token}:"
+        f"metrics:{ip}:{port}:{version_key}:{vendor}:{community_token}:"
         f"{metric_profile_id}:{device_id}:{metric_token}"
     )
-    cached = _get_result_cache(cache_key)
-    if cached is not None:
-        return cached
+    if not bypass_cache:
+        cached = _get_result_cache(cache_key)
+        if cached is not None:
+            return cached
     oids = VENDOR_OIDS.get(vendor, VENDOR_OIDS['cisco_ios'])
     result = {
         'cpu_usage': None,
@@ -1457,6 +1722,10 @@ async def collect_device_metrics(
                     device_id=device_id,
                     profile_id=metric_profile_id,
                     metric_name=metric,
+                    version=version_key,
+                    aggregation_override=(
+                        'max' if vendor == 'h3c_comware' and metric in {'cpu', 'memory'} else None
+                    ),
                 )
                 result['metric_details'][metric] = detail
                 result['hardware_metrics'][metric] = detail.get('value')
@@ -1464,15 +1733,16 @@ async def collect_device_metrics(
                 # OID. Missing data must remain visible to the operator.
                 result[result_key] = detail.get('value')
             else:
-                result[result_key] = await default_collector(ip, community, vendor, oids, port)
+                result[result_key] = await default_collector(ip, community, vendor, oids, port, version_key)
             result['hardware_metrics'][metric] = result[result_key]
 
         # ── Temperature, Fan, PSU ──
+        h3c_entity_health: tuple[str | None, str | None] | None = None
         if vendor == 'fortinet_fortios':
             try:
-                names = await _snmp_walk(ip, community, oids['sensor_name'], port)
-                values = await _snmp_walk(ip, community, oids['temp'], port) # temp/fan/psu point to the same OID
-                alarms = await _snmp_walk(ip, community, oids['sensor_alarm'], port)
+                names = await _snmp_walk_versioned(ip, community, oids['sensor_name'], port, version_key)
+                values = await _snmp_walk_versioned(ip, community, oids['temp'], port, version_key) # temp/fan/psu point to the same OID
+                alarms = await _snmp_walk_versioned(ip, community, oids['sensor_alarm'], port, version_key)
                 
                 name_map = {idx: v for idx, v in names}
                 val_map = {idx: v for idx, v in values}
@@ -1545,8 +1815,8 @@ async def collect_device_metrics(
                 type_oid = oids.get('temp_sensor_type')
                 value_oid = oids.get('temp_sensor_value')
                 if type_oid and value_oid:
-                    type_rows = await _snmp_walk(ip, community, type_oid, port)
-                    value_rows = await _snmp_walk(ip, community, value_oid, port)
+                    type_rows = await _snmp_walk_versioned(ip, community, type_oid, port, version_key)
+                    value_rows = await _snmp_walk_versioned(ip, community, value_oid, port, version_key)
                     value_map = {idx: v for idx, v in value_rows}
                     for idx, t in type_rows:
                         if t == '8' and idx in value_map:  # 8 = celsius
@@ -1557,7 +1827,7 @@ async def collect_device_metrics(
             else:
                 temp_oid = oids.get('temp')
                 if temp_oid:
-                    rows = await _snmp_walk(ip, community, temp_oid, port)
+                    rows = await _snmp_walk_versioned(ip, community, temp_oid, port, version_key)
                     if rows:
                         for _, v in rows:
                             if v.isdigit() and 0 < int(v) < 200:
@@ -1569,14 +1839,14 @@ async def collect_device_metrics(
             if fan_oid:
                 if vendor == 'cisco_nxos' or vendor == 'cisco_iosxr':
                     # cefcFanTrayOperStatus: 2=up, 4=warning → ok; 3=down → fail
-                    rows = await _snmp_walk(ip, community, fan_oid, port)
+                    rows = await _snmp_walk_versioned(ip, community, fan_oid, port, version_key)
                     if rows:
                         all_ok = all(int(v) in (2, 4) for _, v in rows if v.isdigit())
                         result['fan_status'] = 'ok' if all_ok else 'fail'
                 elif vendor == 'juniper_junos':
                     # jnxOperatingState: 2=running, 5=runningAtFullSpeed → normal
-                    descr_rows = await _snmp_walk(ip, community, oids.get('fan_descr', ''), port)
-                    state_rows = await _snmp_walk(ip, community, fan_oid, port)
+                    descr_rows = await _snmp_walk_versioned(ip, community, oids.get('fan_descr', ''), port, version_key)
+                    state_rows = await _snmp_walk_versioned(ip, community, fan_oid, port, version_key)
                     state_map = {idx: int(v) for idx, v in state_rows if v.isdigit()}
                     fan_ok = True
                     for idx, desc in descr_rows:
@@ -1590,16 +1860,22 @@ async def collect_device_metrics(
                     # ENTITY-SENSOR-MIB: filter type=10 (rpm), value > 0 means spinning
                     type_oid = oids.get('fan_type')
                     if type_oid:
-                        type_rows = await _snmp_walk(ip, community, type_oid, port)
-                        value_rows = await _snmp_walk(ip, community, fan_oid, port)
+                        type_rows = await _snmp_walk_versioned(ip, community, type_oid, port, version_key)
+                        value_rows = await _snmp_walk_versioned(ip, community, fan_oid, port, version_key)
                         value_map = {idx: v for idx, v in value_rows}
                         fan_entries = [(idx, value_map.get(idx, '0')) for idx, t in type_rows if t == '10']
                         if fan_entries:
                             all_ok = all(v.isdigit() and int(v) > 0 for _, v in fan_entries)
                             result['fan_status'] = 'ok' if all_ok else 'fail'
+                elif vendor == 'h3c_comware':
+                    if h3c_entity_health is None:
+                        h3c_entity_health = await _collect_h3c_fan_psu_status(ip, community, oids, port, version_key)
+                    fan_status, _ = h3c_entity_health
+                    if fan_status:
+                        result['fan_status'] = fan_status
                 else:
-                    # Cisco IOS/Huawei/H3C: 1 = normal
-                    rows = await _snmp_walk(ip, community, fan_oid, port)
+                    # Cisco IOS/Huawei: 1 = normal
+                    rows = await _snmp_walk_versioned(ip, community, fan_oid, port, version_key)
                     if rows:
                         all_ok = all(int(v) == 1 for _, v in rows if v.isdigit())
                         result['fan_status'] = 'ok' if all_ok else 'fail'
@@ -1609,7 +1885,7 @@ async def collect_device_metrics(
             if psu_oid:
                 if vendor == 'cisco_nxos' or vendor == 'cisco_iosxr':
                     # cefcFRUPowerOperStatus: 2=on → normal; 3=offAdmin, etc → fail
-                    rows = await _snmp_walk(ip, community, psu_oid, port)
+                    rows = await _snmp_walk_versioned(ip, community, psu_oid, port, version_key)
                     if rows:
                         on_count = sum(1 for _, v in rows if v.isdigit() and int(v) == 2)
                         if on_count >= 2:
@@ -1620,8 +1896,8 @@ async def collect_device_metrics(
                             result['psu_status'] = 'fail'
                 elif vendor == 'juniper_junos':
                     # jnxOperatingState for Power Supply / PEM entries: 2=running, 5=fullSpeed
-                    descr_rows = await _snmp_walk(ip, community, oids.get('psu_descr', ''), port)
-                    state_rows = await _snmp_walk(ip, community, psu_oid, port)
+                    descr_rows = await _snmp_walk_versioned(ip, community, oids.get('psu_descr', ''), port, version_key)
+                    state_rows = await _snmp_walk_versioned(ip, community, psu_oid, port, version_key)
                     state_map = {idx: int(v) for idx, v in state_rows if v.isdigit()}
                     psu_ok_count = 0
                     for idx, desc in descr_rows:
@@ -1639,8 +1915,8 @@ async def collect_device_metrics(
                     # ENTITY-SENSOR-MIB type=3 (voltsAC/DC) — non-zero = PSU present and active
                     type_oid = oids.get('psu_type')
                     if type_oid:
-                        type_rows = await _snmp_walk(ip, community, type_oid, port)
-                        value_rows = await _snmp_walk(ip, community, psu_oid, port)
+                        type_rows = await _snmp_walk_versioned(ip, community, type_oid, port, version_key)
+                        value_rows = await _snmp_walk_versioned(ip, community, psu_oid, port, version_key)
                         value_map = {idx: v for idx, v in value_rows}
                         psu_entries = [(idx, value_map.get(idx, '0')) for idx, t in type_rows if t == '3']
                         on_count = sum(1 for _, v in psu_entries if v.isdigit() and int(v) > 0)
@@ -1650,9 +1926,15 @@ async def collect_device_metrics(
                             result['psu_status'] = 'single'
                         elif psu_entries:
                             result['psu_status'] = 'fail'
+                elif vendor == 'h3c_comware':
+                    if h3c_entity_health is None:
+                        h3c_entity_health = await _collect_h3c_fan_psu_status(ip, community, oids, port, version_key)
+                    _, psu_status = h3c_entity_health
+                    if psu_status:
+                        result['psu_status'] = psu_status
                 else:
-                    # Cisco IOS / Huawei / H3C: 1 = normal
-                    rows = await _snmp_walk(ip, community, psu_oid, port)
+                    # Cisco IOS / Huawei: 1 = normal
+                    rows = await _snmp_walk_versioned(ip, community, psu_oid, port, version_key)
                     if rows:
                         normal_count = sum(1 for _, v in rows if v.isdigit() and int(v) == 1)
                         if normal_count >= 2:
@@ -1684,6 +1966,7 @@ async def collect_device_metrics(
                 device_id=device_id,
                 profile_id=metric_profile_id,
                 metric_name=metric,
+                version=version_key,
             )
             result['metric_details'][metric] = detail
             result['hardware_metrics'][metric] = detail.get('value')
@@ -1711,7 +1994,7 @@ async def collect_device_metrics(
     # 当厂商私有 OID 无法访问时（SNMP view 限制等），用标准 MIB 兜底
     if result['cpu_usage'] is None and 'cpu' not in configured_metrics:
         try:
-            rows = await _snmp_walk(ip, community, HR_PROCESSOR_LOAD, port)
+            rows = await _snmp_walk_versioned(ip, community, HR_PROCESSOR_LOAD, port, version_key)
             if rows:
                 vals = [int(v) for _, v in rows if v.isdigit()]
                 if vals:
@@ -1721,8 +2004,8 @@ async def collect_device_metrics(
 
     if result['memory_usage'] is None and 'memory' not in configured_metrics:
         try:
-            used_rows = await _snmp_walk(ip, community, HR_STORAGE_USED, port)
-            size_rows = await _snmp_walk(ip, community, HR_STORAGE_SIZE, port)
+            used_rows = await _snmp_walk_versioned(ip, community, HR_STORAGE_USED, port, version_key)
+            size_rows = await _snmp_walk_versioned(ip, community, HR_STORAGE_SIZE, port, version_key)
             if used_rows and size_rows:
                 size_map = {idx: int(v) for idx, v in size_rows if v.isdigit() and int(v) > 0}
                 used_map = {idx: int(v) for idx, v in used_rows if v.isdigit()}
@@ -1745,7 +2028,8 @@ async def collect_device_metrics(
     ):
         result['hardware_metrics'].setdefault(metric, result.get(result_key))
 
-    _set_result_cache(cache_key, result)
+    if not bypass_cache:
+        _set_result_cache(cache_key, result)
     return result
 
 
@@ -1795,6 +2079,10 @@ async def collect_interface_data(
          hc_in_rows, hc_out_rows, alias_rows,
          in_err_rows, out_err_rows, in_disc_rows, out_disc_rows,
          in_ucast_rows, out_ucast_rows,
+         hc_in_ucast_rows, hc_in_multicast_rows, hc_in_broadcast_rows,
+         hc_out_ucast_rows, hc_out_multicast_rows, hc_out_broadcast_rows,
+         hc_fcs_rows, hc_frame_too_long_rows, hc_mac_rx_rows, hc_symbol_rows,
+         fcs32_rows,
          sys_uptime_raw, lc_rows) = await asyncio.gather(
             _walk(config['if_oper_status_oid']),
             _walk(config['if_high_speed_oid']),
@@ -1808,6 +2096,17 @@ async def collect_interface_data(
             _walk(config['if_out_discards_oid']),
             _walk(config['if_in_ucast_oid']),
             _walk(config['if_out_ucast_oid']),
+            _typed_walk(config['if_hc_in_ucast_pkts_oid']),
+            _typed_walk(config['if_hc_in_multicast_pkts_oid']),
+            _typed_walk(config['if_hc_in_broadcast_pkts_oid']),
+            _typed_walk(config['if_hc_out_ucast_pkts_oid']),
+            _typed_walk(config['if_hc_out_multicast_pkts_oid']),
+            _typed_walk(config['if_hc_out_broadcast_pkts_oid']),
+            _walk(config['dot3_hc_fcs_errors_oid']),
+            _walk(config['dot3_hc_frame_too_long_oid']),
+            _walk(config['dot3_hc_internal_mac_rx_errors_oid']),
+            _walk(config['dot3_hc_symbol_errors_oid']),
+            _walk(config['dot3_fcs_errors_oid']),
             _snmp_get(ip, community, SYS_UPTIME, port),
             _snmp_bulk_walk(ip, community, config['if_last_change_oid'], port),
         )
@@ -1831,6 +2130,47 @@ async def collect_interface_data(
         hc_in_map = dict(hc_in_valid)
         hc_out_map = dict(hc_out_valid)
         hc_pair_indices = set(hc_in_map).intersection(hc_out_map)
+
+        def _typed_counter_map(rows, expected_bits: int = 64) -> dict[str, int]:
+            values: dict[str, int] = {}
+            for idx, value in rows:
+                if not isinstance(value, SnmpTypedValue):
+                    continue
+                if value.snmp_type != 'counter' or value.counter_bits != expected_bits or value.number is None:
+                    continue
+                try:
+                    number = int(value.number)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if number >= 0:
+                    values[str(idx)] = number
+            return values
+
+        def _numeric_counter_map(rows) -> dict[str, int]:
+            values: dict[str, int] = {}
+            for idx, raw in rows:
+                number = _parse_snmp_number(raw)
+                if number is None or number < 0 or not float(number).is_integer():
+                    continue
+                values[str(idx)] = int(number)
+            return values
+
+        # Prefer the documented Counter64 packet counters and retain the old
+        # IF-MIB unicast counters only as a per-interface compatibility
+        # fallback for agents that do not expose ifHC*Pkts.
+        hc_in_ucast_map = _typed_counter_map(hc_in_ucast_rows)
+        hc_in_multicast_map = _typed_counter_map(hc_in_multicast_rows)
+        hc_in_broadcast_map = _typed_counter_map(hc_in_broadcast_rows)
+        hc_out_ucast_map = _typed_counter_map(hc_out_ucast_rows)
+        hc_out_multicast_map = _typed_counter_map(hc_out_multicast_rows)
+        hc_out_broadcast_map = _typed_counter_map(hc_out_broadcast_rows)
+        legacy_in_ucast_map = _numeric_counter_map(in_ucast_rows)
+        legacy_out_ucast_map = _numeric_counter_map(out_ucast_rows)
+        fcs_map = _numeric_counter_map(hc_fcs_rows)
+        fcs32_map = _numeric_counter_map(fcs32_rows)
+        frame_too_long_map = _numeric_counter_map(hc_frame_too_long_rows)
+        mac_rx_map = _numeric_counter_map(hc_mac_rx_rows)
+        symbol_map = _numeric_counter_map(hc_symbol_rows)
 
         legacy_in_valid: list[tuple[str, str]] = []
         legacy_out_valid: list[tuple[str, str]] = []
@@ -1886,11 +2226,110 @@ async def collect_interface_data(
         for oid_name, rows in [
             ('in_errors', in_err_rows), ('out_errors', out_err_rows),
             ('in_discards', in_disc_rows), ('out_discards', out_disc_rows),
-            ('in_ucast_pkts', in_ucast_rows), ('out_ucast_pkts', out_ucast_rows),
         ]:
             for idx, val in rows:
-                if idx in interfaces and val.isdigit():
-                    interfaces[idx][oid_name] = int(val)
+                number = _parse_snmp_number(val)
+                if idx in interfaces and number is not None and number >= 0 and float(number).is_integer():
+                    interfaces[idx][oid_name] = int(number)
+
+        # Packet counters are kept as individual values for evidence and as a
+        # direction total for rate/error-rate calculations.  The total uses
+        # all available HC unicast/multicast/broadcast counters; if an agent
+        # only exposes unicast, that value is retained without inventing the
+        # missing traffic classes.
+        for idx in interfaces:
+            in_ucast = hc_in_ucast_map.get(idx, legacy_in_ucast_map.get(idx))
+            out_ucast = hc_out_ucast_map.get(idx, legacy_out_ucast_map.get(idx))
+            in_multicast = hc_in_multicast_map.get(idx)
+            in_broadcast = hc_in_broadcast_map.get(idx)
+            out_multicast = hc_out_multicast_map.get(idx)
+            out_broadcast = hc_out_broadcast_map.get(idx)
+            in_components = [value for value in (in_ucast, in_multicast, in_broadcast) if value is not None]
+            out_components = [value for value in (out_ucast, out_multicast, out_broadcast) if value is not None]
+            if in_ucast is not None:
+                interfaces[idx]['in_ucast_pkts'] = in_ucast
+            if out_ucast is not None:
+                interfaces[idx]['out_ucast_pkts'] = out_ucast
+            if in_multicast is not None:
+                interfaces[idx]['in_multicast_pkts'] = in_multicast
+            if in_broadcast is not None:
+                interfaces[idx]['in_broadcast_pkts'] = in_broadcast
+            if out_multicast is not None:
+                interfaces[idx]['out_multicast_pkts'] = out_multicast
+            if out_broadcast is not None:
+                interfaces[idx]['out_broadcast_pkts'] = out_broadcast
+            if in_components:
+                interfaces[idx]['in_packets_total'] = sum(in_components)
+            if out_components:
+                interfaces[idx]['out_packets_total'] = sum(out_components)
+            if in_ucast is not None or out_ucast is not None:
+                interfaces[idx]['packet_counter_source'] = (
+                    'ifHCIn/Out{Ucast,Multicast,Broadcast}Pkts'
+                    if idx in hc_in_ucast_map or idx in hc_out_ucast_map
+                    else 'ifInUcastPkts/ifOutUcastPkts'
+                )
+
+            if idx in fcs_map:
+                interfaces[idx]['fcs_errors'] = fcs_map[idx]
+                interfaces[idx]['fcs_source'] = 'dot3HCStatsFCSErrors'
+            elif idx in fcs32_map:
+                interfaces[idx]['fcs_errors'] = fcs32_map[idx]
+                interfaces[idx]['fcs_source'] = 'dot3StatsFCSErrors'
+            if idx in frame_too_long_map:
+                interfaces[idx]['frame_too_long_errors'] = frame_too_long_map[idx]
+            if idx in mac_rx_map:
+                interfaces[idx]['mac_rx_errors'] = mac_rx_map[idx]
+            if idx in symbol_map:
+                interfaces[idx]['symbol_errors'] = symbol_map[idx]
+
+        # Keep every numeric value returned by the device.  Some agents expose
+        # vendor-specific or placeholder-looking values for physical
+        # interfaces; the monitoring view must not replace those returned
+        # values with zero or an "unavailable" marker.
+        for data in interfaces.values():
+            if data.get('counter_width') in (32, 64):
+                data['counter_quality'] = (
+                    'hc64_typed' if data.get('counter_width') == 64 else 'legacy32_typed'
+                )
+
+        # A valid ASN.1 Counter64 type does not guarantee valid telemetry.  A
+        # few Comware SNMP agents/views return one identical non-zero pair for
+        # every physical port while the aggregate row has a different value.
+        # Preserve those raw counters, but tag them so health scoring does not
+        # turn an agent/view defect into a false interface-error alarm.
+        def _is_virtual_or_aggregate(name: object) -> bool:
+            lowered = str(name or '').strip().casefold()
+            return (
+                not lowered
+                or lowered.startswith(('lo', 'loopback', 'inloopback', 'vl', 'vlan', 'tu', 'tunnel'))
+                or 'tunnel' in lowered
+                or any(skip in lowered for skip in ('null', 'nu0', 'unrouted', 'stack', 'cpu', 'async', 'voip', 'vo0'))
+                or any(token in lowered for token in ('bridge-aggregation', 'route-aggregation', 'eth-trunk', 'port-channel', 'portchannel', 'lag'))
+            )
+
+        physical_counter_rows = [
+            data for data in interfaces.values()
+            if data.get('counter_width') in (32, 64)
+            and not _is_virtual_or_aggregate(data.get('name'))
+            and data.get('in_octets') is not None
+            and data.get('out_octets') is not None
+        ]
+        if len(physical_counter_rows) >= 3:
+            in_values = {int(data['in_octets']) for data in physical_counter_rows}
+            out_values = {int(data['out_octets']) for data in physical_counter_rows}
+            if len(in_values) == 1 and len(out_values) == 1:
+                in_value = next(iter(in_values))
+                out_value = next(iter(out_values))
+                if in_value > 0 and out_value > 0:
+                    reason = (
+                        'SNMP returned the same non-zero byte counter for '
+                        f'{len(physical_counter_rows)} physical interfaces '
+                        f'(IN={in_value}, OUT={out_value}); raw values are preserved '
+                        'but should be checked against the device SNMP view.'
+                    )
+                    for data in physical_counter_rows:
+                        data['counter_quality'] = 'suspicious_uniform'
+                        data['counter_quality_reason'] = reason
 
         # ifLastChange
         sys_uptime_hs = int(sys_uptime_raw) if sys_uptime_raw and sys_uptime_raw.isdigit() else 0
@@ -1912,8 +2351,10 @@ async def collect_interface_data(
     for data in interfaces.values():
         name = data.get('name', '').lower()
         if (name.startswith('lo') or name.startswith('loopback') or
+            name.startswith('inloopback') or
             name.startswith('vl') or name.startswith('vlan') or
             name.startswith('tu') or name.startswith('tunnel') or
+            'tunnel' in name or
             any(skip in name for skip in ('null', 'nu0', 'unrouted', 'stack', 'cpu', 'async', 'voip', 'vo0'))):
             continue
         result.append({
@@ -1928,8 +2369,13 @@ async def collect_interface_data(
             'in_octets_32': data.get('in_octets') if data.get('in_octets_hc') is None else None,
             'out_octets_32': data.get('out_octets') if data.get('out_octets_hc') is None else None,
             'counter_width': data.get('counter_width'),
-            'counter_source': 'ifHCInOctets/ifHCOutOctets' if data.get('counter_width') == 64 else 'ifInOctets/ifOutOctets' if data.get('counter_width') == 32 else 'unavailable',
-            'counter_quality': 'hc64_typed' if data.get('counter_width') == 64 else 'legacy32_typed' if data.get('counter_width') == 32 else 'counter_unavailable',
+            'counter_source': 'ifHCInOctets/ifHCOutOctets' if data.get('counter_width') == 64 else 'ifInOctets/ifOutOctets' if data.get('counter_width') == 32 else 'not_collected',
+            'counter_quality': data.get('counter_quality') or (
+                'hc64_typed' if data.get('counter_width') == 64 else
+                'legacy32_typed' if data.get('counter_width') == 32 else
+                'not_collected'
+            ),
+             'counter_quality_reason': data.get('counter_quality_reason'),
             'counter_mode': config['counter_mode'],
             'device_uptime_cs': data.get('device_uptime_cs'),
             'description': data.get('description', ''),
@@ -1939,7 +2385,117 @@ async def collect_interface_data(
             'out_discards': data.get('out_discards', 0),
             'in_ucast_pkts': data.get('in_ucast_pkts', 0),
             'out_ucast_pkts': data.get('out_ucast_pkts', 0),
+            'in_multicast_pkts': data.get('in_multicast_pkts', 0),
+            'out_multicast_pkts': data.get('out_multicast_pkts', 0),
+            'in_broadcast_pkts': data.get('in_broadcast_pkts', 0),
+            'out_broadcast_pkts': data.get('out_broadcast_pkts', 0),
+            'in_packets_total': data.get('in_packets_total', data.get('in_ucast_pkts', 0)),
+            'out_packets_total': data.get('out_packets_total', data.get('out_ucast_pkts', 0)),
+            'packet_counter_source': data.get('packet_counter_source', 'not_collected'),
+            'fcs_errors': data.get('fcs_errors', 0),
+            'fcs_source': data.get('fcs_source', 'not_collected'),
+            'frame_too_long_errors': data.get('frame_too_long_errors', 0),
+            'mac_rx_errors': data.get('mac_rx_errors', 0),
+            'symbol_errors': data.get('symbol_errors', 0),
             'last_change_secs': data.get('last_change_secs'),
+        })
+
+    _set_result_cache(cache_key, result)
+    return result
+
+
+async def collect_interface_health(
+    ip: str,
+    community: str = 'public',
+    port: int = 161,
+    interface_config: Mapping[str, Any] | None = None,
+) -> list[dict]:
+    """Collect only interface identity and oper state for device health.
+
+    The regular interface collector is intentionally richer because topology,
+    WAN, and inspection views need counters and utilization.  The periodic
+    device-health path only needs to know which physical interfaces exist and
+    whether they are up/down.  This function therefore performs at most three
+    bulk walks (ifName, ifDescr fallback, and ifOperStatus) and returns the
+    legacy row shape with counter fields left unset for safe consumers.
+    """
+    config = normalize_interface_config(interface_config) if interface_config else dict(DEFAULT_INTERFACE_CONFIG)
+    if not config.get('enabled', True):
+        config = dict(DEFAULT_INTERFACE_CONFIG)
+    community_token = hashlib.sha256(str(community or '').encode('utf-8')).hexdigest()[:12]
+    config_token = hashlib.sha256(
+        json.dumps(config, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    ).hexdigest()[:16]
+    cache_key = f"intf-health:{ip}:{port}:{community_token}:{config_token}"
+    cached = _get_result_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    interfaces: dict[str, dict[str, Any]] = {}
+    try:
+        async def _walk(oid: str):
+            return await _snmp_bulk_walk(ip, community, oid, port) if oid else []
+
+        name_rows = await _walk(config['if_name_oid'])
+        if not name_rows:
+            name_rows = await _walk(config['if_descr_oid'])
+        for idx, value in name_rows:
+            interfaces[str(idx)] = {'name': str(value or '').strip() or f'ifIndex {idx}', 'index': idx}
+
+        status_rows = await _walk(config['if_oper_status_oid'])
+        for idx, value in status_rows:
+            key = str(idx)
+            if key not in interfaces:
+                continue
+            raw_status = str(value or '').strip().split('(', 1)[0]
+            try:
+                status_code = int(raw_status)
+            except (TypeError, ValueError):
+                status_code = 0
+            interfaces[key]['status'] = (
+                'up' if status_code == 1
+                else 'down' if status_code == 2
+                else 'testing' if status_code in {3, 4, 5}
+                else 'unknown'
+            )
+    except Exception as exc:
+        logger.warning(f"SNMP interface health collection failed for {ip}: {exc}")
+
+    result: list[dict[str, Any]] = []
+    for data in interfaces.values():
+        name = str(data.get('name') or '').strip()
+        lowered = name.casefold()
+        if (
+            lowered.startswith(('lo', 'loopback', 'vl', 'vlan', 'tu', 'tunnel'))
+            or any(skip in lowered for skip in ('null', 'nu0', 'unrouted', 'stack', 'cpu', 'async', 'voip', 'vo0'))
+        ):
+            continue
+        index = data.get('index')
+        result.append({
+            'name': name or 'Unknown',
+            'if_index': int(index) if str(index or '').isdigit() else None,
+            'status': data.get('status', 'unknown'),
+            'speed_mbps': 0,
+            'in_octets': None,
+            'out_octets': None,
+            'in_octets_hc': None,
+            'out_octets_hc': None,
+            'in_octets_32': None,
+            'out_octets_32': None,
+            'counter_width': None,
+            'counter_source': 'not_collected',
+            'counter_quality': 'not_collected',
+            'counter_mode': 'disabled',
+            'device_uptime_cs': None,
+            'description': '',
+            'in_errors': 0,
+            'out_errors': 0,
+            'in_discards': 0,
+            'out_discards': 0,
+            'in_ucast_pkts': 0,
+            'out_ucast_pkts': 0,
+            'last_change_secs': None,
+            'collection_mode': 'health_only',
         })
 
     _set_result_cache(cache_key, result)
@@ -1951,6 +2507,7 @@ async def probe_interface_definition(
     community: str,
     config: Mapping[str, Any] | None = None,
     port: int = 161,
+    version: str = '2c',
 ) -> dict[str, Any]:
     """Validate an interface template without changing throughput baselines.
 
@@ -1973,22 +2530,34 @@ async def probe_interface_definition(
         }
     if not normalized:
         normalized = dict(DEFAULT_INTERFACE_CONFIG)
+    version_key = str(version or '2c').strip().lower()
+    if version_key in {'v1', '1'}:
+        version_key = '1'
+    else:
+        version_key = '2c'
     if not normalized.get('enabled', True):
         return {
             'passed': True,
             'status': 'disabled',
             'message': 'Interface profile is disabled; built-in IF-MIB mapping remains active',
             'checks': {},
+            'interface_config': normalized,
             'counter_mode': normalized['counter_mode'],
             'interfaces': 0,
             'counter_supported': 0,
+            'version': version_key,
         }
 
     async def _walk(oid: str):
         if not oid:
             return []
         try:
-            return await _snmp_bulk_walk(ip, community, oid, port)
+            # Keep the legacy four-argument call for the default v2c path so
+            # existing collectors and tests that replace the walker remain
+            # compatible.  SNMPv1 explicitly uses the version-aware path.
+            if version_key == '2c':
+                return await _snmp_bulk_walk(ip, community, oid, port)
+            return await _snmp_bulk_walk(ip, community, oid, port, version=version_key)
         except Exception:
             return []
 
@@ -1996,7 +2565,9 @@ async def probe_interface_definition(
         if not oid:
             return []
         try:
-            return await _snmp_bulk_walk_typed(ip, community, oid, port)
+            if version_key == '2c':
+                return await _snmp_bulk_walk_typed(ip, community, oid, port)
+            return await _snmp_bulk_walk_typed(ip, community, oid, port, version=version_key)
         except Exception:
             return []
 
@@ -2014,6 +2585,17 @@ async def probe_interface_definition(
         out_discard_rows,
         in_ucast_rows,
         out_ucast_rows,
+        hc_in_ucast_rows,
+        hc_in_multicast_rows,
+        hc_in_broadcast_rows,
+        hc_out_ucast_rows,
+        hc_out_multicast_rows,
+        hc_out_broadcast_rows,
+        hc_fcs_rows,
+        hc_frame_too_long_rows,
+        hc_mac_rx_rows,
+        hc_symbol_rows,
+        fcs32_rows,
         hc_in_rows,
         hc_out_rows,
         legacy_in_rows,
@@ -2032,6 +2614,17 @@ async def probe_interface_definition(
         _walk(normalized['if_out_discards_oid']),
         _walk(normalized['if_in_ucast_oid']),
         _walk(normalized['if_out_ucast_oid']),
+        _typed_walk(normalized['if_hc_in_ucast_pkts_oid']),
+        _typed_walk(normalized['if_hc_in_multicast_pkts_oid']),
+        _typed_walk(normalized['if_hc_in_broadcast_pkts_oid']),
+        _typed_walk(normalized['if_hc_out_ucast_pkts_oid']),
+        _typed_walk(normalized['if_hc_out_multicast_pkts_oid']),
+        _typed_walk(normalized['if_hc_out_broadcast_pkts_oid']),
+        _walk(normalized['dot3_hc_fcs_errors_oid']),
+        _walk(normalized['dot3_hc_frame_too_long_oid']),
+        _walk(normalized['dot3_hc_internal_mac_rx_errors_oid']),
+        _walk(normalized['dot3_hc_symbol_errors_oid']),
+        _walk(normalized['dot3_fcs_errors_oid']),
         _typed_walk(normalized['if_hc_in_octets_oid']) if normalized['counter_mode'] in {'auto', '64'} else asyncio.sleep(0, result=[]),
         _typed_walk(normalized['if_hc_out_octets_oid']) if normalized['counter_mode'] in {'auto', '64'} else asyncio.sleep(0, result=[]),
         _typed_walk(normalized['if_in_octets_oid']) if normalized['counter_mode'] in {'auto', '32'} else asyncio.sleep(0, result=[]),
@@ -2057,33 +2650,120 @@ async def probe_interface_definition(
     legacy_out = _valid_counter_rows(legacy_out_rows, 32)
     hc_pairs = set(hc_in).intersection(hc_out)
     legacy_pairs = set(legacy_in).intersection(legacy_out)
+
+    # A structurally valid table can still be a bad telemetry source.  Some
+    # Comware agents return the same non-zero placeholder for every physical
+    # port while returning a changing value for an aggregation interface.  Do
+    # not rewrite or discard those device values—the collector contract is to
+    # expose exactly what SNMP returned—but surface the anomaly during OID
+    # verification so a template is not mistaken for a trustworthy source.
+    identity_by_index = {
+        str(index): str(value or '').strip()
+        for index, value in (identity_rows or descr_rows)
+    }
+
+    def _looks_virtual_or_aggregate(name: str) -> bool:
+        normalized_name = str(name or '').strip().lower()
+        return any(
+            token in normalized_name
+            for token in (
+                'bridge-aggregation', 'route-aggregation', 'eth-trunk',
+                'port-channel', 'portchannel', 'lag', 'loopback',
+                'inloopback', 'vlan', 'tunnel', 'register-', 'null',
+            )
+        )
+
+    physical_counter_indices = {
+        index for index in hc_pairs
+        if index in identity_by_index
+        and not _looks_virtual_or_aggregate(identity_by_index[index])
+    }
+    verification_warnings: list[dict[str, Any]] = []
+    if len(physical_counter_indices) >= 3:
+        physical_in_values = {hc_in[index] for index in physical_counter_indices}
+        physical_out_values = {hc_out[index] for index in physical_counter_indices}
+        if (
+            len(physical_in_values) == 1
+            and len(physical_out_values) == 1
+            and next(iter(physical_in_values), 0) > 0
+            and next(iter(physical_out_values), 0) > 0
+        ):
+            verification_warnings.append({
+                'code': 'uniform_nonzero_counter64',
+                'severity': 'warning',
+                'message': (
+                    'Counter64 octet counters returned the same non-zero value '
+                    f'for {len(physical_counter_indices)} physical interfaces; '
+                    'verify the device SNMP Agent/view or vendor MIB.'
+                ),
+                'physical_interfaces': len(physical_counter_indices),
+                'in_value': next(iter(physical_in_values)),
+                'out_value': next(iter(physical_out_values)),
+            })
+
+    def _valid_optional_counter_rows(rows: list[tuple[str, SnmpTypedValue]]) -> dict[str, int]:
+        return _valid_counter_rows(rows, 64)
+
+    hc_packet_maps = {
+        'in_ucast': _valid_optional_counter_rows(hc_in_ucast_rows),
+        'in_multicast': _valid_optional_counter_rows(hc_in_multicast_rows),
+        'in_broadcast': _valid_optional_counter_rows(hc_in_broadcast_rows),
+        'out_ucast': _valid_optional_counter_rows(hc_out_ucast_rows),
+        'out_multicast': _valid_optional_counter_rows(hc_out_multicast_rows),
+        'out_broadcast': _valid_optional_counter_rows(hc_out_broadcast_rows),
+    }
     mode = normalized['counter_mode']
     selected_width = 64 if mode == '64' and hc_pairs else 32 if mode == '32' and legacy_pairs else None
     if mode == 'auto':
         selected_width = 64 if hc_pairs else 32 if legacy_pairs else None
     selected_pairs = hc_pairs if selected_width == 64 else legacy_pairs if selected_width == 32 else set()
+
+    def _sample_text_rows(rows: list[tuple[str, str]], limit: int = 3) -> list[dict[str, str]]:
+        return [
+            {'index': str(index), 'value': str(value)}
+            for index, value in rows[:limit]
+        ]
+
+    def _sample_counter_rows(values: Mapping[str, int], limit: int = 3) -> list[dict[str, int | str]]:
+        return [
+            {'index': str(index), 'value': int(value)}
+            for index, value in list(values.items())[:limit]
+        ]
+
     checks = {
         'identity': {
             'oid': normalized['if_name_oid'] or normalized['if_descr_oid'],
             'passed': bool(identity_rows or descr_rows),
             'rows': len(identity_rows or descr_rows),
             'message': 'ifName/ifDescr table available' if (identity_rows or descr_rows) else 'No interface identity rows returned',
+            'sample': _sample_text_rows(identity_rows or descr_rows),
         },
-        'oper_status': {'oid': normalized['if_oper_status_oid'], 'passed': bool(status_rows), 'rows': len(status_rows)},
-        'high_speed': {'oid': normalized['if_high_speed_oid'], 'passed': bool(high_speed_rows), 'rows': len(high_speed_rows)},
-        'speed': {'oid': normalized['if_speed_oid'], 'passed': bool(speed_rows), 'rows': len(speed_rows)},
-        'alias': {'oid': normalized['if_alias_oid'], 'passed': bool(alias_rows), 'rows': len(alias_rows)},
-        'last_change': {'oid': normalized['if_last_change_oid'], 'passed': bool(last_change_rows), 'rows': len(last_change_rows)},
-        'in_errors': {'oid': normalized['if_in_errors_oid'], 'passed': bool(in_error_rows), 'rows': len(in_error_rows)},
-        'out_errors': {'oid': normalized['if_out_errors_oid'], 'passed': bool(out_error_rows), 'rows': len(out_error_rows)},
-        'in_discards': {'oid': normalized['if_in_discards_oid'], 'passed': bool(in_discard_rows), 'rows': len(in_discard_rows)},
-        'out_discards': {'oid': normalized['if_out_discards_oid'], 'passed': bool(out_discard_rows), 'rows': len(out_discard_rows)},
-        'in_ucast': {'oid': normalized['if_in_ucast_oid'], 'passed': bool(in_ucast_rows), 'rows': len(in_ucast_rows)},
-        'out_ucast': {'oid': normalized['if_out_ucast_oid'], 'passed': bool(out_ucast_rows), 'rows': len(out_ucast_rows)},
-        'counter64_in': {'oid': normalized['if_hc_in_octets_oid'], 'passed': bool(hc_in), 'rows': len(hc_in), 'counter_bits': 64},
-        'counter64_out': {'oid': normalized['if_hc_out_octets_oid'], 'passed': bool(hc_out), 'rows': len(hc_out), 'counter_bits': 64},
-        'counter32_in': {'oid': normalized['if_in_octets_oid'], 'passed': bool(legacy_in), 'rows': len(legacy_in), 'counter_bits': 32},
-        'counter32_out': {'oid': normalized['if_out_octets_oid'], 'passed': bool(legacy_out), 'rows': len(legacy_out), 'counter_bits': 32},
+        'oper_status': {'oid': normalized['if_oper_status_oid'], 'passed': bool(status_rows), 'rows': len(status_rows), 'sample': _sample_text_rows(status_rows)},
+        'high_speed': {'oid': normalized['if_high_speed_oid'], 'passed': bool(high_speed_rows), 'rows': len(high_speed_rows), 'sample': _sample_text_rows(high_speed_rows)},
+        'speed': {'oid': normalized['if_speed_oid'], 'passed': bool(speed_rows), 'rows': len(speed_rows), 'sample': _sample_text_rows(speed_rows)},
+        'alias': {'oid': normalized['if_alias_oid'], 'passed': bool(alias_rows), 'rows': len(alias_rows), 'sample': _sample_text_rows(alias_rows)},
+        'last_change': {'oid': normalized['if_last_change_oid'], 'passed': bool(last_change_rows), 'rows': len(last_change_rows), 'sample': _sample_text_rows(last_change_rows)},
+        'in_errors': {'oid': normalized['if_in_errors_oid'], 'passed': bool(in_error_rows), 'rows': len(in_error_rows), 'sample': _sample_text_rows(in_error_rows)},
+        'out_errors': {'oid': normalized['if_out_errors_oid'], 'passed': bool(out_error_rows), 'rows': len(out_error_rows), 'sample': _sample_text_rows(out_error_rows)},
+        'in_discards': {'oid': normalized['if_in_discards_oid'], 'passed': bool(in_discard_rows), 'rows': len(in_discard_rows), 'sample': _sample_text_rows(in_discard_rows)},
+        'out_discards': {'oid': normalized['if_out_discards_oid'], 'passed': bool(out_discard_rows), 'rows': len(out_discard_rows), 'sample': _sample_text_rows(out_discard_rows)},
+        'in_ucast': {'oid': normalized['if_in_ucast_oid'], 'passed': bool(in_ucast_rows), 'rows': len(in_ucast_rows), 'sample': _sample_text_rows(in_ucast_rows)},
+        'out_ucast': {'oid': normalized['if_out_ucast_oid'], 'passed': bool(out_ucast_rows), 'rows': len(out_ucast_rows), 'sample': _sample_text_rows(out_ucast_rows)},
+        'counter64_in_ucast': {'oid': normalized['if_hc_in_ucast_pkts_oid'], 'passed': bool(hc_packet_maps['in_ucast']), 'rows': len(hc_packet_maps['in_ucast']), 'counter_bits': 64, 'sample': _sample_counter_rows(hc_packet_maps['in_ucast'])},
+        'counter64_in_multicast': {'oid': normalized['if_hc_in_multicast_pkts_oid'], 'passed': bool(hc_packet_maps['in_multicast']), 'rows': len(hc_packet_maps['in_multicast']), 'counter_bits': 64, 'sample': _sample_counter_rows(hc_packet_maps['in_multicast'])},
+        'counter64_in_broadcast': {'oid': normalized['if_hc_in_broadcast_pkts_oid'], 'passed': bool(hc_packet_maps['in_broadcast']), 'rows': len(hc_packet_maps['in_broadcast']), 'counter_bits': 64, 'sample': _sample_counter_rows(hc_packet_maps['in_broadcast'])},
+        'counter64_out_ucast': {'oid': normalized['if_hc_out_ucast_pkts_oid'], 'passed': bool(hc_packet_maps['out_ucast']), 'rows': len(hc_packet_maps['out_ucast']), 'counter_bits': 64, 'sample': _sample_counter_rows(hc_packet_maps['out_ucast'])},
+        'counter64_out_multicast': {'oid': normalized['if_hc_out_multicast_pkts_oid'], 'passed': bool(hc_packet_maps['out_multicast']), 'rows': len(hc_packet_maps['out_multicast']), 'counter_bits': 64, 'sample': _sample_counter_rows(hc_packet_maps['out_multicast'])},
+        'counter64_out_broadcast': {'oid': normalized['if_hc_out_broadcast_pkts_oid'], 'passed': bool(hc_packet_maps['out_broadcast']), 'rows': len(hc_packet_maps['out_broadcast']), 'counter_bits': 64, 'sample': _sample_counter_rows(hc_packet_maps['out_broadcast'])},
+        'dot3_hc_fcs_errors': {'oid': normalized['dot3_hc_fcs_errors_oid'], 'passed': bool(hc_fcs_rows), 'rows': len(hc_fcs_rows), 'sample': _sample_text_rows(hc_fcs_rows)},
+        'dot3_hc_frame_too_long': {'oid': normalized['dot3_hc_frame_too_long_oid'], 'passed': bool(hc_frame_too_long_rows), 'rows': len(hc_frame_too_long_rows), 'sample': _sample_text_rows(hc_frame_too_long_rows)},
+        'dot3_hc_internal_mac_rx_errors': {'oid': normalized['dot3_hc_internal_mac_rx_errors_oid'], 'passed': bool(hc_mac_rx_rows), 'rows': len(hc_mac_rx_rows), 'sample': _sample_text_rows(hc_mac_rx_rows)},
+        'dot3_hc_symbol_errors': {'oid': normalized['dot3_hc_symbol_errors_oid'], 'passed': bool(hc_symbol_rows), 'rows': len(hc_symbol_rows), 'sample': _sample_text_rows(hc_symbol_rows)},
+        'dot3_fcs_errors_32_fallback': {'oid': normalized['dot3_fcs_errors_oid'], 'passed': bool(fcs32_rows), 'rows': len(fcs32_rows), 'sample': _sample_text_rows(fcs32_rows)},
+        'counter64_in': {'oid': normalized['if_hc_in_octets_oid'], 'passed': bool(hc_in), 'rows': len(hc_in), 'counter_bits': 64, 'sample': _sample_counter_rows(hc_in)},
+        'counter64_out': {'oid': normalized['if_hc_out_octets_oid'], 'passed': bool(hc_out), 'rows': len(hc_out), 'counter_bits': 64, 'sample': _sample_counter_rows(hc_out)},
+        'counter32_in': {'oid': normalized['if_in_octets_oid'], 'passed': bool(legacy_in), 'rows': len(legacy_in), 'counter_bits': 32, 'sample': _sample_counter_rows(legacy_in)},
+        'counter32_out': {'oid': normalized['if_out_octets_oid'], 'passed': bool(legacy_out), 'rows': len(legacy_out), 'counter_bits': 32, 'sample': _sample_counter_rows(legacy_out)},
     }
     passed = bool(identity_rows or descr_rows) and bool(selected_pairs)
     if passed:
@@ -2092,15 +2772,20 @@ async def probe_interface_definition(
         message = 'Interface identity table validation failed'
     else:
         message = f'No paired Counter{mode if mode in {"32", "64"} else "32/64"} octet counters returned'
+    if verification_warnings:
+        message += ' Warning: ' + ' '.join(item['message'] for item in verification_warnings)
     return {
         'passed': passed,
         'status': 'ok' if passed else 'missing',
         'message': message,
         'checks': checks,
+        'interface_config': normalized,
         'counter_mode': mode,
         'selected_counter_bits': selected_width,
         'interfaces': len(identity_rows or descr_rows),
         'counter_supported': len(selected_pairs),
+        'version': version_key,
+        'warnings': verification_warnings,
     }
 
 

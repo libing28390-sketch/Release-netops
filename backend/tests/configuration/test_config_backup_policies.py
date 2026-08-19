@@ -2,6 +2,7 @@ import sqlite3
 
 from database.migrations.m0050_config_backup_policies import upgrade as upgrade_m0050
 from database.migrations.m0153_config_backup_tftp_and_startup import upgrade as upgrade_m0153
+from database.migrations.m0155_config_backup_transfer_protocol import upgrade as upgrade_m0155
 from services import config_backup_policy_service as policy_service
 
 
@@ -63,6 +64,7 @@ def _connection() -> sqlite3.Connection:
     )
     upgrade_m0050(conn, use_pg=False)
     upgrade_m0153(conn, use_pg=False)
+    upgrade_m0155(conn, use_pg=False)
     return conn
 
 
@@ -71,6 +73,7 @@ def test_migration_is_idempotent_and_adds_policy_attribution() -> None:
     try:
         upgrade_m0050(conn, use_pg=False)
         upgrade_m0153(conn, use_pg=False)
+        upgrade_m0155(conn, use_pg=False)
         run_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(config_backup_runs)")
         }

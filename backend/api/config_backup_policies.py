@@ -13,6 +13,7 @@ from core.rbac import require_role
 from database import get_db_connection
 from services.audit_service import log_audit_event
 from services import config_backup_policy_service as policy_service
+from services.file_transfer_service import SUPPORTED_TRANSFER_PROTOCOLS
 
 
 router = APIRouter(prefix="/configs/backup-policies", tags=["config-backup-policies"])
@@ -48,6 +49,11 @@ class BackupPolicyPayload(BaseModel):
     tftp_server: str = ""
     tftp_port: int = Field(default=69, ge=1, le=65535)
     tftp_path_prefix: str = Field(default="backups", max_length=200)
+    # Kept under the legacy tftp_* API names for backward compatibility.  The
+    # UI presents this as generic remote file archive, not as TFTP-only.
+    tftp_protocol: str = "tftp"
+    tftp_username: str = Field(default="", max_length=200)
+    tftp_password: str = Field(default="", max_length=500)
 
     @field_validator("cron_expr")
     @classmethod
@@ -74,6 +80,14 @@ class BackupPolicyPayload(BaseModel):
         unsupported = set(normalized).difference({"running", "startup"})
         if unsupported or not normalized:
             raise ValueError("Supported configuration types are 'running' and 'startup'")
+        return normalized
+
+    @field_validator("tftp_protocol")
+    @classmethod
+    def validate_tftp_protocol(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in SUPPORTED_TRANSFER_PROTOCOLS:
+            raise ValueError(f"Supported archive protocols are: {', '.join(SUPPORTED_TRANSFER_PROTOCOLS)}")
         return normalized
 
 

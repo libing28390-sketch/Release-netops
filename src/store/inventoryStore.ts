@@ -57,6 +57,19 @@ const normalizeDeviceRecord = (raw: any): Device => {
     interface_data: safeJsonArray(raw?.interface_data),
     cpu_history: safeJsonArray(raw?.cpu_history),
     memory_history: safeJsonArray(raw?.memory_history),
+    snmp_metric_profile:
+      raw?.snmp_metric_profile && typeof raw.snmp_metric_profile === 'object'
+        ? {
+            ...raw.snmp_metric_profile,
+            metric_keys: Array.isArray(raw.snmp_metric_profile.metric_keys)
+              ? raw.snmp_metric_profile.metric_keys
+              : [],
+            metric_sources:
+              raw.snmp_metric_profile.metric_sources && typeof raw.snmp_metric_profile.metric_sources === 'object'
+                ? raw.snmp_metric_profile.metric_sources
+                : {},
+          }
+        : undefined,
     snmp_cpu_oid: typeof raw?.snmp_cpu_oid === 'string' ? raw.snmp_cpu_oid : '',
     snmp_memory_oid: typeof raw?.snmp_memory_oid === 'string' ? raw.snmp_memory_oid : '',
     health_status: ['healthy', 'warning', 'critical', 'unknown'].includes(

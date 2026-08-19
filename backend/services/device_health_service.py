@@ -29,6 +29,20 @@ _COLLECTION_SUCCESS_STATUSES = {'success', 'no_neighbors'}
 _EXPECTED_COLLECTORS = ('reachability', 'snmp_metrics', 'snmp_interfaces')
 
 
+def normalize_hardware_status(value: Any) -> bool | None:
+    """Normalize legacy hardware status labels to the public boolean contract."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    normalized = str(value).strip().casefold()
+    if normalized in {'1', 'true', 'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready'}:
+        return True
+    if normalized in {'0', 'false', 'fail', 'failed', 'warning', 'error', 'down', 'offline', 'alarm'}:
+        return False
+    return None
+
+
 def _as_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -320,7 +334,16 @@ def evaluate_device_health(
         max_util = max(_as_float(interface.get('bw_in_pct')), _as_float(interface.get('bw_out_pct')))
         if max_util >= 85:
             high_util_interfaces += 1
-        if (_as_float(interface.get('in_errors')) + _as_float(interface.get('out_errors')) + _as_float(interface.get('in_discards')) + _as_float(interface.get('out_discards'))) > 0:
+        # Keep raw counters visible, but do not lower the device health score
+        # for the known Comware agent/view pattern where every physical port
+        # exposes the same non-zero error tuple.  The collector marks that
+        # condition explicitly as suspicious_uniform.
+        if interface.get('counter_quality') != 'suspicious_uniform' and (
+            _as_float(interface.get('in_errors'))
+            + _as_float(interface.get('out_errors'))
+            + _as_float(interface.get('in_discards'))
+            + _as_float(interface.get('out_discards'))
+        ) > 0:
             error_interfaces += 1
 
     # down_interfaces is informational only — unused ports being down is normal
@@ -404,7 +427,13 @@ def evaluate_device_health(
 
 
 def annotate_devices_with_health(conn, devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    normalized_devices = [dict(device) for device in devices]
+    normalized_devices = []
+    for device in devices:
+        item = dict(device)
+        for status_key in ('fan_status', 'psu_status'):
+            if status_key in item:
+                item[status_key] = normalize_hardware_status(item.get(status_key))
+        normalized_devices.append(item)
     device_ids = [str(device.get('id') or '') for device in normalized_devices if device.get('id')]
     alert_stats_map = _build_open_alert_stats(conn, device_ids)
     collection_stats_map = _build_collection_stats(conn, device_ids)

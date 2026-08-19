@@ -52,7 +52,6 @@ export const AppModals: React.FC<any> = (props) => {
     // DeviceDetailModal
     showDetailsModal, viewingDevice, viewingDeviceAlerts, deviceDetailLoading, deviceConnectionChecks,
     connectionTestingDeviceId, deviceTrendRangeHours, setDeviceTrendRangeHours, deviceHealthTrend, deviceHealthTrendLoading,
-    deviceOperationalData, deviceOperationalDataLoading, loadDeviceOperationalData,
     handleSnmpTest, snmpTestingId, handleSnmpSyncNow, snmpSyncingId,
     setSelectedDevice, setShowDetailsModal,
     // SnmpTestResultModal
@@ -322,9 +321,6 @@ export const AppModals: React.FC<any> = (props) => {
           onDeviceTrendRangeHoursChange={setDeviceTrendRangeHours}
           deviceHealthTrend={deviceHealthTrend}
           deviceHealthTrendLoading={deviceHealthTrendLoading}
-          deviceOperationalData={deviceOperationalData}
-          deviceOperationalDataLoading={deviceOperationalDataLoading}
-          onLoadOperationalData={loadDeviceOperationalData}
           onTestConnection={handleTestConnection}
           isTestingConnection={isTestingConnection}
           onSnmpTest={handleSnmpTest}

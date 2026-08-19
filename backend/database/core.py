@@ -489,12 +489,20 @@ def fetch_interface_data(conn, device_id: str) -> list[dict]:
                 COALESCE(t.out_bps, 0.0) as out_bps,
                 COALESCE(t.bw_in_pct, 0.0) as bw_in_pct,
                 COALESCE(t.bw_out_pct, 0.0) as bw_out_pct,
+                COALESCE(t.in_pkts, 0) as in_packets_total,
+                COALESCE(t.out_pkts, 0) as out_packets_total,
                 COALESCE(t.in_pkts, 0) as in_ucast_pkts,
                 COALESCE(t.out_pkts, 0) as out_ucast_pkts,
                 COALESCE(t.in_errors, 0) as in_errors,
                 COALESCE(t.out_errors, 0) as out_errors,
                 COALESCE(t.in_discards, 0) as in_discards,
-                COALESCE(t.out_discards, 0) as out_discards
+                COALESCE(t.out_discards, 0) as out_discards,
+                COALESCE(t.fcs_errors, 0) as fcs_errors,
+                COALESCE(t.frame_too_long_errors, 0) as frame_too_long_errors,
+                COALESCE(t.mac_rx_errors, 0) as mac_rx_errors,
+                COALESCE(t.symbol_errors, 0) as symbol_errors,
+                COALESCE(t.packet_counter_source, '') as packet_counter_source,
+                COALESCE(t.fcs_source, '') as fcs_source
             FROM interfaces i
             LEFT JOIN (
                 SELECT latest.*

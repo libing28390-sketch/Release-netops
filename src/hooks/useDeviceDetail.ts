@@ -25,15 +25,12 @@ export const useDeviceDetail = ({
   const [deviceTrendRangeHours, setDeviceTrendRangeHours] = useState(24);
   const [deviceHealthTrend, setDeviceHealthTrend] = useState<DeviceHealthTrendResponse | null>(null);
   const [deviceHealthTrendLoading, setDeviceHealthTrendLoading] = useState(false);
-  const [deviceOperationalData, setDeviceOperationalData] = useState<any | null>(null);
-  const [deviceOperationalDataLoading, setDeviceOperationalDataLoading] = useState(false);
 
   const handleShowDetails = useCallback((device: Device) => {
     setViewingDevice(device);
     setViewingDeviceAlerts([]);
     setDeviceTrendRangeHours(24);
     setDeviceHealthTrend(null);
-    setDeviceOperationalData(null);
     setShowDetailsModal(true);
     setDeviceDetailLoading(true);
 
@@ -82,31 +79,6 @@ export const useDeviceDetail = ({
     };
   }, [deviceTrendRangeHours, showDetailsModal, viewingDevice?.id]);
 
-  const loadDeviceOperationalData = useCallback(async (deviceId: string) => {
-    setDeviceOperationalDataLoading(true);
-    try {
-      const resp = await fetch(`/api/devices/${deviceId}/operational-data`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          categories: ['interfaces', 'neighbors', 'arp', 'mac_table', 'routing_table', 'bgp', 'ospf'],
-          auth_role: 'auto',
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) {
-        throw new Error(data?.detail || 'Failed to collect operational data');
-      }
-      setDeviceOperationalData(data);
-      showToast(language === 'zh' ? '已完成设备运行数据采集' : 'Operational data collected', 'success');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to collect operational data';
-      showToast(language === 'zh' ? `采集失败：${message}` : message, 'error');
-    } finally {
-      setDeviceOperationalDataLoading(false);
-    }
-  }, [language, showToast]);
-
   return {
     showDetailsModal,
     setShowDetailsModal,
@@ -118,9 +90,6 @@ export const useDeviceDetail = ({
     setDeviceTrendRangeHours,
     deviceHealthTrend,
     deviceHealthTrendLoading,
-    deviceOperationalData,
-    deviceOperationalDataLoading,
     handleShowDetails,
-    loadDeviceOperationalData,
   };
 };

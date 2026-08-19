@@ -184,7 +184,8 @@ const App: React.FC = () => {
 
 
 
-  const deviceFetchMode = useMemo<'light' | 'full'>(() => {
+  const deviceFetchMode = useMemo<'light' | 'full' | 'paged-light'>(() => {
+    if (activeTab === 'network-monitoring') return 'paged-light';
     if (activeTab === 'inventory') return 'full';
     if (activeTab === 'automation') return 'full';
     if (activeTab === 'config') return 'full';
@@ -419,7 +420,14 @@ const App: React.FC = () => {
     handleCancelDiscovery,
     handleConfirmTopologyRelation,
     loadTopologyHistory,
-  } = useTopology({ devices, language, showToast, refreshDevices: fetchDevicesData });
+  } = useTopology({
+    devices,
+    language,
+    showToast,
+    isAuthenticated,
+    enabled: isAuthenticated && activeTab === 'topology',
+    refreshDevices: fetchDevicesData,
+  });
 
   // Redirect bare paths and legacy paths to standardized hierarchical paths
   React.useEffect(() => {
@@ -927,11 +935,18 @@ const App: React.FC = () => {
       // links) — slow-changing, refresh on a long cadence. Page-level
       // forms still trigger their own fetches when they need fresh data.
       lookupsInterval = setInterval(fetchSharedLookups, 120000);
-      // Reduce heavy full device refresh pressure while inventory table uses server-side paging.
-      const devicePollMs = activeTab === 'inventory' && inventorySubPage === 'devices'
-        ? 30000
-        : 15000;
-      devicesInterval = setInterval(fetchDevicesData, devicePollMs);
+      // Network monitoring owns its own server-side paginated device list and
+      // telemetry polling. Refreshing the shared inventory here only causes
+      // the left-hand list and its site fallback to re-render, without adding
+      // any data to the monitoring view. Keep the shared poll for the pages
+      // that still consume the global inventory snapshot.
+      if (activeTab !== 'network-monitoring') {
+        // Reduce heavy full device refresh pressure while inventory table uses server-side paging.
+        const devicePollMs = activeTab === 'inventory' && inventorySubPage === 'devices'
+          ? 30000
+          : 15000;
+        devicesInterval = setInterval(fetchDevicesData, devicePollMs);
+      }
     }
 
     return () => {
@@ -952,7 +967,7 @@ const App: React.FC = () => {
     }
     fetchSharedLookups();
     fetchHotData();
-    if (!(activeTab === 'inventory' && inventorySubPage === 'devices')) {
+    if (activeTab !== 'network-monitoring' && !(activeTab === 'inventory' && inventorySubPage === 'devices')) {
       fetchDevicesData();
     }
   }, [isAuthenticated, location.pathname, fetchSharedLookups, fetchHotData, fetchDevicesData, activeTab, inventorySubPage]);
@@ -1190,10 +1205,7 @@ const App: React.FC = () => {
     deviceTrendRangeHours, setDeviceTrendRangeHours,
     deviceHealthTrend,
     deviceHealthTrendLoading,
-    deviceOperationalData,
-    deviceOperationalDataLoading,
     handleShowDetails,
-    loadDeviceOperationalData,
   } = useDeviceDetail({ language, showToast, normalizeDeviceRecord });
 
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -1895,7 +1907,6 @@ const App: React.FC = () => {
           showLifecycleConfirm, lifecycleConfirmChecked, setLifecycleConfirmChecked, setShowLifecycleConfirm,
           showDetailsModal, viewingDevice, viewingDeviceAlerts, deviceDetailLoading, deviceConnectionChecks,
           connectionTestingDeviceId, deviceTrendRangeHours, setDeviceTrendRangeHours, deviceHealthTrend, deviceHealthTrendLoading,
-          deviceOperationalData, deviceOperationalDataLoading, loadDeviceOperationalData,
           handleSnmpTest, snmpTestingId, handleSnmpSyncNow, snmpSyncingId,
           setSelectedDevice, setShowDetailsModal,
           showSnmpTestResult, snmpTestResult, setShowSnmpTestResult,

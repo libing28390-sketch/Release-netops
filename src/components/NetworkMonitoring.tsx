@@ -46,6 +46,14 @@ interface CollectionDiagnosticResult {
   checks: Record<string, { status: string; code?: string; port?: number; error?: string }>;
 }
 
+interface MonitoringDevicePage {
+  items?: Array<Partial<Device> & Pick<Device, 'id' | 'hostname' | 'ip_address'>>;
+  total?: number;
+  page?: number;
+  page_size?: number;
+  site_options?: Array<{ id: string; name: string; device_count?: number }>;
+}
+
 const isServerDevice = (d: any): boolean => {
   if (!d) return false;
   const serverKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'redhat', 'rocky', 'alma', 'server'];
@@ -117,12 +125,26 @@ const fmtRate = (bps?: number) => {
   return `${bps.toFixed(0)} bps`;
 };
 
+const fmtCounter = (value?: number) => {
+  const number = Number(value);
+  if (value == null || !Number.isFinite(number) || number < 0) return '-';
+  return `${Math.round(number).toLocaleString()} B`;
+};
+
 const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices, showToast, isAuthenticated = true }) => {
   const zh = language === 'zh';
   const ct = useChartTheme();
 
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [deviceRows, setDeviceRows] = useState<Device[]>([]);
+  const [deviceTotal, setDeviceTotal] = useState(0);
+  const [devicePage, setDevicePage] = useState(1);
+  const [deviceListLoading, setDeviceListLoading] = useState(false);
+  const [deviceListError, setDeviceListError] = useState('');
+  const [siteOptions, setSiteOptions] = useState<Array<{ id: string; name: string; device_count?: number }>>([]);
+  const devicePageSize = 30;
 
   // Read ?q= URL param on mount to pre-fill search (deep-link from NPA hop popover)
   useEffect(() => {
@@ -130,13 +152,11 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
       const params = new URLSearchParams(window.location.search);
       const q = params.get('q');
       if (q) {
-        setSearch(q);
-        // Auto-select matching device
-        const match = (devices || []).find(d => !isServerDevice(d) && d.ip_address === q);
-        if (match) setSelectedId(String(match.id));
+        setSearchInput(q);
+        setSearchQuery(q.trim());
       }
     } catch { /* ignore */ }
-  }, [devices]);
+  }, []);
   const [realtimeData, setRealtimeData] = useState<any>(null);
   const [trendSeries, setTrendSeries] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
@@ -164,8 +184,18 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollCycleRef = useRef(0);
+  const networkDevicesRef = useRef<Device[]>([]);
+  const deviceListRequestRef = useRef(0);
 
   const networkDevices = useMemo(() => (devices || []).filter((d) => !isServerDevice(d)), [devices]);
+
+  // The shared inventory is refreshed independently from this page's
+  // server-paginated list. Keep it only as an outage fallback; it must not be
+  // a dependency of the list request or every telemetry refresh will restart
+  // the left-hand loading state.
+  useEffect(() => {
+    networkDevicesRef.current = networkDevices;
+  }, [networkDevices]);
 
   const uniqueSites = useMemo(() => {
     const sites = new Map<string, string>();
@@ -178,26 +208,66 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [networkDevices]);
 
-  const filteredDevices = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let list = networkDevices;
-    if (siteFilter !== 'all') {
-      list = list.filter((d) => String(d.site_id || d.site || '') === siteFilter);
+  const availableSites = siteOptions.length > 0 ? siteOptions : uniqueSites;
+
+  // Search and filtering are server-side.  Only one bounded page is kept in
+  // the browser, which avoids rendering/fetching the complete inventory.
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setDeviceRows([]);
+      setDeviceTotal(0);
+      setDeviceListError('');
+      setDeviceListLoading(false);
+      return;
     }
-    if (statusFilter === 'online') {
-      list = list.filter((d) => String(d.status || '').toLowerCase() === 'online');
-    } else if (statusFilter === 'offline') {
-      list = list.filter((d) => String(d.status || '').toLowerCase() !== 'online');
-    }
-    if (!q) return list;
-    return list.filter((d) =>
-      (d.hostname || '').toLowerCase().includes(q) || (d.ip_address || '').toLowerCase().includes(q),
-    );
-  }, [networkDevices, search, siteFilter, statusFilter]);
+    const controller = new AbortController();
+    const requestId = ++deviceListRequestRef.current;
+    const params = new URLSearchParams({
+      q: searchQuery,
+      site_id: siteFilter,
+      status: statusFilter,
+      page: String(devicePage),
+      page_size: String(devicePageSize),
+    });
+    setDeviceListLoading(true);
+    setDeviceListError('');
+    fetch(`/api/monitoring/network-devices?${params.toString()}`, {
+      headers: authHeaders(),
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({} as MonitoringDevicePage));
+        if (!response.ok) throw new Error(payload && 'detail' in payload ? String((payload as any).detail) : 'device list fetch failed');
+        return payload as MonitoringDevicePage;
+      })
+      .then((payload) => {
+        if (requestId !== deviceListRequestRef.current) return;
+        const items = Array.isArray(payload.items) ? payload.items as Device[] : [];
+        setDeviceRows(items);
+        setDeviceTotal(Number(payload.total) || 0);
+        if (Array.isArray(payload.site_options)) setSiteOptions(payload.site_options);
+        setSelectedId((current) => items.some((item) => item.id === current) ? current : (items[0]?.id || null));
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (requestId !== deviceListRequestRef.current) return;
+        setDeviceListError(error instanceof Error ? error.message : 'device list fetch failed');
+        // Keep the page usable during a temporary API failure.
+        const fallbackStart = (devicePage - 1) * devicePageSize;
+        const fallback = networkDevicesRef.current.slice(fallbackStart, fallbackStart + devicePageSize);
+        setDeviceRows(fallback);
+        setDeviceTotal(networkDevicesRef.current.length);
+        setSelectedId((current) => fallback.some((item) => item.id === current) ? current : (fallback[0]?.id || null));
+      })
+      .finally(() => {
+        if (requestId === deviceListRequestRef.current) setDeviceListLoading(false);
+      });
+    return () => controller.abort();
+  }, [devicePage, devicePageSize, isAuthenticated, searchQuery, siteFilter, statusFilter]);
 
   const selectedDevice = useMemo(
-    () => networkDevices.find((d) => d.id === selectedId) || null,
-    [networkDevices, selectedId],
+    () => deviceRows.find((d) => d.id === selectedId) || null,
+    [deviceRows, selectedId],
   );
 
   const { monitorSelectedDevice, setMonitorSelectedDevice } = useMonitoringStore();
@@ -212,10 +282,10 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
   // Auto-select first network device once data is available
   useEffect(() => {
-    if (!selectedId && filteredDevices.length > 0) {
-      setSelectedId(filteredDevices[0].id);
+    if (!selectedId && deviceRows.length > 0) {
+      setSelectedId(deviceRows[0].id);
     }
-  }, [filteredDevices, selectedId]);
+  }, [deviceRows, selectedId]);
 
   const fetchRealtime = useCallback(async (deviceId: string, signal?: AbortSignal) => {
     const resp = await fetch(`/api/monitoring/device/${deviceId}/realtime?window_minutes=15&limit=1000`, {
@@ -359,7 +429,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-    if (!autoRefresh || !selectedId) return;
+    if (!isAuthenticated || !autoRefresh || !selectedId) return;
 
     pollRef.current = setInterval(async () => {
       try {
@@ -383,7 +453,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [autoRefresh, selectedId, rangeHours, trendInterface, alertsPage, alertsSeverity, alertsPhase, loadDeviceData]);
+  }, [autoRefresh, isAuthenticated, selectedId, rangeHours, trendInterface, alertsPage, alertsSeverity, alertsPhase, loadDeviceData]);
 
   const doRefresh = useCallback(async () => {
     if (!selectedId) return;
@@ -416,6 +486,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
       out_pkts: p.out_pkts ?? p.total_out_pkts ?? null,
       errors: p.errors ?? p.total_errors ?? null,
       drops: p.drops ?? p.total_drops ?? null,
+      crc_errors: p.crc_errors ?? p.total_crc_errors ?? null,
     }));
   }, [trendSeries]);
 
@@ -426,6 +497,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     { key: 'out_pkts', label: zh ? '出包数' : 'OUT Packets', short: 'OUT Pkts', color: '#0891b2', unit: 'pps' },
     { key: 'errors', label: zh ? '错包数' : 'Errors', short: 'Errors', color: '#dc2626', unit: 'cnt' },
     { key: 'drops', label: zh ? '丢包数' : 'Drops', short: 'Drops', color: '#16a34a', unit: 'cnt' },
+    { key: 'crc_errors', label: zh ? 'CRC/FCS' : 'CRC/FCS', short: 'CRC', color: '#b91c1c', unit: 'cnt' },
   ] as const;
 
   const trendMetricMap = Object.fromEntries(trendMetricDefs.map((d) => [d.key, d]));
@@ -489,34 +561,14 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
 
-  const interfaceOptions = useMemo(() => {
+  const upInterfaces = useMemo(() => {
     const list = realtimeData?.latest_interfaces || [];
-    return list.map((it: any) => String(it.interface_name || '')).filter(Boolean);
+    return list.filter((it: any) => String(it.status || '').toLowerCase() === 'up');
   }, [realtimeData]);
 
-  // Empty state check
-  if (networkDevices.length === 0) {
-    return (
-      <div className="network-monitoring-page flex flex-col h-full overflow-hidden">
-        <PageHero
-          icon={Router}
-          title={zh ? '网络监控' : 'Network Monitoring'}
-          subtitle={zh ? '网络交换机/路由器性能遥测 · 接口 SNMP 流量分析' : 'Network switch/router telemetry · Interface SNMP traffic analysis'}
-        />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center max-w-md px-6">
-            <Router size={40} className="mx-auto mb-3 text-[var(--muted-text)] opacity-40" />
-            <p className="text-sm font-semibold text-[var(--app-text)]">{zh ? '暂无网络设备' : 'No network devices'}</p>
-            <p className="mt-1 text-xs text-[var(--muted-text)]">
-              {zh
-                ? '请在「资产管理」中添加平台类型不是 Linux 的交换机、路由器等网络设备。'
-                : 'Add switch, router or firewall network devices in Asset Management.'}
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const interfaceOptions = useMemo(() => {
+    return upInterfaces.map((it: any) => String(it.interface_name || '')).filter(Boolean);
+  }, [upInterfaces]);
 
   const latestTrendPoint = trendData.length > 0 ? trendData[trendData.length - 1] : null;
   const snapshotDevice = realtimeData?.device || selectedDevice;
@@ -528,12 +580,28 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
     snmp_inventory: zh ? 'SNMP 资产信息' : 'SNMP Inventory',
     topology_lldp: zh ? 'LLDP 拓扑' : 'LLDP Topology',
   }[collector] || collector);
+  const collectionStatusLabel = (status: string) => ({
+    success: zh ? '成功' : 'Success',
+    stale: zh ? '已过期' : 'Stale',
+    skipped: zh ? '已跳过' : 'Skipped',
+    not_configured: zh ? '未配置' : 'Not configured',
+    failed: zh ? '失败' : 'Failed',
+  }[status] || status);
   const collectionTone = (status: string) => {
-    if (status === 'success') return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10';
-    if (status === 'stale') return 'border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-500/10';
-    if (status === 'skipped') return 'border-slate-200 bg-slate-50 text-slate-600 dark:bg-white/[0.04]';
-    return 'border-rose-200 bg-rose-50 text-rose-700 dark:bg-rose-500/10';
+    if (status === 'success') return 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300';
+    if (status === 'stale') return 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300';
+    if (status === 'skipped') return 'border-slate-300 bg-slate-50 text-slate-700 dark:border-white/15 dark:bg-white/[0.04] dark:text-slate-300';
+    return 'border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300';
   };
+
+  const submitDeviceSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setDevicePage(1);
+    setSearchQuery(searchInput.trim());
+  };
+  const totalDevicePages = Math.max(1, Math.ceil(deviceTotal / devicePageSize));
+  const pageStart = deviceTotal === 0 ? 0 : (devicePage - 1) * devicePageSize + 1;
+  const pageEnd = Math.min(deviceTotal, devicePage * devicePageSize);
 
   return (
     <div className="network-monitoring-page flex flex-col h-full overflow-hidden">
@@ -585,24 +653,32 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
         {/* ── Left: Switch list ── */}
         <div className="w-[276px] shrink-0 border-r border-[var(--ops-line)] bg-[color:var(--ops-bg)]/60 flex flex-col overflow-hidden">
           <div className="p-3 border-b border-[var(--card-border)] space-y-2">
-            <div className="relative">
+            <form onSubmit={submitDeviceSearch} className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-text)]" size={14} />
               <input
                 type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={zh ? '搜索设备名 / IP' : 'Search switch / IP'}
-              className="ops-control w-full pl-9 pr-3 py-2 rounded-xl text-sm outline-none text-[var(--app-text)]"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder={zh ? '输入设备名 / IP 后回车' : 'Search switch / IP, press Enter'}
+                className="ops-control w-full rounded-xl py-2 pl-9 pr-9 text-sm outline-none text-[var(--app-text)]"
               />
-            </div>
+              <button
+                type="submit"
+                aria-label={zh ? '搜索设备' : 'Search devices'}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--muted-text)] transition hover:bg-black/[0.05] hover:text-[var(--app-text)] disabled:opacity-50"
+                disabled={deviceListLoading}
+              >
+                <Search size={13} />
+              </button>
+            </form>
 
             <select
               value={siteFilter}
-              onChange={(e) => setSiteFilter(e.target.value)}
+              onChange={(e) => { setSiteFilter(e.target.value); setDevicePage(1); }}
               className="ops-control w-full rounded-xl px-2 py-1.5 text-xs outline-none"
             >
               <option value="all" className="bg-[var(--card-bg)]">{zh ? '全部区域' : 'All Sites'}</option>
-              {uniqueSites.map((site) => (
+              {availableSites.map((site) => (
                 <option key={site.id} value={site.id} className="bg-[var(--card-bg)]">{site.name}</option>
               ))}
             </select>
@@ -612,7 +688,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                 <button
                   key={status}
                   type="button"
-                  onClick={() => setStatusFilter(status)}
+                  onClick={() => { setStatusFilter(status); setDevicePage(1); }}
                   className={`flex-1 py-1 rounded-md text-[10px] font-bold transition-all ${statusFilter === status ? 'bg-[var(--app-text)] text-[var(--card-bg)] shadow-sm' : 'text-[var(--muted-text)] hover:text-[var(--app-text)]'}`}
                 >
                   {status === 'all' && (zh ? '全部' : 'All')}
@@ -623,44 +699,79 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
             </div>
 
             <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)]">
-              {filteredDevices.length} {zh ? '台网络设备' : 'switches'}
+              {deviceListLoading ? (zh ? '正在加载设备…' : 'Loading devices…') : `${deviceTotal} ${zh ? '台网络设备' : 'switches'}`}
             </p>
+            {deviceListError && <p className="truncate text-[9px] text-amber-700" title={deviceListError}>{zh ? '列表接口暂时不可用，显示本地缓存' : 'List API unavailable; showing local fallback'}</p>}
           </div>
 
-          <VirtualizedDeviceList
-            items={filteredDevices}
-            getKey={(dev) => dev.id}
-            empty={<p className="p-4 text-center text-xs text-[var(--muted-text)]">{zh ? '无匹配设备' : 'No match'}</p>}
-            renderItem={(dev) => {
-              const online = String(dev.status || '').toLowerCase() === 'online';
-              const active = selectedId === dev.id;
-              return (
+          <div className="min-h-0 flex-1 flex flex-col">
+            <VirtualizedDeviceList
+              items={deviceRows}
+              getKey={(dev) => dev.id}
+              empty={<p className="p-4 text-center text-xs text-[var(--muted-text)]">{deviceListLoading ? (zh ? '加载中…' : 'Loading…') : (zh ? '无匹配设备' : 'No match')}</p>}
+              renderItem={(dev) => {
+                const online = String(dev.status || '').toLowerCase() === 'online';
+                const active = selectedId === dev.id;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(dev.id)}
+                    className={`w-full flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-all ${active ? 'border-sky-400 bg-sky-500/[0.07] shadow-sm' : 'border-transparent hover:border-[var(--card-border)] hover:bg-black/[0.02]'}`}
+                  >
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-sky-500/15 text-sky-600' : 'bg-black/[0.04] text-[var(--muted-text)]'}`}>
+                      <Router size={15} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate text-sm font-semibold text-[var(--app-text)]">{dev.hostname || dev.ip_address}</p>
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: online ? '#10b981' : '#94a3b8' }} />
+                      </div>
+                      <p className="truncate text-[11px] font-mono text-[var(--muted-text)]">{dev.ip_address}</p>
+                    </div>
+                  </button>
+                );
+              }}
+            />
+            <div className="flex items-center justify-between gap-2 border-t border-[var(--card-border)] px-3 py-2">
+              <span className="text-[9px] tabular-nums text-[var(--muted-text)]">
+                {pageStart}-{pageEnd} / {deviceTotal || 0}
+              </span>
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => setSelectedId(dev.id)}
-                  className={`w-full flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-all ${active ? 'border-sky-400 bg-sky-500/[0.07] shadow-sm' : 'border-transparent hover:border-[var(--card-border)] hover:bg-black/[0.02]'}`}
+                  aria-label={zh ? '上一页' : 'Previous page'}
+                  disabled={devicePage <= 1 || deviceListLoading}
+                  onClick={() => setDevicePage((page) => Math.max(1, page - 1))}
+                  className="rounded-md p-1 text-[var(--muted-text)] hover:bg-black/[0.05] disabled:cursor-not-allowed disabled:opacity-35"
                 >
-                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-sky-500/15 text-sky-600' : 'bg-black/[0.04] text-[var(--muted-text)]'}`}>
-                    <Router size={15} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <p className="truncate text-sm font-semibold text-[var(--app-text)]">{dev.hostname || dev.ip_address}</p>
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: online ? '#10b981' : '#94a3b8' }} />
-                    </div>
-                    <p className="truncate text-[11px] font-mono text-[var(--muted-text)]">{dev.ip_address}</p>
-                  </div>
+                  <ChevronLeft size={14} />
                 </button>
-              );
-            }}
-          />
+                <span className="min-w-[46px] text-center text-[9px] font-semibold tabular-nums text-[var(--muted-text)]">
+                  {devicePage} / {totalDevicePages}
+                </span>
+                <button
+                  type="button"
+                  aria-label={zh ? '下一页' : 'Next page'}
+                  disabled={devicePage >= totalDevicePages || deviceListLoading}
+                  onClick={() => setDevicePage((page) => Math.min(totalDevicePages, page + 1))}
+                  className="rounded-md p-1 text-[var(--muted-text)] hover:bg-black/[0.05] disabled:cursor-not-allowed disabled:opacity-35"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* ── Right: Telemetry details ── */}
         <div className="flex-1 overflow-auto p-6 space-y-5">
           {!selectedDevice ? (
             <div className="flex h-full items-center justify-center text-sm text-[var(--muted-text)]">
-              {zh ? '从左侧选择一台网络设备' : 'Select a network device from the left'}
+              {deviceListLoading
+                ? (zh ? '正在加载网络设备…' : 'Loading network devices…')
+                : deviceTotal === 0
+                  ? (zh ? '暂无符合条件的网络设备' : 'No matching network devices')
+                  : (zh ? '从左侧选择一台网络设备' : 'Select a network device from the left')}
             </div>
           ) : (
             <>
@@ -689,13 +800,13 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                 </div>
               )}
 
-              <div className="ops-surface rounded-2xl p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="ops-surface rounded-2xl p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--muted-text)]">
                       {zh ? '采集健康与数据新鲜度' : 'Collection Health & Freshness'}
                     </h3>
-                    <span className="text-[10px] text-[var(--muted-text)]">
+                      <span className="text-[9px] text-[var(--muted-text)]">
                       {zh ? '快照 30 秒 / 趋势 60 秒刷新' : 'Snapshot 30s / trend 60s refresh'}
                     </span>
                   </div>
@@ -703,7 +814,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                     type="button"
                     onClick={runCollectionDiagnostics}
                     disabled={diagnosticsLoading}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[10px] font-bold text-sky-700 transition hover:bg-sky-100 disabled:cursor-wait disabled:opacity-60"
+                     className="inline-flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-[9px] font-bold text-sky-700 transition hover:bg-sky-100 disabled:cursor-wait disabled:opacity-60"
                   >
                     <Activity size={12} className={diagnosticsLoading ? 'animate-pulse' : ''} />
                     {diagnosticsLoading ? (zh ? '诊断中…' : 'Diagnosing…') : (zh ? '诊断采集链路' : 'Diagnose Collection')}
@@ -714,36 +825,36 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                     {zh ? '尚无采集状态；等待下一轮后台采集或执行 SNMP 测试。' : 'No collector state yet. Wait for the next poll or run an SNMP test.'}
                   </div>
                 ) : (
-                  <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-                    {collectionStatus.map((item) => (
-                      <div key={item.collector} className={`rounded-xl border px-3 py-2.5 ${collectionTone(item.effective_status)}`}>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-[11px] font-bold">{collectionLabel(item.collector)}</span>
-                          <span className="text-[9px] font-extrabold uppercase">{item.effective_status}</span>
-                        </div>
-                        <p className="mt-1 truncate text-[10px] opacity-75">
-                          {item.last_success_at
-                            ? `${zh ? '成功于' : 'Success'} ${fmtFullTime(item.last_success_at)}`
-                            : (item.error_code || (zh ? '尚未成功' : 'No successful sample'))}
-                        </p>
-                        {(item.coverage_total > 0 || item.consecutive_failures > 0) && (
-                          <p className="mt-1 text-[9px] opacity-70">
-                            {item.coverage_total > 0 ? `${zh ? '覆盖' : 'Coverage'} ${item.coverage_supported}/${item.coverage_total}` : ''}
-                            {item.consecutive_failures > 0 ? ` · ${zh ? '连续失败' : 'Failures'} ${item.consecutive_failures}` : ''}
-                          </p>
+                   <div className="grid gap-1.5 md:grid-cols-2 xl:grid-cols-5">
+                     {collectionStatus.map((item) => (
+                       <div key={item.collector} className={`rounded-lg border px-2.5 py-1.5 ${collectionTone(item.effective_status)}`}>
+                         <div className="flex items-center justify-between gap-2">
+                           <span className="truncate text-[10px] font-bold">{collectionLabel(item.collector)}</span>
+                           <span className="shrink-0 text-[9px] font-extrabold">{collectionStatusLabel(item.effective_status)}</span>
+                         </div>
+                         <p className="mt-0.5 truncate text-[9px]">
+                           {item.last_success_at
+                             ? `${zh ? '成功于' : 'Success'} ${fmtFullTime(item.last_success_at)}`
+                             : (item.error_code || (zh ? '尚未成功' : 'No successful sample'))}
+                         </p>
+                         {(item.coverage_total > 0 || item.consecutive_failures > 0) && (
+                           <p className="mt-0.5 text-[8px] font-medium">
+                             {item.coverage_total > 0 ? `${zh ? '覆盖' : 'Coverage'} ${item.coverage_supported}/${item.coverage_total}` : ''}
+                             {item.consecutive_failures > 0 ? ` · ${zh ? '连续失败' : 'Failures'} ${item.consecutive_failures}` : ''}
+                           </p>
                         )}
                       </div>
                     ))}
                   </div>
                 )}
                 {diagnosticResult && (
-                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                    {Object.entries(diagnosticResult.checks).map(([key, check]) => (
-                      <div key={key} className={`rounded-lg border px-3 py-2 text-[10px] ${check.status === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : check.status === 'not_configured' || check.status === 'skipped' ? 'border-slate-200 bg-slate-50 text-slate-600' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
-                        <div className="flex items-center justify-between gap-2 font-bold"><span>{key.toUpperCase()}</span><span>{check.status}</span></div>
-                        <p className="mt-1 opacity-75">{check.code || check.error || ''}{check.port ? ` · ${check.port}` : ''}</p>
-                      </div>
-                    ))}
+                   <div className="mt-2 grid gap-1.5 sm:grid-cols-3 xl:grid-cols-5">
+                     {Object.entries(diagnosticResult.checks).map(([key, check]) => (
+                       <div key={key} className={`rounded-lg border px-2.5 py-1.5 text-[9px] ${check.status === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : check.status === 'not_configured' || check.status === 'skipped' ? 'border-slate-300 bg-slate-50 text-slate-700' : 'border-rose-300 bg-rose-50 text-rose-800'}`}>
+                         <div className="flex items-center justify-between gap-2 font-bold"><span>{key.toUpperCase()}</span><span>{collectionStatusLabel(check.status)}</span></div>
+                         <p className="mt-0.5 truncate">{check.code || check.error || ''}{check.port ? ` · ${check.port}` : ''}</p>
+                       </div>
+                     ))}
                   </div>
                 )}
               </div>
@@ -756,7 +867,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[var(--card-border)] bg-black/[0.015] dark:bg-white/[0.015]">
                     <Cpu size={20} className="text-sky-500 mb-2" />
-                    <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">CPU</span>
+                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">{zh ? 'CPU 使用率' : 'CPU'}</span>
                     <p className="text-xl font-extrabold text-[var(--app-text)] mt-1 font-mono">
                       {snapshotDevice?.cpu_usage != null && Number.isFinite(Number(snapshotDevice.cpu_usage)) ? `${snapshotDevice.cpu_usage}%` : '--'}
                     </p>
@@ -764,7 +875,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
                   <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[var(--card-border)] bg-black/[0.015] dark:bg-white/[0.015]">
                     <MemoryStick size={20} className="text-violet-500 mb-2" />
-                    <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Memory</span>
+                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">{zh ? '内存使用率' : 'Memory'}</span>
                     <p className="text-xl font-extrabold text-[var(--app-text)] mt-1 font-mono">
                       {snapshotDevice?.memory_usage != null && Number.isFinite(Number(snapshotDevice.memory_usage)) ? `${snapshotDevice.memory_usage}%` : '--'}
                     </p>
@@ -772,7 +883,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
                   <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[var(--card-border)] bg-black/[0.015] dark:bg-white/[0.015]">
                     <Thermometer size={20} className="text-amber-500 mb-2" />
-                    <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Temperature</span>
+                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">{zh ? '设备温度' : 'Temperature'}</span>
                     <p className="text-xl font-extrabold text-[var(--app-text)] mt-1 font-mono">
                       {snapshotDevice?.temp != null && Number.isFinite(Number(snapshotDevice.temp)) ? `${snapshotDevice.temp}°C` : '--'}
                     </p>
@@ -780,7 +891,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
                   <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[var(--card-border)] bg-black/[0.015] dark:bg-white/[0.015]">
                     <Wind size={20} className="text-emerald-500 mb-2" />
-                    <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Fan Status</span>
+                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">{zh ? '风扇状态' : 'Fan Status'}</span>
                     <p className={`text-sm font-extrabold mt-2 ${hardwareStatusTone(snapshotDevice?.fan_status)}`}>
                       {getFanStatusLabel(snapshotDevice?.fan_status)}
                     </p>
@@ -788,7 +899,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
 
                   <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-[var(--card-border)] bg-black/[0.015] dark:bg-white/[0.015]">
                     <Zap size={20} className="text-orange-500 mb-2" />
-                    <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">Power (PSU)</span>
+                     <span className="text-[10px] uppercase font-bold text-[var(--muted-text)]">{zh ? '电源状态' : 'Power (PSU)'}</span>
                     <p className={`text-sm font-extrabold mt-2 ${hardwareStatusTone(snapshotDevice?.psu_status)}`}>
                       {getPsuStatusLabel(snapshotDevice?.psu_status)}
                     </p>
@@ -799,14 +910,22 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
               {/* Interface Table */}
               <div className="ops-surface rounded-2xl p-5">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--muted-text)]">
-                    {zh ? '接口流量与丢包统计 (SNMP)' : 'Interfaces & Realtime Telemetry (SNMP)'}
-                  </h3>
+                  <div>
+                      <h3 className="text-xs font-extrabold uppercase tracking-wider text-[var(--muted-text)]">
+                        {zh ? '接口流量与错误包统计 (SNMP)' : 'Interfaces & Realtime Telemetry (SNMP)'}
+                      </h3>
+                      <p className="mt-1 text-[10px] text-[var(--muted-text)]">
+                        {zh
+                        ? '仅显示当前 UP 接口；IN/OUT 速率使用 SNMP Counter64 累计字节数计算。通用错误、丢弃和 CRC/FCS 分栏显示，数值均来自设备返回。'
+                        : 'UP interfaces only; IN/OUT rates use SNMP Counter64 byte counters. Generic errors, discards, and CRC/FCS are shown separately from device-returned values.'}
+                      </p>
+                  </div>
                   {realtimeData?.summary && (
                     <div className="text-[10px] font-mono text-[var(--muted-text)] flex gap-4">
                       <span>IN: {fmtRate(Number(realtimeData.summary.in_bps || 0))}</span>
                       <span>OUT: {fmtRate(Number(realtimeData.summary.out_bps || 0))}</span>
-                      {realtimeData.summary.errors > 0 && <span className="text-red-500 font-bold">ERR: {realtimeData.summary.errors}</span>}
+                      {realtimeData.summary.errors > 0 && <span className="text-red-500 font-bold">{zh ? '通用错误' : 'Generic errors'}: {realtimeData.summary.errors}</span>}
+                      {realtimeData.summary.crc_errors > 0 && <span className="text-rose-600 font-bold">CRC/FCS: {realtimeData.summary.crc_errors}</span>}
                     </div>
                   )}
                 </div>
@@ -815,38 +934,53 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                   <table className="w-full text-xs">
                     <thead className="bg-black/[0.02] dark:bg-white/[0.02] sticky top-0 backdrop-blur-md">
                       <tr>
-                        <th className="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">Interface</th>
-                        <th className="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">Status</th>
+                        <th className="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{zh ? '接口' : 'Interface'}</th>
+                        <th className="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-[var(--muted-text)]">{zh ? '状态' : 'Status'}</th>
                         <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">IN</th>
                         <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">OUT</th>
                         <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">BW%</th>
-                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]">Errors</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]" title={zh ? 'IF-MIB ifInErrors / ifOutErrors 入/出方向原始计数；不等同于 CRC/FCS' : 'Raw IF-MIB ifInErrors / ifOutErrors by direction; separate from CRC/FCS'}>{zh ? '通用错误（入/出）' : 'Generic errors (IN/OUT)'}</th>
+                        <th className="px-4 py-2.5 text-right text-[10px] uppercase tracking-wider text-[var(--muted-text)]" title={zh ? 'EtherLike-MIB FCS/CRC 累计计数；旁边保留其他物理层错误来源' : 'EtherLike-MIB FCS/CRC cumulative count; other physical-layer error details remain in the source tooltip'}>{zh ? 'CRC/FCS' : 'CRC/FCS'}</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-black/5 dark:divide-white/5">
-                      {(realtimeData?.latest_interfaces || []).map((it: any, idx: number) => {
+                      <tbody className="divide-y divide-black/5 dark:divide-white/5">
+                        {upInterfaces.map((it: any, idx: number) => {
                         const bw = Math.max(Number(it.bw_in_pct || 0), Number(it.bw_out_pct || 0));
-                        const isUp = String(it.status).toLowerCase() === 'up';
+                        const counterSource = String(
+                          it.counter_source
+                          || (Number(it.counter_width) === 64 ? 'ifHCInOctets/ifHCOutOctets' : Number(it.counter_width) === 32 ? 'ifInOctets/ifOutOctets' : 'SNMP'),
+                        );
+                        const counterQuality = String(it.counter_quality || '');
                         return (
                           <tr key={`${it.interface_name}-${idx}`} className="hover:bg-black/[0.015] dark:hover:bg-white/[0.015]">
                             <td className="px-4 py-2 font-mono text-[var(--app-text)] font-semibold">{it.interface_name}</td>
                             <td className="px-4 py-2">
-                              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase ${isUp ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10' : 'bg-red-50 text-red-500 dark:bg-red-500/10'}`}>
-                                <span className={`h-1.5 w-1.5 rounded-full ${isUp ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                                {it.status}
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-extrabold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                {zh ? '正常' : 'UP'}
                               </span>
                             </td>
-                            <td className="px-4 py-2 text-right font-mono text-blue-600 dark:text-blue-400">{fmtRate(it.in_bps)}</td>
-                            <td className="px-4 py-2 text-right font-mono text-orange-600 dark:text-orange-400">{fmtRate(it.out_bps)}</td>
-                            <td className="px-4 py-2 text-right font-mono text-[var(--app-text)]">{bw.toFixed(1)}%</td>
-                            <td className="px-4 py-2 text-right font-mono text-[var(--app-text)]">{Number(it.in_errors || 0) + Number(it.out_errors || 0)}</td>
+                            <td className="px-4 py-2 text-right font-mono text-blue-600 dark:text-blue-400">
+                              <div>{fmtRate(it.in_bps)}</div>
+                              <div className="text-[9px] font-normal text-[var(--muted-text)]" title={zh ? `设备返回的累计字节数；来源 ${counterSource}` : `Device-returned cumulative octets; source ${counterSource}`}>{zh ? '累计 ' : 'Total '}{fmtCounter(it.in_octets)}</div>
+                              <div className={`text-[9px] font-normal ${counterQuality === 'suspicious_uniform' ? 'text-amber-600' : 'text-[var(--muted-text)]'}`} title={it.counter_quality_reason || counterSource}>{zh ? '来源 ' : 'Source '}{counterSource}{counterQuality === 'suspicious_uniform' ? (zh ? '（异常一致）' : ' (uniform)') : ''}</div>
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono text-orange-600 dark:text-orange-400">
+                              <div>{fmtRate(it.out_bps)}</div>
+                              <div className="text-[9px] font-normal text-[var(--muted-text)]" title={zh ? `设备返回的累计字节数；来源 ${counterSource}` : `Device-returned cumulative octets; source ${counterSource}`}>{zh ? '累计 ' : 'Total '}{fmtCounter(it.out_octets)}</div>
+                            </td>
+                            <td className="px-4 py-2 text-right font-mono text-[var(--app-text)]">{`${bw.toFixed(1)}%`}</td>
+                            <td className="px-4 py-2 text-right font-mono text-[var(--app-text)]" title={zh ? `ifInErrors ${Number(it.in_errors || 0)}；ifOutErrors ${Number(it.out_errors || 0)}` : `ifInErrors ${Number(it.in_errors || 0)}; ifOutErrors ${Number(it.out_errors || 0)}`}>{Number(it.in_errors || 0)} / {Number(it.out_errors || 0)}</td>
+                            <td className="px-4 py-2 text-right font-mono text-[var(--app-text)]" title={zh ? `${it.fcs_source || 'EtherLike-MIB'}；超长帧 ${Number(it.frame_too_long_errors || 0)}；MAC接收 ${Number(it.mac_rx_errors || 0)}；符号 ${Number(it.symbol_errors || 0)}` : `${it.fcs_source || 'EtherLike-MIB'}; frame-too-long ${Number(it.frame_too_long_errors || 0)}; MAC RX ${Number(it.mac_rx_errors || 0)}; symbol ${Number(it.symbol_errors || 0)}`}>
+                              {Number(it.fcs_errors || 0)}
+                            </td>
                           </tr>
                         );
                       })}
-                      {(!realtimeData?.latest_interfaces || realtimeData.latest_interfaces.length === 0) && (
+                      {upInterfaces.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-4 py-8 text-center text-sm text-[var(--muted-text)]">
-                            {zh ? '暂无实时接口样本' : 'No realtime interface samples yet'}
+                          <td colSpan={7} className="px-4 py-8 text-center text-sm text-[var(--muted-text)]">
+                            {zh ? '暂无 UP 接口实时样本' : 'No realtime UP interface samples yet'}
                           </td>
                         </tr>
                       )}

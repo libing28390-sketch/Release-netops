@@ -42,6 +42,25 @@ def _require_monitoring_session(request: Request) -> dict:
 
 _SERVER_PLATFORMS = {'linux', 'ubuntu', 'centos', 'debian', 'redhat'}
 
+
+def _is_virtual_interface_name(name: object) -> bool:
+    """Return whether an interface is a virtual/system interface.
+
+    The SNMP collector already applies the same physical-interface policy, but
+    the realtime API also has to protect the UI from historical rows written
+    by older collectors (for example ``InLoopBack0`` and
+    ``Register-Tunnel0``).  Filtering at read time removes those stale rows
+    without deleting telemetry history.
+    """
+    lowered = str(name or '').strip().casefold()
+    if not lowered:
+        return True
+    return (
+        lowered.startswith(('lo', 'loopback', 'inloopback', 'vl', 'vlan', 'tu', 'tunnel'))
+        or 'tunnel' in lowered
+        or any(skip in lowered for skip in ('null', 'nu0', 'unrouted', 'stack', 'cpu', 'async', 'voip', 'vo0'))
+    )
+
 _OVERVIEW_CACHE_TTL_SECONDS = 30
 _overview_cache_lock = threading.Lock()
 _overview_cache: dict[str, object] = {
@@ -158,6 +177,7 @@ def _fill_missing_time_buckets(rows: list[dict], start_dt: datetime, end_dt: dat
         'total_out_pkts',
         'total_errors',
         'total_drops',
+        'total_crc_errors',
     ]
     rows_by_ts = {str(r.get('ts_minute')): r for r in rows if r.get('ts_minute')}
 
@@ -197,7 +217,7 @@ def _downsample_network_series(rows: list[dict], bucket_seconds: int) -> list[di
 
     average_keys = ('total_in_bps', 'total_out_bps')
     max_keys = ('peak_bw_in_pct', 'peak_bw_out_pct')
-    sum_keys = ('total_in_pkts', 'total_out_pkts', 'total_errors', 'total_drops')
+    sum_keys = ('total_in_pkts', 'total_out_pkts', 'total_errors', 'total_drops', 'total_crc_errors')
     result: list[dict] = []
     for bucket, points in sorted(buckets.items()):
         item: dict[str, object] = {
@@ -245,6 +265,122 @@ def search_online_devices(
             (pattern, pattern, limit),
         ).fetchall()
         return {'items': [dict(r) for r in rows], 'query': qv}
+    finally:
+        conn.close()
+
+
+@router.get('/monitoring/network-devices')
+def list_monitoring_network_devices(
+    q: str = Query(default='', min_length=0, max_length=120),
+    site_id: str = Query(default='all', min_length=0, max_length=120),
+    status: Literal['all', 'online', 'offline'] = Query(default='all'),
+    page: int = Query(default=1, ge=1, le=100000),
+    page_size: int = Query(default=30, ge=10, le=100),
+):
+    """Return a bounded, server-filtered page for the network monitoring list.
+
+    The monitoring screen only needs network devices.  Keeping the search,
+    site/status filters, count, and pagination in SQL prevents the browser
+    from receiving the whole inventory just to render the left-hand list.
+    """
+    qv = (q or '').strip()
+    site_filter = (site_id or '').strip()
+    if site_filter.lower() in {'', 'all'}:
+        site_filter = ''
+
+    network_predicate = """
+        LOWER(COALESCE(d.platform, '')) NOT LIKE '%linux%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%ubuntu%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%centos%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%debian%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%redhat%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%rocky%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%alma%'
+        AND LOWER(COALESCE(d.platform, '')) NOT LIKE '%' || 'server' || '%'
+        AND LOWER(COALESCE(d.device_category, '')) NOT LIKE '%' || 'server' || '%'
+        AND LOWER(COALESCE(d.role, '')) NOT LIKE '%' || 'server' || '%'
+        AND LOWER(COALESCE(pa.asset_type, '')) NOT LIKE '%' || 'server' || '%'
+    """
+    site_id_expr = "COALESCE(NULLIF(d.site_id, ''), NULLIF(d.site, ''), '')"
+    site_name_expr = "COALESCE(NULLIF(s.site_name, ''), CASE WHEN SUBSTR(COALESCE(d.site, ''), 1, 5) = 'site-' THEN '' ELSE COALESCE(d.site, '') END, {site_id_expr}, '')".format(site_id_expr=site_id_expr)
+    where_parts = [network_predicate]
+    where_params: list[Any] = []
+    if qv:
+        pattern = f"%{qv}%"
+        where_parts.append("(LOWER(COALESCE(d.hostname, '')) LIKE LOWER(?) OR LOWER(COALESCE(d.ip_address, '')) LIKE LOWER(?))")
+        where_params.extend([pattern, pattern])
+    if site_filter:
+        where_parts.append(f"{site_id_expr} = ?")
+        where_params.append(site_filter)
+    base_where = ' AND '.join(where_parts)
+
+    status_where = list(where_parts)
+    status_params = list(where_params)
+    if status == 'online':
+        status_where.append("LOWER(COALESCE(d.status, '')) = 'online'")
+    elif status == 'offline':
+        status_where.append("LOWER(COALESCE(d.status, '')) <> 'online'")
+
+    conn = get_db_connection()
+    try:
+        total_row = conn.execute(
+            f"SELECT COUNT(*) AS total FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id LEFT JOIN sites s ON s.id = d.site_id WHERE {' AND '.join(status_where)}",
+            tuple(status_params),
+        ).fetchone()
+        total = int(total_row['total'] or 0) if total_row else 0
+
+        status_row = conn.execute(
+            f"""
+            SELECT
+                SUM(CASE WHEN LOWER(COALESCE(d.status, '')) = 'online' THEN 1 ELSE 0 END) AS online_count,
+                SUM(CASE WHEN LOWER(COALESCE(d.status, '')) <> 'online' THEN 1 ELSE 0 END) AS offline_count
+            FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id LEFT JOIN sites s ON s.id = d.site_id
+            WHERE {base_where}
+            """,
+            tuple(where_params),
+        ).fetchone()
+
+        site_rows = conn.execute(
+            f"""
+            SELECT {site_id_expr} AS id, {site_name_expr} AS name, COUNT(*) AS device_count
+            FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id LEFT JOIN sites s ON s.id = d.site_id
+            WHERE {base_where}
+            GROUP BY {site_id_expr}, {site_name_expr}
+            HAVING {site_id_expr} <> ''
+            ORDER BY LOWER({site_name_expr}) ASC
+            """,
+            tuple(where_params),
+        ).fetchall()
+
+        offset = (page - 1) * page_size
+        rows = conn.execute(
+            f"""
+            SELECT d.id, d.hostname, d.ip_address, d.platform, d.status,
+                   d.compliance, d.role, d.device_category, d.model, d.version,
+                   {site_id_expr} AS site_id,
+                   {site_name_expr} AS site
+            FROM devices d LEFT JOIN physical_assets pa ON pa.id = d.asset_id LEFT JOIN sites s ON s.id = d.site_id
+            WHERE {' AND '.join(status_where)}
+            ORDER BY LOWER(COALESCE(d.hostname, '')) ASC, d.id ASC
+            LIMIT ? OFFSET ?
+            """,
+            tuple(status_params) + (page_size, offset),
+        ).fetchall()
+        return {
+            'items': [dict(row) for row in rows],
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'pages': (total + page_size - 1) // page_size if total else 0,
+            'query': qv,
+            'site_id': site_filter or 'all',
+            'status': status,
+            'site_options': [dict(row) for row in site_rows],
+            'status_counts': {
+                'online': int((status_row['online_count'] if status_row else 0) or 0),
+                'offline': int((status_row['offline_count'] if status_row else 0) or 0),
+            },
+        }
     finally:
         conn.close()
 
@@ -555,7 +691,10 @@ def monitoring_device_realtime(
         if not device:
             raise HTTPException(status_code=404, detail='Device not found')
         device = dict(device)
-        device['interface_data'] = fetch_interface_data(conn, device['id'])
+        device['interface_data'] = [
+            item for item in (fetch_interface_data(conn, device['id']) or [])
+            if not _is_virtual_interface_name(item.get('interface_name') or item.get('name'))
+        ]
 
         plat = str(device.get('platform') or '').lower()
         category = str(device.get('device_category') or '').lower()
@@ -598,7 +737,9 @@ def monitoring_device_realtime(
         rows = conn.execute(
             '''
             SELECT ts, interface_name, status, speed_mbps, in_bps, out_bps, bw_in_pct, bw_out_pct,
-                 in_pkts, out_pkts, in_errors, out_errors, in_discards, out_discards
+                 in_pkts, out_pkts, in_errors, out_errors, in_discards, out_discards,
+                 fcs_errors, frame_too_long_errors, mac_rx_errors, symbol_errors,
+                 packet_counter_source, fcs_source
             FROM interface_telemetry_raw
             WHERE device_id = ? AND ts >= ?
             ORDER BY ts DESC
@@ -606,6 +747,65 @@ def monitoring_device_realtime(
             ''',
             (device_id, cutoff, limit),
         ).fetchall()
+        rows = [dict(r) for r in rows if not _is_virtual_interface_name(r['interface_name'])]
+        # The realtime table stores derived rates, while the collector's
+        # durable IF-MIB snapshot keeps the exact cumulative octet counters
+        # returned by the device.  Attach those raw values so the UI can show
+        # a value even when a rate has not yet been derived from two samples.
+        counter_snapshot_by_name: dict[str, dict[str, Any]] = {}
+        counter_sampled_at = None
+        try:
+            snapshot_row = conn.execute(
+                "SELECT values_json, sampled_at FROM snmp_interface_counter_samples "
+                "WHERE device_id = ? ORDER BY updated_at DESC LIMIT 1",
+                (device_id,),
+            ).fetchone()
+            if snapshot_row:
+                counter_sampled_at = snapshot_row['sampled_at']
+                snapshots = json.loads(snapshot_row['values_json'] or '{}')
+                if isinstance(snapshots, dict):
+                    for snapshot in snapshots.values():
+                        if not isinstance(snapshot, dict):
+                            continue
+                        name = str(snapshot.get('name') or '').strip()
+                        if name:
+                            counter_snapshot_by_name[name] = snapshot
+        except Exception as snapshot_error:
+            logger.debug("Unable to attach raw interface counters for %s: %s", device_id, snapshot_error)
+        for row in rows:
+            snapshot = counter_snapshot_by_name.get(str(row.get('interface_name') or '').strip())
+            if snapshot:
+                row['in_octets'] = snapshot.get('in_octets')
+                row['out_octets'] = snapshot.get('out_octets')
+                row['counter_width'] = snapshot.get('counter_width')
+                row['counter_source'] = snapshot.get('counter_source')
+                row['counter_mode'] = snapshot.get('counter_mode')
+                row['counter_quality'] = snapshot.get('counter_quality')
+                row['counter_quality_reason'] = snapshot.get('counter_quality_reason')
+                row['in_packets_total'] = snapshot.get('in_packets_total', row.get('in_pkts'))
+                row['out_packets_total'] = snapshot.get('out_packets_total', row.get('out_pkts'))
+                row['packet_counter_source'] = snapshot.get('packet_counter_source', row.get('packet_counter_source'))
+                row['fcs_errors'] = snapshot.get('fcs_errors', row.get('fcs_errors'))
+                row['frame_too_long_errors'] = snapshot.get('frame_too_long_errors', row.get('frame_too_long_errors'))
+                row['mac_rx_errors'] = snapshot.get('mac_rx_errors', row.get('mac_rx_errors'))
+                row['symbol_errors'] = snapshot.get('symbol_errors', row.get('symbol_errors'))
+                row['fcs_source'] = snapshot.get('fcs_source', row.get('fcs_source'))
+                row['counter_sampled_at'] = counter_sampled_at
+        counter_fields = (
+            'in_pkts', 'out_pkts', 'in_errors', 'out_errors',
+            'in_discards', 'out_discards', 'fcs_errors',
+        )
+        for row in rows:
+            # Do not rewrite or suppress values returned by the collector.
+            # Older rows may have NULLs from a previous collector version; mark
+            # that storage state without turning it into a user-facing status.
+            if not row.get('counter_quality'):
+                row['counter_quality'] = 'raw' if all(row.get(field) is None for field in counter_fields) else 'available'
+            if not row.get('counter_source') and row.get('counter_width') in (32, 64):
+                row['counter_source'] = (
+                    'ifHCInOctets/ifHCOutOctets' if row.get('counter_width') == 64
+                    else 'ifInOctets/ifOutOctets'
+                )
 
         latest_by_interface = {}
         for r in rows:
@@ -614,13 +814,15 @@ def monitoring_device_realtime(
                 latest_by_interface[name] = dict(r)
 
         latest_interfaces = sorted(
-            latest_by_interface.values(),
+            (item for item in latest_by_interface.values() if str(item.get('status') or '').lower() == 'up'),
             key=lambda x: (x.get('status') != 'up', str(x.get('interface_name', ''))),
         )
 
         # Build concise timeseries for charts (aggregate total in/out by timestamp)
         ts_agg = {}
         for r in rows:
+            if str(r['status'] or '').lower() != 'up':
+                continue
             ts = r['ts']
             bucket = ts_agg.setdefault(ts, {
                 'ts': ts,
@@ -630,6 +832,7 @@ def monitoring_device_realtime(
                 'out_pkts': 0,
                 'errors': 0,
                 'drops': 0,
+                'crc_errors': 0,
             })
             bucket['in_bps'] += float(r['in_bps'] or 0)
             bucket['out_bps'] += float(r['out_bps'] or 0)
@@ -637,6 +840,7 @@ def monitoring_device_realtime(
             bucket['out_pkts'] += int(r['out_pkts'] or 0)
             bucket['errors'] += int(r['in_errors'] or 0) + int(r['out_errors'] or 0)
             bucket['drops'] += int(r['in_discards'] or 0) + int(r['out_discards'] or 0)
+            bucket['crc_errors'] += int(r['fcs_errors'] or 0)
 
         series = sorted(ts_agg.values(), key=lambda x: x['ts'])
 
@@ -647,6 +851,7 @@ def monitoring_device_realtime(
             'out_pkts': 0,
             'errors': 0,
             'drops': 0,
+            'crc_errors': 0,
         }
         for item in latest_interfaces:
             summary['in_bps'] += float(item.get('in_bps') or 0)
@@ -655,6 +860,7 @@ def monitoring_device_realtime(
             summary['out_pkts'] += int(item.get('out_pkts') or 0)
             summary['errors'] += int(item.get('in_errors') or 0) + int(item.get('out_errors') or 0)
             summary['drops'] += int(item.get('in_discards') or 0) + int(item.get('out_discards') or 0)
+            summary['crc_errors'] += int(item.get('fcs_errors') or 0)
 
         return {
             'device': {
@@ -805,7 +1011,8 @@ def monitoring_device_trend(
                        SUM(COALESCE(in_pkts_sum, 0)) AS total_in_pkts,
                        SUM(COALESCE(out_pkts_sum, 0)) AS total_out_pkts,
                        SUM(COALESCE(err_delta_sum, 0)) AS total_errors,
-                       SUM(COALESCE(discard_delta_sum, 0)) AS total_drops
+                       SUM(COALESCE(discard_delta_sum, 0)) AS total_drops,
+                       SUM(COALESCE(fcs_sum, 0)) AS total_crc_errors
                 FROM interface_telemetry_1m
                 WHERE device_id = ? AND ts_minute >= ? AND ts_minute <= ? {intf_where}
                 GROUP BY ts_minute
@@ -842,7 +1049,8 @@ def monitoring_device_trend(
                        SUM(COALESCE(in_pkts_sum, 0)) AS total_in_pkts,
                        SUM(COALESCE(out_pkts_sum, 0)) AS total_out_pkts,
                        SUM(COALESCE(err_delta_sum, 0)) AS total_errors,
-                       SUM(COALESCE(discard_delta_sum, 0)) AS total_drops
+                       SUM(COALESCE(discard_delta_sum, 0)) AS total_drops,
+                       SUM(COALESCE(fcs_sum, 0)) AS total_crc_errors
                 FROM interface_telemetry_1m
                 WHERE device_id = ? AND ts_minute >= ? AND ts_minute <= ? {intf_where}
                 GROUP BY ts_minute
@@ -877,7 +1085,8 @@ def monitoring_device_trend(
                        SUM(COALESCE(in_pkts, 0)) AS total_in_pkts,
                        SUM(COALESCE(out_pkts, 0)) AS total_out_pkts,
                        SUM(COALESCE(in_errors, 0) + COALESCE(out_errors, 0)) AS total_errors,
-                       SUM(COALESCE(in_discards, 0) + COALESCE(out_discards, 0)) AS total_drops
+                       SUM(COALESCE(in_discards, 0) + COALESCE(out_discards, 0)) AS total_drops,
+                       SUM(COALESCE(fcs_errors, 0)) AS total_crc_errors
                 FROM interface_telemetry_raw
                 WHERE device_id = ? AND ts >= ? AND ts <= ? AND interface_name = ?
                 GROUP BY ts
@@ -896,7 +1105,8 @@ def monitoring_device_trend(
                        SUM(COALESCE(in_pkts, 0)) AS total_in_pkts,
                        SUM(COALESCE(out_pkts, 0)) AS total_out_pkts,
                        SUM(COALESCE(in_errors, 0) + COALESCE(out_errors, 0)) AS total_errors,
-                       SUM(COALESCE(in_discards, 0) + COALESCE(out_discards, 0)) AS total_drops
+                       SUM(COALESCE(in_discards, 0) + COALESCE(out_discards, 0)) AS total_drops,
+                       SUM(COALESCE(fcs_errors, 0)) AS total_crc_errors
                 FROM interface_telemetry_raw
                 WHERE device_id = ? AND ts >= ? AND ts <= ?
                 GROUP BY ts
@@ -915,7 +1125,8 @@ def monitoring_device_trend(
                        SUM(COALESCE(in_pkts_sum, 0)) AS total_in_pkts,
                        SUM(COALESCE(out_pkts_sum, 0)) AS total_out_pkts,
                        SUM(COALESCE(err_delta_sum, 0)) AS total_errors,
-                       SUM(COALESCE(discard_delta_sum, 0)) AS total_drops
+                       SUM(COALESCE(discard_delta_sum, 0)) AS total_drops,
+                       SUM(COALESCE(fcs_sum, 0)) AS total_crc_errors
                 FROM interface_telemetry_1m
                 WHERE device_id = ? AND ts_minute >= ? AND ts_minute <= ? AND interface_name = ?
                 GROUP BY ts_minute
@@ -934,7 +1145,8 @@ def monitoring_device_trend(
                        SUM(COALESCE(in_pkts_sum, 0)) AS total_in_pkts,
                        SUM(COALESCE(out_pkts_sum, 0)) AS total_out_pkts,
                        SUM(COALESCE(err_delta_sum, 0)) AS total_errors,
-                       SUM(COALESCE(discard_delta_sum, 0)) AS total_drops
+                       SUM(COALESCE(discard_delta_sum, 0)) AS total_drops,
+                       SUM(COALESCE(fcs_sum, 0)) AS total_crc_errors
                 FROM interface_telemetry_1m
                 WHERE device_id = ? AND ts_minute >= ? AND ts_minute <= ?
                 GROUP BY ts_minute

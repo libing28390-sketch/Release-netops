@@ -8,7 +8,6 @@ import {
   METRIC_CATALOG,
   createDefinition,
   hasDefinition,
-  toPayload,
   metricLabel,
   catalogEntry,
 } from './MetricRowItem';
@@ -18,6 +17,7 @@ import {
   DEFAULT_INTERFACE_CONFIG,
 } from './InterfaceConfigSection';
 import { LiveWalkInspector, CandidateDevice } from './LiveWalkInspector';
+import type { SnmpHardwareTestResult, SnmpMetricProbeResult } from './LiveWalkInspector';
 import { ModelPresetItem } from '../PresetProfilesModal';
 
 export interface ProfileForm {
@@ -35,6 +35,7 @@ export interface InterfaceTestResult {
   selected_counter_bits?: number | null;
   interfaces?: number;
   counter_supported?: number;
+  warnings?: Array<{ code?: string; severity?: string; message?: string; [key: string]: unknown }>;
   checks?: Record<
     string,
     { oid?: string; passed?: boolean; rows?: number; message?: string; counter_bits?: number }
@@ -59,6 +60,14 @@ interface MetricProfileEditorProps {
 }
 
 const KNOWN_VENDOR_SET = new Set<string>(ALL_VENDOR_NAMES as readonly string[]);
+const DEFAULT_HEALTH_METRIC_KEYS = ['cpu', 'memory', 'temperature', 'fan', 'power_supply'];
+
+const liveMetricValue = (detail: SnmpMetricProbeResult | undefined, zh: boolean) => {
+  if (!detail || detail.value === null || detail.value === undefined || detail.value === '') return '—';
+  if (detail.value === true) return zh ? '正常' : 'Normal';
+  if (detail.value === false) return zh ? '异常' : 'Abnormal';
+  return `${String(detail.value)}${detail.unit ? ` ${detail.unit}` : ''}`;
+};
 
 export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
   editingId,
@@ -78,6 +87,7 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
 }) => {
   const zh = language === 'zh';
   const [addMetricKey, setAddMetricKey] = useState('');
+  const [liveTestResult, setLiveTestResult] = useState<SnmpHardwareTestResult | null>(null);
 
   const addableMetrics = useMemo(() => {
     return METRIC_CATALOG.filter(item => !form.metrics.some(row => row.key === item.key));
@@ -92,39 +102,6 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
     const next = addableMetrics.find(item => item.key !== addMetricKey);
     setAddMetricKey(next?.key || '');
   };
-
-  const handleBackfillOid = (metricKey: string, oid: string) => {
-    onChangeForm(prev => {
-      const exists = prev.metrics.some(m => m.key === metricKey);
-      const metrics = exists
-        ? prev.metrics
-        : [...prev.metrics, { key: metricKey, definition: createDefinition(metricKey) }];
-      return {
-        ...prev,
-        metrics: metrics.map(row => {
-          if (row.key !== metricKey) return row;
-          return {
-            ...row,
-            definition: {
-              ...row.definition,
-              oid,
-            },
-          };
-        }),
-      };
-    });
-    showToast(
-      zh ? `已将 ${oid} 设为 ${metricLabel(metricKey, true)} OID` : `Set ${oid} to ${metricKey} OID`,
-      'success',
-    );
-  };
-
-  const fallbackOid = useMemo(() => {
-    return (
-      form.metrics.map(row => String(toPayload(row.definition).oid || '').trim()).find(Boolean) ||
-      (form.interfaceConfig.enabled ? form.interfaceConfig.if_name_oid : '')
-    );
-  }, [form.metrics, form.interfaceConfig]);
 
   return (
     <div
@@ -164,6 +141,7 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
             <label className="block text-[11px] font-medium text-black/60 dark:text-white/60">
               {zh ? '设备厂商（关联资产管理）' : 'Vendor (shared catalog)'}
               <select
+                aria-label={zh ? '设备厂商（关联资产管理）' : 'Vendor (shared catalog)'}
                 value={form.vendor}
                 onChange={e => onChangeForm(prev => ({ ...prev, vendor: e.target.value }))}
                 className="mt-1 w-full rounded-lg border border-black/8 bg-white/40 px-3 py-2 text-xs outline-none focus:border-[#00bceb]/50 dark:border-white/10 dark:bg-white/[.03]"
@@ -232,10 +210,11 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
           <LiveWalkInspector
             zh={zh}
             candidateDevices={candidateDevices}
-            fallbackOid={fallbackOid}
+            metrics={form.metrics}
+            interfaceConfig={form.interfaceConfig}
             saving={saving}
             showToast={showToast}
-            onBackfillOid={handleBackfillOid}
+            onTestResult={setLiveTestResult}
           />
 
           {/* Metrics Section Header */}
@@ -246,8 +225,8 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
               </div>
               <div className="mt-0.5 text-[9px] text-black/40 dark:text-white/40">
                 {zh
-                  ? '默认包含 CPU 与内存指标；可根据设备支持能力按需添加温度、风扇、电源、存储等 OID。'
-                  : 'CPU and memory are included by default; add optional metrics as supported.'}
+                  ? '实时测试默认采集 CPU、内存、温度、风扇、电源五项健康指标；存储、电压、功耗等模板扩展指标按需添加。'
+                  : 'Live testing includes CPU, memory, temperature, fan, and PSU health by default; add storage, voltage, or power metrics as needed.'}
               </div>
             </div>
             <div className="flex min-w-0 items-center gap-1.5">
@@ -313,6 +292,46 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
               </tbody>
             </table>
           </div>
+
+          {liveTestResult && (
+            <div className="mt-3 rounded-xl border border-emerald-200/70 bg-emerald-50/45 p-3 dark:border-emerald-400/20 dark:bg-emerald-400/[.05]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-[11px] font-semibold text-emerald-900 dark:text-emerald-200">
+                    {zh ? '最近一次硬件测试结果（已加载）' : 'Latest hardware test results (loaded)'}
+                  </div>
+                  <div className="mt-0.5 text-[9px] text-emerald-800/65 dark:text-emerald-200/65">
+                    {zh ? '以下五项就是健康采集实际使用的来源和值；内置采集器不需要填写 OID。' : 'These five values and sources are used by health collection; built-in collectors do not require an OID.'}
+                  </div>
+                </div>
+                <span className="rounded-full bg-white/80 px-2 py-1 text-[9px] font-semibold text-emerald-700 dark:bg-white/10 dark:text-emerald-300">
+                  {liveTestResult.matched_hostname || liveTestResult.host}
+                </span>
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                {DEFAULT_HEALTH_METRIC_KEYS.map(key => {
+                  const detail = liveTestResult.metrics?.[key];
+                  const isNormal = detail?.status === 'ok';
+                  const source = detail?.source === 'template_definition'
+                    ? (zh ? 'SNMP 型号模板' : 'SNMP model template')
+                    : (zh ? '厂商内置采集器' : 'Vendor built-in collector');
+                  return (
+                    <div key={key} className="rounded-lg border border-white/80 bg-white/75 px-2.5 py-2 dark:border-white/10 dark:bg-white/[.06]">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[10px] font-semibold text-black/70 dark:text-white/75">{metricLabel(key, zh)}</span>
+                        <span className={`text-[9px] font-semibold ${isNormal ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-600 dark:text-amber-300'}`}>
+                          {detail ? (isNormal ? (zh ? '正常' : 'OK') : (zh ? '检查' : 'Check')) : (zh ? '未返回' : 'Missing')}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-sm font-semibold text-[#00172D] dark:text-white/90">{liveMetricValue(detail, zh)}</div>
+                      <div className="mt-1 text-[9px] font-medium text-cyan-700 dark:text-cyan-300">{source}</div>
+                      {detail?.oid ? <div className="mt-0.5 truncate font-mono text-[8px] text-black/35 dark:text-white/35" title={detail.oid}>OID {detail.oid}</div> : <div className="mt-0.5 text-[8px] text-black/35 dark:text-white/35">{zh ? '无需 OID：内置规则' : 'No OID: built-in rule'}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Interface Config Section */}
           <InterfaceConfigSection

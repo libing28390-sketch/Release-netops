@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from database import get_db_connection
 from services.device_health_service import annotate_devices_with_health, build_health_overview, fetch_device_health_history, fetch_device_health_trend, load_devices_for_health, record_device_health_snapshot
+from services.snmp_metric_profile_service import annotate_devices_with_snmp_profile
 from services.site_identity_service import canonical_site_name
 
 
@@ -12,7 +13,8 @@ router = APIRouter()
 def device_health_overview():
     conn = get_db_connection()
     try:
-        devices = annotate_devices_with_health(conn, load_devices_for_health(conn))
+        devices = annotate_devices_with_snmp_profile(load_devices_for_health(conn))
+        devices = annotate_devices_with_health(conn, devices)
         return build_health_overview(devices)
     finally:
         conn.close()
@@ -53,6 +55,7 @@ def device_health_detail(device_id: str):
         raw_device['site_id'] = str(raw_device.get('site_id') or raw_device.get('resolved_site_id') or '').strip()
         raw_device['site'] = canonical_site_name(raw_device)
         raw_device.pop('resolved_site_id', None)
+        raw_device = annotate_devices_with_snmp_profile([raw_device])[0]
         device = annotate_devices_with_health(conn, [raw_device])[0]
         recent_alerts = conn.execute(
             '''

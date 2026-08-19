@@ -1,4 +1,4 @@
-from services.device_health_service import _build_collection_stats, build_health_overview, evaluate_device_health, fetch_device_health_history
+from services.device_health_service import _build_collection_stats, build_health_overview, evaluate_device_health, fetch_device_health_history, normalize_hardware_status
 from database.migrations.m0060_monitoring_health_dimensions import upgrade
 from services.site_identity_service import canonical_site_name, is_reserved_system_site
 
@@ -85,6 +85,14 @@ def test_boolean_hardware_failure_is_a_health_penalty() -> None:
         },
     )
     assert result["health_status"] == "critical"
+
+
+def test_hardware_status_normalization_exposes_persisted_true_as_boolean() -> None:
+    assert normalize_hardware_status('true') is True
+    assert normalize_hardware_status('ok') is True
+    assert normalize_hardware_status('false') is False
+    assert normalize_hardware_status('fail') is False
+    assert normalize_hardware_status('not-supported') is None
 
 
 def test_overview_separates_availability_and_evaluable_health() -> None:

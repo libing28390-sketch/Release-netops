@@ -18,6 +18,11 @@ from services.tftp_service import (
     upload_bytes_to_tftp,
     upload_file_to_tftp,
 )
+from services.file_transfer_service import (
+    batch_upload_configs,
+    normalize_remote_path,
+    upload_bytes,
+)
 
 
 def test_tftp_opcodes_defined():
@@ -106,6 +111,82 @@ def test_batch_upload_configs_to_tftp():
         assert len(res["details"]) == 3
         assert mock_upload.call_count == 2
         assert mock_bytes_upload.call_count == 1
+
+
+def test_archive_path_rejects_traversal():
+    with pytest.raises(Exception, match="路径无效"):
+        normalize_remote_path("backups/../outside.cfg")
+
+
+def test_sftp_archive_upload_uses_password_auth(monkeypatch):
+    import paramiko
+
+    client = MagicMock()
+    sftp = MagicMock()
+    client.open_sftp.return_value = sftp
+    monkeypatch.setattr(paramiko, "SSHClient", lambda: client)
+
+    success, message = upload_bytes(
+        protocol="sftp",
+        server_ip="192.0.2.10",
+        server_port=22,
+        username="netops",
+        password="secret",
+        data=b"sysname SW1\n",
+        remote_filename="backups/SW1.cfg",
+    )
+
+    assert success is True
+    assert "sftp://192.0.2.10:22" in message
+    client.connect.assert_called_once()
+    assert client.connect.call_args.kwargs["username"] == "netops"
+    assert client.connect.call_args.kwargs["password"] == "secret"
+    sftp.putfo.assert_called_once()
+
+
+def test_ftp_archive_upload_uses_authenticated_storbinary(monkeypatch):
+    import ftplib
+
+    ftp = MagicMock()
+    monkeypatch.setattr(ftplib, "FTP", lambda: ftp)
+
+    success, message = upload_bytes(
+        protocol="ftp",
+        server_ip="192.0.2.11",
+        server_port=21,
+        username="netftp",
+        password="secret",
+        data=b"sysname SW1\n",
+        remote_filename="backups/SW1.cfg",
+    )
+
+    assert success is True
+    assert "ftp://192.0.2.11:21" in message
+    ftp.login.assert_called_once_with("netftp", "secret")
+    ftp.storbinary.assert_called_once()
+
+
+def test_sftp_batch_passes_one_protocol_to_each_file(monkeypatch, tmp_path):
+    config = tmp_path / "SW1.cfg"
+    config.write_text("sysname SW1\n", encoding="utf-8")
+    calls = []
+
+    def fake_upload_file(**kwargs):
+        calls.append(kwargs)
+        return True, "ok"
+
+    monkeypatch.setattr("services.file_transfer_service.upload_file", fake_upload_file)
+    result = batch_upload_configs(
+        protocol="sftp",
+        server_ip="192.0.2.12",
+        server_port=22,
+        username="netops",
+        password="secret",
+        items=[{"local_path": str(config), "remote_name": "SW1.cfg", "hostname": "SW1"}],
+    )
+
+    assert result["status"] == "success"
+    assert calls and calls[0]["protocol"] == "sftp"
 
 
 @pytest.mark.anyio
