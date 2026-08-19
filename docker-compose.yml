@@ -1,5 +1,14 @@
 name: nexora
 
+# Keep container stdout/stderr bounded even when a service enters a restart
+# loop. The local driver is compact and rotates without retaining an
+# unbounded JSON log file.
+x-container-logging: &container-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: nexora-postgres:latest
@@ -18,11 +27,7 @@ services:
     shm_size: 256m
     stop_grace_period: 60s
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
+    logging: *container-logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-netops}"]
       interval: 10s
@@ -51,6 +56,9 @@ services:
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set to a non-default secret}
       - REQUEST_BODY_MAX_BYTES=${REQUEST_BODY_MAX_BYTES:-157286400}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE_MAX_BYTES=${LOG_FILE_MAX_BYTES:-10485760}
+      - LOG_FILE_BACKUP_COUNT=${LOG_FILE_BACKUP_COUNT:-5}
       # Windows browsers download the one-click EXE from the Windows release
       # branch; Ubuntu browsers download the local systemd installer.
       - TERMINAL_AGENT_WINDOWS_URL=${TERMINAL_AGENT_WINDOWS_URL:-https://github.com/libing28390-sketch/Release-netops/raw/refs/heads/windows/NexoraTerminalAgent.exe}
@@ -78,11 +86,7 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
+    logging: *container-logging
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/api/health/live', timeout=3)"]
       interval: 30s
@@ -120,11 +124,7 @@ services:
       nofile:
         soft: 65536
         hard: 65536
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
+    logging: *container-logging
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://netops:8003/api/health/live"]
       interval: 30s

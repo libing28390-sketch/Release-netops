@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # HTTP access records are emitted at DEBUG; warnings/errors remain visible.
     LOG_LEVEL: str = "INFO"
     LOG_SLOW_REQUEST_MS: float = 500.0
+    # The file logger is bounded independently from Docker's stdout/stderr
+    # rotation so an application restart loop cannot fill the data volume.
+    LOG_FILE_MAX_BYTES: int = 10 * 1024 * 1024
+    LOG_FILE_BACKUP_COUNT: int = 5
     # Keep the application boundary aligned with nginx's 150m limit.  Route
     # models and upload handlers may impose smaller limits for their payloads.
     REQUEST_BODY_MAX_BYTES: int = 150 * 1024 * 1024

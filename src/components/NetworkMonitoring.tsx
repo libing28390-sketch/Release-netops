@@ -125,12 +125,6 @@ const fmtRate = (bps?: number) => {
   return `${bps.toFixed(0)} bps`;
 };
 
-const fmtCounter = (value?: number) => {
-  const number = Number(value);
-  if (value == null || !Number.isFinite(number) || number < 0) return '-';
-  return `${Math.round(number).toLocaleString()} B`;
-};
-
 const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices, showToast, isAuthenticated = true }) => {
   const zh = language === 'zh';
   const ct = useChartTheme();
@@ -946,11 +940,6 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                       <tbody className="divide-y divide-black/5 dark:divide-white/5">
                         {upInterfaces.map((it: any, idx: number) => {
                         const bw = Math.max(Number(it.bw_in_pct || 0), Number(it.bw_out_pct || 0));
-                        const counterSource = String(
-                          it.counter_source
-                          || (Number(it.counter_width) === 64 ? 'ifHCInOctets/ifHCOutOctets' : Number(it.counter_width) === 32 ? 'ifInOctets/ifOutOctets' : 'SNMP'),
-                        );
-                        const counterQuality = String(it.counter_quality || '');
                         return (
                           <tr key={`${it.interface_name}-${idx}`} className="hover:bg-black/[0.015] dark:hover:bg-white/[0.015]">
                             <td className="px-4 py-2 font-mono text-[var(--app-text)] font-semibold">{it.interface_name}</td>
@@ -962,12 +951,9 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                             </td>
                             <td className="px-4 py-2 text-right font-mono text-blue-600 dark:text-blue-400">
                               <div>{fmtRate(it.in_bps)}</div>
-                              <div className="text-[9px] font-normal text-[var(--muted-text)]" title={zh ? `设备返回的累计字节数；来源 ${counterSource}` : `Device-returned cumulative octets; source ${counterSource}`}>{zh ? '累计 ' : 'Total '}{fmtCounter(it.in_octets)}</div>
-                              <div className={`text-[9px] font-normal ${counterQuality === 'suspicious_uniform' ? 'text-amber-600' : 'text-[var(--muted-text)]'}`} title={it.counter_quality_reason || counterSource}>{zh ? '来源 ' : 'Source '}{counterSource}{counterQuality === 'suspicious_uniform' ? (zh ? '（异常一致）' : ' (uniform)') : ''}</div>
                             </td>
                             <td className="px-4 py-2 text-right font-mono text-orange-600 dark:text-orange-400">
                               <div>{fmtRate(it.out_bps)}</div>
-                              <div className="text-[9px] font-normal text-[var(--muted-text)]" title={zh ? `设备返回的累计字节数；来源 ${counterSource}` : `Device-returned cumulative octets; source ${counterSource}`}>{zh ? '累计 ' : 'Total '}{fmtCounter(it.out_octets)}</div>
                             </td>
                             <td className="px-4 py-2 text-right font-mono text-[var(--app-text)]">{`${bw.toFixed(1)}%`}</td>
                             <td className="px-4 py-2 text-right font-mono text-[var(--app-text)]" title={zh ? `ifInErrors ${Number(it.in_errors || 0)}；ifOutErrors ${Number(it.out_errors || 0)}` : `ifInErrors ${Number(it.in_errors || 0)}; ifOutErrors ${Number(it.out_errors || 0)}`}>{Number(it.in_errors || 0)} / {Number(it.out_errors || 0)}</td>
