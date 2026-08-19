@@ -946,9 +946,13 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     CREATE TABLE IF NOT EXISTS global_vars (
         id TEXT PRIMARY KEY,
         key TEXT UNIQUE,
-        value TEXT
+        value TEXT,
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
     )
     ''')
+    ensure_column('global_vars', 'created_at', "TEXT DEFAULT ''")
+    ensure_column('global_vars', 'updated_at', "TEXT DEFAULT ''")
 
     # Create global_notification_channels table if not exists
     cursor.execute('''

@@ -2079,7 +2079,7 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                     onChange={(e) => setTftpSettings({ ...tftpSettings, path_prefix: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 focus:border-[#0891b2] focus:outline-none"
                   />
-                  <p className="text-[10px] text-slate-400">{zh ? `文件将上传至 ${archiveProtocolLabel(tftpSettings.protocol)} 服务器的该前缀路径中（如 backups/hostname_YYYYMMDD.cfg）` : `Files will be uploaded under the ${archiveProtocolLabel(tftpSettings.protocol)} remote prefix`}</p>
+                  <p className="text-[10px] text-slate-400">{zh ? `本批次文件将压缩为一个 ZIP 后上传至 ${archiveProtocolLabel(tftpSettings.protocol)} 服务器的该前缀路径中（如 backups/config_backup_YYYYMMDD_HHMMSS.zip）` : `Each backup batch is compressed into one time-stamped ZIP archive under the ${archiveProtocolLabel(tftpSettings.protocol)} remote prefix`}</p>
                 </div>
 
                 {tftpTestResult && (

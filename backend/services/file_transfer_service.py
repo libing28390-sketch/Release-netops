@@ -12,6 +12,8 @@ import ftplib
 import io
 import logging
 import posixpath
+import time
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -281,77 +283,145 @@ def batch_upload_configs(
     password: str = "",
     path_prefix: str = "backups",
     summary_log: str = "",
+    archive_name: str | None = None,
 ) -> dict[str, Any]:
-    """Upload backup files and an optional batch summary using one protocol."""
+    """Upload one readable ZIP archive containing the whole backup batch.
+
+    ``items`` are expected to contain decoded configuration bytes in ``data``
+    when called by the configuration backup API.  The local snapshot files can
+    remain encrypted; only the in-memory decoded bytes are written to the
+    remote archive.  Reading ``local_path`` remains as a compatibility fallback
+    for older callers that already provide plaintext files.
+    """
 
     normalized_protocol = normalize_transfer_protocol(protocol)
     if not str(server_ip or "").strip():
         return {"status": "skipped", "uploaded": 0, "total": 0, "details": ["文件服务器未配置"]}
 
-    if normalized_protocol == "tftp":
-        # Preserve the legacy batch implementation so existing TFTP servers
-        # and callers keep exactly the same behavior during migration.
-        return tftp_service.batch_upload_configs_to_tftp(
-            server_ip=server_ip,
-            items=items,
-            server_port=int(server_port or default_transfer_port(normalized_protocol)),
-            path_prefix=path_prefix,
-            summary_log=summary_log,
-        )
-
     clean_prefix = str(path_prefix or "").strip("/").replace("\\", "/")
-    uploaded_count = 0
-    total_count = len(items) + (1 if summary_log else 0)
-    details: list[str] = []
     label = TRANSFER_PROTOCOL_LABELS[normalized_protocol]
+    details: list[str] = []
+    used_names: set[str] = set()
+    archive_buffer = io.BytesIO()
+    file_count = 0
+    skipped_count = 0
 
-    for item in items:
-        local_path = item.get("local_path", "")
-        remote_name = item.get("remote_name", "")
-        hostname = item.get("hostname", "unknown")
-        if not local_path or not remote_name:
-            continue
+    def _as_bytes(item: dict[str, Any]) -> bytes | None:
+        value = item.get("data")
+        if value is None:
+            local_path = str(item.get("local_path") or "")
+            if not local_path:
+                return None
+            try:
+                value = Path(local_path).read_bytes()
+            except OSError:
+                return None
+        if isinstance(value, str):
+            return value.encode("utf-8")
+        if isinstance(value, (bytearray, memoryview)):
+            return bytes(value)
+        return value if isinstance(value, bytes) else None
 
-        target_remote_path = f"{clean_prefix}/{remote_name}" if clean_prefix else remote_name
-        ok, msg = upload_file(
-            protocol=normalized_protocol,
-            server_ip=server_ip,
-            local_file_path=local_path,
-            remote_filename=target_remote_path,
-            server_port=server_port,
-            username=username,
-            password=password,
-        )
-        if ok:
-            uploaded_count += 1
-            details.append(f"[{hostname}] {label} 上传成功: {target_remote_path}")
-        else:
-            details.append(f"[{hostname}] {label} 上传失败: {msg}")
+    def _unique_entry_name(raw_name: str) -> str:
+        normalized_name = normalize_remote_path(raw_name)
+        candidate = normalized_name
+        counter = 2
+        while candidate in used_names:
+            stem, suffix = posixpath.splitext(normalized_name)
+            candidate = f"{stem}_{counter}{suffix}"
+            counter += 1
+        used_names.add(candidate)
+        return candidate
 
-    if summary_log and summary_log.strip():
-        timestamp_str = __import__("time").strftime("%Y%m%d_%H%M%S")
-        log_remote_name = f"backup_summary_{timestamp_str}.log"
-        target_log_path = f"{clean_prefix}/{log_remote_name}" if clean_prefix else log_remote_name
-        ok, msg = upload_bytes(
-            protocol=normalized_protocol,
-            server_ip=server_ip,
-            data=summary_log.encode("utf-8"),
-            remote_filename=target_log_path,
-            server_port=server_port,
-            username=username,
-            password=password,
-        )
-        if ok:
-            uploaded_count += 1
-            details.append(f"[批次摘要] {label} 上传成功: {target_log_path}")
-        else:
-            details.append(f"[批次摘要] {label} 上传失败: {msg}")
+    try:
+        with zipfile.ZipFile(archive_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for item in items:
+                hostname = str(item.get("hostname") or "unknown")
+                raw_name = item.get("archive_name") or item.get("remote_name")
+                data = _as_bytes(item)
+                if not raw_name or data is None:
+                    skipped_count += 1
+                    details.append(f"[{hostname}] 已跳过：配置归档内容无效")
+                    continue
+                try:
+                    entry_name = _unique_entry_name(str(raw_name))
+                except FileTransferError as exc:
+                    skipped_count += 1
+                    details.append(f"[{hostname}] 已跳过：{exc}")
+                    continue
+                archive.writestr(entry_name, data)
+                file_count += 1
 
-    status = "success" if uploaded_count == total_count and total_count > 0 else ("partial" if uploaded_count > 0 else "failed")
+            if summary_log and summary_log.strip():
+                archive.writestr(_unique_entry_name("backup_summary.txt"), summary_log.encode("utf-8"))
+    except Exception as exc:
+        logger.warning("Could not build configuration archive: %s", exc)
+        return {
+            "status": "failed",
+            "uploaded": 0,
+            "total": 1,
+            "file_count": 0,
+            "skipped": len(items),
+            "details": details + [f"批量归档失败: {exc}"],
+            "server": f"{server_ip}:{server_port or default_transfer_port(normalized_protocol)}",
+            "protocol": normalized_protocol,
+        }
+
+    if file_count == 0:
+        return {
+            "status": "failed",
+            "uploaded": 0,
+            "total": 1,
+            "file_count": 0,
+            "skipped": skipped_count,
+            "details": details + ["批量归档失败：没有可上传的有效配置文件"],
+            "server": f"{server_ip}:{server_port or default_transfer_port(normalized_protocol)}",
+            "protocol": normalized_protocol,
+        }
+
+    raw_archive_name = str(archive_name or f"config_backup_{time.strftime('%Y%m%d_%H%M%S')}.zip").strip()
+    try:
+        clean_archive_name = normalize_remote_path(raw_archive_name)
+    except FileTransferError as exc:
+        return {
+            "status": "failed",
+            "uploaded": 0,
+            "total": 1,
+            "file_count": file_count,
+            "skipped": skipped_count,
+            "details": details + [f"批量归档失败：{exc}"],
+            "server": f"{server_ip}:{server_port or default_transfer_port(normalized_protocol)}",
+            "protocol": normalized_protocol,
+        }
+    if not clean_archive_name.lower().endswith(".zip"):
+        clean_archive_name += ".zip"
+    target_remote_path = f"{clean_prefix}/{clean_archive_name}" if clean_prefix else clean_archive_name
+
+    ok, msg = upload_bytes(
+        protocol=normalized_protocol,
+        server_ip=server_ip,
+        data=archive_buffer.getvalue(),
+        remote_filename=target_remote_path,
+        server_port=server_port,
+        username=username,
+        password=password,
+    )
+    if ok:
+        status = "partial" if skipped_count else "success"
+        details.append(f"[批次归档] {label} 上传成功: {target_remote_path}（{file_count} 个配置文件）")
+        uploaded_count = 1
+    else:
+        status = "failed"
+        details.append(f"[批次归档] {label} 上传失败: {msg}")
+        uploaded_count = 0
+
     return {
         "status": status,
         "uploaded": uploaded_count,
-        "total": total_count,
+        "total": 1,
+        "file_count": file_count,
+        "skipped": skipped_count,
+        "archive_name": clean_archive_name,
         "details": details,
         "server": f"{server_ip}:{server_port or default_transfer_port(normalized_protocol)}",
         "protocol": normalized_protocol,

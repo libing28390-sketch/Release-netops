@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+import io
 import socket
 import tempfile
+import zipfile
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -166,27 +169,52 @@ def test_ftp_archive_upload_uses_authenticated_storbinary(monkeypatch):
     ftp.storbinary.assert_called_once()
 
 
-def test_sftp_batch_passes_one_protocol_to_each_file(monkeypatch, tmp_path):
-    config = tmp_path / "SW1.cfg"
-    config.write_text("sysname SW1\n", encoding="utf-8")
+def test_batch_uploads_one_plaintext_zip_archive(monkeypatch):
     calls = []
 
-    def fake_upload_file(**kwargs):
+    def fake_upload_bytes(**kwargs):
         calls.append(kwargs)
         return True, "ok"
 
-    monkeypatch.setattr("services.file_transfer_service.upload_file", fake_upload_file)
+    monkeypatch.setattr("services.file_transfer_service.upload_bytes", fake_upload_bytes)
     result = batch_upload_configs(
         protocol="sftp",
         server_ip="192.0.2.12",
         server_port=22,
         username="netops",
         password="secret",
-        items=[{"local_path": str(config), "remote_name": "SW1.cfg", "hostname": "SW1"}],
+        path_prefix="backups",
+        archive_name="config_backup_20260820_120000_run-01.zip",
+        summary_log="Files In Archive: 2\n",
+        items=[{
+            "remote_name": "SW1.cfg",
+            "archive_name": "2026/08/H3C/SW1/20260820_120000_running.cfg",
+            "hostname": "SW1",
+            "data": b"sysname SW1\n",
+        }, {
+            "remote_name": "SW2.cfg",
+            "archive_name": "2026/08/H3C/SW2/20260820_120000_running.cfg",
+            "hostname": "SW2",
+            "data": b"sysname SW2\n",
+        }],
     )
 
     assert result["status"] == "success"
-    assert calls and calls[0]["protocol"] == "sftp"
+    assert result["uploaded"] == 1
+    assert result["total"] == 1
+    assert result["file_count"] == 2
+    assert len(calls) == 1
+    assert calls[0]["protocol"] == "sftp"
+    assert calls[0]["remote_filename"] == "backups/config_backup_20260820_120000_run-01.zip"
+    with zipfile.ZipFile(io.BytesIO(calls[0]["data"])) as archive:
+        assert archive.namelist() == [
+            "2026/08/H3C/SW1/20260820_120000_running.cfg",
+            "2026/08/H3C/SW2/20260820_120000_running.cfg",
+            "backup_summary.txt",
+        ]
+        assert archive.read(archive.namelist()[0]) == b"sysname SW1\n"
+        assert archive.read(archive.namelist()[1]) == b"sysname SW2\n"
+        assert archive.read("backup_summary.txt") == b"Files In Archive: 2\n"
 
 
 @pytest.mark.anyio
@@ -203,6 +231,7 @@ async def test_tftp_api_endpoints(monkeypatch, tmp_path):
         test_tftp_connectivity,
         sync_snapshot_to_tftp,
         sync_batch_to_tftp,
+        _write_config_file,
     )
 
     db_file = str(tmp_path / "test_tftp_api.db")
@@ -218,9 +247,7 @@ async def test_tftp_api_endpoints(monkeypatch, tmp_path):
         CREATE TABLE global_vars (
             id TEXT PRIMARY KEY,
             key TEXT NOT NULL UNIQUE,
-            value TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            value TEXT NOT NULL
         );
         CREATE TABLE config_snapshots (
             id TEXT PRIMARY KEY,
@@ -238,23 +265,37 @@ async def test_tftp_api_endpoints(monkeypatch, tmp_path):
         );
         """
     )
+    from database.migrations.m0157_global_vars_timestamps import upgrade as upgrade_global_vars
+    upgrade_global_vars(conn, use_pg=False)
     conn.execute("INSERT INTO config_backup_runs (id) VALUES ('run-01')")
 
-    # Create dummy local cfg file
     backup_root = str(tmp_path / "backups_root")
-    os.makedirs(os.path.join(backup_root, "Huawei"), exist_ok=True)
-    cfg_file = os.path.join(backup_root, "Huawei", "SW-01.cfg")
-    with open(cfg_file, "w", encoding="utf-8") as f:
-        f.write("sysname SW-01\n")
+    from core import crypto
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "CREDENTIAL_ENCRYPTION_KEY", "test-config-archive-key")
+    monkeypatch.setattr(crypto, "_aes_key", None)
+    monkeypatch.setattr(crypto, "_fernet", None)
+    monkeypatch.setattr("api.configs.BACKUP_ROOT", backup_root)
+    rel_path = _write_config_file(
+        "Huawei",
+        "SW-01",
+        datetime(2026, 8, 20, tzinfo=timezone.utc),
+        "manual",
+        "sysname SW-01\nvlan 10\n",
+    )
+    raw_path = os.path.join(backup_root, rel_path.replace('/', os.sep))
+    with open(raw_path, "rb") as stored_file:
+        assert stored_file.read().startswith(b"ENCRYPTED:")
 
     conn.execute(
-        "INSERT INTO config_snapshots (id, hostname, file_path, config_type, task_id) VALUES ('snap-01', 'SW-01', 'Huawei/SW-01.cfg', 'running', 'run-01')"
+        "INSERT INTO config_snapshots (id, hostname, file_path, config_type, task_id) VALUES ('snap-01', 'SW-01', ?, 'running', 'run-01')",
+        (rel_path,),
     )
     conn.commit()
     conn.close()
 
     monkeypatch.setattr("api.configs.get_db_connection", _get_conn)
-    monkeypatch.setattr("api.configs.BACKUP_ROOT", backup_root)
 
     # 1. Test settings GET & PUT
     save_res = save_tftp_settings(
@@ -275,20 +316,30 @@ async def test_tftp_api_endpoints(monkeypatch, tmp_path):
         assert "探测成功" in probe_res["message"]
 
     # 3. Test sync single snapshot
-    with patch("services.tftp_service.upload_file_to_tftp", return_value=(True, "Uploaded")):
+    with patch("services.tftp_service.upload_bytes_to_tftp", return_value=(True, "Uploaded")) as single_upload:
         sync_res = await sync_snapshot_to_tftp(
             TFTPSyncSnapshotPayload(snapshot_id="snap-01", server_ip="192.168.1.200")
         )
         assert sync_res["success"] is True
         assert "SW-01" in sync_res["message"]
+        assert single_upload.call_args.kwargs["data"].replace(b"\r\n", b"\n") == b"sysname SW-01\nvlan 10\n"
 
     # 4. Test sync batch
-    with patch("services.tftp_service.batch_upload_configs_to_tftp", return_value={"status": "success", "uploaded": 1, "total": 1, "details": ["SW-01 OK"]}):
+    with patch("services.tftp_service.upload_bytes_to_tftp", return_value=(True, "Uploaded")) as batch_upload:
         batch_res = await sync_batch_to_tftp(
             TFTPSyncBatchPayload(run_id="run-01", server_ip="192.168.1.200")
         )
         assert batch_res["success"] is True
         assert batch_res["uploaded"] == 1
+        assert batch_res["total"] == 1
+        assert batch_res["file_count"] == 1
+        assert batch_upload.call_count == 1
+        with zipfile.ZipFile(io.BytesIO(batch_upload.call_args.kwargs["data"])) as archive:
+            names = archive.namelist()
+            assert any(name.endswith(rel_path) for name in names)
+            assert "backup_summary.txt" in names
+            config_name = next(name for name in names if name.endswith(rel_path))
+            assert archive.read(config_name).replace(b"\r\n", b"\n") == b"sysname SW-01\nvlan 10\n"
 
     check_conn = _get_conn()
     run_row = check_conn.execute("SELECT * FROM config_backup_runs WHERE id = 'run-01'").fetchone()
