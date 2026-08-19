@@ -76,8 +76,8 @@ export const ServerFaceplate: React.FC<ServerFaceplateProps> = ({
         </mesh>
 
         {/* 3D Physical PWR (Power) LED */}
-        <mesh position={[-(width / 2) + 0.24, (height / 2) - 0.08, 0.015]}>
-          <cylinderGeometry args={[0.02, 0.02, 0.01, 16]} rotation={[Math.PI / 2, 0, 0]} />
+        <mesh position={[-(width / 2) + 0.24, (height / 2) - 0.08, 0.015]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.02, 0.02, 0.01, 16]} />
           <meshStandardMaterial
             color={healthStatus === 'offline' ? '#334155' : '#22c55e'}
             emissive={healthStatus === 'offline' ? '#000000' : '#22c55e'}
@@ -87,8 +87,8 @@ export const ServerFaceplate: React.FC<ServerFaceplateProps> = ({
         </mesh>
 
         {/* 3D Physical SYS (Health) Status LED */}
-        <mesh position={[-(width / 2) + 0.32, (height / 2) - 0.08, 0.015]}>
-          <cylinderGeometry args={[0.02, 0.02, 0.01, 16]} rotation={[Math.PI / 2, 0, 0]} />
+        <mesh position={[-(width / 2) + 0.32, (height / 2) - 0.08, 0.015]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.02, 0.02, 0.01, 16]} />
           <meshStandardMaterial
             color={ledConfig.color}
             emissive={ledConfig.emissive}

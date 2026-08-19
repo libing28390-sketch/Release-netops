@@ -33,6 +33,13 @@ export default defineConfig(({ mode }) => {
               return 'router-vendor';
             }
 
+            // Recharts and React Three Fiber both depend on this shared
+            // module. Keep it with React so Rollup cannot create a
+            // charts-vendor -> react-vendor -> charts-vendor cycle.
+            if (id.includes('use-sync-external-store')) {
+              return 'react-vendor';
+            }
+
             if (id.includes('recharts') || id.includes('/d3-')) {
               return 'charts-vendor';
             }

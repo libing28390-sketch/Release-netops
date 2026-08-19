@@ -42,7 +42,7 @@ import {
   findFirstFreeStartU
 } from './helpers';
 import { normalizeRackToVM, HealthMap, HealthInfo } from './adapters/rackViewModel';
-import { Rack3DContainer } from './Rack3D';
+const Rack3DContainer = React.lazy(() => import('./Rack3D').then(m => ({ default: m.Rack3DContainer })));
 import { DevicePortMatrix } from './components/DevicePortMatrix';
 import RackElevation from './components/RackElevation';
 
@@ -1395,14 +1395,24 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
               {viewMode === '3d' && rackVM ? (
                 <div className="flex-1 min-h-0 relative" style={{ paddingRight: drawerVisible ? 396 : undefined }}>
-                  <Rack3DContainer
-                    rackVM={rackVM}
-                    selectedDeviceId={selectedDeviceId}
-                    onSelectDevice={handleDeviceSelect}
-                    onFallbackTo2D={() => setViewMode('2d')}
-                    zh={zh}
-                  />
+                  <React.Suspense fallback={
+                    <div className="flex items-center justify-center h-full" style={{ background: 'var(--card-bg)' }}>
+                      <div className="text-center space-y-2">
+                        <div className="animate-spin w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full mx-auto" />
+                        <p className="text-xs" style={{ color: 'var(--muted-text)' }}>{zh ? '正在加载 3D 引擎...' : 'Loading 3D Engine...'}</p>
+                      </div>
+                    </div>
+                  }>
+                    <Rack3DContainer
+                      rackVM={rackVM}
+                      selectedDeviceId={selectedDeviceId}
+                      onSelectDevice={handleDeviceSelect}
+                      onFallbackTo2D={() => setViewMode('2d')}
+                      zh={zh}
+                    />
+                  </React.Suspense>
                 </div>
+
               ) : (
                 <div className="flex-1 min-h-0 overflow-y-auto p-3" ref={rackScrollRef} style={{ paddingRight: drawerVisible ? 396 : undefined }}>
                   <div className="text-[10px] font-semibold text-center mb-1.5 sticky top-0 z-10 pb-1" style={{ color: 'var(--muted-text)', background: 'var(--card-bg)' }}>
