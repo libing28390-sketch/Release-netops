@@ -87,6 +87,13 @@ export interface RackLayout {
   total_u: number;
   description: string;
   status: string;
+  site_id?: string;
+  site_code?: string;
+  site_name?: string;
+  rack_code?: string;
+  rack_name?: string;
+  room_name?: string;
+  row_name?: string;
   placement_strategy?: 'bottom_first' | 'top_first';
   rack_type_id?: string;
   width_mm?: number;
@@ -100,6 +107,7 @@ export interface RackLayout {
   total_used: number;
   available_u: number;
 }
+
 
 export interface RackStats {
   total_racks: number;
@@ -116,3 +124,77 @@ export interface Props {
   language: string;
   t: (key: string) => string;
 }
+
+export type DeviceHealthStatus = 'healthy' | 'warning' | 'critical' | 'offline' | 'unknown';
+
+export interface DeviceTelemetryVM {
+  cpuPct?: number;
+  memoryPct?: number;
+  temperatureC?: number;
+  openAlertCount?: number;
+  criticalAlerts?: number;
+  warningAlerts?: number;
+  ratedPowerWatts: number;
+  powerSource: 'RATED' | 'TELEMETRY' | 'ESTIMATED' | 'NONE';
+}
+
+export interface RackDeviceCoordinates {
+  centerY: number;
+  height: number;
+  depth: number;
+  centerZ: number;
+  width: number;
+}
+
+export interface RackDeviceVM {
+  id: string;
+  rackId: string;
+  name: string;
+  assetId: string;
+  networkDeviceId?: string;
+  deviceTypeId: string;
+  vendor: string;
+  model: string;
+  role: string;
+  startU: number;
+  heightU: number;
+  endU: number;
+  face: 'front' | 'rear';
+  isFullDepth: boolean;
+  serialNumber: string;
+  lifecycleStatus: string;
+  healthStatus: DeviceHealthStatus;
+  metrics: DeviceTelemetryVM;
+  dataQuality: {
+    valid: boolean;
+    issues: string[];
+  };
+  coordinates: RackDeviceCoordinates;
+}
+
+export interface RackVM {
+  id: string;
+  name: string;
+  siteId: string;
+  siteLabel: string;
+  floor: string;
+  room: string;
+  row: string;
+  totalU: number;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+  usedU: number;
+  availableU: number;
+  ratedPowerTotalWatts: number;
+  devices: RackDeviceVM[];
+  validDevices: RackDeviceVM[];
+  invalidDevices: RackDeviceVM[];
+  dataQuality: {
+    valid: boolean;
+    issues: string[];
+  };
+}
+
+export type RackDisplayMode = 'physical' | 'health' | 'role' | 'power';
+

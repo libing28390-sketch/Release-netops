@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Columns3,
+  Box,
   LayoutGrid,
   Server,
   Layers,
@@ -40,7 +41,11 @@ import {
   hasConflict,
   findFirstFreeStartU
 } from './helpers';
+import { normalizeRackToVM, HealthMap, HealthInfo } from './adapters/rackViewModel';
+import { Rack3DContainer } from './Rack3D';
+import { DevicePortMatrix } from './components/DevicePortMatrix';
 import RackElevation from './components/RackElevation';
+
 import DeviceIcon from './components/DeviceIcon';
 import PowerLed from './components/PowerLed';
 
@@ -74,6 +79,8 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [selectedRackId, setSelectedRackId] = useState('');
   const [layout, setLayout] = useState<RackLayout | null>(null);
   const [viewSide, setViewSide] = useState<'front' | 'rear'>('front');
+  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
+  const [healthMap, setHealthMap] = useState<HealthMap>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -247,7 +254,6 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const loadDeviceTypes = useCallback(async () => {
     try { setDeviceTypes(await fetchJson<DeviceType[]>(`${API}/device-types`)); } catch {}
   }, []);
-
   const loadRackTypes = useCallback(async () => {
     try { setRackTypes(await fetchJson<RackType[]>(`${API}/rack-types`)); } catch {}
   }, []);
@@ -255,6 +261,39 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const loadStats = useCallback(async () => {
     try { setStats(await fetchJson<RackStats>(`${API}/racks/stats`)); } catch {}
   }, []);
+
+  const loadHealthOverview = useCallback(async () => {
+    try {
+      const res = await fetchJson<any>(`${API}/device-health/overview`);
+      const list = Array.isArray(res) ? res : (res?.items || res?.overview || []);
+      const map: HealthMap = {};
+      list.forEach((item: any) => {
+        const info: HealthInfo = {
+          status: item.health_status || item.status,
+          cpu_usage: item.cpu_usage,
+          memory_usage: item.memory_usage,
+          temp: item.temp,
+          open_alert_count: item.open_alert_count,
+          critical_open_alerts: item.critical_open_alerts,
+          warning_open_alerts: item.warning_open_alerts,
+          network_device_id: item.id || item.device_id
+        };
+        if (item.asset_id) map[item.asset_id] = info;
+        if (item.id) map[item.id] = info;
+        if (item.sn) map[item.sn.toLowerCase()] = info;
+        if (item.hostname) map[item.hostname.toLowerCase()] = info;
+      });
+      setHealthMap(map);
+    } catch {
+      // Telemetry lookup is optional enhancement
+    }
+  }, []);
+
+  const rackVM = useMemo(() => {
+    if (!layout) return null;
+    return normalizeRackToVM(layout, healthMap, siteLabel);
+  }, [layout, healthMap, siteLabel]);
+
 
   const fetchInstallAssets = useCallback(async (q: string, page: number, append: boolean) => {
     try {
@@ -309,9 +348,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       setError('');
     } catch (e: any) { setError(e.message); setLayout(null); }
     finally { setLoading(false); }
+
   }, []);
 
-  useEffect(() => { loadRacks(); loadDeviceTypes(); loadRackTypes(); loadStats(); loadSites(); }, []);
+  useEffect(() => { loadRacks(); loadDeviceTypes(); loadRackTypes(); loadStats(); loadSites(); loadHealthOverview(); }, []);
   useEffect(() => { if (selectedRackId) loadLayout(selectedRackId); }, [selectedRackId, loadLayout]);
 
   useEffect(() => {
@@ -336,7 +376,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const installAssetsCanLoadMore = assetTotal > 0 && assets.length < assetTotal;
 
-  const refresh = () => { loadRacks(); loadRackTypes(); loadStats(); };
+  const refresh = () => { loadRacks(); loadRackTypes(); loadStats(); loadHealthOverview(); };
 
   const applyRackTypeToForm = (rackTypeId: string) => {
     const rt = rackTypeById.get(rackTypeId);
@@ -1262,43 +1302,71 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       {siteLabel(selectedRack)}{selectedRack.floor ? ` / ${selectedRack.floor}` : ''}{selectedRack.room ? ` / ${selectedRack.room}` : ''}
                     </span>
                   </h3>
-                  <div className="flex items-center rounded-lg p-0.5" style={{ background: 'var(--app-hover-bg)' }}>
-                    <button onClick={() => setViewSide('front')} className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${viewSide === 'front' ? 'bg-cyan-600 text-white shadow-sm' : ''}`} style={viewSide !== 'front' ? { color: 'var(--muted-text)' } : {}}>
-                      {zh ? '前面板' : 'Front'}
+                  {/* 2D / 3D Mode Switch */}
+                  <div className="flex items-center rounded-lg p-0.5" style={{ background: 'var(--app-hover-bg)', border: '1px solid var(--card-border)' }}>
+                    <button
+                      onClick={() => setViewMode('2d')}
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                        viewMode === '2d' ? 'bg-cyan-600 text-white shadow-sm' : ''
+                      }`}
+                      style={viewMode !== '2d' ? { color: 'var(--muted-text)' } : {}}
+                    >
+                      <Columns3 size={12} />
+                      {zh ? '2D 机柜' : '2D'}
                     </button>
-                    <button onClick={() => setViewSide('rear')} className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${viewSide === 'rear' ? 'bg-cyan-600 text-white shadow-sm' : ''}`} style={viewSide !== 'rear' ? { color: 'var(--muted-text)' } : {}}>
-                      {zh ? '后面板' : 'Rear'}
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button onClick={handleFitToScreen} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors hover:bg-cyan-50" style={{ color: 'var(--muted-text)' }} title={zh ? '适应屏幕' : 'Fit to Screen'}>
-                      <Maximize2 size={12} />
-                    </button>
-                    <button onClick={handleResetZoom} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors hover:bg-cyan-50" style={{ color: 'var(--muted-text)' }} title={zh ? '原始大小' : '100%'}>
-                      100%
+                    <button
+                      onClick={() => setViewMode('3d')}
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                        viewMode === '3d' ? 'bg-cyan-600 text-white shadow-sm' : ''
+                      }`}
+                      style={viewMode !== '3d' ? { color: 'var(--muted-text)' } : {}}
+                    >
+                      <Box size={12} />
+                      {zh ? '3D 孪生' : '3D'}
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-1 ml-3 pl-3 border-l" style={{ borderColor: 'var(--card-border)' }}>
-                    <button
-                      onClick={() => setCollapseEmpty(!collapseEmpty)}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all ${collapseEmpty ? 'bg-cyan-600/20 text-cyan-600' : 'hover:bg-cyan-50'}`}
-                      style={!collapseEmpty ? { color: 'var(--muted-text)' } : {}}
-                      title={zh ? '折叠空U位' : 'Collapse empty'}
-                    >
-                      {collapseEmpty ? <ChevronsUpDown size={12} /> : <Layers size={12} />}
-                      {collapseEmpty ? (zh ? '已折叠' : 'Collapsed') : (zh ? '全展开' : 'Expand')}
-                    </button>
-                    <button
-                      onClick={() => setShowDeviceList(!showDeviceList)}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all ${showDeviceList ? 'bg-cyan-600/20 text-cyan-600' : 'hover:bg-cyan-50'}`}
-                      style={!showDeviceList ? { color: 'var(--muted-text)' } : {}}
-                      title={zh ? '设备栏' : 'Device list'}
-                    >
-                      {showDeviceList ? <PanelRightOpen size={12} /> : <PanelRightClose size={12} />}
-                      {showDeviceList ? (zh ? '已显示' : 'Shown') : (zh ? '已隐藏' : 'Hidden')}
-                    </button>
-                  </div>
+                  {viewMode === '2d' && (
+                    <>
+                      <div className="flex items-center rounded-lg p-0.5" style={{ background: 'var(--app-hover-bg)' }}>
+                        <button onClick={() => setViewSide('front')} className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${viewSide === 'front' ? 'bg-cyan-600 text-white shadow-sm' : ''}`} style={viewSide !== 'front' ? { color: 'var(--muted-text)' } : {}}>
+                          {zh ? '前面板' : 'Front'}
+                        </button>
+                        <button onClick={() => setViewSide('rear')} className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${viewSide === 'rear' ? 'bg-cyan-600 text-white shadow-sm' : ''}`} style={viewSide !== 'rear' ? { color: 'var(--muted-text)' } : {}}>
+                          {zh ? '后面板' : 'Rear'}
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button onClick={handleFitToScreen} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors hover:bg-cyan-50" style={{ color: 'var(--muted-text)' }} title={zh ? '适应屏幕' : 'Fit to Screen'}>
+                          <Maximize2 size={12} />
+                        </button>
+                        <button onClick={handleResetZoom} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors hover:bg-cyan-50" style={{ color: 'var(--muted-text)' }} title={zh ? '原始大小' : '100%'}>
+                          100%
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-1 ml-3 pl-3 border-l" style={{ borderColor: 'var(--card-border)' }}>
+                        <button
+                          onClick={() => setCollapseEmpty(!collapseEmpty)}
+                          className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all ${collapseEmpty ? 'bg-cyan-600/20 text-cyan-600' : 'hover:bg-cyan-50'}`}
+                          style={!collapseEmpty ? { color: 'var(--muted-text)' } : {}}
+                          title={zh ? '折叠空U位' : 'Collapse empty'}
+                        >
+                          {collapseEmpty ? <ChevronsUpDown size={12} /> : <Layers size={12} />}
+                          {collapseEmpty ? (zh ? '已折叠' : 'Collapsed') : (zh ? '全展开' : 'Expand')}
+                        </button>
+                        <button
+                          onClick={() => setShowDeviceList(!showDeviceList)}
+                          className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all ${showDeviceList ? 'bg-cyan-600/20 text-cyan-600' : 'hover:bg-cyan-50'}`}
+                          style={!showDeviceList ? { color: 'var(--muted-text)' } : {}}
+                          title={zh ? '设备栏' : 'Device list'}
+                        >
+                          {showDeviceList ? <PanelRightOpen size={12} /> : <PanelRightClose size={12} />}
+                          {showDeviceList ? (zh ? '已显示' : 'Shown') : (zh ? '已隐藏' : 'Hidden')}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-medium" style={{ color: 'var(--muted-text)' }}>
@@ -1325,21 +1393,33 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                 </div>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto p-3" ref={rackScrollRef} style={{ paddingRight: drawerVisible ? 396 : undefined }}>
-                <div className="text-[10px] font-semibold text-center mb-1.5 sticky top-0 z-10 pb-1" style={{ color: 'var(--muted-text)', background: 'var(--card-bg)' }}>
-                  {viewSide === 'front' ? (zh ? '▼ 前面板 · 可拖拽' : '▼ Front · Draggable') : (zh ? '▼ 后面板 · 可拖拽' : '▼ Rear · Draggable')}
-                </div>
-                <div style={{ transform: `scale(${rackScale})`, transformOrigin: 'top center' }}>
-                  <RackElevation
-                    layout={layout}
-                    viewSide={viewSide}
+              {viewMode === '3d' && rackVM ? (
+                <div className="flex-1 min-h-0 relative" style={{ paddingRight: drawerVisible ? 396 : undefined }}>
+                  <Rack3DContainer
+                    rackVM={rackVM}
+                    selectedDeviceId={selectedDeviceId}
+                    onSelectDevice={handleDeviceSelect}
+                    onFallbackTo2D={() => setViewMode('2d')}
                     zh={zh}
-                    collapseEmpty={collapseEmpty}
-                    onDeviceMove={handleDeviceMove}
-                    onDeviceSelect={handleDeviceSelect}
                   />
                 </div>
-              </div>
+              ) : (
+                <div className="flex-1 min-h-0 overflow-y-auto p-3" ref={rackScrollRef} style={{ paddingRight: drawerVisible ? 396 : undefined }}>
+                  <div className="text-[10px] font-semibold text-center mb-1.5 sticky top-0 z-10 pb-1" style={{ color: 'var(--muted-text)', background: 'var(--card-bg)' }}>
+                    {viewSide === 'front' ? (zh ? '▼ 前面板 · 可拖拽' : '▼ Front · Draggable') : (zh ? '▼ 后面板 · 可拖拽' : '▼ Rear · Draggable')}
+                  </div>
+                  <div style={{ transform: `scale(${rackScale})`, transformOrigin: 'top center' }}>
+                    <RackElevation
+                      layout={layout}
+                      viewSide={viewSide}
+                      zh={zh}
+                      collapseEmpty={collapseEmpty}
+                      onDeviceMove={handleDeviceMove}
+                      onDeviceSelect={handleDeviceSelect}
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Device Detail Drawer Overlay */}
               {drawerVisible && selectedDeviceId && (() => {
@@ -1431,9 +1511,20 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                                 <div className="px-2.5 py-1.5 rounded border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}>{device.position === 'front' ? (zh ? '前面板' : 'Front') : (zh ? '后面板' : 'Rear')}</div>
                               </div>
                             </div>
+
+                            {/* Live SNMP Port Matrix */}
+                            <div className="pt-2">
+                              <DevicePortMatrix
+                                deviceId={device.asset_id || device.id}
+                                deviceName={device.name}
+                                deviceRole={device.device_role}
+                                zh={zh}
+                              />
+                            </div>
                           </>
                         )}
                       </div>
+
                       <div className="p-4 border-t" style={{ borderColor: 'var(--card-border)' }}>
                         <button onClick={() => handleRemoveDevice(device.id, device.name)} className="w-full px-3 py-2 rounded-lg text-[12px] font-medium text-red-500 hover:bg-red-50/80">{zh ? '移除设备' : 'Remove'}</button>
                       </div>
