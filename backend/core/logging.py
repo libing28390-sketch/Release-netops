@@ -149,6 +149,27 @@ def _prune_legacy_timed_archives(log_file: str, max_bytes: int, backup_count: in
             pass
 
 
+def _trim_oversized_active_log(log_file: str, max_bytes: int) -> None:
+    """Keep the newest tail when an old unbounded active log already exists."""
+    log_path = Path(log_file)
+    marker = b"\n[previous log truncated to enforce the file-size limit]\n"
+    try:
+        if not log_path.is_file() or log_path.stat().st_size <= max_bytes:
+            return
+        tail_bytes = max(0, max_bytes - len(marker))
+        with log_path.open("r+b") as stream:
+            stream.seek(-tail_bytes, os.SEEK_END) if tail_bytes else stream.seek(0)
+            tail = stream.read(tail_bytes)
+            stream.seek(0)
+            stream.write(marker)
+            stream.write(tail)
+            stream.truncate()
+    except OSError:
+        # Logging must never prevent the service from starting. The rotating
+        # handler will still enforce the limit on the next emitted record.
+        pass
+
+
 def setup_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
     log_file = os.path.join(LOG_DIR, "netops.log")
@@ -180,6 +201,7 @@ def setup_logging():
         lower=_MIN_LOG_BACKUP_COUNT,
         upper=_MAX_LOG_BACKUP_COUNT,
     )
+    _trim_oversized_active_log(log_file, max_bytes)
     _prune_legacy_timed_archives(log_file, max_bytes, backup_count)
 
     # Size-based rotation is the hard safety limit. The active file is capped
