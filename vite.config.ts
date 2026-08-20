@@ -84,6 +84,18 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           ws: true,
         },
+        '/docs': {
+          target: process.env.VITE_API_TARGET || 'http://127.0.0.1:5310',
+          changeOrigin: true,
+        },
+        '/redoc': {
+          target: process.env.VITE_API_TARGET || 'http://127.0.0.1:5310',
+          changeOrigin: true,
+        },
+        '/openapi.json': {
+          target: process.env.VITE_API_TARGET || 'http://127.0.0.1:5310',
+          changeOrigin: true,
+        },
       },
     },
   };

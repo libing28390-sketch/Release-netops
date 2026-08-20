@@ -98,3 +98,13 @@ def test_diagnose_ssh_failure_scenarios():
     # 6. Read timeout
     reason, detail = diagnose_ssh_failure("Timed-out reading channel", ip="192.168.2.201")
     assert reason == "读取响应超时"
+
+    # 7. Custom port timeout & refused
+    reason, detail = diagnose_ssh_failure("TCP connection timeout", ip="192.168.2.201", port=2222)
+    assert reason == "连接超时"
+    assert "2222 端口" in detail
+
+    reason, detail = diagnose_ssh_failure("Connection refused [Errno 111]", ip="192.168.2.201", port=8022)
+    assert reason == "连接被拒绝"
+    assert "8022 端口" in detail
+

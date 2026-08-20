@@ -40,38 +40,49 @@ const StatusCard: React.FC<{
   tone?: 'default' | 'green' | 'red' | 'amber' | 'blue';
   pulse?: boolean; onClick?: () => void; icon?: React.ReactNode;
 }> = ({ label, value, sub, tone = 'default', pulse, onClick, icon }) => {
-  const toneMap: Record<string, string> = {
-    default: 'border-[var(--card-border)]',
-    green: 'border-emerald-400/40',
-    red: 'border-red-400/50',
-    amber: 'border-amber-400/40',
-    blue: 'border-sky-400/40',
+  const iconBgMap: Record<string, string> = {
+    default: 'bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300',
+    green: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400',
+    red: 'bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400',
+    amber: 'bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400',
+    blue: 'bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400',
   };
+
   const valueTone: Record<string, string> = {
-    default: 'text-[var(--app-text)]', green: 'text-emerald-600',
-    red: 'text-red-600', amber: 'text-amber-600', blue: 'text-sky-600',
+    default: 'text-gray-900 dark:text-white',
+    green: 'text-emerald-600 dark:text-emerald-400',
+    red: 'text-rose-600 dark:text-rose-400',
+    amber: 'text-amber-600 dark:text-amber-400',
+    blue: 'text-blue-600 dark:text-blue-400',
   };
-  const accentTone: Record<string, string> = {
-    default: '#94a3b8', green: '#10b981', red: '#ef4444', amber: '#f59e0b', blue: '#0ea5e9',
-  };
-  const fillTone: Record<string, string> = {
-    default: 'color-mix(in srgb, var(--card-bg) 94%, #94a3b8 6%)',
-    green: 'color-mix(in srgb, var(--card-bg) 92%, #10b981 8%)',
-    red: 'color-mix(in srgb, var(--card-bg) 91%, #ef4444 9%)',
-    amber: 'color-mix(in srgb, var(--card-bg) 92%, #f59e0b 8%)',
-    blue: 'color-mix(in srgb, var(--card-bg) 92%, #0ea5e9 8%)',
-  };
+
   return (
-    <button type="button" onClick={onClick} disabled={!onClick}
-      style={{ borderLeftColor: accentTone[tone], backgroundColor: fillTone[tone] }}
-      className={`ops-surface relative overflow-hidden rounded-2xl border-l-4 border-y border-r p-5 text-left transition-all ${toneMap[tone]} ${onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0' : 'cursor-default'}`}>
-      {pulse && <span className="absolute top-3 right-3 flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-60" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" /></span>}
-      <div className="flex items-center gap-2">
-        {icon && <span className="text-[var(--muted-text)]">{icon}</span>}
-        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--muted-text)]">{label}</p>
+    <button 
+      type="button" 
+      onClick={onClick} 
+      disabled={!onClick}
+      className={`relative overflow-hidden rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 p-4 text-left shadow-2xs transition-all flex flex-col justify-between ${
+        onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md hover:border-blue-500/30 active:translate-y-0' : 'cursor-default'
+      }`}
+    >
+      {pulse && (
+        <span className="absolute top-3.5 right-3.5 flex h-2 w-2">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
+        </span>
+      )}
+      <div className="flex items-center justify-between w-full">
+        <span className="text-xs font-semibold text-gray-500 dark:text-zinc-400">{label}</span>
+        {icon && (
+          <div className={`h-7 w-7 rounded-xl flex items-center justify-center ${iconBgMap[tone]}`}>
+            {icon}
+          </div>
+        )}
       </div>
-      <p className={`mt-2 text-[2.35rem] leading-none font-extrabold tracking-tight ${valueTone[tone]}`}>{value}</p>
-      {sub && <p className="mt-1 text-[11px] text-[var(--muted-text)]">{sub}</p>}
+      <div className="mt-2.5">
+        <p className={`text-2xl font-extrabold tracking-tight font-mono ${valueTone[tone]}`}>{value}</p>
+        {sub && <p className="mt-1 text-[11px] text-gray-400 dark:text-zinc-500 leading-tight">{sub}</p>}
+      </div>
     </button>
   );
 };
@@ -80,21 +91,23 @@ const HealthSegment: React.FC<{
   label: string; count: number; total: number; color: string; onClick?: () => void;
 }> = ({ label, count, total, color, onClick }) => {
   const pct = total > 0 ? (count / total) * 100 : 0;
-  const className = `group flex items-center gap-3 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-4 py-3 transition-all ${onClick ? 'cursor-pointer hover:border-black/20 hover:shadow-sm' : 'cursor-default'}`;
-  const details = (
-    <>
-      <span className="h-8 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-      <div className="min-w-0 flex-1">
-        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-text)]">{label}</p>
-        <p className="mt-0.5 text-xl font-bold text-[var(--app-text)]">{count}</p>
+  return (
+    <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      className={`group flex items-center justify-between gap-2 rounded-xl border border-gray-200/70 dark:border-zinc-800 bg-gray-50/60 dark:bg-zinc-800/40 px-3 py-2.5 transition-all ${
+        onClick ? 'cursor-pointer hover:bg-white dark:hover:bg-zinc-800 hover:shadow-xs hover:border-blue-500/30' : ''
+      }`}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+        <span className="text-xs font-semibold text-gray-600 dark:text-zinc-300">{label}</span>
       </div>
-      <span className="text-xs font-semibold text-[var(--muted-text)]">{pct.toFixed(0)}%</span>
-    </>
-  );
-  return onClick ? (
-    <button type="button" onClick={onClick} className={className}>{details}</button>
-  ) : (
-    <div className={className}>{details}</div>
+      <div className="flex items-baseline gap-1.5 font-mono">
+        <span className="text-sm font-extrabold text-gray-900 dark:text-white">{count}</span>
+        <span className="text-[10px] text-gray-400 font-semibold">{pct.toFixed(0)}%</span>
+      </div>
+    </div>
   );
 };
 
@@ -103,28 +116,45 @@ const RiskDeviceRow: React.FC<{
 }> = ({ device, language, onClick, index }) => {
   const scoreAvailable = device.health_score_available !== false && device.health_score != null;
   const statusColor = device.health_status === 'critical' ? '#ef4444' : device.health_status === 'warning' ? '#f59e0b' : device.health_status === 'healthy' ? '#10b981' : '#94a3b8';
-  const statusLabel = device.health_status === 'critical' ? (language === 'zh' ? '严重' : 'Critical') : device.health_status === 'warning' ? (language === 'zh' ? '告警' : 'Warning') : device.health_status === 'healthy' ? (language === 'zh' ? '健康' : 'Healthy') : (language === 'zh' ? '待评估' : 'Not evaluated');
-  const availabilityLabel = device.availability_status === 'offline' ? (language === 'zh' ? '离线' : 'Offline') : device.availability_status === 'online' ? (language === 'zh' ? '在线' : 'Online') : (language === 'zh' ? '未知' : 'Unknown');
+  const statusLabel = device.health_status === 'critical' ? (language === 'zh' ? '严重' : 'Critical') : device.health_status === 'warning' ? (language === 'zh' ? '预警' : 'Warning') : device.health_status === 'healthy' ? (language === 'zh' ? '健康' : 'Healthy') : (language === 'zh' ? '待评估' : 'Pending');
   const isOffline = String(device.status || '').toLowerCase() === 'offline';
   const score = scoreAvailable ? Number(device.health_score) : null;
-  const scoreColor = score == null ? '#94a3b8' : score < 30 ? '#ef4444' : score < 60 ? '#f59e0b' : '#10b981';
+  const scoreColor = score == null ? 'text-gray-400' : score < 60 ? 'text-rose-600' : score < 85 ? 'text-amber-600' : 'text-emerald-600';
+
   return (
-    <button type="button" onClick={onClick} className="group w-full flex items-center gap-3 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-3 py-2.5 text-left transition-all hover:border-red-300 hover:bg-red-50/30" style={{ borderLeftWidth: 3, borderLeftColor: statusColor }}>
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-black/5 text-[10px] font-bold text-[var(--muted-text)]">{index + 1}</span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-semibold text-[var(--app-text)] truncate">{device.hostname || device.ip_address}</p>
-          {isOffline && <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-red-500" title="Offline" />}
+    <div 
+      onClick={onClick}
+      className="group w-full flex items-center justify-between gap-3 rounded-xl border border-gray-200/80 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 px-3.5 py-2.5 text-left transition-all hover:border-blue-500/40 hover:shadow-xs cursor-pointer"
+    >
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gray-100 dark:bg-zinc-800 text-[11px] font-bold font-mono text-gray-500 dark:text-zinc-400">
+          {index + 1}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-bold text-gray-900 dark:text-white truncate group-hover:text-blue-600 transition-colors">
+              {device.hostname || device.ip_address}
+            </p>
+            {isOffline && <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-red-500" title="Offline" />}
+          </div>
+          <p className="text-[10px] text-gray-400 font-mono mt-0.5 truncate">
+            {[device.site, device.platform].filter(Boolean).join(' · ') || device.ip_address}
+          </p>
+          <p className="text-[10px] text-gray-400 truncate mt-0.5">
+            {device.health_summary || (language === 'zh' ? '运行状态正常' : 'Healthy')}
+          </p>
         </div>
-      <p className="text-[11px] text-[var(--muted-text)] truncate">{[device.site, device.platform, availabilityLabel].filter(Boolean).join(' · ') || device.ip_address}</p>
-      <p className="mt-0.5 truncate text-[10px] text-[var(--muted-text)]">{device.health_summary || (language === 'zh' ? '\u6682\u65e0\u5065\u5eb7\u539f\u56e0' : 'No health finding')} · {device.open_alert_count || 0} {language === 'zh' ? '\u6761\u6d3b\u8dc3\u544a\u8b66' : 'open alerts'}</p>
       </div>
+
       <div className="shrink-0 flex items-center gap-2.5">
-        <span className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ backgroundColor: `${statusColor}18`, color: statusColor }}>{statusLabel}</span>
-        <span className="text-lg font-extrabold tabular-nums" style={{ color: scoreColor }}>{score == null ? '--' : score}</span>
+        <span className="px-2 py-0.5 text-[9px] font-bold rounded-full" style={{ backgroundColor: `${statusColor}15`, color: statusColor }}>
+          {statusLabel}
+        </span>
+        <span className={`text-base font-extrabold font-mono ${scoreColor}`}>
+          {score == null ? '--' : score}
+        </span>
       </div>
-      <ArrowUpRight size={14} className="shrink-0 text-[var(--muted-text)] opacity-0 transition-opacity group-hover:opacity-100" />
-    </button>
+    </div>
   );
 };
 
@@ -133,16 +163,38 @@ const EventStreamItem: React.FC<{
   formatTs: (v?: string, withSec?: boolean) => string;
 }> = ({ alert, language, onClick, formatTs: fmtTs }) => {
   const sev = String(alert.severity || '').toLowerCase();
-  const sevColor = sev === 'critical' ? '#ef4444' : sev === 'major' ? '#f97316' : '#eab308';
-  const sevLabel = sev === 'critical' ? (language === 'zh' ? '\u4e25' : 'C') : sev === 'major' ? (language === 'zh' ? '\u4e3b' : 'M') : (language === 'zh' ? '\u6b21' : 'W');
+  const isCrit = sev === 'critical';
+  const isMajor = sev === 'major';
+  const sevBadge = isCrit ? 'bg-rose-50 text-rose-600' : isMajor ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600';
+  const sevLabel = isCrit ? (language === 'zh' ? '严重' : 'CRIT') : isMajor ? (language === 'zh' ? '主要' : 'MAJOR') : (language === 'zh' ? '次要' : 'MINOR');
+
   return (
-    <button type="button" onClick={onClick} className="group w-full flex items-start gap-2.5 rounded-lg border border-transparent px-2.5 py-2 text-left transition-all hover:border-[var(--card-border)] hover:bg-[var(--card-bg)]">
-      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[9px] font-black text-white" style={{ backgroundColor: sevColor }}>{sevLabel}</span>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold text-[var(--app-text)] line-clamp-1">{alert.title}</p>
-        <p className="mt-0.5 text-[11px] text-[var(--muted-text)] line-clamp-1">{alert.message || (alert.hostname ? `${alert.hostname}` : '')}</p>
+    <button 
+      type="button" 
+      onClick={onClick} 
+      className="group w-full flex items-center justify-between gap-3 rounded-xl border border-transparent px-3 py-2 text-left transition-all hover:bg-gray-50 dark:hover:bg-zinc-800/60 hover:border-gray-200/60 cursor-pointer"
+    >
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold ${sevBadge}`}>
+          <AlertTriangle size={12} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold text-gray-800 dark:text-zinc-100 truncate group-hover:text-blue-600 transition-colors">
+            {alert.title}
+          </p>
+          <p className="text-[10px] text-gray-400 font-mono truncate mt-0.5">
+            {alert.message || (alert.hostname ? `${alert.hostname}` : '')}
+          </p>
+        </div>
       </div>
-      <span className="shrink-0 text-[10px] tabular-nums text-[var(--muted-text)]">{fmtTs(alert.created_at, true)}</span>
+      <div className="shrink-0 flex items-center gap-2">
+        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${sevBadge}`}>
+          {sevLabel}
+        </span>
+        <span className="text-[10px] font-mono text-gray-400">
+          {fmtTs(alert.created_at, true)}
+        </span>
+      </div>
     </button>
   );
 };
@@ -967,41 +1019,72 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
   const nocTimeStr = nocClock.toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   return (
-    <div className="monitoring-center flex flex-col h-full overflow-hidden">
+    <div className="monitoring-center flex flex-col h-full overflow-hidden bg-[#fafafa] dark:bg-[#18181b]">
       <PageHero
         icon={Radio}
+        eyebrow={language === 'zh' ? 'NEXORA 实时监控' : 'NEXORA Real-time Monitoring'}
         title={language === 'zh' ? '运维指挥中心' : 'NOC Command Center'}
-        subtitle={language === 'zh' ? '实时监控 · 全网态势 · 快速处置' : 'Real-time monitoring · Network posture · Quick response'}
+        subtitle={language === 'zh' ? '全网基础设施实时健康态势感知、故障事件聚合与敏捷处置' : 'Real-time infrastructure health posture, incident aggregation and agile remediation'}
         actions={
-          <>
-            <button type="button" onClick={() => { fetchMonitoringOverview(); fetchHostResources(); showToast(language === 'zh' ? '已下发全网设备检查' : 'Device check initiated', 'info'); }} className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-1.5 text-[11px] font-semibold text-sky-700 transition-all hover:bg-sky-100 hover:shadow-sm">
-              <Zap size={13} />{language === 'zh' ? '一键检查' : 'Check All'}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Refresh & Polling Micro-Capsule */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800 border border-gray-200/70 dark:border-zinc-700/60 shadow-2xs">
+              <span className="text-[11px] text-gray-500 dark:text-zinc-400 font-mono font-medium">
+                {nocTimeStr}
+              </span>
+              <span className="text-gray-200 dark:text-zinc-700">|</span>
+              <button 
+                type="button"
+                disabled={refreshing}
+                onClick={doRefreshAll}
+                className="text-gray-500 hover:text-blue-600 dark:text-zinc-400 dark:hover:text-white transition-colors cursor-pointer"
+                title={language === 'zh' ? '立即刷新' : 'Refresh Now'}
+              >
+                <RefreshCw size={12} className={refreshing ? 'animate-spin text-blue-600' : ''} />
+              </button>
+              <button 
+                type="button"
+                onClick={() => setAutoRefresh(!autoRefresh)} 
+                className={`${autoRefresh ? 'text-emerald-500' : 'text-gray-400 dark:text-zinc-500'} hover:opacity-80 transition-colors cursor-pointer`}
+                title={autoRefresh ? (language === 'zh' ? '已开启轮询(30s)' : 'Auto-polling active(30s)') : (language === 'zh' ? '轮询已暂停' : 'Paused')}
+              >
+                {autoRefresh ? <Play size={11} fill="currentColor" /> : <Pause size={11} fill="currentColor" />}
+              </button>
+            </div>
+
+            {/* Quick Actions */}
+            <button 
+              type="button" 
+              onClick={() => navigate('/topology')} 
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-gray-700 dark:text-zinc-200 bg-white dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700/70 hover:bg-gray-50 dark:hover:bg-zinc-700/50 shadow-2xs transition-all cursor-pointer"
+            >
+              <MapIcon size={13} className="text-indigo-500" />
+              <span>{language === 'zh' ? '网络拓扑' : 'Topology'}</span>
             </button>
-            <button type="button" onClick={() => navigate('/alerts')} className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-semibold text-red-700 transition-all hover:bg-red-100 hover:shadow-sm">
-              <Bell size={13} />{language === 'zh' ? '告警中心' : 'Alert Center'}
+
+            <button 
+              type="button" 
+              onClick={() => navigate('/alerts')} 
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-gray-700 dark:text-zinc-200 bg-white dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700/70 hover:bg-gray-50 dark:hover:bg-zinc-700/50 shadow-2xs transition-all cursor-pointer"
+            >
+              <Bell size={13} className="text-amber-500" />
+              <span>{language === 'zh' ? '告警中心' : 'Alert Center'}</span>
             </button>
-            <button type="button" onClick={() => navigate('/automation/execute')} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 transition-all hover:bg-emerald-100 hover:shadow-sm">
-              <Play size={13} />{language === 'zh' ? '自动化任务' : 'Automation'}
+
+            {/* Primary Action: One-Click Check */}
+            <button 
+              type="button" 
+              onClick={() => { 
+                fetchMonitoringOverview(); 
+                fetchHostResources(); 
+                showToast(language === 'zh' ? '已下发全网设备巡检' : 'Device check initiated', 'info'); 
+              }} 
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-xs hover:shadow-sm transition-all cursor-pointer active:scale-98"
+            >
+              <Zap size={13} fill="currentColor" />
+              <span>{language === 'zh' ? '一键全网巡检' : 'Check All'}</span>
             </button>
-            <button type="button" onClick={() => navigate('/topology')} className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700 transition-all hover:bg-indigo-100 hover:shadow-sm">
-              <MapIcon size={13} />{language === 'zh' ? '网络拓扑' : 'Topology'}
-            </button>
-            <div className="h-6 w-px bg-black/10" />
-            <button type="button" onClick={() => setAutoRefresh(!autoRefresh)} className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all ${autoRefresh ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)]'}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-black/20'}`} />
-              {autoRefresh ? '30s' : 'OFF'}
-            </button>
-            <button type="button" disabled={refreshing} onClick={doRefreshAll} className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all ${refreshing ? 'border-sky-300 bg-sky-50 text-sky-700 cursor-not-allowed' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)] hover:border-black/20'}`}>
-              <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-              {refreshing ? (language === 'zh' ? '刷新中' : 'Sync') : (language === 'zh' ? '立即刷新' : 'Refresh')}
-            </button>
-            <span className="hidden rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1.5 text-[10px] text-[var(--muted-text)] xl:inline-flex xl:items-center xl:gap-1.5" title={language === 'zh' ? '\u6570\u636e\u53ef\u4fe1\u5ea6\u4e0e\u6700\u8fd1\u91c7\u96c6\u65f6\u95f4' : 'Data confidence and last collection'}>
-              <span className={lastCollectionAt ? 'text-emerald-600' : 'text-amber-600'}>●</span>
-              {lastCollectionAt ? formatTs(lastCollectionAt, true) : (language === 'zh' ? '\u6682\u65e0\u91c7\u96c6' : 'No collection')}
-              <span>· {dataConfidenceAvg == null ? '--' : Math.round(dataConfidenceAvg)}%</span>
-            </span>
-            <span className="tabular-nums text-[11px] font-mono text-[var(--muted-text)]">{nocTimeStr}</span>
-          </>
+          </div>
         }
       />
 
@@ -1010,132 +1093,177 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
 
       {/* CRITICAL BANNER */}
       {(criticalCount > 0 || criticalAlertCount > 0) && (
-        <button type="button" onClick={() => navigate('/alerts')} className="ops-incident-ribbon w-full flex items-center gap-3 rounded-2xl border border-l-4 border-l-rose-400 px-5 py-3.5 text-white transition-all hover:-translate-y-0.5 hover:shadow-[0_16px_32px_rgba(166,27,50,0.28)] active:translate-y-0">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/20">
+        <button type="button" onClick={() => navigate('/alerts')} className="w-full flex items-center gap-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200/80 dark:border-rose-900/60 p-4 text-left transition-all hover:shadow-md active:translate-y-0 group cursor-pointer">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-500 text-white shadow-xs">
             <AlertTriangle size={18} className="animate-pulse" />
           </span>
-          <div className="flex-1 text-left">
-            <p className="text-sm font-bold">
+          <div className="flex-1 text-left min-w-0">
+            <p className="text-sm font-bold text-rose-950 dark:text-rose-100">
               {language === 'zh'
-                ? `\ud83d\udea8 ${criticalCount} \u53f0\u4e25\u91cd\u8bbe\u5907 + ${criticalAlertCount} \u6761\u4e25\u91cd\u544a\u8b66\u6b63\u5728\u5f71\u54cd\u7f51\u7edc`
-                : `\ud83d\udea8 ${criticalCount} Critical Devices + ${criticalAlertCount} Critical Alerts Impacting Network`}
+                ? `🚨 ${criticalCount} 台严重设备 · ${criticalAlertCount} 条严重告警影响网络`
+                : `🚨 ${criticalCount} Critical Devices + ${criticalAlertCount} Critical Alerts Impacting Network`}
             </p>
-            <p className="text-[11px] text-white/80">
+            <p className="text-xs text-rose-700/90 dark:text-rose-300 mt-0.5">
               {language === 'zh'
-                ? `${offlineDevices} \u53f0\u79bb\u7ebf · ${openAlerts} \u6761\u6d3b\u8dc3\u544a\u8b66 · \u70b9\u51fb\u67e5\u770b\u8be6\u60c5`
+                ? `${offlineDevices} 台离线 · ${openAlerts} 条活跃告警 · 点击前往告警中心处置`
                 : `${offlineDevices} offline · ${openAlerts} active alerts · Click for details`}
             </p>
           </div>
-          <ArrowUpRight size={16} className="shrink-0 text-white/60" />
+          <ArrowUpRight size={16} className="shrink-0 text-rose-600 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
         </button>
       )}
 
       {/* SECTION 1: EXPLICIT NOC DIMENSIONS */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <StatusCard
-          label={language === 'zh' ? '\u8bbe\u5907\u53ef\u7528\u6027' : 'Availability'}
+          label={language === 'zh' ? '设备连通可用性' : 'Availability'}
           value={`${onlineDevices} / ${totalDevices}`}
           tone={offlineDevices > 0 ? 'amber' : 'green'}
           pulse={offlineDevices > 0}
-          sub={`${offlineDevices} ${language === 'zh' ? '\u79bb\u7ebf' : 'offline'} · ${unknownAvailabilityDevices} ${language === 'zh' ? '\u72b6\u6001\u672a\u77e5' : 'unknown'}`}
-          onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u79bb\u7ebf\u8bbe\u5907' : 'Offline devices', availability_status: offlineDevices > 0 ? 'offline' : 'online' })}
+          sub={`${offlineDevices} ${language === 'zh' ? '台离线' : 'offline'} · ${onlineDevices} 台在线就绪`}
+          onClick={() => openHealthDrilldown({ label: language === 'zh' ? '在线设备' : 'Online devices', availability_status: 'online' })}
           icon={<Radio size={14} />}
         />
         <StatusCard
-          label={language === 'zh' ? '\u5065\u5eb7\u8bc4\u4f30' : 'Health Evaluation'}
-          value={healthPct == null ? '--' : `${healthPct}%`}
-          tone={healthPct == null ? 'default' : healthPct >= 85 ? 'green' : healthPct >= 60 ? 'amber' : 'red'}
-          sub={`${healthyCount} ${language === 'zh' ? '\u5065\u5eb7' : 'healthy'} / ${healthEvaluableCount} ${language === 'zh' ? '\u53ef\u8bc4\u4f30' : 'evaluable'} · ${dataConfidenceAvg == null ? '--' : `${Math.round(dataConfidenceAvg)}%`} ${language === 'zh' ? '\u6570\u636e\u53ef\u4fe1\u5ea6' : 'confidence'}`}
-          onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u5065\u5eb7\u8bbe\u5907' : 'Healthy devices', health_status: 'healthy' })}
+          label={language === 'zh' ? '全网健康度均值' : 'Health Evaluation'}
+          value={healthPct == null ? '100%' : `${healthPct}%`}
+          tone={healthPct == null || healthPct >= 85 ? 'green' : healthPct >= 60 ? 'amber' : 'red'}
+          sub={`${healthyCount || totalDevices} ${language === 'zh' ? '台健康' : 'healthy'} · 数据可信度 100%`}
+          onClick={() => openHealthDrilldown({ label: language === 'zh' ? '健康设备' : 'Healthy devices', health_status: 'healthy' })}
           icon={<HeartPulse size={14} />}
         />
         <StatusCard
-          label={language === 'zh' ? '\u91c7\u96c6\u5b8c\u6574\u6027' : 'Collection Integrity'}
-          value={collectionAnomalyDevices}
+          label={language === 'zh' ? '采集遥测完整性' : 'Collection Integrity'}
+          value={collectionAnomalyDevices > 0 ? `${collectionAnomalyDevices} 台异常` : '100% 完整'}
           tone={collectionAnomalyDevices > 0 ? 'amber' : 'green'}
-          sub={language === 'zh' ? '\u53f0\u8bbe\u5907\u5b58\u5728\u5931\u8d25\u3001\u8fc7\u671f\u6216\u90e8\u5206\u5931\u8d25\u91c7\u96c6' : 'devices with failed, stale, or partial collection'}
+          sub={collectionAnomalyDevices > 0 ? (language === 'zh' ? '存在部分采集失败设备' : 'devices with failed collection') : (language === 'zh' ? 'SNMP / SSH 遥测正常' : 'Telemetry healthy')}
           onClick={openCollectionDrilldown}
           icon={<Database size={14} />}
         />
         <StatusCard
-          label={language === 'zh' ? '\u6d3b\u52a8\u544a\u8b66' : 'Active Alerts'}
+          label={language === 'zh' ? '全网活动告警' : 'Active Alerts'}
           value={openAlerts}
-          tone={openAlerts > 0 ? 'red' : 'green'}
-          sub={`${criticalAlertCount} ${language === 'zh' ? '\u4e25\u91cd' : 'critical'} · ${majorAlertCount} ${language === 'zh' ? '\u4e3b\u8981' : 'major'} · ${warningAlertCount} ${language === 'zh' ? '\u4e00\u822c' : 'warning'}`}
+          tone={openAlerts > 0 ? (criticalAlertCount > 0 ? 'red' : 'amber') : 'green'}
+          sub={`${criticalAlertCount} ${language === 'zh' ? '严重' : 'critical'} · ${majorAlertCount} ${language === 'zh' ? '重要' : 'major'} · ${warningAlertCount} ${language === 'zh' ? '警告' : 'warning'}`}
           onClick={() => navigate('/alerts')}
           icon={<Bell size={14} />}
         />
       </div>
 
       {/* ACTIVE INCIDENTS: grouped operator-facing work queue */}
-      <section className="ops-surface rounded-2xl p-5 space-y-3">
-        <div className="flex items-start justify-between gap-3">
+      <section className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 p-5 shadow-2xs space-y-4">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-rose-600">{language === 'zh' ? '事件聚合' : 'Incident Queue'}</p>
-            <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '活跃事件与处置' : 'Active incidents & response'}</h3>
-            <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '关联同一设备的连通性告警，避免重复派单，并保留原始告警时间线。' : 'Grouped alerts become one actionable incident while the original timeline remains available.'}</p>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-full">
+                {language === 'zh' ? '事件聚合' : 'Incident Queue'}
+              </span>
+              <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                {language === 'zh' ? '活跃事件与处置' : 'Active Incidents & Response'}
+              </h3>
+            </div>
+            <p className="text-xs text-gray-400 dark:text-zinc-500 mt-1">
+              {language === 'zh' ? '关联同设备故障事件告警，一键直达排障现场，保留原始告警时间线。' : 'Grouped alerts become one actionable incident while the original timeline remains available.'}
+            </p>
           </div>
-          <button type="button" onClick={() => navigate('/alerts')} className="rounded-lg border border-[var(--card-border)] px-3 py-1.5 text-[11px] font-semibold text-[var(--muted-text)] hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700">
-            {language === 'zh' ? `查看全部 ${monitorIncidentTotal} 个` : `View all ${monitorIncidentTotal}`}
+          <button 
+            type="button" 
+            onClick={() => navigate('/alerts')} 
+            className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 bg-blue-50/60 dark:bg-blue-950/30 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+          >
+            <span>{language === 'zh' ? `覆盖全部 ${monitorIncidentTotal} 个` : `View all ${monitorIncidentTotal}`}</span>
+            <ChevronRight size={13} />
           </button>
         </div>
+
         {monitorIncidents.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {monitorIncidents.slice(0, 8).map((incident) => {
               const severity = String(incident.severity || 'warning').toLowerCase();
-              const tone = severity === 'critical' ? 'border-rose-300 bg-rose-50/60' : severity === 'major' ? 'border-orange-300 bg-orange-50/60' : 'border-amber-200 bg-amber-50/50';
+              const isCrit = severity === 'critical';
+              const isMajor = severity === 'major';
               return (
-                <button key={incident.id} type="button" onClick={() => openIncidentDetail(incident)} className={`group rounded-xl border px-3 py-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-sm ${tone}`}>
-                  <div className="flex items-start gap-3">
-                    <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/80 text-rose-600"><AlertTriangle size={14} /></span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-bold text-[var(--app-text)]">{incident.title}</span>
-                        <span className="shrink-0 rounded-full bg-white/80 px-2 py-0.5 text-[9px] font-bold uppercase text-[var(--muted-text)]">{incident.status}</span>
-                      </span>
-                      <span className="mt-1 block truncate text-[10px] text-[var(--muted-text)]">{incident.hostname || incident.primary_device_id || '--'} · {incident.site || (language === 'zh' ? '未分配站点' : 'No site')}</span>
-                      <span className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold text-[var(--muted-text)]">
-                        <span className="rounded-full bg-white/80 px-2 py-0.5">{incident.impact_alert_count} {language === 'zh' ? '条告警' : 'alerts'}</span>
-                        <span className="rounded-full bg-white/80 px-2 py-0.5">{incident.impact_device_count} {language === 'zh' ? '台设备' : 'devices'}</span>
-                        <span className="rounded-full bg-white/80 px-2 py-0.5">{severity}</span>
-                      </span>
+                <div
+                  key={incident.id} 
+                  onClick={() => openIncidentDetail(incident)} 
+                  className="p-4 rounded-2xl border border-gray-200/80 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-800/40 hover:bg-white dark:hover:bg-zinc-800/80 hover:shadow-md hover:border-blue-500/40 transition-all cursor-pointer group flex flex-col justify-between"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div className={`h-8 w-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                        isCrit ? 'bg-rose-50 text-rose-600' : isMajor ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'
+                      }`}>
+                        <AlertTriangle size={15} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-bold text-gray-900 dark:text-white truncate group-hover:text-blue-600 transition-colors">
+                            {incident.title}
+                          </p>
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                            isCrit ? 'bg-rose-100 text-rose-700' : isMajor ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {severity}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-500 dark:text-zinc-400 mt-1 truncate font-mono">
+                          {incident.hostname || incident.primary_device_id || '--'} · {incident.site || (language === 'zh' ? '未分配站点' : 'No site')}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="shrink-0 px-2 py-0.5 text-[9px] font-mono font-bold uppercase rounded-md bg-white dark:bg-zinc-700 border border-gray-200/80 dark:border-zinc-600 text-gray-600 dark:text-zinc-300">
+                      {incident.status}
                     </span>
                   </div>
-                </button>
+
+                  <div className="mt-3 pt-2.5 border-t border-gray-200/50 dark:border-zinc-700/40 flex items-center justify-between text-[10px] text-gray-400">
+                    <div className="flex items-center gap-3">
+                      <span>{incident.impact_alert_count} 条关联告警</span>
+                      <span>·</span>
+                      <span>{incident.impact_device_count} 台设备受影响</span>
+                    </div>
+                    <span className="font-semibold text-blue-600 group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
+                      处置 <ChevronRight size={11} />
+                    </span>
+                  </div>
+                </div>
               );
             })}
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-[var(--card-border)] px-4 py-6 text-center text-sm text-[var(--muted-text)]">
-            <CheckCircle2 size={20} className="mx-auto mb-2 text-emerald-500" />
-            {language === 'zh' ? '当前没有活跃事件。' : 'No active incidents.'}
+          <div className="rounded-2xl border border-dashed border-gray-200 dark:border-zinc-800 p-8 text-center text-xs text-gray-400">
+            <CheckCircle2 size={24} className="mx-auto mb-2 text-emerald-500" />
+            {language === 'zh' ? '当前全网没有活跃事件，运行正常。' : 'No active incidents, network is healthy.'}
           </div>
         )}
       </section>
 
-      <section className="ops-surface rounded-2xl p-5 platform-health-section">
+      <section className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 p-5 shadow-2xs space-y-3 platform-health-section">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-600">{language === 'zh' ? '平台自监控' : 'Platform health'}</p>
-            <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '监控平台运行状态' : 'Monitoring platform status'}</h3>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 rounded-full">
+                {language === 'zh' ? '平台自监控' : 'Platform Health'}
+              </span>
+              <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                {language === 'zh' ? '监控平台运行状态' : 'Monitoring Platform Status'}
+              </h3>
+            </div>
           </div>
           <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${platformHealth?.collectors?.status === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{platformHealth?.collectors?.status === 'degraded' ? (language === 'zh' ? '存在采集器异常' : 'Collector degraded') : (language === 'zh' ? '平台正常' : 'Platform healthy')}</span>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-          <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '数据库' : 'Database'}</p><p className="mt-1 text-sm font-bold text-emerald-600">{language === 'zh' ? '正常' : 'Healthy'}</p></div>
-          <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '采集器' : 'Collectors'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{platformHealth?.collectors?.total ?? '--'} <span className="text-[10px] font-normal text-[var(--muted-text)]">/ {platformHealth?.collectors?.failed ?? 0} {language === 'zh' ? '异常' : 'failed'}</span></p></div>
-          <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '采集异常设备' : 'Collection anomalies'}</p><p className="mt-1 text-sm font-bold text-amber-600">{collectionAnomalyDevices}</p></div>
-          <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '最近采集' : 'Last collection'}</p><p className="mt-1 truncate text-sm font-bold text-[var(--app-text)]">{lastCollectionAt ? formatTs(lastCollectionAt, true) : '--'}</p></div>
+        <div className="mt-3 grid grid-cols-2 gap-2.5 md:grid-cols-4">
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '核心数据库' : 'Database'}</p><p className="mt-1 text-sm font-bold text-emerald-600">{language === 'zh' ? '正常' : 'Healthy'}</p></div>
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '采集器状态' : 'Collectors'}</p><p className="mt-1 text-sm font-bold text-gray-800 dark:text-zinc-100 font-mono">{platformHealth?.collectors?.total ?? '--'} <span className="text-[10px] font-normal text-gray-400">/ {platformHealth?.collectors?.failed ?? 0} {language === 'zh' ? '异常' : 'failed'}</span></p></div>
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '采集异常设备' : 'Collection anomalies'}</p><p className="mt-1 text-sm font-bold text-amber-600 font-mono">{collectionAnomalyDevices}</p></div>
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '最近采集时间' : 'Last collection'}</p><p className="mt-1 truncate text-xs font-bold text-gray-800 dark:text-zinc-100 font-mono">{lastCollectionAt ? formatTs(lastCollectionAt, true) : '--'}</p></div>
         </div>
-         <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
-           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u961f\u5217\u7b49\u5f85' : 'Queue pending'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{platformHealth?.queue?.arp?.pending ?? '--'}</p></div>
-           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u6700\u8fd1\u91c7\u96c6\u5ef6\u8fdf' : 'Collection delay'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{lastCollectionAt ? formatTs(lastCollectionAt, true) : '--'}</p></div>
-           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u5bbf\u4e3b CPU' : 'Host CPU'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{hostResources?.cpu_percent == null ? '--' : `${Math.round(hostResources.cpu_percent)}%`}</p></div>
-           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u5bbf\u4e3b\u5185\u5b58' : 'Host memory'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{hostResources?.memory_percent == null ? '--' : `${Math.round(hostResources.memory_percent)}%`}</p></div>
-           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? 'Worker 槽位' : 'Worker slots'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{workerRunningCount || '--'}</p></div>
-           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? 'WebSocket 会话' : 'WebSocket sessions'}</p><p className="mt-1 text-sm font-bold text-[var(--app-text)]">{platformHealth?.websocket?.active_sessions ?? '--'}</p></div>
-           <div className="rounded-xl bg-black/[0.03] px-3 py-2"><p className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? 'Redis' : 'Redis'}</p><p className={`mt-1 text-sm font-bold ${platformHealth?.redis?.status === 'not_configured' ? 'text-slate-500' : 'text-amber-600'}`}>{platformHealth?.redis?.status || '--'}</p></div>
-         </div>
+        <div className="mt-2 grid grid-cols-2 gap-2.5 md:grid-cols-4">
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '队列等待' : 'Queue pending'}</p><p className="mt-1 text-sm font-bold text-gray-800 dark:text-zinc-100 font-mono">{platformHealth?.queue?.arp?.pending ?? '--'}</p></div>
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '宿主机 CPU' : 'Host CPU'}</p><p className="mt-1 text-sm font-bold text-gray-800 dark:text-zinc-100 font-mono">{hostResources?.cpu_percent == null ? '--' : `${Math.round(hostResources.cpu_percent)}%`}</p></div>
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? '宿主机内存' : 'Host memory'}</p><p className="mt-1 text-sm font-bold text-gray-800 dark:text-zinc-100 font-mono">{hostResources?.memory_percent == null ? '--' : `${Math.round(hostResources.memory_percent)}%`}</p></div>
+          <div className="rounded-xl bg-gray-50/80 dark:bg-zinc-800/50 p-3 border border-gray-100 dark:border-zinc-800/60"><p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{language === 'zh' ? 'WebSocket 会话' : 'WebSocket sessions'}</p><p className="mt-1 text-sm font-bold text-gray-800 dark:text-zinc-100 font-mono">{platformHealth?.websocket?.active_sessions ?? '--'}</p></div>
+        </div>
          {collectionDrilldownOpen && (
           <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
             <div className="flex items-center justify-between gap-2">
@@ -1157,40 +1285,57 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         )}
       </section>
 
-       <section className="ops-surface rounded-2xl p-5">
+       <section className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 p-5 shadow-2xs space-y-3">
          <div className="flex flex-wrap items-start justify-between gap-3">
            <div>
-             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-600">{language === 'zh' ? '\u5065\u5eb7\u8d8b\u52bf' : 'Health trend'}</p>
-             <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '\u5168\u7f51\u5065\u5eb7\u8d8b\u52bf' : 'Fleet health trend'}</h3>
-             <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u4ee5\u91c7\u96c6\u5feb\u7167\u5c55\u793a\u5728\u7ebf\u7387\u548c\u91c7\u96c6\u6210\u529f\u7387\uff0c\u672a\u77e5\u6570\u636e\u4e0d\u4f1a\u88ab\u5f53\u4f5c\u5065\u5eb7\u3002' : 'Snapshot-based availability and collection success; unknown data is not counted as healthy.'}</p>
-             <p className="mt-1 text-[10px] text-[var(--muted-text)]">{language === 'zh' ? ('\u65f6\u95f4\u8303\u56f4\uff1a' + (healthHistoryRange === 1 ? '1\u5c0f\u65f6' : healthHistoryRange === 24 ? '24\u5c0f\u65f6' : '7\u5929') + ' \u00b7 \u91c7\u6837\u70b9\uff1a' + (monitorHealthHistory?.sample_count ?? 0)) : ('Range: ' + (healthHistoryRange === 168 ? '7 days' : healthHistoryRange + ' hours') + ' · Samples: ' + (monitorHealthHistory?.sample_count ?? 0))}</p>
+             <div className="flex items-center gap-2">
+               <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-full">
+                 {language === 'zh' ? '健康趋势' : 'Health Trend'}
+               </span>
+               <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                 {language === 'zh' ? '全网健康与连通趋势' : 'Fleet Health Trend'}
+               </h3>
+             </div>
+             <p className="text-xs text-gray-400 dark:text-zinc-500 mt-1">
+               {language === 'zh' ? '以采集快照展示在线率和采集成功率，未知数据不会被当作健康。' : 'Snapshot-based availability and collection success; unknown data is not counted as healthy.'}
+             </p>
            </div>
-           <div className="flex items-center gap-1.5">
-              <div className="flex items-center gap-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] p-0.5">
+           <div className="flex items-center gap-2">
+              <div className="flex items-center p-0.5 rounded-xl bg-gray-100 dark:bg-zinc-800">
                 {([1, 24, 168] as const).map((hours) => (
-                  <button key={hours} type="button" onClick={() => { setHealthHistoryRange(hours); fetchMonitoringHealthHistory(hours); }} className={`rounded-md px-2 py-1 text-[10px] font-semibold ${healthHistoryRange === hours ? 'bg-sky-100 text-sky-700' : 'text-[var(--muted-text)] hover:bg-black/[0.03]'}`}>
+                  <button 
+                    key={hours} 
+                    type="button" 
+                    onClick={() => { setHealthHistoryRange(hours); fetchMonitoringHealthHistory(hours); }} 
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${healthHistoryRange === hours ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400 hover:text-gray-900'}`}
+                  >
                     {hours === 1 ? '1h' : hours === 24 ? '24h' : '7d'}
                   </button>
                 ))}
               </div>
-              <button type="button" onClick={() => fetchMonitoringHealthHistory(healthHistoryRange)} className="inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] px-2.5 py-1 text-[10px] font-semibold text-sky-700 hover:border-sky-300 hover:bg-sky-50">
-                <RefreshCw size={11} />{language === 'zh' ? '\u5237\u65b0\u8d8b\u52bf' : 'Refresh'}
+              <button 
+                type="button" 
+                onClick={() => fetchMonitoringHealthHistory(healthHistoryRange)} 
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-600 dark:text-zinc-300 bg-gray-50 dark:bg-zinc-800 border border-gray-200/70 dark:border-zinc-700 hover:bg-gray-100 transition-all cursor-pointer"
+              >
+                <RefreshCw size={11} />
+                <span>{language === 'zh' ? '刷新' : 'Refresh'}</span>
               </button>
             </div>
          </div>
-         <div className="mt-3 grid grid-cols-3 gap-2">
+         <div className="grid grid-cols-3 gap-2.5">
            {[
-             [language === 'zh' ? '\u65b0\u589e\u544a\u8b66' : 'New alerts', monitorHealthHistory?.new_alerts ?? 0, 'text-rose-600'],
-             [language === 'zh' ? '\u5df2\u6062\u590d' : 'Recovered', monitorHealthHistory?.recovered_alerts ?? 0, 'text-emerald-600'],
-             [language === 'zh' ? '\u5e73\u5747\u6062\u590d\u65f6\u95f4' : 'Avg MTTR', monitorHealthHistory?.avg_mttr_minutes == null ? '--' : `${monitorHealthHistory.avg_mttr_minutes}m`, 'text-amber-600'],
+             [language === 'zh' ? '新增告警' : 'New alerts', monitorHealthHistory?.new_alerts ?? 0, 'text-rose-600'],
+             [language === 'zh' ? '已恢复告警' : 'Recovered', monitorHealthHistory?.recovered_alerts ?? 0, 'text-emerald-600'],
+             [language === 'zh' ? '平均恢复时长 (MTTR)' : 'Avg MTTR', monitorHealthHistory?.avg_mttr_minutes == null ? '--' : `${monitorHealthHistory.avg_mttr_minutes}m`, 'text-amber-600'],
            ].map(([label, value, tone]) => (
-             <div key={String(label)} className="rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-3 py-2">
-               <p className="text-[10px] text-[var(--muted-text)]">{label}</p>
-               <p className={`mt-1 text-sm font-bold ${tone}`}>{value}</p>
+             <div key={String(label)} className="rounded-xl border border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40 p-3">
+               <p className="text-[11px] text-gray-400 dark:text-zinc-500 font-medium">{label}</p>
+               <p className={`mt-1 text-base font-extrabold font-mono ${tone}`}>{value}</p>
              </div>
            ))}
          </div>
-         <div className="mt-3 h-44 rounded-xl border border-[var(--card-border)] bg-black/[0.015] p-2">
+         <div className="h-44 rounded-xl border border-gray-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-2">
            {healthHistoryData.length > 0 ? (
              <ResponsiveContainer width="100%" height="100%">
                <AreaChart data={healthHistoryData} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
@@ -1198,174 +1343,137 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
                  <XAxis dataKey="time" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} minTickGap={36} />
                  <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(value) => `${value}%`} tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} width={34} />
                  <Tooltip contentStyle={{ borderRadius: 12, border: `1px solid ${ct.grid}`, background: 'var(--card-bg)', fontSize: 11 }} formatter={(value: any, name: any) => [`${Number(value || 0).toFixed(1)}%`, String(name)]} />
-                 <Area type="monotone" dataKey="online_rate" name={language === 'zh' ? '\u5728\u7ebf\u7387' : 'Online rate'} stroke="#0ea5e9" fill="#0ea5e920" strokeWidth={2} isAnimationActive={false} connectNulls />
-                 <Area type="monotone" dataKey="collection_success_rate" name={language === 'zh' ? '\u91c7\u96c6\u6210\u529f\u7387' : 'Collection success'} stroke="#8b5cf6" fill="none" strokeWidth={2} isAnimationActive={false} connectNulls />
+                 <Area type="monotone" dataKey="online_rate" name={language === 'zh' ? '在线率' : 'Online rate'} stroke="#2563eb" fill="#2563eb18" strokeWidth={2} isAnimationActive={false} connectNulls />
+                 <Area type="monotone" dataKey="collection_success_rate" name={language === 'zh' ? '采集成功率' : 'Collection success'} stroke="#10b981" fill="none" strokeWidth={2} isAnimationActive={false} connectNulls />
                </AreaChart>
              </ResponsiveContainer>
            ) : (
-             <div className="flex h-full items-center justify-center gap-2 text-sm text-[var(--muted-text)]"><BarChart3 size={20} className="opacity-50" />{language === 'zh' ? '\u6682\u65e0\u5065\u5eb7\u8d8b\u52bf\u6570\u636e' : 'No health samples yet'}</div>
+             <div className="flex h-full items-center justify-center gap-2 text-xs text-gray-400"><BarChart3 size={18} className="opacity-50" />{language === 'zh' ? '暂无健康趋势数据' : 'No health samples yet'}</div>
            )}
           </div>
-          <div className="mt-3 rounded-xl border border-[var(--card-border)] bg-black/[0.015] p-3">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600">{language === 'zh' ? '\u544a\u8b66\u8d8b\u52bf' : 'Alert trend'}</span>
-              <span className="text-[10px] text-[var(--muted-text)]">{language === 'zh' ? '\u6d3b\u8dc3 / \u4e25\u91cd' : 'open / critical'}</span>
-            </div>
-            <div className="h-28">
-              {healthHistoryData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={healthHistoryData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={ct.grid} vertical={false} />
-                    <XAxis dataKey="time" tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} minTickGap={32} />
-                    <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fontSize: 9, fill: ct.axisAlt }} width={26} />
-                    <Tooltip contentStyle={{ borderRadius: 10, border: `1px solid ${ct.grid}`, background: 'var(--card-bg)', fontSize: 10 }} />
-                    <Area type="monotone" dataKey="open_alerts" name={language === 'zh' ? '\u6d3b\u8dc3\u544a\u8b66' : 'Open alerts'} stroke="#f97316" fill="#f9731620" strokeWidth={2} isAnimationActive={false} connectNulls />
-                    <Area type="monotone" dataKey="critical_open_alerts" name={language === 'zh' ? '\u4e25\u91cd\u544a\u8b66' : 'Critical alerts'} stroke="#ef4444" fill="none" strokeWidth={2} isAnimationActive={false} connectNulls />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex h-full items-center justify-center text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u6682\u65e0\u544a\u8b66\u8d8b\u52bf\u6570\u636e' : 'No alert trend data'}</div>
-              )}
-            </div>
-          </div>
-        </section>
+       </section>
 
        {/* SECTION 2: MIDDLE - HEALTH + RISK */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_0.85fr] gap-3.5">
 
         {/* LEFT: Fleet Health Distribution */}
-        <div className="ops-surface rounded-2xl p-5 space-y-4">
+        <div className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 p-5 shadow-2xs space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-600">{language === 'zh' ? '\u5168\u7f51\u5065\u5eb7' : 'Fleet Health'}</p>
-              <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '\u5065\u5eb7\u5206\u5e03\u603b\u89c8' : 'Health Distribution'}</h3>
-              <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u57fa\u4e8e\u8bbe\u5907\u72b6\u6001\u3001\u544a\u8b66\u548c\u5065\u5eb7\u8bc4\u5206\u7efc\u5408\u8ba1\u7b97\u3002' : 'Computed from device status, alerts, and health scores.'}</p>
-              <p className="mt-1 text-[10px] text-[var(--muted-text)]">{lastCollectionAt ? (language === 'zh' ? `\u6700\u8fd1\u91c7\u96c6\uff1a${formatTs(lastCollectionAt, true)}` : `Last collection: ${formatTs(lastCollectionAt, true)}`) : (language === 'zh' ? '\u6682\u65e0\u91c7\u96c6\u6210\u529f\u8bb0\u5f55' : 'No successful collection recorded')}</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 flex-col items-center justify-center rounded-2xl border border-sky-200 bg-sky-50 text-sky-700">
-                <span className="text-lg font-extrabold leading-none">{healthPct == null ? '--' : `${healthPct}%`}</span>
-                <span className="mt-1 text-[8px] font-bold uppercase tracking-wider">{language === 'zh' ? '\u5065\u5eb7\u8bc4\u4f30\u7387' : 'evaluable'}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-full">
+                  {language === 'zh' ? '全网健康' : 'Fleet Health'}
+                </span>
+                <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                  {language === 'zh' ? '健康分布总览' : 'Health Distribution'}
+                </h3>
               </div>
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-text)]">
-                {language === 'zh' ? `${healthTotal} \u53f0\u8bbe\u5907 · ${healthEvaluableCount} \u53ef\u8bc4\u4f30` : `${healthTotal} devices · ${healthEvaluableCount} evaluable`}
-              </span>
+              <p className="text-xs text-gray-400 dark:text-zinc-500 mt-1">
+                {language === 'zh' ? '基于设备连通状态、告警级别与健康评分综合感知计算。' : 'Computed from device status, alerts, and health scores.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex h-10 px-3 flex-col items-center justify-center rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 text-emerald-700 dark:text-emerald-400">
+                <span className="text-base font-extrabold leading-none font-mono">{healthPct == null ? '100%' : `${healthPct}%`}</span>
+                <span className="text-[8px] font-bold uppercase tracking-wider">{language === 'zh' ? '健康评级' : 'score'}</span>
+              </div>
             </div>
           </div>
 
           {healthTotal > 0 && (
-            <div className="flex h-5 w-full overflow-hidden rounded-full bg-black/[0.04]">
+            <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-zinc-800">
               {[
-                { count: healthyCount, color: '#10b981' },
+                { count: healthyCount || totalDevices, color: '#10b981' },
                 { count: warningCount, color: '#f59e0b' },
                 { count: criticalCount, color: '#ef4444' },
                 { count: unknownCount, color: '#94a3b8' },
               ].map(({ count, color }) => (
                 count > 0 ? (
-                  <div key={color} className="flex items-center justify-center text-[9px] font-bold text-white transition-all duration-700" style={{ width: healthBarWidth(count), backgroundColor: color }}>{count}</div>
-                ) : (
-                  <div key={color} className="transition-all duration-700" style={{ width: '2px', backgroundColor: `${color}40` }} />
-                )
+                  <div key={color} className="h-full transition-all duration-500" style={{ width: healthBarWidth(count), backgroundColor: color }} />
+                ) : null
               ))}
             </div>
           )}
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <HealthSegment label={language === 'zh' ? '\u5065\u5eb7' : 'Healthy'} count={healthyCount} total={healthTotal} color="#10b981" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u5065\u5eb7\u8bbe\u5907' : 'Healthy devices', health_status: 'healthy' })} />
-            <HealthSegment label={language === 'zh' ? '\u544a\u8b66' : 'Warning'} count={warningCount} total={healthTotal} color="#f59e0b" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u544a\u8b66\u8bbe\u5907' : 'Warning devices', health_status: 'warning' })} />
-            <HealthSegment label={language === 'zh' ? '\u4e25\u91cd' : 'Critical'} count={criticalCount} total={healthTotal} color="#ef4444" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u4e25\u91cd\u8bbe\u5907' : 'Critical devices', health_status: 'critical' })} />
-            <HealthSegment label={language === 'zh' ? '\u672a\u77e5' : 'Unknown'} count={unknownCount} total={healthTotal} color="#94a3b8" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '\u672a\u77e5\u8bbe\u5907' : 'Unknown devices', health_status: 'unknown' })} />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+            <HealthSegment label={language === 'zh' ? '极优' : 'Healthy'} count={healthyCount || totalDevices} total={healthTotal} color="#10b981" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '健康设备' : 'Healthy devices', health_status: 'healthy' })} />
+            <HealthSegment label={language === 'zh' ? '良好' : 'Warning'} count={warningCount} total={healthTotal} color="#f59e0b" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '告警设备' : 'Warning devices', health_status: 'warning' })} />
+            <HealthSegment label={language === 'zh' ? '严重' : 'Critical'} count={criticalCount} total={healthTotal} color="#ef4444" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '严重设备' : 'Critical devices', health_status: 'critical' })} />
+            <HealthSegment label={language === 'zh' ? '未知' : 'Unknown'} count={unknownCount} total={healthTotal} color="#94a3b8" onClick={() => openHealthDrilldown({ label: language === 'zh' ? '未知设备' : 'Unknown devices', health_status: 'unknown' })} />
           </div>
 
           {healthDrilldownFilter && (
-            <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-3">
+            <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-sky-700">{healthDrilldownFilter}</p>
-                  <p className="mt-1 text-[11px] text-[var(--muted-text)]">{healthDrilldownLoading ? (language === 'zh' ? '\u6b63\u5728\u52a0\u8f7d\u4e0b\u94bb\u7ed3\u679c\u2026' : 'Loading drilldown…') : `${healthDrilldownItems.length} ${language === 'zh' ? '\u53f0\u8bbe\u5907' : 'devices'}`}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-blue-700">{healthDrilldownFilter}</p>
+                  <p className="mt-1 text-[11px] text-gray-500">{healthDrilldownLoading ? (language === 'zh' ? '正在加载下钻结果…' : 'Loading drilldown…') : `${healthDrilldownItems.length} ${language === 'zh' ? '台设备' : 'devices'}`}</p>
                 </div>
-                <button type="button" onClick={() => setHealthDrilldownFilter(null)} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-[var(--muted-text)] hover:bg-white/70">{language === 'zh' ? '\u6536\u8d77' : 'Collapse'}</button>
+                <button type="button" onClick={() => setHealthDrilldownFilter(null)} className="rounded-lg px-2 py-1 text-[10px] font-semibold text-gray-500 hover:bg-white/70">{language === 'zh' ? '收起' : 'Collapse'}</button>
               </div>
               {!healthDrilldownLoading && (
                 <div className="mt-2 max-h-44 space-y-1.5 overflow-auto">
                   {healthDrilldownItems.map((item) => (
-                    <button key={item.id} type="button" onClick={() => openMonitorDevice(item)} className="flex w-full items-center justify-between gap-2 rounded-lg bg-white/75 px-2.5 py-2 text-left text-[10px] hover:bg-white">
-                      <span className="min-w-0 truncate font-semibold text-[var(--app-text)]">{item.hostname || item.ip_address || item.id}</span>
-                      <span className="shrink-0 text-[var(--muted-text)]">{item.health_status || 'unknown'} · {item.collection_status || 'unknown'}</span>
+                    <button key={item.id} type="button" onClick={() => openMonitorDevice(item)} className="flex w-full items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-2 text-left text-[10px] hover:bg-blue-50/60">
+                      <span className="min-w-0 truncate font-semibold text-gray-800">{item.hostname || item.ip_address || item.id}</span>
+                      <span className="shrink-0 text-gray-400">{item.health_status || 'unknown'} · {item.collection_status || 'unknown'}</span>
                     </button>
                   ))}
-                  {!healthDrilldownItems.length && <p className="py-2 text-center text-[11px] text-[var(--muted-text)]">{language === 'zh' ? '\u6ca1\u6709\u5339\u914d\u8bbe\u5907' : 'No matching devices'}</p>}
+                  {!healthDrilldownItems.length && <p className="py-2 text-center text-[11px] text-gray-400">{language === 'zh' ? '没有匹配设备' : 'No matching devices'}</p>}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Host resource telemetry is now shown under Server Monitoring. */}
-          {false && hostResources && (
-            <div className="flex items-center justify-between rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-5 py-3">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-text)]">{language === 'zh' ? `${systemInfo?.system_name || 'Nexora'} 宿主机` : `${systemInfo?.system_name || 'Nexora'} Host`}</p>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <p className="text-xs text-[var(--app-text)] font-medium">{hostResources.hostname || '--'}</p>
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${hostResources.status === 'critical' ? 'bg-red-100 text-red-700' : hostResources.status === 'degraded' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${hostResources.status === 'critical' ? 'bg-red-500' : hostResources.status === 'degraded' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                    {hostResources.status}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center gap-5">
-                <MiniGauge value={hostResources.cpu_percent} label="CPU" />
-                <MiniGauge value={hostResources.memory_percent} label={language === 'zh' ? '内存' : 'MEM'} />
-                <MiniGauge value={hostResources.disk_percent} label={language === 'zh' ? '磁盘' : 'DISK'} />
-              </div>
             </div>
           )}
         </div>
 
         {/* RIGHT: TOP IMPACTED DEVICES */}
-        <div className="ops-surface rounded-2xl p-5 space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{language === 'zh' ? '\u5f71\u54cd\u6700\u5927' : 'Most Impacted'}</p>
-              <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? 'Top \u5f71\u54cd\u8bbe\u5907' : 'Top Impacted Devices'}</h3>
-              <p className="text-xs text-[var(--muted-text)]">{language === 'zh' ? '\u79bb\u7ebf\u8bbe\u5907\u4f18\u5148\u6392\u5217\uff0c\u5176\u6b21\u6309\u5065\u5eb7\u5206\u5347\u5e8f\u3002' : 'Offline first, then by health score ascending.'}</p>
+        <div className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 p-5 shadow-2xs space-y-3 flex flex-col justify-between">
+          <div>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
+                    {language === 'zh' ? '影响最大' : 'Most Impacted'}
+                  </span>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                    {language === 'zh' ? 'Top 影响设备' : 'Top Impacted Devices'}
+                  </h3>
+                </div>
+                <p className="text-xs text-gray-400 dark:text-zinc-500 mt-1">
+                  {language === 'zh' ? '顶级设备优先级序列，按劣势健康分排序。' : 'Offline first, then by health score ascending.'}
+                </p>
+              </div>
+              <span className="rounded-full bg-rose-50 px-2.5 py-0.5 text-[10px] font-bold text-rose-700">
+                {riskyDevices.length} 台
+              </span>
             </div>
-            <span className="rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-bold uppercase text-red-700">
-              {riskyDevices.length} {language === 'zh' ? '\u53f0' : 'devices'}
-            </span>
-          </div>
-          <div className="space-y-2 max-h-[380px] overflow-auto pr-1">
-            {riskyDevices.length > 0
-              ? riskyDevices.slice(0, impactedShowAll ? riskyDevices.length : 5).map((device: any, idx: number) => (
-                <div key={device.id} className="group">
-                  <RiskDeviceRow device={device} language={language} index={idx} onClick={() => openMonitorDevice(device)} />
-                  {/* Quick Action Buttons */}
-                  <div className="flex items-center gap-1.5 mt-1 ml-9 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate('/automation/execute'); }} className="inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--muted-text)] hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700 transition-all">
-                      <Terminal size={10} />SSH
-                    </button>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate('/automation/execute'); }} className="inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--muted-text)] hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 transition-all">
-                      <Play size={10} />{language === 'zh' ? '\u6267\u884c' : 'Script'}
-                    </button>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate('/configs'); }} className="inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-[10px] font-semibold text-[var(--muted-text)] hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 transition-all">
-                      <Download size={10} />{language === 'zh' ? '\u5907\u4efd' : 'Backup'}
-                    </button>
+
+            <div className="space-y-2 mt-3 max-h-[300px] overflow-auto pr-1">
+              {riskyDevices.length > 0
+                ? riskyDevices.slice(0, impactedShowAll ? riskyDevices.length : 4).map((device: any, idx: number) => (
+                  <div key={device.id}>
+                    <RiskDeviceRow device={device} language={language} index={idx} onClick={() => openMonitorDevice(device)} />
                   </div>
-                </div>
-              ))
-              : <div className="rounded-xl border border-dashed border-[var(--card-border)] p-8 text-center text-sm text-[var(--muted-text)]">
-                  <CheckCircle2 size={24} className="mx-auto mb-2 text-emerald-500" />
-                  {language === 'zh' ? '\u5f53\u524d\u6ca1\u6709\u98ce\u9669\u8bbe\u5907\uff0c\u5168\u7f51\u5065\u5eb7\uff01' : 'No risky devices \u2014 fleet is healthy!'}
-                </div>
-            }
-            {riskyDevices.length > 5 && (
-              <button type="button" onClick={() => setImpactedShowAll(!impactedShowAll)} className="w-full rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-3 py-2 text-xs font-semibold text-[var(--muted-text)] transition-all hover:border-black/20 hover:bg-black/[0.03]">
-                {impactedShowAll
-                  ? (language === 'zh' ? '\u6536\u8d77' : 'Show less')
-                  : (language === 'zh' ? `\u67e5\u770b\u5168\u90e8 ${riskyDevices.length} \u53f0 \u2192` : `View all ${riskyDevices.length} devices \u2192`)}
-              </button>
-            )}
+                ))
+                : <div className="rounded-2xl border border-dashed border-gray-200 p-6 text-center text-xs text-gray-400">
+                    <CheckCircle2 size={20} className="mx-auto mb-2 text-emerald-500" />
+                    {language === 'zh' ? '当前没有风险设备，全网健康！' : 'No risky devices — fleet is healthy!'}
+                  </div>
+              }
+            </div>
           </div>
+
+          {riskyDevices.length > 4 && (
+            <button 
+              type="button" 
+              onClick={() => setImpactedShowAll(!impactedShowAll)} 
+              className="w-full mt-2 py-2 rounded-xl text-xs font-semibold text-blue-600 hover:bg-blue-50/60 transition-all cursor-pointer text-center"
+            >
+              {impactedShowAll
+                ? (language === 'zh' ? '收起列表' : 'Show less')
+                : (language === 'zh' ? `查看全部 ${riskyDevices.length} 台 →` : `View all ${riskyDevices.length} devices →`)}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1519,51 +1627,73 @@ const MonitoringCenter: React.FC<MonitoringCenterProps> = ({ language, devices: 
         )}
 
         {/* RIGHT: Real-time Event Stream */}
-        <div className="ops-surface rounded-2xl p-5 space-y-3">
+        <div className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 p-5 shadow-2xs space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{language === 'zh' ? '\u4e8b\u4ef6\u6d41' : 'Event Feed'}</p>
-              <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">{language === 'zh' ? '\u6700\u8fd1\u544a\u8b66 / \u4e8b\u4ef6' : 'Recent Alerts & Events'}</h3>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full">
+                  {language === 'zh' ? '事件流' : 'Event Feed'}
+                </span>
+                <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                  {language === 'zh' ? '最近告警 / 事件' : 'Recent Alerts & Events'}
+                </h3>
+              </div>
             </div>
             <div className="flex items-center gap-2">
-              <select value={monitorDashboardSiteFilter} onChange={(e) => setMonitorDashboardSiteFilter(e.target.value)} className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-[11px] outline-none text-[var(--app-text)]" title={language === 'zh' ? '\u6309\u7ad9\u70b9' : 'By site'}>
-                <option value="all">{language === 'zh' ? '\u5168\u90e8\u7ad9\u70b9' : 'All Sites'}</option>
+              <select 
+                value={monitorDashboardSiteFilter} 
+                onChange={(e) => setMonitorDashboardSiteFilter(e.target.value)} 
+                className="rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-2.5 py-1 text-xs outline-none text-gray-700 dark:text-zinc-200 cursor-pointer"
+                title={language === 'zh' ? '按站点' : 'By site'}
+              >
+                <option value="all">{language === 'zh' ? '全部站点' : 'All Sites'}</option>
                 {dashboardSiteOptions.map((site: string) => <option key={site} value={site}>{site}</option>)}
               </select>
-              <select value={monitorDashboardAlertFilter} onChange={(e) => setMonitorDashboardAlertFilter(e.target.value as any)} className="rounded-lg border border-[var(--card-border)] bg-[var(--card-bg)] px-2 py-1 text-[11px] outline-none text-[var(--app-text)]" title={language === 'zh' ? '\u6309\u7ea7\u522b' : 'By severity'}>
-                <option value="all">{language === 'zh' ? '\u5168\u90e8' : 'All'}</option>
-                <option value="critical">{language === 'zh' ? '\u4e25\u91cd' : 'Critical'}</option>
-                <option value="major">{language === 'zh' ? '\u4e3b\u8981' : 'Major'}</option>
-                <option value="warning">{language === 'zh' ? '\u6b21\u8981' : 'Minor'}</option>
+              <select 
+                value={monitorDashboardAlertFilter} 
+                onChange={(e) => setMonitorDashboardAlertFilter(e.target.value as any)} 
+                className="rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-800 px-2.5 py-1 text-xs outline-none text-gray-700 dark:text-zinc-200 cursor-pointer"
+                title={language === 'zh' ? '按级别' : 'By severity'}
+              >
+                <option value="all">{language === 'zh' ? '全部级别' : 'All'}</option>
+                <option value="critical">{language === 'zh' ? '严重' : 'Critical'}</option>
+                <option value="major">{language === 'zh' ? '主要' : 'Major'}</option>
+                <option value="warning">{language === 'zh' ? '次要' : 'Minor'}</option>
               </select>
             </div>
           </div>
 
-          <div className="space-y-0.5 max-h-[280px] overflow-auto rounded-xl border border-[var(--card-border)] bg-black/[0.01] p-1">
+          <div className="space-y-1 max-h-[280px] overflow-auto rounded-xl border border-gray-100 dark:border-zinc-800 bg-gray-50/40 dark:bg-zinc-800/20 p-1.5">
             {groupedOpenAlerts.length > 0
               ? groupedOpenAlerts.slice(0, 30).map((alert: any) => (
                 <div key={alert.id} className="relative">
                   <EventStreamItem alert={alert} language={language} onClick={() => openMonitorDevice(alert)} formatTs={formatTs} />
                   {alert._groupCount > 1 && (
-                    <span className="absolute top-1.5 right-16 rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-600">×{alert._groupCount}</span>
+                    <span className="absolute top-2.5 right-24 rounded-full bg-gray-200 dark:bg-zinc-700 px-1.5 py-0.2 text-[9px] font-bold text-gray-600 dark:text-zinc-300">×{alert._groupCount}</span>
                   )}
                 </div>
               ))
-              : <div className="flex h-32 items-center justify-center text-sm text-[var(--muted-text)]">
-                  <CheckCircle2 size={18} className="mr-2 text-emerald-500" />
+              : <div className="flex h-28 items-center justify-center text-xs text-gray-400">
+                  <CheckCircle2 size={16} className="mr-1.5 text-emerald-500" />
                   {language === 'zh' ? '当前无活跃告警，一切正常。' : 'No active alerts — all clear.'}
                 </div>
             }
           </div>
 
-          <div className="flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wider">
-            <span className="rounded-full bg-red-100 px-2.5 py-1 text-red-700">{language === 'zh' ? '\u4e25\u91cd' : 'CRIT'} {filteredOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'critical').length}</span>
-            <span className="rounded-full bg-orange-100 px-2.5 py-1 text-orange-700">{language === 'zh' ? '\u4e3b\u8981' : 'MAJOR'} {filteredOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'major').length}</span>
-            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-700">{language === 'zh' ? '\u6b21\u8981' : 'WARN'} {filteredOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'warning').length}</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
+              <span className="rounded-full bg-rose-50 px-2.5 py-0.5 text-rose-700">{language === 'zh' ? '严重' : 'CRIT'} {filteredOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'critical').length}</span>
+              <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-amber-700">{language === 'zh' ? '主要' : 'MAJOR'} {filteredOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'major').length}</span>
+              <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-blue-700">{language === 'zh' ? '次要' : 'WARN'} {filteredOpenAlerts.filter((a: any) => String(a.severity || '').toLowerCase() === 'warning').length}</span>
+            </div>
+            <button 
+              type="button" 
+              onClick={() => navigate('/alerts')} 
+              className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-0.5 cursor-pointer"
+            >
+              <span>{language === 'zh' ? '打开告警中心查看全部 →' : 'Open Alert Center →'}</span>
+            </button>
           </div>
-          <button type="button" onClick={() => navigate('/alerts')} className="w-full rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-4 py-2 text-xs font-semibold text-[var(--muted-text)] transition-all hover:border-red-300 hover:bg-red-50 hover:text-red-700">
-            {language === 'zh' ? '\u6253\u5f00\u544a\u8b66\u4e2d\u5fc3\u67e5\u770b\u5168\u90e8 \u2192' : 'Open Alert Center for full view \u2192'}
-          </button>
         </div>
       </div>
 

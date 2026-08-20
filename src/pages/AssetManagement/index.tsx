@@ -343,7 +343,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchSites(); }, [fetchSites]);
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
-  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, lifecycleFilter, tagFilter, pageSize]);
+  useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, vendorFilter, dcFilter, deptFilter, deviceCategoryFilter, lifecycleFilter, tagFilter, pageSize, severityFilter]);
 
   useEffect(() => {
     if (!drawerAsset) return;
@@ -368,9 +368,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
   );
   const deptList   = useMemo(() => summary?.by_department ? Object.keys(summary.by_department).sort() : [], [summary]);
 
-  const criticalCount  = (summary?.by_status?.['inactive'] ?? 0);
+  const criticalCount  = (summary?.by_status?.['inactive'] ?? 0) + (summary?.by_status?.['decommissioned'] ?? 0);
   const majorCount     = (summary?.by_status?.['maintenance'] ?? 0);
-  const warningCount   = summary?.warranty_expiring_soon ?? 0;
+  const warningCount   = (summary?.warranty_expiring_soon ?? 0) + (summary?.by_status?.['in_storage'] ?? 0);
   const healthyCount   = summary?.by_status?.['active'] ?? 0;
   const totalCount     = summary
     ? (summary.by_type?.network_device ?? 0) + (summary.by_type?.server ?? 0)
@@ -382,6 +382,40 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     if (lifecycleFilter !== 'all') result = result.filter(a => (a.lifecycle_status || 'staging') === lifecycleFilter);
     return result;
   }, [assets, severityFilter, lifecycleFilter]);
+
+  const hasFilters = Boolean(
+    search.trim() ||
+    typeFilter !== 'all' ||
+    statusFilter !== 'all' ||
+    tagFilter.length > 0 ||
+    vendorFilter !== 'all' ||
+    dcFilter !== 'all' ||
+    deptFilter !== 'all' ||
+    lifecycleFilter !== 'all' ||
+    deviceCategoryFilter ||
+    severityFilter !== 'all'
+  );
+
+  const advancedFilterCount = [
+    vendorFilter !== 'all',
+    dcFilter !== 'all',
+    deptFilter !== 'all',
+    lifecycleFilter !== 'all',
+    Boolean(deviceCategoryFilter),
+  ].filter(Boolean).length;
+
+  const clearAllFilters = () => {
+    setSearch('');
+    setTypeFilter('all');
+    setStatusFilter('all');
+    setTagFilter([]);
+    setVendorFilter('all');
+    setDcFilter('all');
+    setDeptFilter('all');
+    setLifecycleFilter('all');
+    setDeviceCategoryFilter('');
+    setSeverityFilter('all');
+  };
 
   const openAdd = () => {
     setEditingAsset(null);
@@ -1423,30 +1457,80 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
     return labels[a.device_category || '']?.[zh ? 'zh' : 'en'] || a.device_category || '—';
   };
 
-  const hasFilters = typeFilter !== 'all' || statusFilter !== 'all' || vendorFilter !== 'all' || dcFilter !== 'all' || deptFilter !== 'all' || lifecycleFilter !== 'all' || deviceCategoryFilter !== '' || tagFilter.length > 0;
-  const advancedFilterCount = [vendorFilter, dcFilter, deptFilter, lifecycleFilter].filter(f => f !== 'all').length + (tagFilter.length > 0 ? 1 : 0);
-  const clearAllFilters = () => { setTypeFilter('all'); setStatusFilter('all'); setVendorFilter('all'); setDcFilter('all'); setDeptFilter('all'); setSeverityFilter('all'); setLifecycleFilter('all'); setDeviceCategoryFilter(''); setTagFilter([]); };
-
   const renderAssetCell = (column: AssetColumnKey, a: Asset): React.ReactNode => {
     const onlineStatus = a.online_status || (a.status === 'active' ? 'online' : a.status === 'inactive' ? 'offline' : 'pending');
     const onlineMeta = onlineStatus === 'online'
-      ? { label: zh ? '在线' : 'Online', text: 'text-emerald-600', dot: 'bg-emerald-500' }
+      ? { label: zh ? '在线' : 'Online', badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300', dot: 'bg-emerald-500' }
       : onlineStatus === 'offline'
-        ? { label: zh ? '离线' : 'Offline', text: 'text-red-500', dot: 'bg-red-500' }
-        : { label: zh ? '待确认' : 'Pending', text: 'text-amber-600', dot: 'bg-amber-400' };
+        ? { label: zh ? '离线' : 'Offline', badge: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300', dot: 'bg-rose-500' }
+        : { label: zh ? '待确认' : 'Pending', badge: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300', dot: 'bg-amber-400' };
     switch (column) {
-      case 'hostname': return <><p className="font-semibold text-[12px] text-black/80 leading-tight truncate max-w-[180px]">{a.hostname || '—'}</p><p className="text-[10px] text-black/20 font-mono truncate">{a.asset_tag || a.management_ip || a.serial_number || ''}</p></>;
-      case 'category_role': return <><span className="inline-flex items-center gap-1 text-[11px] text-cyan-600">{a.asset_type === 'server' ? <Server size={10} /> : <Router size={10} />}{typeDisplay(a)}</span><span className="block text-[10px] text-black/35 truncate max-w-[120px]">{categoryDisplay(a)}{a.device_role ? ` / ${a.device_role}` : ''}</span></>;
-      case 'site': return <span className="text-[11px] text-black/45 truncate max-w-[100px] block">{a.site_name || a.site_code || a.site_id || '—'}{a.rack && <span className="text-black/25 block text-[10px]">{a.rack}{a.rack_unit ? `U${a.rack_unit}` : ''}</span>}</span>;
-      case 'status': return <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${onlineMeta.text}`}><span className={`h-1.5 w-1.5 rounded-full ${onlineMeta.dot}`} />{onlineMeta.label}</span>;
-      case 'tags': return a.tags?.length ? <div className="flex flex-wrap items-center gap-1 max-w-[180px]">{a.tags.slice(0, 3).map(tag => <span key={tag.id} className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium whitespace-nowrap" style={{ color: tag.color || '#0891b2', backgroundColor: `${tag.color || '#0891b2'}12` }}><span className="h-1 w-1 rounded-full" style={{ backgroundColor: tag.color || '#0891b2' }} />{zh ? (tag.label_zh || tag.label) : tag.label}</span>)}{a.tags.length > 3 && <span className="text-[9px] text-black/25">+{a.tags.length - 3}</span>}</div> : <span className="text-black/15">—</span>;
-      case 'vendor': return <span className="text-[11px] text-black/55">{a.vendor || '—'}</span>;
-      case 'model': return <span className="text-[11px] text-black/45">{a.model || '—'}</span>;
-      case 'serial_number': return <span className="font-mono text-[11px] text-black/50">{a.serial_number || '—'}</span>;
-      case 'management_ip': return <span className="font-mono text-[11px] text-black/50">{a.management_ip || '—'}</span>;
-      case 'lifecycle': return rotatingAssetId === a.id ? <span className="inline-flex items-center gap-1 text-[11px] font-medium text-cyan-600"><Loader2 size={10} className="animate-spin" />{zh ? '上收中' : 'Rotating'}</span> : <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${a.lifecycle_status === 'production' ? 'text-emerald-600' : a.lifecycle_status === 'decommissioned' ? 'text-slate-400' : a.lifecycle_status === 'maintenance' ? 'text-amber-600' : 'text-blue-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${a.lifecycle_status === 'production' ? 'bg-emerald-500' : a.lifecycle_status === 'decommissioned' ? 'bg-slate-400' : a.lifecycle_status === 'maintenance' ? 'bg-amber-500' : 'bg-blue-400'}`} />{LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}</span>;
-      case 'created_at': return <span className="text-[11px] text-black/45 tabular-nums">{a.created_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
-      case 'updated_at': return <span className="text-[11px] text-black/45 tabular-nums">{a.updated_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
+      case 'hostname': return (
+        <div>
+          <p className="font-bold text-xs text-gray-900 dark:text-white leading-tight truncate max-w-[200px]">{a.hostname || '—'}</p>
+          <p className="text-[10px] text-gray-400 font-mono truncate mt-0.5">{a.asset_tag || a.management_ip || a.serial_number || ''}</p>
+        </div>
+      );
+      case 'category_role': return (
+        <div className="space-y-0.5">
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-[10px] font-semibold">
+            {a.asset_type === 'server' ? <Server size={11} /> : <Router size={11} />}
+            {typeDisplay(a)}
+          </span>
+          <span className="block text-[11px] text-gray-500 dark:text-zinc-400 truncate max-w-[130px]">
+            {categoryDisplay(a)}{a.device_role ? ` / ${a.device_role}` : ''}
+          </span>
+        </div>
+      );
+      case 'site': return (
+        <div className="max-w-[120px]">
+          <span className="text-xs font-medium text-gray-800 dark:text-zinc-200 truncate block">{a.site_name || a.site_code || a.site_id || '—'}</span>
+          {a.rack && <span className="text-[10px] text-gray-400 font-mono block truncate">{a.rack}{a.rack_unit ? ` · U${a.rack_unit}` : ''}</span>}
+        </div>
+      );
+      case 'status': return (
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${onlineMeta.badge}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${onlineMeta.dot}`} />
+          {onlineMeta.label}
+        </span>
+      );
+      case 'tags': return a.tags?.length ? (
+        <div className="flex flex-wrap items-center gap-1 max-w-[200px]">
+          {a.tags.slice(0, 3).map(tag => (
+            <span key={tag.id} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap" style={{ color: tag.color || '#2563eb', backgroundColor: `${tag.color || '#2563eb'}15` }}>
+              <span className="h-1 w-1 rounded-full" style={{ backgroundColor: tag.color || '#2563eb' }} />
+              {zh ? (tag.label_zh || tag.label) : tag.label}
+            </span>
+          ))}
+          {a.tags.length > 3 && <span className="text-[9px] font-mono text-gray-400">+{a.tags.length - 3}</span>}
+        </div>
+      ) : <span className="text-gray-300 dark:text-zinc-600">—</span>;
+      case 'vendor': return <span className="text-xs font-semibold text-gray-700 dark:text-zinc-300">{a.vendor || '—'}</span>;
+      case 'model': return <span className="text-xs text-gray-600 dark:text-zinc-400">{a.model || '—'}</span>;
+      case 'serial_number': return <span className="font-mono text-xs text-gray-600 dark:text-zinc-400">{a.serial_number || '—'}</span>;
+      case 'management_ip': return <span className="font-mono text-xs font-semibold text-gray-800 dark:text-zinc-200">{a.management_ip || '—'}</span>;
+      case 'lifecycle': return rotatingAssetId === a.id ? (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-semibold">
+          <Loader2 size={10} className="animate-spin" />{zh ? '上收中' : 'Rotating'}
+        </span>
+      ) : (
+        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+          a.lifecycle_status === 'production' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' :
+          a.lifecycle_status === 'decommissioned' ? 'bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-zinc-400' :
+          a.lifecycle_status === 'maintenance' ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' :
+          'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+        }`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${
+            a.lifecycle_status === 'production' ? 'bg-emerald-500' :
+            a.lifecycle_status === 'decommissioned' ? 'bg-gray-400' :
+            a.lifecycle_status === 'maintenance' ? 'bg-amber-500' :
+            'bg-blue-500'
+          }`} />
+          {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
+        </span>
+      );
+      case 'created_at': return <span className="text-xs font-mono text-gray-400 tabular-nums">{a.created_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
+      case 'updated_at': return <span className="text-xs font-mono text-gray-400 tabular-nums">{a.updated_at?.replace('T', ' ').slice(0, 19) || '—'}</span>;
     }
   };
 
@@ -1458,7 +1542,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         subtitle={zh ? '设备台账 · 资产生命周期 · 租户归属' : 'Device inventory, lifecycle and tenant ownership'}
       />
 
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-2.5">
+      <div className="flex-1 overflow-auto p-5 space-y-4">
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} />
 
         <AnimatePresence>
@@ -1469,26 +1553,26 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.25 }}
-              className={`fixed right-6 top-20 z-[220] flex w-[min(560px,calc(100vw-2rem))] items-start gap-3 px-4 py-3 rounded-xl border shadow-2xl backdrop-blur-sm ${
-                feedbackMsg.type === 'success' ? 'bg-emerald-50/90 border-emerald-200 text-emerald-800' :
-                feedbackMsg.type === 'warning' ? 'bg-amber-50/90 border-amber-200 text-amber-800' :
-                feedbackMsg.type === 'info' ? 'bg-cyan-50/90 border-cyan-200 text-cyan-800' :
-                'bg-red-50/90 border-red-200 text-red-800'
+              className={`fixed right-6 top-20 z-[220] flex w-[min(560px,calc(100vw-2rem))] items-start gap-3 px-4 py-3 rounded-2xl border shadow-2xl backdrop-blur-sm ${
+                feedbackMsg.type === 'success' ? 'bg-emerald-50/95 border-emerald-200 text-emerald-800 dark:bg-emerald-950/90 dark:text-emerald-200 dark:border-emerald-800' :
+                feedbackMsg.type === 'warning' ? 'bg-amber-50/95 border-amber-200 text-amber-800 dark:bg-amber-950/90 dark:text-amber-200 dark:border-amber-800' :
+                feedbackMsg.type === 'info' ? 'bg-blue-50/95 border-blue-200 text-blue-800 dark:bg-blue-950/90 dark:text-blue-200 dark:border-blue-800' :
+                'bg-rose-50/95 border-rose-200 text-rose-800 dark:bg-rose-950/90 dark:text-rose-200 dark:border-rose-800'
               }`}
             >
-              {feedbackMsg.type === 'success' ? <CheckCircle2 size={18} className="text-emerald-500 shrink-0" /> :
-               feedbackMsg.type === 'warning' ? <AlertTriangle size={18} className="text-amber-500 shrink-0" /> :
-               feedbackMsg.type === 'info' ? (rotatingAssetId ? <Loader2 size={18} className="text-cyan-500 shrink-0 animate-spin" /> : <Info size={18} className="text-cyan-500 shrink-0" />) :
-               <AlertCircle size={18} className="text-red-500 shrink-0" />}
+              {feedbackMsg.type === 'success' ? <CheckCircle2 size={18} className="text-emerald-500 shrink-0 mt-0.5" /> :
+               feedbackMsg.type === 'warning' ? <AlertTriangle size={18} className="text-amber-500 shrink-0 mt-0.5" /> :
+               feedbackMsg.type === 'info' ? (rotatingAssetId ? <Loader2 size={18} className="text-blue-500 shrink-0 animate-spin mt-0.5" /> : <Info size={18} className="text-blue-500 shrink-0 mt-0.5" />) :
+               <AlertCircle size={18} className="text-rose-500 shrink-0 mt-0.5" />}
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium">{feedbackMsg.text}</div>
+                <div className="text-sm font-bold">{feedbackMsg.text}</div>
                 {feedbackMsg.details?.length ? (
-                  <ul className="mt-1 space-y-0.5 text-[11px] font-normal leading-4 opacity-90">
+                  <ul className="mt-1 space-y-0.5 text-xs font-normal leading-4 opacity-90">
                     {feedbackMsg.details.map((detail, index) => <li key={`${detail}-${index}`}>{detail}</li>)}
                   </ul>
                 ) : null}
               </div>
-              <button onClick={() => setFeedbackMsg(null)} className="p-0.5 rounded-md hover:bg-black/5 transition-colors">
+              <button onClick={() => setFeedbackMsg(null)} className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer">
                 <X size={14} />
               </button>
             </motion.div>
@@ -1496,46 +1580,46 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
         </AnimatePresence>
 
         {batchTakeoverResults.length > 0 && (
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-2.5">
+          <div className="rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 shadow-2xs overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40 px-4 py-3">
               <div>
-                <div className="text-xs font-bold text-slate-700">{zh ? '批量口令上收结果' : 'Batch takeover results'}</div>
-                <div className="mt-0.5 text-[10px] text-slate-400">{zh ? '绑定凭据的设备已在任务创建前拦截，不会修改设备口令。' : 'Credential-bound devices are blocked before task creation and will not be modified.'}</div>
+                <div className="text-xs font-bold text-gray-900 dark:text-white">{zh ? '批量口令上收结果' : 'Batch takeover results'}</div>
+                <div className="mt-0.5 text-[11px] text-gray-400">{zh ? '绑定凭据的设备已在任务创建前拦截，不会修改设备口令。' : 'Credential-bound devices are blocked before task creation and will not be modified.'}</div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-[10px] font-medium">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
                 {[
-                  { key: 'running', label: zh ? '处理中' : 'Running', cls: 'text-cyan-600' },
-                  { key: 'completed', label: zh ? '成功' : 'Completed', cls: 'text-emerald-600' },
-                  { key: 'failed', label: zh ? '失败' : 'Failed', cls: 'text-red-600' },
-                  { key: 'blocked_credential', label: zh ? '已拦截' : 'Blocked', cls: 'text-amber-600' },
+                  { key: 'running', label: zh ? '处理中' : 'Running', cls: 'text-blue-600 dark:text-blue-400' },
+                  { key: 'completed', label: zh ? '成功' : 'Completed', cls: 'text-emerald-600 dark:text-emerald-400' },
+                  { key: 'failed', label: zh ? '失败' : 'Failed', cls: 'text-rose-600 dark:text-rose-400' },
+                  { key: 'blocked_credential', label: zh ? '已拦截' : 'Blocked', cls: 'text-amber-600 dark:text-amber-400' },
                 ].map(item => {
                   const count = batchTakeoverResults.filter(result => result.status === item.key).length;
                   return <span key={item.key} className={item.cls}>{item.label} {count}</span>;
                 })}
               </div>
             </div>
-            <div className="max-h-56 overflow-auto divide-y divide-slate-100">
+            <div className="max-h-56 overflow-auto divide-y divide-gray-100 dark:divide-zinc-800">
               {batchTakeoverDisplayResults.map(result => {
                 const statusMeta = result.status === 'completed'
-                  ? { label: zh ? '成功' : 'Completed', cls: 'bg-emerald-50 text-emerald-700', Icon: CheckCircle2 }
+                  ? { label: zh ? '成功' : 'Completed', cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300', Icon: CheckCircle2 }
                   : result.status === 'failed' || result.status === 'error' || result.status === 'timeout'
-                    ? { label: result.status === 'timeout' ? (zh ? '超时' : 'Timeout') : (zh ? '失败' : 'Failed'), cls: 'bg-red-50 text-red-700', Icon: AlertCircle }
+                    ? { label: result.status === 'timeout' ? (zh ? '超时' : 'Timeout') : (zh ? '失败' : 'Failed'), cls: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300', Icon: AlertCircle }
                     : result.status === 'blocked_credential'
-                      ? { label: zh ? '绑定凭据，未执行' : 'Blocked', cls: 'bg-amber-50 text-amber-700', Icon: Lock }
-                      : { label: zh ? '处理中' : 'Running', cls: 'bg-cyan-50 text-cyan-700', Icon: Loader2 };
+                      ? { label: zh ? '绑定凭据，未执行' : 'Blocked', cls: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300', Icon: Lock }
+                      : { label: zh ? '处理中' : 'Running', cls: 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300', Icon: Loader2 };
                 const StatusIcon = statusMeta.Icon;
                 return (
-                  <div key={result.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-[10px]">
+                  <div key={result.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-xs">
                     <div className="min-w-[170px] flex-1">
-                      <div className="font-semibold text-slate-700">{result.status === 'blocked_credential' ? (zh ? `${result.device_count || 1} 台设备` : `${result.device_count || 1} devices`) : (result.hostname || result.id)}</div>
-                      <div className="font-mono text-slate-400">{result.status === 'blocked_credential' ? (result.device_names || []).slice(0, 3).join('、') + ((result.device_count || 0) > 3 ? ` +${(result.device_count || 0) - 3}` : '') : (result.management_ip || '—')}</div>
+                      <div className="font-bold text-gray-800 dark:text-zinc-200">{result.status === 'blocked_credential' ? (zh ? `${result.device_count || 1} 台设备` : `${result.device_count || 1} devices`) : (result.hostname || result.id)}</div>
+                      <div className="font-mono text-xs text-gray-400">{result.status === 'blocked_credential' ? (result.device_names || []).slice(0, 3).join('、') + ((result.device_count || 0) > 3 ? ` +${(result.device_count || 0) - 3}` : '') : (result.management_ip || '—')}</div>
                     </div>
-                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-semibold ${statusMeta.cls}`}>
-                      <StatusIcon size={11} className={result.status === 'running' ? 'animate-spin' : ''} />
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${statusMeta.cls}`}>
+                      <StatusIcon size={12} className={result.status === 'running' ? 'animate-spin' : ''} />
                       {statusMeta.label}
                     </span>
-                    <div className="min-w-[260px] flex-[2] text-slate-500">
-                      {result.status === 'blocked_credential' && result.credential_name ? <span className="font-medium text-amber-700">{zh ? '关联凭据：' : 'Credential: '}{result.credential_name} · </span> : null}
+                    <div className="min-w-[260px] flex-[2] text-gray-500 dark:text-zinc-400">
+                      {result.status === 'blocked_credential' && result.credential_name ? <span className="font-medium text-amber-700 dark:text-amber-300">{zh ? '关联凭据：' : 'Credential: '}{result.credential_name} · </span> : null}
                       {result.message || '—'}
                     </div>
                   </div>
@@ -1545,130 +1629,293 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           </div>
         )}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        {/* 5-Bento Status Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
           {([
-            { key: 'critical', value: criticalCount, label: zh ? '严重故障' : 'Critical', sub: 'P1', Icon: Flame, gradient: 'from-red-600 to-red-700', filterVal: 'critical', pulse: true },
-            { key: 'major', value: majorCount, label: zh ? '重要问题' : 'Major Issues', sub: 'P2', Icon: AlertTriangle, gradient: 'from-orange-600 to-orange-700', filterVal: 'major' },
-            { key: 'warning', value: warningCount, label: zh ? '需要关注' : 'Warning', sub: 'P3', Icon: AlertCircle, gradient: 'from-amber-600 to-amber-700', filterVal: 'warning' },
-            { key: 'healthy', value: healthyCount, label: zh ? '运行正常' : 'Healthy', sub: zh ? '正常' : 'OK', Icon: CheckCircle2, gradient: 'from-emerald-600 to-emerald-700', filterVal: 'healthy' },
+            {
+              key: 'all',
+              value: totalCount,
+              label: zh ? '全部资产' : 'All Assets',
+              sub: zh ? '全部' : 'ALL',
+              Icon: Package,
+              pill: 'bg-slate-100 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 border-slate-200/80 dark:border-zinc-700/80',
+              iconBg: 'bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300',
+              activeBorder: 'border-blue-500 ring-2 ring-blue-500/20 shadow-sm',
+              filterVal: 'all',
+            },
+            {
+              key: 'critical',
+              value: criticalCount,
+              label: zh ? '严重故障' : 'Critical',
+              sub: 'P1',
+              Icon: Flame,
+              pill: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200/80 dark:border-rose-900/50',
+              iconBg: 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400',
+              activeBorder: 'border-rose-500 ring-2 ring-rose-500/20',
+              filterVal: 'critical',
+              pulse: true,
+            },
+            {
+              key: 'major',
+              value: majorCount,
+              label: zh ? '重要问题' : 'Major Issues',
+              sub: 'P2',
+              Icon: AlertTriangle,
+              pill: 'bg-orange-50 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300 border-orange-200/80 dark:border-orange-900/50',
+              iconBg: 'bg-orange-50 dark:bg-orange-950/50 text-orange-600 dark:text-orange-400',
+              activeBorder: 'border-orange-500 ring-2 ring-orange-500/20',
+              filterVal: 'major',
+            },
+            {
+              key: 'warning',
+              value: warningCount,
+              label: zh ? '需要关注' : 'Warning',
+              sub: 'P3',
+              Icon: AlertCircle,
+              pill: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200/80 dark:border-amber-900/50',
+              iconBg: 'bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400',
+              activeBorder: 'border-amber-500 ring-2 ring-amber-500/20',
+              filterVal: 'warning',
+            },
+            {
+              key: 'healthy',
+              value: healthyCount,
+              label: zh ? '运行正常' : 'Healthy',
+              sub: zh ? '正常' : 'OK',
+              Icon: CheckCircle2,
+              pill: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200/80 dark:border-emerald-900/50',
+              iconBg: 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400',
+              activeBorder: 'border-emerald-500 ring-2 ring-emerald-500/20',
+              filterVal: 'healthy',
+            },
           ]).map(c => {
             const isActive = severityFilter === c.filterVal;
             const isEmpty = c.value === 0;
+            const pct = totalCount > 0 ? Math.round((c.value / totalCount) * 100) : 0;
             return (
               <button
                 key={c.key}
-                onClick={() => setSeverityFilter(isActive ? 'all' : c.filterVal)}
-                className={`group relative rounded-xl overflow-hidden transition-all hover:shadow-md hover:scale-[1.01] active:scale-[0.99] bg-gradient-to-br ${c.gradient} ${isEmpty ? 'opacity-60' : ''} ${isActive ? 'ring-2 ring-white/30 shadow-lg' : 'shadow-sm'}`}
+                type="button"
+                onClick={() => setSeverityFilter(c.filterVal === 'all' ? 'all' : isActive ? 'all' : c.filterVal)}
+                className={`group relative rounded-2xl border p-4 text-left transition-all duration-200 bg-white dark:bg-zinc-900/90 shadow-2xs cursor-pointer ${
+                  isActive
+                    ? `${c.activeBorder} shadow-sm`
+                    : 'border-gray-200/70 dark:border-zinc-800/80 hover:border-gray-300 dark:hover:border-zinc-700 hover:shadow-xs'
+                }`}
               >
-                <div className="px-3 py-2.5 flex items-center justify-between relative z-10">
-                  <div className="text-left">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span className="text-[9px] font-bold uppercase tracking-widest text-white/50">{c.sub}</span>
-                      <span className="text-[10px] font-medium text-white/60">{c.label}</span>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] font-bold tracking-wider uppercase font-mono ${c.pill}`}>
+                        {c.sub}
+                      </span>
+                      <span className="text-xs font-semibold text-gray-500 dark:text-zinc-400">{c.label}</span>
                     </div>
-                    <p className="text-2xl font-black tabular-nums leading-none mt-0.5 text-white">{c.value}</p>
-                    {c.value > 0 && totalCount > 0 && (
-                      <p className="text-[9px] mt-0.5 text-white/30">
-                        {Math.round((c.value / totalCount) * 100)}% {zh ? '资产' : 'of fleet'}
-                      </p>
-                    )}
+                    <div className="mt-2.5 flex items-baseline gap-2">
+                      <span className="text-2xl font-black tabular-nums tracking-tight font-mono text-gray-900 dark:text-white">
+                        {c.value}
+                      </span>
+                      {totalCount > 0 && (
+                        <span className="text-xs font-mono text-gray-400">
+                          ({pct}%)
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="h-8 w-8 rounded-lg flex items-center justify-center bg-white/[0.08]">
-                    <c.Icon size={16} className={`text-white/77 ${!isEmpty && c.pulse ? 'animate-pulse' : ''}`} />
+                  <div className={`flex h-9 w-9 items-center justify-center rounded-xl transition-transform group-hover:scale-105 ${c.iconBg}`}>
+                    <c.Icon size={18} className={!isEmpty && (c as any).pulse ? 'animate-pulse' : ''} />
                   </div>
                 </div>
-                {isActive && <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20" />}
+
+                {/* Micro fluid indicator */}
+                <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-zinc-800">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      c.key === 'all' ? 'bg-blue-500' :
+                      c.key === 'critical' ? 'bg-rose-500' :
+                      c.key === 'major' ? 'bg-orange-500' :
+                      c.key === 'warning' ? 'bg-amber-500' :
+                      'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.max(c.value > 0 ? 6 : 0, pct)}%` }}
+                  />
+                </div>
               </button>
             );
           })}
         </div>
 
-        <div className="relative z-20 bg-white rounded-xl border border-black/5 shadow-sm overflow-visible">
-          <div className="flex items-center justify-between px-3 py-1.5 border-b border-black/5 bg-black/[0.008]">
-            <div className="flex items-center gap-0.5">
-              <span className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-[#00bceb]/10 text-[#0088b0] text-[11px] font-semibold">
-                <LayoutList size={12} />{zh ? '表格' : 'Table'}
+        {/* Main Table Container */}
+        <div className="bg-white dark:bg-zinc-900/90 border border-gray-200/70 dark:border-zinc-800/80 rounded-2xl shadow-2xs overflow-hidden">
+          {/* Header Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-800/30">
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 text-xs font-bold shadow-2xs">
+                <LayoutList size={13} />
+                {zh ? '资产台账' : 'Inventory Table'}
               </span>
-            </div>
 
-            <div className="flex items-center gap-1">
               <AnimatePresence>
                 {selectedIds.size > 0 && (
-                  <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} className="flex items-center gap-0.5 mr-1.5 pr-1.5 border-r border-black/8">
-                    <span className="text-[10px] font-bold text-[#00bceb] tabular-nums mr-1">{selectedIds.size}</span>
-                    <button onClick={requestBatchTakeover} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-cyan-500 text-[9px] font-medium hover:bg-cyan-50 hover:text-cyan-600 transition-colors"><Shield size={10} />{zh ? '批量上收' : 'Takeover'}</button>
-                    <button onClick={handleBatchDelete} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-black/35 text-[9px] font-medium hover:bg-red-50 hover:text-red-600 transition-colors"><Trash2 size={10} />{zh ? '删除' : 'Delete'}</button>
-                    <button onClick={clearSel} className="p-0.5 ml-0.5 text-black/20 hover:text-black/45" title="Clear"><X size={10} /></button>
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="flex items-center gap-1.5 ml-2 pl-3 border-l border-gray-200 dark:border-zinc-700"
+                  >
+                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400 font-mono px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40">
+                      {selectedIds.size} {zh ? '已选' : 'selected'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={requestBatchTakeover}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 text-xs font-semibold transition-all cursor-pointer"
+                    >
+                      <Shield size={12} />
+                      {zh ? '批量上收' : 'Takeover'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleBatchDelete}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 text-xs font-semibold transition-all cursor-pointer"
+                    >
+                      <Trash2 size={12} />
+                      {zh ? '批量删除' : 'Delete'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearSel}
+                      className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 cursor-pointer"
+                      title="Clear"
+                    >
+                      <X size={12} />
+                    </button>
                   </motion.div>
                 )}
               </AnimatePresence>
+            </div>
 
+            <div className="flex flex-wrap items-center gap-2">
               <div ref={columnsMenuRef} className="relative">
                 <button
+                  type="button"
                   onClick={() => setColumnsOpen(open => !open)}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[11px] font-semibold transition-colors ${columnsOpen ? 'border-[#00bceb]/30 bg-[#00bceb]/5 text-[#0088b0]' : 'border-black/8 bg-white text-black/45 hover:border-[#00bceb]/25 hover:text-[#0088b0]'}`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                    columnsOpen
+                      ? 'border-blue-500 bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400'
+                      : 'border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-700 dark:text-zinc-200 hover:bg-gray-50'
+                  }`}
                   title={zh ? '配置展示列' : 'Configure columns'}
                 >
-                  <Settings2 size={13} /><span className="hidden sm:inline">{zh ? '展示列' : 'Columns'}</span>
+                  <Settings2 size={13} />
+                  <span>{zh ? '展示列' : 'Columns'}</span>
                 </button>
                 {columnsOpen && (
-                  <div className="absolute right-0 top-full z-40 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
-                    <div className="mb-2 flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-700">{zh ? '选择展示列' : 'Visible columns'}</span>
-                      <span className="text-[10px] text-slate-400">{activeAssetColumns.length}/{ASSET_COLUMN_DEFS.length}</span>
+                  <div className="absolute right-0 top-full z-40 mt-2 w-64 rounded-2xl border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-3.5 shadow-xl">
+                    <div className="mb-2.5 flex items-center justify-between">
+                      <span className="text-xs font-bold text-gray-800 dark:text-zinc-200">{zh ? '选择展示列' : 'Visible columns'}</span>
+                      <span className="text-[11px] font-mono text-gray-400">{activeAssetColumns.length}/{ASSET_COLUMN_DEFS.length}</span>
                     </div>
                     <button
+                      type="button"
                       onClick={() => setVisibleColumns(normalizeAssetColumns(Object.fromEntries(ASSET_COLUMN_DEFS.map(column => [column.key, true]))))}
                       disabled={allAssetColumnsSelected}
-                      className="mb-2 w-full rounded-lg bg-cyan-50 px-2 py-1.5 text-left text-[11px] font-semibold text-cyan-700 disabled:cursor-default disabled:opacity-50"
+                      className="mb-2 w-full rounded-xl bg-blue-50 dark:bg-blue-950/40 px-2.5 py-1.5 text-left text-xs font-semibold text-blue-600 dark:text-blue-400 disabled:cursor-default disabled:opacity-50 cursor-pointer"
                     >
                       {zh ? '一键全选' : 'Select all'}
                     </button>
-                    <div className="max-h-80 overflow-y-auto pr-1">
+                    <div className="max-h-80 overflow-y-auto pr-1 space-y-0.5">
                       {ASSET_COLUMN_DEFS.map(column => {
                         const fixed = FIXED_ASSET_COLUMNS.has(column.key);
                         return (
-                        <label key={column.key} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs ${fixed ? 'cursor-default text-slate-400' : 'cursor-pointer text-slate-600 hover:bg-slate-50'}`}>
-                          <input
-                            type="checkbox"
-                            checked={visibleColumns[column.key]}
-                            disabled={fixed}
-                            onChange={() => { if (!fixed) setVisibleColumns(current => normalizeAssetColumns({ ...current, [column.key]: !current[column.key] })); }}
-                            className="accent-[#00bceb] disabled:opacity-50"
-                          />
-                          <span className="flex-1">{zh ? column.zh : column.en}</span>
-                          {visibleColumns[column.key] && <Check size={13} className={fixed ? 'text-cyan-600/60' : 'text-cyan-600'} />}
-                        </label>
+                          <label key={column.key} className={`flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs ${fixed ? 'cursor-default text-gray-400' : 'cursor-pointer text-gray-700 dark:text-zinc-200 hover:bg-gray-50 dark:hover:bg-zinc-800'}`}>
+                            <input
+                              type="checkbox"
+                              checked={visibleColumns[column.key]}
+                              disabled={fixed}
+                              onChange={() => { if (!fixed) setVisibleColumns(current => normalizeAssetColumns({ ...current, [column.key]: !current[column.key] })); }}
+                              className="accent-blue-600 disabled:opacity-50 cursor-pointer"
+                            />
+                            <span className="flex-1">{zh ? column.zh : column.en}</span>
+                            {visibleColumns[column.key] && <Check size={13} className={fixed ? 'text-blue-600/60' : 'text-blue-600'} />}
+                          </label>
                         );
                       })}
                     </div>
                     <button
+                      type="button"
                       onClick={() => setVisibleColumns(normalizeAssetColumns({}))}
-                      className="mt-2 w-full border-t border-slate-100 pt-2 text-left text-[11px] text-cyan-600"
+                      className="mt-2.5 w-full border-t border-gray-100 dark:border-zinc-800 pt-2 text-left text-xs font-semibold text-blue-600 hover:underline cursor-pointer"
                     >
                       {zh ? '恢复默认展示' : 'Reset to default'}
                     </button>
                   </div>
                 )}
               </div>
-              <button onClick={openAdd} className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#00bceb] text-white text-[11px] font-semibold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20" title={zh ? '新增资产' : 'Add Asset'}><Plus size={13} /><span className="hidden sm:inline">{zh ? '新增' : 'Add'}</span></button>
-              <button onClick={() => { fetchAssets(); fetchSummary(); }} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '刷新' : 'Refresh'}><RefreshCw size={13} /></button>
-              <button onClick={handleDownloadTemplate} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '下载模板' : 'Template'}><FileText size={13} /></button>
-              <button onClick={handleExport} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '导出' : 'Export'}><Download size={13} /></button>
-              <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded-md text-black/20 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '导入' : 'Import'}><Upload size={13} /></button>
+
+              <button
+                type="button"
+                onClick={openAdd}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 shadow-2xs transition-all cursor-pointer"
+                title={zh ? '新增资产' : 'Add Asset'}
+              >
+                <Plus size={13} />
+                <span>{zh ? '新增' : 'Add'}</span>
+              </button>
+
+              <div className="flex items-center gap-1 border-l border-gray-200 dark:border-zinc-700 pl-2">
+                <button
+                  type="button"
+                  onClick={() => { fetchAssets(); fetchSummary(); }}
+                  className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
+                  title={zh ? '刷新' : 'Refresh'}
+                >
+                  <RefreshCw size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadTemplate}
+                  className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
+                  title={zh ? '下载模板' : 'Template'}
+                >
+                  <FileText size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
+                  title={zh ? '导出' : 'Export'}
+                >
+                  <Download size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
+                  title={zh ? '导入' : 'Import'}
+                >
+                  <Upload size={13} />
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="border-b border-black/[0.03]">
-            <div className="flex items-center gap-1.5 px-3 py-1.5">
-              <div className="relative flex-1 max-w-[280px]">
-                <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-black/15" />
+          {/* Filter Bar */}
+          <div className="border-b border-gray-100 dark:border-zinc-800 px-4 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative flex-1 min-w-[220px] max-w-[320px]">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
-                  value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder={zh ? 'IP / 主机名 / 资产编号 / 序列号...' : 'IP / hostname / tag / serial...'}
-                  className="w-full pl-7 pr-6 py-1.5 rounded-md bg-black/[0.015] border border-black/5 text-[11px] text-black/75 placeholder:text-black/15 focus:outline-none focus:border-[#00bceb]/25 focus:ring-1 focus:ring-[#00bceb]/10 focus:bg-white"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder={zh ? '搜索 IP / 主机名 / 资产编号 / 序列号...' : 'Search IP / hostname / tag / serial...'}
+                  className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-gray-50 dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700 text-xs text-gray-800 dark:text-zinc-100 placeholder:text-gray-400 focus:outline-none focus:border-blue-500 focus:bg-white transition-all"
                 />
-                {search && <button onClick={() => setSearch('')} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-black/15 hover:text-black/35"><X size={10} /></button>}
+                {search && (
+                  <button onClick={() => setSearch('')} title="Clear" className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer">
+                    <X size={11} />
+                  </button>
+                )}
               </div>
 
               {([
@@ -1681,8 +1928,15 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 ] },
               ] as const).map(f => (
                 <select
-                  key={f.label} value={f.val} onChange={e => f.set(e.target.value)} title={f.label}
-                  className={`px-1.5 py-1.5 rounded-md border text-[10px] focus:outline-none cursor-pointer transition-colors ${f.val !== 'all' ? 'bg-[#00bceb]/5 border-[#00bceb]/15 text-[#0088b0] font-semibold' : 'bg-transparent border-black/5 text-black/30'}`}
+                  key={f.label}
+                  value={f.val}
+                  onChange={e => f.set(e.target.value)}
+                  title={f.label}
+                  className={`px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
+                    f.val !== 'all'
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-semibold'
+                      : 'bg-gray-50 dark:bg-zinc-800 border-gray-200/80 dark:border-zinc-700 text-gray-600 dark:text-zinc-300'
+                  }`}
                 >
                   <option value="all">{f.label}</option>
                   {f.opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
@@ -1697,39 +1951,67 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               />
 
               <button
+                type="button"
                 onClick={() => setShowAdvancedFilter(p => !p)}
-                className={`flex items-center gap-1 px-1.5 py-1.5 rounded-md border text-[10px] font-medium transition-colors ${showAdvancedFilter || advancedFilterCount > 0 ? 'bg-[#00bceb]/5 border-[#00bceb]/15 text-[#0088b0]' : 'bg-transparent border-black/5 text-black/30 hover:text-black/50'}`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+                  showAdvancedFilter || advancedFilterCount > 0
+                    ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                    : 'bg-gray-50 dark:bg-zinc-800 border-gray-200/80 dark:border-zinc-700 text-gray-600 dark:text-zinc-300 hover:bg-gray-100'
+                }`}
                 title={zh ? '高级筛选' : 'Advanced Filters'}
               >
-                <SlidersHorizontal size={11} />
-                <span>{zh ? '筛选' : 'Filter'}</span>
+                <SlidersHorizontal size={12} />
+                <span>{zh ? '高级筛选' : 'Filters'}</span>
                 {advancedFilterCount > 0 && (
-                  <span className="ml-0.5 h-3.5 min-w-[14px] inline-flex items-center justify-center rounded-full bg-[#00bceb] text-white text-[8px] font-bold">{advancedFilterCount}</span>
+                  <span className="h-4 min-w-[16px] inline-flex items-center justify-center rounded-full bg-blue-600 text-white text-[9px] font-bold font-mono">
+                    {advancedFilterCount}
+                  </span>
                 )}
               </button>
 
               {(hasFilters || severityFilter !== 'all') && (
-                <button onClick={clearAllFilters} className="text-[9px] text-[#00bceb] hover:underline ml-0.5 whitespace-nowrap">{zh ? '清除全部' : 'Clear all'}</button>
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="text-xs font-semibold text-blue-600 hover:underline ml-1 cursor-pointer whitespace-nowrap"
+                >
+                  {zh ? '重置筛选' : 'Reset'}
+                </button>
               )}
 
               <div className="flex-1" />
-              <span className="text-[10px] text-black/20 tabular-nums whitespace-nowrap">{total} {zh ? '条记录' : 'records'}</span>
+              <span className="text-xs font-mono text-gray-400 tabular-nums whitespace-nowrap">
+                {zh ? `共 ${severityFilter !== 'all' ? displayAssets.length : total} 条资产` : `${severityFilter !== 'all' ? displayAssets.length : total} assets`}
+              </span>
             </div>
 
             <AnimatePresence>
               {showAdvancedFilter && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.15 }} className="overflow-hidden">
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-black/[0.008] border-t border-black/[0.02]">
-                    <span className="text-[9px] text-black/20 mr-0.5">{zh ? '高级:' : 'More:'}</span>
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="overflow-hidden"
+                >
+                  <div className="flex flex-wrap items-center gap-2 pt-2.5 mt-2.5 border-t border-gray-100 dark:border-zinc-800">
+                    <span className="text-xs font-medium text-gray-400 mr-1">{zh ? '高级筛选:' : 'Filters:'}</span>
                     {([
                       { val: vendorFilter, set: setVendorFilter, label: zh ? '厂商' : 'Vendor', opts: vendorList.map(v => ({ v, l: v })),   hide: !vendorList.length },
                       { val: dcFilter,     set: setDcFilter,     label: zh ? '站点' : 'Site',   opts: dcList.map(d => ({ v: d.value, l: d.label })), hide: !dcList.length },
-                      { val: deptFilter,   set: setDeptFilter,   label: zh ? '业务' : 'Service', opts: deptList.map(d => ({ v: d, l: d })),  hide: !deptList.length },
-                      { val: lifecycleFilter, set: setLifecycleFilter, label: zh ? '投产' : 'Lifecycle', opts: LIFECYCLE_STATUSES.map(s => ({ v: s.value, l: s.label[zh ? 'zh' : 'en'] })), hide: false },
+                      { val: deptFilter,   set: setDeptFilter,   label: zh ? '业务部门' : 'Department', opts: deptList.map(d => ({ v: d, l: d })),  hide: !deptList.length },
+                      { val: lifecycleFilter, set: setLifecycleFilter, label: zh ? '生命周期' : 'Lifecycle', opts: LIFECYCLE_STATUSES.map(s => ({ v: s.value, l: s.label[zh ? 'zh' : 'en'] })), hide: false },
                     ] as const).filter(f => !f.hide).map(f => (
                       <select
-                        key={f.label} value={f.val} onChange={e => f.set(e.target.value)} title={f.label}
-                        className={`px-1.5 py-1.5 rounded-md border text-[10px] focus:outline-none cursor-pointer transition-colors ${f.val !== 'all' ? 'bg-[#00bceb]/5 border-[#00bceb]/15 text-[#0088b0] font-semibold' : 'bg-transparent border-black/5 text-black/30'}`}
+                        key={f.label}
+                        value={f.val}
+                        onChange={e => f.set(e.target.value)}
+                        title={f.label}
+                        className={`px-3 py-1.5 rounded-xl border text-xs outline-none cursor-pointer transition-all ${
+                          f.val !== 'all'
+                            ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 font-semibold'
+                            : 'bg-gray-50 dark:bg-zinc-800 border-gray-200/80 dark:border-zinc-700 text-gray-600 dark:text-zinc-300'
+                        }`}
                       >
                         <option value="all">{f.label}</option>
                         {f.opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
@@ -1742,44 +2024,56 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
           </div>
 
           <DataTableFrame className="rounded-none border-0 shadow-none">
-              <DataTable className="text-[12px]">
+              <DataTable className="text-xs">
                 <thead>
-                  <tr className="border-b border-black/5 bg-black/[0.008]">
-                    <th className="w-7 px-1.5 py-1.5">
-                      <input type="checkbox" checked={selectedIds.size === displayAssets.length && displayAssets.length > 0} onChange={toggleAll} className="h-3 w-3 rounded border-black/12 accent-[#00bceb] cursor-pointer" />
+                  <tr className="border-b border-gray-100 dark:border-zinc-800 bg-gray-50/50 dark:bg-zinc-800/40">
+                    <th className="w-8 px-3 py-3 text-center">
+                      <input type="checkbox" checked={selectedIds.size === displayAssets.length && displayAssets.length > 0} onChange={toggleAll} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer" />
                     </th>
                     {activeAssetColumns.map(column => (
-                      <th key={column.key} className={`text-left px-1.5 py-2 text-[10px] font-bold uppercase tracking-wider text-black/35 ${column.width}`}>
+                      <th key={column.key} className={`text-left px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 ${column.width}`}>
                         {zh ? column.zh : column.en}
                       </th>
                     ))}
-                    <th className="w-20 px-1.5 py-1.5 text-center text-[9px] font-bold uppercase tracking-wider text-black/20">{zh ? '操作' : 'Actions'}</th>
+                    <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-gray-400">{zh ? '操作' : 'Actions'}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={activeAssetColumns.length + 2} className="text-center py-16 text-black/15">
-                      <RefreshCw size={16} className="mx-auto mb-1.5 animate-spin text-[#00bceb]/25" />
-                      <p className="text-[10px]">{zh ? '加载中...' : 'Loading...'}</p>
+                    <tr><td colSpan={activeAssetColumns.length + 2} className="text-center py-20 text-gray-400">
+                      <RefreshCw size={18} className="mx-auto mb-2 animate-spin text-blue-500" />
+                      <p className="text-xs font-medium">{zh ? '加载资产中...' : 'Loading...'}</p>
                     </td></tr>
                   ) : displayAssets.length === 0 ? (
-                    <tr><td colSpan={activeAssetColumns.length + 2} className="py-16">
+                    <tr><td colSpan={activeAssetColumns.length + 2} className="py-20">
                       <div className="text-center max-w-lg mx-auto">
-                        <div className="relative h-24 w-24 mx-auto mb-5">
-                          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#00bceb]/5 to-[#00bceb]/10 flex items-center justify-center">
-                            <Package size={36} className="text-[#00bceb]/20" />
-                          </div>
-                          <div className="absolute -right-1 -top-1 h-6 w-6 rounded-full bg-emerald-100 flex items-center justify-center">
-                            <Wifi size={10} className="text-emerald-500" />
+                        <div className="relative h-20 w-20 mx-auto mb-4">
+                          <div className="absolute inset-0 rounded-2xl bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center">
+                            <Package size={32} className="text-blue-500" />
                           </div>
                         </div>
-                        <p className="text-lg font-bold text-black/50 mb-1">{zh ? '开始管理你的网络' : 'Start Managing Your Network'}</p>
-                        <p className="text-[11px] text-black/20 mb-6 leading-relaxed max-w-sm mx-auto">
-                          {zh ? '添加网络设备和服务器，自动发现拓扑，连接监控系统' : 'Add devices, discover topology, connect monitoring'}
+                        <p className="text-base font-bold text-gray-800 dark:text-zinc-200 mb-1">
+                          {hasFilters || severityFilter !== 'all' ? (zh ? '暂无匹配当前筛选条件的资产' : 'No assets match the filters') : (zh ? '暂无资产数据' : 'No asset records')}
+                        </p>
+                        <p className="text-xs text-gray-400 mb-5 leading-relaxed max-w-sm mx-auto">
+                          {hasFilters || severityFilter !== 'all' ? (zh ? '请尝试重置筛选或切换严重级别分类' : '添加网络设备和服务器，自动发现拓扑，连接监控系统') : (zh ? '添加网络设备和服务器，自动发现拓扑，连接监控系统' : 'Add devices, discover topology, connect monitoring')}
                         </p>
                         <div className="flex items-center justify-center gap-2 flex-wrap">
-                          <button onClick={openAdd} className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-[#00bceb] text-white text-[11px] font-bold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20"><Plus size={13} />{zh ? '添加资产' : 'Add Asset'}</button>
-                          <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-black/8 text-black/35 text-[11px] font-medium hover:bg-black/[0.01]"><Upload size={12} />{zh ? '导入 Excel' : 'Import Excel'}</button>
+                          {hasFilters || severityFilter !== 'all' ? (
+                            <button
+                              type="button"
+                              onClick={clearAllFilters}
+                              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-2xs cursor-pointer"
+                            >
+                              <RefreshCw size={13} />
+                              {zh ? '重置所有筛选' : 'Reset All Filters'}
+                            </button>
+                          ) : (
+                            <>
+                              <button onClick={openAdd} className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-2xs cursor-pointer"><Plus size={13} />{zh ? '添加资产' : 'Add Asset'}</button>
+                              <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-gray-200 dark:border-zinc-700 text-gray-600 dark:text-zinc-300 text-xs font-semibold hover:bg-gray-50 cursor-pointer"><Upload size={12} />{zh ? '导入 Excel' : 'Import Excel'}</button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </td></tr>
@@ -1789,22 +2083,23 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
 
                     return (
                       <tr
-                        key={a.id} onClick={() => setDrawerAsset(a)}
-                        className={`border-b border-black/[0.02] cursor-pointer transition-colors ${sel ? 'bg-[#00bceb]/[0.025]' : isDrawerTarget ? 'bg-black/[0.015]' : 'hover:bg-black/[0.008]'}`}
+                        key={a.id}
+                        onClick={() => setDrawerAsset(a)}
+                        className={`border-b border-gray-100 dark:border-zinc-800 cursor-pointer transition-colors ${sel ? 'bg-blue-50/50 dark:bg-blue-950/20' : isDrawerTarget ? 'bg-gray-50 dark:bg-zinc-800/40' : 'hover:bg-gray-50/70 dark:hover:bg-zinc-800/30'}`}
                       >
-                        <td className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
-                          <input type="checkbox" checked={sel} onChange={() => toggle(a.id)} className="h-3 w-3 rounded border-black/12 accent-[#00bceb] cursor-pointer" />
+                        <td className="px-3 py-2.5 text-center" onClick={e => e.stopPropagation()}>
+                          <input type="checkbox" checked={sel} onChange={() => toggle(a.id)} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer" />
                         </td>
                         {activeAssetColumns.map(column => (
-                        <td key={column.key} className="px-1.5 py-1.5 text-[12px]">
+                          <td key={column.key} className="px-3 py-2.5 text-xs">
                             {renderAssetCell(column.key, a)}
                           </td>
                         ))}
-                        <td className="px-1.5 py-1" onClick={e => e.stopPropagation()}>
-                          <div className="flex items-center justify-center gap-px">
-                            <button onClick={() => openCopy(a)} className="p-1 rounded text-black/12 hover:text-emerald-500 hover:bg-emerald-50" title={zh ? '复制' : 'Copy'}><Copy size={12} /></button>
-                            <button onClick={() => openEdit(a)} className="p-1 rounded text-black/12 hover:text-[#00bceb] hover:bg-[#00bceb]/5" title={zh ? '编辑' : 'Edit'}><Pencil size={12} /></button>
-                            <button onClick={() => setDeleteTarget(a)} className="p-1 rounded text-black/12 hover:text-red-500 hover:bg-red-50" title={zh ? '删除' : 'Delete'}><Trash2 size={12} /></button>
+                        <td className="px-3 py-2.5 text-center" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-center gap-1">
+                            <button onClick={() => openCopy(a)} className="p-1.5 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors cursor-pointer" title={zh ? '复制' : 'Copy'}><Copy size={13} /></button>
+                            <button onClick={() => openEdit(a)} className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer" title={zh ? '编辑' : 'Edit'}><Pencil size={13} /></button>
+                            <button onClick={() => setDeleteTarget(a)} className="p-1.5 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer" title={zh ? '删除' : 'Delete'}><Trash2 size={13} /></button>
                           </div>
                         </td>
                       </tr>
@@ -1814,79 +2109,17 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               </DataTable>
             </DataTableFrame>
 
-          {/* Legacy grouped view removed; assets are now shown only in the table view.
-          {viewMode === 'group' && false && (
-            <div className="divide-y divide-black/[0.03]">
-              {loading ? (
-                <div className="text-center py-14 text-black/15"><RefreshCw size={16} className="mx-auto mb-1.5 animate-spin text-[#00bceb]/25" /></div>
-              ) : Object.keys(groupedAssets).length === 0 ? (
-                <div className="text-center py-14"><Building2 size={24} className="mx-auto mb-1.5 text-black/8" /><p className="text-xs text-black/20">{zh ? '无分组数据' : 'No groups'}</p></div>
-              ) : (Object.entries(groupedAssets) as [string, Asset[]][]).sort((a, b) => b[1].length - a[1].length).map(([gk, items]) => {
-                const isExp = expandedGroups.has(gk);
-                const onlineIn = items.filter(a => a.status === 'active').length;
-                const offlineIn = items.filter(a => a.status === 'inactive').length;
-                const GroupIcon = groupBy === 'site_id' ? Building2 : groupBy === 'vendor' ? MonitorSpeaker : Zap;
-                return (
-                  <div key={gk}>
-                    <button
-                      onClick={() => setExpandedGroups(p => { const n = new Set(p); n.has(gk) ? n.delete(gk) : n.add(gk); return n; })}
-                      className="w-full flex items-center justify-between px-4 py-2 hover:bg-black/[0.005] transition-colors"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <GroupIcon size={14} className="text-black/15" />
-                        <span className="text-[12px] font-semibold text-black/65">{gk}</span>
-                        <span className="text-[9px] text-black/20 tabular-nums">{items.length}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-1.5 w-16 rounded-full overflow-hidden bg-black/[0.03]">
-                          {onlineIn > 0 && <div className="bg-emerald-400" style={{ width: `${(onlineIn / items.length) * 100}%` }} />}
-                          {offlineIn > 0 && <div className="bg-red-400" style={{ width: `${(offlineIn / items.length) * 100}%` }} />}
-                        </div>
-                        <span className="text-[9px] text-black/15 tabular-nums w-8 text-right">{onlineIn}/{items.length}</span>
-                        {isExp ? <ChevronUp size={12} className="text-black/15" /> : <ChevronDown size={12} className="text-black/15" />}
-                      </div>
-                    </button>
-                    <AnimatePresence>
-                      {isExp && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                          <table className="w-full text-[10px]">
-                            <tbody>
-                              {items.map(a => {
-                                const sm = statusMeta(a.status);
-                                return (
-                                  <tr key={a.id} onClick={() => setDrawerAsset(a)} className="border-b border-black/[0.015] hover:bg-black/[0.006] cursor-pointer transition-colors">
-                                    <td className="pl-10 pr-2 py-1.5 font-semibold text-black/65 text-[11px]">{a.hostname || a.asset_tag || '—'}</td>
-                                    <td className="px-2 py-1.5 text-black/25">{typeDisplay(a)}</td>
-                                    <td className="px-2 py-1.5 font-mono text-black/35">{a.management_ip || '—'}</td>
-                                    <td className="px-2 py-1.5">
-                                      <span className={`inline-flex items-center gap-1 text-[9px] font-bold ${sm.text}`}>
-                                        <span className={`h-1.5 w-1.5 rounded-full ${sm.dot}`} />{sm.label[zh ? 'zh' : 'en']}
-                                      </span>
-                                    </td>
-                                    <td className="px-2 py-1.5 text-[9px] text-black/30">{categoryDisplay(a)}</td>
-                                    <td className="px-2 py-1.5">
-                                      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${a.lifecycle_status === 'production' ? 'bg-emerald-50 text-emerald-600' : a.lifecycle_status === 'decommissioned' ? 'bg-slate-100 text-slate-400' : a.lifecycle_status === 'maintenance' ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-500'}`}>
-                                        {LIFECYCLE_STATUSES.find(l => l.value === a.lifecycle_status)?.label[zh ? 'zh' : 'en'] || (zh ? '待投产' : 'Staging')}
-                                      </span>
-                                    </td>
-                                    <td className="px-2 py-1.5 text-right">
-                                      <button onClick={e => { e.stopPropagation(); openCopy(a); }} title={zh ? '复制' : 'Copy'} className="p-1 rounded text-black/10 hover:text-emerald-500 hover:bg-emerald-50"><Copy size={11} /></button>
-                                      <button onClick={e => { e.stopPropagation(); openEdit(a); }} title="Edit" className="p-1 rounded text-black/10 hover:text-[#00bceb] hover:bg-[#00bceb]/5"><Pencil size={11} /></button>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          */}
+            {/* Bottom Pagination */}
+            <Pagination
+              currentPage={page}
+              totalItems={severityFilter !== 'all' ? displayAssets.length : total}
+              onPageChange={setPage}
+              itemsPerPage={pageSize}
+              onItemsPerPageChange={setPageSize}
+              language={language}
+              alwaysVisible
+            />
+          </div>
 
           {terminalSession && (
             <motion.div
@@ -1895,7 +2128,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
               onClick={() => setTerminalSession(null)}
             >
               <motion.div
-                className="bg-[#0b1220] rounded-xl w-[900px] max-w-[95vw] h-[560px] border border-white/10 shadow-2xl flex flex-col"
+                className="bg-[#0b1220] rounded-2xl w-[900px] max-w-[95vw] h-[560px] border border-white/10 shadow-2xl flex flex-col overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
                 initial={{ scale: 0.98, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.98, opacity: 0 }}
               >
@@ -1973,7 +2206,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                           }
                         }
                       }}
-                      className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded hover:bg-emerald-500/30 transition-all flex items-center gap-1"
+                      className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-lg hover:bg-emerald-500/30 transition-all flex items-center gap-1 cursor-pointer"
                     >
                       <MonitorSpeaker size={10} />
                       {(() => {
@@ -1982,7 +2215,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         return zh ? `${appName} 调起` : `Launch ${appName}`;
                       })()}
                     </button>
-                    <button onClick={() => setTerminalSession(null)} className="text-white/50 hover:text-white ml-2"><X size={14} /></button>
+                    <button onClick={() => setTerminalSession(null)} className="text-white/50 hover:text-white ml-2 cursor-pointer"><X size={14} /></button>
                   </div>
                 </div>
                 <div className="flex-1 bg-black/20 relative overflow-hidden">
@@ -1991,27 +2224,20 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                     className="absolute inset-0 p-2"
                   />
                 </div>
-                <div className="h-12 border-t border-white/10 px-2 flex items-center gap-2">
+                <div className="h-12 border-t border-white/10 px-3 flex items-center gap-2">
                   <input
                     value={terminalInput}
                     onChange={(e) => setTerminalInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') sendTerminalInput(); }}
                     placeholder={zh ? '输入命令并回车' : 'Type command and press Enter'}
-                    className="flex-1 h-8 bg-black/30 border border-white/15 rounded px-2 text-xs text-white outline-none"
+                    className="flex-1 h-8 bg-black/30 border border-white/15 rounded-lg px-2 text-xs text-white outline-none"
                   />
-                  <button onClick={sendTerminalInput} className="h-8 px-3 rounded bg-[#00bceb] text-white text-xs font-bold hover:bg-[#00a5d0]">{zh ? '发送' : 'Send'}</button>
+                  <button onClick={sendTerminalInput} className="h-8 px-3 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 cursor-pointer">{zh ? '发送' : 'Send'}</button>
                 </div>
               </motion.div>
             </motion.div>
           )}
         </div>
-
-        {total > 0 && (
-          <div className="mt-auto pt-4 border-t border-black/5 bg-white">
-            <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={setPageSize} language={language} />
-          </div>
-        )}
-      </div>
 
       {/* Drawer */}
       <AssetDetailDrawer

@@ -44,6 +44,30 @@ export const useAuth = ({
   const [showLoginPwd, setShowLoginPwd] = useState(false);
   const [mfaRequired, setMfaRequired] = useState(false);
   const [tempMfaToken, setTempMfaToken] = useState('');
+  const [captchaRequired, setCaptchaRequired] = useState(false);
+  const [captchaId, setCaptchaId] = useState('');
+  const [captchaImage, setCaptchaImage] = useState('');
+  const [captchaCode, setCaptchaCode] = useState('');
+  const [loadingCaptcha, setLoadingCaptcha] = useState(false);
+
+  const refreshCaptcha = useCallback(async () => {
+    setLoadingCaptcha(true);
+    try {
+      const resp = await fetch('/api/captcha/generate');
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.captcha_id && data.image) {
+          setCaptchaId(data.captcha_id);
+          setCaptchaImage(data.image);
+          setCaptchaCode('');
+        }
+      }
+    } catch {
+      // ignore network errors
+    } finally {
+      setLoadingCaptcha(false);
+    }
+  }, []);
 
   const [loginForm, setLoginForm] = useState(() => {
     const saved = localStorage.getItem('netops_user');
@@ -57,21 +81,11 @@ export const useAuth = ({
       return;
     }
 
-    const validateCurrentSession = async (currentToken: string) => {
+    let active = true;
+    (async () => {
       try {
-        const response = await fetchWithTimeout('/api/session', { headers: { Authorization: `Bearer ${currentToken}` } }, 10000);
-        if (!response.ok) expireLocalSession();
-        return response.ok;
-      } catch {
-        return true;
-      }
-    };
-
-    const expiryHandler = () => expireLocalSession();
-    window.addEventListener('netops:auth-expired', expiryHandler);
-
-    fetchWithTimeout('/api/session', { headers: { Authorization: `Bearer ${token}` } }, 10000)
-      .then(async (r) => {
+        const r = await fetchWithTimeout('/api/session', { headers: { Authorization: `Bearer ${token}` } }, 10000);
+        if (!active) return;
         if (r.ok) {
           const data = await r.json();
           setIsAuthenticated(true);
@@ -95,17 +109,38 @@ export const useAuth = ({
         } else {
           expireLocalSession();
         }
-      })
-      .catch(() => {
+      } catch {
+        if (!active) return;
         expireLocalSession();
-      })
-      .finally(() => {
-        setAuthChecking(false);
-      });
-    const timer = window.setInterval(() => {
-      const currentToken = localStorage.getItem('netops_token');
-      if (currentToken) void validateCurrentSession(currentToken);
+      } finally {
+        if (active) setAuthChecking(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [expireLocalSession, fetchWithTimeout, setLanguage, setShowSetupWizard]);
+
+  useEffect(() => {
+    const expiryHandler = () => {
+      expireLocalSession();
+    };
+
+    window.addEventListener('netops:auth-expired', expiryHandler);
+    const timer = window.setInterval(async () => {
+      const token = localStorage.getItem('netops_token');
+      if (!token) return;
+      try {
+        const res = await fetchWithTimeout('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } }, 6000);
+        if (!res.ok && res.status === 401) {
+          expireLocalSession();
+        }
+      } catch {
+        // silent polling catch
+      }
     }, 60000);
+
     return () => {
       window.clearInterval(timer);
       window.removeEventListener('netops:auth-expired', expiryHandler);
@@ -122,26 +157,55 @@ export const useAuth = ({
       return;
     }
 
+    if (captchaRequired && !captchaCode.trim()) {
+      setLoginError(language === 'zh' ? '请输入图形验证码' : 'Please enter security captcha');
+      return;
+    }
+
     setIsAuthenticating(true);
     setLoginError(null);
 
     try {
+      const payload: Record<string, any> = {
+        username: loginForm.username.trim(),
+        password: loginForm.password,
+      };
+      if (captchaRequired && captchaId) {
+        payload.captcha_id = captchaId;
+        payload.captcha_code = captchaCode.trim();
+      }
+
       const response = await fetchWithTimeout(
         '/api/login',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username: loginForm.username.trim(),
-            password: loginForm.password,
-          }),
+          body: JSON.stringify(payload),
         },
         12000
       );
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setLoginError(data.detail || (language === 'zh' ? '登录失败' : 'Login failed'));
+        let msg = data.detail || (language === 'zh' ? '登录失败，请检查用户名和密码' : 'Login failed');
+        if (typeof msg === 'string') {
+          if (msg.includes('Invalid credentials') && !msg.includes('连续失败')) {
+            msg = language === 'zh' ? '用户名或密码错误，请重新输入' : 'Invalid username or password';
+          } else if (msg.includes('Account locked') && !msg.includes('已被锁定')) {
+            msg = language === 'zh' ? '密码错误次数过多，账号已被锁定，请稍后再试或联系系统管理员' : msg;
+          }
+        }
+        setLoginError(msg);
+
+        const shouldRequireCaptcha =
+          response.headers.get('X-Captcha-Required') === 'true' ||
+          Boolean(data.captcha_required) ||
+          (typeof msg === 'string' && (msg.includes('验证码') || msg.includes('3 次') || msg.includes('3次')));
+
+        if (shouldRequireCaptcha) {
+          setCaptchaRequired(true);
+          refreshCaptcha();
+        }
         return;
       }
 
@@ -163,6 +227,10 @@ export const useAuth = ({
       setCurrentUser(data.user || { username: loginForm.username.trim() });
       setIsAuthenticated(true);
       setLoginForm((prev) => ({ ...prev, password: '' }));
+      setCaptchaRequired(false);
+      setCaptchaId('');
+      setCaptchaImage('');
+      setCaptchaCode('');
       showToast(language === 'zh' ? '登录成功' : 'Login successful', 'success');
 
       try {
@@ -316,5 +384,12 @@ export const useAuth = ({
     mfaRequired,
     setMfaRequired,
     handleMfaVerify,
+    captchaRequired,
+    setCaptchaRequired,
+    captchaImage,
+    captchaCode,
+    setCaptchaCode,
+    loadingCaptcha,
+    refreshCaptcha,
   };
 };

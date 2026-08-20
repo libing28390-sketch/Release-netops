@@ -198,7 +198,7 @@ const LocalHostMonitoringPanel: React.FC<{
   const ct = useChartTheme();
   const series = hostResourceHistory?.series || [];
   const statusLabel = hostResources.status === 'critical' ? (zh ? '严重' : 'Critical') : hostResources.status === 'degraded' ? (zh ? '告警' : 'Degraded') : (zh ? '健康' : 'Healthy');
-  const statusClass = hostResources.status === 'critical' ? 'bg-red-50 text-red-700 border-red-200' : hostResources.status === 'degraded' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  const statusClass = hostResources.status === 'critical' ? 'bg-rose-50 text-rose-700 border-rose-200/80' : hostResources.status === 'degraded' ? 'bg-amber-50 text-amber-700 border-amber-200/80' : 'bg-emerald-50 text-emerald-700 border-emerald-200/80';
   const hostOsLabel = serverOsLabel(hostResources);
   const chartData = series.map((point) => ({
     ts: point.ts,
@@ -220,84 +220,140 @@ const LocalHostMonitoringPanel: React.FC<{
   };
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] px-5 py-3.5">
-        <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-600"><Server size={18} /></span>
+    <div className="space-y-4">
+      {/* Host Summary Hero Card */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 p-4 shadow-2xs">
+        <div className="flex items-center gap-3.5">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
+            <Server size={18} />
+          </div>
           <div>
-            <p className="text-base font-bold text-[var(--app-text)]">{hostResources.hostname || (zh ? '本机部署' : 'Local Deployment')}</p>
-            <p className="text-[11px] text-[var(--muted-text)]">{zh ? `${hostOsLabel} 服务器 · 当前部署主机` : `${hostOsLabel} server · Current deployment host`}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-bold text-gray-900 dark:text-white">{hostResources.hostname || (zh ? '本机部署' : 'Local Host')}</p>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 font-mono">
+                {hostOsLabel}
+              </span>
+            </div>
+            <p className="text-xs text-gray-400 dark:text-zinc-500 mt-0.5">{zh ? 'Nexora 平台核心服务 · 当前运行宿主机' : 'Nexora Core Platform · Local Host'}</p>
           </div>
         </div>
-        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusClass}`}>
-          <span className="h-1.5 w-1.5 rounded-full bg-current" />{statusLabel}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${statusClass}`}>
+            <span className="h-1.5 w-1.5 rounded-full bg-current" />{statusLabel}
+          </span>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* 4 Bento KPI Cards */}
+      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         {[
-          { label: 'CPU', value: hostResources.cpu_percent, color: '#0ea5e9' },
-          { label: zh ? '内存' : 'Memory', value: hostResources.memory_percent, color: '#f97316' },
-          { label: zh ? '磁盘' : 'Disk', value: hostResources.disk_percent, color: '#10b981' },
+          { label: 'CPU 使用率', value: hostResources.cpu_percent, color: '#2563eb', bg: 'bg-blue-50 text-blue-600', icon: Cpu },
+          { label: zh ? '内存使用率' : 'Memory', value: hostResources.memory_percent, color: (hostResources.memory_percent || 0) > 85 ? '#ef4444' : '#f59e0b', bg: (hostResources.memory_percent || 0) > 85 ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600', icon: MemoryStick },
+          { label: zh ? '磁盘使用率' : 'Disk', value: hostResources.disk_percent, color: '#10b981', bg: 'bg-emerald-50 text-emerald-600', icon: HardDrive },
         ].map((metric) => (
-          <div key={metric.label} className="flex items-center justify-center rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] py-3">
-            <RadialGauge value={metric.value} color={metric.color} size={104} label={metric.label} unit="%" />
+          <div key={metric.label} className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 p-4 shadow-2xs flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-500 dark:text-zinc-400">{metric.label}</span>
+              <div className={`h-7 w-7 rounded-xl flex items-center justify-center ${metric.bg}`}>
+                <metric.icon size={14} />
+              </div>
+            </div>
+            <div className="mt-3 flex items-baseline gap-1">
+              <span className="text-2xl font-extrabold font-mono text-gray-900 dark:text-white">
+                {metric.value != null ? Math.round(metric.value) : '--'}
+              </span>
+              <span className="text-xs font-bold text-gray-400">%</span>
+            </div>
+            <div className="mt-2 w-full h-1.5 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+              <div 
+                className="h-full rounded-full transition-all duration-500" 
+                style={{ width: `${Math.min(100, Math.max(0, metric.value || 0))}%`, backgroundColor: metric.color }}
+              />
+            </div>
           </div>
         ))}
-        <div className="flex flex-col justify-center rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] px-4 py-3">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)]">{zh ? '运行信息' : 'Runtime'}</p>
-          <p className="mt-2 text-xl font-extrabold text-[var(--app-text)]">{hostResources.uptime_hours != null ? `${Math.round(hostResources.uptime_hours)}h` : '--'}</p>
-          <p className="mt-1 text-[11px] text-[var(--muted-text)]">Load {hostResources.load_1m?.toFixed(2) ?? '--'}</p>
+
+        <div className="bg-white dark:bg-zinc-900/90 rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 p-4 shadow-2xs flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-gray-500 dark:text-zinc-400">{zh ? '运行健康' : 'Runtime'}</span>
+            <div className="h-7 w-7 rounded-xl bg-purple-50 dark:bg-purple-950/40 text-purple-600 flex items-center justify-center">
+              <Activity size={14} />
+            </div>
+          </div>
+          <div className="mt-3 flex items-baseline gap-1">
+            <span className="text-2xl font-extrabold font-mono text-gray-900 dark:text-white">
+              {hostResources.uptime_hours != null ? `${Math.round(hostResources.uptime_hours)}` : '--'}
+            </span>
+            <span className="text-xs font-bold text-gray-400">h</span>
+          </div>
+          <p className="mt-2 text-[11px] text-gray-400 font-mono">
+            Load {hostResources.load_1m?.toFixed(2) ?? '--'}
+          </p>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* Trend Chart */}
+      <div className="rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 p-5 shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-600">{zh ? '本机资源趋势' : 'Local Host Trends'}</p>
-            <h3 className="mt-1 text-lg font-bold text-[var(--app-text)]">CPU / {zh ? '内存' : 'Memory'} / {zh ? '磁盘' : 'Disk'}</h3>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 px-2 py-0.5 rounded-full">
+                {zh ? '本机资源趋势' : 'Local Host Trends'}
+              </span>
+              <h3 className="text-base font-bold text-gray-900 dark:text-white">CPU / {zh ? '内存' : 'Memory'} / {zh ? '磁盘' : 'Disk'}</h3>
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="inline-flex rounded-xl bg-black/[0.04] p-0.5">
+            <div className="flex items-center p-0.5 rounded-xl bg-gray-100 dark:bg-zinc-800">
               {rangeOptions.map((option) => (
-                <button key={option.value} type="button" onClick={() => onRangeChange(option.value)} className={`rounded-lg px-2.5 py-1 text-[10px] font-bold ${rangeHours === option.value ? 'bg-white text-[var(--app-text)] shadow-sm' : 'text-[var(--muted-text)]'}`}>
+                <button 
+                  key={option.value} 
+                  type="button" 
+                  onClick={() => onRangeChange(option.value)} 
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${rangeHours === option.value ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400 hover:text-gray-900'}`}
+                >
                   {option.label}
                 </button>
               ))}
             </div>
-            <button type="button" onClick={onRefresh} className="inline-flex items-center gap-1 rounded-lg border border-[var(--card-border)] px-2.5 py-1.5 text-[10px] font-semibold text-[var(--muted-text)] hover:border-indigo-300 hover:text-indigo-600">
-              <RefreshCw size={11} className={hostResourceHistoryLoading ? 'animate-spin' : ''} />{zh ? '刷新' : 'Refresh'}
+            <button 
+              type="button" 
+              onClick={onRefresh} 
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold text-gray-600 dark:text-zinc-300 bg-gray-50 dark:bg-zinc-800 border border-gray-200/70 dark:border-zinc-700 hover:bg-gray-100 transition-all cursor-pointer"
+            >
+              <RefreshCw size={11} className={hostResourceHistoryLoading ? 'animate-spin text-blue-600' : ''} />
+              <span>{zh ? '刷新' : 'Refresh'}</span>
             </button>
           </div>
         </div>
-        <div className="mt-4 h-[260px]">
+        <div className="h-[250px]">
           {hostResourceHistoryLoading && chartData.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-sm text-[var(--muted-text)]"><RefreshCw size={16} className="mr-2 animate-spin" />{zh ? '加载趋势数据...' : 'Loading trends...'}</div>
+            <div className="flex h-full items-center justify-center text-xs text-gray-400"><RefreshCw size={16} className="mr-2 animate-spin" />{zh ? '加载趋势数据...' : 'Loading trends...'}</div>
           ) : chartData.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-[var(--muted-text)]"><Database size={26} className="opacity-40" /><span>{zh ? '暂无本机趋势数据' : 'No local host trend data yet'}</span><button type="button" onClick={onRefresh} className="text-xs font-semibold text-indigo-600">{zh ? '立即刷新' : 'Refresh now'}</button></div>
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-gray-400"><Database size={24} className="opacity-40" /><span>{zh ? '暂无本机趋势数据' : 'No local host trend data yet'}</span><button type="button" onClick={onRefresh} className="text-xs font-semibold text-blue-600">{zh ? '立即刷新' : 'Refresh now'}</button></div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="localCpuFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.24} /><stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} /></linearGradient>
+                  <linearGradient id="localCpuFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563eb" stopOpacity={0.24} /><stop offset="100%" stopColor="#2563eb" stopOpacity={0} /></linearGradient>
                   <linearGradient id="localMemoryFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f97316" stopOpacity={0.2} /><stop offset="100%" stopColor="#f97316" stopOpacity={0} /></linearGradient>
                   <linearGradient id="localDiskFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10b981" stopOpacity={0.18} /><stop offset="100%" stopColor="#10b981" stopOpacity={0} /></linearGradient>
                 </defs>
                 <CartesianGrid vertical={false} stroke={ct.gridAlt} strokeOpacity={0.45} />
                 <XAxis dataKey="ts" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} tickFormatter={(value) => formatTime(String(value))} minTickGap={48} />
                 <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: ct.axisAlt }} domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(value) => `${value}%`} width={36} />
-                <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(15, 23, 42, 0.94)', color: '#f1f5f9', fontSize: 12 }} formatter={(value: any, name: any) => [`${Math.round(Number(value || 0))}%`, String(name)]} labelFormatter={(value) => formatTime(String(value))} />
-                <Area type="monotone" dataKey="cpu" name="CPU" stroke="#0ea5e9" strokeWidth={2} fill="url(#localCpuFill)" isAnimationActive={false} connectNulls />
+                <Tooltip contentStyle={{ borderRadius: 12, border: 'none', background: ct.tooltipBg, color: ct.tooltipText, boxShadow: ct.tooltipShadow, fontSize: 11 }} formatter={(value: any, name: any) => [`${Math.round(Number(value || 0))}%`, String(name)]} labelFormatter={(value) => formatTime(String(value))} />
+                <Area type="monotone" dataKey="cpu" name="CPU" stroke="#2563eb" strokeWidth={2} fill="url(#localCpuFill)" isAnimationActive={false} connectNulls />
                 <Area type="monotone" dataKey="memory" name={zh ? '内存' : 'Memory'} stroke="#f97316" strokeWidth={2} fill="url(#localMemoryFill)" isAnimationActive={false} connectNulls />
                 <Area type="monotone" dataKey="disk" name={zh ? '磁盘' : 'Disk'} stroke="#10b981" strokeWidth={2} fill="url(#localDiskFill)" isAnimationActive={false} connectNulls />
               </AreaChart>
             </ResponsiveContainer>
           )}
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-text)]">
-          <span className="rounded-full bg-black/[0.04] px-2.5 py-1">DB {hostResources.database_ok ? 'OK' : 'ERR'}</span>
-          <span className="rounded-full bg-black/[0.04] px-2.5 py-1">{hostResourceHistory?.sample_count || chartData.length} {zh ? '个采样点' : 'samples'}</span>
-          <span className="rounded-full bg-black/[0.04] px-2.5 py-1">{zh ? '平台' : 'Platform'}: {hostOsLabel}</span>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
+          <span className="rounded-full bg-gray-100 dark:bg-zinc-800 px-2.5 py-0.5">DB {hostResources.database_ok ? 'OK' : 'ERR'}</span>
+          <span className="rounded-full bg-gray-100 dark:bg-zinc-800 px-2.5 py-0.5">{hostResourceHistory?.sample_count || chartData.length} {zh ? '个采样点' : 'samples'}</span>
+          <span className="rounded-full bg-gray-100 dark:bg-zinc-800 px-2.5 py-0.5">{zh ? '平台' : 'Platform'}: {hostOsLabel}</span>
         </div>
       </div>
     </div>
@@ -641,14 +697,14 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
         title={zh ? '服务器监控' : 'Server Monitoring'}
         subtitle={zh ? 'Windows / Linux 主机性能遥测 · 本机资源与服务器指标' : 'Windows / Linux host telemetry · Local resources and server metrics'}
         actions={
-          <>
-            <div className="inline-flex rounded-xl border border-[var(--card-border)] overflow-hidden">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center p-0.5 rounded-xl bg-gray-100 dark:bg-zinc-800">
               {RANGE_OPTIONS.map((opt) => (
                 <button
                   key={opt.h}
                   type="button"
                   onClick={() => setRangeHours(opt.h)}
-                  className={`px-3 py-1.5 text-[11px] font-bold transition-all ${rangeHours === opt.h ? 'bg-[var(--app-text)] text-[var(--card-bg)]' : 'text-[var(--muted-text)] hover:bg-black/[0.04]'}`}
+                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all cursor-pointer ${rangeHours === opt.h ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400 hover:text-gray-900'}`}
                 >
                   {opt.label}
                 </button>
@@ -657,37 +713,37 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
             <button
               type="button"
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all ${autoRefresh ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-[var(--card-border)] bg-[var(--card-bg)] text-[var(--muted-text)]'}`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${autoRefresh ? 'border-emerald-200/80 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800' : 'border-gray-200/70 bg-white text-gray-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400'}`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-black/20'}`} />
+              <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`} />
               {autoRefresh ? '30s' : 'OFF'}
             </button>
             <button
               type="button"
               disabled={refreshing}
               onClick={doRefresh}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--card-border)] bg-[var(--card-bg)] px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)] transition-all hover:border-black/20"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-gray-200/70 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-700 dark:text-zinc-200 hover:bg-gray-50 transition-all cursor-pointer"
             >
-              <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-              {zh ? '刷新' : 'Refresh'}
+              <RefreshCw size={12} className={refreshing ? 'animate-spin text-blue-600' : ''} />
+              <span>{zh ? '刷新' : 'Refresh'}</span>
             </button>
-          </>
+          </div>
         }
       />
 
       <div className="flex-1 overflow-hidden flex">
         {/* ── Left: server list ── */}
-        <div className="w-[260px] shrink-0 border-r border-[var(--card-border)] flex flex-col overflow-hidden">
-          <div className="p-3 border-b border-[var(--card-border)] space-y-2">
+        <div className="w-[270px] shrink-0 border-r border-gray-200/70 dark:border-zinc-800/80 bg-gray-50/40 dark:bg-zinc-900/30 flex flex-col overflow-hidden">
+          <div className="p-3 border-b border-gray-200/70 dark:border-zinc-800/80 space-y-2.5">
             {/* Search Input */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-text)]" size={14} />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={13} />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={zh ? '搜索主机名 / IP' : 'Search host / IP'}
-                className="w-full pl-9 pr-3 py-2 bg-black/[0.02] border border-[var(--card-border)] rounded-xl text-sm outline-none focus:border-sky-400 text-[var(--app-text)]"
+                placeholder={zh ? '搜索主机名 / IP...' : 'Search host / IP...'}
+                className="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700 rounded-xl text-xs outline-none focus:border-blue-500 text-gray-800 dark:text-zinc-100 placeholder-gray-400 shadow-2xs"
               />
             </div>
 
@@ -695,22 +751,22 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
             <select
               value={siteFilter}
               onChange={(e) => setSiteFilter(e.target.value)}
-              className="w-full bg-black/[0.02] border border-[var(--card-border)] rounded-xl px-2 py-1.5 text-xs outline-none text-[var(--app-text)] focus:border-sky-400 dark:bg-white/[0.02]"
+              className="w-full bg-white dark:bg-zinc-800 border border-gray-200/80 dark:border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs outline-none text-gray-700 dark:text-zinc-200 focus:border-blue-500 shadow-2xs cursor-pointer"
             >
-              <option value="all" className="bg-[var(--card-bg)]">{zh ? '全部区域' : 'All Sites'}</option>
+              <option value="all">{zh ? '全部区域' : 'All Sites'}</option>
               {uniqueSites.map((site) => (
-                <option key={site} value={site} className="bg-[var(--card-bg)]">{site}</option>
+                <option key={site} value={site}>{site}</option>
               ))}
             </select>
 
             {/* Status Filter Buttons */}
-            <div className="flex rounded-lg bg-black/[0.02] dark:bg-white/[0.02] border border-[var(--card-border)] p-0.5">
+            <div className="flex rounded-xl bg-gray-200/60 dark:bg-zinc-800 p-0.5">
               {(['all', 'online', 'offline'] as const).map((status) => (
                 <button
                   key={status}
                   type="button"
                   onClick={() => setStatusFilter(status)}
-                  className={`flex-1 py-1 rounded-md text-[10px] font-bold transition-all ${statusFilter === status ? 'bg-[var(--app-text)] text-[var(--card-bg)] shadow-sm' : 'text-[var(--muted-text)] hover:text-[var(--app-text)]'}`}
+                  className={`flex-1 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${statusFilter === status ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800'}`}
                 >
                   {status === 'all' && (zh ? '全部' : 'All')}
                   {status === 'online' && (zh ? '在线' : 'Online')}
@@ -719,28 +775,28 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
               ))}
             </div>
 
-            <div className="flex rounded-lg bg-black/[0.02] dark:bg-white/[0.02] border border-[var(--card-border)] p-0.5">
+            <div className="flex rounded-xl bg-gray-200/60 dark:bg-zinc-800 p-0.5">
               {(['all', 'windows', 'linux'] as const).map((os) => (
                 <button
                   key={os}
                   type="button"
                   onClick={() => setOsFilter(os)}
-                  className={`flex-1 py-1 rounded-md text-[10px] font-bold transition-all ${osFilter === os ? 'bg-[var(--app-text)] text-[var(--card-bg)] shadow-sm' : 'text-[var(--muted-text)] hover:text-[var(--app-text)]'}`}
+                  className={`flex-1 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${osFilter === os ? 'bg-white dark:bg-zinc-700 text-gray-900 dark:text-white shadow-2xs' : 'text-gray-500 dark:text-zinc-400 hover:text-gray-800'}`}
                 >
                   {os === 'all' ? (zh ? '全部系统' : 'All OS') : os === 'windows' ? 'Windows' : 'Linux'}
                 </button>
               ))}
             </div>
 
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-text)]">
-              {filteredServers.length} {zh ? '台服务器' : 'servers'}
-            </p>
+            <div className="flex items-center justify-between text-[11px] font-medium text-gray-400 px-0.5">
+              <span>{filteredServers.length} {zh ? '台在管服务器' : 'servers'}</span>
+            </div>
           </div>
 
           <VirtualizedDeviceList
             items={filteredServers}
             getKey={(srv) => srv.id}
-            empty={<p className="p-4 text-center text-xs text-[var(--muted-text)]">{zh ? '无匹配服务器' : 'No match'}</p>}
+            empty={<p className="p-4 text-center text-xs text-gray-400">{zh ? '无匹配服务器' : 'No match'}</p>}
             renderItem={(srv) => {
               const online = String(srv.status || '').toLowerCase() === 'online';
               const active = selectedId === srv.id;
@@ -748,20 +804,26 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                 <button
                   type="button"
                   onClick={() => setSelectedId(srv.id)}
-                  className={`w-full flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-all ${active ? 'border-sky-400 bg-sky-500/[0.07] shadow-sm' : 'border-transparent hover:border-[var(--card-border)] hover:bg-black/[0.02]'}`}
+                  className={`w-full flex items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left transition-all cursor-pointer mb-1.5 ${active ? 'border-blue-500/50 bg-blue-50/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 shadow-2xs' : 'border-transparent bg-white/70 dark:bg-zinc-800/40 hover:border-gray-200 dark:hover:border-zinc-700 hover:bg-white'}`}
                 >
-                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-sky-500/15 text-sky-600' : 'bg-black/[0.04] text-[var(--muted-text)]'}`}>
-                    <Server size={15} />
-                  </span>
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${active ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-zinc-700 text-gray-500 dark:text-zinc-400'}`}>
+                    <Server size={14} />
+                  </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <p className="truncate text-sm font-semibold text-[var(--app-text)]">{srv.hostname || srv.ip_address}</p>
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: online ? '#10b981' : '#94a3b8' }} />
+                    <div className="flex items-center justify-between gap-1.5">
+                      <p className={`truncate text-xs font-bold ${active ? 'text-blue-900 dark:text-blue-100' : 'text-gray-800 dark:text-zinc-200'}`}>
+                        {srv.hostname || srv.ip_address}
+                      </p>
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${online ? 'bg-emerald-500' : 'bg-gray-300'}`} />
                     </div>
-                      <div className="flex items-center gap-1.5">
-                        <p className="truncate text-[11px] font-mono text-[var(--muted-text)]">{srv.isLocalHost ? (zh ? '当前部署主机' : 'Current deployment host') : srv.ip_address}</p>
-                        <span className="shrink-0 rounded-full bg-black/[0.04] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--muted-text)]">{serverOsLabel(srv)}</span>
-                      </div>
+                    <div className="flex items-center justify-between gap-1.5 mt-0.5">
+                      <p className="truncate text-[10px] font-mono text-gray-400">
+                        {srv.isLocalHost ? (zh ? '当前部署主机' : 'Local Host') : srv.ip_address}
+                      </p>
+                      <span className="shrink-0 rounded-md bg-gray-100 dark:bg-zinc-700/80 px-1.5 py-0.2 text-[9px] font-medium text-gray-500 dark:text-zinc-400">
+                        {serverOsLabel(srv)}
+                      </span>
+                    </div>
                   </div>
                 </button>
               );
@@ -778,19 +840,19 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
           ) : (
             <>
               {/* Header strip */}
-              <div className="flex items-center justify-between rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] px-5 py-3.5">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600">
+              <div className="flex items-center justify-between rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 p-4 shadow-2xs">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
                     <Server size={18} />
-                  </span>
+                  </div>
                   <div>
-                    <p className="text-base font-bold text-[var(--app-text)]">{selectedDevice.hostname || selectedDevice.ip_address}</p>
-                    <p className="text-[11px] font-mono text-[var(--muted-text)]">
+                    <p className="text-base font-bold text-gray-900 dark:text-white">{selectedDevice.hostname || selectedDevice.ip_address}</p>
+                    <p className="text-xs font-mono text-gray-400">
                       {selectedDevice.ip_address} · {serverOsLabel(selectedDevice)}
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 text-[11px] text-[var(--muted-text)]">
+                <div className="flex items-center gap-2 text-xs text-gray-400">
                   <Clock size={13} />
                   {latest?.ts ? (zh ? `最近采样 ${fmtTime(latest.ts)}` : `Last ${fmtTime(latest.ts)}`) : (zh ? '等待数据' : 'Awaiting data')}
                 </div>
@@ -816,12 +878,14 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                   return (
                     <div
                       key={srv.key}
-                      className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${!hasData ? 'border-[var(--card-border)]' : up ? 'border-emerald-200 bg-emerald-500/[0.04]' : 'border-red-200 bg-red-500/[0.06]'}`}
+                      className={`flex items-center gap-3 rounded-2xl border p-4 shadow-2xs transition-all ${!hasData ? 'border-gray-200/70 bg-white dark:bg-zinc-900/90 dark:border-zinc-800' : up ? 'border-emerald-200/80 bg-emerald-50/50 dark:bg-emerald-950/30' : 'border-rose-200/80 bg-rose-50/50 dark:bg-rose-950/30'}`}
                     >
-                      <Shield size={18} className={!hasData ? 'text-[var(--muted-text)]' : up ? 'text-emerald-600' : 'text-red-500'} />
+                      <div className={`flex h-8 w-8 items-center justify-center rounded-xl ${!hasData ? 'bg-gray-100 text-gray-400' : up ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}>
+                        <Shield size={16} />
+                      </div>
                       <div>
-                        <p className="text-sm font-bold text-[var(--app-text)]">{srv.name}</p>
-                        <p className={`text-[10px] font-black uppercase ${!hasData ? 'text-[var(--muted-text)]' : up ? 'text-emerald-600' : 'text-red-500'}`}>
+                        <p className="text-xs font-bold text-gray-900 dark:text-white">{srv.name}</p>
+                        <p className={`text-[10px] font-extrabold uppercase mt-0.5 ${!hasData ? 'text-gray-400' : up ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'}`}>
                           {!hasData ? '--' : up ? (zh ? '运行中' : 'Active') : (zh ? '未运行' : 'Inactive')}
                         </p>
                       </div>
@@ -870,17 +934,17 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                         type="button"
                         key={key}
                         onClick={() => setFocusMetric(key)}
-                        className={`rounded-2xl border bg-[var(--card-bg)] p-4 text-left transition-all hover:shadow-md ${focusMetric === key ? 'border-sky-400 ring-1 ring-sky-300/50' : 'border-[var(--card-border)]'}`}
+                        className={`rounded-2xl border bg-white dark:bg-zinc-900/90 p-4 text-left transition-all hover:shadow-md cursor-pointer ${focusMetric === key ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-sm' : 'border-gray-200/70 dark:border-zinc-800/80'}`}
                       >
                         {/* Card header */}
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ backgroundColor: `${color}1a`, color }}>
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex h-8 w-8 items-center justify-center rounded-xl" style={{ backgroundColor: `${color}18`, color }}>
                               <Icon size={15} />
-                            </span>
+                            </div>
                             <div>
-                              <p className="text-[13px] font-bold text-[var(--app-text)]">{metricLabel(key)}</p>
-                              <p className="text-[9px] font-mono uppercase tracking-wider text-[var(--muted-text)]">{key}</p>
+                              <p className="text-xs font-bold text-gray-900 dark:text-white">{metricLabel(key)}</p>
+                              <p className="text-[9px] font-mono uppercase tracking-wider text-gray-400">{key}</p>
                             </div>
                           </div>
                           <span className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[9px] font-bold ${toneBadge.cls}`}>
@@ -893,9 +957,9 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                           {isPercent ? (
                             <RadialGauge value={value ?? null} color={color} size={104} label={zh ? '当前' : 'Now'} unit="%" />
                           ) : (
-                            <div className="flex h-[104px] w-[104px] shrink-0 flex-col items-center justify-center rounded-xl border border-[var(--card-border)] bg-black/[0.015]">
-                              <span className="text-2xl font-extrabold tabular-nums" style={{ color }}>{fmtValue(key, value)}</span>
-                              <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted-text)]">{zh ? '当前' : 'Now'}</span>
+                            <div className="flex h-[104px] w-[104px] shrink-0 flex-col items-center justify-center rounded-2xl border border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40">
+                              <span className="text-2xl font-extrabold tabular-nums font-mono" style={{ color }}>{fmtValue(key, value)}</span>
+                              <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">{zh ? '当前' : 'Now'}</span>
                             </div>
                           )}
 
@@ -913,7 +977,7 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                                 <XAxis dataKey="ts" hide />
                                 <YAxis hide domain={isPercent ? [0, 100] : ['auto', 'auto']} />
                                 <Tooltip
-                                  contentStyle={{ borderRadius: 10, borderColor: ct.tooltipBorder, padding: '4px 8px', background: ct.tooltipBg, color: ct.tooltipText, fontSize: '11px' }}
+                                  contentStyle={{ borderRadius: 10, border: 'none', padding: '4px 8px', background: ct.tooltipBg, color: ct.tooltipText, fontSize: '11px', boxShadow: ct.tooltipShadow }}
                                   labelFormatter={(v) => fmtTime(String(v))}
                                   formatter={(v: any) => [fmtValue(key, v == null ? null : Number(v)), metricLabel(key)]}
                                 />
@@ -925,7 +989,7 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
 
                         {/* Threshold legend */}
                         {item && (item.warning_threshold != null || item.critical_threshold != null) && (
-                          <div className="mt-2 flex items-center gap-3 border-t border-[var(--card-border)] pt-2 text-[9px] font-semibold text-[var(--muted-text)]">
+                          <div className="mt-2 flex items-center gap-3 border-t border-gray-100 dark:border-zinc-800 pt-2 text-[9px] font-semibold text-gray-400">
                             {item.warning_threshold != null && (
                               <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" />{zh ? '告警阈值' : 'Warn'} {item.warning_threshold}{meta.unit}</span>
                             )}
@@ -954,12 +1018,16 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                 const lineColor = '#2563eb';
                 const rangeLabel = RANGE_OPTIONS.find((r) => r.h === rangeHours)?.label || `${rangeHours}h`;
                 return (
-                  <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] p-5">
+                  <div className="rounded-2xl border border-gray-200/70 dark:border-zinc-800/80 bg-white dark:bg-zinc-900/90 p-5 shadow-2xs">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-600">{zh ? '历史趋势' : 'History'}</p>
-                        <h3 className="mt-0.5 text-lg font-bold text-[var(--app-text)]">{metricLabel(focusMetric)}</h3>
-                        <p className="text-[11px] text-[var(--muted-text)]">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+                            {zh ? '历史趋势' : 'History'}
+                          </span>
+                          <h3 className="text-base font-bold text-gray-900 dark:text-white">{metricLabel(focusMetric)}</h3>
+                        </div>
+                        <p className="text-xs text-gray-400 dark:text-zinc-500 mt-1">
                           {zh ? `最近 ${rangeLabel} · ${histData.length} 个采样点` : `Last ${rangeLabel} · ${histData.length} samples`}
                         </p>
                       </div>
@@ -970,7 +1038,7 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                             key={k}
                             type="button"
                             onClick={() => setFocusMetric(k)}
-                            className={`rounded-lg px-2.5 py-1 text-[10px] font-bold transition-all ${focusMetric === k ? 'bg-sky-600 text-white' : 'bg-black/[0.04] text-[var(--muted-text)] hover:bg-black/[0.08]'}`}
+                            className={`rounded-xl px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${focusMetric === k ? 'bg-blue-600 text-white shadow-2xs' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-200'}`}
                           >
                             {metricLabel(k)}
                           </button>
@@ -979,16 +1047,16 @@ const ServerMonitoring: React.FC<ServerMonitoringProps> = ({ language, devices, 
                     </div>
 
                     {/* Stat summary row */}
-                    <div className="mt-3 grid grid-cols-4 gap-2">
+                    <div className="mt-3 grid grid-cols-4 gap-2.5">
                       {[
                         { label: zh ? '当前' : 'Current', v: curV },
                         { label: zh ? '最小' : 'Min', v: minV },
                         { label: zh ? '平均' : 'Avg', v: avgV },
                         { label: zh ? '最大' : 'Max', v: maxV },
                       ].map((s) => (
-                        <div key={s.label} className="rounded-xl border border-[var(--card-border)] bg-black/[0.015] px-3 py-2">
-                          <p className="text-[9px] font-bold uppercase tracking-wider text-[var(--muted-text)]">{s.label}</p>
-                          <p className="text-lg font-extrabold tabular-nums text-[var(--app-text)]">{fmtValue(focusMetric, s.v)}</p>
+                        <div key={s.label} className="rounded-xl border border-gray-100 dark:border-zinc-800 bg-gray-50/70 dark:bg-zinc-800/40 p-3">
+                          <p className="text-[11px] font-semibold text-gray-400">{s.label}</p>
+                          <p className="text-lg font-extrabold font-mono text-gray-900 dark:text-white mt-1">{fmtValue(focusMetric, s.v)}</p>
                         </div>
                       ))}
                     </div>

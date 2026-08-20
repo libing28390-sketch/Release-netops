@@ -19,7 +19,7 @@ import {
 import { RackVM, RackDisplayMode, RackDeviceVM } from '../types';
 import { isWebGLAvailable } from './utils/webgl';
 import { RackScene } from './RackScene';
-import { CameraPreset } from './CameraController';
+import { CameraPreset, DeviceFocusTarget } from './CameraController';
 import { RackDeviceTooltip } from './RackDeviceTooltip';
 import { CableMode, TopologyLinkItem } from './RackCableLayer';
 import { API } from '../constants';
@@ -80,6 +80,8 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [webglSupported, setWebglSupported] = useState<boolean | null>(null);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>('reset');
+  const [focusTarget, setFocusTarget] = useState<DeviceFocusTarget | null>(null);
+  const [pulledOutDeviceId, setPulledOutDeviceId] = useState<string | null>(null);
   const [zoomAction, setZoomAction] = useState<{ type: 'in' | 'out'; timestamp: number } | null>(null);
   const [isDoorOpen, setIsDoorOpen] = useState(true); // Default open 100°
   const [showDoor, setShowDoor] = useState(true);
@@ -92,6 +94,19 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [showDataIssues, setShowDataIssues] = useState(false);
+
+  const handlePresetChange = (preset: CameraPreset) => {
+    setFocusTarget(null);
+    setCameraPreset(preset);
+  };
+
+  const handleDoubleClickDevice = (device: RackDeviceVM) => {
+    setFocusTarget({
+      centerY: device.coordinates.centerY,
+      face: device.face,
+      timestamp: Date.now()
+    });
+  };
 
   useEffect(() => {
     setWebglSupported(isWebGLAvailable());
@@ -208,44 +223,62 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
           {/* Camera View Presets */}
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setCameraPreset('front')}
+              onClick={() => handlePresetChange('front')}
               className={`px-2 py-1 rounded-lg text-xs font-medium transition-all ${
-                cameraPreset === 'front' ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
+                cameraPreset === 'front' && !focusTarget ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
               }`}
               title={zh ? '正面视角' : 'Front View'}
             >
               {zh ? '正面' : 'Front'}
             </button>
             <button
-              onClick={() => setCameraPreset('rear')}
+              onClick={() => handlePresetChange('rear')}
               className={`px-2 py-1 rounded-lg text-xs font-medium transition-all ${
-                cameraPreset === 'rear' ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
+                cameraPreset === 'rear' && !focusTarget ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
               }`}
               title={zh ? '背面视角（电源与风扇）' : 'Rear View'}
             >
               {zh ? '背面' : 'Rear'}
             </button>
             <button
-              onClick={() => setCameraPreset('iso')}
+              onClick={() => handlePresetChange('iso')}
               className={`px-2 py-1 rounded-lg text-xs font-medium transition-all ${
-                cameraPreset === 'iso' ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
+                cameraPreset === 'iso' && !focusTarget ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
               }`}
               title={zh ? '45° 等轴视角' : 'Isometric View'}
             >
               {zh ? '45°' : '45°'}
             </button>
             <button
-              onClick={() => setCameraPreset('top')}
+              onClick={() => handlePresetChange('top')}
               className={`px-2 py-1 rounded-lg text-xs font-medium transition-all ${
-                cameraPreset === 'top' ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
+                cameraPreset === 'top' && !focusTarget ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
               }`}
               title={zh ? '顶部俯视' : 'Top View'}
             >
               {zh ? '俯视' : 'Top'}
             </button>
+            <button
+              onClick={() => handlePresetChange('focus_top')}
+              className={`px-2 py-1 rounded-lg text-xs font-medium transition-all ${
+                cameraPreset === 'focus_top' && !focusTarget ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
+              }`}
+              title={zh ? '聚焦顶部设备 (U35-U42)' : 'Focus Top (U35-U42)'}
+            >
+              {zh ? '聚焦顶部' : 'Top 8U'}
+            </button>
+            <button
+              onClick={() => handlePresetChange('focus_bottom')}
+              className={`px-2 py-1 rounded-lg text-xs font-medium transition-all ${
+                cameraPreset === 'focus_bottom' && !focusTarget ? 'bg-cyan-600 text-white shadow-md' : 'hover:bg-slate-800/80 text-slate-300'
+              }`}
+              title={zh ? '聚焦底部设备 (U1-U10)' : 'Focus Bottom (U1-U10)'}
+            >
+              {zh ? '聚焦底部' : 'Bot 8U'}
+            </button>
 
             <button
-              onClick={() => setCameraPreset('reset')}
+              onClick={() => handlePresetChange('reset')}
               className="p-1 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
               title={zh ? '重置视角' : 'Reset Camera'}
             >
@@ -373,6 +406,25 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
 
           <div className="w-[1px] h-3.5 bg-slate-700/80" />
 
+          {/* Maintenance Pull-Out Button */}
+          {selectedDeviceId && (
+            <>
+              <button
+                onClick={() => setPulledOutDeviceId(pulledOutDeviceId === selectedDeviceId ? null : selectedDeviceId)}
+                className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold transition-all ${
+                  pulledOutDeviceId === selectedDeviceId
+                    ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/50 ring-1 ring-amber-400 animate-pulse'
+                    : 'bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/50'
+                }`}
+                title={zh ? '沿导轨抽出 38cm 检修设备' : 'Pull Out 38cm for Maintenance'}
+              >
+                <Layers size={11} />
+                <span>{pulledOutDeviceId === selectedDeviceId ? (zh ? '推回' : 'Push In') : (zh ? '抽出检修' : 'Pull Out')}</span>
+              </button>
+              <div className="w-[1px] h-3.5 bg-slate-700/80" />
+            </>
+          )}
+
           {/* Fullscreen Button */}
           <button
             onClick={handleToggleFullscreen}
@@ -463,16 +515,33 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
           </div>
         </div>
 
+        {/* Close-up Focus Mode Floating Badge */}
+        {focusTarget && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2.5 px-3.5 py-1.5 rounded-full shadow-2xl backdrop-blur-xl bg-slate-950/95 border border-cyan-500/70 text-xs text-cyan-200 animate-in fade-in slide-in-from-top-2">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+            <span className="font-semibold">{zh ? '已平滑对焦设备特写' : 'Device Focused'}</span>
+            <button
+              onClick={() => handlePresetChange('reset')}
+              className="ml-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-colors shadow-md"
+            >
+              {zh ? '恢复全景' : 'Reset'}
+            </button>
+          </div>
+        )}
+
         {/* 3D Scene Viewport */}
         <div className="flex-1 w-full h-full">
           <RackScene
             rackVM={rackVM}
             selectedDeviceId={selectedDeviceId}
+            pulledOutDeviceId={pulledOutDeviceId}
             displayMode={displayMode}
             cableMode={cableMode}
             topologyLinks={topologyLinks}
             zoomAction={zoomAction}
+            focusTarget={focusTarget}
             onSelectDevice={onSelectDevice}
+            onDoubleClickDevice={handleDoubleClickDevice}
             onHoverDevice={setHoveredDevice}
             cameraPreset={cameraPreset}
             isDoorOpen={isDoorOpen}
@@ -480,6 +549,30 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             showULabels={showULabels}
           />
         </div>
+
+        {/* Power Heatmap Legend Overlay */}
+        {displayMode === 'power' && (
+          <div className="absolute bottom-12 left-3 z-10 flex items-center gap-2 px-3 py-1.5 rounded-xl shadow-xl backdrop-blur-xl bg-slate-950/95 border border-slate-700 text-xs text-slate-200 animate-in fade-in slide-in-from-bottom-2">
+            <span className="font-bold text-amber-400 flex items-center gap-1">
+              <Zap size={11} />
+              <span>{zh ? '功耗热力:' : 'Heatmap:'}</span>
+            </span>
+            <div className="flex items-center gap-2 text-[10px]">
+              <span className="flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-sm bg-cyan-500 inline-block shadow-[0_0_4px_#06b6d4]" /> &lt;250W
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block shadow-[0_0_4px_#10b981]" /> 250-500W
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block shadow-[0_0_4px_#f59e0b]" /> 500-800W
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block shadow-[0_0_4px_#ef4444]" /> &gt;800W
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Bottom Clean Status Strip (Health Breakdown) */}
         <div className="absolute bottom-3 left-3 z-10 flex items-center gap-3 px-3 py-1.5 rounded-xl shadow-lg backdrop-blur-xl bg-slate-950/85 border border-slate-700/60 text-xs text-slate-300">

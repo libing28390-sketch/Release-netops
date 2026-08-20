@@ -2,11 +2,18 @@ import React, { useEffect, useRef } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
-export type CameraPreset = 'front' | 'rear' | 'iso' | 'top' | 'reset';
+export type CameraPreset = 'front' | 'rear' | 'iso' | 'top' | 'focus_top' | 'focus_bottom' | 'reset';
+
+export interface DeviceFocusTarget {
+  centerY: number;
+  face?: 'front' | 'rear';
+  timestamp: number;
+}
 
 interface CameraControllerProps {
   preset: CameraPreset;
   rackHeight: number;
+  focusTarget?: DeviceFocusTarget | null;
   zoomAction?: { type: 'in' | 'out'; timestamp: number } | null;
   controlsRef?: React.RefObject<any>;
   onPresetApplied?: () => void;
@@ -15,6 +22,7 @@ interface CameraControllerProps {
 export const CameraController: React.FC<CameraControllerProps> = ({
   preset,
   rackHeight,
+  focusTarget,
   zoomAction,
   controlsRef,
   onPresetApplied
@@ -24,6 +32,16 @@ export const CameraController: React.FC<CameraControllerProps> = ({
   const targetPos = useRef(new THREE.Vector3(0, rackHeight / 2, 28));
   const targetLook = useRef(new THREE.Vector3(0, rackHeight / 2, 0));
   const isTransitioning = useRef(false);
+
+  // Handle Double-Click Device Close-up Focus
+  useEffect(() => {
+    if (!focusTarget) return;
+    const isRear = focusTarget.face === 'rear';
+    const distZ = isRear ? -8.5 : 8.5;
+    targetPos.current.set(0, focusTarget.centerY + 0.15, distZ);
+    targetLook.current.set(0, focusTarget.centerY, 0);
+    isTransitioning.current = true;
+  }, [focusTarget]);
 
   // When user drags, stop programmatic animation
   useEffect(() => {
@@ -76,6 +94,16 @@ export const CameraController: React.FC<CameraControllerProps> = ({
       case 'top':
         targetPos.current.set(0, rackHeight + distanceZ * 0.9, 0.1);
         targetLook.current.set(0, centerY, 0);
+        break;
+      case 'focus_top':
+        // Smoothly zoom in and focus on upper rack (U32 ~ U42)
+        targetPos.current.set(0, rackHeight * 0.82 + 1, 14);
+        targetLook.current.set(0, rackHeight * 0.82, 0);
+        break;
+      case 'focus_bottom':
+        // Smoothly zoom in and focus on lower rack (U1 ~ U12)
+        targetPos.current.set(0, rackHeight * 0.2 + 1, 14);
+        targetLook.current.set(0, rackHeight * 0.2, 0);
         break;
       case 'reset':
       default:

@@ -1,13 +1,4 @@
-/**
- * HomePage — Nexora Console Dashboard
- *
- * Layout (top → bottom):
- *   1. Title + inline summary metrics
- *   2. Icon grid (5 cols) — module quick-nav
- *   3. Stat blocks (4 cols) — key numbers with visual weight
- *   4. Two-column: Recent Activity (left) + Quick Actions (right)
- */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import {
   Activity,
@@ -31,6 +22,7 @@ import {
   Globe,
   Database,
   Bot,
+  Sparkles,
 } from 'lucide-react';
 import type { Device, Job, NotificationItem, HostResourceSnapshot } from '../types';
 
@@ -100,6 +92,15 @@ const HomePage: React.FC<HomePageProps> = ({
   userCount,
 }) => {
   const zh = language === 'zh';
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
 
   const stats = useMemo(() => {
     const online = devices.filter(d => d.status === 'online').length;
@@ -155,8 +156,8 @@ const HomePage: React.FC<HomePageProps> = ({
 
   /* ── Quick Action Buttons ── */
   const quickActions = [
-    { label: zh ? '添加设备' : 'Add Device', path: '/assets/network-devices', icon: Plus },
-    { label: zh ? '执行巡检' : 'Run Inspection', path: '/automation/inspections', icon: Play },
+    { label: zh ? '添加网络设备' : 'Add Network Device', path: '/assets/network-devices', icon: Plus },
+    { label: zh ? '执行自动化巡检' : 'Run Inspection', path: '/automation/inspections', icon: Play },
     { label: zh ? '查看配置差异' : 'View Config Diff', path: '/config/diff', icon: FileCode2 },
     { label: zh ? '新建变更工单' : 'New Change Order', path: '/change-orders/new', icon: ClipboardList },
   ];
@@ -201,12 +202,48 @@ const HomePage: React.FC<HomePageProps> = ({
         </div>
       </motion.div>
 
-      {/* ════════ 2. Module Grid — 4 cols card nav (12 Modules) ════════ */}
+      {/* ════════ 2. Stat Blocks — 4 cols ════════ */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.04 }}
-        className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3"
+        className="grid grid-cols-2 sm:grid-cols-4 gap-3.5"
+      >
+        {statBlocks.map((block, idx) => {
+          const Icon = block.icon;
+          return (
+            <div
+              key={idx}
+              className="rounded-xl p-4 flex flex-col justify-between transition-all duration-150"
+              style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium" style={{ color: 'var(--muted-text)' }}>
+                  {block.label}
+                </span>
+                <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: block.accent + '15', color: block.accent }}>
+                  <Icon size={15} strokeWidth={2} />
+                </div>
+              </div>
+              <div className="mt-3">
+                <div className="text-2xl font-bold tracking-tight" style={{ color: 'var(--heading-text)' }}>
+                  {block.value}
+                </div>
+                <div className="text-[11px] mt-0.5" style={{ color: 'var(--dim-text)' }}>
+                  {block.sub}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </motion.div>
+
+      {/* ════════ 3. Module Grid — 4 cols card nav (12 Modules) ════════ */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.08 }}
+        className="grid grid-cols-2 sm:grid-cols-4 gap-3"
       >
         {apps.map((app, idx) => {
           const Icon = app.icon;
@@ -241,43 +278,7 @@ const HomePage: React.FC<HomePageProps> = ({
         })}
       </motion.div>
 
-      {/* ════════ 3. Stat Blocks — 4 cols ════════ */}
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.12 }}
-        className="grid grid-cols-2 sm:grid-cols-4 gap-3.5"
-      >
-        {statBlocks.map((block, idx) => {
-          const Icon = block.icon;
-          return (
-            <div
-              key={idx}
-              className="rounded-xl p-4 flex flex-col justify-between transition-all duration-150"
-              style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: '12px', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[12px] font-medium" style={{ color: 'var(--muted-text)' }}>
-                  {block.label}
-                </span>
-                <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: block.accent + '15', color: block.accent }}>
-                  <Icon size={15} strokeWidth={2} />
-                </div>
-              </div>
-              <div className="mt-3">
-                <div className="text-2xl font-bold tracking-tight" style={{ color: 'var(--heading-text)' }}>
-                  {block.value}
-                </div>
-                <div className="text-[11px] mt-0.5" style={{ color: 'var(--dim-text)' }}>
-                  {block.sub}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </motion.div>
-
-      {/* ════════ 4. Two-Column Layout — Recent Activity + Quick Actions ════════ */}
+      {/* ════════ 3. Two-Column Layout — Platform Distribution + Quick Actions ════════ */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Left (2 cols): System Platform Overview */}
         <motion.div

@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { RackVM, RackDeviceVM } from '../types';
 
@@ -24,6 +25,37 @@ interface RackCableLayerProps {
   cableMode: CableMode;
   links?: TopologyLinkItem[];
 }
+
+/**
+ * Animated Glowing Data Traffic Pulse along the cable curve
+ */
+const CableTrafficParticle: React.FC<{
+  curve: THREE.CatmullRomCurve3;
+  isFiber: boolean;
+  speed?: number;
+  offset?: number;
+}> = ({ curve, isFiber, speed = 0.35, offset = 0 }) => {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useFrame(({ clock }) => {
+    if (!meshRef.current) return;
+    const progress = ((clock.elapsedTime * speed) + offset) % 1.0;
+    const position = curve.getPointAt(progress);
+    meshRef.current.position.copy(position);
+  });
+
+  return (
+    <mesh ref={meshRef}>
+      <sphereGeometry args={[isFiber ? 0.03 : 0.038, 8, 8]} />
+      <meshStandardMaterial
+        color={isFiber ? '#38bdf8' : '#fbbf24'}
+        emissive={isFiber ? '#38bdf8' : '#fbbf24'}
+        emissiveIntensity={3.5}
+        roughness={0.1}
+      />
+    </mesh>
+  );
+};
 
 /**
  * Calculate precise 3D physical port X and Y coordinates on the switch faceplate
@@ -281,6 +313,26 @@ export const RackCableLayer: React.FC<RackCableLayerProps> = ({
                 emissiveIntensity={emissiveIntensity}
               />
             </mesh>
+
+            {/* Dynamic Data Traffic Flow Particles */}
+            {(isHighlighted || cableMode === 'all') && (
+              <>
+                <CableTrafficParticle
+                  curve={curve}
+                  isFiber={isFiber}
+                  speed={isHighlighted ? 0.6 : 0.25}
+                  offset={0}
+                />
+                {isHighlighted && (
+                  <CableTrafficParticle
+                    curve={curve}
+                    isFiber={isFiber}
+                    speed={0.6}
+                    offset={0.5}
+                  />
+                )}
+              </>
+            )}
           </group>
         );
       })}

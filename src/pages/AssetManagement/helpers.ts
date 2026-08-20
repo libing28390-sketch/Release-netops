@@ -18,9 +18,31 @@ export const ago = (iso: string) => {
 };
 
 export const severityOf = (a: Asset): 'critical' | 'major' | 'warning' | 'healthy' => {
-  if (a.status === 'decommissioned') return 'critical';
-  if (a.status === 'maintenance') return 'major';
-  if (a.warranty_expiry && new Date(a.warranty_expiry) <= new Date(Date.now() + 90 * 86400000)) return 'warning';
-  if (a.status === 'inactive' || a.status === 'in_storage') return 'warning';
+  const onlineStatus = a.online_status || (a.status === 'active' ? 'online' : a.status === 'inactive' ? 'offline' : 'pending');
+
+  // 1. Critical (严重故障/离线/已退役)
+  if (onlineStatus === 'offline' || a.status === 'inactive' || a.status === 'decommissioned' || a.lifecycle_status === 'decommissioned') {
+    return 'critical';
+  }
+
+  // 2. Major (重要问题/维护中)
+  if (a.status === 'maintenance' || a.lifecycle_status === 'maintenance') {
+    return 'major';
+  }
+
+  // 3. Warning (需要关注 / 临期保修 90 天内 / 库存中 / 待投产)
+  if (a.warranty_expiry) {
+    const exp = new Date(a.warranty_expiry).getTime();
+    const now = Date.now();
+    // Only future dates within 90 days are "expiring soon", matching backend warranty_expiring_soon
+    if (!Number.isNaN(exp) && exp >= now && exp <= now + 90 * 86400000) {
+      return 'warning';
+    }
+  }
+  if (a.status === 'in_storage' || a.lifecycle_status === 'staging') {
+    return 'warning';
+  }
+
+  // 4. Healthy (正常运行)
   return 'healthy';
 };

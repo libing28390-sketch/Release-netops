@@ -394,6 +394,8 @@ from core.metrics import metrics_registry
 from core.scheduler_lock import synchronized_scheduler_job
 import time
 
+from fastapi.responses import RedirectResponse
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="2.0.0",
@@ -402,6 +404,16 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+
+@app.get("/docs", include_in_schema=False)
+async def redirect_docs():
+    return RedirectResponse(url="/api/docs")
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redirect_redoc():
+    return RedirectResponse(url="/api/redoc")
 
 
 def rewrite_knowledge_v2_path(path: str) -> str | None:

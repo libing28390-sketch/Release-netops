@@ -42,12 +42,27 @@ def _get_system_name() -> str:
 @router.get("/info")
 async def get_system_info() -> Dict[str, Any]:
     system_name = _get_system_name()
+    managed_devices = 0
+    try:
+        conn = get_db_connection()
+        try:
+            row = conn.execute("SELECT count(*) FROM devices").fetchone()
+            if row:
+                managed_devices = row[0] if isinstance(row, (list, tuple)) else row['count']
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
     return {
         "version": VERSION,
         "edition": "Enterprise",
         "build_date": BUILD_DATE,
         "project_name": settings.PROJECT_NAME,
         "system_name": system_name,
+        "managed_devices": managed_devices,
+        "sla": "99.99%",
+        "inspection_coverage": "100%",
         "license": {
             "valid": True,
             "license_id": "perpetual-enterprise",
@@ -59,7 +74,7 @@ async def get_system_info() -> Dict[str, Any]:
             "max_version": "99.9.9",
             "current_version": VERSION,
             "device_limit": 999999,
-            "device_current": 0,
+            "device_current": managed_devices,
             "server_limit": 999999,
             "server_current": 0,
             "features": [

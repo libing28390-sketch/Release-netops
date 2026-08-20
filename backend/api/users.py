@@ -29,7 +29,7 @@ _SESSION_TTL = max(300, int(settings.SESSION_TTL_SECONDS))
 
 # Login failure tracking: username -> { count, locked_until }
 _login_failures: dict[str, dict] = {}
-_MAX_LOGIN_ATTEMPTS = 5
+_MAX_LOGIN_ATTEMPTS = 10
 _LOCKOUT_SECONDS = 900  # 15 minutes initial lockout
 
 async def _hash_password(plain: str) -> str:
@@ -57,21 +57,21 @@ def _is_bcrypt_hash(value: str) -> bool:
 def _validate_password_strength(password: str) -> str | None:
     """Return an error message if password is too weak, or None if OK."""
     if len(password) < 10:
-        return 'Password must be at least 10 characters'
+        return '密码长度不能少于10位 / Password must be at least 10 characters'
     if not re.search(r'[A-Z]', password):
-        return 'Password must contain at least one uppercase letter'
+        return '密码必须包含至少一个大写字母 (A-Z) / Password must contain at least one uppercase letter'
     if not re.search(r'[a-z]', password):
-        return 'Password must contain at least one lowercase letter'
+        return '密码必须包含至少一个小写字母 (a-z) / Password must contain at least one lowercase letter'
     if not re.search(r'[0-9]', password):
-        return 'Password must contain at least one digit'
+        return '密码必须包含至少一个数字 (0-9) / Password must contain at least one digit'
     if not re.search(r'[!@#$%^&*()_+\-=\[\]{}|;:\'",.<>?/\\`~]', password):
-        return 'Password must contain at least one special character'
+        return '密码必须包含至少一个特殊字符 (如 !@#$%^&* 等) / Password must contain at least one special character'
     # Check common weak patterns
     lower = password.lower()
     weak_patterns = ['password', '12345678', 'qwerty', 'admin123', 'letmein', 'welcome', 'changeme']
     for wp in weak_patterns:
         if wp in lower:
-            return 'Password contains a commonly used weak pattern'
+            return f'密码不能包含常见弱口令片段 ({wp}) / Password contains commonly used weak pattern'
     return None
 
 
@@ -316,6 +316,124 @@ def verify_totp(secret: str, code: str, window: int = 1) -> bool:
 # In-memory session store for temporary MFA tickets: temp_token -> { user_id, username, expires_at }
 _temp_mfa_tokens: dict[str, dict] = {}
 
+# In-memory store for Cyber Captchas: captcha_id -> { "code": "ABCD", "expires_at": timestamp }
+_captcha_cache: dict[str, dict] = {}
+
+def _clean_expired_captchas():
+    now = time.time()
+    expired = [k for k, v in _captcha_cache.items() if v.get('expires_at', 0) < now]
+    for k in expired:
+        _captcha_cache.pop(k, None)
+
+def _generate_cyber_captcha() -> dict:
+    """Generate high-aesthetic Cyber SVG Captcha with neon glow & cyber waves."""
+    _clean_expired_captchas()
+    import random
+    import uuid
+    import base64
+    
+    # Safe charset without ambiguous glyphs (0/O, 1/I/l)
+    safe_charset = "3456789ABCDEFGHJKLMNPQRSTUVWXY"
+    code = ''.join(random.choices(safe_charset, k=4))
+    captcha_id = uuid.uuid4().hex
+    
+    width = 120
+    height = 40
+    
+    # Modern high-contrast color palette for characters
+    colors = [
+        ("#1d4ed8", "#2563eb"), # Blue
+        ("#6d28d9", "#7c3aed"), # Purple
+        ("#047857", "#059669"), # Emerald
+        ("#be185d", "#db2777"), # Rose
+    ]
+    random.shuffle(colors)
+    
+    svg_parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" style="border-radius:10px;background:#f8fafc;overflow:hidden;border:1px solid rgba(226,232,240,0.9);">'
+        '<defs>'
+        '  <linearGradient id="bgG" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#f1f5f9"/></linearGradient>'
+        '</defs>'
+        f'<rect width="{width}" height="{height}" fill="url(#bgG)"/>'
+    ]
+    
+    # Subtle soft grid lines
+    for gx in range(12, width, 16):
+        svg_parts.append(f'<line x1="{gx}" y1="0" x2="{gx}" y2="{height}" stroke="rgba(148,163,184,0.12)" stroke-width="1"/>')
+    for gy in range(8, height, 10):
+        svg_parts.append(f'<line x1="0" y1="{gy}" x2="{width}" y2="{gy}" stroke="rgba(148,163,184,0.12)" stroke-width="1"/>')
+    
+    # 2 smooth harmonic curves
+    for _ in range(2):
+        p0_y = random.randint(8, height - 8)
+        p1_x = random.randint(25, 55)
+        p1_y = random.randint(4, height - 4)
+        p2_x = random.randint(65, 95)
+        p2_y = random.randint(4, height - 4)
+        p3_y = random.randint(8, height - 8)
+        line_color = random.choice(["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981"])
+        svg_parts.append(
+            f'<path d="M 0 {p0_y} C {p1_x} {p1_y}, {p2_x} {p2_y}, {width} {p3_y}" stroke="{line_color}" stroke-width="1.2" fill="none" opacity="0.3"/>'
+        )
+        
+    # Micro dots
+    for _ in range(16):
+        cx = random.randint(4, width - 4)
+        cy = random.randint(4, height - 4)
+        r = random.uniform(0.7, 1.4)
+        c = random.choice(["#3b82f6", "#8b5cf6", "#10b981", "#64748b"])
+        op = random.uniform(0.2, 0.5)
+        svg_parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="{c}" opacity="{op:.2f}"/>')
+        
+    # Render characters
+    x_positions = [14, 40, 66, 92]
+    for i, ch in enumerate(code):
+        x = x_positions[i] + random.randint(-2, 2)
+        y = 27 + random.randint(-2, 2)
+        rot = random.randint(-10, 10)
+        c1, _ = colors[i]
+        font_size = random.randint(20, 23)
+        svg_parts.append(
+            f'<text x="{x}" y="{y}" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, monospace, sans-serif" font-size="{font_size}" font-weight="800" fill="{c1}" transform="rotate({rot} {x} {y})" letter-spacing="1">{ch}</text>'
+        )
+        
+    svg_parts.append('</svg>')
+    svg_content = ''.join(svg_parts)
+    b64_img = "data:image/svg+xml;base64," + base64.b64encode(svg_content.encode('utf-8')).decode('utf-8')
+    
+    _captcha_cache[captcha_id] = {
+        "code": code.upper(),
+        "expires_at": time.time() + 300,
+    }
+    
+    return {
+        "captcha_id": captcha_id,
+        "image": b64_img,
+        "expires_in": 300,
+    }
+
+def _verify_captcha(captcha_id: str, code: str) -> bool:
+    """Verify captcha and immediately consume it."""
+    _clean_expired_captchas()
+    if not captcha_id or not code:
+        return False
+    entry = _captcha_cache.pop(captcha_id, None)
+    if not entry:
+        return False
+    if time.time() > entry.get('expires_at', 0):
+        return False
+    return entry.get('code', '').strip().upper() == code.strip().upper()
+
+@router.get("/captcha/generate")
+@limiter.limit("60/minute")
+async def generate_captcha(request: Request):
+    """Generate a high-aesthetic cyber SVG captcha."""
+    captcha_data = _generate_cyber_captcha()
+    return {
+        "success": True,
+        **captcha_data,
+    }
+
 
 def _clean_sessions():
     """Remove expired sessions from DB."""
@@ -542,7 +660,7 @@ def switch_user(request: Request, payload: dict = Body(...)):
 
 
 @router.post("/login")
-@limiter.limit("5/minute")
+@limiter.limit("20/minute")
 async def login(request: Request, payload: dict = Body(...)):
     username = payload.get('username')
     password = payload.get('password')
@@ -565,10 +683,35 @@ async def login(request: Request, payload: dict = Body(...)):
             target_type='session',
             target_name=safe_username,
         )
+        minutes = max(1, (remaining + 59) // 60)
         raise HTTPException(
             status_code=429,
-            detail=f"Account locked due to too many failed attempts. Try again in {remaining} seconds.",
+            detail=f"密码错误次数过多，账号已被锁定。请在 {remaining} 秒（约 {minutes} 分钟）后再试，或联系系统管理员重置密码。",
         )
+
+    # --- Check prior failure count to enforce captcha ---
+    fail_conn = get_db_connection()
+    try:
+        prior_fail_row = fail_conn.execute('SELECT count, locked_until FROM login_failures WHERE username = ?', (safe_username,)).fetchone()
+        prior_count = prior_fail_row['count'] if prior_fail_row else 0
+    finally:
+        fail_conn.close()
+
+    if prior_count >= 3:
+        captcha_id = payload.get('captcha_id')
+        captcha_code = payload.get('captcha_code')
+        if not captcha_id or not captcha_code:
+            raise HTTPException(
+                status_code=400,
+                detail="密码已连续错误3次以上，请输入图形验证码",
+                headers={"X-Captcha-Required": "true"}
+            )
+        if not _verify_captcha(captcha_id, captcha_code):
+            raise HTTPException(
+                status_code=400,
+                detail="图形验证码错误或已失效，请重新输入",
+                headers={"X-Captcha-Required": "true"}
+            )
 
     conn = get_db_connection()
     try:
@@ -639,31 +782,46 @@ async def login(request: Request, payload: dict = Body(...)):
             }
         else:
             _record_login_failure(safe_username)
-            # Look up current failure count from DB
+            # Look up current failure count and locked status from DB
             fail_conn = get_db_connection()
             try:
-                fail_row = fail_conn.execute('SELECT count FROM login_failures WHERE username = ?', (safe_username,)).fetchone()
+                fail_row = fail_conn.execute('SELECT count, locked_until FROM login_failures WHERE username = ?', (safe_username,)).fetchone()
                 current_count = fail_row['count'] if fail_row else 0
+                locked_until = fail_row['locked_until'] if fail_row else 0
             finally:
                 fail_conn.close()
-            attempts_left = _MAX_LOGIN_ATTEMPTS - (current_count % _MAX_LOGIN_ATTEMPTS)
-            logger.warning(f"Login failed for user: {safe_username} - Invalid credentials")
+
+            logger.warning(f"Login failed for user: {safe_username} - Invalid credentials (count={current_count})")
             log_audit_event(
                 event_type='LOGIN_FAILED',
                 category='identity',
                 severity='medium',
                 status='failed',
-                summary=f"Failed login attempt for user {safe_username}",
+                summary=f"Failed login attempt for user {safe_username} (count={current_count})",
                 actor_username=safe_username,
                 actor_role='unknown',
                 source_ip=request.client.host if request and request.client else None,
                 target_type='session',
                 target_name=safe_username,
             )
-            detail = "Invalid credentials"
-            if 0 < attempts_left <= 3:
-                detail = "Invalid credentials. Account may be locked soon."
-            raise HTTPException(status_code=401, detail=detail)
+
+            if locked_until and time.time() < locked_until:
+                remaining = int(locked_until - time.time())
+                minutes = max(1, (remaining + 59) // 60)
+                detail = f"密码连续错误达到 {_MAX_LOGIN_ATTEMPTS} 次，账号已被安全锁定。请在 {remaining} 秒（约 {minutes} 分钟）后再试，或联系系统管理员重置密码。"
+                raise HTTPException(status_code=429, detail=detail)
+
+            attempts_left = max(0, _MAX_LOGIN_ATTEMPTS - current_count)
+            if current_count >= 3:
+                detail = f"用户名或密码错误。连续失败超过 {_MAX_LOGIN_ATTEMPTS} 次将锁定账号（当前已连续失败 {current_count} 次，剩余 {attempts_left} 次机会）。请输入图形验证码。"
+                raise HTTPException(
+                    status_code=401,
+                    detail=detail,
+                    headers={"X-Captcha-Required": "true"}
+                )
+            else:
+                detail = "用户名或密码错误，请重新输入"
+                raise HTTPException(status_code=401, detail=detail)
     except HTTPException:
         raise
     except Exception as e:
@@ -673,15 +831,50 @@ async def login(request: Request, payload: dict = Body(...)):
         conn.close()
 
 
-# ── Forgot-password: send verification code via notification channels ──
+# ── Forgot-password: send verification code via notification channels / MFA ──
 
 _RESET_CODE_EXPIRE_MIN = 5
 _RESET_CODE_LENGTH = 6
+_RESET_TICKET_TTL = 600  # 10 minutes valid reset window
+_RESET_TICKET_SECRET = os.environ.get("NETOPS_RESET_SECRET") or os.urandom(32).hex()
 
 import secrets as _secrets
 
 def _generate_reset_code() -> str:
     return ''.join([str(_secrets.randbelow(10)) for _ in range(_RESET_CODE_LENGTH)])
+
+
+def _generate_reset_ticket(username: str, method: str = 'mfa') -> str:
+    """Generate a tamper-proof 10-minute reset ticket."""
+    now = int(time.time())
+    payload = f"{username}:{method}:{now}"
+    sig = hmac.new(_RESET_TICKET_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    raw = f"{payload}:{sig}"
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def _verify_reset_ticket(ticket: str, expected_username: str = None) -> tuple[bool, str, str]:
+    """Verify reset ticket. Returns (is_valid, username, error_message)."""
+    if not ticket or not isinstance(ticket, str):
+        return False, "", "缺少重置凭证 / Reset ticket is missing"
+    try:
+        decoded = base64.urlsafe_b64decode(ticket.encode()).decode()
+        parts = decoded.split(":")
+        if len(parts) != 4:
+            return False, "", "重置凭证无效或已损坏 / Invalid reset ticket"
+        username, method, ts_str, sig = parts
+        ts = int(ts_str)
+        if time.time() - ts > _RESET_TICKET_TTL:
+            return False, "", "重置凭证已过期（有效期10分钟），请重新验证 / Reset ticket expired, please verify again"
+        payload = f"{username}:{method}:{ts}"
+        expected_sig = hmac.new(_RESET_TICKET_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected_sig):
+            return False, "", "重置凭证校验失败 / Reset ticket signature mismatch"
+        if expected_username and username.strip().lower() != expected_username.strip().lower():
+            return False, "", "重置凭证与账户不匹配 / Reset ticket user mismatch"
+        return True, username, ""
+    except Exception:
+        return False, "", "重置凭证解析失败 / Failed to parse reset ticket"
 
 
 @router.post("/forgot-password/send-code")
@@ -690,7 +883,7 @@ def forgot_password_send_code(request: Request, payload: dict = Body(...)):
     """Send a verification code to the user's configured notification channels."""
     username = (payload.get('username') or '').strip()
     if not username:
-        raise HTTPException(status_code=400, detail="Username is required")
+        raise HTTPException(status_code=400, detail="请输入用户名 / Username is required")
 
     conn = get_db_connection()
     try:
@@ -698,10 +891,10 @@ def forgot_password_send_code(request: Request, payload: dict = Body(...)):
             'SELECT id, username, notification_channels, preferred_language FROM users WHERE username = ?',
             (username,),
         ).fetchone()
-        # Always return success to avoid username enumeration
+        # Always return generic success message to avoid username enumeration
         if not user:
             logger.warning(f"Password reset requested for non-existent user: {username}")
-            return {"success": True, "message": "If an account with that username exists and has notification channels configured, a code has been sent."}
+            return {"success": True, "message": "如果该用户名存在并配置了通知渠道，验证码已发送。"}
 
         channels = {}
         try:
@@ -720,8 +913,7 @@ def forgot_password_send_code(request: Request, payload: dict = Body(...)):
             (wechat.get('enabled') and wechat.get('webhook_url', '').strip())
         )
         if not has_channel:
-            # Return generic message — don't reveal whether channels are configured
-            return {"success": False, "message": "No notification channels configured for this account. Please contact your administrator."}
+            return {"success": False, "message": "该账户未配置有效的通知渠道（飞书/钉钉/企业微信），请使用 MFA 身份验证器找回或联系管理员。"}
 
         # Generate and store code
         code = _generate_reset_code()
@@ -763,7 +955,7 @@ def forgot_password_send_code(request: Request, payload: dict = Body(...)):
 
         any_success = any(s['success'] for s in sent_to)
         if not any_success:
-            return {"success": False, "message": "Failed to send verification code. Please try again later."}
+            return {"success": False, "message": "通知渠道验证码发送失败，请稍后重试或使用 MFA 验证器找回。"}
 
         log_audit_event(
             event_type='PASSWORD_RESET_REQUESTED',
@@ -778,12 +970,90 @@ def forgot_password_send_code(request: Request, payload: dict = Body(...)):
             target_name=username,
         )
         logger.info(f"Password reset code sent for user: {username}")
-        return {"success": True, "message": "Verification code sent to your notification channels.", "channels": sent_to}
+        return {"success": True, "message": "验证码已成功发送到您的通知渠道。", "channels": sent_to}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Forgot password error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="服务器内部错误，请稍后重试")
+    finally:
+        conn.close()
+
+
+@router.post("/forgot-password/verify-code")
+@limiter.limit("10/minute")
+def forgot_password_verify_code(request: Request, payload: dict = Body(...)):
+    """Verify notification verification code upfront and issue a 10-minute reset ticket."""
+    username = (payload.get('username') or '').strip()
+    code = (payload.get('code') or '').strip()
+
+    if not username or not code:
+        raise HTTPException(status_code=400, detail="请输入用户名与6位数字验证码")
+
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT id, code, expires_at FROM password_reset_codes WHERE username = ? AND used = 0 ORDER BY created_at DESC LIMIT 1",
+            (username,),
+        ).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=400, detail="验证码无效或不存在，请重新获取验证码")
+
+        if time.time() > row['expires_at']:
+            conn.execute("UPDATE password_reset_codes SET used = 1 WHERE id = ?", (row['id'],))
+            conn.commit()
+            raise HTTPException(status_code=400, detail="验证码已过期，请点击重新发送")
+
+        if not hmac.compare_digest(code, row['code']):
+            raise HTTPException(status_code=400, detail="验证码错误，请核对后重新输入")
+
+        # Mark code as consumed
+        conn.execute("UPDATE password_reset_codes SET used = 1 WHERE id = ?", (row['id'],))
+        conn.commit()
+
+        ticket = _generate_reset_ticket(username, method='notification')
+        return {
+            "success": True,
+            "message": "验证码核验通过",
+            "reset_ticket": ticket,
+            "username": username,
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/forgot-password/verify-mfa")
+@limiter.limit("10/minute")
+def forgot_password_verify_mfa(request: Request, payload: dict = Body(...)):
+    """Verify TOTP MFA code upfront and issue a 10-minute reset ticket (solves 30s expiration race)."""
+    username = (payload.get('username') or '').strip()
+    code = (payload.get('code') or '').strip()
+
+    if not username or not code:
+        raise HTTPException(status_code=400, detail="请输入用户名与手机验证器显示的 6 位动态码")
+
+    conn = get_db_connection()
+    try:
+        user = conn.execute(
+            'SELECT id, username, role, mfa_enabled, mfa_secret FROM users WHERE username = ?',
+            (username,),
+        ).fetchone()
+        if not user:
+            raise HTTPException(status_code=404, detail="账户不存在，请核对用户名")
+        if not user['mfa_enabled'] or not user['mfa_secret']:
+            raise HTTPException(status_code=400, detail="该账户未开启 MFA 二次认证，无法使用动态码找回")
+
+        if not verify_totp(user['mfa_secret'], code, window=1):
+            raise HTTPException(status_code=400, detail="MFA 动态验证码错误或已失效，请查看手机验证器最新动态码后重试")
+
+        ticket = _generate_reset_ticket(user['username'], method='mfa')
+        return {
+            "success": True,
+            "message": "MFA 动态验证码校验成功",
+            "reset_ticket": ticket,
+            "username": user['username'],
+        }
     finally:
         conn.close()
 
@@ -791,49 +1061,57 @@ def forgot_password_send_code(request: Request, payload: dict = Body(...)):
 @router.post("/forgot-password/reset")
 @limiter.limit("5/minute")
 async def forgot_password_reset(request: Request, payload: dict = Body(...)):
-    """Verify code and reset password."""
+    """Verify ticket/code and reset password."""
     username = (payload.get('username') or '').strip()
+    reset_ticket = payload.get('reset_ticket', '')
     code = (payload.get('code') or '').strip()
     new_password = payload.get('new_password', '')
 
-    if not username or not code or not new_password:
-        raise HTTPException(status_code=400, detail="Username, code, and new_password are required")
+    if not username or not new_password:
+        raise HTTPException(status_code=400, detail="用户名和新密码为必填项")
 
     # Validate password strength
     pwd_error = _validate_password_strength(new_password)
     if pwd_error:
         raise HTTPException(status_code=400, detail=pwd_error)
 
+    # 1. Prefer reset ticket
+    if reset_ticket:
+        is_valid, ticket_user, err_msg = _verify_reset_ticket(reset_ticket, expected_username=username)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=err_msg)
+    elif code:
+        # 2. Fallback to legacy single-step code check
+        conn_chk = get_db_connection()
+        try:
+            row = conn_chk.execute(
+                "SELECT id, code, expires_at FROM password_reset_codes WHERE username = ? AND used = 0 ORDER BY created_at DESC LIMIT 1",
+                (username,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="验证码无效或已过期，请重新获取")
+            if time.time() > row['expires_at']:
+                conn_chk.execute("UPDATE password_reset_codes SET used = 1 WHERE id = ?", (row['id'],))
+                conn_chk.commit()
+                raise HTTPException(status_code=400, detail="验证码已过期，请重新获取")
+            if not hmac.compare_digest(code, row['code']):
+                raise HTTPException(status_code=400, detail="验证码不正确")
+            conn_chk.execute("UPDATE password_reset_codes SET used = 1 WHERE id = ?", (row['id'],))
+            conn_chk.commit()
+        finally:
+            conn_chk.close()
+    else:
+        raise HTTPException(status_code=400, detail="缺少重置凭证或验证码，无法修改密码")
+
     conn = get_db_connection()
     try:
-        # Find valid unused code
-        row = conn.execute(
-            "SELECT id, code, expires_at FROM password_reset_codes WHERE username = ? AND used = 0 ORDER BY created_at DESC LIMIT 1",
-            (username,),
-        ).fetchone()
-
-        if not row:
-            raise HTTPException(status_code=400, detail="Invalid or expired verification code")
-
-        if time.time() > row['expires_at']:
-            conn.execute("UPDATE password_reset_codes SET used = 1 WHERE id = ?", (row['id'],))
-            conn.commit()
-            raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
-
-        if not hmac.compare_digest(code, row['code']):
-            raise HTTPException(status_code=400, detail="Invalid verification code")
-
-        # Mark code as used
-        conn.execute("UPDATE password_reset_codes SET used = 1 WHERE id = ?", (row['id'],))
-
         # Update password
         hashed = await _hash_password(new_password)
         conn.execute("UPDATE users SET password = ? WHERE username = ?", (hashed, username))
 
         # Clear login failures / lockout
         conn.execute("DELETE FROM login_failures WHERE username = ?", (username,))
-        # A password reset must invalidate existing sessions so the old
-        # credential cannot remain usable through an already-issued token.
+        # Invalidate existing sessions
         conn.execute(
             "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)",
             (username,),
@@ -853,12 +1131,12 @@ async def forgot_password_reset(request: Request, payload: dict = Body(...)):
             target_name=username,
         )
         logger.info(f"Password reset completed for user: {username}")
-        return {"success": True, "message": "Password reset successfully. You can now log in with your new password."}
+        return {"success": True, "message": "密码重置成功，请使用新密码重新登录。"}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Password reset error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="密码重置发生异常，请稍后重试")
     finally:
         conn.close()
 
@@ -866,13 +1144,14 @@ async def forgot_password_reset(request: Request, payload: dict = Body(...)):
 @router.post("/forgot-password/mfa-reset")
 @limiter.limit("5/minute")
 async def forgot_password_mfa_reset(request: Request, payload: dict = Body(...)):
-    """Reset a password with the account's enrolled TOTP authenticator."""
+    """Reset a password with enrolled TOTP authenticator (supports reset_ticket or direct code)."""
     username = (payload.get('username') or '').strip()
+    reset_ticket = payload.get('reset_ticket', '')
     code = (payload.get('code') or '').strip()
     new_password = payload.get('new_password', '')
 
-    if not username or not code or not new_password:
-        raise HTTPException(status_code=400, detail="Username, code, and new_password are required")
+    if not username or not new_password:
+        raise HTTPException(status_code=400, detail="用户名和新密码为必填项")
 
     pwd_error = _validate_password_strength(new_password)
     if pwd_error:
@@ -884,8 +1163,22 @@ async def forgot_password_mfa_reset(request: Request, payload: dict = Body(...))
             'SELECT id, username, role, mfa_enabled, mfa_secret FROM users WHERE username = ?',
             (username,),
         ).fetchone()
-        if not user or not user['mfa_enabled'] or not user['mfa_secret'] or not verify_totp(user['mfa_secret'], code):
-            raise HTTPException(status_code=400, detail="Invalid account or MFA code")
+        if not user:
+            raise HTTPException(status_code=404, detail="账户不存在，请核对用户名")
+
+        # 1. Prefer reset ticket
+        if reset_ticket:
+            is_valid, ticket_user, err_msg = _verify_reset_ticket(reset_ticket, expected_username=username)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=err_msg)
+        elif code:
+            # 2. Fallback to direct TOTP code check
+            if not user['mfa_enabled'] or not user['mfa_secret']:
+                raise HTTPException(status_code=400, detail="该账户未开启 MFA 二次认证")
+            if not verify_totp(user['mfa_secret'], code, window=1):
+                raise HTTPException(status_code=400, detail="MFA 动态验证码错误或已失效，请重新输入")
+        else:
+            raise HTTPException(status_code=400, detail="缺少重置凭证或动态验证码")
 
         hashed = await _hash_password(new_password)
         conn.execute('UPDATE users SET password = ? WHERE id = ?', (hashed, user['id']))
@@ -908,12 +1201,12 @@ async def forgot_password_mfa_reset(request: Request, payload: dict = Body(...))
             target_name=username,
             details={'method': 'totp'},
         )
-        return {"success": True, "message": "Password reset successfully. You can now log in with your new password."}
+        return {"success": True, "message": "密码重置成功，请使用新密码重新登录。"}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"MFA password reset error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="MFA 密码重置发生异常，请稍后重试")
     finally:
         conn.close()
 

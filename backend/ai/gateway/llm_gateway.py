@@ -452,6 +452,7 @@ class LLMGateway:
         document_scope: Optional[str] = None,
         request_id: Optional[str] = None,
         data_classification: Optional[str] = None,
+        route_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         request_id = self._generate_request_id(request_id)
         start_time = time.perf_counter()

@@ -17,8 +17,11 @@ interface RackElevationProps {
   viewSide: 'front' | 'rear';
   zh: boolean;
   collapseEmpty: boolean;
+  rackScale?: number;
+  scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
   onDeviceMove: (deviceId: string, newStartU: number) => Promise<void>;
   onDeviceSelect?: (deviceId: string) => void;
+  onEmptySlotClick?: (uNumber: number) => void;
 }
 
 export const RackElevation: React.FC<RackElevationProps> = ({
@@ -26,8 +29,11 @@ export const RackElevation: React.FC<RackElevationProps> = ({
   viewSide,
   zh,
   collapseEmpty,
+  rackScale = 1,
+  scrollContainerRef,
   onDeviceMove,
   onDeviceSelect,
+  onEmptySlotClick,
 }) => {
   const totalU = layout.total_u;
   const sideDevices = useMemo(
@@ -115,6 +121,35 @@ export const RackElevation: React.FC<RackElevationProps> = ({
   const [activeDevice, setActiveDevice] = useState<RackDevice | null>(null);
   const [ghostU, setGhostU] = useState<number | null>(null);
   const rackBodyRef = useRef<HTMLDivElement>(null);
+  const scrollAnimRef = useRef<number | null>(null);
+
+  const stopAutoScroll = useCallback(() => {
+    if (scrollAnimRef.current !== null) {
+      cancelAnimationFrame(scrollAnimRef.current);
+      scrollAnimRef.current = null;
+    }
+  }, []);
+
+  const startAutoScroll = useCallback((direction: 'up' | 'down', speed: number) => {
+    stopAutoScroll();
+    const scrollContainer = scrollContainerRef?.current;
+    if (!scrollContainer) return;
+
+    const step = () => {
+      scrollContainer.scrollTop += direction === 'down' ? speed : -speed;
+      scrollAnimRef.current = requestAnimationFrame(step);
+    };
+    scrollAnimRef.current = requestAnimationFrame(step);
+  }, [scrollContainerRef, stopAutoScroll]);
+
+  // Clean up auto scroll on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollAnimRef.current !== null) {
+        cancelAnimationFrame(scrollAnimRef.current);
+      }
+    };
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -136,15 +171,34 @@ export const RackElevation: React.FC<RackElevationProps> = ({
   const handleDragMove = useCallback((e: DragMoveEvent) => {
     if (!activeDevice || !rackBodyRef.current) return;
     const rackRect = rackBodyRef.current.getBoundingClientRect();
+    const currentScale = (totalU * U_PX > 0 ? rackRect.height / (totalU * U_PX) : rackScale) || 1;
     const pointerY = (e.activatorEvent as PointerEvent).clientY + (e.delta.y ?? 0);
-    const relY = pointerY - rackRect.top;
+    
+    // Auto-scroll when dragging near container boundaries
+    if (scrollContainerRef?.current) {
+      const containerRect = scrollContainerRef.current.getBoundingClientRect();
+      const edgeThreshold = 44;
+      if (pointerY < containerRect.top + edgeThreshold) {
+        const intensity = Math.max(2, Math.min(14, (containerRect.top + edgeThreshold - pointerY) / 3));
+        startAutoScroll('up', intensity);
+      } else if (pointerY > containerRect.bottom - edgeThreshold) {
+        const intensity = Math.max(2, Math.min(14, (pointerY - (containerRect.bottom - edgeThreshold)) / 3));
+        startAutoScroll('down', intensity);
+      } else {
+        stopAutoScroll();
+      }
+    }
+
+    // Scale-normalized relative Y position inside rack
+    const relY = (pointerY - rackRect.top) / currentScale;
     const topU = yToU(relY, totalU);
     const startU = topU - activeDevice.u_height + 1;
     const clamped = Math.max(1, Math.min(totalU - activeDevice.u_height + 1, startU));
     setGhostU(clamped);
-  }, [activeDevice, totalU]);
+  }, [activeDevice, totalU, rackScale, scrollContainerRef, startAutoScroll, stopAutoScroll]);
 
   const handleDragEnd = useCallback(async (e: DragEndEvent) => {
+    stopAutoScroll();
     if (activeDevice && ghostU !== null && !hasConflict(ghostU, activeDevice.u_height, totalU, sideDevices, activeDevice.id)) {
       if (ghostU !== activeDevice.start_u) {
         await onDeviceMove(activeDevice.id, ghostU);
@@ -152,12 +206,13 @@ export const RackElevation: React.FC<RackElevationProps> = ({
     }
     setActiveDevice(null);
     setGhostU(null);
-  }, [activeDevice, ghostU, totalU, sideDevices, onDeviceMove]);
+  }, [activeDevice, ghostU, totalU, sideDevices, onDeviceMove, stopAutoScroll]);
 
   const handleDragCancel = useCallback(() => {
+    stopAutoScroll();
     setActiveDevice(null);
     setGhostU(null);
-  }, []);
+  }, [stopAutoScroll]);
 
   const ghostUSet = useMemo(() => {
     if (!activeDevice || ghostU === null) return new Set<number>();
@@ -235,8 +290,14 @@ export const RackElevation: React.FC<RackElevationProps> = ({
                 return (
                   <div
                     key={u}
-                    className="absolute"
+                    className={`absolute ${!occupiedUs.has(u) && !isGhost ? 'cursor-pointer hover:bg-cyan-500/10 transition-colors' : ''}`}
                     style={{ left: 0, right: 0, top: i * U_PX, height: U_PX, borderBottom: '1px solid rgba(30,41,59,0.5)' }}
+                    onClick={() => {
+                      if (!occupiedUs.has(u) && !isGhost && onEmptySlotClick) {
+                        onEmptySlotClick(u);
+                      }
+                    }}
+                    title={!occupiedUs.has(u) && !isGhost ? (zh ? `点击在 U${u} 快速安装设备` : `Click to install device at U${u}`) : undefined}
                   >
                     <DroppableSlot
                       uNumber={u}
@@ -245,8 +306,8 @@ export const RackElevation: React.FC<RackElevationProps> = ({
                       ghostHeight={activeDevice?.u_height ?? 1}
                       ghostIsStart={ghostU === u}
                     />
-                    {!sideDevices.some(d => u >= d.start_u && u < d.start_u + d.u_height) && !isGhost && (
-                      <span className="absolute inset-0 flex items-center justify-center text-[8px] font-mono text-slate-700 pointer-events-none">
+                    {!occupiedUs.has(u) && !isGhost && (
+                      <span className="absolute inset-0 flex items-center justify-center text-[8px] font-mono text-slate-700 hover:text-cyan-400 pointer-events-none transition-colors">
                         U{u}
                       </span>
                     )}

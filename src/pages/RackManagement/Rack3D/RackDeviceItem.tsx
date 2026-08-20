@@ -12,20 +12,24 @@ import { TopologyLinkItem } from './RackCableLayer';
 interface RackDeviceItemProps {
   device: RackDeviceVM;
   isSelected: boolean;
+  isPulledOut?: boolean;
   isAnySelected?: boolean;
   displayMode?: RackDisplayMode;
   links?: TopologyLinkItem[];
   onSelect: (deviceId: string) => void;
+  onDoubleClick?: (device: RackDeviceVM) => void;
   onHover?: (device: RackDeviceVM | null) => void;
 }
 
 export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
   device,
   isSelected,
+  isPulledOut = false,
   isAnySelected = false,
   displayMode = 'physical',
   links = [],
   onSelect,
+  onDoubleClick,
   onHover
 }) => {
   const [hovered, setHovered] = useState(false);
@@ -51,14 +55,14 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
     return Array.from(new Set(ports));
   }, [device.id, device.name, links]);
 
-  // Single-source 6cm pull-out animation on selection
+  // Smooth pull-out animation on selection / service maintenance mode
   useFrame((_, delta) => {
     if (!groupRef.current) return;
-    const targetZ = isSelected ? 0.6 : 0;
+    const targetZ = isPulledOut ? 3.8 : (isSelected ? 0.6 : 0);
     groupRef.current.position.z = THREE.MathUtils.damp(
       groupRef.current.position.z,
       targetZ,
-      14,
+      12,
       delta
     );
   });
@@ -66,6 +70,14 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
   const handleClick = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
     onSelect(device.id);
+  };
+
+  const handleDoubleClick = (e: ThreeEvent<MouseEvent>) => {
+    e.stopPropagation();
+    onSelect(device.id);
+    if (onDoubleClick) {
+      onDoubleClick(device);
+    }
   };
 
   const handlePointerOver = (e: ThreeEvent<PointerEvent>) => {
@@ -136,6 +148,7 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
     <group
       position={[0, coordinates.centerY, coordinates.centerZ]}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
       onPointerOver={handlePointerOver}
       onPointerOut={handlePointerOut}
     >
@@ -144,6 +157,7 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
         <mesh
           position={[0, 0, 0]}
           onClick={handleClick}
+          onDoubleClick={handleDoubleClick}
           onPointerOver={handlePointerOver}
           onPointerOut={handlePointerOut}
         >
@@ -160,6 +174,7 @@ export const RackDeviceItem: React.FC<RackDeviceItemProps> = ({
           ratedPowerWatts={metrics.ratedPowerWatts}
           displayMode={displayMode}
           selected={isSelected}
+          isPulledOut={isPulledOut}
           isAnySelected={isAnySelected}
         />
         {renderFaceplate()}

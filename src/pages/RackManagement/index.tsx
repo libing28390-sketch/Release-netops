@@ -747,6 +747,24 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     setShowDeviceModal(true);
   };
 
+  const openInstallDeviceAtU = (uNumber: number) => {
+    setSelectedAsset(null);
+    setAssetSearch('');
+    setAssetTotal(0);
+    setAssetPage(1);
+    setDeviceForm({
+      name: '',
+      device_type_id: '',
+      start_u: uNumber,
+      position: viewSide,
+      status: 'active',
+      serial_number: '',
+      asset_id: ''
+    });
+    setFormError('');
+    setShowDeviceModal(true);
+  };
+
   const resolveStartUForInstall = (deviceTypeId: string, position: string): number => {
     const uH = deviceTypes.find(dt => dt.id === deviceTypeId)?.u_height ?? 1;
     if (!layout || !selectedRackId) return 1;
@@ -1424,8 +1442,11 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       viewSide={viewSide}
                       zh={zh}
                       collapseEmpty={collapseEmpty}
+                      rackScale={rackScale}
+                      scrollContainerRef={rackScrollRef}
                       onDeviceMove={handleDeviceMove}
                       onDeviceSelect={handleDeviceSelect}
+                      onEmptySlotClick={openInstallDeviceAtU}
                     />
                   </div>
                 </div>
@@ -1463,7 +1484,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                           <X size={18} style={{ color: 'var(--muted-text)' }} />
                         </button>
                       </div>
-                      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                      <div className="flex-1 overflow-y-auto p-4 space-y-3">
                         {drawerAssetLoading && (
                           <div className="text-xs flex items-center gap-2 mb-3" style={{ color: 'var(--muted-text)' }}>
                             <RefreshCw size={12} className="animate-spin" />
@@ -1476,7 +1497,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                           </div>
                         ) : (
                           <>
-                            <div className="flex gap-2 flex-wrap mb-4">
+                            <div className="flex gap-2 flex-wrap mb-2">
                               <span className="text-xs px-2.5 py-1 rounded-lg font-semibold" style={{ background: rc.bg + '20', color: rc.bg }}>
                                 {zh ? rc.labelZh : rc.label}
                               </span>
@@ -1489,6 +1510,52 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                                 {device.power_watts ?? 0} W
                               </span>
                             </div>
+
+                            {/* Quick U-Position Relocation Control */}
+                            <div className="p-3 rounded-xl border" style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)' }}>
+                              <div className="flex items-center justify-between mb-2">
+                                <label className="text-[11px] font-bold" style={{ color: 'var(--heading-text)' }}>
+                                  {zh ? '快速迁移 U 位' : 'Quick Move U Position'}
+                                </label>
+                                <span className="text-[10px] font-mono" style={{ color: 'var(--muted-text)' }}>
+                                  {device.u_height}U {zh ? '高度' : 'Height'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (device.start_u > 1) {
+                                      handleDeviceMove(device.id, device.start_u - 1);
+                                    }
+                                  }}
+                                  disabled={device.start_u <= 1}
+                                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold border disabled:opacity-35 hover:bg-cyan-500/10 transition-colors"
+                                  style={{ borderColor: 'var(--card-border)', color: 'var(--body-text)' }}
+                                  title={zh ? '下移 1U (向 U1 方向)' : 'Move Down 1U'}
+                                >
+                                  -1U (下移)
+                                </button>
+                                <div className="flex-1 text-center py-1 rounded-lg font-mono font-bold text-xs bg-black/5" style={{ color: 'var(--heading-text)' }}>
+                                  U{device.start_u} {endU !== device.start_u ? `~ U${endU}` : ''}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (layout && device.start_u + device.u_height - 1 < layout.total_u) {
+                                      handleDeviceMove(device.id, device.start_u + 1);
+                                    }
+                                  }}
+                                  disabled={!layout || device.start_u + device.u_height - 1 >= layout.total_u}
+                                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold border disabled:opacity-35 hover:bg-cyan-500/10 transition-colors"
+                                  style={{ borderColor: 'var(--card-border)', color: 'var(--body-text)' }}
+                                  title={zh ? '上移 1U (向顶部方向)' : 'Move Up 1U'}
+                                >
+                                  +1U (上移)
+                                </button>
+                              </div>
+                            </div>
+
                             <div className="grid grid-cols-2 gap-x-2.5 gap-y-2 text-[11px]">
                               <div>
                                 <label className="block text-[10px] font-semibold mb-0.5" style={{ color: 'var(--muted-text)' }}>{zh ? '厂商' : 'Vendor'}</label>

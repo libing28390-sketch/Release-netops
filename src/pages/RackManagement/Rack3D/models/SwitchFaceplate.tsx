@@ -1,4 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
+import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { DeviceHealthStatus } from '../../types';
 import { getSwitchFrontTexture, getSwitchRearTexture } from '../utils/textures';
 
@@ -27,6 +29,9 @@ export const SwitchFaceplate: React.FC<SwitchFaceplateProps> = ({
   healthStatus,
   connectedPortNumbers = []
 }) => {
+  const pwrMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const sysMatRef = useRef<THREE.MeshStandardMaterial>(null);
+
   const frontTexture = useMemo(() => {
     return getSwitchFrontTexture(
       deviceName,
@@ -36,7 +41,6 @@ export const SwitchFaceplate: React.FC<SwitchFaceplateProps> = ({
       connectedPortNumbers
     );
   }, [deviceName, vendor, model, heightU, connectedPortNumbers]);
-
 
   const rearTexture = useMemo(() => {
     return getSwitchRearTexture(vendor || 'Huawei', model || 'CE6885', heightU);
@@ -48,17 +52,41 @@ export const SwitchFaceplate: React.FC<SwitchFaceplateProps> = ({
   const ledConfig = useMemo(() => {
     switch (healthStatus) {
       case 'healthy':
-        return { color: '#22c55e', emissive: '#22c55e', intensity: 2.0 };
+        return { color: '#22c55e', emissive: '#22c55e', baseIntensity: 2.0 };
       case 'warning':
-        return { color: '#f59e0b', emissive: '#f59e0b', intensity: 2.0 };
+        return { color: '#f59e0b', emissive: '#f59e0b', baseIntensity: 2.2 };
       case 'critical':
-        return { color: '#ef4444', emissive: '#ef4444', intensity: 2.5 };
+        return { color: '#ef4444', emissive: '#ef4444', baseIntensity: 3.0 };
       case 'offline':
-        return { color: '#475569', emissive: '#1e293b', intensity: 0.1 };
+        return { color: '#475569', emissive: '#1e293b', baseIntensity: 0 };
       default:
-        return { color: '#94a3b8', emissive: '#475569', intensity: 0.6 };
+        return { color: '#94a3b8', emissive: '#475569', baseIntensity: 0.6 };
     }
   }, [healthStatus]);
+
+  // Live LED Pulse / Strobe / Breathing Animation
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime;
+
+    if (pwrMatRef.current && healthStatus !== 'offline') {
+      pwrMatRef.current.emissiveIntensity = 2.0 + Math.sin(t * 2.0) * 0.4;
+    }
+
+    if (sysMatRef.current) {
+      if (healthStatus === 'healthy') {
+        // Gentle breathing glow
+        sysMatRef.current.emissiveIntensity = 1.6 + Math.sin(t * 3.0) * 0.8;
+      } else if (healthStatus === 'warning') {
+        // Warning alert pulse
+        const alertPulse = Math.sin(t * 7.0) > 0 ? 3.0 : 0.4;
+        sysMatRef.current.emissiveIntensity = alertPulse;
+      } else if (healthStatus === 'critical') {
+        // High visibility strobe
+        const strobe = Math.sin(t * 12.0) > 0 ? 3.8 : 0.2;
+        sysMatRef.current.emissiveIntensity = strobe;
+      }
+    }
+  });
 
   return (
     <group>
@@ -89,6 +117,7 @@ export const SwitchFaceplate: React.FC<SwitchFaceplateProps> = ({
         <mesh position={[-(width / 2) + 0.26, (height / 2) - 0.08, 0.015]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.02, 0.02, 0.01, 16]} />
           <meshStandardMaterial
+            ref={pwrMatRef}
             color={healthStatus === 'offline' ? '#334155' : '#22c55e'}
             emissive={healthStatus === 'offline' ? '#000000' : '#22c55e'}
             emissiveIntensity={healthStatus === 'offline' ? 0 : 2.5}
@@ -100,9 +129,10 @@ export const SwitchFaceplate: React.FC<SwitchFaceplateProps> = ({
         <mesh position={[-(width / 2) + 0.34, (height / 2) - 0.08, 0.015]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.02, 0.02, 0.01, 16]} />
           <meshStandardMaterial
+            ref={sysMatRef}
             color={ledConfig.color}
             emissive={ledConfig.emissive}
-            emissiveIntensity={ledConfig.intensity}
+            emissiveIntensity={ledConfig.baseIntensity}
             roughness={0.2}
           />
         </mesh>

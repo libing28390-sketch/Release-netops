@@ -16,11 +16,13 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
   const [step, setStep] = useState<Step>('username');
   const [username, setUsername] = useState(initialUsername);
   const [code, setCode] = useState('');
+  const [resetTicket, setResetTicket] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [verifyingCode, setVerifyingCode] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [channels, setChannels] = useState<{ platform: string; success: boolean }[]>([]);
   const [recoveryMethod, setRecoveryMethod] = useState<RecoveryMethod>('notification');
@@ -31,11 +33,13 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
       setStep('username');
       setUsername(initialUsername);
       setCode('');
+      setResetTicket('');
       setNewPassword('');
       setConfirmPassword('');
       setShowPwd(false);
       setError(null);
       setSending(false);
+      setVerifyingCode(false);
       setCountdown(0);
       setChannels([]);
       setRecoveryMethod('notification');
@@ -84,17 +88,58 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
     }
     setRecoveryMethod('mfa');
     setCode('');
+    setResetTicket('');
     setError(null);
     setStep('code');
   }, [username, t]);
 
+  const handleVerifyStepCode = useCallback(async () => {
+    const trimmedCode = code.trim();
+    if (!trimmedCode || trimmedCode.length !== 6) {
+      setError(recoveryMethod === 'mfa' ? t('fpMfaCodeInvalid') : t('fpCodeInvalid'));
+      return;
+    }
+    setVerifyingCode(true);
+    setError(null);
+    try {
+      const endpoint = recoveryMethod === 'mfa' ? '/api/forgot-password/verify-mfa' : '/api/forgot-password/verify-code';
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: username.trim(),
+          code: trimmedCode,
+        }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.success && data.reset_ticket) {
+        setResetTicket(data.reset_ticket);
+        setStep('newpwd');
+      } else {
+        setError(data.detail || data.message || (recoveryMethod === 'mfa' ? 'MFA 动态验证码校验失败' : '验证码校验失败'));
+      }
+    } catch {
+      setError(t('fpNetworkError'));
+    } finally {
+      setVerifyingCode(false);
+    }
+  }, [code, recoveryMethod, username, t]);
+
   const handleVerifyAndReset = useCallback(async () => {
-    if (!code.trim() || code.trim().length !== 6) {
-      setError(t('fpCodeInvalid'));
+    if (!newPassword) {
+      setError(t('fpPasswordTooShort'));
       return;
     }
     if (newPassword.length < 10) {
       setError(t('fpPasswordTooShort'));
+      return;
+    }
+    const hasUpper = /[A-Z]/.test(newPassword);
+    const hasLower = /[a-z]/.test(newPassword);
+    const hasDigit = /[0-9]/.test(newPassword);
+    const hasSpecial = /[!@#$%^&*()_+\-=\[\]{}|;:'",.<>?/\\`~]/.test(newPassword);
+    if (!hasUpper || !hasLower || !hasDigit || !hasSpecial) {
+      setError(t('fpPasswordHint'));
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -104,13 +149,19 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
     setSending(true);
     setError(null);
     try {
-      const resp = await fetch(recoveryMethod === 'mfa' ? '/api/forgot-password/mfa-reset' : '/api/forgot-password/reset', {
+      const endpoint = recoveryMethod === 'mfa' ? '/api/forgot-password/mfa-reset' : '/api/forgot-password/reset';
+      const resp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), code: code.trim(), new_password: newPassword }),
+        body: JSON.stringify({
+          username: username.trim(),
+          reset_ticket: resetTicket,
+          code: code.trim(),
+          new_password: newPassword,
+        }),
       });
       const data = await resp.json();
-      if (data.success || resp.ok) {
+      if (resp.ok && (data.success || data.message)) {
         setStep('done');
       } else {
         setError(data.detail || data.message || t('fpResetFailed'));
@@ -120,7 +171,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
     } finally {
       setSending(false);
     }
-  }, [username, code, newPassword, confirmPassword, recoveryMethod, t]);
+  }, [newPassword, confirmPassword, recoveryMethod, username, resetTicket, code, t]);
 
   if (!open) return null;
 
@@ -271,6 +322,19 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                     >
                       <ShieldCheck size={14} />{t('fpUseMfa')}
                     </button>
+
+                    {/* Admin help fallback note */}
+                    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3 text-[11px] text-white/40 space-y-1 mt-2">
+                      <div className="font-semibold text-white/70 flex items-center gap-1">
+                        <span>💡 其他找回与重置方式：</span>
+                      </div>
+                      <p className="leading-relaxed text-[10px]">
+                        • <strong>管理员重置</strong>：联系超级管理员在【系统管理 → 用户管理】中直接重设新密码。
+                      </p>
+                      <p className="leading-relaxed text-[10px]">
+                        • <strong>服务器运维快速重置</strong>：登录服务器在后台执行重置脚本即可解锁与改密。
+                      </p>
+                    </div>
                   </motion.div>
                 )}
 
@@ -312,43 +376,52 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                         maxLength={6}
                         value={code}
                         onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(null); }}
-                        onKeyDown={(e) => { if (e.key === 'Enter' && code.length === 6) setStep('newpwd'); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && code.length === 6 && !verifyingCode) handleVerifyStepCode(); }}
                         placeholder="000000"
                         autoFocus
-                        className="w-full rounded-xl border border-white/[0.08] py-3 px-4 text-center text-2xl font-mono tracking-[0.5em] text-white placeholder-white/10 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:border-[#06b6d4]/50 focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)]"
+                        disabled={verifyingCode}
+                        className="w-full rounded-xl border border-white/[0.08] py-3 px-4 text-center text-2xl font-mono tracking-[0.5em] text-white placeholder-white/10 outline-none transition-all bg-white/[0.04] focus:bg-white/[0.07] focus:border-[#06b6d4]/50 focus:shadow-[0_0_0_3px_rgba(6,182,212,0.12)] disabled:opacity-60"
                       />
                     </div>
-                    {/* resend */}
-                    {recoveryMethod === 'notification' ? <div className="flex items-center justify-between">
-                      <button
-                        onClick={() => { setStep('username'); setError(null); }}
-                        className="text-[11px] text-white/25 hover:text-white/50 flex items-center gap-1 transition-colors"
-                      >
-                        <ArrowLeft size={12} />{t('fpBack')}
-                      </button>
-                      <button
-                        onClick={handleSendCode}
-                        disabled={countdown > 0 || sending}
-                        className="text-[11px] text-[#06b6d4]/60 hover:text-[#06b6d4] disabled:text-white/15 transition-colors"
-                      >
-                        {countdown > 0 ? `${t('fpResend')} (${countdown}s)` : t('fpResend')}
-                      </button>
-                    </div> : <div className="flex items-center justify-start">
-                      <button onClick={() => { setStep('username'); setRecoveryMethod('notification'); setError(null); }} className="text-[11px] text-white/25 hover:text-white/50 flex items-center gap-1 transition-colors"><ArrowLeft size={12} />{t('fpBack')}</button>
-                    </div>}
+                    {/* resend / back */}
+                    {recoveryMethod === 'notification' ? (
+                      <div className="flex items-center justify-between">
+                        <button
+                          onClick={() => { setStep('username'); setError(null); }}
+                          disabled={verifyingCode}
+                          className="text-[11px] text-white/25 hover:text-white/50 flex items-center gap-1 transition-colors disabled:opacity-50"
+                        >
+                          <ArrowLeft size={12} />{t('fpBack')}
+                        </button>
+                        <button
+                          onClick={handleSendCode}
+                          disabled={countdown > 0 || sending || verifyingCode}
+                          className="text-[11px] text-[#06b6d4]/60 hover:text-[#06b6d4] disabled:text-white/15 transition-colors"
+                        >
+                          {countdown > 0 ? `${t('fpResend')} (${countdown}s)` : t('fpResend')}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-start">
+                        <button
+                          onClick={() => { setStep('username'); setRecoveryMethod('notification'); setError(null); }}
+                          disabled={verifyingCode}
+                          className="text-[11px] text-white/25 hover:text-white/50 flex items-center gap-1 transition-colors disabled:opacity-50"
+                        >
+                          <ArrowLeft size={12} />{t('fpBack')}
+                        </button>
+                      </div>
+                    )}
                     <button
-                      onClick={() => {
-                        if (code.trim().length !== 6) {
-                          setError(t('fpCodeInvalid'));
-                          return;
-                        }
-                        setError(null);
-                        setStep('newpwd');
-                      }}
-                      disabled={code.length !== 6}
-                      className="group flex w-full items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-bold tracking-wide text-white bg-gradient-to-r from-[#0e7490] via-[#06b6d4] to-[#22d3ee] shadow-[0_4px_24px_rgba(6,182,212,0.3)] transition-all hover:shadow-[0_0_48px_rgba(6,182,212,0.3)] active:scale-[0.98] disabled:opacity-50"
+                      onClick={handleVerifyStepCode}
+                      disabled={code.length !== 6 || verifyingCode}
+                      className="group flex w-full items-center justify-center gap-2 rounded-xl py-3 text-[13px] font-bold tracking-wide text-white bg-gradient-to-r from-[#0e7490] via-[#06b6d4] to-[#22d3ee] shadow-[0_4px_24px_rgba(6,182,212,0.3)] transition-all hover:shadow-[0_0_48px_rgba(6,182,212,0.3)] active:scale-[0.98] disabled:opacity-50 cursor-pointer"
                     >
-                      {t('fpNext')}<ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                      {verifyingCode ? (
+                        <><RotateCcw className="animate-spin" size={14} />{t('fpVerifying')}</>
+                      ) : (
+                        <>{t('fpNext')}<ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" /></>
+                      )}
                     </button>
                   </motion.div>
                 )}
@@ -412,11 +485,35 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ open, onClose
                         />
                       </div>
                     </div>
-                    <p className="text-[10px] text-white/20 leading-relaxed">{t('fpPasswordHint')}</p>
+
+                    {/* Password criteria checklist */}
+                    <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-white/[0.06] bg-white/[0.02] p-2.5 text-[10px]">
+                      <div className={`flex items-center gap-1.5 transition-colors ${newPassword.length >= 10 ? 'text-emerald-400 font-medium' : 'text-white/30'}`}>
+                        <CheckCircle2 size={11} className={newPassword.length >= 10 ? 'text-emerald-400' : 'text-white/20'} />
+                        <span>{t('fpRuleMinLen')}</span>
+                      </div>
+                      <div className={`flex items-center gap-1.5 transition-colors ${/[A-Z]/.test(newPassword) ? 'text-emerald-400 font-medium' : 'text-white/30'}`}>
+                        <CheckCircle2 size={11} className={/[A-Z]/.test(newPassword) ? 'text-emerald-400' : 'text-white/20'} />
+                        <span>{t('fpRuleUpper')}</span>
+                      </div>
+                      <div className={`flex items-center gap-1.5 transition-colors ${/[a-z]/.test(newPassword) ? 'text-emerald-400 font-medium' : 'text-white/30'}`}>
+                        <CheckCircle2 size={11} className={/[a-z]/.test(newPassword) ? 'text-emerald-400' : 'text-white/20'} />
+                        <span>{t('fpRuleLower')}</span>
+                      </div>
+                      <div className={`flex items-center gap-1.5 transition-colors ${/[0-9]/.test(newPassword) ? 'text-emerald-400 font-medium' : 'text-white/30'}`}>
+                        <CheckCircle2 size={11} className={/[0-9]/.test(newPassword) ? 'text-emerald-400' : 'text-white/20'} />
+                        <span>{t('fpRuleDigit')}</span>
+                      </div>
+                      <div className={`col-span-2 flex items-center gap-1.5 transition-colors ${/[!@#$%^&*()_+\-=\[\]{}|;:'",.<>?/\\`~]/.test(newPassword) ? 'text-emerald-400 font-medium' : 'text-white/30'}`}>
+                        <CheckCircle2 size={11} className={/[!@#$%^&*()_+\-=\[\]{}|;:'",.<>?/\\`~]/.test(newPassword) ? 'text-emerald-400' : 'text-white/20'} />
+                        <span>{t('fpRuleSpecial')}</span>
+                      </div>
+                    </div>
+
                     <div className="flex gap-3">
                       <button
                         onClick={() => { setStep('code'); setError(null); }}
-                        className="flex items-center justify-center gap-1.5 rounded-xl py-3 px-4 text-[13px] font-medium text-white/40 border border-white/[0.08] hover:bg-white/[0.04] transition-colors"
+                        className="flex items-center justify-center gap-1.5 rounded-xl py-3 px-4 text-[13px] font-medium text-white/40 border border-white/[0.08] hover:bg-white/[0.04] transition-colors cursor-pointer"
                       >
                         <ArrowLeft size={14} />{t('fpBack')}
                       </button>

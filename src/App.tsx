@@ -170,6 +170,12 @@ const App: React.FC = () => {
     mfaRequired,
     setMfaRequired,
     handleMfaVerify,
+    captchaRequired,
+    captchaImage,
+    captchaCode,
+    setCaptchaCode,
+    loadingCaptcha,
+    refreshCaptcha,
   } = useAuth({
     language,
     setLanguage,
@@ -1415,6 +1421,12 @@ const App: React.FC = () => {
         }}
         onTogglePassword={() => setShowLoginPwd((value) => !value)}
         onRememberMeChange={setRememberMe}
+        captchaRequired={captchaRequired}
+        captchaImage={captchaImage}
+        captchaCode={captchaCode}
+        onCaptchaChange={setCaptchaCode}
+        loadingCaptcha={loadingCaptcha}
+        onRefreshCaptcha={refreshCaptcha}
         onSubmit={handleLogin}
       />
     );

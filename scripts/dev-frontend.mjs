@@ -67,6 +67,7 @@ const child = spawn(process.execPath, ['node_modules/vite/bin/vite.js'], {
   stdio: 'inherit',
   env: {
     ...process.env,
+    CI: 'true',
     VITE_PORT: String(port),
   },
 });

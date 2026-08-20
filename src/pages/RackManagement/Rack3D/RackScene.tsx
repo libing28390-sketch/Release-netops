@@ -4,17 +4,20 @@ import { OrbitControls, Grid } from '@react-three/drei';
 import { RackVM, RackDisplayMode, RackDeviceVM } from '../types';
 import { RackFrame } from './RackFrame';
 import { RackDeviceItem } from './RackDeviceItem';
-import { CameraController, CameraPreset } from './CameraController';
+import { CameraController, CameraPreset, DeviceFocusTarget } from './CameraController';
 import { RackCableLayer, CableMode, TopologyLinkItem } from './RackCableLayer';
 
 interface RackSceneProps {
   rackVM: RackVM;
   selectedDeviceId?: string | null;
+  pulledOutDeviceId?: string | null;
   displayMode?: RackDisplayMode;
   cableMode?: CableMode;
   topologyLinks?: TopologyLinkItem[];
   zoomAction?: { type: 'in' | 'out'; timestamp: number } | null;
+  focusTarget?: DeviceFocusTarget | null;
   onSelectDevice: (deviceId: string) => void;
+  onDoubleClickDevice?: (device: RackDeviceVM) => void;
   onHoverDevice?: (device: RackDeviceVM | null) => void;
   cameraPreset: CameraPreset;
   isDoorOpen: boolean;
@@ -25,11 +28,14 @@ interface RackSceneProps {
 export const RackScene: React.FC<RackSceneProps> = ({
   rackVM,
   selectedDeviceId,
+  pulledOutDeviceId,
   displayMode = 'physical',
   cableMode = 'select',
   topologyLinks = [],
   zoomAction,
+  focusTarget,
   onSelectDevice,
+  onDoubleClickDevice,
   onHoverDevice,
   cameraPreset,
   isDoorOpen,
@@ -39,6 +45,16 @@ export const RackScene: React.FC<RackSceneProps> = ({
   const rackHeight = rackVM.totalU * 0.4445;
   const centerY = rackHeight / 2;
   const controlsRef = useRef<any>(null);
+
+  const occupiedUs = useMemo(() => {
+    const s = new Set<number>();
+    rackVM.validDevices.forEach(d => {
+      for (let u = d.startU; u < d.startU + d.heightU; u++) {
+        s.add(u);
+      }
+    });
+    return s;
+  }, [rackVM.validDevices]);
 
   const selectedDevice = useMemo(() => {
     if (!selectedDeviceId) return undefined;
@@ -64,17 +80,19 @@ export const RackScene: React.FC<RackSceneProps> = ({
         }}
       >
         {/* Studio Lighting Setup */}
-        <ambientLight intensity={1.6} color="#e2e8f0" />
-        <directionalLight position={[12, centerY + 18, 22]} intensity={1.8} color="#ffffff" castShadow />
-        <directionalLight position={[-14, centerY + 12, 18]} intensity={1.4} color="#bae6fd" />
-        <directionalLight position={[0, centerY + 10, -22]} intensity={1.2} color="#94a3b8" />
-        <pointLight position={[0, rackHeight + 8, 0]} intensity={1.0} color="#ffffff" distance={40} />
-        <pointLight position={[0, centerY, 12]} intensity={0.6} color="#38bdf8" distance={25} />
+        <ambientLight intensity={2.0} color="#f8fafc" />
+        <directionalLight position={[12, centerY + 18, 22]} intensity={2.2} color="#ffffff" castShadow />
+        <directionalLight position={[-16, centerY + 12, 18]} intensity={1.6} color="#e0f2fe" />
+        <directionalLight position={[0, centerY + 15, -24]} intensity={1.8} color="#93c5fd" />
+        <pointLight position={[0, rackHeight + 6, 0]} intensity={1.2} color="#ffffff" distance={40} />
+        <pointLight position={[0, centerY, 14]} intensity={0.9} color="#e2e8f0" distance={30} />
+        <pointLight position={[0, -1.5, 12]} intensity={0.7} color="#38bdf8" distance={25} />
 
         {/* Camera Transition Controller */}
         <CameraController
           preset={cameraPreset}
           rackHeight={rackHeight}
+          focusTarget={focusTarget}
           zoomAction={zoomAction}
           controlsRef={controlsRef}
         />
@@ -114,6 +132,7 @@ export const RackScene: React.FC<RackSceneProps> = ({
           showDoor={showDoor}
           isDoorOpen={isDoorOpen}
           showULabels={showULabels}
+          occupiedUs={occupiedUs}
         />
 
         {/* Installed Devices */}
@@ -123,10 +142,12 @@ export const RackScene: React.FC<RackSceneProps> = ({
               key={device.id}
               device={device}
               isSelected={device.id === selectedDeviceId}
+              isPulledOut={device.id === pulledOutDeviceId}
               isAnySelected={Boolean(selectedDeviceId)}
               displayMode={displayMode}
               links={topologyLinks}
               onSelect={onSelectDevice}
+              onDoubleClick={onDoubleClickDevice}
               onHover={onHoverDevice}
             />
           ))}

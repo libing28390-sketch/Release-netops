@@ -290,6 +290,7 @@ def is_ssh_timeout_error(error_text: str) -> bool:
         "tcp connection to device failed",
         "no existing session",
         "timed out",
+        "timeout",
     ]
     return any(indicator in normalized for indicator in indicators)
 
@@ -320,11 +321,12 @@ def is_ssh_transport_error(error_text: str) -> bool:
     return any(indicator in normalized for indicator in indicators)
 
 
-def build_ssh_transport_guidance(error_text: str) -> str:
+def build_ssh_transport_guidance(error_text: str, port: int | str = 22) -> str:
     if not is_ssh_transport_error(error_text):
         return error_text
 
-    return "连接失败或被拒绝。建议检查：1. 目标 IP 与 22 端口；2. 设备 VTY 是否启用 SSH 及防火墙策略。"
+    port_str = f"{port} 端口" if port else "SSH 端口"
+    return f"连接失败或被拒绝。建议检查：1. 目标 IP 与 {port_str}；2. 设备 VTY 是否启用 SSH 及防火墙策略。"
 
 
 def is_ssh_host_key_error(error_text: str) -> bool:
@@ -367,7 +369,7 @@ def get_ssh_error_code(error_text: str) -> str | None:
     return None
 
 
-def build_ssh_error_guidance(error_text: str) -> str:
+def build_ssh_error_guidance(error_text: str, port: int | str = 22) -> str:
     """根据 SSH 错误类型生成统一用户提示。"""
     error_code = get_ssh_error_code(error_text)
     if error_code == LEGACY_SSH_ERROR_CODE:
@@ -377,17 +379,18 @@ def build_ssh_error_guidance(error_text: str) -> str:
     if error_code == SSH_TIMEOUT_ERROR_CODE:
         return build_ssh_timeout_guidance(error_text)
     if error_code == SSH_TRANSPORT_ERROR_CODE:
-        return build_ssh_transport_guidance(error_text)
+        return build_ssh_transport_guidance(error_text, port=port)
     if error_code == SSH_HOST_KEY_ERROR_CODE:
         return build_ssh_host_key_guidance(error_text)
     return error_text
 
 
-def diagnose_ssh_failure(error_text: str, ip: str = "") -> tuple[str, str]:
+def diagnose_ssh_failure(error_text: str, ip: str = "", port: int | str = 22) -> tuple[str, str]:
     """根据具体报错日志智能分析根因，返回 (分类短原因, 精准排查建议)。"""
     raw = str(error_text or "").strip()
     low = raw.lower()
     ip_str = str(ip or "").strip()
+    port_str = f"{port} 端口" if port else "SSH 端口"
 
     # 1. 检查 IP 地址格式是否非法 / DNS 解析失败
     if ip_str:
@@ -426,7 +429,7 @@ def diagnose_ssh_failure(error_text: str, ip: str = "") -> tuple[str, str]:
 
     # 5. 连接被拒绝（Connection Refused）
     if any(m in low for m in ["connection refused", "actively refused", "10061", "errno 111", "wsaeconnrefused"]):
-        return "连接被拒绝", "目标端口拒绝连接。请检查设备 22 端口是否开放，以及 VTY 是否启用 SSH。"
+        return "连接被拒绝", f"目标端口拒绝连接。请检查设备 {port_str} 是否开放，以及 VTY 是否启用 SSH。"
 
     # 6. 网络不可达 / 路由不可达 / 主机下线
     if any(m in low for m in ["no route to host", "network is unreachable", "host unreachable", "10065", "errno 113", "wsaehostunreach"]):
@@ -444,7 +447,7 @@ def diagnose_ssh_failure(error_text: str, ip: str = "") -> tuple[str, str]:
     if is_ssh_timeout_error(raw):
         if "timed-out reading channel" in low:
             return "读取响应超时", "发送备份命令后未在超时时间内收到回包，请检查设备负载或命令执行耗时。"
-        return "连接超时", "TCP 连接建立超时。请检查网络丢包延迟，或确认防火墙是否放行 22 端口。"
+        return "连接超时", f"TCP 连接建立超时。请检查网络丢包延迟，或确认防火墙是否放行 {port_str}。"
 
     # 10. CLI 命令报错
     if any(m in low for m in ["% invalid input", "% permission denied", "syntax error", "unrecognized command"]):

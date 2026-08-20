@@ -1571,7 +1571,7 @@ async def run_scheduled_backup(
             logger.error("[Scheduled Backup] Policy %s no longer exists", policy_id)
             return
         device_rows = conn.execute(
-            "SELECT id, hostname, ip_address, platform, vendor, role, site, site_id, status, "
+            "SELECT id, asset_id, hostname, ip_address, platform, vendor, role, site, site_id, status, "
             "config_backup_enabled, username, password, "
             "normal_username, normal_password, admin_username, admin_password, enable_password, "
             "credential_id, admin_credential_id, credential_source, vault_path, management_port "
@@ -1755,13 +1755,14 @@ async def run_scheduled_backup(
         cred_kind = 'resolved'
 
         output = ''
+        startup_output = ''
         backup_ok = False
         results = None
 
         async with sem:
             for attempt in range(run_retry_count + 1):
                 try:
-                    commands = [_running_cmd]
+                    commands = [_running_cmd, _startup_cmd] if collect_startup_config else [_running_cmd]
                     if d.get('platform_profile_id'):
                         from services.platform_registry_service import execute_platform_action
                         registry_result = await asyncio.to_thread(
@@ -1783,6 +1784,26 @@ async def run_scheduled_backup(
                             'output': output,
                             'error': registry_result.get('error') or registry_result.get('error_code'),
                         }]
+                        if collect_startup_config and results[0].get('success'):
+                            st_reg_result = await asyncio.to_thread(
+                                execute_platform_action,
+                                str(d['id']),
+                                'get_startup_config',
+                                user={
+                                    'id': f"config-backup:{d['id']}",
+                                    'username': 'config-backup',
+                                    'role': 'Administrator',
+                                    'tenant_id': d.get('tenant_id') or '',
+                                },
+                                connection_options=ssh_timeout_options,
+                                include_raw_output=True,
+                            )
+                            st_raw = str(st_reg_result.get('raw_output') or '')
+                            results.append({
+                                'success': bool(st_reg_result.get('success')),
+                                'output': st_raw,
+                                'error': st_reg_result.get('error') or st_reg_result.get('error_code'),
+                            })
                     else:
                         driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
                         service = AutomationService(driver_type=driver_type)
@@ -1793,6 +1814,8 @@ async def run_scheduled_backup(
 
                     if results and results[0].get('success', False):
                         output = results[0].get('output') or results[0].get('stdout') or ''
+                        if collect_startup_config and len(results) > 1 and results[1].get('success', False):
+                            startup_output = results[1].get('output') or results[1].get('stdout') or ''
                         if not _looks_like_error(output) and not output.startswith('% '):
                             _record_instant_execution(
                                 d['id'],
@@ -1818,6 +1841,7 @@ async def run_scheduled_backup(
                         err,
                     )
                     output = ''
+                    startup_output = ''
                 except Exception as e:
                     logger.warning(
                         "[Scheduled Backup] Attempt %d/%d raised for %s: %s",
@@ -1827,6 +1851,7 @@ async def run_scheduled_backup(
                         e,
                     )
                     output = ''
+                    startup_output = ''
 
         if not _looks_like_error(output) and not output.startswith('% '):
             backup_ok = True
@@ -1845,7 +1870,9 @@ async def run_scheduled_backup(
                 err_str = 'No connection could be established'
 
             from drivers.ssh_compat import diagnose_ssh_failure
-            short_reason, detail_reason = diagnose_ssh_failure(str(err_str), device.get('ip_address', ''))
+            from services.connection_profile import resolve_ssh_port
+            dev_port = resolve_ssh_port(d)
+            short_reason, detail_reason = diagnose_ssh_failure(str(err_str), device.get('ip_address', ''), port=dev_port)
 
             return {
                 'hostname': device['hostname'],
@@ -1931,80 +1958,51 @@ async def run_scheduled_backup(
             has_unsaved = 0
             unsaved_summary = ''
             startup_snap_id = None
-            if collect_startup_config:
-                startup_output = ''
+            if collect_startup_config and startup_output and not _looks_like_error(startup_output) and not startup_output.startswith('% '):
                 try:
-                    async with sem:
-                        if d.get('platform_profile_id'):
-                            from services.platform_registry_service import execute_platform_action
-                            st_res = await asyncio.to_thread(
-                                execute_platform_action,
-                                str(d['id']),
-                                'get_startup_config',
-                                user={
-                                    'id': f"config-backup:{d['id']}",
-                                    'username': 'config-backup',
-                                    'role': 'Administrator',
-                                    'tenant_id': d.get('tenant_id') or '',
-                                },
-                                connection_options=ssh_timeout_options,
-                                include_raw_output=True,
-                            )
-                            startup_output = str(st_res.get('raw_output') or '')
+                    st_metadata = _config_snapshot_metadata(startup_output)
+                    if st_metadata['integrity_status'] == 'verified':
+                        if metadata['normalized_hash'] != st_metadata['normalized_hash']:
+                            has_unsaved = 1
+                            unsaved_summary = f"未保存运行配置差异 (运行 {metadata['line_count']} 行 vs 启动 {st_metadata['line_count']} 行)"
                         else:
-                            driver_type = 'mock' if d.get('ip_address') in ['127.0.0.1', '0.0.0.0'] else 'netmiko'
-                            st_service = AutomationService(driver_type=driver_type)
-                            st_results = await asyncio.get_event_loop().run_in_executor(
-                                st_service.orchestrator.executor,
-                                lambda: st_service.execute_commands(d, [_startup_cmd], is_config=False)
+                            has_unsaved = 0
+                            unsaved_summary = "运行配置与启动配置一致"
+
+                        st_rel_path = _write_config_file(vendor, device['hostname'], ts, run_trigger, startup_output, config_type='startup')
+                        startup_snap_id = f"snap-{uuid.uuid4().hex[:12]}"
+                        st_size = len(startup_output.encode('utf-8'))
+
+                        conn_st = get_db_connection()
+                        try:
+                            conn_st.execute(
+                                '''INSERT INTO config_snapshots
+                                   (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
+                                    raw_hash, normalized_hash, line_count, section_count, integrity_status,
+                                    lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type,
+                                    has_unsaved_changes, unsaved_diff_summary)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                                (startup_snap_id, device['id'], device['hostname'], vendor,
+                                 ts.isoformat(), run_trigger, run_author, '', st_rel_path, st_size,
+                                 st_metadata['raw_hash'], st_metadata['normalized_hash'], st_metadata['line_count'],
+                                 st_metadata['section_count'], st_metadata['integrity_status'],
+                                 st_metadata['lifecycle_status'], st_metadata['normalizer_version'],
+                                 ts.isoformat(), persisted_run_id, policy_id or '', 'startup',
+                                 has_unsaved, unsaved_summary)
                             )
-                            if st_results and st_results[0].get('success'):
-                                startup_output = st_results[0].get('output') or st_results[0].get('stdout') or ''
+                            conn_st.commit()
+                        finally:
+                            conn_st.close()
 
-                    if startup_output and not _looks_like_error(startup_output) and not startup_output.startswith('% '):
-                        st_metadata = _config_snapshot_metadata(startup_output)
-                        if st_metadata['integrity_status'] == 'verified':
-                            if metadata['normalized_hash'] != st_metadata['normalized_hash']:
-                                has_unsaved = 1
-                                unsaved_summary = f"未保存运行配置差异 (运行 {metadata['line_count']} 行 vs 启动 {st_metadata['line_count']} 行)"
-                            else:
-                                has_unsaved = 0
-                                unsaved_summary = "运行配置与启动配置一致"
-
-                            st_rel_path = _write_config_file(vendor, device['hostname'], ts, run_trigger, startup_output, config_type='startup')
-                            startup_snap_id = f"snap-{uuid.uuid4().hex[:12]}"
-                            st_size = len(startup_output.encode('utf-8'))
-
-                            conn_st = get_db_connection()
-                            try:
-                                conn_st.execute(
-                                    '''INSERT INTO config_snapshots
-                                       (id, device_id, hostname, vendor, timestamp, trigger, author, tag, file_path, size,
-                                        raw_hash, normalized_hash, line_count, section_count, integrity_status,
-                                        lifecycle_status, normalizer_version, collected_at, task_id, policy_id, config_type,
-                                        has_unsaved_changes, unsaved_diff_summary)
-                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                                    (startup_snap_id, device['id'], device['hostname'], vendor,
-                                     ts.isoformat(), run_trigger, run_author, '', st_rel_path, st_size,
-                                     st_metadata['raw_hash'], st_metadata['normalized_hash'], st_metadata['line_count'],
-                                     st_metadata['section_count'], st_metadata['integrity_status'],
-                                     st_metadata['lifecycle_status'], st_metadata['normalizer_version'],
-                                     ts.isoformat(), persisted_run_id, policy_id or '', 'startup',
-                                     has_unsaved, unsaved_summary)
-                                )
-                                conn_st.commit()
-                            finally:
-                                conn_st.close()
-
-                            created_backup_items.append({
-                                'local_path': os.path.join(BACKUP_ROOT, st_rel_path.replace('/', os.sep).replace('\\', os.sep)),
-                                'remote_name': os.path.basename(st_rel_path),
-                                'archive_name': st_rel_path,
-                                'hostname': device['hostname'],
-                                'data': startup_output.encode('utf-8'),
-                            })
+                        created_backup_items.append({
+                            'local_path': os.path.join(BACKUP_ROOT, st_rel_path.replace('/', os.sep).replace('\\', os.sep)),
+                            'remote_name': os.path.basename(st_rel_path),
+                            'archive_name': st_rel_path,
+                            'hostname': device['hostname'],
+                            'data': startup_output.encode('utf-8'),
+                        })
                 except Exception as st_err:
-                    logger.warning(f"[Scheduled Backup] Startup config fetch error for {device['hostname']}: {st_err}")
+                    logger.warning(f"[Scheduled Backup] Startup config process error for {device['hostname']}: {st_err}")
 
             conn2 = get_db_connection()
             try:
