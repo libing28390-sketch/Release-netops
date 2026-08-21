@@ -118,6 +118,8 @@ tools/node/
 !blog/user-manuals/
 !blog/user-manuals/**/*.md
 !blog/用户使用手册索引_20260801.md
+!public/downloads/
+!public/downloads/**/*.md
 !**/.agents/AGENTS.md
 !**/.agents/skills/**/SKILL.md
 !**/.agents/skills/**/references/**/*.md

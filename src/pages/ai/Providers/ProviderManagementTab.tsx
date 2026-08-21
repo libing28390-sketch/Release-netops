@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock3,
+  Download,
   Eye,
   EyeOff,
   Globe2,
@@ -336,6 +337,16 @@ export const ProviderManagementTab: React.FC = () => {
           </div>
 
           <div className="flex shrink-0 items-center gap-2 self-start xl:self-center">
+            <a
+              href="/downloads/nexora-ai-provider-debug-manual.md"
+              download="Nexora-AI-使用手册.md"
+              aria-label={zh ? '下载 AI 使用手册' : 'Download AI user manual'}
+              title={zh ? '下载 AI 接入与调试使用手册' : 'Download AI integration and troubleshooting manual'}
+              className="inline-flex items-center gap-2 rounded-xl border border-white/90 bg-white/80 px-3.5 py-2.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-indigo-200 hover:bg-white hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:border-indigo-700 dark:hover:bg-slate-900 dark:hover:text-indigo-300"
+            >
+              <Download className="h-4 w-4" />
+              {zh ? '下载 AI 使用手册' : 'Download AI manual'}
+            </a>
             <button
               type="button"
               onClick={() => void fetchProviders()}
