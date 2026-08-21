@@ -235,7 +235,7 @@ interface ArpSweepStatus {
   message: string;
 }
 
-const LocatorContextCard: React.FC<{ title: string; icon: React.ElementType; children: React.ReactNode }> = ({ title, icon: Icon, children }) => (
+const LocatorContextCard: React.FC<{ title: string; icon: React.ComponentType<any>; children: React.ReactNode }> = ({ title, icon: Icon, children }) => (
   <div className="rounded-xl border border-black/5 dark:border-white/10 bg-white/70 dark:bg-white/[0.04] p-4">
     <div className="flex items-center gap-2 mb-3">
       <Icon size={14} className="text-[#0891b2]" />

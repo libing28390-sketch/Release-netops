@@ -1909,7 +1909,7 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
   );
 };
 
-const EmptyState: React.FC<{ icon: React.ElementType; title: string }> = ({ icon: Icon, title }) => (
+const EmptyState: React.FC<{ icon: React.ComponentType<any>; title: string }> = ({ icon: Icon, title }) => (
   <div className="flex h-full min-h-64 flex-col items-center justify-center text-center">
     <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-slate-600"><Icon size={24} /></span>
     <p className="mt-3 text-xs font-bold text-slate-500">{title}</p>

@@ -562,6 +562,12 @@ export interface AssistantStreamDoneMeta {
   sequence?: number;
   status?: 'completed' | 'cancelled' | 'error' | string;
   duration_ms?: number;
+  latency_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  model_id?: string;
+  provider_id?: string;
+  route_reason?: string;
 }
 
 export interface AssistantStreamCitation {
@@ -611,6 +617,14 @@ export interface AssistantStreamMeta {
   facts_retrieved?: boolean;
   retrieval?: AssistantRetrievalTrace;
   copilot?: CopilotContract;
+  model_id?: string;
+  requested_model_id?: string;
+  provider_id?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  latency_ms?: number;
+  route_reason?: string;
+  selection_source?: string;
 }
 
 export interface CopilotContract {
@@ -666,6 +680,9 @@ export interface AIConversationMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   citations?: any[];
+  requested_model_id?: string;
+  actual_model_id?: string;
+  provider_id?: string;
   created_at: string;
 }
 

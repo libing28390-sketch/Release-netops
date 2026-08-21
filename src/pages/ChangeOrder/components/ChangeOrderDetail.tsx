@@ -30,7 +30,7 @@ interface Props {
   handleSaveAsTemplate: (order: ChangeOrder) => void;
   handleExportOrder: (order: ChangeOrder) => void;
   openEdit: (order: ChangeOrder) => void;
-  getTransitionActions: (order: ChangeOrder) => { label: string; status: string; variant: string; icon: React.ElementType }[];
+  getTransitionActions: (order: ChangeOrder) => { label: string; status: string; variant: string; icon: React.ComponentType<any> }[];
   handleTransition: (orderId: string, status: string, payload?: any) => void;
   setExecuteModal: (m: any) => void;
   setActionPrompt: (p: any) => void;

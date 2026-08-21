@@ -62,7 +62,7 @@ import NavSection from './NavSection';
 import { useSystem } from '../../hooks/useSystem';
 
 /** Map icon string keys (from navConfig) → lucide component */
-const iconMap: Record<string, React.ElementType> = {
+const iconMap: Record<string, React.ComponentType<any>> = {
   Activity, BarChart2, Bell, BookOpen, Bot, ClipboardList, Clock, Cpu, FileCode2, FileText, GitBranch, Globe, Key, Layers3, Lock, MessageSquare, Monitor, Server, Settings, Shield, ShieldAlert, ShieldCheck, Terminal, User, Wrench, Zap,
 };
 

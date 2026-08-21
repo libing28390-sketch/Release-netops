@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, Cpu, Clock, Database, Layers, ShieldAlert, Code } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Cpu, Clock, Database, Layers, ShieldAlert, Code, Copy, Check } from 'lucide-react';
 import type { AssistantRetrievalTrace } from '../../../api/ai';
 
 interface CopilotInspectorDrawerProps {
@@ -13,7 +13,15 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
   onClose,
   activeMessage,
 }) => {
+  const [copied, setCopied] = useState(false);
   if (!isOpen) return null;
+
+  const handleCopyPayload = () => {
+    if (!activeMessage) return;
+    void navigator.clipboard.writeText(JSON.stringify(activeMessage, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const retrieval = activeMessage?.retrieval as AssistantRetrievalTrace | undefined;
   const retrievalRequest = retrieval?.request || {};
@@ -28,9 +36,9 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
   );
 
   return (
-    <aside className="w-80 shrink-0 min-h-0 bg-white dark:bg-gray-900 border-l border-gray-200/80 dark:border-gray-800 flex flex-col h-full z-20 shadow-xl text-xs select-none">
+    <aside className="w-96 sm:w-[420px] shrink-0 min-h-0 bg-white dark:bg-gray-900 border-l border-gray-200/80 dark:border-gray-800 flex flex-col h-full z-20 shadow-xl text-xs select-none">
       {/* Header */}
-      <div className="p-3.5 border-b border-gray-200/80 dark:border-gray-800 flex items-center justify-between">
+      <div className="p-3.5 border-b border-gray-200/80 dark:border-gray-800 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2 font-bold text-gray-900 dark:text-white">
           <Cpu className="w-4 h-4 text-indigo-500" />
           <span>开发者调试 Trace (Inspector)</span>
@@ -44,7 +52,7 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
       </div>
 
       {/* Content Body */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 pb-12 space-y-4">
         {activeMessage?.copilot && (
           <div className="space-y-2 p-3 bg-indigo-50/70 dark:bg-indigo-950/20 rounded-xl border border-indigo-100 dark:border-indigo-900/60">
             <div className="font-semibold text-indigo-700 dark:text-indigo-300">工程师证据面板</div>
@@ -72,7 +80,7 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
             </div>
             <div className="flex justify-between">
               <span className="text-gray-400">Route Model:</span>
-              <span className="text-gray-700 dark:text-gray-300">{activeMessage?.route_model || (llmSkipped ? '未调用' : '未上报')}</span>
+              <span className="text-gray-700 dark:text-gray-300 font-semibold">{activeMessage?.route_model || (llmSkipped ? '未调用' : '未上报')}</span>
             </div>
           </div>
         </div>
@@ -140,11 +148,22 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
         </div>
 
         {/* Raw JSON Trace */}
-        <div className="space-y-1">
-          <div className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
-            <Code className="w-3.5 h-3.5 text-amber-500" /> 原始 Message Payload
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+              <Code className="w-3.5 h-3.5 text-amber-500" /> 原始 Message Payload
+            </div>
+            <button
+              type="button"
+              onClick={handleCopyPayload}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-[10px] text-gray-600 dark:text-gray-300 transition"
+              title="复制 JSON 载荷"
+            >
+              {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+              {copied ? '已复制' : '复制 JSON'}
+            </button>
           </div>
-          <pre className="p-2.5 bg-[#0d1117] text-[#e6edf3] font-mono text-[10px] rounded-xl overflow-x-auto max-h-48 leading-normal border border-gray-800">
+          <pre className="p-3 bg-[#0d1117] text-[#e6edf3] font-mono text-[10px] rounded-xl overflow-auto max-h-80 leading-relaxed border border-gray-800 select-all shadow-inner">
             {JSON.stringify(activeMessage || {}, null, 2)}
           </pre>
         </div>

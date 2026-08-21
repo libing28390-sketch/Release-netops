@@ -74,7 +74,7 @@ const ROLE_LEVEL: Record<string, number> = { Administrator: 3, Operator: 2, View
 const LS_KEY = 'nexora_module_nav';
 
 /** Map icon string keys (from navConfig) → lucide component */
-const iconMap: Record<string, React.ElementType> = {
+const iconMap: Record<string, React.ComponentType<any>> = {
   Activity, Archive, BarChart2, BarChart3, Bell, BookOpen, Bot, Building2, CalendarClock,
   ClipboardCheck, ClipboardList, Clock, Code2, Columns3, Cpu, Database,
   FileCode2, FileEdit, FileSearch, FileText, GitBranch, GitCompare, Globe,

@@ -45,7 +45,7 @@ interface AppEntry {
   labelEn: string;
   desc: string;
   descEn: string;
-  icon: React.ElementType;
+  icon: React.ComponentType<any>;
   path: string;
   accent: string;
 }

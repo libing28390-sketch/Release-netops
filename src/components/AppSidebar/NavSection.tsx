@@ -6,7 +6,7 @@ interface NavSectionProps {
   /** Section header label */
   label: string;
   /** Optional icon component for the header */
-  icon?: React.ElementType;
+  icon?: React.ComponentType<any>;
   /** Whether section starts expanded (uncontrolled mode) */
   defaultOpen?: boolean;
   /** Controlled open state (overrides defaultOpen when defined) */

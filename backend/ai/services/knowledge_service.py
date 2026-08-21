@@ -34,6 +34,14 @@ from ai.services.knowledge_metadata import (
 )
 
 
+try:
+    import sqlite3
+    from psycopg2.extras import Json as _PgJson
+    sqlite3.register_adapter(_PgJson, lambda j: json.dumps(getattr(j, "adapted", j), ensure_ascii=False))
+except Exception:
+    pass
+
+
 def _json_db_value(value: Dict[str, Any]) -> Any:
     """Adapt a metadata mapping to JSONB on PostgreSQL and TEXT on SQLite."""
     if _USE_PG:
@@ -902,10 +910,16 @@ class KnowledgeService:
             chunk_select = ", ".join(
                 f"c.{field} AS {field}" for field in selected_chunk_fields
             )
+            order_terms = []
+            if "ordinal" in chunk_columns:
+                order_terms.append("COALESCE(c.ordinal, 0) ASC")
+            if "page" in chunk_columns:
+                order_terms.append("COALESCE(c.page, 0) ASC")
+            order_terms.extend(["c.created_at ASC", "c.id ASC"])
             cursor.execute(
                 f"SELECT {chunk_select} FROM ai_document_chunk c "
                 "WHERE c.document_id = ? "
-                "ORDER BY COALESCE(c.ordinal, 0) ASC, COALESCE(c.page, 0) ASC, c.created_at ASC, c.id ASC",
+                f"ORDER BY {', '.join(order_terms)}",
                 (doc_id,),
             )
             raw_chunk_rows = cursor.fetchall()
@@ -983,18 +997,22 @@ class KnowledgeService:
             source_version_history: List[Dict[str, Any]] = []
             raw_sources: List[Dict[str, Any]] = []
             canonical_document_id = str(row_values.get("document_id") or doc_id)
-            if _USE_PG:
+            canonical_tables_ready = False
+            try:
                 cursor.execute(
                     "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() "
                     "AND table_name IN ('kb_document', 'kb_document_version', 'kb_document_source')"
                 )
                 canonical_tables_ready = len(cursor.fetchall()) == 3
-            else:
-                cursor.execute(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
-                    "AND name IN ('kb_document', 'kb_document_version', 'kb_document_source')"
-                )
-                canonical_tables_ready = int(cursor.fetchone()[0] or 0) == 3
+            except Exception:
+                try:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
+                        "AND name IN ('kb_document', 'kb_document_version', 'kb_document_source')"
+                    )
+                    canonical_tables_ready = int((cursor.fetchone() or [0])[0] or 0) == 3
+                except Exception:
+                    canonical_tables_ready = False
             if canonical_tables_ready:
                 cursor.execute(
                     "SELECT id, source_uri, canonical_key, source_registry_id, current_version_id "

@@ -46,7 +46,7 @@ class _Connection:
         return None
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_provider_probe_declares_public_classification(monkeypatch):
     probe = AsyncMock(return_value={"content": "ok"})
     monkeypatch.setattr(providers_api, "get_db_connection", lambda: _Connection())
@@ -82,7 +82,7 @@ def test_public_provider_boundary_accepts_only_explicit_public_probe_label():
     assert payload.metadata["classification"] == "PUBLIC"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_gateway_preserves_specific_security_reason_code(monkeypatch):
     class _BlockingGateway:
         policy = SecurityPolicy(external_ai_enabled=True)

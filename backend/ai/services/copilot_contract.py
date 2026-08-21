@@ -40,12 +40,18 @@ def build_copilot_contract(
     if hasattr(resolution, "to_dict"):
         resolution = resolution.to_dict()
     request = (retrieval or {}).get("request")
-    required_fields = {
-        "vendor": context.get("vendor"),
-        "model": context.get("model") or context.get("product_model"),
-        "version": context.get("version") or context.get("software_version"),
-        "impact_scope": context.get("impact_scope") or context.get("scope"),
-    }
+    is_general_qa = str(intent) in {"general_qa", "chitchat"} and not any(
+        context.get(k) for k in ("device_id", "interface", "alert_ids", "vendor", "model")
+    )
+    if is_general_qa:
+        required_fields = {}
+    else:
+        required_fields = {
+            "vendor": context.get("vendor"),
+            "model": context.get("model") or context.get("product_model"),
+            "version": context.get("version") or context.get("software_version"),
+            "impact_scope": context.get("impact_scope") or context.get("scope"),
+        }
     missing = [key for key, value in required_fields.items() if not value]
     candidates = _safe_list(resolution.get("platform_candidates") or resolution.get("candidates"))
     facts = []
@@ -61,16 +67,20 @@ def build_copilot_contract(
         facts.append("已关联拓扑邻居")
     if context.get("metrics"):
         facts.append("已关联性能指标")
-    confidence = 0.35 if missing else (0.75 if facts else 0.55)
-    if candidates:
-        confidence = min(confidence, 0.45)
-    next_checks = [
-        "确认设备厂商、型号和 OS/软件版本",
-        "确认影响范围、发生时间及最近变更",
-        "执行一项授权的只读连通性或接口状态检查",
-    ]
-    if category == "knowledge_retrieval":
-        next_checks = ["确认产品/平台边界", "核对官方来源版本", "在目标设备上验证命令适用性"]
+    if is_general_qa:
+        confidence = 0.95
+        next_checks = []
+    else:
+        confidence = 0.35 if missing else (0.75 if facts else 0.55)
+        if candidates:
+            confidence = min(confidence, 0.45)
+        next_checks = [
+            "确认设备厂商、型号和 OS/软件版本",
+            "确认影响范围、发生时间及最近变更",
+            "执行一项授权的只读连通性或接口状态检查",
+        ]
+        if category == "knowledge_retrieval":
+            next_checks = ["确认产品/平台边界", "核对官方来源版本", "在目标设备上验证命令适用性"]
     source_labels = []
     for item in citations or []:
         source_type = str(item.get("source_type") or "enterprise").lower()

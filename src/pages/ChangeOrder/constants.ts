@@ -18,7 +18,7 @@ export const STATUS_META: Record<string, { label: { zh: string; en: string }; do
   executing:           { label: { zh: '执行中(旧)', en: 'Executing (Legacy)' }, dot: 'bg-cyan-400',    bg: 'bg-cyan-50',     ring: 'ring-cyan-200' },
 };
 
-export const PRIORITY_META: Record<string, { label: { zh: string; en: string }; icon: React.ElementType; color: string; bg: string }> = {
+export const PRIORITY_META: Record<string, { label: { zh: string; en: string }; icon: React.ComponentType<any>; color: string; bg: string }> = {
   critical: { label: { zh: '紧急', en: 'Critical' }, icon: ArrowUp,       color: 'text-rose-600',   bg: 'bg-rose-50' },
   high:     { label: { zh: '高', en: 'High' },       icon: ArrowUpRight,  color: 'text-orange-600', bg: 'bg-orange-50' },
   medium:   { label: { zh: '中', en: 'Medium' },     icon: Minus,         color: 'text-amber-600',  bg: 'bg-amber-50' },

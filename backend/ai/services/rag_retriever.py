@@ -31,6 +31,7 @@ from ai.services.retrieval_contract import (
     version_compatibility,
 )
 from ai.services.retrieval_index_service import retrieval_index_service
+from ai.services.feature_flag_service import feature_flag_service
 from core.config import settings
 
 
@@ -969,11 +970,19 @@ class RAGRetriever:
         read-only and its results are reduced to bounded, hashed metrics.
         """
         generation = self._active_index_generation(request.tenant_id)
-        shadow_enabled = self._setting_flag("KNOWLEDGE_V2_SHADOW_READ")
-        v2_enabled = self._setting_flag("KNOWLEDGE_V2_ENABLED")
         if not generation:
             return self._search_once(request, min_relevance, active_generation=None)
-        if shadow_enabled:
+
+        user_ctx = {
+            "tenant_id": getattr(request, "tenant_id", "tenant-default"),
+            "user_id": getattr(request, "user_id", None),
+            "roles": getattr(request, "roles", None),
+            "site_ids": getattr(request, "site_ids", None),
+        }
+        v2_enabled, rollout_reason, rollout_meta = feature_flag_service.evaluate_v2_access(user_ctx)
+        shadow_enabled = self._setting_flag("KNOWLEDGE_V2_SHADOW_READ")
+
+        if shadow_enabled and not v2_enabled:
             started = time.perf_counter()
             v1 = self._search_once(request, min_relevance, active_generation=None)
             v1_elapsed = int((time.perf_counter() - started) * 1000)
@@ -994,8 +1003,16 @@ class RAGRetriever:
             )
             v1["debug"] = debug
             return v1
+
         if v2_enabled:
-            return self._search_once(request, min_relevance, active_generation=generation)
+            v2_res = self._search_once(request, min_relevance, active_generation=generation)
+            debug = dict(v2_res.get("debug") or {})
+            debug["index_source"] = "v2"
+            debug["rollout_reason"] = rollout_reason
+            debug["rollout_meta"] = rollout_meta
+            v2_res["debug"] = debug
+            return v2_res
+
         return self._search_once(request, min_relevance, active_generation=None)
 
     def retrieve(

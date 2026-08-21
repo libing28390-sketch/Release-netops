@@ -4,7 +4,7 @@ import {
   Search, ChevronLeft, ChevronRight, RefreshCw,
   AlertTriangle, CheckCircle2, Database, HeartPulse,
   Zap, Bell, Clock, ArrowUpRight, Eye, Activity,
-  Radio, Play, ChevronDown, ChevronUp,
+  Radio, Play, Pause, ChevronDown, ChevronUp,
   Terminal, Download, Wrench, Map as MapIcon, Globe, Layers, BarChart3,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Brush } from 'recharts';

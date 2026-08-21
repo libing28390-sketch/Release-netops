@@ -117,6 +117,14 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
 
 
+try:
+    import sqlite3
+    from psycopg2.extras import Json as _PgJson
+    sqlite3.register_adapter(_PgJson, lambda j: _json_dumps(getattr(j, "adapted", j)))
+except Exception:
+    pass
+
+
 def _json_db_value(value: dict[str, Any]) -> Any:
     if _database._USE_PG:
         try:

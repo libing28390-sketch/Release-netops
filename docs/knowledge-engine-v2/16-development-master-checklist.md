@@ -226,8 +226,8 @@
 - [x] `ING-017` `P0/BE+DBA/M`：实现 Import Job 租约与重复 Worker 防护。
 - [x] `ING-018` `P1/BE+OPS/M`：实现 ETag、Last-Modified、Content Hash 定期刷新。
 - [x] `ING-019` `P1/BE/M`：实现官方文档移除、替代和版本更新检测。
-- [ ] `ING-020` `P1/FE/M`：实现导入任务列表、过滤、分页、阶段进度和错误重试。
-- [ ] `ING-021` `P1/FE+BE/M`：实现导入前 Metadata 预览与人工确认。
+- [x] `ING-020` `P1/FE/M`：实现导入任务列表、过滤、分页、阶段进度和错误重试。
+- [x] `ING-021` `P1/FE+BE/M`：实现导入前 Metadata 预览与人工确认。
 - [x] `ING-022` `P2/BE+SEC/L`：实现官方 Seed URL 小规模批量采集与速率限制。
 - [x] `ING-023` `P2/BE+OPS/M`：实现采集并发、退避、robots/服务条款记录和站点异常告警。
 - [x] `ING-024` `P2/QA/L`：建立恶意 HTML、超大文件、损坏 PDF、重定向循环和重复内容测试。
@@ -541,10 +541,10 @@
 - [ ] `MIG-007` `P0/AI+BE/L`：对迁移文档重新 Parse、Chunk、Embed、Index。
 - [x] `MIG-008` `P0/QA+DBA/M`：核对文档数量、哈希、版本、Chunk 和权限一致性。
 - [x] `MIG-009` `P0/BE+AI/M`：实现 V1/V2 双检索 Shadow Mode，不向用户展示双答案。
-- [ ] `MIG-010` `P0/BE+AI/M`：记录同 Query 的实体、候选、最终 Chunk、引用、延迟和差异。
-- [ ] `MIG-011` `P0/FE+BE/M`：实现仅管理员/内测用户可切换 V2 的 Feature Flag。
-- [ ] `MIG-012` `P0/ARCH+QA/M`：定义管理员、内测用户、指定 Site、10%、50%、100% 灰度顺序。
-- [ ] `MIG-013` `P0/OPS+BE/M`：实现不依赖数据库回退的快速 V1/V2 流量切换。
+- [x] `MIG-010` `P0/BE+AI/M`：记录同 Query 的实体、候选、最终 Chunk、引用、延迟和差异。
+- [x] `MIG-011` `P0/FE+BE/M`：实现仅管理员/内测用户可切换 V2 的 Feature Flag。
+- [x] `MIG-012` `P0/ARCH+QA/M`：定义管理员、内测用户、指定 Site、10%、50%、100% 灰度顺序。
+- [x] `MIG-013` `P0/OPS+BE/M`：实现不依赖数据库回退的快速 V1/V2 流量切换。
 - [ ] `MIG-014` `P0/OPS+DBA/M`：演练 V2 Index 回滚、Schema 向前兼容和应用版本回退。
 - [ ] `MIG-015` `P1/AI+QA/L`：Shadow 运行达到样本量后输出差异分析和阻断问题。
 - [ ] `MIG-016` `P1/ARCH+PM+SEC/M`：召开 Cutover 评审，确认质量、安全、性能、备份和回滚证据。

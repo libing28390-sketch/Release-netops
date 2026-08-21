@@ -18,7 +18,7 @@ import type { LucideIcon } from 'lucide-react';
 
 export interface PageHeroProps {
   /** Required: main icon rendered inside the tile */
-  icon: LucideIcon | React.ElementType;
+  icon: React.ComponentType<any>;
   /** Primary page title (Chinese or current locale) */
   title: string;
   /** Optional short description shown below the title */

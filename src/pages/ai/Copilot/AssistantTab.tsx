@@ -62,6 +62,10 @@ interface ChatMessage {
   retrieval?: AssistantRetrievalTrace;
   created_at: string;
   latency_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  route_model?: string;
+  provider_id?: string;
   processing_steps?: AssistantProcessStep[];
   copilot?: CopilotContract;
   feedback?: 'positive' | 'negative';
@@ -93,6 +97,8 @@ const mapConversationMessage = (message: AIConversationMessage): ChatMessage => 
   role: message.role === 'user' ? 'user' : 'assistant',
   content: message.content || '',
   created_at: message.created_at,
+  route_model: message.actual_model_id || message.requested_model_id,
+  provider_id: message.provider_id,
   sources: Array.isArray(message.citations)
     ? message.citations.map((item: any) => ({
       citation_id: String(item?.citation_id || ''),
@@ -628,10 +634,15 @@ export const AssistantTab: React.FC = () => {
                     return {
                       ...m,
                       stream_status: 'streaming',
-                      intent: meta.intent,
-                      sources: meta.citations,
-                      retrieval: meta.retrieval,
-                      copilot: meta.copilot,
+                      intent: meta.intent || m.intent,
+                      sources: meta.citations || m.sources,
+                      retrieval: meta.retrieval || m.retrieval,
+                      copilot: meta.copilot || m.copilot,
+                      route_model: meta.model_id || meta.requested_model_id || meta.copilot?.runtime?.model_id || m.route_model,
+                      provider_id: meta.provider_id || meta.copilot?.runtime?.provider_id || m.provider_id,
+                      input_tokens: meta.input_tokens ?? m.input_tokens,
+                      output_tokens: meta.output_tokens ?? m.output_tokens,
+                      latency_ms: meta.latency_ms ?? m.latency_ms,
                     };
                   }
                   return m;
@@ -661,6 +672,25 @@ export const AssistantTab: React.FC = () => {
           if (typeof done.duration_ms === 'number') {
             streamDurationMs = done.duration_ms;
           }
+          setSessions((prev) =>
+            prev.map((s) => {
+              if (s.id !== activeSessionId) return s;
+              return {
+                ...s,
+                messages: s.messages.map((m) => {
+                  if (m.id !== assistantMsgId) return m;
+                  return {
+                    ...m,
+                    latency_ms: typeof done.duration_ms === 'number' ? done.duration_ms : m.latency_ms,
+                    input_tokens: typeof done.input_tokens === 'number' ? done.input_tokens : m.input_tokens,
+                    output_tokens: typeof done.output_tokens === 'number' ? done.output_tokens : m.output_tokens,
+                    route_model: done.model_id || m.route_model,
+                    provider_id: done.provider_id || m.provider_id,
+                  };
+                }),
+              };
+            })
+          );
         },
         (streamError) => {
           const message = streamError.code === 'AI_SECURITY_BLOCKED'
@@ -711,8 +741,13 @@ export const AssistantTab: React.FC = () => {
           if (s.id === activeSessionId) {
             const msgs = s.messages.map((m) => {
               if (m.id === assistantMsgId) {
-                const updatedMsg = { ...m, latency_ms: elapsed, stream_status: 'completed' as const };
-                setActiveInspectorMsg(updatedMsg);
+                const updatedMsg = {
+                  ...m,
+                  latency_ms: m.latency_ms ?? elapsed,
+                  route_model: m.route_model || selectedModel || 'deepseek-chat',
+                  stream_status: 'completed' as const,
+                };
+                setActiveInspectorMsg((current) => current?.id === updatedMsg.id ? updatedMsg : current);
                 return updatedMsg;
               }
               return m;
@@ -935,6 +970,11 @@ export const AssistantTab: React.FC = () => {
                     </div>
 
                     {m.copilot && (
+                      (m.copilot.required_evidence && m.copilot.required_evidence.length > 0) ||
+                      (m.copilot.confirmed_facts && m.copilot.confirmed_facts.length > 0) ||
+                      (m.copilot.next_checks && m.copilot.next_checks.length > 0) ||
+                      (m.copilot.intent && !['consultation', 'general_qa', 'chitchat'].includes(m.copilot.intent))
+                    ) && (
                       <div className="rounded-xl border border-indigo-100 dark:border-indigo-900/60 bg-indigo-50/60 dark:bg-indigo-950/20 p-3 text-xs space-y-2">
                         <div className="flex flex-wrap items-center gap-2 font-semibold text-indigo-700 dark:text-indigo-300">
                           <span>诊断摘要</span>

@@ -32,7 +32,7 @@ class _Client:
         return self.response
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.parametrize("status_code", [401, 403])
 async def test_openai_compatible_provider_maps_auth_status_to_stable_auth_code(monkeypatch, status_code):
     monkeypatch.setattr(
@@ -54,7 +54,7 @@ async def test_openai_compatible_provider_maps_auth_status_to_stable_auth_code(m
     assert exc_info.value.code == "AI_AUTH_FAILED"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_llm_gateway_does_not_retry_or_open_circuit_for_auth_failure(monkeypatch):
     import importlib
 

@@ -1488,7 +1488,7 @@ const ChangeOrderComponent: React.FC<Props> = ({
             handleExportOrder={handleExportOrder}
             openEdit={openEdit}
             getTransitionActions={(order) => {
-              const actions: { label: string; status: string; variant: string; icon: React.ElementType }[] = [];
+              const actions: { label: string; status: string; variant: string; icon: React.ComponentType<any> }[] = [];
               const isRequester = order.requester_username === currentUser.username;
               const isInitialReviewer = order.assigned_initial_reviewer_id === String(currentUser.id);
               const isFinalApprover = order.assigned_final_approver_id === String(currentUser.id);

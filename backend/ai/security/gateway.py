@@ -146,7 +146,7 @@ class AISecurityGateway:
         self.vault = vault or token_vault
         self._egress_audit_events: list[dict[str, Any]] = []
         self.policy = policy or SecurityPolicy(
-            external_ai_enabled=bool(getattr(settings, "EXTERNAL_AI_ENABLED", False)),
+            external_ai_enabled=False,
             kill_switch=bool(getattr(settings, "AI_KILL_SWITCH", False)),
             max_payload_bytes=int(getattr(settings, "AI_MAX_PAYLOAD_BYTES", 256_000)),
             allowed_provider_types=tuple(
@@ -182,6 +182,13 @@ class AISecurityGateway:
         provider_allowed_classification: str | None = None,
     ) -> SecurePayload:
         active_policy = policy or self.policy
+        if self is ai_security_gateway and not active_policy.external_ai_enabled and policy is None:
+            try:
+                from ai.api.security import load_persisted_security_policy
+                load_persisted_security_policy()
+                active_policy = self.policy
+            except Exception:
+                pass
         if active_policy.kill_switch:
             raise SecurityBlocked("AI external egress is disabled by the kill switch", reason_code="AI_SECURITY_KILL_SWITCH")
         if active_policy.tenant_kill_switches.get(str(tenant_id)):

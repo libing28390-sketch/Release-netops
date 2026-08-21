@@ -12,6 +12,18 @@ def test_deepseek_uses_only_v4_models_and_official_endpoint():
     assert provider.base_url == "https://api.deepseek.com"
     assert provider._get_endpoint().endswith("/v1/chat/completions")
     assert provider.test_connection.__func__ is DeepSeekProvider.test_connection
+    # Valid models
+    provider._validate_model("deepseek-chat")
+    provider._validate_model("deepseek-reasoner")
+    provider._validate_model("deepseek-v4-flash")
+    provider._validate_model("deepseek-v4-pro")
+
+
+def test_deepseek_rejects_unsupported_model():
+    with pytest.raises(Exception):
+        DeepSeekProvider._validate_model("gpt-4o")
+    with pytest.raises(Exception):
+        DeepSeekProvider._validate_model("claude-3-5-sonnet")
 
 
 def test_deepseek_rejects_custom_endpoint():

@@ -96,12 +96,13 @@ class Settings(BaseSettings):
     KNOWLEDGE_V2_SHADOW_READ: bool = False
     KNOWLEDGE_V2_ROLLOUT_PERCENT: int = 0
     KNOWLEDGE_V2_WRITE_ENABLED: bool = False
+    KNOWLEDGE_V2_PILOT_ROLES: list[str] = ["admin", "knowledge_admin"]
+    KNOWLEDGE_V2_PILOT_USERS: list[str] = []
+    KNOWLEDGE_V2_ENABLED_SITES: list[str] = []
 
     # PAM Web terminal compatibility control. Host-key registration is not a
     # login prerequisite; legacy algorithms still require explicit opt-in.
     PAM_ALLOW_LEGACY_SSH: bool = False
-
-    # HashiCorp Vault integration
     VAULT_ENABLED: bool = False
     VAULT_ADDR: str = "http://127.0.0.1:8200"
     VAULT_TOKEN: str = ""

@@ -7,7 +7,7 @@ interface NavItemProps {
   /** Whether this item is the currently active route */
   active: boolean;
   /** Optional icon component */
-  icon?: React.ElementType;
+  icon?: React.ComponentType<any>;
   /** Level-2 indented item (smaller text, deeper padding) */
   indent?: boolean;
   /** Optional badge element rendered after label */

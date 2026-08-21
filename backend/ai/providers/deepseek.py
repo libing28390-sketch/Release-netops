@@ -12,7 +12,13 @@ from ai.providers.openai_compatible import OpenAICompatibleProvider
 class DeepSeekProvider(OpenAICompatibleProvider):
     """DeepSeek Provider implementation using DeepSeek's OpenAI-compatible API."""
 
-    SUPPORTED_MODELS = frozenset({"deepseek-v4-flash", "deepseek-v4-pro"})
+    SUPPORTED_MODELS = frozenset({
+        "deepseek-chat",
+        "deepseek-reasoner",
+        "deepseek-coder",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+    })
 
     def __init__(self, provider_data: Dict[str, Any], api_key: Optional[str] = None):
         configured = (provider_data.get("base_url") or "").rstrip("/")
@@ -23,8 +29,9 @@ class DeepSeekProvider(OpenAICompatibleProvider):
 
     @classmethod
     def _validate_model(cls, model: str) -> None:
-        if str(model).lower() not in cls.SUPPORTED_MODELS:
-            raise AIModelNotFoundException("DeepSeek V4 model is required")
+        m = str(model or "").lower()
+        if m not in cls.SUPPORTED_MODELS and not m.startswith("deepseek-"):
+            raise AIModelNotFoundException("DeepSeek model is required (e.g. deepseek-chat, deepseek-reasoner)")
 
     async def chat(self, messages: List[Dict[str, str]], *, model: str, **kwargs: Any) -> Dict[str, Any]:
         self._validate_model(model)

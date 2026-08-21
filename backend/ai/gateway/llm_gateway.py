@@ -112,7 +112,7 @@ class LLMGateway:
                 cursor.execute(
                     "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
                     "m.enabled, p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, "
-                    "m.json_supported, 1, 'PUBLIC', 'unknown', 32768, 4096, 0, 0 "
+                    "m.json_supported, 1, COALESCE(p.allowed_data_classification, 'CONFIDENTIAL'), 'unknown', 32768, 4096, 0, 0 "
                     "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
                     "WHERE (m.id = ? OR m.model_code = ?) AND m.enabled = 1",
                     (model_id_or_code, model_id_or_code)

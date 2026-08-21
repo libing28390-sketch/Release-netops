@@ -1697,85 +1697,9 @@ export const KnowledgeManagementTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Two-Column Layout: Left Directory Tree Sidebar + Right Documents Table */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-        {/* Directory management lives in the main sidebar; source types remain document metadata. */}
-        <div className="bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80 rounded-2xl p-4 shadow-xs space-y-3">
-          <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700/60 pb-2">
-            <h3 className="text-xs font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
-              <Folder className="w-4 h-4 text-indigo-500" />
-              知识库目录
-            </h3>
-            <span className="text-[10px] text-gray-400 font-mono">{directoryTree.length} 个根目录</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedDirectoryPath('');
-              setSelectedFolder('all');
-              setCurrentPage(1);
-              setSelectedDocIds(new Set());
-            }}
-            className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs transition ${
-              !selectedDirectoryPath
-                ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300'
-                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700/60'
-            }`}
-          >
-            <FolderOpen className="h-4 w-4 text-amber-500" />
-            <span>全部知识文档</span>
-          </button>
-          {directUploadStatus && (
-            <div className={`rounded-xl px-2.5 py-2 text-[10px] leading-4 ${
-              directUploadStatus.phase === 'error'
-                ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-300'
-                : directUploadStatus.phase === 'success'
-                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
-                : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300'
-            }`}>
-              <div className="flex items-start gap-1.5">
-                {directUploadStatus.phase === 'uploading' || directUploadStatus.phase === 'processing'
-                  ? <Loader2 className="mt-0.5 h-3 w-3 shrink-0 animate-spin" />
-                  : directUploadStatus.phase === 'success'
-                  ? <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />
-                  : directUploadStatus.phase === 'error'
-                  ? <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                  : null}
-                <span>{directUploadStatus.message}</span>
-              </div>
-              {directUploadStatus.phase === 'uploading' && directUploadStatus.total > 0 && (
-                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-indigo-200 dark:bg-indigo-900">
-                  <div
-                    className="h-full rounded-full bg-indigo-600 transition-all"
-                    style={{ width: `${(directUploadStatus.completed / directUploadStatus.total) * 100}%` }}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-          <DirectoryTreePicker
-            inline
-            nodes={directoryTree}
-            selectedPath={selectedDirectoryPath}
-            loading={directoryTreeLoading}
-            error={directoryTreeError}
-            disabled={directUploading}
-            onSelect={(node) => {
-              setSelectedDirectoryPath(node.path);
-              setKnowledgeDirectory(node.path);
-              setSelectedFolder('all');
-              setCurrentPage(1);
-              setSelectedDocIds(new Set());
-            }}
-            onCreate={handleCreateDirectory}
-            onRename={handleRenameDirectory}
-            onDelete={handleDeleteDirectory}
-            onUpload={handleDirectoryUpload}
-          />
-        </div>
-        {/* Right Content Area: Document Management Table */}
-        <div className="lg:col-span-3 space-y-4">
-          <div className="grid gap-3 md:grid-cols-3" aria-label="官方知识与企业知识分区">
+      {/* Full-Width Document Management Section */}
+      <div className="space-y-4 w-full">
+        <div className="grid gap-3 md:grid-cols-3" aria-label="官方知识与企业知识分区">
             {([
               ['all', '全部知识', '统一查看，但保留来源徽标与服务端边界', 'bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-900/50 dark:border-slate-700 dark:text-slate-200'],
               ['official', '官方知识', '厂商官方资料与 Source Registry 来源', 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/30 dark:border-blue-900 dark:text-blue-200'],
@@ -1802,7 +1726,7 @@ export const KnowledgeManagementTab: React.FC = () => {
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
               <input
                 type="text"
-                placeholder="在当前目录中搜索文档名称、厂商或平台..."
+                placeholder="搜索文档名称、厂商、型号或知识库内容..."
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:border-indigo-500 dark:text-white"
@@ -1821,7 +1745,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                 </button>
               )}
               <div className="text-xs text-gray-500 dark:text-gray-400">
-                当前目录: <strong className="text-gray-800 dark:text-gray-200 font-semibold">{selectedDirectoryPath ? selectedDirectoryPath : '全部知识文档'}</strong> ({totalDocuments} 篇)
+                共计 <strong className="text-gray-800 dark:text-gray-200 font-semibold">{totalDocuments}</strong> 篇知识文档
               </div>
             </div>
           </div>
@@ -2137,7 +2061,6 @@ export const KnowledgeManagementTab: React.FC = () => {
             )}
           </div>
         </div>
-      </div>
 
       {/* Document Content Viewer */}
       {selectedDocument && (
@@ -2442,12 +2365,16 @@ export const KnowledgeManagementTab: React.FC = () => {
                 {/* Metadata selectors (shared for all files in batch) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">目标知识目录</label>
-                    <div className="flex min-h-[38px] items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300">
-                      <FolderOpen className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate font-mono">{getDirectoryImportPath(knowledgeDirectory, vendor)}</span>
-                    </div>
-                    <p className="mt-1 text-[10px] text-gray-400">目标来自左侧目录节点的导入按钮。</p>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">知识分类目录</label>
+                    <select
+                      value={knowledgeDirectory}
+                      onChange={(e) => setKnowledgeDirectory(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
+                    >
+                      {KNOWLEDGE_DIRECTORY_OPTIONS.map((item) => (
+                        <option key={item.id} value={item.id}>{item.label}</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>
@@ -2698,12 +2625,16 @@ export const KnowledgeManagementTab: React.FC = () => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">目标知识目录</label>
-                    <div className="flex min-h-[38px] items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300">
-                      <FolderOpen className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate font-mono">{getDirectoryImportPath(knowledgeDirectory, vendor)}</span>
-                    </div>
-                    <p className="mt-1 text-[10px] text-gray-400">目标来自左侧目录节点的导入按钮。</p>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">知识分类目录</label>
+                    <select
+                      value={knowledgeDirectory}
+                      onChange={(e) => setKnowledgeDirectory(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-xl dark:bg-gray-900 dark:text-white"
+                    >
+                      {KNOWLEDGE_DIRECTORY_OPTIONS.map((item) => (
+                        <option key={item.id} value={item.id}>{item.label}</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>

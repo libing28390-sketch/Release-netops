@@ -61,7 +61,7 @@ interface SamplePoint {
 }
 
 /* Per-metric display metadata: icon + unit + whether higher is worse */
-const METRIC_META: Record<string, { icon: React.ElementType; unit: string; higherIsWorse: boolean }> = {
+const METRIC_META: Record<string, { icon: React.ComponentType<any>; unit: string; higherIsWorse: boolean }> = {
   cpu_util:       { icon: Cpu,         unit: '%',    higherIsWorse: true },
   cpu_load:       { icon: Gauge,       unit: '%',    higherIsWorse: true },
   mem_avail:      { icon: MemoryStick, unit: '%',    higherIsWorse: true },

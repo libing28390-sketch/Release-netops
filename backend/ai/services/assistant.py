@@ -105,9 +105,27 @@ def _progress_event(
     return _sse_event("progress", payload)
 
 
-def _done_event(started_at: float) -> str:
+def _done_event(started_at: float, extra: Optional[Dict[str, Any]] = None) -> str:
     duration_ms = max(0, int((time.perf_counter() - started_at) * 1000))
-    return _sse_event("done", {"status": "completed", "duration_ms": duration_ms})
+    payload: Dict[str, Any] = {"status": "completed", "duration_ms": duration_ms}
+    if extra and isinstance(extra, dict):
+        payload.update({k: v for k, v in extra.items() if v is not None})
+    return _sse_event("done", payload)
+
+
+def _build_system_prompt() -> str:
+    import datetime
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return (
+        f"Current System Time: {now_str}\n"
+        "You are Nexora AI Assistant, an expert AI network operations copilot and assistant. "
+        "For general questions, greetings, current time, common knowledge, programming, or network concept explanations, answer naturally, politely, and accurately. "
+        "For enterprise network asset, topology, inventory, IP address, and telemetry queries within Nexora, always prioritize the provided real facts from CMDB/IPAM/Telemetry database. "
+        "Never invent non-existent network devices, IPs, or alarms when querying inventory facts. "
+        "For knowledge requests, use exact retrieved knowledge chunks. "
+        "If entity_resolution is ambiguous but clarification_required is false, keep each retrieved CLI platform's syntax in a separately labeled section and never merge commands across platforms. "
+        "For network vendor CLI commands, use language tags like ```huawei, ```cisco, ```h3c, or ```bash."
+    )
 
 
 class AIAssistantService:
@@ -784,15 +802,7 @@ class AIAssistantService:
             }
 
         # 4. Synthesize with LLM
-        sys_prompt = (
-            "You are Nexora AI Assistant, an expert AI network operations copilot. "
-            "Always prioritize real facts queried from Nexora's CMDB, IPAM, and Telemetry database. "
-            "Be professional, direct, and structured in your answer. "
-            "Never invent missing device fields, counts, locations, software lifecycle status, EOL claims, or alarm causes. "
-            "If a fact is absent from the supplied database facts, say that it is unavailable instead of guessing. "
-            "For knowledge requests, use only exact retrieved knowledge chunks; never provide a generic or remembered network configuration when retrieval is empty. "
-            "If entity_resolution is ambiguous but clarification_required is false, keep each retrieved CLI platform's syntax in a separately labeled section and never merge commands across platforms."
-        )
+        sys_prompt = _build_system_prompt()
 
         messages = [{"role": "system", "content": sys_prompt}]
         if history:
@@ -1151,15 +1161,7 @@ class AIAssistantService:
             yield _done_event(started_at)
             return
 
-        sys_prompt = (
-            "You are Nexora AI Assistant, an expert AI network operations copilot. "
-            "Always prioritize real facts queried from Nexora's CMDB, IPAM, and Telemetry database. "
-            "Use clear Markdown formatting. Never invent missing fields, counts, locations, EOL claims, or alarm causes. "
-            "If a fact is absent from the supplied database facts, state that it is unavailable. "
-            "For knowledge requests, use only exact retrieved knowledge chunks; never provide a generic or remembered network configuration when retrieval is empty. "
-            "If entity_resolution is ambiguous but clarification_required is false, keep each retrieved CLI platform's syntax in a separately labeled section and never merge commands across platforms. "
-            "For network vendor CLI commands, use language tags like ```huawei, ```cisco, ```h3c, or ```bash."
-        )
+        sys_prompt = _build_system_prompt()
 
         messages = [{"role": "system", "content": sys_prompt}]
         if history:
@@ -1186,7 +1188,7 @@ class AIAssistantService:
                 if token:
                     tokens_emitted += 1
                     yield _token_event(token)
-        except AISecurityBlockedException:
+        except AISecurityBlockedException as exc:
             # A security block is a terminal policy decision. Do not turn it
             # into a normal answer or try another external model.
             if knowledge_trace is not None and knowledge_trace.get("trace_id"):
@@ -1198,7 +1200,7 @@ class AIAssistantService:
                         "requested_model_id": route_meta.get("requested_model_id") or model_id,
                         "route_reason": route_meta.get("route_reason"),
                         "security_result": "blocked",
-                        "security": {"decision": "block", "result_code": "AI_SECURITY_BLOCKED"},
+                        "security": {"decision": "block", "result_code": getattr(exc, "code", "AI_SECURITY_BLOCKED")},
                         "latency": {"llm_ms": max(0, int(route_meta.get("latency_ms") or 0))},
                         "tokens": {"input": 0, "output": 0},
                     },
@@ -1207,10 +1209,10 @@ class AIAssistantService:
                 llm_step[0],
                 llm_step[1],
                 "error",
-                detail="请求被 AI 安全策略拦截",
+                detail=str(exc) or "请求被 AI 安全策略拦截",
                 operation=llm_step[2],
             )
-            yield _sse_event("error", {"code": "AI_SECURITY_BLOCKED", "message": "请求被 AI 安全策略拦截", "retryable": False})
+            yield _sse_event("error", {"code": getattr(exc, "code", "AI_SECURITY_BLOCKED"), "message": str(exc) or "请求被 AI 安全策略拦截", "retryable": False})
             yield _done_event(started_at)
             return
         except Exception as err:
@@ -1310,7 +1312,16 @@ class AIAssistantService:
             )
             yield _meta_event(route_meta)
 
-        yield _done_event(started_at)
+        done_extra = {
+            "latency_ms": max(0, int((time.perf_counter() - started_at) * 1000)),
+            "input_tokens": max(0, int(route_meta.get("input_tokens") or 0)) if route_meta else 0,
+            "output_tokens": max(0, int(route_meta.get("output_tokens") or tokens_emitted or 0)) if route_meta else tokens_emitted,
+            "model_id": route_meta.get("model_id") if route_meta else None,
+            "provider_id": route_meta.get("provider_id") if route_meta else None,
+            "route_reason": route_meta.get("route_reason") if route_meta else None,
+        } if route_meta or tokens_emitted else None
+
+        yield _done_event(started_at, extra=done_extra)
 
 
 ai_assistant_service = AIAssistantService()
