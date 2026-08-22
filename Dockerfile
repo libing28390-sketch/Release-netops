@@ -2,7 +2,9 @@
 FROM node:20-alpine AS frontend-build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --silent
+# The frontend build uses devDependencies such as Vite and cross-env.
+# Install them explicitly even when the build environment sets NODE_ENV=production.
+RUN npm ci --include=dev --silent
 COPY . .
 RUN npm run build
 
