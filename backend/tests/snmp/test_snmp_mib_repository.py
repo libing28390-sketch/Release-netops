@@ -4,7 +4,6 @@ import io
 import asyncio
 import sqlite3
 import zipfile
-from collections import Counter
 import pytest
 from fastapi import HTTPException, UploadFile
 
@@ -217,38 +216,45 @@ def test_mib_store_and_search_workflow() -> None:
 
 def test_official_presets_service_and_api() -> None:
     presets = list_preset_profiles()
-    assert len(presets) >= 20
-    vendor_counts = Counter(item["vendor"] for item in presets)
-    assert vendor_counts["Huawei"] == 5
-    assert vendor_counts["H3C"] == 5
-    assert vendor_counts["Ruijie"] == 5
+    assert len(presets) == 23
+    assert {item["vendor"] for item in presets} == {"H3C", "Huawei", "ZTE", "Cisco"}
+    assert sum(1 for item in presets if item.get("testable", True)) == 22
+    assert all(item.get("source_oids") for item in presets if item.get("testable", True))
+    assert {item["model"] for item in presets if item["vendor"] == "H3C"} >= {
+        "S5000", "S5110", "S5120", "S5130", "S5135", "S5170", "S5500", "S5800",
+        "S6300", "S6500", "S6800", "S10500", "S10500 (V5)",
+    }
+    assert {item["model"] for item in presets if item["vendor"] == "Huawei"} == {
+        "S3700", "S5700", "S6700", "S7700", "S8700", "S9700", "S12700", "S16700",
+    }
+    assert not any(item["model"] == "Catalyst 9300" for item in presets)
+    assert not any("Nexus" in item["model"] for item in presets)
+    assert not any(item["vendor"] in {"Ruijie", "Juniper", "Fortinet", "Raisecom"} for item in presets)
 
-    cisco_9300 = next(p for p in presets if p["model"] == "Catalyst 9300")
-    assert cisco_9300["vendor"] == "Cisco"
-    assert "cpu" in cisco_9300["metric_definitions"]
-    assert cisco_9300["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.4.1.9.9.109.1.1.1.1.8"
+    h3c = next(p for p in presets if p["vendor"] == "H3C")
+    assert h3c["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.4.1.25506.2.6.1.1.1.1.6"
+    assert h3c["metric_definitions"]["memory"]["oid"] == "1.3.6.1.4.1.25506.2.6.1.1.1.1.8"
+    assert "1.3.6.1.4.1.25506.2.6.1.1.1.1.19" in h3c["source_oids"]["system"]
 
-    huawei_s5700 = next(p for p in presets if p["model"] == "S5700")
-    assert huawei_s5700["vendor"] == "Huawei"
-    assert "cpu" in huawei_s5700["metric_definitions"]
-    assert huawei_s5700["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5"
+    huawei = next(p for p in presets if p["vendor"] == "Huawei")
+    assert huawei["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5"
+    assert huawei["metric_definitions"]["fan"]["oid"] == "1.3.6.1.4.1.2011.5.25.31.1.1.10.1.7"
 
-    juniper_ex = next(p for p in presets if p["model"] == "EX4300")
-    assert juniper_ex["vendor"] == "Juniper"
-    assert "cpu" in juniper_ex["metric_definitions"]
+    zte = next(p for p in presets if p["vendor"] == "ZTE")
+    assert zte["metric_definitions"]["uptime"]["oid"] == "1.3.6.1.2.1.1.3"
+    assert "1.3.6.1.4.1.3902.3.600.2.1.1.3.0.0.1.0" in zte["source_oids"]["system"]
+    assert "1.3.6.1.4.1.3902.3.103.11.1.1.24" in zte["source_oids"]["optical"]
 
-    fortinet_fg = next(p for p in presets if p["model"] == "FortiGate-100F")
-    assert fortinet_fg["vendor"] == "Fortinet"
-    assert "cpu" in fortinet_fg["metric_definitions"]
-
-    raisecom_s5600 = next(p for p in presets if p["model"] == "ISCOM S5600-28C-EI")
-    assert raisecom_s5600["vendor"] == "Raisecom"
-    assert raisecom_s5600["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.2.1.25.3.3.1.2"
+    cisco = next(p for p in presets if p["vendor"] == "Cisco")
+    assert cisco["metric_definitions"]["cpu"]["oid"] == "1.3.6.1.4.1.9.9.109.1.1.1.1.3"
+    assert cisco["metric_definitions"]["memory"]["used_oid"] == "1.3.6.1.4.1.9.9.48.1.1.1.5"
+    assert cisco["metric_definitions"]["memory"]["free_oid"] == "1.3.6.1.4.1.9.9.48.1.1.1.6"
+    assert "CISCO-PROCESS-MIB::cpmCPUTotal5sec" in cisco["source_oids"]["system"]
 
     # Test API endpoint
     api_res = get_official_model_presets(user={"role": "Viewer"})
     assert api_res["success"] is True
-    assert api_res["total"] >= 5
+    assert api_res["total"] == 23
 
 
 def test_manual_mib_upload_can_be_disabled_explicitly(monkeypatch) -> None:
@@ -429,42 +435,27 @@ def test_builtin_mibs_seeder() -> None:
 def test_auto_match_model_mibs() -> None:
     from api.devices import auto_match_model_mibs
 
-    # Exact match
-    cisco_exact = auto_match_model_mibs(vendor="Cisco", model="Catalyst 9300", user={"role": "Viewer"})
-    assert cisco_exact["matched"] is True
-    assert cisco_exact["data"]["match_type"] == "exact"
-    assert cisco_exact["data"]["preset"]["model"] == "Catalyst 9300"
+    cases = [
+        ("H3C", "S5130S-52S-EI", "md-h3c-comware-v7"),
+        ("华为", "S5720-28P-PWR-LI-AC", "md-huawei-vrp-switch"),
+        ("中兴", "ZXR10-某系列", "md-zte-zxr10-switch"),
+        ("Cisco", "C9300-48P-A", "md-cisco-catalyst-categraf"),
+    ]
+    for vendor, model, expected_id in cases:
+        matched = auto_match_model_mibs(vendor=vendor, model=model, user={"role": "Viewer"})
+        assert matched["matched"] is True
+        assert matched["data"]["preset"]["family_id"] == expected_id
 
-    # Series inferred (Huawei S5720 -> S5720 series)
-    hw_inferred = auto_match_model_mibs(vendor="Huawei", model="S5720-28P-PWR-LI-AC", user={"role": "Viewer"})
-    assert hw_inferred["matched"] is True
-    assert hw_inferred["data"]["preset"]["vendor"] == "Huawei"
-    assert hw_inferred["data"]["preset"]["model"] == "S5720"
-    assert "cpu" in hw_inferred["data"]["preset"]["metric_definitions"]
-
-    h3c_inferred = auto_match_model_mibs(vendor="H3C", model="S5130S-52S-EI", user={"role": "Viewer"})
-    assert h3c_inferred["matched"] is True
-    assert h3c_inferred["data"]["preset"]["model"] == "S5130"
-
-    ruijie_inferred = auto_match_model_mibs(vendor="Ruijie", model="RG-S2910C-24GT4SFP-UP-H", user={"role": "Viewer"})
-    assert ruijie_inferred["matched"] is True
-    assert ruijie_inferred["data"]["preset"]["model"] == "RG-S2910"
-
-    # Cisco C9300-48P -> Catalyst 9300 series
-    cisco_inferred = auto_match_model_mibs(vendor="Cisco", model="C9300-48P-A", user={"role": "Viewer"})
-    assert cisco_inferred["matched"] is True
-    assert cisco_inferred["data"]["preset"]["vendor"] == "Cisco"
-
-    # CloudEngine CE6850
-    ce_inferred = auto_match_model_mibs(vendor="Huawei", model="CE6850-48T6Q-HI", user={"role": "Viewer"})
-    assert ce_inferred["matched"] is True
-    assert ce_inferred["data"]["preset"]["model"] == "CE6800"
-
-    raisecom_exact = auto_match_model_mibs(
-        vendor="瑞斯康达",
-        model="ISCOM S5600-28C-EI",
+    unsupported = auto_match_model_mibs(
+        vendor="Ruijie",
+        model="RG-S5750",
         user={"role": "Viewer"},
     )
-    assert raisecom_exact["matched"] is True
-    assert raisecom_exact["data"]["match_type"] == "exact"
-    assert raisecom_exact["data"]["preset"]["vendor"] == "Raisecom"
+    assert unsupported["matched"] is False
+
+    unsupported_nexus = auto_match_model_mibs(
+        vendor="Cisco",
+        model="Nexus 93180YC-FX",
+        user={"role": "Viewer"},
+    )
+    assert unsupported_nexus["matched"] is False

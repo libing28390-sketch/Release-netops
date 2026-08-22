@@ -7,12 +7,16 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from database.core import get_db_connection
 from ai.security.gateway import SecurityBlocked, SecurityPolicy, ai_security_gateway
+from ai.security.dev_passthrough import dev_passthrough
 from ai.security.classification import DataClassification, normalize_classification
 from ai.security.permissions import require_ai_permission
+from core.rbac import _get_current_user
 from ai.security.security_service import (
     audit_provider_adapters,
     create_security_incident,
@@ -29,12 +33,14 @@ from api.knowledge_v2_contracts import (
     AttachmentCheckRequest,
     SecurityIncidentRequest,
     SecurityKillSwitchRequest,
+    DevPassthroughRequest,
     SecurityPolicyUpdateRequest,
     SecurityTestPayloadRequest,
     TenantSecurityKillSwitchRequest,
 )
 
 router = APIRouter(prefix="/security", tags=["AI Security Gateway"])
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -135,6 +141,7 @@ def get_security_policy(user=Depends(require_ai_permission("ai.audit.view"))):
         "provider_kill_switches": dict(policy.provider_kill_switches),
         "tenant_kill_switches": dict(policy.tenant_kill_switches),
         "scope_rules": dict(policy.scope_rules),
+        "dev_passthrough": dev_passthrough.status(),
     }
 
 
@@ -197,6 +204,44 @@ def update_security_policy(payload: SecurityPolicyUpdateRequest, user=Depends(re
         )
         conn.commit()
     return get_security_policy(user)
+
+
+@router.post("/dev-passthrough", response_model=Dict[str, Any])
+def set_dev_passthrough(
+    payload: DevPassthroughRequest,
+    request: Request,
+    user=Depends(require_ai_permission("ai.security.manage")),
+):
+    """Enable a short-lived raw egress test mode in development only.
+
+    The mode is intentionally not persisted: restarting the process disables
+    it. Provider allowlists, external-AI policy, kill switches, payload size,
+    unsafe tools, and hard credential DLP checks remain enforced by the
+    gateway.
+    """
+    # `require_ai_permission` intentionally keeps a development fallback for
+    # legacy internal endpoints. Do not let that fallback operate this
+    # high-impact control: it must have a real, valid Administrator session.
+    authenticated_user = _get_current_user(request)
+    if not authenticated_user:
+        raise HTTPException(status_code=401, detail="Authentication is required to change development passthrough")
+    if str(authenticated_user.get("role") or "").strip().lower() not in {"administrator", "admin"}:
+        raise HTTPException(status_code=403, detail="Administrator permission is required to change development passthrough")
+    user = authenticated_user
+
+    if not dev_passthrough.is_supported():
+        raise HTTPException(status_code=403, detail="Development passthrough is disabled or unavailable in this environment")
+    try:
+        status = dev_passthrough.enable(payload.duration_minutes) if payload.enabled else dev_passthrough.disable()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    logger.warning(
+        "AI development passthrough %s by user=%s expires_at=%s",
+        "enabled" if status["enabled"] else "disabled",
+        user.get("username", "unknown"),
+        status.get("expires_at"),
+    )
+    return status
 
 
 @router.post("/test-payload", response_model=Dict[str, Any])

@@ -1183,6 +1183,11 @@ class AIAssistantService:
                 route_meta=route_meta, workspace_id=copilot_context.get("workspace_id"),
                 site_id=copilot_context.get("site_id"), department=copilot_context.get("department"),
                 document_scope=copilot_context.get("document_scope"),
+                # Read-only CMDB/RAG context may contain identifiers.  Mark
+                # the authorized context as INTERNAL so the security gateway
+                # tokenizes identifiers instead of treating the whole
+                # request as CONFIDENTIAL and rejecting an INTERNAL provider.
+                data_classification="INTERNAL" if context_facts else None,
                 request_id=request_id,
             ):
                 if token:

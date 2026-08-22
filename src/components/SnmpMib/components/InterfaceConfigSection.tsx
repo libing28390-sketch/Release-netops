@@ -1,5 +1,5 @@
-import React from 'react';
-import { RotateCcw, Search } from 'lucide-react';
+import React, { useState } from 'react';
+import { ChevronDown, ChevronUp, RotateCcw, Search, ShieldCheck } from 'lucide-react';
 
 export type InterfaceCounterMode = 'auto' | '32' | '64';
 
@@ -105,10 +105,7 @@ export const INTERFACE_OID_FIELDS: Array<{
 ];
 
 const inputClass =
-  'w-full rounded-md border border-black/8 bg-transparent px-2 py-1.5 font-mono text-[10px] outline-none focus:border-[#00bceb]/55 dark:border-white/10';
-const selectClass =
-  'w-full rounded-md border border-black/8 bg-transparent px-2 py-1.5 text-[10px] outline-none focus:border-[#00bceb]/55 dark:border-white/10';
-const tinyLabelClass = 'mb-1 block text-[9px] text-black/45 dark:text-white/45';
+  'w-full rounded-md border border-black/8 bg-transparent px-2 py-1.5 font-mono text-xs outline-none focus:border-[#00bceb]/55 dark:border-white/10';
 
 interface InterfaceConfigSectionProps {
   config: InterfaceOidConfig;
@@ -120,6 +117,15 @@ interface InterfaceConfigSectionProps {
 
 export const InterfaceConfigSection: React.FC<InterfaceConfigSectionProps> = React.memo(
   ({ config, zh, onChange, onPickOid, showToast }) => {
+    const [customOpen, setCustomOpen] = useState(false);
+
+    const handleToggleEnabled = (enabled: boolean) => {
+      onChange({
+        ...config,
+        enabled,
+      });
+    };
+
     const handleResetStandard = () => {
       onChange({
         ...DEFAULT_INTERFACE_CONFIG,
@@ -132,102 +138,100 @@ export const InterfaceConfigSection: React.FC<InterfaceConfigSectionProps> = Rea
     };
 
     return (
-      <section className="mt-4 rounded-xl border border-[#00bceb]/25 bg-[#00bceb]/[.035] p-3.5 dark:bg-[#00bceb]/[.06]">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-semibold text-black/75 dark:text-white/80">
-                {zh ? '接口流量与状态模板（可选覆盖默认 IF-MIB）' : 'Interface Traffic & Status Template'}
-              </span>
-              <span className="rounded bg-[#00bceb]/10 px-1.5 py-0.5 text-[9px] font-medium text-[#008aad] dark:text-[#00bceb]">
-                RFC 2863 / IF-MIB
-              </span>
-            </div>
-            <div className="mt-1 text-[9px] leading-4 text-black/45 dark:text-white/45">
-              {zh
-                ? '启用后，接口表、流量 Counter64、通用错误/丢弃和 CRC/FCS 明细都从此处配置读取；不启用时自动使用内置标准映射。'
-                : 'When enabled, interface identity, Counter64 traffic, generic errors/discards, and CRC/FCS details read from these OIDs.'}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleResetStandard}
-              className="inline-flex items-center gap-1 rounded-md border border-[#00bceb]/30 bg-white/70 px-2 py-1 text-[9px] font-medium text-[#008aad] shadow-sm hover:bg-white dark:bg-white/[.08] dark:text-[#00bceb] dark:hover:bg-white/[.12]"
-              title={zh ? `重置所有 ${INTERFACE_OID_FIELDS.length} 个字段为标准 IF-MIB / EtherLike-MIB 默认值` : `Reset all ${INTERFACE_OID_FIELDS.length} fields to standard IF-MIB / EtherLike-MIB values`}
-            >
-              <RotateCcw size={10} />
-              {zh ? '恢复标准 IF-MIB' : 'Reset to Standard IF-MIB'}
-            </button>
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[#00bceb]/30 bg-white/60 px-2.5 py-1 text-[10px] font-medium text-[#008aad] shadow-sm hover:bg-white dark:bg-white/[.06] dark:text-[#00bceb]">
+      <div className="mt-3.5 rounded-xl border border-black/8 bg-white/40 p-3 shadow-sm dark:border-white/10 dark:bg-white/[.02]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <label className="inline-flex cursor-pointer items-center gap-2">
               <input
                 type="checkbox"
+                aria-label={zh ? '启用接口模板' : 'Enable interface template'}
                 checked={config.enabled}
-                onChange={event => onChange({ ...config, enabled: event.target.checked })}
-                className="rounded text-[#00a9ce] focus:ring-[#00bceb]"
+                onChange={e => handleToggleEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-[#00a9ce] focus:ring-[#00a9ce]"
               />
-              {zh ? '启用接口模板' : 'Enable interface template'}
+              <span className="text-xs font-semibold text-black/80 dark:text-white/85">
+                {zh ? '启用接口流量与状态采集' : 'Enable Interface Traffic & Status Monitoring'}
+              </span>
             </label>
-          </div>
-        </div>
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {INTERFACE_OID_FIELDS.map(field => (
-            <label key={field.key} className="block">
-              <div className="flex items-center justify-between">
-                <span className={tinyLabelClass}>{zh ? field.labelZh : field.labelEn}</span>
+            {config.enabled && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                <ShieldCheck size={12} />
+                {zh ? '标准 IF-MIB (RFC 2863 / Counter64)' : 'Standard IF-MIB / 64-bit'}
+              </span>
+            )}
+          </div>
+
+          {config.enabled && (
+            <div className="flex items-center gap-2">
+              <label className="inline-flex items-center gap-1.5 text-[10px] font-medium text-black/50 dark:text-white/50">
+                <span>{zh ? '流量计数器位宽' : 'Traffic counter width'}</span>
+                <select
+                  aria-label={zh ? '流量计数器位宽' : 'Traffic counter width'}
+                  value={config.counter_mode}
+                  onChange={e => onChange({ ...config, counter_mode: e.target.value as InterfaceCounterMode })}
+                  className="rounded-md border border-black/8 bg-transparent px-1.5 py-1 text-[10px] text-black/70 outline-none dark:border-white/10 dark:text-white/70"
+                >
+                  <option value="auto">{zh ? '自动' : 'Auto'}</option>
+                  <option value="64">64-bit</option>
+                  <option value="32">32-bit</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={() => setCustomOpen(prev => !prev)}
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-[#008aad] hover:underline dark:text-[#00bceb]"
+              >
+                {customOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                {zh ? '自定义私有接口 OID (极少数特殊机型)' : 'Custom Interface OIDs (rare)'}
+              </button>
+
+              {customOpen && (
                 <button
                   type="button"
-                  disabled={!config.enabled}
-                  onClick={() => onPickOid('__interface', field.key)}
-                  className="inline-flex items-center gap-0.5 text-[9px] font-medium text-[#008aad] hover:underline disabled:opacity-40 dark:text-[#00bceb]"
+                  onClick={handleResetStandard}
+                  className="inline-flex items-center gap-1 rounded border border-black/8 px-2 py-0.5 text-[10px] text-black/60 hover:bg-black/5 dark:border-white/10 dark:text-white/60"
+                  title={zh ? '恢复标准 IF-MIB 默认值' : 'Reset to standard IF-MIB'}
                 >
-                  <Search size={10} />
-                  {zh ? '拾取' : 'Pick'}
+                  <RotateCcw size={10} />
+                  {zh ? '重置' : 'Reset'}
                 </button>
-              </div>
-              <input
-                value={config[field.key]}
-                onChange={event => onChange({ ...config, [field.key]: event.target.value })}
-                disabled={!config.enabled}
-                className={inputClass + ' disabled:cursor-not-allowed disabled:opacity-45'}
-                placeholder="1.3.6.1.2.1..."
-              />
-            </label>
-          ))}
+              )}
+            </div>
+          )}
         </div>
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <label className="block">
-            <span className={tinyLabelClass}>{zh ? '流量计数器位宽策略' : 'Traffic counter width policy'}</span>
-            <select
-              aria-label={zh ? '流量计数器位宽策略' : 'Traffic counter width'}
-              value={config.counter_mode}
-              onChange={event =>
-                onChange({
-                  ...config,
-                  counter_mode: event.target.value as InterfaceCounterMode,
-                })
-              }
-              disabled={!config.enabled}
-              className={selectClass + ' disabled:cursor-not-allowed disabled:opacity-45'}
-            >
-              <option value="auto">
-                {zh ? '自动选择：优先成对 64 位，缺失时自动回退 32 位' : 'Auto: prefer paired 64-bit, fall back to 32-bit'}
-              </option>
-              <option value="32">Counter32（仅使用 32 位）</option>
-              <option value="64">Counter64（仅使用 64 位）</option>
-            </select>
-          </label>
-          <div className="rounded-md bg-white/50 px-2.5 py-2 text-[9px] leading-4 text-black/50 dark:bg-white/[.04] dark:text-white/50">
-            {zh
-              ? '💡 提示：入方向与出方向必须使用同等位宽计算速率；采集引擎具备环绕补偿，不会跨位宽错算。'
-              : 'Ingress and egress must use matching counter width.'}
+        {/* Collapsible custom interface OID grid */}
+        {config.enabled && customOpen && (
+          <div className="mt-3 grid gap-2.5 border-t border-black/6 pt-3 sm:grid-cols-2 lg:grid-cols-3 dark:border-white/8">
+            {INTERFACE_OID_FIELDS.map(item => (
+              <div key={item.key} className="relative">
+                <label className="block text-[10px] font-medium text-black/50 dark:text-white/50">
+                  {zh ? item.labelZh : item.labelEn}
+                </label>
+                <div className="relative mt-1">
+                  <input
+                    value={String(config[item.key] || '')}
+                    onChange={e => onChange({ ...config, [item.key]: e.target.value })}
+                    className={`${inputClass} pr-6`}
+                    placeholder="1.3.6.1.2.1..."
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onPickOid('__interface', item.key)}
+                    className="absolute right-1.5 top-2 text-[#008aad] hover:text-[#00bceb] dark:text-[#00bceb]"
+                    title={zh ? '从 MIB 拾取' : 'Pick OID'}
+                  >
+                    <Search size={11} />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
-      </section>
+        )}
+      </div>
     );
   },
 );
 
-InterfaceConfigSection.displayName = 'InterfaceConfigSection';
+export default InterfaceConfigSection;

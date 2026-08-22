@@ -32,6 +32,7 @@ import {
   InterfaceTestResult,
 } from '../SnmpMib/components/MetricProfileEditor';
 import { CandidateDevice } from '../SnmpMib/components/LiveWalkInspector';
+import type { InspectorTab } from '../SnmpMib/components/LiveWalkInspector';
 
 interface MetricProfileListResponse {
   success: boolean;
@@ -162,6 +163,9 @@ const MetricOidProfilesModal: React.FC<Props> = ({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [initialLiveInspectorOpen, setInitialLiveInspectorOpen] = useState(false);
+  const [initialInspectorTab, setInitialInspectorTab] = useState<InspectorTab>('snmpwalk');
+  const [autoRunHardwareTest, setAutoRunHardwareTest] = useState(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -269,6 +273,9 @@ const MetricOidProfilesModal: React.FC<Props> = ({
 
   const resetForm = () => {
     setEditingId(null);
+    setInitialLiveInspectorOpen(false);
+    setInitialInspectorTab('snmpwalk');
+    setAutoRunHardwareTest(false);
     setForm({
       vendor: '',
       model: '',
@@ -282,11 +289,19 @@ const MetricOidProfilesModal: React.FC<Props> = ({
 
   const openCreate = () => {
     resetForm();
+    setInitialLiveInspectorOpen(true);
+    setInitialInspectorTab('snmpwalk');
     setEditorOpen(true);
   };
 
-  const startEdit = async (profile: MetricOidProfile) => {
+  const startEdit = async (
+    profile: MetricOidProfile,
+    options: { openLiveInspector?: boolean; initialTab?: InspectorTab; autoRunHardwareTest?: boolean } = {},
+  ) => {
     setEditingId(profile.profile_id);
+    setInitialLiveInspectorOpen(Boolean(options.openLiveInspector));
+    setInitialInspectorTab(options.initialTab || 'snmpwalk');
+    setAutoRunHardwareTest(Boolean(options.autoRunHardwareTest));
     const rows = rowsFromProfile(profile);
     setForm({
       vendor: profile.vendor,
@@ -294,6 +309,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({
       metrics: rows,
       interfaceConfig: interfaceConfigFromProfile(profile),
     });
+    setCandidateDevices([]);
     setLastTestDetails(null);
     setEditorOpen(true);
 
@@ -314,7 +330,24 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     }
   };
 
-  const handleClonePreset = (preset: ModelPresetItem) => {
+  const handleClonePreset = (
+    preset: ModelPresetItem,
+    options: {
+      openLiveInspector?: boolean;
+      initialTab?: InspectorTab;
+      autoRunHardwareTest?: boolean;
+      candidateDevices?: CandidateDevice[];
+    } = {},
+  ) => {
+    if (preset.testable === false || Object.keys(preset.metric_definitions || {}).length === 0) {
+      showToast(
+        zh
+          ? `【${preset.vendor} ${preset.model}】目前只有 MD 文档范围，需先核验具体 OID`
+          : `[${preset.vendor} ${preset.model}] is documentation-only; verify concrete OIDs first`,
+        'info',
+      );
+      return;
+    }
     const rows: MetricRow[] = [];
     Object.entries(preset.metric_definitions || {}).forEach(([key, def]: [string, any]) => {
       rows.push({
@@ -324,6 +357,9 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     });
 
     setEditingId(null);
+    setInitialLiveInspectorOpen(Boolean(options.openLiveInspector));
+    setInitialInspectorTab(options.initialTab || 'snmpwalk');
+    setAutoRunHardwareTest(Boolean(options.autoRunHardwareTest));
     setForm({
       vendor: preset.vendor,
       model: preset.model,
@@ -332,7 +368,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({
         ? ({ ...DEFAULT_INTERFACE_CONFIG, ...preset.interface_config } as InterfaceOidConfig)
         : { ...DEFAULT_INTERFACE_CONFIG },
     });
-    setCandidateDevices([]);
+    setCandidateDevices(options.candidateDevices || []);
     setLastTestDetails(null);
     setEditorOpen(true);
     showToast(
@@ -343,27 +379,16 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     );
   };
 
-  const handleCloneProfile = (profile: MetricOidProfile) => {
-    const rows = rowsFromProfile(profile);
-    setEditingId(null);
-    setForm({
-      vendor: profile.vendor,
-      model: `${profile.model} (副本)`,
-      metrics: rows,
-      interfaceConfig: interfaceConfigFromProfile(profile),
-    });
-    setCandidateDevices([]);
-    setLastTestDetails(null);
-    setEditorOpen(true);
-    showToast(
-      zh
-        ? `已克隆【${profile.model}】配置，请修改精确型号后保存`
-        : `Cloned [${profile.model}], edit exact model name and save`,
-      'info',
-    );
-  };
-
   const handleApplyPreset = (preset: ModelPresetItem) => {
+    if (preset.testable === false || Object.keys(preset.metric_definitions || {}).length === 0) {
+      showToast(
+        zh
+          ? `【${preset.vendor} ${preset.model}】目前只有 MD 文档范围，需先核验具体 OID`
+          : `[${preset.vendor} ${preset.model}] is documentation-only; verify concrete OIDs first`,
+        'info',
+      );
+      return;
+    }
     const rows: MetricRow[] = [];
     Object.entries(preset.metric_definitions || {}).forEach(([key, def]: [string, any]) => {
       rows.push({
@@ -372,6 +397,8 @@ const MetricOidProfilesModal: React.FC<Props> = ({
       });
     });
 
+    setInitialInspectorTab('snmpwalk');
+    setAutoRunHardwareTest(false);
     setForm(prev => ({
       vendor: preset.vendor || prev.vendor,
       model: preset.model || prev.model,
@@ -386,33 +413,6 @@ const MetricOidProfilesModal: React.FC<Props> = ({
       zh ? `已套用预置模板：${preset.vendor} ${preset.model}` : `Applied preset: ${preset.vendor} ${preset.model}`,
       'success',
     );
-  };
-
-  const handleAutoMatchFromRow = async (profile: MetricOidProfile) => {
-    try {
-      const params = new URLSearchParams({ vendor: profile.vendor.trim(), model: profile.model.trim() });
-      const res = await apiRequest<{ success: boolean; matched: boolean; data: any }>(
-        `/api/platform-registry/mibs/auto-match?${params.toString()}`,
-      );
-      if (res.matched && res.data?.preset) {
-        handleApplyPreset({
-          ...res.data.preset,
-          vendor: profile.vendor,
-          model: profile.model,
-        });
-        showToast(
-          zh
-            ? `✨ 已根据【${profile.model}】智能匹配到【${res.data.matched_series || res.data.preset.model}】MIB 规则`
-            : `Auto-matched [${res.data.matched_series || res.data.preset.model}] for ${profile.model}`,
-          'success',
-        );
-      } else {
-        void startEdit(profile);
-        showToast(zh ? '未匹配到预设型号系列，请手动配置' : 'No pre-set series matched, configure manually', 'info');
-      }
-    } catch {
-      void startEdit(profile);
-    }
   };
 
   const openOidPicker = (metricKey: string, field: string) => {
@@ -771,8 +771,8 @@ const MetricOidProfilesModal: React.FC<Props> = ({
             </div>
             <p className="mt-1 text-[11px] text-black/45 dark:text-white/45">
               {zh
-                ? '厂商同步资产管理共享目录；按精确型号维护完整的 CPU、内存、环境与接口采集规则，支持 MIB 拾取与官方预置。'
-                : 'Vendors use shared asset catalog. Maintain complete hardware and IF-MIB contract by exact model.'}
+                ? '按厂商与产品族聚合展示完整适配型号；第二列仅呈现采集指标，末列提供 SNMP Walk 与关联设备入口。'
+                : 'Group supported models by vendor and product family; keep metrics, SNMP Walk, and linked devices visible.'}
             </p>
           </div>
           {!embedded && (
@@ -796,7 +796,6 @@ const MetricOidProfilesModal: React.FC<Props> = ({
             page={page}
             pageSize={pageSize}
             search={search}
-            testingId={testingId}
             language={language}
             onSearchChange={setSearch}
             onPageChange={setPage}
@@ -813,11 +812,34 @@ const MetricOidProfilesModal: React.FC<Props> = ({
             onOpenMibs={() => setMibModalOpen(true)}
             onEdit={startEdit}
             onDeleteProfile={handleDeleteFromRow}
-            onCloneProfile={handleCloneProfile}
-            onClonePreset={handleClonePreset}
-            onAutoMatch={handleAutoMatchFromRow}
+            onOpenSnmpWalk={(item, target) => {
+              if ('profile_id' in item) {
+                void startEdit(item, { openLiveInspector: true, initialTab: 'snmpwalk' });
+              } else {
+                handleClonePreset(item, {
+                  openLiveInspector: true,
+                  initialTab: 'snmpwalk',
+                  candidateDevices: target ? [target] : [],
+                });
+              }
+            }}
+            onOpenCollectionResult={(item, target) => {
+              if ('profile_id' in item) {
+                void startEdit(item, {
+                  openLiveInspector: true,
+                  initialTab: 'validate',
+                  autoRunHardwareTest: true,
+                });
+              } else {
+                handleClonePreset(item, {
+                  openLiveInspector: true,
+                  initialTab: 'validate',
+                  autoRunHardwareTest: Boolean(target),
+                  candidateDevices: target ? [target] : [],
+                });
+              }
+            }}
             onValidateMapping={validateMapping}
-            onTestProfile={testProfile}
           />
         </div>
       </div>
@@ -830,6 +852,9 @@ const MetricOidProfilesModal: React.FC<Props> = ({
           saving={saving}
           language={language}
           candidateDevices={candidateDevices}
+          initialLiveInspectorOpen={initialLiveInspectorOpen}
+          initialInspectorTab={initialInspectorTab}
+          autoRunHardwareTest={autoRunHardwareTest}
           autoMatchResult={autoMatchResult}
           lastTestDetails={lastTestDetails}
           onChangeForm={setForm}

@@ -76,7 +76,10 @@ const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ languag
 
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className = '' }) => {
   return (
-    <div className={`markdown-body space-y-3 leading-relaxed text-sm ${className}`}>
+    <div
+      className={`markdown-body select-text space-y-3 leading-relaxed text-sm ${className}`}
+      style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

@@ -1,7 +1,8 @@
-"""SNMP Preset Profiles and Built-in MIB Seeder.
+"""MD-backed SNMP preset profiles and built-in MIB seeder.
 
-Provides out-of-the-box model metric templates for major network vendors (Cisco,
-Huawei, H3C, Arista, Ruijie, Juniper, Fortinet, Raisecom) and seeds standard RFC / vendor MIB definitions.
+The official model template catalog is sourced from the vendor OID document
+provided by the operator.  Standard/vendor MIB definitions are seeded
+separately and are not model-template data.
 """
 
 from __future__ import annotations
@@ -13,867 +14,11 @@ from typing import Any
 
 from database import get_db_connection
 from services.snmp_mib_service import deduplicate_builtin_mibs, parse_and_store_mib
+from services.snmp_md_preset_catalog import get_md_official_model_presets
 
 logger = logging.getLogger(__name__)
 
-OFFICIAL_MODEL_PRESETS: list[dict[str, Any]] = [
-    # ── Cisco IOS / IOS-XE (Catalyst 2960 / 3850 / 9300 / ISR 4000) ──
-    {
-        "vendor": "Cisco",
-        "model": "Catalyst 9300",
-        "category": "Campus Switch",
-        "description": "Cisco Catalyst 9300 Series Enterprise Switch (IOS-XE)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.9.9.109.1.1.1.1.8",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "used_total_percent",
-                "used_oid": "1.3.6.1.4.1.9.9.221.1.1.1.1.18",
-                "total_oid": "1.3.6.1.4.1.9.9.221.1.1.1.1.17",
-                "aggregation": "sum",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.9.9.13.1.3.1.3",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-            "fan": {
-                "mode": "status_code",
-                "oid": "1.3.6.1.4.1.9.9.13.1.4.1.3",
-                "status_ok_values": [1],
-                "status_warning_values": [3],
-                "status_fail_values": [2, 4],
-                "aggregation": "first",
-                "unit": "bool",
-            },
-            "power_supply": {
-                "mode": "status_code",
-                "oid": "1.3.6.1.4.1.9.9.13.1.5.1.3",
-                "status_ok_values": [1],
-                "status_warning_values": [],
-                "status_fail_values": [2, 3, 4, 5],
-                "aggregation": "first",
-                "unit": "bool",
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "auto",
-        },
-    },
-    {
-        "vendor": "Cisco",
-        "model": "Catalyst 3850",
-        "category": "Campus Switch",
-        "description": "Cisco Catalyst 3850 Series Stackable Switch (IOS-XE)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.9.9.109.1.1.1.1.8",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "used_total_percent",
-                "used_oid": "1.3.6.1.4.1.9.9.221.1.1.1.1.18",
-                "total_oid": "1.3.6.1.4.1.9.9.221.1.1.1.1.17",
-                "aggregation": "sum",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.9.9.13.1.3.1.3",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "auto",
-        },
-    },
-    {
-        "vendor": "Cisco",
-        "model": "Catalyst 2960",
-        "category": "Campus Switch",
-        "description": "Cisco Catalyst 2960 Series Layer 2 Switch (Classic IOS)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.9.9.109.1.1.1.1.8",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "used_free_percent",
-                "used_oid": "1.3.6.1.4.1.9.9.48.1.1.1.5",
-                "free_oid": "1.3.6.1.4.1.9.9.48.1.1.1.6",
-                "aggregation": "sum",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.9.9.13.1.3.1.3",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "auto",
-        },
-    },
-    {
-        "vendor": "Cisco",
-        "model": "Nexus 9000",
-        "category": "Data Center Switch",
-        "description": "Cisco Nexus 9000 Series Data Center Switch (NX-OS)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.9.9.109.1.1.1.1.8",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.9.9.305.1.1.2.0",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.2.1.99.1.1.1.4",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "64",
-        },
-    },
-
-    # ── Huawei VRP (S5700 / S6700 / CE6800 / CE12800 / AR6100) ──
-    {
-        "vendor": "Huawei",
-        "model": "S5700",
-        "category": "Campus Switch",
-        "description": "Huawei S5700 Series Gigabit Campus Switch (VRP)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.7",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.11",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-            "fan": {
-                "mode": "status_code",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.10.1.7",
-                "status_ok_values": [1],
-                "status_warning_values": [],
-                "status_fail_values": [2],
-                "aggregation": "first",
-                "unit": "bool",
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "auto",
-        },
-    },
-    {
-        "vendor": "Huawei",
-        "model": "S6700",
-        "category": "Campus Core Switch",
-        "description": "Huawei S6700 10GE Core/Aggregation Campus Switch (VRP)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.7",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.11",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "64",
-        },
-    },
-    {
-        "vendor": "Huawei",
-        "model": "CE6800",
-        "category": "Data Center Switch",
-        "description": "Huawei CloudEngine 6800 Data Center Switch (VRP8)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.5",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.7",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.2011.5.25.31.1.1.1.1.11",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "64",
-        },
-    },
-
-    # ── H3C Comware (S5500 / S6800 / S10500) ──
-    {
-        "vendor": "H3C",
-        "model": "S5500",
-        "category": "Campus Switch",
-        "description": "H3C S5500 Series Gigabit Campus Switch (Comware V7)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.6",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.8",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.12",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "auto",
-        },
-    },
-    {
-        "vendor": "H3C",
-        "model": "S6800",
-        "category": "Data Center Switch",
-        "description": "H3C S6800 10G/40G Data Center Switch (Comware V7)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.6",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.8",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.25506.2.6.1.1.1.1.12",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "if_hc_in_ucast_pkts_oid": "1.3.6.1.2.1.31.1.1.1.7",
-            "if_hc_in_multicast_pkts_oid": "1.3.6.1.2.1.31.1.1.1.8",
-            "if_hc_in_broadcast_pkts_oid": "1.3.6.1.2.1.31.1.1.1.9",
-            "if_hc_out_ucast_pkts_oid": "1.3.6.1.2.1.31.1.1.1.11",
-            "if_hc_out_multicast_pkts_oid": "1.3.6.1.2.1.31.1.1.1.12",
-            "if_hc_out_broadcast_pkts_oid": "1.3.6.1.2.1.31.1.1.1.13",
-            "dot3_hc_fcs_errors_oid": "1.3.6.1.2.1.10.7.11.1.2",
-            "dot3_hc_frame_too_long_oid": "1.3.6.1.2.1.10.7.11.1.4",
-            "dot3_hc_internal_mac_rx_errors_oid": "1.3.6.1.2.1.10.7.11.1.5",
-            "dot3_hc_symbol_errors_oid": "1.3.6.1.2.1.10.7.11.1.6",
-            "dot3_fcs_errors_oid": "1.3.6.1.2.1.10.7.2.1.3",
-            "counter_mode": "64",
-        },
-    },
-
-    # ── Arista EOS ──
-    {
-        "vendor": "Arista",
-        "model": "7050X",
-        "category": "Data Center Switch",
-        "description": "Arista 7050X Series 10G/40G Data Center Switch (EOS)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.2.1.25.3.3.1.2",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "used_total_percent",
-                "used_oid": "1.3.6.1.2.1.25.2.3.1.6",
-                "total_oid": "1.3.6.1.2.1.25.2.3.1.5",
-                "aggregation": "sum",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.2.1.99.1.1.1.4",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "64",
-        },
-    },
-
-    # ── Ruijie (RG-S5750 / RG-S6220) ──
-    {
-        "vendor": "Ruijie",
-        "model": "RG-S5750",
-        "category": "Campus Switch",
-        "description": "Ruijie RG-S5750 Series Gigabit Switch (RGOS)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.3",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.2",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.4881.1.1.10.2.35.1.1.1.4",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "auto",
-        },
-    },
-
-    # ── Juniper Junos (EX4300 / QFX5100 / MX240) ──
-    {
-        "vendor": "Juniper",
-        "model": "EX4300",
-        "category": "Campus Switch",
-        "description": "Juniper EX4300 Series Campus Switch (Junos OS)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.2636.3.1.13.1.8",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.2636.3.1.13.1.11",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "temperature": {
-                "mode": "direct_value",
-                "oid": "1.3.6.1.4.1.2636.3.1.13.1.7",
-                "aggregation": "max",
-                "unit": "°C",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "auto",
-        },
-    },
-
-    # ── Fortinet FortiGate ──
-    {
-        "vendor": "Fortinet",
-        "model": "FortiGate-100F",
-        "category": "Firewall / Gateway",
-        "description": "Fortinet FortiGate 100F Next-Generation Firewall (FortiOS)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.12356.101.4.1.3.0",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-            "memory": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.4.1.12356.101.4.1.4.0",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "if_name_oid": "1.3.6.1.2.1.31.1.1.1.1",
-            "if_descr_oid": "1.3.6.1.2.1.2.2.1.2",
-            "if_alias_oid": "1.3.6.1.2.1.31.1.1.1.18",
-            "if_oper_status_oid": "1.3.6.1.2.1.2.2.1.8",
-            "if_high_speed_oid": "1.3.6.1.2.1.31.1.1.1.15",
-            "if_speed_oid": "1.3.6.1.2.1.2.2.1.5",
-            "if_last_change_oid": "1.3.6.1.2.1.2.2.1.9",
-            "if_in_octets_oid": "1.3.6.1.2.1.2.2.1.10",
-            "if_out_octets_oid": "1.3.6.1.2.1.2.2.1.16",
-            "if_hc_in_octets_oid": "1.3.6.1.2.1.31.1.1.1.6",
-            "if_hc_out_octets_oid": "1.3.6.1.2.1.31.1.1.1.10",
-            "if_in_errors_oid": "1.3.6.1.2.1.2.2.1.14",
-            "if_out_errors_oid": "1.3.6.1.2.1.2.2.1.20",
-            "if_in_discards_oid": "1.3.6.1.2.1.2.2.1.13",
-            "if_out_discards_oid": "1.3.6.1.2.1.2.2.1.19",
-            "if_in_ucast_oid": "1.3.6.1.2.1.2.2.1.11",
-            "if_out_ucast_oid": "1.3.6.1.2.1.2.2.1.17",
-            "counter_mode": "64",
-        },
-    },
-    # ── Raisecom ISCOM S5600-EI ──
-    # The supplied ROS output identifies the software/model, but does not
-    # prove a proprietary sensor OID.  Keep the preset on standard MIBs;
-    # vendor-specific temperature/fan/PSU metrics require a verified model
-    # profile after an SNMP walk.
-    {
-        "vendor": "Raisecom",
-        "model": "ISCOM S5600-28C-EI",
-        "category": "Campus Switch",
-        "description": "Raisecom ISCOM S5600-28C-EI (ROS 5.2.1 baseline; standard IF-MIB/HOST-RESOURCES-MIB)",
-        "metric_definitions": {
-            "cpu": {
-                "mode": "direct_percent",
-                "oid": "1.3.6.1.2.1.25.3.3.1.2",
-                "aggregation": "average",
-                "unit": "%",
-                "scale": 1,
-                "offset": 0,
-            },
-        },
-        "interface_config": {
-            "enabled": True,
-            "counter_mode": "auto",
-        },
-    },
-]
-
-
-def _derive_series_preset(
-    *,
-    base_vendor: str,
-    base_model: str,
-    model: str,
-    category: str,
-    description: str,
-) -> dict[str, Any]:
-    """Create a series-level preset while keeping metric definitions isolated.
-
-    The domestic vendors expose the same core ENTITY/DEVICE MIB objects across
-    many switch series.  Reusing a known-good vendor baseline keeps the catalog
-    compact while ``deepcopy`` prevents later edits from mutating the source
-    preset by reference.
-    """
-    base = next(
-        item for item in OFFICIAL_MODEL_PRESETS
-        if item["vendor"] == base_vendor and item["model"] == base_model
-    )
-    derived = deepcopy(base)
-    derived.update({"model": model, "category": category, "description": description})
-    return derived
-
-
-# The catalog intentionally covers the common domestic switch series without
-# turning every SKU into a separate template.  Exact device variants can still
-# be refined from the MIB picker and SNMP WALK verification in the editor.
-OFFICIAL_MODEL_PRESETS.extend([
-    _derive_series_preset(
-        base_vendor="Huawei",
-        base_model="S5700",
-        model="S5720",
-        category="Campus Switch",
-        description="Huawei S5720 Series Gigabit Campus Switch (VRP)",
-    ),
-    _derive_series_preset(
-        base_vendor="Huawei",
-        base_model="S5700",
-        model="S5735",
-        category="Campus Switch",
-        description="Huawei S5735 Series Gigabit Campus Switch (VRP)",
-    ),
-    _derive_series_preset(
-        base_vendor="H3C",
-        base_model="S5500",
-        model="S5130",
-        category="Access Switch",
-        description="H3C S5130 Series Gigabit Access Switch (Comware)",
-    ),
-    _derive_series_preset(
-        base_vendor="H3C",
-        base_model="S5500",
-        model="S5560X",
-        category="Aggregation Switch",
-        description="H3C S5560X Series Aggregation Switch (Comware)",
-    ),
-    _derive_series_preset(
-        base_vendor="H3C",
-        base_model="S6800",
-        model="S6520X",
-        category="Aggregation/Core Switch",
-        description="H3C S6520X Series 10GE Aggregation Switch (Comware)",
-    ),
-    _derive_series_preset(
-        base_vendor="Ruijie",
-        base_model="RG-S5750",
-        model="RG-S2910",
-        category="Access Switch",
-        description="Ruijie RG-S2910 Series Access Switch (RGOS)",
-    ),
-    _derive_series_preset(
-        base_vendor="Ruijie",
-        base_model="RG-S5750",
-        model="RG-S5300",
-        category="Aggregation Switch",
-        description="Ruijie RG-S5300 Series Aggregation Switch (RGOS)",
-    ),
-    _derive_series_preset(
-        base_vendor="Ruijie",
-        base_model="RG-S5750",
-        model="RG-S6000",
-        category="Aggregation/Core Switch",
-        description="Ruijie RG-S6000 Series Aggregation Switch (RGOS)",
-    ),
-    _derive_series_preset(
-        base_vendor="Ruijie",
-        base_model="RG-S5750",
-        model="RG-S6220",
-        category="Data Center Switch",
-        description="Ruijie RG-S6220 Series Data Center Switch (RGOS)",
-    ),
-])
-
+OFFICIAL_MODEL_PRESETS: list[dict[str, Any]] = get_md_official_model_presets()
 
 # Built-in core standard MIB definitions (RFC1213, IF-MIB, HOST-RESOURCES, CISCO, HUAWEI, HH3C, ARISTA, JUNIPER, FORTINET, RUIJIE)
 BUILTIN_MIB_SEEDS = [
@@ -1523,144 +668,129 @@ def reset_builtin_mibs() -> int:
 
 
 def match_profile_for_model(vendor: str, model: str) -> dict[str, Any] | None:
-    """Auto-match and assemble recommended SNMP metric definitions based on asset vendor and model."""
-    v_clean = vendor.strip().lower()
-    m_clean = model.strip().lower()
+    """Match an asset to one of the MD-backed vendor/model templates.
 
-    # Asset imports may retain the Chinese display name.  Canonicalize only
-    # this known alias so the exact/series matching below shares one preset.
-    if v_clean in {"瑞斯康达", "瑞斯康达通信"}:
-        v_clean = "raisecom"
+    The matcher deliberately uses the same MD catalog that the preset API
+    exposes.  It does not infer an unlisted vendor or manufacture a
+    model-specific OID set.
+    """
 
+    v_clean = str(vendor or "").strip().lower()
+    m_clean = str(model or "").strip().lower()
     if not v_clean and not m_clean:
         return None
 
-    # 1. Exact model match from pre-built catalog
+    aliases = {
+        "华三": "h3c",
+        "新华三": "h3c",
+        "华为": "huawei",
+        "中兴": "zte",
+        "思科": "cisco",
+    }
+    for alias, canonical in aliases.items():
+        if alias in v_clean:
+            v_clean = canonical
+            break
+
+    def preset_for(preset_id: str, model_hint: str = "") -> dict[str, Any] | None:
+        candidates = [
+            item
+            for item in OFFICIAL_MODEL_PRESETS
+            if item.get("id") == preset_id or item.get("family_id") == preset_id
+        ]
+        if not candidates:
+            return None
+
+        # Prefer an explicitly named model row when the asset model contains
+        # the series marker.  Keep the V5 row separate from the V7 OIDs.
+        hint = model_hint.casefold()
+        if "v5" in hint:
+            v5 = next((item for item in candidates if "v5" in str(item.get("model", "")).casefold()), None)
+            if v5:
+                return v5
+        for item in candidates:
+            candidate_model = str(item.get("model", "")).casefold()
+            if candidate_model and candidate_model in hint and item.get("testable", True):
+                return item
+        return next((item for item in candidates if item.get("testable", True)), candidates[0])
+
+    def result(
+        preset_id: str,
+        match_type: str,
+        confidence: float,
+        matched_series: str,
+    ) -> dict[str, Any] | None:
+        preset = preset_for(preset_id, m_clean)
+        if not preset:
+            return None
+        return {
+            "match_type": match_type,
+            "confidence": confidence,
+            "matched_series": matched_series,
+            "preset": preset,
+        }
+
+    # Exact matches remain supported for the compact MD model labels.
     for preset in OFFICIAL_MODEL_PRESETS:
-        p_vendor = preset["vendor"].strip().lower()
-        p_model = preset["model"].strip().lower()
+        p_vendor = str(preset.get("vendor", "")).strip().lower()
+        p_model = str(preset.get("model", "")).strip().lower()
         if (not v_clean or p_vendor == v_clean) and p_model == m_clean:
             return {
                 "match_type": "exact",
                 "confidence": 1.0,
+                "matched_series": preset["model"],
                 "preset": preset,
             }
 
-    # 2. Heuristic series / prefix matching rules
-    # Cisco rules
-    if "cisco" in v_clean or any(kw in m_clean for kw in ["c93", "c94", "c95", "c92", "c38", "c36", "c29", "ws-c", "nexus", "catalyst", "asr", "isr"]):
-        if any(x in m_clean for x in ["9300", "9200", "9400", "9500", "c93", "c92", "c94", "c95", "catalyst 9"]):
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "Catalyst 9300"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "Catalyst 9000 (IOS-XE)", "preset": target}
-        if any(x in m_clean for x in ["3850", "3650", "c38", "c36"]):
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "Catalyst 3850"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "Catalyst 3850 (IOS-XE)", "preset": target}
-        if any(x in m_clean for x in ["2960", "3750", "3560", "2950", "c29"]):
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "Catalyst 2960"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.90, "matched_series": "Catalyst 2960/3750 (Classic IOS)", "preset": target}
-        if any(x in m_clean for x in ["nexus", "n9k", "n7k", "n5k", "n3k", "9000", "9300-gx"]):
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "Nexus 9000"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "Nexus (NX-OS)", "preset": target}
-        # Fallback Cisco default (IOS-XE Catalyst 9300 profile)
-        fallback = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "Catalyst 9300"), None)
-        if fallback:
-            return {"match_type": "vendor_default", "confidence": 0.85, "matched_series": "Cisco Standard (IOS-XE)", "preset": fallback}
+    h3c_markers = (
+        "s5000", "s5110", "s5120", "s5130", "s5135", "s5170", "s5500",
+        "s5800", "s6300", "s6500", "s6800", "s10500",
+        "comware",
+    )
+    if v_clean == "h3c" or "h3c" in v_clean or any(marker in m_clean for marker in h3c_markers):
+        confidence = 0.95 if any(marker in m_clean for marker in h3c_markers) else 0.88
+        return result(
+            "md-h3c-comware-v7",
+            "series_inferred" if confidence > 0.9 else "vendor_default",
+            confidence,
+            "H3C Comware V7（MD 厂商模板）",
+        )
 
-    # Huawei rules
-    if "huawei" in v_clean or any(kw in m_clean for kw in ["s57", "s67", "ce68", "ce128"]):
-        if any(x in m_clean for x in ["ce68", "ce128", "ce88", "ce58", "cloudengine"]):
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "CE6800"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "Huawei CloudEngine Series", "preset": target}
-        if "s5735" in m_clean:
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "S5735"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "Huawei S5735 Campus Series", "preset": target}
-        if "s5720" in m_clean:
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "S5720"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "Huawei S5720 Campus Series", "preset": target}
-        if any(x in m_clean for x in ["s67", "s127", "s77", "s97", "6700", "6720", "6730"]):
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "S6700"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "Huawei S6700 Core Series", "preset": target}
-        # Default Huawei S5700 series
-        target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "S5700"), None)
-        if target:
-            return {"match_type": "vendor_default", "confidence": 0.90, "matched_series": "Huawei S5700/Campus Series", "preset": target}
+    huawei_markers = (
+        "s3700", "s5700", "s6700", "s7700", "s8700", "s9700", "s12700",
+        "s16700", "vrp",
+    )
+    if v_clean == "huawei" or "huawei" in v_clean or any(marker in m_clean for marker in huawei_markers):
+        confidence = 0.95 if any(marker in m_clean for marker in huawei_markers) else 0.88
+        return result(
+            "md-huawei-vrp-switch",
+            "series_inferred" if confidence > 0.9 else "vendor_default",
+            confidence,
+            "Huawei VRP Switch（MD 厂商模板）",
+        )
 
-    # H3C rules
-    if "h3c" in v_clean or any(kw in m_clean for kw in ["s55", "s68", "s5130", "s5560", "s6520", "s10500"]):
-        if any(x in m_clean for x in ["s68", "s105", "s125", "6800", "10500"]):
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "S6800"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "H3C S6800 Data Center Series", "preset": target}
-        if "s6520" in m_clean:
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "S6520X"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "H3C S6520X Aggregation Series", "preset": target}
-        if "s5560" in m_clean:
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "S5560X"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "H3C S5560X Aggregation Series", "preset": target}
-        if "s5130" in m_clean:
-            target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "S5130"), None)
-            if target:
-                return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": "H3C S5130 Access Series", "preset": target}
-        target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "S5500"), None)
-        if target:
-            return {"match_type": "vendor_default", "confidence": 0.90, "matched_series": "H3C S5500/Campus Series", "preset": target}
+    if v_clean == "zte" or "zte" in v_clean or "zxr10" in m_clean:
+        confidence = 0.95 if "zxr10" in m_clean else 0.88
+        return result(
+            "md-zte-zxr10-switch",
+            "series_inferred" if confidence > 0.9 else "vendor_default",
+            confidence,
+            "ZTE ZXR10（MD 厂商模板）",
+        )
 
-    # Arista rules
-    if "arista" in v_clean or any(kw in m_clean for kw in ["7050", "7280", "7060", "dcs-"]):
-        target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "7050X"), None)
-        if target:
-            return {"match_type": "vendor_default", "confidence": 0.95, "matched_series": "Arista 7050X EOS Series", "preset": target}
+    if "nexus" in m_clean:
+        # Nexus is intentionally not part of the MD-backed official catalog:
+        # the supplied MD does not provide a verified numeric OID set.  Do
+        # not fall through to the generic Cisco Catalyst recommendation.
+        return None
 
-    # Ruijie rules
-    if "ruijie" in v_clean or any(kw in m_clean for kw in ["s5750", "s6220", "rg-s"]):
-        for marker, target_model, series_name in (
-            ("s2910", "RG-S2910", "Ruijie RG-S2910 Access Series"),
-            ("s5300", "RG-S5300", "Ruijie RG-S5300 Aggregation Series"),
-            ("s6000", "RG-S6000", "Ruijie RG-S6000 Aggregation Series"),
-            ("s6220", "RG-S6220", "Ruijie RG-S6220 Data Center Series"),
-            ("s5750", "RG-S5750", "Ruijie RG-S5750 Campus Series"),
-        ):
-            if marker in m_clean:
-                target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == target_model), None)
-                if target:
-                    return {"match_type": "series_inferred", "confidence": 0.95, "matched_series": series_name, "preset": target}
-        target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "RG-S5750"), None)
-        if target:
-            return {"match_type": "vendor_default", "confidence": 0.90, "matched_series": "Ruijie RGOS Series", "preset": target}
-
-    # Raisecom ROS rules.  Keep the exact S5600-28C-EI preset authoritative;
-    # other S5600-EI model suffixes receive the same standard-MIB baseline but
-    # are marked as inferred rather than claiming a verified model OID.
-    if "raisecom" in v_clean or "iscom s5600" in m_clean:
-        target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "ISCOM S5600-28C-EI"), None)
-        if target and "s5600" in m_clean:
-            return {
-                "match_type": "series_inferred",
-                "confidence": 0.90,
-                "matched_series": "Raisecom ISCOM S5600-EI (ROS)",
-                "preset": target,
-            }
-
-    # Juniper rules
-    if "juniper" in v_clean or any(kw in m_clean for kw in ["ex43", "qfx", "mx240", "ex2"]):
-        target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "EX4300"), None)
-        if target:
-            return {"match_type": "vendor_default", "confidence": 0.90, "matched_series": "Juniper Junos Series", "preset": target}
-
-    # Fortinet rules
-    if "fortinet" in v_clean or any(kw in m_clean for kw in ["fortigate", "fg-", "100f", "200f", "60f"]):
-        target = next((p for p in OFFICIAL_MODEL_PRESETS if p["model"] == "FortiGate-100F"), None)
-        if target:
-            return {"match_type": "vendor_default", "confidence": 0.90, "matched_series": "Fortinet FortiOS Series", "preset": target}
+    if v_clean == "cisco" or "cisco" in v_clean or "catalyst" in m_clean:
+        confidence = 0.95 if "catalyst" in m_clean else 0.88
+        return result(
+            "md-cisco-catalyst-categraf",
+            "series_inferred" if confidence > 0.9 else "vendor_default",
+            confidence,
+            "Cisco Catalyst Categraf（MD 厂商模板）",
+        )
 
     return None

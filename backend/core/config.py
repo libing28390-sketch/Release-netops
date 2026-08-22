@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     AI_ENABLED: bool = False
     EXTERNAL_AI_ENABLED: bool = False
     AI_KILL_SWITCH: bool = False
+    # Development-only raw egress test gate. The runtime switch is separate,
+    # in-memory, administrator-controlled, and automatically expires.
+    AI_DEV_PASSTHROUGH_ENABLED: bool = False
+    AI_DEV_PASSTHROUGH_MAX_MINUTES: int = 15
     AI_SECURITY_VAULT_TTL_SECONDS: int = 3600
     AI_MAX_PAYLOAD_BYTES: int = 256000
     AI_PROVIDER_ALLOWLIST: str = "deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen"

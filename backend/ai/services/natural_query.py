@@ -350,7 +350,11 @@ class NaturalQueryService:
         res = await llm_gateway.chat(
             scene="natural_query",
             messages=messages,
-            user_id=user_id
+            user_id=user_id,
+            # CMDB facts may contain hostnames and management IPs.  Keep the
+            # provider boundary at INTERNAL while allowing the security
+            # gateway to tokenize those identifiers before egress.
+            data_classification="INTERNAL",
         )
 
         return {

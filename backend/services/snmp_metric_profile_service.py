@@ -49,6 +49,7 @@ SUPPORTED_METRIC_KEYS = (
     "temperature",
     "fan",
     "power_supply",
+    "uptime",
     "power",
     "storage",
     "voltage",

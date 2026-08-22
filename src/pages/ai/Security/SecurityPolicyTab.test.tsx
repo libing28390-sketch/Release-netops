@@ -7,6 +7,7 @@ import {
   getAISecurityEvents,
   getAISecurityIncidents,
   getAISecurityPolicy,
+  setAIDevPassthrough,
   testAISecurityPayload,
   updateAISecurityPolicy,
 } from '../../../api/ai';
@@ -18,6 +19,7 @@ vi.mock('../../../api/ai', () => ({
   resolveAISecurityIncident: vi.fn(),
   exportAISecurityEvents: vi.fn(),
   setAIKillSwitch: vi.fn(),
+  setAIDevPassthrough: vi.fn(),
   setAITenantKillSwitch: vi.fn(),
   testAISecurityPayload: vi.fn(),
   updateAISecurityPolicy: vi.fn(),
@@ -39,6 +41,7 @@ const getPolicy = vi.mocked(getAISecurityPolicy);
 const getEvents = vi.mocked(getAISecurityEvents);
 const getIncidents = vi.mocked(getAISecurityIncidents);
 const updatePolicy = vi.mocked(updateAISecurityPolicy);
+const setDevPassthrough = vi.mocked(setAIDevPassthrough);
 const testPayload = vi.mocked(testAISecurityPayload);
 
 describe('SecurityPolicyTab browser key paths', () => {
@@ -75,5 +78,38 @@ describe('SecurityPolicyTab browser key paths', () => {
     getPolicy.mockRejectedValueOnce(new Error('安全策略服务不可用'));
     render(<SecurityPolicyTab />);
     expect((await screen.findByRole('alert')).textContent).toContain('安全策略服务不可用');
+  });
+
+  it('enables the configured development passthrough for a bounded test window', async () => {
+    const user = userEvent.setup();
+    getPolicy.mockResolvedValueOnce({
+      ...policy,
+      external_ai_enabled: true,
+      dev_passthrough: {
+        supported: true,
+        configured: true,
+        enabled: false,
+        expires_at: null,
+        remaining_seconds: 0,
+        max_minutes: 15,
+        environment: 'development',
+      },
+    } as any);
+    setDevPassthrough.mockResolvedValueOnce({
+      supported: true,
+      configured: true,
+      enabled: true,
+      expires_at: '2026-08-21T16:15:00+00:00',
+      remaining_seconds: 900,
+      max_minutes: 15,
+      environment: 'development',
+    });
+
+    render(<SecurityPolicyTab />);
+    const switchButton = await screen.findByRole('switch', { name: '切换开发环境临时直通' });
+    await user.click(switchButton);
+
+    await waitFor(() => expect(setDevPassthrough).toHaveBeenCalledWith(true, 15));
+    expect(await screen.findByText('开发环境直通已开启')).toBeTruthy();
   });
 });

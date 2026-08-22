@@ -289,6 +289,11 @@ class SecurityKillSwitchRequest(StrictContract):
     reason: str = Field(default="operator change", max_length=512)
 
 
+class DevPassthroughRequest(StrictContract):
+    enabled: bool = False
+    duration_minutes: int = Field(default=15, ge=1, le=120)
+
+
 class TenantSecurityKillSwitchRequest(SecurityKillSwitchRequest):
     tenant_id: str | None = Field(default=None, max_length=128)
 
@@ -392,7 +397,7 @@ __all__ = [
     "OfficialUrlImportContract", "OfficialSeedBatchContract", "ImportCancelContract", "ImportRetryContract", "KnowledgeBaseCreateRequest",
     "KnowledgeDocumentCreateRequest", "KnowledgeMetadataPreviewRequest", "KnowledgeReindexRequest", "KnowledgeDirectoryCreateRequest", "KnowledgeDirectoryRenameRequest",
     "RetrievalFilters", "SearchContract", "ChatHistoryMessage", "CopilotContext", "CopilotPlanItem",
-    "SecurityMessage", "SecurityPolicyUpdateRequest", "SecurityTestPayloadRequest", "SecurityKillSwitchRequest",
+    "SecurityMessage", "SecurityPolicyUpdateRequest", "SecurityTestPayloadRequest", "SecurityKillSwitchRequest", "DevPassthroughRequest",
     "TenantSecurityKillSwitchRequest", "SecurityIncidentRequest", "AttachmentCheckRequest",
     "DiagnosticStepPayload", "DiagnosticPlanPayload", "DiagnosticContext",
 ]

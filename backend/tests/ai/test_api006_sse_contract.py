@@ -94,3 +94,31 @@ def test_chat_stream_covers_meta_progress_token_citation_done_and_error(monkeypa
     assert error_payload["code"] == "ASSISTANT_CONTEXT_ERROR"
     assert error_payload["event_version"] == SSE_EVENT_VERSION
     assert "internal parser detail" not in json.dumps(error_payload)
+
+
+def test_device_context_is_sent_to_provider_as_internal(monkeypatch):
+    async def fake_parse_intent(message, user_id=None):
+        return {"intent": "device_search", "filters": {}}
+
+    async def fake_query(message, filters, user_id=None, tenant_id=None):
+        return {
+            "data": [{"hostname": "core-1", "ip_address": "10.0.0.1", "vendor": "H3C"}],
+            "summary": "当前有 1 台设备",
+        }
+
+    async def fake_chat_stream(**kwargs):
+        calls.append(kwargs)
+        yield "ok"
+
+    calls: list[dict] = []
+    monkeypatch.setattr(assistant_module.intent_parser, "parse_intent", fake_parse_intent)
+    monkeypatch.setattr(assistant_module.natural_query_service, "execute_query", fake_query)
+    monkeypatch.setattr(assistant_module.rag_retriever, "retrieve", lambda *args, **kwargs: [])
+    monkeypatch.setattr(assistant_module.llm_gateway, "chat_stream", fake_chat_stream)
+
+    async def collect():
+        return [event async for event in AIAssistantService().chat_stream("有多少台设备", tenant_id="tenant-a")]
+
+    events = asyncio.run(collect())
+    assert any('"content": "ok"' in event for event in events)
+    assert calls[0]["data_classification"] == "INTERNAL"

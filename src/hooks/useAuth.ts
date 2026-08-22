@@ -132,7 +132,7 @@ export const useAuth = ({
       const token = localStorage.getItem('netops_token');
       if (!token) return;
       try {
-        const res = await fetchWithTimeout('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } }, 6000);
+        const res = await fetchWithTimeout('/api/session', { headers: { Authorization: `Bearer ${token}` } }, 6000);
         if (!res.ok && res.status === 401) {
           expireLocalSession();
         }

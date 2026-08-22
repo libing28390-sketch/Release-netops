@@ -81,6 +81,15 @@ export interface AISecurityPolicy {
   allowed_data_regions?: string[];
   provider_kill_switches?: Record<string, boolean>;
   tenant_kill_switches?: Record<string, boolean>;
+  dev_passthrough?: {
+    supported: boolean;
+    configured: boolean;
+    enabled: boolean;
+    expires_at?: string | null;
+    remaining_seconds: number;
+    max_minutes: number;
+    environment: string;
+  };
 }
 
 export interface AISecurityDryRunResult {
@@ -374,6 +383,13 @@ export async function setAITenantKillSwitch(tenantId: string, enabled: boolean, 
   return apiRequest<{ tenant_id: string; enabled: boolean }>('/api/ai/security/tenant-kill-switch', {
     method: 'POST',
     body: JSON.stringify({ tenant_id: tenantId, enabled, reason }),
+  });
+}
+
+export async function setAIDevPassthrough(enabled: boolean, durationMinutes?: number): Promise<NonNullable<AISecurityPolicy['dev_passthrough']>> {
+  return apiRequest<NonNullable<AISecurityPolicy['dev_passthrough']>>('/api/ai/security/dev-passthrough', {
+    method: 'POST',
+    body: JSON.stringify({ enabled, duration_minutes: durationMinutes }),
   });
 }
 

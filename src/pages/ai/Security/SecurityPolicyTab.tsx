@@ -29,6 +29,7 @@ import {
   resolveAISecurityIncident,
   exportAISecurityEvents,
   setAIKillSwitch,
+  setAIDevPassthrough,
   setAITenantKillSwitch,
   testAISecurityPayload,
   updateAISecurityPolicy,
@@ -199,6 +200,25 @@ export const SecurityPolicyTab: React.FC = () => {
     }
   };
 
+  const toggleDevPassthrough = async () => {
+    if (!policy.dev_passthrough?.supported) return;
+    const enabled = !Boolean(policy.dev_passthrough.enabled);
+    if (enabled && !window.confirm(`开发环境直通会在 ${policy.dev_passthrough.max_minutes} 分钟内跳过分类与 Token 化，但仍保留凭据 DLP、Provider 白名单、区域、大小和工具安全检查。确定开启吗？`)) return;
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const next = await setAIDevPassthrough(enabled, policy.dev_passthrough.max_minutes);
+      setPolicy((current) => ({ ...current, dev_passthrough: next }));
+      setLastSavedAt(new Date());
+      setNotice(enabled ? `开发环境直通已开启，将在 ${next.max_minutes} 分钟内自动关闭。` : '开发环境直通已关闭。');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '切换开发环境直通失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const runDryRun = async () => {
     if (!sample.trim()) {
       setError('请先输入一段待检查的文本。');
@@ -232,6 +252,7 @@ export const SecurityPolicyTab: React.FC = () => {
   };
 
   const gatewayReady = policy.external_ai_enabled && !policy.kill_switch;
+  const devPassthroughActive = Boolean(policy.dev_passthrough?.enabled);
   const status = useMemo(() => {
     if (policy.kill_switch) {
       return {
@@ -249,13 +270,21 @@ export const SecurityPolicyTab: React.FC = () => {
         tone: 'amber',
       };
     }
+    if (devPassthroughActive) {
+      return {
+        label: '开发环境直通已开启',
+        detail: '当前请求会跳过分类与 Token 化，仅用于开发测试；凭据 DLP、Provider/区域、大小和工具安全检查仍然保留。',
+        icon: AlertTriangle,
+        tone: 'amber',
+      };
+    }
     return {
       label: '安全网关已就绪',
       detail: '请求会先经过数据分级、脱敏/最小化、Token 化和 DLP 检查，再转发到允许的 Provider。',
       icon: ShieldCheck,
       tone: 'emerald',
     };
-  }, [policy.external_ai_enabled, policy.kill_switch]);
+  }, [devPassthroughActive, policy.external_ai_enabled, policy.kill_switch]);
 
   const StatusIcon = status.icon;
   const statusTone = status.tone === 'rose'
@@ -321,7 +350,7 @@ export const SecurityPolicyTab: React.FC = () => {
             </div>
             <div className="flex shrink-0 items-center gap-2 rounded-full bg-white/70 px-3 py-2 text-xs font-bold uppercase tracking-wider shadow-sm dark:bg-slate-950/40">
               <span className={`h-2 w-2 rounded-full ${gatewayReady ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-              {gatewayReady ? 'Protected / ready' : 'Blocked by policy'}
+              {devPassthroughActive ? 'Developer passthrough / timed' : gatewayReady ? 'Protected / ready' : 'Blocked by policy'}
             </div>
           </div>
         </section>
@@ -362,6 +391,17 @@ export const SecurityPolicyTab: React.FC = () => {
                 <div className="mt-4 text-sm font-bold text-slate-900 dark:text-white">{policy.tenant_kill_switches?.['tenant-default'] ? '已暂停' : '未暂停'}</div>
                 <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">租户开关优先于 Provider 配置，只影响当前认证租户。</p>
               </div>
+
+              {policy.dev_passthrough?.supported && (
+                <div className={`rounded-2xl border p-4 transition ${policy.dev_passthrough.enabled ? 'border-amber-200 bg-amber-50/70 dark:border-amber-900/60 dark:bg-amber-950/20' : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/50'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2"><AlertTriangle className={`h-4 w-4 ${policy.dev_passthrough.enabled ? 'text-amber-600' : 'text-slate-500'}`} /><span className="text-sm font-semibold text-slate-800 dark:text-slate-100">开发环境临时直通</span></div>
+                    <SwitchButton checked={Boolean(policy.dev_passthrough.enabled)} danger disabled={saving} onClick={() => void toggleDevPassthrough()} label="切换开发环境临时直通" />
+                  </div>
+                  <div className="mt-4 text-sm font-bold text-slate-900 dark:text-white">{policy.dev_passthrough.enabled ? `已开启 · 剩余 ${Math.ceil(policy.dev_passthrough.remaining_seconds / 60)} 分钟` : '未开启'}</div>
+                  <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">仅 development/test 可用，重启自动关闭。跳过分类与 Token 化，但仍保留凭据 DLP、Provider/区域、大小和工具安全检查。</p>
+                </div>
+              )}
             </div>
           </section>
 

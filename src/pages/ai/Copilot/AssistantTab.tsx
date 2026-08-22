@@ -222,6 +222,8 @@ export const AssistantTab: React.FC = () => {
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [activeInspectorMsg, setActiveInspectorMsg] = useState<ChatMessage | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedSelectionId, setCopiedSelectionId] = useState<string | null>(null);
+  const [selectionCopyNotice, setSelectionCopyNotice] = useState<{ id: string; text: string } | null>(null);
   const [expandedSourcesId, setExpandedSourcesId] = useState<string | null>(null);
   const [expandedProcessId, setExpandedProcessId] = useState<string | null>(null);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
@@ -799,6 +801,39 @@ export const AssistantTab: React.FC = () => {
     }
   };
 
+  const handleCopySelectedMessage = async (id: string) => {
+    const selection = window.getSelection();
+    const selectedText = selection?.toString() || '';
+    const messageElement = Array.from(document.querySelectorAll<HTMLElement>('[data-copilot-message-id]'))
+      .find((element) => element.dataset.copilotMessageId === id);
+    const selectionBelongsToMessage = Boolean(
+      selection?.rangeCount &&
+      messageElement &&
+      messageElement.contains(selection.anchorNode) &&
+      messageElement.contains(selection.focusNode),
+    );
+
+    const showSelectionNotice = (text: string) => {
+      setSelectionCopyNotice({ id, text });
+      window.setTimeout(() => {
+        setSelectionCopyNotice((current) => current?.id === id ? null : current);
+      }, 2500);
+    };
+
+    if (!selectedText.trim() || !selectionBelongsToMessage) {
+      showSelectionNotice('请先在这条回答中拖动选中文本');
+      return;
+    }
+
+    const copiedSuccessfully = await copyTextWithFallback(selectedText);
+    if (!copiedSuccessfully) {
+      showSelectionNotice('复制选中文本失败，请检查浏览器剪贴板权限');
+      return;
+    }
+    setCopiedSelectionId(id);
+    window.setTimeout(() => setCopiedSelectionId((current) => current === id ? null : current), 2000);
+  };
+
   const handleFeedback = async (message: ChatMessage, rating: 'positive' | 'negative', reason?: string) => {
     if (!activeSessionId || !activeSessionId.startsWith('conv_')) {
       setFeedbackNotice('请在已保存会话中提交反馈');
@@ -951,7 +986,7 @@ export const AssistantTab: React.FC = () => {
 
                 // Assistant Message (No Card Box, Pure Document-like Experience)
                 return (
-                  <div key={m.id} className="space-y-3 select-text">
+                  <div key={m.id} data-copilot-message-id={m.id} className="space-y-3 select-text">
                     {/* Assistant Title Header */}
                     <div className="flex items-center justify-between select-none">
                       <div className="flex items-center gap-2">
@@ -1073,6 +1108,20 @@ export const AssistantTab: React.FC = () => {
                     {/* Assistant Action Bar (Copy, Like, Regenerate, Inspector Toggle) */}
                     <div className="flex items-center gap-3 pt-1 text-gray-400 select-none text-xs">
                       <button
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => void handleCopySelectedMessage(m.id)}
+                        className="hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1 p-1 transition"
+                        title="复制选中文本"
+                      >
+                        {copiedSelectionId === m.id ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-500" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                        <span className="hidden sm:inline">{copiedSelectionId === m.id ? '已复制选中' : '复制选中'}</span>
+                      </button>
+                      <button
                         onClick={() => handleCopyMessage(m.id, m.content)}
                         className="hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1 p-1 transition"
                         title="复制全文"
@@ -1133,6 +1182,9 @@ export const AssistantTab: React.FC = () => {
                         <span className="text-[11px]">调试 Trace</span>
                       </button>
                     </div>
+                    {selectionCopyNotice?.id === m.id && (
+                      <div role="status" className="text-[11px] text-amber-600 dark:text-amber-300">{selectionCopyNotice.text}</div>
+                    )}
                     {feedbackReasonMessageId === m.id && (
                       <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-rose-100 bg-rose-50/70 px-2 py-1.5 text-[11px] text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-300">
                         <span>请选择差评原因：</span>

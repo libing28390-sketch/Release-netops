@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Search, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Search, Settings2, Trash2 } from 'lucide-react';
 
 export type MetricMode =
   | 'direct_percent'
@@ -51,6 +51,7 @@ export const METRIC_CATALOG: MetricCatalogEntry[] = [
   { key: 'temperature', labelZh: '设备温度', labelEn: 'Temperature', defaultMode: 'direct_value', output: 'value', defaultUnit: '°C' },
   { key: 'fan', labelZh: '风扇状态', labelEn: 'Fan status', defaultMode: 'status_code', output: 'status', defaultUnit: 'bool' },
   { key: 'power_supply', labelZh: '电源状态', labelEn: 'Power supply status', defaultMode: 'status_code', output: 'status', defaultUnit: 'bool' },
+  { key: 'uptime', labelZh: '设备运行时间', labelEn: 'Device uptime', defaultMode: 'direct_value', output: 'value', defaultUnit: 's' },
   { key: 'storage', labelZh: '存储使用率', labelEn: 'Storage usage', defaultMode: 'used_total_percent', output: 'percent', defaultUnit: '%' },
   { key: 'voltage', labelZh: '电压', labelEn: 'Voltage', defaultMode: 'direct_value', output: 'value', defaultUnit: 'V' },
   { key: 'power', labelZh: '整机功耗', labelEn: 'Power consumption', defaultMode: 'direct_value', output: 'value', defaultUnit: 'W' },
@@ -94,9 +95,9 @@ export const metricLabel = (key: string, zh: boolean) => {
 
 export const modeLabel = (mode: MetricMode, zh: boolean) => {
   if (mode === 'direct_value') return zh ? '直接数值' : 'Direct value';
-  if (mode === 'used_total_percent') return zh ? '已用 / 总量' : 'Used / total';
-  if (mode === 'used_free_percent') return zh ? '已用 /（已用 + 空闲）' : 'Used / (used + free)';
-  if (mode === 'counter_rate_percent') return zh ? '计数器速率 / 容量' : 'Counter rate / capacity';
+  if (mode === 'used_total_percent') return zh ? '已用/总量 (%)' : 'Used / total (%)';
+  if (mode === 'used_free_percent') return zh ? '已用/(已用+空闲)' : 'Used / (used + free)';
+  if (mode === 'counter_rate_percent') return zh ? '计数器速率' : 'Counter rate';
   if (mode === 'status_code') return zh ? '状态码 → 布尔值' : 'Status code → boolean';
   return zh ? '直接百分比（Gauge）' : 'Direct percentage (Gauge)';
 };
@@ -116,9 +117,9 @@ export const createDefinition = (key: string): MetricDefinition => {
     ...EMPTY_DEFINITION,
     mode,
     unit: item?.defaultUnit || (mode === 'status_code' ? 'bool' : ''),
-    status_ok_values: mode === 'status_code' ? '1' : '',
+    status_ok_values: mode === 'status_code' ? '1,2' : '',
     status_warning_values: '',
-    status_fail_values: mode === 'status_code' ? '2,3' : '',
+    status_fail_values: mode === 'status_code' ? '3,4' : '',
   };
 };
 
@@ -169,10 +170,9 @@ export const toPayload = (definition: MetricDefinition): Record<string, unknown>
 };
 
 const inputClass =
-  'w-full rounded-md border border-black/8 bg-transparent px-2 py-1.5 font-mono text-[10px] outline-none focus:border-[#00bceb]/55 dark:border-white/10';
+  'w-full rounded-md border border-black/8 bg-transparent px-2.5 py-1.5 font-mono text-xs outline-none focus:border-[#00bceb]/55 dark:border-white/10';
 const selectClass =
-  'w-full rounded-md border border-black/8 bg-transparent px-2 py-1.5 text-[10px] outline-none focus:border-[#00bceb]/55 dark:border-white/10';
-const tinyLabelClass = 'mb-1 block text-[9px] text-black/45 dark:text-white/45';
+  'w-full rounded-md border border-black/8 bg-transparent px-2 py-1.5 text-xs outline-none focus:border-[#00bceb]/55 dark:border-white/10';
 
 interface MetricRowItemProps {
   row: MetricRow;
@@ -190,281 +190,195 @@ export const MetricRowItem: React.FC<MetricRowItemProps> = React.memo(
     const set = (patch: Partial<MetricDefinition>) => onChange({ ...definition, ...patch });
     const advancedConfigured = hasAdvancedSettings(row.key, definition);
 
-    const sourceLabel = (
-      label: string,
-      value: string,
-      field: 'oid' | 'used_oid' | 'total_oid' | 'free_oid' | 'capacity_oid',
-      placeholder = '1.3.6.1.4.1...',
-    ) => (
-      <label className="block">
-        <div className="flex items-center justify-between">
-          <span className={tinyLabelClass}>{label}</span>
-          <button
-            type="button"
-            onClick={() => onPickOid(row.key, field)}
-            className="inline-flex items-center gap-0.5 text-[9px] font-medium text-[#008aad] hover:underline dark:text-[#00bceb]"
-          >
-            <Search size={10} />
-            {zh ? 'MIB 拾取' : 'Pick'}
-          </button>
-        </div>
-        <input
-          value={value}
-          onChange={event => set({ [field]: event.target.value })}
-          className={inputClass}
-          placeholder={placeholder}
-        />
-      </label>
-    );
-
-    const advancedToggle = (
-      <button
-        type="button"
-        onClick={() => setAdvancedOpen(prev => !prev)}
-        className="inline-flex items-center gap-1 text-[10px] text-black/50 hover:text-black/80 dark:text-white/50 dark:hover:text-white/80"
-      >
-        {advancedOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-        <span>{zh ? '高级计算与表项' : 'Advanced calculation'}</span>
-        {advancedConfigured && (
-          <span className="rounded bg-[#00bceb]/10 px-1 py-0.2 text-[8px] font-medium text-[#008aad]">
-            {zh ? '已改' : 'Custom'}
-          </span>
-        )}
-      </button>
-    );
-
     return (
       <tr className="border-t border-black/5 hover:bg-black/[.01] dark:border-white/6 dark:hover:bg-white/[.01]">
         {/* Metric Name */}
-        <td className="min-w-[130px] px-3 py-3 align-top">
-          <div className="font-semibold text-black/80 dark:text-white/85">{metricLabel(row.key, zh)}</div>
-          <div className="mt-0.5 font-mono text-[9px] text-black/35 dark:text-white/35">{row.key}</div>
+        <td className="w-[180px] px-3.5 py-2.5 align-top">
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-black/80 dark:text-white/85">{metricLabel(row.key, zh)}</span>
+          </div>
+          <div className="font-mono text-[10px] text-black/35 dark:text-white/35">{row.key}</div>
         </td>
 
-        {/* Mode */}
-        <td className="min-w-[170px] px-2 py-3 align-top">
-          <label className="block">
-            <span className={tinyLabelClass}>{zh ? '采集方式' : 'Collection mode'}</span>
-            {modes.length === 1 ? (
-              <div className="rounded-md border border-black/8 bg-black/[.02] px-2 py-1.5 text-[10px] font-medium text-black/65 dark:border-white/10 dark:bg-white/[.04] dark:text-white/70">
-                {modeLabel(modes[0], zh)}
+        {/* OID Input Area */}
+        <td className="px-2.5 py-2.5 align-top">
+          {definition.mode === 'used_total_percent' ? (
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              <div className="relative">
+                <input
+                  value={definition.used_oid}
+                  onChange={e => set({ used_oid: e.target.value })}
+                  placeholder="已用 OID (例如 1.3.6.1.2.1.25.2.3.1.6)"
+                  className={`${inputClass} pr-7`}
+                />
+                <button
+                  type="button"
+                  onClick={() => onPickOid(row.key, 'used_oid')}
+                  className="absolute right-1.5 top-2 text-[#008aad] hover:text-[#00bceb] dark:text-[#00bceb]"
+                  title={zh ? '从 MIB 库拾取已用 OID' : 'Pick Used OID'}
+                >
+                  <Search size={12} />
+                </button>
               </div>
-            ) : (
-              <select
-                value={definition.mode}
-                onChange={event => set({ mode: event.target.value as MetricMode })}
-                className={selectClass}
-              >
-                {modes.map(mode => (
-                  <option key={mode} value={mode}>
-                    {modeLabel(mode, zh)}
-                  </option>
-                ))}
-              </select>
-            )}
-          </label>
-        </td>
-
-        {/* OIDs */}
-        <td className="min-w-[280px] px-2 py-3 align-top">
-          {definition.mode === 'used_total_percent' && (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {sourceLabel(zh ? '已用 OID' : 'Used OID', definition.used_oid, 'used_oid')}
-              {sourceLabel(zh ? '总量 OID' : 'Total OID', definition.total_oid, 'total_oid')}
+              <div className="relative">
+                <input
+                  value={definition.total_oid}
+                  onChange={e => set({ total_oid: e.target.value })}
+                  placeholder="总量 OID (例如 1.3.6.1.2.1.25.2.3.1.5)"
+                  className={`${inputClass} pr-7`}
+                />
+                <button
+                  type="button"
+                  onClick={() => onPickOid(row.key, 'total_oid')}
+                  className="absolute right-1.5 top-2 text-[#008aad] hover:text-[#00bceb] dark:text-[#00bceb]"
+                  title={zh ? '从 MIB 库拾取总量 OID' : 'Pick Total OID'}
+                >
+                  <Search size={12} />
+                </button>
+              </div>
             </div>
-          )}
-          {definition.mode === 'used_free_percent' && (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {sourceLabel(zh ? '已用 OID' : 'Used OID', definition.used_oid, 'used_oid')}
-              {sourceLabel(zh ? '空闲 OID' : 'Free OID', definition.free_oid, 'free_oid')}
-            </div>
-          )}
-          {definition.mode !== 'used_total_percent' && definition.mode !== 'used_free_percent' && (
-            <div className="space-y-2">
-              {sourceLabel(
-                definition.mode === 'counter_rate_percent' ? (zh ? '计数器 OID' : 'Counter OID') : 'OID',
-                definition.oid,
-                'oid',
-              )}
-              {definition.mode === 'counter_rate_percent' &&
-                sourceLabel(
-                  zh ? '容量 OID（单位/秒）' : 'Capacity OID (units/sec)',
-                  definition.capacity_oid,
-                  'capacity_oid',
-                )}
-            </div>
-          )}
-        </td>
-
-        {/* Output & Status Mapping */}
-        <td className="min-w-[190px] px-2 py-3 align-top">
-          {definition.mode === 'status_code' ? (
-            <label className="block">
-              <span className={tinyLabelClass}>{zh ? '正常码 → true' : 'Normal codes → true'}</span>
-              <input
-                value={definition.status_ok_values}
-                onChange={event => set({ status_ok_values: event.target.value })}
-                className={inputClass}
-                placeholder="1"
-              />
-            </label>
-          ) : definition.mode === 'direct_value' ? (
-            <label className="block">
-              <span className={tinyLabelClass}>{zh ? '结果单位' : 'Output unit'}</span>
-              <input
-                value={definition.unit}
-                onChange={event => set({ unit: event.target.value })}
-                className={inputClass}
-                placeholder="°C / V / W"
-              />
-            </label>
           ) : (
-            <div className="rounded-md border border-dashed border-[#00bceb]/30 px-2 py-2 text-[10px] leading-4 text-[#008aad]">
-              {zh ? '数值结果：百分比（0–100）' : 'Numeric result: percentage (0–100)'}
+            <div className="relative">
+              <input
+                value={definition.oid}
+                onChange={e => set({ oid: e.target.value })}
+                placeholder="SNMP OID，例如 1.3.6.1.4.1.25506.2.6.1.1.1.1.6"
+                className={`${inputClass} pr-7`}
+              />
+              <button
+                type="button"
+                onClick={() => onPickOid(row.key, 'oid')}
+                className="absolute right-2 top-2 text-[#008aad] hover:text-[#00bceb] dark:text-[#00bceb]"
+                title={zh ? '从 MIB 库拾取 OID' : 'Pick OID from MIB'}
+              >
+                <Search size={13} />
+              </button>
             </div>
           )}
-        </td>
 
-        {/* Calculation & Advanced Drawer */}
-        <td className="min-w-[215px] px-2 py-3 align-top">
-          <div className="space-y-2">
-            {definition.mode === 'status_code' && (
-              <div className="rounded-md bg-black/[.025] px-2 py-2 text-[10px] leading-4 text-black/50 dark:bg-white/[.04] dark:text-white/50">
-                {zh
-                  ? '布尔输出：true = 正常，false = 异常，null = 未知码/无数据'
-                  : 'Boolean output: true normal, false abnormal, null unknown'}
-              </div>
-            )}
-            {definition.mode === 'counter_rate_percent' && (
-              <>
+          {/* Collapsible Advanced Parameters */}
+          {advancedOpen && (
+            <div className="mt-2.5 rounded-lg border border-black/8 bg-black/[.02] p-2.5 dark:border-white/10 dark:bg-white/[.02]">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <label className="block">
-                  <span className={tinyLabelClass}>{zh ? '计数器位宽（必选）' : 'Counter width (required)'}</span>
-                  <select
-                    value={definition.counter_bits}
-                    onChange={event => set({ counter_bits: event.target.value as CounterBits })}
-                    className={selectClass}
-                  >
-                    <option value="">{zh ? '选择 32 / 64 位' : 'Select 32 / 64 bits'}</option>
-                    <option value="32">Counter32</option>
-                    <option value="64">Counter64</option>
-                  </select>
-                </label>
-                <label className="block">
-                  <span className={tinyLabelClass}>{zh ? '计数单位' : 'Counter unit'}</span>
-                  <select
-                    value={definition.counter_unit}
-                    onChange={event => set({ counter_unit: event.target.value as 'bits' | 'octets' })}
-                    className={selectClass}
-                  >
-                    <option value="bits">bits</option>
-                    <option value="octets">octets × 8</option>
-                  </select>
-                </label>
-              </>
-            )}
-            {advancedToggle}
-            {advancedOpen && (
-              <div className="space-y-2 rounded-md border border-[#00bceb]/15 bg-[#00bceb]/[.035] p-2 dark:bg-[#00bceb]/[.06]">
-                {definition.mode === 'status_code' && (
-                  <>
-                    <label className="block">
-                      <span className={tinyLabelClass}>{zh ? '告警码 → false' : 'Warning codes → false'}</span>
-                      <input
-                        value={definition.status_warning_values}
-                        onChange={event => set({ status_warning_values: event.target.value })}
-                        className={inputClass}
-                        placeholder="4"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className={tinyLabelClass}>{zh ? '故障码 → false' : 'Failure codes → false'}</span>
-                      <input
-                        value={definition.status_fail_values}
-                        onChange={event => set({ status_fail_values: event.target.value })}
-                        className={inputClass}
-                        placeholder="2,3"
-                      />
-                    </label>
-                  </>
-                )}
-                <label className="block">
-                  <span className={tinyLabelClass}>{zh ? '表项索引（可选）' : 'Table row selector (optional)'}</span>
-                  <input
-                    value={definition.selector}
-                    onChange={event => set({ selector: event.target.value })}
-                    className={inputClass}
-                    placeholder="1 or 1.2"
-                  />
-                </label>
-                <label className="block">
-                  <span className={tinyLabelClass}>{zh ? '聚合方式' : 'Aggregation'}</span>
+                  <span className="mb-0.5 block text-[10px] text-black/45 dark:text-white/45">{zh ? '聚合方式' : 'Aggregation'}</span>
                   <select
                     value={definition.aggregation}
-                    onChange={event => set({ aggregation: event.target.value as Aggregation })}
+                    onChange={e => set({ aggregation: e.target.value as Aggregation })}
                     className={selectClass}
                   >
-                    {AGGREGATIONS.map(value => (
-                      <option key={value} value={value}>
-                        {value}
+                    {AGGREGATIONS.map(agg => (
+                      <option key={agg} value={agg}>
+                        {agg}
                       </option>
                     ))}
                   </select>
                 </label>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-0.5 block text-[10px] text-black/45 dark:text-white/45">{zh ? '缩放 (Scale)' : 'Scale multiplier'}</span>
+                  <input
+                    value={definition.scale}
+                    onChange={e => set({ scale: e.target.value })}
+                    className={inputClass}
+                    placeholder={zh ? '1' : '1 or 1.2'}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-0.5 block text-[10px] text-black/45 dark:text-white/45">{zh ? '偏移 (Offset)' : 'Offset'}</span>
+                  <input
+                    value={definition.offset}
+                    onChange={e => set({ offset: e.target.value })}
+                    className={inputClass}
+                    placeholder="0"
+                  />
+                </label>
+              </div>
+
+              {definition.mode === 'status_code' && (
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
                   <label className="block">
-                    <span className={tinyLabelClass}>{zh ? '缩放倍数' : 'Scale multiplier'}</span>
-                    <div className="space-y-1">
-                      <input
-                        value={definition.scale}
-                        onChange={event => set({ scale: event.target.value })}
-                        className={inputClass}
-                      />
-                      <div className="flex flex-wrap gap-1">
-                        {['1', '0.1', '0.01', '0.001'].map(val => (
-                          <button
-                            key={val}
-                            type="button"
-                            onClick={() => set({ scale: val })}
-                            className={`rounded px-1 py-0.5 text-[8px] font-mono transition-colors ${
-                              definition.scale === val
-                                ? 'bg-[#00bceb]/20 font-semibold text-[#008aad]'
-                                : 'bg-black/[.04] text-black/50 hover:bg-black/[.08] dark:bg-white/[.06] dark:text-white/50'
-                            }`}
-                          >
-                            ×{val}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <span className="mb-0.5 block text-[10px] text-emerald-600 dark:text-emerald-400">{zh ? '正常状态码' : 'OK Code'}</span>
+                    <input
+                      value={definition.status_ok_values}
+                      onChange={e => set({ status_ok_values: e.target.value })}
+                      className={inputClass}
+                      placeholder="1,2"
+                    />
                   </label>
                   <label className="block">
-                    <span className={tinyLabelClass}>{zh ? '偏移' : 'Offset'}</span>
+                    <span className="mb-0.5 block text-[10px] text-amber-600 dark:text-amber-400">{zh ? '告警状态码' : 'Warn Code'}</span>
                     <input
-                      value={definition.offset}
-                      onChange={event => set({ offset: event.target.value })}
+                      value={definition.status_warning_values}
+                      onChange={e => set({ status_warning_values: e.target.value })}
                       className={inputClass}
+                      placeholder="41,31"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-0.5 block text-[10px] text-red-600 dark:text-red-400">{zh ? '故障状态码' : 'Fail Code'}</span>
+                    <input
+                      value={definition.status_fail_values}
+                      onChange={e => set({ status_fail_values: e.target.value })}
+                      className={inputClass}
+                      placeholder="3,4"
                     />
                   </label>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </td>
 
-        {/* Remove Row Button */}
-        <td className="w-[48px] px-2 py-3 text-right align-top">
-          <button
-            type="button"
-            onClick={onRemove}
-            title={zh ? '移除指标行' : 'Remove metric'}
-            className="rounded-md p-1.5 text-black/35 hover:bg-red-500/10 hover:text-red-600 dark:text-white/35 dark:hover:text-red-400"
-          >
-            <Trash2 size={13} />
-          </button>
+        {/* Mode & Unit */}
+        <td className="w-[180px] px-2.5 py-2.5 align-top">
+          {modes.length > 1 ? (
+            <select
+              value={definition.mode}
+              onChange={e => set({ mode: e.target.value as MetricMode })}
+              className={selectClass}
+            >
+              {modes.map(mode => (
+                <option key={mode} value={mode}>
+                  {modeLabel(mode, zh)}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="rounded-md border border-black/8 bg-black/[.02] px-2 py-1.5 text-xs text-black/65 dark:border-white/10 dark:bg-white/[.04] dark:text-white/70">
+              {modeLabel(modes[0], zh)}
+            </div>
+          )}
+        </td>
+
+        {/* Actions & Advanced Toggle */}
+        <td className="w-[90px] px-3 py-2.5 text-right align-top">
+          <div className="flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen(prev => !prev)}
+              aria-label={zh ? '高级计算与参数选项' : 'Advanced calculation options'}
+              className={`rounded-md p-1.5 transition-colors ${
+                advancedConfigured || advancedOpen
+                  ? 'bg-[#00a9ce]/15 text-[#007391] dark:text-[#00c2e8]'
+                  : 'text-black/40 hover:bg-black/5 hover:text-black/70 dark:text-white/40 dark:hover:bg-white/5 dark:hover:text-white/70'
+              }`}
+              title={zh ? '高级计算与参数选项' : 'Advanced Parameters'}
+            >
+              <Settings2 size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={onRemove}
+              className="rounded-md p-1.5 text-black/35 hover:bg-red-500/10 hover:text-red-600 dark:text-white/35 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+              title={zh ? '移除此指标' : 'Remove Metric'}
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
         </td>
       </tr>
     );
   },
 );
 
-MetricRowItem.displayName = 'MetricRowItem';
+export default MetricRowItem;

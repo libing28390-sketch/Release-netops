@@ -20,6 +20,7 @@ from ai.security.classification import (
     normalize_classification,
     separate_data_and_instructions,
 )
+from ai.security.dev_passthrough import dev_passthrough
 from ai.security.dlp import assert_clean
 from ai.security.minimizer import minimize, minimize_tool_result
 from ai.security.tokenization import ScopedTokenVault, opaque_user_id, tokenize_text, token_vault
@@ -214,38 +215,50 @@ class AISecurityGateway:
         _, instruction_findings = separate_data_and_instructions(messages)
         if instruction_findings:
             findings.extend(Finding(DataLevel.L3_SENSITIVE, category) for category in instruction_findings)
-        if level >= DataLevel.L4_PROHIBITED:
-            raise SecurityBlocked("prohibited data detected before tokenization", findings=findings, reason_code="AI_SECURITY_SENSITIVE_DATA")
+        passthrough_active = dev_passthrough.is_active()
         requested_classification = normalize_classification(data_classification) if data_classification is not None else classification_for_level(level)
         if data_classification is not None and requested_classification is None:
             raise SecurityBlocked("unknown data classification", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
-        if requested_classification.value not in {str(item).upper() for item in active_policy.allowed_classifications}:
-            # L3 sensitive values may still be minimized; prohibited findings
-            # and explicit SECRET payloads never cross the boundary.
-            if requested_classification == DataClassification.SECRET and level < DataLevel.L4_PROHIBITED and active_policy.allow_sensitive_minimization:
-                pass
-            else:
-                raise SecurityBlocked("data classification is not allowed", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
-        if provider_allowed_classification and _classification_rank(requested_classification) > _classification_rank(provider_allowed_classification):
-            raise SecurityBlocked("model classification boundary denied the request", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
+        has_injection = any(item.category == "prompt_injection" for item in findings)
         if tools and any(_tool_is_unsafe(tool) for tool in tools):
             raise SecurityBlocked("raw write-capable or unrestricted tool is not allowed", findings=findings, reason_code="AI_SECURITY_UNSAFE_TOOL")
 
-        has_injection = any(item.category == "prompt_injection" for item in findings)
-        action = action_for(level, has_prompt_injection=has_injection)
-        if level == DataLevel.L3_SENSITIVE and not active_policy.allow_sensitive_minimization:
-            raise SecurityBlocked("sensitive context is not eligible for external AI", findings=findings, reason_code="AI_SECURITY_SENSITIVE_DATA")
+        if passthrough_active:
+            # Development-only testing mode: keep the external/provider
+            # controls above, but send non-secret test data as-is. Hard DLP
+            # checks below still reject credentials, private keys, JWTs and
+            # cookies; unsafe write-capable tools remain blocked above.
+            action = SecurityAction.ALLOW
+            safe_messages = messages
+            safe_tools = tools if tools else None
+            safe_options = provider_options or {}
+        else:
+            if level >= DataLevel.L4_PROHIBITED:
+                raise SecurityBlocked("prohibited data detected before tokenization", findings=findings, reason_code="AI_SECURITY_SENSITIVE_DATA")
+            if requested_classification.value not in {str(item).upper() for item in active_policy.allowed_classifications}:
+                # L3 sensitive values may still be minimized; prohibited findings
+                # and explicit SECRET payloads never cross the boundary.
+                if requested_classification == DataClassification.SECRET and level < DataLevel.L4_PROHIBITED and active_policy.allow_sensitive_minimization:
+                    pass
+                else:
+                    raise SecurityBlocked("data classification is not allowed", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
+            if provider_allowed_classification and _classification_rank(requested_classification) > _classification_rank(provider_allowed_classification):
+                raise SecurityBlocked("model classification boundary denied the request", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
 
-        safe_messages: Any = minimize(messages) if action == SecurityAction.MINIMIZE else messages
+            action = action_for(level, has_prompt_injection=has_injection)
+            if level == DataLevel.L3_SENSITIVE and not active_policy.allow_sensitive_minimization:
+                raise SecurityBlocked("sensitive context is not eligible for external AI", findings=findings, reason_code="AI_SECURITY_SENSITIVE_DATA")
 
-        def transform(text: str) -> str:
-            # Secrets were blocked above.  Only identifiers are reversible, and
-            # the vault never stores the mapping in an application table.
-            return tokenize_text(text, tenant_id=tenant_id, task_id=task_id, vault=self.vault)
+            safe_messages = minimize(messages) if action == SecurityAction.MINIMIZE else messages
 
-        safe_messages = _walk_transform(safe_messages, transform)
-        safe_tools = _walk_transform(minimize(tools or []), transform) if tools else None
-        safe_options = _walk_transform(minimize(provider_options or {}), transform)
+            def transform(text: str) -> str:
+                # Secrets were blocked above.  Only identifiers are reversible,
+                # and the vault never stores the mapping in an application table.
+                return tokenize_text(text, tenant_id=tenant_id, task_id=task_id, vault=self.vault)
+
+            safe_messages = _walk_transform(safe_messages, transform)
+            safe_tools = _walk_transform(minimize(tools or []), transform) if tools else None
+            safe_options = _walk_transform(minimize(provider_options or {}), transform)
         opaque_id = opaque_user_id(user_id, tenant_id=tenant_id, task_id=task_id)
         payload = SecurePayload(
             messages=safe_messages,
@@ -265,6 +278,7 @@ class AISecurityGateway:
                 "data_region": normalized_region,
                 "provider_id": provider_id or "",
                 "model_id": model_id or "",
+                "dev_passthrough": passthrough_active,
                 "scope": {key: value for key, value in scope.items() if value},
             },
         )
@@ -272,7 +286,10 @@ class AISecurityGateway:
         if len(serialized.encode("utf-8")) > active_policy.max_payload_bytes:
             raise SecurityBlocked("outbound payload exceeds the configured size limit", findings=findings, reason_code="AI_SECURITY_DLP_FAILED")
         try:
-            assert_clean(serialized, identifiers_blocked=active_policy.identifiers_must_be_tokenized)
+            assert_clean(
+                serialized,
+                identifiers_blocked=active_policy.identifiers_must_be_tokenized and not passthrough_active,
+            )
         except ValueError as exc:
             # The final serialized-body check is mandatory even if an earlier
             # transformation looked safe; providers only receive this payload.
@@ -318,26 +335,31 @@ class AISecurityGateway:
 
         combined = {"embedding_inputs": values, "provider_type": provider_type}
         level, findings = self._classify(combined)
+        passthrough_active = dev_passthrough.is_active()
         requested_classification = normalize_classification(data_classification) if data_classification is not None else classification_for_level(level)
         if data_classification is not None and requested_classification is None:
             raise SecurityBlocked("unknown data classification", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
-        if requested_classification.value not in {str(item).upper() for item in active_policy.allowed_classifications} and level >= DataLevel.L3_SENSITIVE:
-            raise SecurityBlocked("embedding classification is not allowed", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
-        if provider_allowed_classification and _classification_rank(requested_classification) > _classification_rank(provider_allowed_classification):
-            raise SecurityBlocked("embedding classification boundary denied the request", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
-        if level >= DataLevel.L4_PROHIBITED:
-            raise SecurityBlocked("prohibited data detected before external embedding", findings=findings, reason_code="AI_SECURITY_SENSITIVE_DATA")
-        has_injection = any(item.category == "prompt_injection" for item in findings)
-        action = action_for(level, has_prompt_injection=has_injection)
-        if level == DataLevel.L3_SENSITIVE and not active_policy.allow_sensitive_minimization:
-            raise SecurityBlocked("sensitive context is not eligible for external embedding", findings=findings, reason_code="AI_SECURITY_SENSITIVE_DATA")
+        if passthrough_active:
+            action = SecurityAction.ALLOW
+            safe_texts = values
+        else:
+            if requested_classification.value not in {str(item).upper() for item in active_policy.allowed_classifications} and level >= DataLevel.L3_SENSITIVE:
+                raise SecurityBlocked("embedding classification is not allowed", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
+            if provider_allowed_classification and _classification_rank(requested_classification) > _classification_rank(provider_allowed_classification):
+                raise SecurityBlocked("embedding classification boundary denied the request", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
+            if level >= DataLevel.L4_PROHIBITED:
+                raise SecurityBlocked("prohibited data detected before external embedding", findings=findings, reason_code="AI_SECURITY_SENSITIVE_DATA")
+            has_injection = any(item.category == "prompt_injection" for item in findings)
+            action = action_for(level, has_prompt_injection=has_injection)
+            if level == DataLevel.L3_SENSITIVE and not active_policy.allow_sensitive_minimization:
+                raise SecurityBlocked("sensitive context is not eligible for external embedding", findings=findings, reason_code="AI_SECURITY_SENSITIVE_DATA")
 
-        safe_texts = minimize(values) if action == SecurityAction.MINIMIZE else values
+            safe_texts = minimize(values) if action == SecurityAction.MINIMIZE else values
 
-        def transform(text: str) -> str:
-            return tokenize_text(text, tenant_id=tenant_id, task_id=task_id, vault=self.vault)
+            def transform(text: str) -> str:
+                return tokenize_text(text, tenant_id=tenant_id, task_id=task_id, vault=self.vault)
 
-        safe_texts = [_walk_transform(value, transform) for value in safe_texts]
+            safe_texts = [_walk_transform(value, transform) for value in safe_texts]
         metadata = {
             "egress_kind": "embedding",
             "provider_type": provider_type,
@@ -349,6 +371,7 @@ class AISecurityGateway:
             "data_region": normalized_region,
             "provider_id": provider_id or "",
             "model_id": model_id or "",
+            "dev_passthrough": passthrough_active,
         }
         payload = SecureEmbeddingPayload(
             texts=safe_texts,
@@ -363,7 +386,10 @@ class AISecurityGateway:
         if len(serialized.encode("utf-8")) > active_policy.max_payload_bytes:
             raise SecurityBlocked("outbound embedding payload exceeds the configured size limit", findings=findings, reason_code="AI_SECURITY_DLP_FAILED")
         try:
-            assert_clean(serialized, identifiers_blocked=active_policy.identifiers_must_be_tokenized)
+            assert_clean(
+                serialized,
+                identifiers_blocked=active_policy.identifiers_must_be_tokenized and not passthrough_active,
+            )
         except ValueError as exc:
             raise SecurityBlocked("final serialized embedding body failed DLP", findings=findings, reason_code="AI_SECURITY_DLP_FAILED") from exc
         self._egress_audit_events.append(
