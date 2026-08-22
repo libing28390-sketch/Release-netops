@@ -2,6 +2,35 @@
 
 > 适用于 `/ai/providers`、`/ai/models`、`/ai/security`、`/ai/copilot`。
 
+## 0. 先确认部署方式和访问入口
+
+AI 页面路径相同，但访问协议、主机和端口取决于部署方式。`5400` 只用于本地前端开发，不要用于 Docker 或正式生产环境。
+
+| 部署方式 | 平台基础地址 | Provider | Models | Security | Copilot |
+| --- | --- | --- | --- | --- | --- |
+| Docker Compose 生产部署 | `https://<Docker服务器IP>`（Nginx 默认 443；HTTP 会跳转 HTTPS） | `/ai/providers` | `/ai/models` | `/ai/security` | `/ai/copilot` |
+| Ubuntu/物理机部署 | `http://<服务器IP>:<Nginx端口>`（脚本默认 80） | `/ai/providers` | `/ai/models` | `/ai/security` | `/ai/copilot` |
+| Windows 桌面部署 | `http://127.0.0.1:5010` | `/ai/providers` | `/ai/models` | `/ai/security` | `/ai/copilot` |
+| 本地前端开发 | `http://127.0.0.1:5400` | `/ai/providers` | `/ai/models` | `/ai/security` | `/ai/copilot` |
+
+例如 Docker 服务器地址为 `192.168.204.128` 时，应访问：
+
+```text
+https://192.168.204.128/ai/copilot
+```
+
+同一部署下的其他页面为：
+
+```text
+https://192.168.204.128/ai/providers
+https://192.168.204.128/ai/models
+https://192.168.204.128/ai/security
+```
+
+Docker 首次启动可能使用自签名证书，浏览器会提示证书风险；生产环境应替换 `nginx/ssl/` 下的证书。Ubuntu 如果把 Nginx 改为其他端口，例如 `8080`，则使用 `http://<服务器IP>:8080/ai/copilot`。Windows 需要局域网访问时，将 `127.0.0.1` 替换为 Windows 主机 IP，并按防火墙策略放行 5010。
+
+下面步骤中的 `<平台基础地址>`，请替换为上表对应的地址。例如 Docker 环境使用 `https://192.168.204.128`，不要再固定使用 `http://<项目地址>:5400`。
+
 ## 1. `.env` 最小配置
 
 正式 Docker 环境保持 `production`，不需要改成 `development`：
@@ -42,7 +71,7 @@ docker compose exec netops sh -lc 'printf "ENVIRONMENT=%s\nAI_ENABLED=%s\nEXTERN
 
 ## 3. 配置 DeepSeek
 
-打开 `/ai/providers`，新增 Provider：
+打开 `<平台基础地址>/ai/providers`，新增 Provider：
 
 | 字段 | 填写值 |
 | --- | --- |
@@ -57,18 +86,18 @@ docker compose exec netops sh -lc 'printf "ENVIRONMENT=%s\nAI_ENABLED=%s\nEXTERN
 
 ## 4. 配置安全策略和模型
 
-打开 `/ai/security`，确认：
+打开 `<平台基础地址>/ai/security`，确认：
 
 - 外部 AI 已开启。
 - Kill Switch 已关闭。
 - Provider 白名单包含 `deepseek`。
 - 数据区域和数据分类符合 Provider 配置。
 
-打开 `/ai/models`，确认模型已绑定 DeepSeek、模型代码正确并已启用。
+打开 `<平台基础地址>/ai/models`，确认模型已绑定 DeepSeek、模型代码正确并已启用。
 
 ## 5. AI 临时测试模式
 
-打开 `/ai/security`，在“AI 临时测试模式”卡片中点击开关。
+打开 `<平台基础地址>/ai/security`，在“AI 临时测试模式”卡片中点击开关。
 
 - 仅管理员可以操作。
 - 最多开启 15 分钟，到期自动关闭。

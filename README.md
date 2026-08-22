@@ -182,6 +182,32 @@ bash scripts/deploy-docker.sh install
 
 ---
 
+## AI 管理页面访问入口
+
+AI 页面使用相同的路径，但访问地址要按部署方式区分。`5400` 仅用于本地前端开发，不是 Docker 或生产环境端口。
+
+| 部署方式 | 平台基础地址 | AI 页面示例 |
+| :--- | :--- | :--- |
+| Docker Compose 生产部署 | `https://<Docker服务器IP>`（Nginx 默认 443） | `https://<Docker服务器IP>/ai/copilot` |
+| Ubuntu/物理机部署 | `http://<服务器IP>:<Nginx端口>`（脚本默认 80） | `http://<服务器IP>/ai/copilot` |
+| Windows 桌面部署 | `http://127.0.0.1:5010` | `http://127.0.0.1:5010/ai/copilot` |
+| 本地前端开发 | `http://127.0.0.1:5400` | `http://127.0.0.1:5400/ai/copilot` |
+
+Docker 例如部署在 `192.168.204.128` 时，使用：
+
+```text
+https://192.168.204.128/ai/providers
+https://192.168.204.128/ai/models
+https://192.168.204.128/ai/security
+https://192.168.204.128/ai/copilot
+```
+
+其他部署方式只需将基础地址替换为上表对应地址。完整的 AI Provider、模型、安全策略和 Copilot 配置步骤见 [`public/downloads/nexora-ai-provider-debug-manual.md`](public/downloads/nexora-ai-provider-debug-manual.md)。
+
+<br/>
+
+---
+
 ## Environment Variables / 环境变量说明
 
 部署项目时，请将 `.env.example` 复制为 `.env` 并按需调整参数值：
