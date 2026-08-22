@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Cpu, Clock, Database, Layers, ShieldAlert, Code, Copy, Check } from 'lucide-react';
 import type { AssistantRetrievalTrace } from '../../../api/ai';
 
@@ -14,6 +14,17 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
   activeMessage,
 }) => {
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleCopyPayload = () => {
@@ -36,23 +47,37 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
   );
 
   return (
-    <aside className="w-96 sm:w-[420px] shrink-0 min-h-0 bg-white dark:bg-gray-900 border-l border-gray-200/80 dark:border-gray-800 flex flex-col h-full z-20 shadow-xl text-xs select-none">
-      {/* Header */}
-      <div className="p-3.5 border-b border-gray-200/80 dark:border-gray-800 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2 font-bold text-gray-900 dark:text-white">
-          <Cpu className="w-4 h-4 text-indigo-500" />
-          <span>开发者调试 Trace (Inspector)</span>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[1px] sm:p-6"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="relative flex h-[min(82vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="copilot-inspector-title"
+      >
+        {/* Header */}
+        <div className="flex shrink-0 items-center justify-between border-b border-gray-200/80 p-3.5 select-none dark:border-gray-800">
+          <div className="flex items-center gap-2 font-bold text-gray-900 dark:text-white">
+            <Cpu className="h-4 w-4 text-indigo-500" />
+            <span id="copilot-inspector-title">开发者调试 Trace (Inspector)</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭调试 Trace"
+            className="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
 
-      {/* Content Body */}
-      <div className="flex-1 overflow-y-auto p-4 pb-12 space-y-4">
+        {/* Content Body */}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 pb-12 select-text">
         {activeMessage?.copilot && (
           <div className="space-y-2 p-3 bg-indigo-50/70 dark:bg-indigo-950/20 rounded-xl border border-indigo-100 dark:border-indigo-900/60">
             <div className="font-semibold text-indigo-700 dark:text-indigo-300">工程师证据面板</div>
@@ -167,7 +192,8 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
             {JSON.stringify(activeMessage || {}, null, 2)}
           </pre>
         </div>
+        </div>
       </div>
-    </aside>
+    </div>
   );
 };

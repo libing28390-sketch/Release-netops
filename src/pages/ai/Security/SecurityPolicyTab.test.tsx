@@ -80,7 +80,7 @@ describe('SecurityPolicyTab browser key paths', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('安全策略服务不可用');
   });
 
-  it('enables the configured development passthrough for a bounded test window', async () => {
+  it('enables the administrator-controlled temporary AI test mode for a bounded window', async () => {
     const user = userEvent.setup();
     getPolicy.mockResolvedValueOnce({
       ...policy,
@@ -92,7 +92,7 @@ describe('SecurityPolicyTab browser key paths', () => {
         expires_at: null,
         remaining_seconds: 0,
         max_minutes: 15,
-        environment: 'development',
+        environment: 'production',
       },
     } as any);
     setDevPassthrough.mockResolvedValueOnce({
@@ -102,14 +102,14 @@ describe('SecurityPolicyTab browser key paths', () => {
       expires_at: '2026-08-21T16:15:00+00:00',
       remaining_seconds: 900,
       max_minutes: 15,
-      environment: 'development',
+      environment: 'production',
     });
 
     render(<SecurityPolicyTab />);
-    const switchButton = await screen.findByRole('switch', { name: '切换开发环境临时直通' });
+    const switchButton = await screen.findByRole('switch', { name: '切换 AI 临时测试模式' });
     await user.click(switchButton);
 
     await waitFor(() => expect(setDevPassthrough).toHaveBeenCalledWith(true, 15));
-    expect(await screen.findByText('开发环境直通已开启')).toBeTruthy();
+    expect(await screen.findByText('AI 临时测试模式已开启')).toBeTruthy();
   });
 });

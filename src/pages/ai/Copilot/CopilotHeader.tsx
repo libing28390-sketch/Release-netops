@@ -1,5 +1,5 @@
 import React from 'react';
-import { RotateCcw, SlidersHorizontal, ChevronDown, Sparkles, Bot, ShieldCheck } from 'lucide-react';
+import { RotateCcw, ChevronDown, Sparkles, Bot, ShieldCheck } from 'lucide-react';
 
 interface CopilotModelOption {
   id: string;
@@ -18,8 +18,6 @@ interface CopilotHeaderProps {
   onSelectModel: (model: string) => void;
   models?: CopilotModelOption[];
   onClearChat: () => void;
-  onToggleInspector: () => void;
-  isInspectorOpen: boolean;
 }
 
 export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
@@ -28,8 +26,6 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
   onSelectModel,
   models = [],
   onClearChat,
-  onToggleInspector,
-  isInspectorOpen,
 }) => {
   const defaultModels: CopilotModelOption[] = [
     { id: 'm0', name: 'DeepSeek V4 Flash (默认极速)', model_code: 'deepseek-v4-flash', provider_name: 'DeepSeek' },
@@ -77,13 +73,14 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
         </div>
       </div>
 
-      {/* Actions: Clear Chat & Inspector Drawer Toggle */}
+      {/* Actions: Clear Chat */}
       <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         <span className="hidden sm:flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full font-medium">
           <ShieldCheck className="w-3 h-3" /> 内网事实优先
         </span>
 
         <button
+          type="button"
           onClick={onClearChat}
           className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 rounded-lg transition"
           title="清空当前对话"
@@ -91,18 +88,6 @@ export const CopilotHeader: React.FC<CopilotHeaderProps> = ({
           <RotateCcw className="w-4 h-4" />
         </button>
 
-        <button
-          onClick={onToggleInspector}
-          className={`p-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition border ${
-            isInspectorOpen
-              ? 'bg-indigo-50 dark:bg-indigo-950/70 border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400'
-              : 'border-transparent text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400'
-          }`}
-          title="开启/关闭开发者调试抽屉"
-        >
-          <SlidersHorizontal className="w-4 h-4" />
-          <span className="hidden md:inline">调试 Trace</span>
-        </button>
       </div>
     </header>
   );

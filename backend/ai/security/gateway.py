@@ -224,10 +224,10 @@ class AISecurityGateway:
             raise SecurityBlocked("raw write-capable or unrestricted tool is not allowed", findings=findings, reason_code="AI_SECURITY_UNSAFE_TOOL")
 
         if passthrough_active:
-            # Development-only testing mode: keep the external/provider
-            # controls above, but send non-secret test data as-is. Hard DLP
-            # checks below still reject credentials, private keys, JWTs and
-            # cookies; unsafe write-capable tools remain blocked above.
+            # Temporary testing mode: keep the external/provider controls
+            # above, but send non-secret test data as-is. Hard DLP checks
+            # below still reject credentials, private keys, JWTs and cookies;
+            # unsafe write-capable tools remain blocked above.
             action = SecurityAction.ALLOW
             safe_messages = messages
             safe_tools = tools if tools else None

@@ -40,6 +40,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: nexora-netops
+    # Keep the backend runtime configuration in sync with the deployment
+    # .env. Explicit entries in `environment` below override host-specific
+    # values that must be different inside Docker (for example DATABASE_URL
+    # and ENVIRONMENT).
+    env_file:
+      - .env
     init: true
     mem_limit: 2g
     cpus: "2.0"
@@ -50,10 +56,36 @@ services:
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - NODE_ENV=production
+      # Docker Compose is the production deployment profile. The AI
+      # temporary test mode is controlled at runtime and no longer depends on
+      # switching ENVIRONMENT in .env.
+      - ENVIRONMENT=production
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a non-default secret}@db:5432/${POSTGRES_DB:-netops}
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY must be set to a non-default secret}
       - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY must be set to a non-default secret}
+      # AI settings are passed through from the existing .env contract. The
+      # temporary test mode itself is runtime-controlled from /ai/security.
+      - AI_ENABLED=${AI_ENABLED:-0}
+      - EXTERNAL_AI_ENABLED=${EXTERNAL_AI_ENABLED:-0}
+      - AI_KILL_SWITCH=${AI_KILL_SWITCH:-0}
+      - AI_SECURITY_VAULT_TTL_SECONDS=${AI_SECURITY_VAULT_TTL_SECONDS:-3600}
+      - AI_MAX_PAYLOAD_BYTES=${AI_MAX_PAYLOAD_BYTES:-256000}
+      - AI_PROVIDER_ALLOWLIST=${AI_PROVIDER_ALLOWLIST:-deepseek,openai,openai_compatible,azure_openai,ollama,local,qwen}
+      - AI_DEBUG_PAYLOAD=${AI_DEBUG_PAYLOAD:-0}
+      - AI_OUTBOUND_PROXY_URL=${AI_OUTBOUND_PROXY_URL:-}
+      - AI_PROVIDER_MAX_CONCURRENCY=${AI_PROVIDER_MAX_CONCURRENCY:-8}
+      - AI_TENANT_MAX_CONCURRENCY=${AI_TENANT_MAX_CONCURRENCY:-4}
+      - AI_USER_MAX_CONCURRENCY=${AI_USER_MAX_CONCURRENCY:-2}
+      - AI_CONCURRENCY_ACQUIRE_TIMEOUT_SECONDS=${AI_CONCURRENCY_ACQUIRE_TIMEOUT_SECONDS:-10}
+      - AI_CIRCUIT_FAILURE_THRESHOLD=${AI_CIRCUIT_FAILURE_THRESHOLD:-3}
+      - AI_CIRCUIT_COOLDOWN_SECONDS=${AI_CIRCUIT_COOLDOWN_SECONDS:-30}
+      - AI_HEALTH_BACKOFF_SECONDS=${AI_HEALTH_BACKOFF_SECONDS:-30}
+      - AI_DAILY_BUDGET_USD=${AI_DAILY_BUDGET_USD:-0}
+      - AI_EMBEDDING_MODE=${AI_EMBEDDING_MODE:-local}
+      - AI_EMBEDDING_DIMENSIONS=${AI_EMBEDDING_DIMENSIONS:-1536}
+      - AI_RETRIEVAL_CACHE_ENABLED=${AI_RETRIEVAL_CACHE_ENABLED:-0}
+      - AI_RETRIEVAL_TRGM_THRESHOLD=${AI_RETRIEVAL_TRGM_THRESHOLD:-0.35}
       - REQUEST_BODY_MAX_BYTES=${REQUEST_BODY_MAX_BYTES:-157286400}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

@@ -1,8 +1,9 @@
-"""Development-only, time-limited AI egress passthrough state.
+"""Short-lived, administrator-controlled AI test mode.
 
-The feature gate comes from configuration, while activation is deliberately
-kept in memory so a process restart disables the mode automatically. This is
-not a production override and never enables itself from an environment flag.
+The capability follows the normal AI enablement settings instead of the
+deployment environment label. Activation remains in memory and expires
+automatically, so a restart disables the mode without adding another
+deployment profile or persistent switch.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import Any
 from core.config import settings
 
 
-_DEV_ENVIRONMENTS = {"development", "dev", "test"}
+_MAX_TEST_MINUTES = 15
 
 
 def _now() -> datetime:
@@ -27,8 +28,10 @@ class DevPassthroughController:
         self._expires_at: datetime | None = None
 
     def is_supported(self) -> bool:
-        environment = str(getattr(settings, "ENVIRONMENT", "") or "").strip().lower()
-        return environment in _DEV_ENVIRONMENTS and bool(getattr(settings, "AI_DEV_PASSTHROUGH_ENABLED", False))
+        return bool(
+            getattr(settings, "AI_ENABLED", False)
+            and getattr(settings, "EXTERNAL_AI_ENABLED", False)
+        )
 
     def is_active(self) -> bool:
         with self._lock:
@@ -44,11 +47,10 @@ class DevPassthroughController:
 
     def enable(self, duration_minutes: int | None = None) -> dict[str, Any]:
         if not self.is_supported():
-            raise RuntimeError("AI development passthrough is unavailable outside a configured development environment")
-        configured_max = max(1, int(getattr(settings, "AI_DEV_PASSTHROUGH_MAX_MINUTES", 15) or 15))
-        requested = configured_max if duration_minutes is None else int(duration_minutes)
-        if requested < 1 or requested > configured_max:
-            raise ValueError(f"duration_minutes must be between 1 and {configured_max}")
+            raise RuntimeError("AI temporary test mode requires AI and external AI to be enabled")
+        requested = _MAX_TEST_MINUTES if duration_minutes is None else int(duration_minutes)
+        if requested < 1 or requested > _MAX_TEST_MINUTES:
+            raise ValueError(f"duration_minutes must be between 1 and {_MAX_TEST_MINUTES}")
         with self._lock:
             self._expires_at = _now() + timedelta(minutes=requested)
         return self.status()
@@ -67,14 +69,13 @@ class DevPassthroughController:
                 self._expires_at = None
             expires_at = self._expires_at
             remaining = max(0, int((expires_at - _now()).total_seconds())) if expires_at else 0
-            max_minutes = max(1, int(getattr(settings, "AI_DEV_PASSTHROUGH_MAX_MINUTES", 15) or 15))
             return {
                 "supported": supported,
-                "configured": bool(getattr(settings, "AI_DEV_PASSTHROUGH_ENABLED", False)),
+                "configured": supported,
                 "enabled": bool(expires_at and remaining > 0),
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "remaining_seconds": remaining,
-                "max_minutes": max_minutes,
+                "max_minutes": _MAX_TEST_MINUTES,
                 "environment": str(getattr(settings, "ENVIRONMENT", "") or "unknown"),
             }
 

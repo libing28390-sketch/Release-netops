@@ -50,6 +50,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   const [reasoningLevel, setReasoningLevel] = useState<'normal' | 'high'>('high');
   const [speedLevel, setSpeedLevel] = useState<'fast' | 'precise' | 'creative'>('fast');
   const [showContext, setShowContext] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -65,6 +66,7 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
   useEffect(() => {
     if (editDraft === null || editDraft === undefined) return;
     setInput(editDraft);
+    setIsEditing(true);
     onEditDraftConsumed?.();
     textareaRef.current?.focus();
   }, [editDraft, onEditDraftConsumed]);
@@ -86,8 +88,18 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
     if (!input.trim() || disabled) return;
     onSend(input.trim());
     setInput('');
+    setIsEditing(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setInput('');
+    setIsEditing(false);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.focus();
     }
   };
 
@@ -345,6 +357,15 @@ export const CopilotComposer: React.FC<CopilotComposerProps> = ({
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
           </div>
+        </div>
+      )}
+
+      {isEditing && (
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-indigo-200 bg-indigo-50/80 px-3 py-2 text-xs text-indigo-700 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-300">
+          <span>正在编辑问题，修改后点击发送即可提交新问题</span>
+          <button type="button" onClick={handleCancelEdit} className="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium hover:bg-indigo-100 dark:hover:bg-indigo-900/50">
+            取消编辑
+          </button>
         </div>
       )}
 

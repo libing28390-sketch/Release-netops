@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, SlidersHorizontal, Check, Clock3, ChevronDown, ChevronUp, ListChecks, Loader2, CheckCircle2, AlertCircle, ExternalLink, AlertTriangle, Square, RotateCcw, Pencil, Play } from 'lucide-react';
+import { Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, SlidersHorizontal, Check, Clock3, ChevronDown, ChevronUp, ListChecks, Loader2, CheckCircle2, AlertCircle, ExternalLink, AlertTriangle, Terminal, RotateCcw, Pencil, Play } from 'lucide-react';
 import {
   AIConversationMessage,
   AssistantProcessStep,
@@ -25,12 +25,18 @@ import {
 } from '../../../api/ai';
 import { MarkdownRenderer } from '../../../components/MarkdownRenderer';
 import { copyTextWithFallback } from '../../../utils/clipboard';
+import { cloneSelectionWithin, hasTextSelection, restoreSelection } from './selectionUtils';
 import { CopilotSidebar, ChatSession } from './CopilotSidebar';
 import { CopilotHeader } from './CopilotHeader';
 import { CopilotEmptyState } from './CopilotEmptyState';
 import { CopilotComposer, CopilotModelOption } from './CopilotComposer';
 import { CopilotInspectorDrawer } from './CopilotInspectorDrawer';
 import { formatCopilotDuration, upsertCopilotProcessStep } from './progress';
+
+interface CopilotSelectionSnapshot {
+  range: Range;
+  messageRoot: Element;
+}
 
 interface CitationSource {
   citation_id?: string;
@@ -144,10 +150,10 @@ const AssistantProcessPanel: React.FC<{
 }> = ({ steps, expanded, onToggle, isStreaming, elapsedMs, latencyMs }) => {
   const durationLabel = isStreaming
     ? `处理中 ${formatCopilotDuration(elapsedMs).replace('已处理 ', '')}`
-    : formatCopilotDuration(latencyMs || 0);
+    : `耗时 ${formatCopilotDuration(latencyMs || 0).replace('已处理 ', '')}`;
 
   return (
-    <div className="pt-1 space-y-2 select-none">
+    <div className="pt-1 space-y-2">
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="inline-flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
           <Clock3 className="w-3.5 h-3.5" />
@@ -157,6 +163,8 @@ const AssistantProcessPanel: React.FC<{
           <button
             type="button"
             onClick={onToggle}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? '收起' : '展开'}处理过程，共 ${steps.length} 步`}
             className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/70 px-2.5 py-1 text-gray-600 dark:text-gray-300 hover:border-indigo-300 hover:text-indigo-600 dark:hover:text-indigo-300 transition"
           >
             <ListChecks className="w-3.5 h-3.5" />
@@ -168,39 +176,49 @@ const AssistantProcessPanel: React.FC<{
       </div>
 
       {expanded && steps.length > 0 && (
-        <div className="max-w-xl rounded-xl border border-gray-200/80 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/50 px-3 py-2.5 space-y-2">
+        <div className="max-w-2xl rounded-xl border border-gray-200/80 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/50 p-2.5 space-y-1.5 select-text">
           {steps.map((step) => (
-            <div key={step.id} className="flex items-start gap-2.5 text-xs">
-              <div className="mt-0.5 shrink-0">
+            <div key={step.id} className="rounded-lg border border-gray-200/80 dark:border-gray-700/80 bg-white/80 dark:bg-gray-900/60 px-3 py-2.5 text-xs">
+              <div className="flex items-start gap-2.5">
+                <div className="mt-0.5 shrink-0">
                 {step.status === 'running' ? (
                   <Loader2 className="w-3.5 h-3.5 text-indigo-500 animate-spin" />
                 ) : step.status === 'error' ? (
                   <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+                ) : step.command ? (
+                  <Terminal className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                 ) : (
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                 )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span className="font-medium text-gray-700 dark:text-gray-200">{step.label}</span>
-                  {step.status === 'running' && <span className="text-indigo-500">进行中</span>}
-                  {step.status === 'error' && <span className="text-rose-500">失败</span>}
                 </div>
-                {step.detail && <div className="mt-0.5 text-gray-500 dark:text-gray-400">{step.detail}</div>}
-                {step.operation && (
-                  <code className="mt-1 inline-block max-w-full truncate rounded bg-white dark:bg-gray-900 px-1.5 py-0.5 text-[10px] text-gray-500 dark:text-gray-400">
-                    {step.operation}
-                  </code>
-                )}
-                {step.command && (
-                  <code className="mt-1 block max-w-full overflow-x-auto rounded bg-gray-900 px-1.5 py-0.5 text-[10px] text-gray-200">
-                    {step.command}
-                  </code>
-                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span className="font-medium text-gray-700 dark:text-gray-200">{step.label}</span>
+                    {step.status === 'running' && <span className="text-indigo-500">进行中</span>}
+                    {step.status === 'error' && <span className="text-rose-500">失败</span>}
+                  </div>
+                  {step.detail && <div className="mt-1 text-gray-500 dark:text-gray-400">{step.detail}</div>}
+                  {step.operation && (
+                    <div className="mt-1.5 flex min-w-0 items-start gap-2">
+                      <span className="shrink-0 text-[10px] text-gray-400 dark:text-gray-500">调用</span>
+                      <code className="min-w-0 break-all rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500 dark:text-gray-400 select-text">
+                        {step.operation}
+                      </code>
+                    </div>
+                  )}
+                  {step.command && (
+                    <div className="mt-1.5 flex min-w-0 items-start gap-2">
+                      <span className="shrink-0 text-[10px] text-gray-400 dark:text-gray-500">命令</span>
+                      <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-gray-900 px-2 py-1.5 text-[10px] leading-relaxed text-gray-200 select-text">
+                        {step.command}
+                      </pre>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ))}
-          <div className="border-t border-gray-200/80 dark:border-gray-700 pt-2 text-[11px] text-gray-400 dark:text-gray-500">
+          <div className="border-t border-gray-200/80 dark:border-gray-700 px-1 pt-2 text-[11px] text-gray-400 dark:text-gray-500 select-text">
             本次 Copilot 对话仅执行只读查询、知识检索和模型生成，未执行设备 CLI 命令。
           </div>
         </div>
@@ -222,8 +240,6 @@ export const AssistantTab: React.FC = () => {
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [activeInspectorMsg, setActiveInspectorMsg] = useState<ChatMessage | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [copiedSelectionId, setCopiedSelectionId] = useState<string | null>(null);
-  const [selectionCopyNotice, setSelectionCopyNotice] = useState<{ id: string; text: string } | null>(null);
   const [expandedSourcesId, setExpandedSourcesId] = useState<string | null>(null);
   const [expandedProcessId, setExpandedProcessId] = useState<string | null>(null);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
@@ -244,6 +260,10 @@ export const AssistantTab: React.FC = () => {
   const requestStartedAtRef = useRef<number | null>(null);
   const loadedSessionIdsRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
+  const selectionBeforeContextMenuRef = useRef<CopilotSelectionSnapshot | null>(null);
+  const isSelectingTextRef = useRef(false);
+  const shouldStickToBottomRef = useRef(true);
+  const restoringSelectionRef = useRef(false);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const messages = (activeSession?.messages || []) as ChatMessage[];
@@ -251,6 +271,57 @@ export const AssistantTab: React.FC = () => {
   // at 900px made the conversation list look like an empty white strip in an
   // embedded browser and hid rename/archive actions.
   const compactSidebar = sidebarCollapsed;
+
+  useEffect(() => {
+    const rememberSelection = () => {
+      if (restoringSelectionRef.current) return;
+      const selection = window.getSelection();
+      if (!selection || !hasTextSelection(selection)) return;
+
+      const anchorElement = selection.anchorNode instanceof Element
+        ? selection.anchorNode
+        : selection.anchorNode?.parentElement;
+      const messageRoot = anchorElement?.closest('[data-copilot-message-id]');
+      if (!messageRoot || !messageRoot.contains(selection.focusNode)) return;
+
+      const range = cloneSelectionWithin(selection, messageRoot);
+      if (range) {
+        selectionBeforeContextMenuRef.current = { range, messageRoot };
+      }
+    };
+
+    const finishTextSelection = () => {
+      isSelectingTextRef.current = false;
+    };
+
+    const restoreSelectionForContextMenu = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const messageRoot = target?.closest('[data-copilot-message-id]');
+      const snapshot = selectionBeforeContextMenuRef.current;
+      if (!snapshot || !messageRoot || snapshot.messageRoot !== messageRoot) return;
+
+      selectionBeforeContextMenuRef.current = null;
+      restoringSelectionRef.current = true;
+      const restoredRange = snapshot.range.cloneRange();
+      restoreSelection(restoredRange);
+      window.setTimeout(() => {
+        restoreSelection(restoredRange);
+        restoringSelectionRef.current = false;
+        selectionBeforeContextMenuRef.current = null;
+      }, 0);
+    };
+
+    document.addEventListener('selectionchange', rememberSelection);
+    document.addEventListener('contextmenu', restoreSelectionForContextMenu, true);
+    window.addEventListener('mouseup', finishTextSelection);
+    window.addEventListener('blur', finishTextSelection);
+    return () => {
+      document.removeEventListener('selectionchange', rememberSelection);
+      document.removeEventListener('contextmenu', restoreSelectionForContextMenu, true);
+      window.removeEventListener('mouseup', finishTextSelection);
+      window.removeEventListener('blur', finishTextSelection);
+    };
+  }, []);
 
   const loadSessionMessages = async (sessionId: string) => {
     if (!sessionId.startsWith('conv_') || loadedSessionIdsRef.current.has(sessionId)) return;
@@ -405,11 +476,13 @@ export const AssistantTab: React.FC = () => {
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
+    if (isSelectingTextRef.current || hasTextSelection(window.getSelection())) return;
+    if (!shouldStickToBottomRef.current) return;
 
     // Scroll the message list itself. Calling scrollIntoView here can select
     // the outer Copilot shell as the scroll container and move the sidebar
     // and header out of view in nested flex layouts.
-    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
   }, [messages, loading]);
 
   useEffect(() => {
@@ -525,12 +598,45 @@ export const AssistantTab: React.FC = () => {
     abortControllerRef.current?.abort();
   };
 
+  const handleMessageMouseDown = (event: React.MouseEvent<HTMLElement>) => {
+    if (event.button === 0) {
+      isSelectingTextRef.current = true;
+      selectionBeforeContextMenuRef.current = null;
+      return;
+    }
+    if (event.button !== 2) return;
+
+    const messageRoot = event.currentTarget.closest('[data-copilot-message-id]');
+    const range = cloneSelectionWithin(window.getSelection(), event.currentTarget);
+    if (messageRoot && range) {
+      selectionBeforeContextMenuRef.current = { range, messageRoot };
+    } else if (!messageRoot || selectionBeforeContextMenuRef.current?.messageRoot !== messageRoot) {
+      selectionBeforeContextMenuRef.current = null;
+    }
+  };
+
+  const handleMessagesScroll = () => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom <= 120;
+  };
+
+  const handleEditMessage = (message: ChatMessage) => {
+    setEditDraft(message.content);
+  };
+
+  const handleResendMessage = (message: ChatMessage) => {
+    if (loading) return;
+    void handleSend(message.content);
+  };
+
   const handleRetryMessage = (message: ChatMessage) => {
     const index = messages.findIndex((item) => item.id === message.id);
     const previousUser = index >= 0
       ? [...messages.slice(0, index)].reverse().find((item) => item.role === 'user')
       : undefined;
-    if (previousUser) void handleSend(previousUser.content);
+    if (previousUser) handleResendMessage(previousUser);
   };
 
   const handleContinueMessage = (message: ChatMessage) => {
@@ -540,6 +646,8 @@ export const AssistantTab: React.FC = () => {
 
   const handleSend = async (userMsg: string) => {
     if (!userMsg.trim() || loading || !activeSession) return;
+
+    shouldStickToBottomRef.current = true;
 
     const conversationId = activeSession.id.startsWith('conv_') ? activeSession.id : undefined;
     if (conversationId && activeSession.status === 'archived') {
@@ -801,39 +909,6 @@ export const AssistantTab: React.FC = () => {
     }
   };
 
-  const handleCopySelectedMessage = async (id: string) => {
-    const selection = window.getSelection();
-    const selectedText = selection?.toString() || '';
-    const messageElement = Array.from(document.querySelectorAll<HTMLElement>('[data-copilot-message-id]'))
-      .find((element) => element.dataset.copilotMessageId === id);
-    const selectionBelongsToMessage = Boolean(
-      selection?.rangeCount &&
-      messageElement &&
-      messageElement.contains(selection.anchorNode) &&
-      messageElement.contains(selection.focusNode),
-    );
-
-    const showSelectionNotice = (text: string) => {
-      setSelectionCopyNotice({ id, text });
-      window.setTimeout(() => {
-        setSelectionCopyNotice((current) => current?.id === id ? null : current);
-      }, 2500);
-    };
-
-    if (!selectedText.trim() || !selectionBelongsToMessage) {
-      showSelectionNotice('请先在这条回答中拖动选中文本');
-      return;
-    }
-
-    const copiedSuccessfully = await copyTextWithFallback(selectedText);
-    if (!copiedSuccessfully) {
-      showSelectionNotice('复制选中文本失败，请检查浏览器剪贴板权限');
-      return;
-    }
-    setCopiedSelectionId(id);
-    window.setTimeout(() => setCopiedSelectionId((current) => current === id ? null : current), 2000);
-  };
-
   const handleFeedback = async (message: ChatMessage, rating: 'positive' | 'negative', reason?: string) => {
     if (!activeSessionId || !activeSessionId.startsWith('conv_')) {
       setFeedbackNotice('请在已保存会话中提交反馈');
@@ -956,8 +1031,6 @@ export const AssistantTab: React.FC = () => {
           onSelectModel={setSelectedModel}
           models={availableModels}
           onClearChat={handleClearMessages}
-          onToggleInspector={() => setIsInspectorOpen(!isInspectorOpen)}
-          isInspectorOpen={isInspectorOpen}
         />
 
         {sessionError && (
@@ -968,7 +1041,7 @@ export const AssistantTab: React.FC = () => {
         )}
 
         {/* Center Scrollable Chat List (Max-width 820px) */}
-        <div ref={messagesContainerRef} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {messages.length === 0 ? (
             <CopilotEmptyState onSelectPrompt={handleSend} />
           ) : (
@@ -976,15 +1049,51 @@ export const AssistantTab: React.FC = () => {
               {messages.map((m) => {
                 if (m.role === 'user') {
                   return (
-                    <div key={m.id} className="flex justify-end select-text">
-                      <div className="max-w-[78%] bg-[#f4f4f5] dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-[20px] rounded-tr-none px-4 py-3 shadow-xs font-sans text-sm leading-relaxed">
+                    <div key={m.id} data-copilot-message-id={m.id} className="flex flex-col items-end gap-1 select-text">
+                      <div
+                        className="max-w-[78%] cursor-text rounded-[20px] rounded-tr-none bg-[#f4f4f5] px-4 py-3 font-sans text-sm leading-relaxed text-gray-900 selection:bg-indigo-200 selection:text-gray-900 dark:bg-gray-800 dark:text-gray-100 dark:selection:bg-indigo-700/70 dark:selection:text-white"
+                        style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+                        onMouseDownCapture={handleMessageMouseDown}
+                      >
                         <p className="whitespace-pre-wrap">{m.content}</p>
+                      </div>
+                      <div className="flex items-center gap-1 text-gray-400 select-none">
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyMessage(m.id, m.content)}
+                          className="inline-flex items-center gap-1 rounded-md p-1 text-[11px] transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                          title="复制问题"
+                          aria-label="复制问题"
+                        >
+                          {copiedId === m.id ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleEditMessage(m)}
+                          disabled={loading}
+                          className="inline-flex items-center gap-1 rounded-md p-1 text-[11px] transition hover:bg-gray-100 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-gray-800 dark:hover:text-indigo-300"
+                          title="编辑并发送问题"
+                          aria-label="编辑并发送问题"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleResendMessage(m)}
+                          disabled={loading}
+                          className="inline-flex items-center gap-1 rounded-md p-1 text-[11px] transition hover:bg-gray-100 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-gray-800 dark:hover:text-indigo-300"
+                          title="重新发送问题"
+                          aria-label="重新发送问题"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </div>
                   );
                 }
 
                 // Assistant Message (No Card Box, Pure Document-like Experience)
+                const isMessageStreaming = streamingMessageId === m.id;
                 return (
                   <div key={m.id} data-copilot-message-id={m.id} className="space-y-3 select-text">
                     {/* Assistant Title Header */}
@@ -1000,8 +1109,18 @@ export const AssistantTab: React.FC = () => {
                     </div>
 
                     {/* Content Rendered via MarkdownRenderer */}
-                    <div className="text-gray-800 dark:text-gray-100 pl-1">
-                      <MarkdownRenderer content={m.content || (loading ? '...' : '')} />
+                    <div
+                      className="cursor-text pl-1 text-gray-800 select-text selection:bg-indigo-200 selection:text-gray-900 dark:text-gray-100 dark:selection:bg-indigo-700/70 dark:selection:text-white"
+                      style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+                      onMouseDownCapture={handleMessageMouseDown}
+                    >
+                      {isMessageStreaming ? (
+                        <div className="whitespace-pre-wrap break-words leading-relaxed select-text">
+                          {m.content || '...'}
+                        </div>
+                      ) : (
+                        <MarkdownRenderer content={m.content || (loading ? '...' : '')} />
+                      )}
                     </div>
 
                     {m.copilot && (
@@ -1109,19 +1228,6 @@ export const AssistantTab: React.FC = () => {
                     <div className="flex items-center gap-3 pt-1 text-gray-400 select-none text-xs">
                       <button
                         type="button"
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => void handleCopySelectedMessage(m.id)}
-                        className="hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1 p-1 transition"
-                        title="复制选中文本"
-                      >
-                        {copiedSelectionId === m.id ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-500" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                        <span className="hidden sm:inline">{copiedSelectionId === m.id ? '已复制选中' : '复制选中'}</span>
-                      </button>
-                      <button
                         onClick={() => handleCopyMessage(m.id, m.content)}
                         className="hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1 p-1 transition"
                         title="复制全文"
@@ -1136,7 +1242,10 @@ export const AssistantTab: React.FC = () => {
                       <button type="button" onClick={() => handleRetryMessage(m)} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="重试本次问题">
                         <RotateCcw className="w-3.5 h-3.5" />
                       </button>
-                      <button type="button" onClick={() => setEditDraft(messages.slice(0, messages.findIndex((item) => item.id === m.id)).reverse().find((item) => item.role === 'user')?.content || '')} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="修改上一条问题">
+                      <button type="button" onClick={() => {
+                        const previousUser = messages.slice(0, messages.findIndex((item) => item.id === m.id)).reverse().find((item) => item.role === 'user');
+                        if (previousUser) handleEditMessage(previousUser);
+                      }} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="编辑并发送上一条问题">
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
                       <button type="button" onClick={() => handleContinueMessage(m)} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="继续排查">
@@ -1182,9 +1291,6 @@ export const AssistantTab: React.FC = () => {
                         <span className="text-[11px]">调试 Trace</span>
                       </button>
                     </div>
-                    {selectionCopyNotice?.id === m.id && (
-                      <div role="status" className="text-[11px] text-amber-600 dark:text-amber-300">{selectionCopyNotice.text}</div>
-                    )}
                     {feedbackReasonMessageId === m.id && (
                       <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-rose-100 bg-rose-50/70 px-2 py-1.5 text-[11px] text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/20 dark:text-rose-300">
                         <span>请选择差评原因：</span>
@@ -1235,7 +1341,7 @@ export const AssistantTab: React.FC = () => {
         />
       </div>
 
-      {/* ── Right Inspector Drawer (360px) ── */}
+      {/* ── Center Inspector Modal ── */}
       <CopilotInspectorDrawer
         isOpen={isInspectorOpen}
         onClose={() => setIsInspectorOpen(false)}

@@ -212,7 +212,7 @@ def set_dev_passthrough(
     request: Request,
     user=Depends(require_ai_permission("ai.security.manage")),
 ):
-    """Enable a short-lived raw egress test mode in development only.
+    """Enable a short-lived AI test mode from the security page.
 
     The mode is intentionally not persisted: restarting the process disables
     it. Provider allowlists, external-AI policy, kill switches, payload size,
@@ -224,19 +224,21 @@ def set_dev_passthrough(
     # high-impact control: it must have a real, valid Administrator session.
     authenticated_user = _get_current_user(request)
     if not authenticated_user:
-        raise HTTPException(status_code=401, detail="Authentication is required to change development passthrough")
+        raise HTTPException(status_code=401, detail="Authentication is required to change AI temporary test mode")
     if str(authenticated_user.get("role") or "").strip().lower() not in {"administrator", "admin"}:
-        raise HTTPException(status_code=403, detail="Administrator permission is required to change development passthrough")
+        raise HTTPException(status_code=403, detail="Administrator permission is required to change AI temporary test mode")
     user = authenticated_user
 
     if not dev_passthrough.is_supported():
-        raise HTTPException(status_code=403, detail="Development passthrough is disabled or unavailable in this environment")
+        raise HTTPException(status_code=403, detail="AI and external AI must be enabled before temporary test mode can be used")
+    if payload.enabled and (not ai_security_gateway.policy.external_ai_enabled or ai_security_gateway.policy.kill_switch):
+        raise HTTPException(status_code=409, detail="Enable external AI and disable the global Kill Switch before starting temporary test mode")
     try:
         status = dev_passthrough.enable(payload.duration_minutes) if payload.enabled else dev_passthrough.disable()
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     logger.warning(
-        "AI development passthrough %s by user=%s expires_at=%s",
+        "AI temporary test mode %s by user=%s expires_at=%s",
         "enabled" if status["enabled"] else "disabled",
         user.get("username", "unknown"),
         status.get("expires_at"),

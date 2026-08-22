@@ -19,9 +19,27 @@ def _gateway() -> AISecurityGateway:
     )
 
 
-def test_dev_passthrough_is_disabled_outside_development(monkeypatch):
+def _enable_ai_test_mode(monkeypatch):
+    monkeypatch.setattr(settings, "AI_ENABLED", True)
+    monkeypatch.setattr(settings, "EXTERNAL_AI_ENABLED", True)
+
+
+def test_temporary_test_mode_is_available_in_production(monkeypatch):
     monkeypatch.setattr(settings, "ENVIRONMENT", "production")
-    monkeypatch.setattr(settings, "AI_DEV_PASSTHROUGH_ENABLED", True)
+    _enable_ai_test_mode(monkeypatch)
+    dev_passthrough.disable()
+
+    assert dev_passthrough.is_supported() is True
+    status = dev_passthrough.enable(1)
+    assert status["enabled"] is True
+    assert status["environment"] == "production"
+    dev_passthrough.disable()
+
+
+def test_temporary_test_mode_requires_ai_enablement(monkeypatch):
+    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+    monkeypatch.setattr(settings, "AI_ENABLED", False)
+    monkeypatch.setattr(settings, "EXTERNAL_AI_ENABLED", False)
     dev_passthrough.disable()
 
     assert dev_passthrough.is_supported() is False
@@ -29,23 +47,8 @@ def test_dev_passthrough_is_disabled_outside_development(monkeypatch):
         dev_passthrough.enable(1)
 
 
-def test_dev_passthrough_is_explicit_and_time_limited(monkeypatch):
-    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
-    monkeypatch.setattr(settings, "AI_DEV_PASSTHROUGH_ENABLED", True)
-    monkeypatch.setattr(settings, "AI_DEV_PASSTHROUGH_MAX_MINUTES", 15)
-    dev_passthrough.disable()
-
-    status = dev_passthrough.enable(1)
-    assert status["enabled"] is True
-    assert 0 < status["remaining_seconds"] <= 60
-
-    dev_passthrough.disable()
-    assert dev_passthrough.status()["enabled"] is False
-
-
 def test_passthrough_keeps_raw_identifiers_but_not_credentials(monkeypatch):
-    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
-    monkeypatch.setattr(settings, "AI_DEV_PASSTHROUGH_ENABLED", True)
+    _enable_ai_test_mode(monkeypatch)
     dev_passthrough.disable()
     dev_passthrough.enable(1)
     try:
@@ -69,8 +72,7 @@ def test_passthrough_keeps_raw_identifiers_but_not_credentials(monkeypatch):
 
 
 def test_dev_passthrough_requires_a_real_authenticated_request(monkeypatch):
-    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
-    monkeypatch.setattr(settings, "AI_DEV_PASSTHROUGH_ENABLED", True)
+    _enable_ai_test_mode(monkeypatch)
     dev_passthrough.disable()
     request = Request({"type": "http", "method": "POST", "path": "/api/ai/security/dev-passthrough", "headers": []})
 
