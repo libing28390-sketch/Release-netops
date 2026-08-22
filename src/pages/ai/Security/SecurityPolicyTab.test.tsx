@@ -35,6 +35,15 @@ const policy = {
   allowed_classifications: ['PUBLIC', 'INTERNAL'],
   allowed_data_regions: ['unknown', 'global'],
   tenant_kill_switches: {},
+  dev_passthrough: {
+    supported: false,
+    configured: false,
+    enabled: false,
+    expires_at: null,
+    remaining_seconds: 0,
+    max_minutes: 15,
+    environment: 'production',
+  },
 };
 
 const getPolicy = vi.mocked(getAISecurityPolicy);
@@ -67,6 +76,7 @@ describe('SecurityPolicyTab browser key paths', () => {
 
     await user.click(screen.getByRole('switch', { name: '切换外部 AI 出口' }));
     await waitFor(() => expect(updatePolicy).toHaveBeenCalledWith(expect.objectContaining({ external_ai_enabled: true })));
+    expect(updatePolicy.mock.calls[0]?.[0]).not.toHaveProperty('dev_passthrough');
     expect(await screen.findByText('安全网关已就绪')).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: '运行策略检查' }));

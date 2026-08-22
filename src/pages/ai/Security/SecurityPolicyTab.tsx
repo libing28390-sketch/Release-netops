@@ -142,7 +142,10 @@ export const SecurityPolicyTab: React.FC = () => {
     setError(null);
     setNotice(null);
     try {
-      const nextPolicy = await updateAISecurityPolicy({ ...policy, ...patch });
+      // `dev_passthrough` is runtime status returned by the read endpoint,
+      // not part of the persisted policy update contract.
+      const { dev_passthrough: _devPassthrough, ...policyPayload } = { ...policy, ...patch };
+      const nextPolicy = await updateAISecurityPolicy(policyPayload);
       setPolicy(nextPolicy);
       setLastSavedAt(new Date());
       setNotice('安全策略已保存，新的请求会立即按此策略执行。');
