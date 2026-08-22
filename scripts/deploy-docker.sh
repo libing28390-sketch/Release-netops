@@ -48,6 +48,9 @@ Environment:
   NETOPS_RELEASE_BRANCH  Override the release branch (default: main).
   NETOPS_DIR              Default deployment directory (default: current dir).
   RELEASE_BACKUP_DIR      Backup destination (default: ../netops-release-backups).
+  NETOPS_BUILD_PULL       Set to 1 to always pull newer base images while
+                          building. By default local base images are reused and
+                          the registry is only contacted for missing images.
 EOF
 }
 
@@ -271,9 +274,15 @@ validate_compose() {
 
 build_and_start() {
     validate_compose
+    local build_args=(db netops nginx)
+    # Local images win: without --pull, BuildKit uses locally available FROM
+    # images and only contacts the registry when one is missing. Hosts with
+    # reliable registry access can set NETOPS_BUILD_PULL=1 to force refreshing
+    # base images.
+    [[ "${NETOPS_BUILD_PULL:-0}" == "1" ]] && build_args=(--pull "${build_args[@]}")
     # Build the database image first so pgvector and pg_trgm are present before
     # the application container starts its migrations.
-    docker compose build --pull db netops nginx
+    docker compose build "${build_args[@]}"
     docker compose up -d --force-recreate --remove-orphans
     docker compose ps
 }
