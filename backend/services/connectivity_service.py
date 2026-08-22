@@ -18,6 +18,7 @@ from typing import Any
 
 from database import get_db_connection
 from core.crypto import decrypt_credential
+from core.subprocess_utils import run_console_command
 from services.vault_service import resolve_device_credentials
 from services.operational_data_service import collect_operational_data
 
@@ -41,7 +42,7 @@ def _server_ping(target: str, count: int = 4, timeout: int = 3) -> dict[str, Any
            '-w' if is_win else '-W', str(timeout * (1000 if is_win else 1)),
            target]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=count * timeout + 5)
+        proc = run_console_command(cmd, timeout=count * timeout + 5)
         output = proc.stdout + proc.stderr
 
         # 解析丢包率
@@ -105,7 +106,7 @@ def _server_traceroute(target: str, max_hops: int = 15, timeout: int = 3) -> dic
     else:
         cmd = ['traceroute', '-n', '-m', str(max_hops), '-w', str(timeout), target]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=max_hops * timeout + 10)
+        proc = run_console_command(cmd, timeout=max_hops * timeout + 10)
         output = proc.stdout + proc.stderr
 
         # 解析跳数

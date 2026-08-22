@@ -16,7 +16,6 @@ import logging
 import platform
 import re
 import socket
-import subprocess
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,6 +32,7 @@ from services.snmp_service import collect_device_metrics, collect_interface_data
 from services.snmp_metric_profile_service import resolve_metric_profiles
 from services.network_access_limiter import limited_connect_handler
 from core.config import settings
+from core.subprocess_utils import run_console_command
 from core.textfsm import parse_with_textfsm
 from core.analysis import analyze_device_inspection, summarize_run_analysis, correlate_risk_patterns
 from core.exception_classifier import make_finding
@@ -81,7 +81,7 @@ def _ping_device(ip: str, count: int = 3, timeout: int = 2) -> dict[str, Any]:
     cmd = ['ping', '-n' if is_win else '-c', str(count),
            '-w' if is_win else '-W', str(timeout * (1000 if is_win else 1)), ip]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=count * timeout + 5)
+        proc = run_console_command(cmd, timeout=count * timeout + 5)
         output = proc.stdout + proc.stderr
         loss_match = re.search(r'(\d+)%\s*(loss|丢失|packet loss)', output, re.I)
         loss_pct = int(loss_match.group(1)) if loss_match else 100

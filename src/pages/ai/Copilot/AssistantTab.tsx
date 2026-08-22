@@ -713,6 +713,54 @@ export const AssistantTab: React.FC = () => {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
+    // Stream tokens arrive faster than the display refreshes. Committing one
+    // setState per token re-rendered the whole conversation and made text
+    // selection and copy feel laggy, so tokens are batched per frame.
+    let pendingStreamText = '';
+    let streamFlushHandle: number | null = null;
+    let streamFlushIsTimeout = false;
+    const appendStreamText = (chunk: string) => {
+      if (!chunk) return;
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== activeSessionId) return s;
+          const msgs = s.messages.map((m) => {
+            if (m.id === assistantMsgId) {
+              return { ...m, content: m.content + chunk, stream_status: 'streaming' as const };
+            }
+            return m;
+          });
+          return { ...s, messages: msgs };
+        })
+      );
+    };
+    const flushStreamText = () => {
+      streamFlushHandle = null;
+      const chunk = pendingStreamText;
+      pendingStreamText = '';
+      appendStreamText(chunk);
+    };
+    const scheduleStreamFlush = () => {
+      if (streamFlushHandle !== null) return;
+      if (document.hidden) {
+        streamFlushIsTimeout = true;
+        streamFlushHandle = window.setTimeout(flushStreamText, 100);
+      } else {
+        streamFlushIsTimeout = false;
+        streamFlushHandle = window.requestAnimationFrame(flushStreamText);
+      }
+    };
+    const finalizeStreamText = (flushRemaining: boolean) => {
+      if (streamFlushHandle !== null) {
+        if (streamFlushIsTimeout) window.clearTimeout(streamFlushHandle);
+        else window.cancelAnimationFrame(streamFlushHandle);
+        streamFlushHandle = null;
+      }
+      const chunk = pendingStreamText;
+      pendingStreamText = '';
+      if (flushRemaining) appendStreamText(chunk);
+    };
+
     try {
       const historyPayload = conversationId ? undefined : messages.map((m) => ({ role: m.role, content: m.content }));
 
@@ -720,20 +768,8 @@ export const AssistantTab: React.FC = () => {
         userMsg,
         historyPayload,
         (token) => {
-          setSessions((prev) =>
-            prev.map((s) => {
-              if (s.id === activeSessionId) {
-                const msgs = s.messages.map((m) => {
-                  if (m.id === assistantMsgId) {
-                    return { ...m, content: m.content + token, stream_status: 'streaming' };
-                  }
-                  return m;
-                });
-                return { ...s, messages: msgs };
-              }
-              return s;
-            })
-          );
+          pendingStreamText += token;
+          scheduleStreamFlush();
         },
         (meta) => {
           setSessions((prev) =>
@@ -845,6 +881,7 @@ export const AssistantTab: React.FC = () => {
         },
       );
 
+      finalizeStreamText(true);
       const elapsed = streamDurationMs ?? Date.now() - startTime;
       setSessions((prev) =>
         prev.map((s) => {
@@ -868,6 +905,7 @@ export const AssistantTab: React.FC = () => {
         })
       );
     } catch (err: any) {
+      finalizeStreamText(false);
       const elapsed = streamDurationMs ?? Date.now() - startTime;
       const aborted = err?.name === 'AbortError' || abortController.signal.aborted;
       setSessions((prev) =>

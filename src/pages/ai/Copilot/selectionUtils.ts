@@ -1,5 +1,7 @@
 export const hasTextSelection = (selection: Selection | null): boolean => (
-  Boolean(selection && selection.rangeCount > 0 && selection.toString().trim())
+  // isCollapsed is O(1); selection.toString() serializes the whole range and
+  // made per-token streaming and drag-select jank on long answers.
+  Boolean(selection && selection.rangeCount > 0 && !selection.isCollapsed)
 );
 
 export const cloneSelectionWithin = (selection: Selection | null, root: Node): Range | null => {

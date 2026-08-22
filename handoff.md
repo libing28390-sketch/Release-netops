@@ -1,8 +1,33 @@
 # Nexora NetOps Copilot 交接说明
 
 - 日期：2026-08-22
-- 任务范围：Copilot Trace 入口去重、回答文本选择与复制稳定性修复
+- 任务范围：Copilot Trace 入口去重、回答文本选择与复制稳定性修复、后端 ping/tracert 编码崩溃修复、流式渲染性能优化
 - 当前状态：代码修改已完成，前端测试、类型检查和生产构建均已通过；本次未执行 commit 或 push。
+
+## 2026-08-22 第二轮修复
+
+### 后端 UnicodeDecodeError（选中文本时控制台大量报错）
+
+- 根因：`connectivity_service` / `inspection_service` / `outbound_probe_service` 中 4 处
+  `subprocess.run(..., capture_output=True, text=True)` 未指定编码。中文 Windows 的
+  `ping`/`tracert` 输出 GBK（0xd5 为 GBK 首字节），后端 Python 处于 UTF-8 模式时
+  读取线程解码崩溃，探测输出丢失。
+- 修复：新增 `backend/core/subprocess_utils.py`（`run_console_command` +
+  `decode_console_output`，按字节捕获后依次尝试 UTF-8/GBK 解码，最终 replace 兜底），
+  4 处调用点全部切换到该 helper。
+- 验证：venv 内真实执行 `_server_ping('127.0.0.1')`，中文输出正确解码，
+  丢包率与 RTT 解析正常，无任何 UnicodeDecodeError。
+
+### 选中/复制延迟（前端性能）
+
+- 根因 1：`selectionUtils.hasTextSelection` 用 `selection.toString().trim()` 判断选区，
+  为 O(n) 序列化。拖动选中时每次 `selectionchange` 触发；流式输出时每个 token 的
+  滚动 effect 也触发。长回答下持续整段序列化导致卡顿。已改为 `!selection.isCollapsed`（O(1)）。
+- 根因 2：每个 SSE token 触发一次 `setSessions`，整个会话树（侧栏+全部消息+输入框）
+  每 token 重渲染一次。已改为 token 缓冲 + requestAnimationFrame 按帧合并提交
+  （后台标签页降级为 100ms setTimeout），流结束/出错时同步 flush，内容不丢失。
+- 新增 `src/pages/ai/Copilot/streamRender.test.tsx`：渲染完整 AssistantTab，
+  验证批量合并后回答内容完整（含流结束同帧到达的尾部 token）。
 
 ## 已完成内容
 
@@ -24,12 +49,15 @@
 
 ## 关键文件
 
-- `src/pages/ai/Copilot/AssistantTab.tsx`：选区捕获/恢复、自动滚动策略、流式回答渲染。
+- `backend/core/subprocess_utils.py`：subprocess 输出容错解码 helper（新增）。
+- `backend/services/connectivity_service.py`、`backend/services/inspection_service.py`、`backend/services/outbound_probe_service.py`：ping/tracert 调用点切换到新 helper。
+- `src/pages/ai/Copilot/AssistantTab.tsx`：选区捕获/恢复、自动滚动策略、流式回答渲染、token 按帧合并。
+- `src/pages/ai/Copilot/selectionUtils.ts`：选区判断、克隆和恢复工具（hasTextSelection 已 O(1) 化）。
+- `src/pages/ai/Copilot/streamRender.test.tsx`：流式 token 批量渲染回归测试（新增）。
 - `src/pages/ai/Copilot/CopilotHeader.tsx`：移除顶部重复 Trace 入口。
 - `src/pages/ai/Copilot/CopilotInspectorDrawer.tsx`：Trace 居中 Inspector。
 - `src/pages/ai/Copilot/CopilotComposer.tsx`：保留并验证输入区交互。
 - `src/pages/ai/Copilot/keypaths.test.tsx`：页面关键交互回归测试。
-- `src/pages/ai/Copilot/selectionUtils.ts`：选区判断、克隆和恢复工具。
 - `src/pages/ai/Copilot/selectionUtils.test.ts`：选区工具单元测试。
 
 ## 验证结果
@@ -37,14 +65,16 @@
 执行了以下检查：
 
 ~~~text
-npm run test:frontend -- --run src/pages/ai/Copilot/selectionUtils.test.ts src/pages/ai/Copilot/keypaths.test.tsx src/pages/ai/Copilot/progress.test.ts
+npm run test:frontend -- --run src/pages/ai/Copilot/
+npm run lint
+npm run build
 ~~~
 
-- Vitest：3 个测试文件、7 个测试全部通过。
+- Vitest：4 个测试文件、9 个测试全部通过（含新增 streamRender 2 个用例）。
 - `npm run lint`：通过，TypeScript 类型检查无错误。
 - `npm run build`：通过，Vite 生产构建成功；仅保留既有的大 chunk 提示。
-- 浏览器验证：鼠标拖动选中文本后使用 Ctrl+C，可正常复制并粘贴选中文本。
-- 内置浏览器 CUA 工具无法完整验证原生右键菜单：该工具会在 contextmenu 事件后清除选区；但同步捕获恢复和 fallback 恢复逻辑已通过运行时日志确认生效。接入真实浏览器后需再验证原生“复制”菜单。
+- 后端：4 个改动文件语法检查通过；venv 导入冒烟通过；真实 ping 执行验证 GBK 解码与结果解析正常。
+- `dist/index.html` 已恢复到构建前版本，避免资源哈希变更混入工作区。
 
 ## 部署与接手步骤
 

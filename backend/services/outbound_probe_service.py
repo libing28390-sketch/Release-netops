@@ -256,8 +256,8 @@ def _base_result(target: dict) -> dict:
 
 
 def _probe_icmp(target: dict) -> dict:
-    import subprocess
     import platform
+    from core.subprocess_utils import run_console_command
     result = _base_result(target)
     started = time.perf_counter()
     host = target["host"]
@@ -274,7 +274,7 @@ def _probe_icmp(target: dict) -> dict:
             timeout_sec = max(1, int(timeout_ms / 1000))
             cmd = ["ping", "-c", "1", "-W", str(timeout_sec), ip_addr]
             
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=timeout_ms / 1000 + 1)
+        proc = run_console_command(cmd, timeout=timeout_ms / 1000 + 1)
         if proc.returncode == 0:
             result.update(success=True, latency_ms=round((time.perf_counter() - started) * 1000, 2), resolved_ip=ip_addr)
         else:
