@@ -15,7 +15,9 @@
 ## 一句话速览
 
 - **Windows**：准备 PostgreSQL 17、`pgvector`、`pg_trgm` 和业务库 → 克隆 `windows` 分支 → 双击 `NetOps.exe` → Nexora 向导处理运行时 → 浏览器开 `http://127.0.0.1:5010`。
-- **Docker**：克隆仓库 → 配好 `.env` → 根目录 `docker compose up -d --build` → 访问 `http://localhost`。
+- **Docker 在线**：克隆仓库 → 配好 `.env` → 根目录 `docker compose up -d --build` → 访问 `http://localhost`。
+- **Docker 完全离线**：联网机器执行 `bash scripts/deploy-docker.sh save-images <archive-path>`，目标服务器执行 `load-images` 后再执行 `start-offline`；详见 [Docker Compose 部署](docker.md#完全离线部署)。
+- **Docker 交付手册**：镜像归档、离线升级、数据卷和故障排查详见 [Docker 部署与离线交付手册](docker-release-manual.md)。
 - **Ubuntu**：一条 `curl ... | bash` 或 `./deploy-ubuntu.sh`，自动装依赖 + systemd + Nginx。
 
 > 完整的安全加固清单、HTTPS 配置、备份与日志轮转等内容见仓库根目录的 [README.md](../../README.md) 和 [DEPLOY.md](../../DEPLOY.md)。

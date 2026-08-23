@@ -32,13 +32,15 @@ Commands:
   update     Preserve .env, Docker volumes, and nginx/ssl; sync the public
              release history, show source changes, and rebuild only when the
              release content changed. Use --force to rebuild unconditionally.
-  save-images Save the three Compose images to a gzip-compressed archive and
-             write a SHA-256 checksum alongside it.
+  save-images Save the three already-built Compose images to a gzip-compressed
+             archive and write a SHA-256 checksum alongside it. This command
+             does not build images or access a registry.
   load-images Load a previously saved image archive and verify all required
              Compose image tags are available locally.
   backup-release Create a PostgreSQL custom dump, redacted Source Manifest,
              and private configuration/config-snapshot archives before release.
-  start-offline Start the stack without building or pulling any image.
+  start-offline Start the stack using only local images, without building or
+                 pulling any image.
   reset-data Stop the stack and delete this Compose project's volumes, local
              build images, and generated TLS files. It does not affect other
              Docker projects. Use --yes or NETOPS_CONFIRM=YES for automation.

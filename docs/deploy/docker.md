@@ -42,17 +42,20 @@ docker compose logs -f nginx     # Nginx 日志
 docker compose restart netops    # 重启后端
 ```
 
-## 离线镜像部署
+## 完全离线部署
 
-如果生产服务器无法访问镜像仓库，建议在一台可以联网的构建机上准备镜像，再把镜像归档文件和部署目录传到目标服务器。离线服务器不执行构建、不拉取镜像，只执行 `docker load` 和 Compose 启动。
+如果目标服务器无法访问 Docker Hub 或其他镜像仓库，请在联网机器上准备好镜像，然后只把镜像归档文件和部署文件传到目标服务器。`save-images` 不会重新构建镜像，也不会访问镜像仓库；它只保存当前本机已经存在的三个 Nexora 镜像。
 
 ### 1. 在联网构建机保存镜像
 
-在已成功启动 Nexora 的部署目录执行：
+在已经构建好目标版本镜像的部署目录执行：
 
 ```bash
-bash scripts/deploy-docker.sh save-images /tmp/nexora-images-$(date +%Y%m%d-%H%M%S).tar.gz
+bash scripts/deploy-docker.sh save-images \
+  ./nexora-images-$(date +%Y%m%d-%H%M%S).tar.gz
 ```
+
+如果三个镜像已经存在于本机，也不需要先执行 `docker compose build`。脚本会先验证以下标签是否存在，再生成归档：
 
 该命令会保存以下镜像，并同时生成 `.sha256` 校验文件：
 
@@ -62,20 +65,28 @@ nexora-nginx:latest
 nexora-postgres:latest
 ```
 
-将以下文件以及部署目录中的 `docker-compose.yml`、`.env` 和 `nginx/ssl/` 传到离线服务器：
+镜像归档不会包含 Compose 文件、运行时环境变量、SSL 证书或数据库数据。请将以下内容传到离线服务器：
 
 ```text
 nexora-images-*.tar.gz
 nexora-images-*.tar.gz.sha256
+docker-compose.yml
+scripts/deploy-docker.sh
+.env.example
+nginx/nginx.conf
+nginx/ssl/                 # 使用正式 HTTPS 证书时需要
 ```
+
+不要直接分发包含生产密码和密钥的 `.env`；在目标服务器根据 `.env.example` 创建并填写自己的 `.env`。
 
 ### 2. 在离线服务器导入镜像
 
 ```bash
-bash scripts/deploy-docker.sh load-images /data/packages/nexora-images-20260728.tar.gz
+bash scripts/deploy-docker.sh load-images \
+  /data/packages/nexora-images-20260728.tar.gz
 ```
 
-如果校验文件与镜像包位于同一目录，脚本会先验证 SHA-256，再执行 `docker load`。
+如果校验文件与镜像包位于同一目录，脚本会先验证 SHA-256，再执行 `docker load`。导入不会删除或修改镜像归档文件。
 
 ### 3. 不构建、不拉取，直接启动
 
@@ -90,6 +101,8 @@ docker compose up -d --no-build --pull never --remove-orphans
 ```
 
 离线启动前请确认三个镜像标签都已导入，并确认目标服务器与源构建机的 CPU 架构一致。
+
+离线服务器不要执行 `docker compose up -d --build`、`docker compose pull` 或脚本的 `install`/`update` 命令；这些命令可能尝试构建或访问远程仓库。首次启动会创建新的 Docker volumes 并执行数据库迁移；如果需要迁移原有业务数据，请另外恢复 PostgreSQL 备份和数据卷。
 
 ## 服务构成
 
