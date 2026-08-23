@@ -106,6 +106,7 @@ def _audit_version_operation(user: dict[str, Any], operation: str, details: dict
 @router.get("")
 @router.get("/")
 def api_list_catalog(
+    search: str = Query(default="", max_length=256),
     vendor_id: str = Query(default="", max_length=64),
     family_code: str = Query(default="", max_length=64),
     series_code: str = Query(default="", max_length=64),
@@ -118,12 +119,12 @@ def api_list_catalog(
     sort_order: str = Query(default="desc", pattern="^(?i:asc|desc)$"),
     user=require_permission("knowledge_catalog", "read"),
 ):
-    result = _call(list_product_catalog, user, vendor_id=vendor_id, family_code=family_code, series_code=series_code, model=model, software_version=software_version, status=status)
+    result = _call(list_product_catalog, user, search=search, vendor_id=vendor_id, family_code=family_code, series_code=series_code, model=model, software_version=software_version, status=status)
     items, meta = paginate_items(
         result.get("items") or [], page=page, page_size=page_size, sort_by=sort_by, sort_order=sort_order,
         allowed_sort_fields={"created_at", "vendor_id", "family_code", "series_code", "model_code", "display_name", "status"},
     )
-    result = attach_pagination({**result, "items": items}, meta, filters={"vendor_id": vendor_id, "family_code": family_code, "series_code": series_code, "model": model, "software_version": software_version, "status": status})
+    result = attach_pagination({**result, "items": items}, meta, filters={"search": search, "vendor_id": vendor_id, "family_code": family_code, "series_code": series_code, "model": model, "software_version": software_version, "status": status})
     return {"success": True, "data": result, "message": ""}
 
 

@@ -8,6 +8,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from database import _USE_PG, get_db_connection
 
@@ -36,6 +37,14 @@ def _parse_json_object(value: Any) -> dict[str, Any]:
         return {}
 
 
+def _zone(value: Any) -> ZoneInfo | None:
+    name = str(value or "UTC").strip() or "UTC"
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
 def _percentile(values: list[float], percentile: float) -> float | None:
     if not values:
         return None
@@ -61,6 +70,11 @@ def ensure_wan_partitions_once() -> dict[str, Any]:
     conn = get_db_connection()
     created = 0
     try:
+        # Multiple API/scheduler instances may wake up at the same minute.
+        # Keep partition DDL mutually exclusive without relying on an
+        # application-local lock.  The advisory lock is transaction-scoped
+        # and therefore released by the commit/rollback below.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(?))", ("nexora:wan:partitions",))
         for offset in range(-1, 4):
             month_index = now.year * 12 + now.month - 1 + offset
             year, month0 = divmod(month_index, 12)
@@ -91,7 +105,25 @@ def _valid_sample(row: dict[str, Any]) -> bool:
     if str(row.get("collection_status") or "") != "success":
         return False
     flags = _quality_flags(row)
-    return not any(flags.get(key) for key in ("interval_abnormal", "counter_reset", "counter_missing", "invalid_spike"))
+    # Direction-specific flags (download_counter_reset, upload_counter_missing
+    # and friends) are the values emitted by the WAN collector.  Checking only
+    # the old generic names silently let invalid samples into long-term
+    # rollups.  Counter wraps remain valid deltas and are intentionally not in
+    # this rejection set.
+    invalid_markers = (
+        "interval_abnormal",
+        "counter_reset",
+        "counter_missing",
+        "counter_width_unknown",
+        "counter_ambiguous",
+        "counter_invalid",
+        "device_restart",
+        "invalid_spike",
+    )
+    return not any(
+        bool(value) and any(marker in str(key).lower() for marker in invalid_markers)
+        for key, value in flags.items()
+    )
 
 
 def _rollup_table(
@@ -129,6 +161,10 @@ def _rollup_table(
             upload = nums("upload_bps", "avg_upload_bps")
             download_util = nums("download_util_pct", "avg_download_util_pct")
             upload_util = nums("upload_util_pct", "avg_upload_util_pct")
+            in_error_rate = nums("in_error_rate", "avg_in_error_rate")
+            out_error_rate = nums("out_error_rate", "avg_out_error_rate")
+            in_discard_rate = nums("in_discard_rate", "avg_in_discard_rate")
+            out_discard_rate = nums("out_discard_rate", "avg_out_discard_rate")
             p95_download = nums("download_bps", "p95_download_bps") if rollup_source else download
             p95_upload = nums("upload_bps", "p95_upload_bps") if rollup_source else upload
             valid_points = [point for point in points if _valid_sample(point)] if not rollup_source else [point for point in points if float(point.get("coverage_pct") or 0) >= 80]
@@ -174,6 +210,10 @@ def _rollup_table(
                 round(max(upload_util), 3) if upload_util else None,
                 round(_percentile(download_util, 0.95), 3) if download_util else None,
                 round(_percentile(upload_util, 0.95), 3) if upload_util else None,
+                round(sum(in_error_rate) / len(in_error_rate), 6) if in_error_rate else None,
+                round(sum(out_error_rate) / len(out_error_rate), 6) if out_error_rate else None,
+                round(sum(in_discard_rate) / len(in_discard_rate), 6) if in_discard_rate else None,
+                round(sum(out_discard_rate) / len(out_discard_rate), 6) if out_discard_rate else None,
                 int(round(successful)) if rollup_source else len(valid_points), high_load_minutes(70), high_load_minutes(85), high_load_minutes(95),
                 total("in_error_delta", "in_error_total"), total("out_error_delta", "out_error_total"),
                 total("in_discard_delta", "in_discard_total"), total("out_discard_delta", "out_discard_total"),
@@ -185,9 +225,10 @@ def _rollup_table(
                     max_download_bps, max_upload_bps, p95_download_bps, p95_upload_bps,
                     avg_download_util_pct, avg_upload_util_pct, max_download_util_pct, max_upload_util_pct,
                     p95_download_util_pct, p95_upload_util_pct,
+                    avg_in_error_rate, avg_out_error_rate, avg_in_discard_rate, avg_out_discard_rate,
                     valid_sample_count, high_70_minutes, high_85_minutes, high_95_minutes,
                     in_error_total, out_error_total, in_discard_total, out_discard_total, quality_flags, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(link_id, bucket_start) DO UPDATE SET
                     sample_count=excluded.sample_count, coverage_pct=excluded.coverage_pct,
                     avg_download_bps=excluded.avg_download_bps, avg_upload_bps=excluded.avg_upload_bps,
@@ -196,6 +237,8 @@ def _rollup_table(
                     avg_download_util_pct=excluded.avg_download_util_pct, avg_upload_util_pct=excluded.avg_upload_util_pct,
                     max_download_util_pct=excluded.max_download_util_pct, max_upload_util_pct=excluded.max_upload_util_pct,
                     p95_download_util_pct=excluded.p95_download_util_pct, p95_upload_util_pct=excluded.p95_upload_util_pct,
+                    avg_in_error_rate=excluded.avg_in_error_rate, avg_out_error_rate=excluded.avg_out_error_rate,
+                    avg_in_discard_rate=excluded.avg_in_discard_rate, avg_out_discard_rate=excluded.avg_out_discard_rate,
                     valid_sample_count=excluded.valid_sample_count, high_70_minutes=excluded.high_70_minutes,
                     high_85_minutes=excluded.high_85_minutes, high_95_minutes=excluded.high_95_minutes,
                     in_error_total=excluded.in_error_total, out_error_total=excluded.out_error_total,
@@ -223,8 +266,14 @@ def apply_wan_retention_once() -> dict[str, int]:
     conn = get_db_connection()
     run_id = f"wan-retention-{uuid.uuid4().hex}"
     started = _now()
+    policy: dict[str, Any] = {}
+    policy_json = "{}"
     try:
         policy = dict(conn.execute("SELECT * FROM wan_retention_policies WHERE id = 'default'").fetchone() or {})
+        # PostgreSQL returns timestamp columns as ``datetime`` objects while
+        # SQLite returns strings.  Retention runs must be auditable on both
+        # backends, so normalize the policy payload before persisting JSON.
+        policy_json = json.dumps(policy, default=str)
         removed: dict[str, int] = {}
         for table, column, days in (
             (_sample_table(), "sampled_at", policy.get("raw_days", 30)),
@@ -252,7 +301,7 @@ def apply_wan_retention_once() -> dict[str, int]:
             removed["raw_partitions"] = dropped
         conn.execute(
             "INSERT INTO wan_retention_runs (id, started_at, completed_at, status, policy_json, deleted_json) VALUES (?, ?, ?, 'completed', ?, ?)",
-            (run_id, started, _now(), json.dumps(policy), json.dumps(removed)),
+            (run_id, started, _now(), policy_json, json.dumps(removed)),
         )
         conn.commit()
         return removed
@@ -261,7 +310,7 @@ def apply_wan_retention_once() -> dict[str, int]:
         try:
             conn.execute(
                 "INSERT INTO wan_retention_runs (id, started_at, completed_at, status, policy_json, deleted_json, error_message) VALUES (?, ?, ?, 'failed', ?, '{}', ?)",
-                (run_id, started, _now(), json.dumps(locals().get("policy", {})), str(exc)),
+                (run_id, started, _now(), policy_json, str(exc)),
             )
             conn.commit()
         except Exception:
@@ -289,22 +338,31 @@ def is_wan_link_in_maintenance(conn, link_id: str, site_id: str, now: str | None
             if start <= current <= end:
                 return True
             continue
+        local_zone = _zone(item.get("timezone"))
+        if local_zone is None:
+            # An invalid timezone must not silently widen a maintenance
+            # window.  The write API rejects it; this guards legacy rows.
+            continue
+        local_current = current.astimezone(local_zone)
+        local_start = start.astimezone(local_zone)
         duration = end - start
-        if duration.total_seconds() <= 0 or current < start:
+        if duration.total_seconds() <= 0 or local_current < local_start:
             continue
         if recurrence == "daily":
-            occurrence = start + timedelta(days=(current.date() - start.date()).days)
+            occurrence = local_start + timedelta(days=(local_current.date() - local_start.date()).days)
         elif recurrence == "weekly":
-            occurrence = start + timedelta(weeks=(current.date() - start.date()).days // 7)
-        else:
-            months = (current.year - start.year) * 12 + current.month - start.month
-            month_index = start.year * 12 + start.month - 1 + max(0, months)
+            occurrence = local_start + timedelta(weeks=(local_current.date() - local_start.date()).days // 7)
+        elif recurrence == "monthly":
+            months = (local_current.year - local_start.year) * 12 + local_current.month - local_start.month
+            month_index = local_start.year * 12 + local_start.month - 1 + max(0, months)
             year, month0 = divmod(month_index, 12)
-            month_start = datetime(year, month0 + 1, 1, tzinfo=start.tzinfo)
+            month_start = datetime(year, month0 + 1, 1, tzinfo=local_zone)
             next_month_start = (month_start + timedelta(days=32)).replace(day=1)
-            day = min(start.day, (next_month_start - timedelta(days=1)).day)
-            occurrence = month_start.replace(day=day, hour=start.hour, minute=start.minute, second=start.second, microsecond=0)
-        if occurrence <= current <= occurrence + duration:
+            day = min(local_start.day, (next_month_start - timedelta(days=1)).day)
+            occurrence = month_start.replace(day=day, hour=local_start.hour, minute=local_start.minute, second=local_start.second, microsecond=0)
+        else:
+            continue
+        if occurrence <= local_current <= occurrence + duration:
             return True
     return False
 
@@ -354,11 +412,27 @@ def upsert_wan_maintenance_window(payload: dict[str, Any], actor: dict[str, Any]
     start, end = _parse(payload["starts_at"]), _parse(payload["ends_at"])
     if not start or not end or end <= start:
         raise ValueError("maintenance window time range is invalid")
+    timezone_name = str(payload.get("timezone") or "Asia/Shanghai").strip() or "Asia/Shanghai"
+    if _zone(timezone_name) is None:
+        raise ValueError("maintenance timezone is invalid")
+    recurrence = str(payload.get("recurrence") or "once").strip().lower()
+    if recurrence not in {"once", "daily", "weekly", "monthly"}:
+        raise ValueError("maintenance recurrence is invalid")
     conn = get_db_connection()
     try:
         now = _now()
         item_id = window_id or str(payload.get("id") or f"wan-maint-{uuid.uuid4().hex}")
-        values = (item_id, str(payload.get("site_id") or ""), str(payload.get("link_id") or ""), str(payload.get("device_id") or ""), str(payload.get("link_group_id") or ""), str(payload.get("name") or ""), start.isoformat(), end.isoformat(), str(payload.get("timezone") or "Asia/Shanghai"), str(payload.get("recurrence") or "once"), str(payload.get("reason") or ""), bool(payload.get("enabled", True)), str(actor.get("username") or actor.get("id") or ""), now, now)
+        scope_checks = (
+            ("link_id", "wan_links"),
+            ("device_id", "devices"),
+            ("link_group_id", "wan_link_groups"),
+            ("site_id", "sites"),
+        )
+        for field, table in scope_checks:
+            scope_id = str(payload.get(field) or "").strip()
+            if scope_id and not conn.execute(f"SELECT 1 FROM {table} WHERE id = ?", (scope_id,)).fetchone():
+                raise ValueError(f"maintenance scope {field} does not exist")
+        values = (item_id, str(payload.get("site_id") or ""), str(payload.get("link_id") or ""), str(payload.get("device_id") or ""), str(payload.get("link_group_id") or ""), str(payload.get("name") or ""), start.isoformat(), end.isoformat(), timezone_name, recurrence, str(payload.get("reason") or ""), bool(payload.get("enabled", True)), str(actor.get("username") or actor.get("id") or ""), now, now)
         conn.execute("""INSERT INTO wan_maintenance_windows (id, site_id, link_id, device_id, link_group_id, name, starts_at, ends_at, timezone, recurrence, reason, enabled, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET site_id=excluded.site_id, link_id=excluded.link_id, device_id=excluded.device_id, link_group_id=excluded.link_group_id, name=excluded.name, starts_at=excluded.starts_at, ends_at=excluded.ends_at, timezone=excluded.timezone, recurrence=excluded.recurrence, reason=excluded.reason, enabled=excluded.enabled, updated_at=excluded.updated_at""", values)
         conn.commit()
         return dict(conn.execute("SELECT * FROM wan_maintenance_windows WHERE id = ?", (item_id,)).fetchone())
@@ -517,9 +591,34 @@ def upsert_wan_link_group(payload: dict[str, Any], actor: dict[str, Any], group_
     if mode not in {"primary_backup", "load_balanced"}:
         raise ValueError("mode must be primary_backup or load_balanced")
     members = payload.get("members") or []
+    if not isinstance(members, list):
+        raise ValueError("members must be a list")
     conn = get_db_connection()
     try:
         now, item_id = _now(), group_id or str(payload.get("id") or f"wan-group-{uuid.uuid4().hex}")
+        group_site_id = str(payload.get("site_id") or "").strip()
+        group_provider = str(payload.get("provider") or "").strip()
+        seen_links: set[str] = set()
+        primary_count = 0
+        for member in members:
+            link_id = str(member.get("link_id") or "").strip()
+            if not link_id or link_id in seen_links:
+                raise ValueError("A link may appear only once in a group")
+            seen_links.add(link_id)
+            row = conn.execute("SELECT site_id, provider FROM wan_links WHERE id = ?", (link_id,)).fetchone()
+            if not row:
+                raise ValueError("Every group member must reference an existing WAN link")
+            if group_site_id and str(row[0] or "") not in {"", group_site_id}:
+                raise ValueError("Every group member must belong to the selected site")
+            if group_provider and str(row[1] or "") not in {"", group_provider}:
+                raise ValueError("Every group member must use the selected provider")
+            role = str(member.get("role") or "primary")
+            if role not in {"primary", "backup", "load_balanced"}:
+                raise ValueError("Invalid group member role")
+            if mode == "primary_backup" and role == "primary":
+                primary_count += 1
+        if mode == "primary_backup" and primary_count > 1:
+            raise ValueError("primary_backup groups may contain only one primary link")
         conn.execute("INSERT INTO wan_link_groups (id, group_name, mode, site_id, provider, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET group_name=excluded.group_name, mode=excluded.mode, site_id=excluded.site_id, provider=excluded.provider, enabled=excluded.enabled, updated_at=excluded.updated_at", (item_id, name, mode, str(payload.get("site_id") or ""), str(payload.get("provider") or ""), bool(payload.get("enabled", True)), now, now))
         conn.execute("DELETE FROM wan_link_group_members WHERE group_id = ?", (item_id,))
         for member in members:

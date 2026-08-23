@@ -10,6 +10,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from typing import Any, Dict, List, Optional
 
 from database.core import get_db_connection
@@ -55,11 +56,23 @@ class LLMGateway:
     def _get_provider_instance(self, provider_id: str) -> BaseLLMProvider:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, name, provider_type, base_url, api_key_encrypted, timeout, max_retries, proxy_url, enabled "
-                "FROM ai_provider WHERE id = ?",
-                (provider_id,)
-            )
+            try:
+                cursor.execute(
+                    "SELECT id, name, provider_type, base_url, api_key_encrypted, timeout, max_retries, proxy_url, enabled, approved_endpoint_patterns_json "
+                    "FROM ai_provider WHERE id = ?",
+                    (provider_id,)
+                )
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, name, provider_type, base_url, api_key_encrypted, timeout, max_retries, proxy_url, enabled, '[]' "
+                    "FROM ai_provider WHERE id = ?",
+                    (provider_id,)
+                )
             row = cursor.fetchone()
             if not row:
                 raise AIModelNotFoundException(f"Provider '{provider_id}' not found in database.")
@@ -76,6 +89,18 @@ class LLMGateway:
             }
             if not p_data["enabled"]:
                 raise AIModelNotFoundException(f"Provider '{row[1]}' is currently disabled.")
+
+            raw_patterns = row[9] if len(row) > 9 else "[]"
+            try:
+                endpoint_patterns = raw_patterns if isinstance(raw_patterns, list) else json.loads(raw_patterns or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                endpoint_patterns = []
+            endpoint_patterns = [str(item).strip().rstrip("/") for item in endpoint_patterns if str(item).strip()]
+            provider_type = str(p_data["provider_type"] or "").lower().replace("-", "_")
+            if provider_type not in {"local", "ollama"}:
+                base_url = str(p_data.get("base_url") or "").rstrip("/")
+                if not endpoint_patterns or not any(fnmatchcase(base_url, pattern) for pattern in endpoint_patterns):
+                    raise AIProviderUnsupportedException("Provider endpoint is not covered by the approved egress allowlist")
             
             plain_api_key = decrypt_api_key(row[4])
             
@@ -93,6 +118,8 @@ class LLMGateway:
                     "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
                     "m.enabled, p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, "
                     "m.json_supported, m.stream_supported, p.allowed_data_classification, p.data_region, "
+                    "p.no_training_confirmed, p.retention_days, p.data_processing_agreement_ref, "
+                    "p.agreement_reviewed_at, p.approved_endpoint_patterns_json, "
                     "m.context_length, m.max_output_tokens, m.cost_input_per_1k, m.cost_output_per_1k "
                     "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
                     "WHERE (m.id = ? OR m.model_code = ?) AND m.enabled = 1 AND COALESCE(p.enabled, 0) = 1",
@@ -112,7 +139,8 @@ class LLMGateway:
                 cursor.execute(
                     "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
                     "m.enabled, p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, "
-                    "m.json_supported, 1, COALESCE(p.allowed_data_classification, 'CONFIDENTIAL'), 'unknown', 32768, 4096, 0, 0 "
+                    "m.json_supported, 1, COALESCE(p.allowed_data_classification, 'CONFIDENTIAL'), 'unknown', "
+                    "0, NULL, NULL, NULL, '[]', 32768, 4096, 0, 0 "
                     "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
                     "WHERE (m.id = ? OR m.model_code = ?) AND m.enabled = 1",
                     (model_id_or_code, model_id_or_code)
@@ -133,10 +161,15 @@ class LLMGateway:
                     "stream_supported": bool(row[11] if row[11] is not None else True),
                     "allowed_data_classification": row[12] or "PUBLIC",
                     "data_region": row[13] or "unknown",
-                    "context_length": int(row[14] or 32768),
-                    "max_output_tokens": int(row[15] or 4096),
-                    "cost_input_per_1k": float(row[16] or 0),
-                    "cost_output_per_1k": float(row[17] or 0),
+                    "no_training_confirmed": bool(row[14]),
+                    "retention_days": int(row[15]) if row[15] is not None else None,
+                    "data_processing_agreement_ref": row[16],
+                    "agreement_reviewed_at": row[17],
+                    "approved_endpoint_patterns": row[18],
+                    "context_length": int(row[19] or 32768),
+                    "max_output_tokens": int(row[20] or 4096),
+                    "cost_input_per_1k": float(row[21] or 0),
+                    "cost_output_per_1k": float(row[22] or 0),
                 }
             
             # If not found by ID or code, try any active default model
@@ -144,14 +177,17 @@ class LLMGateway:
                 cursor.execute(
                     "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
                     "p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, m.json_supported, m.stream_supported, "
-                    "p.allowed_data_classification, p.data_region, m.context_length, m.max_output_tokens, m.cost_input_per_1k, m.cost_output_per_1k "
+                    "p.allowed_data_classification, p.data_region, p.no_training_confirmed, p.retention_days, "
+                    "p.data_processing_agreement_ref, p.agreement_reviewed_at, p.approved_endpoint_patterns_json, "
+                    "m.context_length, m.max_output_tokens, m.cost_input_per_1k, m.cost_output_per_1k "
                     "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
                     "WHERE m.enabled = 1 AND COALESCE(p.enabled, 0) = 1 ORDER BY m.is_default DESC, m.priority DESC LIMIT 1"
                 )
             except Exception:
                 cursor.execute(
                     "SELECT m.id, m.provider_id, m.model_code, m.default_temperature, m.default_max_tokens, "
-                    "p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, m.json_supported, 1, 'PUBLIC', 'unknown', 32768, 4096, 0, 0 "
+                    "p.provider_type, m.model_type, m.thinking_supported, m.tool_call_supported, m.json_supported, 1, 'PUBLIC', 'unknown', "
+                    "0, NULL, NULL, NULL, '[]', 32768, 4096, 0, 0 "
                     "FROM ai_model m LEFT JOIN ai_provider p ON p.id = m.provider_id "
                     "WHERE m.enabled = 1 ORDER BY m.is_default DESC, m.priority DESC LIMIT 1"
                 )
@@ -171,10 +207,15 @@ class LLMGateway:
                     "stream_supported": bool(def_row[10] if def_row[10] is not None else True),
                     "allowed_data_classification": def_row[11] or "PUBLIC",
                     "data_region": def_row[12] or "unknown",
-                    "context_length": int(def_row[13] or 32768),
-                    "max_output_tokens": int(def_row[14] or 4096),
-                    "cost_input_per_1k": float(def_row[15] or 0),
-                    "cost_output_per_1k": float(def_row[16] or 0),
+                    "no_training_confirmed": bool(def_row[13]),
+                    "retention_days": int(def_row[14]) if def_row[14] is not None else None,
+                    "data_processing_agreement_ref": def_row[15],
+                    "agreement_reviewed_at": def_row[16],
+                    "approved_endpoint_patterns": def_row[17],
+                    "context_length": int(def_row[18] or 32768),
+                    "max_output_tokens": int(def_row[19] or 4096),
+                    "cost_input_per_1k": float(def_row[20] or 0),
+                    "cost_output_per_1k": float(def_row[21] or 0),
                 }
         
         raise AIModelNotFoundException("No active AI model configured in database.")
@@ -223,15 +264,38 @@ class LLMGateway:
 
     @staticmethod
     def _classification_rank(value: str | None) -> int:
-        return {"PUBLIC": 1, "INTERNAL": 2, "CONFIDENTIAL": 3}.get(str(value or "PUBLIC").upper(), 0)
+        return {"PUBLIC": 1, "INTERNAL": 2, "CONFIDENTIAL": 3, "SECRET": 4}.get(str(value or "PUBLIC").upper(), 0)
 
-    def _fallback_is_compatible(self, primary: Dict[str, Any], fallback: Dict[str, Any]) -> bool:
+    @staticmethod
+    def _is_local_provider(model_info: Dict[str, Any]) -> bool:
+        return str(model_info.get("provider_type") or "").lower().replace("-", "_") in {"local", "ollama"}
+
+    def _fallback_is_compatible(
+        self,
+        primary: Dict[str, Any],
+        fallback: Dict[str, Any],
+        *,
+        data_classification: str | None = None,
+    ) -> bool:
         """A fallback may not downgrade the data classification boundary."""
         if fallback.get("model_type") in {"embedding", "rerank"}:
             return False
         if not fallback.get("stream_supported", True) and primary.get("stream_required"):
             return False
-        return self._classification_rank(fallback.get("allowed_data_classification")) >= self._classification_rank(primary.get("allowed_data_classification"))
+        requested_rank = self._classification_rank(data_classification)
+        if requested_rank >= self._classification_rank("CONFIDENTIAL") and not self._is_local_provider(fallback):
+            return False
+        if requested_rank == self._classification_rank("INTERNAL") and not self._is_local_provider(fallback):
+            if (
+                not bool(fallback.get("no_training_confirmed"))
+                or fallback.get("retention_days") is None
+                or not str(fallback.get("data_processing_agreement_ref") or "").strip()
+                or str(fallback.get("data_region") or "unknown").lower() == "unknown"
+            ):
+                return False
+        return self._classification_rank(fallback.get("allowed_data_classification")) >= max(
+            self._classification_rank(primary.get("allowed_data_classification")), requested_rank
+        )
 
     def _budget_exceeded(self, *, provider_id: str, model_id: str) -> bool:
         budget = float(getattr(settings, "AI_DAILY_BUDGET_USD", 0) or 0)
@@ -515,6 +579,7 @@ class LLMGateway:
         tools, response_format, thinking, reasoning_effort = self._apply_model_capabilities(
             target_info, tools=tools, response_format=response_format, thinking=thinking, reasoning_effort=reasoning_effort
         )
+        fallback_info: Dict[str, Any] | None = None
         if fallback_model_id:
             try:
                 fallback_info = self._get_model_details(fallback_model_id)
@@ -524,7 +589,11 @@ class LLMGateway:
                     # A route fallback is still an external egress. Never let
                     # it bypass the same provider allowlist as the primary.
                     fallback_model_id = None
-                elif not self._fallback_is_compatible(target_info, fallback_info):
+                elif not self._fallback_is_compatible(
+                    target_info,
+                    fallback_info,
+                    data_classification=data_classification,
+                ):
                     fallback_model_id = None
             except AIException:
                 fallback_model_id = None
@@ -548,6 +617,9 @@ class LLMGateway:
                 data_classification=data_classification,
                 data_region=target_info.get("data_region"),
                 provider_allowed_classification=target_info.get("allowed_data_classification"),
+                provider_no_training_confirmed=bool(target_info.get("no_training_confirmed")),
+                provider_retention_days=target_info.get("retention_days"),
+                provider_data_processing_agreement_ref=target_info.get("data_processing_agreement_ref"),
                 workspace_id=workspace_id,
                 site_id=site_id,
                 department=department,
@@ -589,6 +661,21 @@ class LLMGateway:
             )
             blocked.request_id = request_id
             raise blocked from exc
+
+        # `protect` derives a classification when the caller did not provide
+        # one explicitly.  Re-check the already-loaded fallback against that
+        # effective classification before any provider attempt; otherwise a
+        # route fallback could reuse a sanitized payload but still violate the
+        # local-only CONFIDENTIAL/SECRET or assured-INTERNAL boundary.
+        effective_classification = str(
+            (secure_payload.metadata or {}).get("classification") or data_classification or "PUBLIC"
+        )
+        if fallback_model_id and fallback_info and not self._fallback_is_compatible(
+            target_info,
+            fallback_info,
+            data_classification=effective_classification,
+        ):
+            fallback_model_id = None
 
         processed_messages = secure_payload.messages
         processed_tools = secure_payload.tools
@@ -694,6 +781,7 @@ class LLMGateway:
             result["requested_model_id"] = requested_model_id
             result["route_reason"] = route_reason
             result["fallback_used"] = False
+            result["token_source"] = "provider_reported" if int(result.get("input_tokens") or 0) > 0 else None
             if result.get("content"):
                 result["content"] = self.security_gateway.resolve_output(
                     result["content"], tenant_id=tenant, task_id=task
@@ -747,6 +835,7 @@ class LLMGateway:
                     result["requested_model_id"] = requested_model_id
                     result["route_reason"] = "scene_route_fallback"
                     result["fallback_used"] = True
+                    result["token_source"] = "provider_reported" if int(result.get("input_tokens") or 0) > 0 else None
                     if result.get("content"):
                         result["content"] = self.security_gateway.resolve_output(
                             result["content"], tenant_id=tenant, task_id=task
@@ -856,17 +945,25 @@ class LLMGateway:
 
         model_info = self._get_model_details(target_model_id)
         self._authorize_model(model_info, tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
+        fallback_info: Dict[str, Any] | None = None
         if fallback_model_id:
             try:
                 fallback_info = self._get_model_details(fallback_model_id)
                 self._authorize_model(fallback_info, tenant_id=tenant_id or "tenant-default", user_id=user_id, roles=roles)
-                if not self._fallback_is_compatible(model_info, fallback_info):
+                allowed_types = {item.lower() for item in self.security_gateway.policy.allowed_provider_types}
+                if str(fallback_info.get("provider_type") or "").lower() not in allowed_types:
+                    fallback_model_id = None
+                elif not self._fallback_is_compatible(
+                    model_info,
+                    fallback_info,
+                    data_classification=data_classification,
+                ):
                     fallback_model_id = None
             except AIException:
                 fallback_model_id = None
 
         if route_meta is not None:
-            route_meta.update({"requested_model_id": requested_model_id, "model_id": model_info.get("id"), "provider_id": model_info.get("provider_id"), "route_reason": route_reason, "fallback_used": False, "request_id": request_id})
+            route_meta.update({"requested_model_id": requested_model_id, "model_id": model_info.get("id"), "provider_id": model_info.get("provider_id"), "route_reason": route_reason, "fallback_used": False, "external_egress": False, "request_id": request_id})
 
         tools, response_format, thinking, reasoning_effort = self._apply_model_capabilities(
             model_info, tools=tools, response_format=response_format, thinking=thinking, reasoning_effort=reasoning_effort
@@ -895,6 +992,9 @@ class LLMGateway:
                 data_classification=data_classification,
                 data_region=model_info.get("data_region"),
                 provider_allowed_classification=model_info.get("allowed_data_classification"),
+                provider_no_training_confirmed=bool(model_info.get("no_training_confirmed")),
+                provider_retention_days=model_info.get("retention_days"),
+                provider_data_processing_agreement_ref=model_info.get("data_processing_agreement_ref"),
                 workspace_id=workspace_id,
                 site_id=site_id,
                 department=department,
@@ -939,6 +1039,16 @@ class LLMGateway:
             )
             raise blocked from exc
 
+        effective_classification = str(
+            (secure_payload.metadata or {}).get("classification") or data_classification or "PUBLIC"
+        )
+        if fallback_model_id and fallback_info and not self._fallback_is_compatible(
+            model_info,
+            fallback_info,
+            data_classification=effective_classification,
+        ):
+            fallback_model_id = None
+
         processed_messages = secure_payload.messages
         full_content = []
         self._log_security_audit(
@@ -957,6 +1067,8 @@ class LLMGateway:
         if route_meta is not None:
             route_meta.update({"status": "prepared", "security_result": str(secure_payload.action.value), "security": {"decision": str(secure_payload.action.value), "result_code": "AI_SECURITY_PREPARED"}})
 
+        stream_usage_by_model: Dict[str, Dict[str, int]] = {}
+
         async def _stream_candidate(candidate_info: Dict[str, Any]):
             if self._budget_exceeded(provider_id=candidate_info["provider_id"], model_id=candidate_info["id"]):
                 raise AIBudgetExceededException()
@@ -970,7 +1082,18 @@ class LLMGateway:
             )
             try:
                 async with ai_limits.slot(provider_id=candidate_info["provider_id"], tenant_id=tenant, user_id=user_id):
+                    if route_meta is not None:
+                        # This flag means a provider adapter call actually
+                        # started; model selection and security preparation
+                        # alone are not external egress.
+                        route_meta.update({
+                            "external_egress": True,
+                            "model_id": candidate_info.get("id"),
+                            "provider_id": candidate_info.get("provider_id"),
+                        })
                     if hasattr(provider_inst, "chat_stream"):
+                        usage_sink: Dict[str, int] = {}
+                        stream_usage_by_model[str(candidate_info["id"])] = usage_sink
                         async for chunk in provider_inst.chat_stream(
                             processed_messages,
                             model=candidate_info["model_code"],
@@ -982,6 +1105,7 @@ class LLMGateway:
                             reasoning_effort=call_reasoning,
                             user_id=secure_payload.user_id,
                             request_id=request_id,
+                            usage_sink=usage_sink,
                         ):
                             yield chunk
                     else:
@@ -1011,8 +1135,10 @@ class LLMGateway:
 
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             combined_txt = "".join(full_content)
-            out_tok = max(1, len(combined_txt) // 3)
-            in_tok = max(1, sum(len(m.get("content", "")) for m in messages) // 3)
+            provider_usage = stream_usage_by_model.get(str(model_info["id"])) or {}
+            provider_reported = int(provider_usage.get("input_tokens") or 0) > 0
+            out_tok = max(0, int(provider_usage.get("output_tokens") or 0)) if provider_reported else max(1, len(combined_txt) // 3)
+            in_tok = max(0, int(provider_usage.get("input_tokens") or 0)) if provider_reported else max(1, sum(len(m.get("content", "")) for m in messages) // 3)
 
             self._log_request(
                 request_id=request_id,
@@ -1028,7 +1154,7 @@ class LLMGateway:
                 status="success"
             )
             if route_meta is not None:
-                route_meta.update({"model_id": model_info["id"], "provider_id": model_info["provider_id"], "fallback_used": False, "status": "success", "security_result": str(secure_payload.action.value), "latency_ms": latency_ms, "input_tokens": in_tok, "output_tokens": out_tok})
+                route_meta.update({"model_id": model_info["id"], "provider_id": model_info["provider_id"], "fallback_used": False, "status": "success", "security_result": str(secure_payload.action.value), "latency_ms": latency_ms, "input_tokens": in_tok, "output_tokens": out_tok, "token_source": "provider_reported" if provider_reported else "estimated"})
         except Exception as exc:
             if fallback_model_id and not full_content:
                 ai_metrics.fallback_event(
@@ -1052,10 +1178,12 @@ class LLMGateway:
                         status="success",
                     )
                     latency_ms = int((time.perf_counter() - start_time) * 1000)
-                    fallback_input_tokens = max(1, sum(len(m.get("content", "")) for m in messages) // 3)
-                    fallback_output_tokens = max(1, len("".join(full_content)) // 3)
+                    fallback_usage = stream_usage_by_model.get(str(fallback_info["id"])) or {}
+                    fallback_provider_reported = int(fallback_usage.get("input_tokens") or 0) > 0
+                    fallback_input_tokens = max(0, int(fallback_usage.get("input_tokens") or 0)) if fallback_provider_reported else max(1, sum(len(m.get("content", "")) for m in messages) // 3)
+                    fallback_output_tokens = max(0, int(fallback_usage.get("output_tokens") or 0)) if fallback_provider_reported else max(1, len("".join(full_content)) // 3)
                     if route_meta is not None:
-                        route_meta.update({"model_id": fallback_info["id"], "provider_id": fallback_info["provider_id"], "route_reason": "scene_route_fallback", "fallback_used": True, "status": "success", "security_result": str(secure_payload.action.value), "latency_ms": latency_ms, "input_tokens": fallback_input_tokens, "output_tokens": fallback_output_tokens})
+                        route_meta.update({"model_id": fallback_info["id"], "provider_id": fallback_info["provider_id"], "route_reason": "scene_route_fallback", "fallback_used": True, "status": "success", "security_result": str(secure_payload.action.value), "latency_ms": latency_ms, "input_tokens": fallback_input_tokens, "output_tokens": fallback_output_tokens, "token_source": "provider_reported" if fallback_provider_reported else "estimated"})
                     self._log_request(request_id=request_id, user_id=secure_payload.user_id, scene=scene, provider_id=fallback_info["provider_id"], model_id=fallback_info["id"], prompt_id=None, prompt_version=None, input_tokens=fallback_input_tokens, output_tokens=fallback_output_tokens, latency_ms=latency_ms, status="success")
                     return
                 except Exception as fallback_exc:

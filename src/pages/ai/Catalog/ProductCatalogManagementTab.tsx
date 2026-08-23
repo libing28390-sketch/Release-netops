@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -21,6 +21,7 @@ import {
   type KnowledgeCatalogModel,
   type KnowledgeCatalogResolveResponse,
 } from '../../../api/ai';
+import Pagination from '../../../components/Pagination';
 
 type CatalogPanel = 'models' | 'aliases';
 
@@ -51,10 +52,14 @@ export const ProductCatalogManagementTab: React.FC = () => {
   const [vendorFilter, setVendorFilter] = useState('');
   const [familyFilter, setFamilyFilter] = useState('');
   const [seriesFilter, setSeriesFilter] = useState('');
-  const [modelFilter, setModelFilter] = useState('');
   const [softwareVersionFilter, setSoftwareVersionFilter] = useState('');
-  const [aliasFilter, setAliasFilter] = useState('');
   const [kindFilter, setKindFilter] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [facets, setFacets] = useState({ vendors: [] as string[], families: [] as string[], series: [] as string[], software_versions: [] as string[] });
   const [query, setQuery] = useState('CE68');
   const [resolution, setResolution] = useState<KnowledgeCatalogResolveResponse | null>(null);
   const [resolving, setResolving] = useState(false);
@@ -63,28 +68,52 @@ export const ProductCatalogManagementTab: React.FC = () => {
     setLoading(true);
     setError('');
     try {
-      const [catalog, aliasResponse] = await Promise.all([
-        getKnowledgeCatalog({ vendor_id: vendorFilter, family_code: familyFilter, series_code: seriesFilter, model: modelFilter, software_version: softwareVersionFilter }),
-        getKnowledgeCatalogAliases({ alias: aliasFilter, alias_kind: kindFilter }),
-      ]);
-      setModels(catalog.items);
-      setAliases(aliasResponse.items);
+      if (panel === 'models') {
+        const catalog = await getKnowledgeCatalog({ search: appliedSearch, vendor_id: vendorFilter, family_code: familyFilter, series_code: seriesFilter, software_version: softwareVersionFilter, page, page_size: pageSize });
+        setModels(catalog.items);
+        setTotal(catalog.meta?.pagination.total ?? catalog.total);
+        if (catalog.meta?.pagination.page && catalog.meta.pagination.page !== page) setPage(catalog.meta.pagination.page);
+        if (catalog.facets) setFacets(catalog.facets);
+      } else {
+        const aliasResponse = await getKnowledgeCatalogAliases({ alias: appliedSearch, alias_kind: kindFilter, page, page_size: pageSize });
+        setAliases(aliasResponse.items);
+        setTotal(aliasResponse.meta?.pagination.total ?? aliasResponse.total);
+        if (aliasResponse.meta?.pagination.page && aliasResponse.meta.pagination.page !== page) setPage(aliasResponse.meta.pagination.page);
+      }
     } catch (err: any) {
       setError(err?.message || '产品目录加载失败');
     } finally {
       setLoading(false);
     }
-  }, [aliasFilter, familyFilter, kindFilter, modelFilter, seriesFilter, softwareVersionFilter, vendorFilter]);
+  }, [appliedSearch, familyFilter, kindFilter, page, pageSize, panel, seriesFilter, softwareVersionFilter, vendorFilter]);
 
   useEffect(() => {
     void loadCatalog();
   }, [loadCatalog]);
 
-  const vendors = useMemo(() => Array.from(new Set(models.map((item) => item.vendor_id))), [models]);
-  const families = useMemo(() => Array.from(new Set(models.map((item) => item.family_code))), [models]);
-  const series = useMemo(() => Array.from(new Set(models.map((item) => item.series_code))), [models]);
-  const softwareVersions = useMemo(() => Array.from(new Set(models.flatMap((item) => [item.software_scope?.primary_version, item.software_scope?.compatibility_version].filter((value): value is string => typeof value === 'string' && value.length > 0)))), [models]);
+  const vendors = facets.vendors;
+  const families = facets.families;
+  const series = facets.series;
+  const softwareVersions = facets.software_versions;
   const conflictCount = aliases.filter((item) => item.conflict_status === 'ambiguous_pending_review').length;
+
+  const applySearch = (event?: React.FormEvent) => {
+    event?.preventDefault();
+    setPage(1);
+    setAppliedSearch(searchText.trim());
+  };
+
+  const changePanel = (next: CatalogPanel) => {
+    setPanel(next);
+    setPage(1);
+    setSearchText('');
+    setAppliedSearch('');
+    setVendorFilter('');
+    setFamilyFilter('');
+    setSeriesFilter('');
+    setSoftwareVersionFilter('');
+    setKindFilter('');
+  };
 
   const runResolution = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -126,30 +155,34 @@ export const ProductCatalogManagementTab: React.FC = () => {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2"><Filter className="h-4 w-4 text-indigo-500" /><span className="text-sm font-semibold text-gray-800 dark:text-gray-100">目录筛选</span></div>
           <div className="flex rounded-xl bg-gray-100 p-1 dark:bg-gray-900">
-            <button type="button" onClick={() => setPanel('models')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${panel === 'models' ? 'bg-white text-indigo-700 shadow-sm dark:bg-gray-700 dark:text-indigo-300' : 'text-gray-500'}`}><Database className="mr-1 inline h-3.5 w-3.5" />型号目录</button>
-            <button type="button" onClick={() => setPanel('aliases')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${panel === 'aliases' ? 'bg-white text-indigo-700 shadow-sm dark:bg-gray-700 dark:text-indigo-300' : 'text-gray-500'}`}><Tag className="mr-1 inline h-3.5 w-3.5" />Alias 队列</button>
+            <button type="button" onClick={() => changePanel('models')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${panel === 'models' ? 'bg-white text-indigo-700 shadow-sm dark:bg-gray-700 dark:text-indigo-300' : 'text-gray-500'}`}><Database className="mr-1 inline h-3.5 w-3.5" />型号目录</button>
+            <button type="button" onClick={() => changePanel('aliases')} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${panel === 'aliases' ? 'bg-white text-indigo-700 shadow-sm dark:bg-gray-700 dark:text-indigo-300' : 'text-gray-500'}`}><Tag className="mr-1 inline h-3.5 w-3.5" />Alias 队列</button>
           </div>
         </div>
-        <div className="grid gap-2 md:grid-cols-5">
-          <label className="text-[11px] font-semibold text-gray-500">Vendor<select value={vendorFilter} onChange={(event) => setVendorFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部 Vendor</option>{vendors.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-semibold text-gray-500">Family<select value={familyFilter} onChange={(event) => setFamilyFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部 Family</option>{families.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-semibold text-gray-500">Series<select value={seriesFilter} onChange={(event) => setSeriesFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部 Series</option>{series.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-          <label className="text-[11px] font-semibold text-gray-500">型号搜索<input value={modelFilter} onChange={(event) => setModelFilter(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void loadCatalog(); }} placeholder="C9300-48P" className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100" /></label>
-          {panel === 'models' ? <label className="text-[11px] font-semibold text-gray-500">Software Version<select value={softwareVersionFilter} onChange={(event) => setSoftwareVersionFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部 Version</option>{softwareVersions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label> : <label className="text-[11px] font-semibold text-gray-500">Alias 类型<select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部类型</option>{Object.entries(KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>}
-        </div>
-        {panel === 'aliases' && <div className="mt-2"><label className="text-[11px] font-semibold text-gray-500">Alias 搜索<input value={aliasFilter} onChange={(event) => setAliasFilter(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void loadCatalog(); }} placeholder="CE68 / Catalyst93" className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100" /></label></div>}
-        <div className="mt-3 flex justify-end"><button type="button" onClick={() => { setVendorFilter(''); setFamilyFilter(''); setSeriesFilter(''); setModelFilter(''); setSoftwareVersionFilter(''); setAliasFilter(''); setKindFilter(''); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:border-indigo-300 dark:border-gray-600 dark:text-gray-300">清除筛选</button></div>
+        <form onSubmit={applySearch} className="mb-3 flex flex-wrap gap-2">
+          <div className="relative min-w-[260px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder={panel === 'models' ? '搜索厂商、系列、型号、OS 或软件版本' : '搜索 Alias'} className="w-full rounded-xl border border-gray-200 bg-white py-2 pl-9 pr-3 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100" /></div>
+          <button type="submit" className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700">搜索</button>
+        </form>
+        {panel === 'models' ? <div className="grid gap-2 md:grid-cols-4">
+          <label className="text-[11px] font-semibold text-gray-500">Vendor<select value={vendorFilter} onChange={(event) => { setVendorFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部 Vendor</option>{vendors.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="text-[11px] font-semibold text-gray-500">Family<select value={familyFilter} onChange={(event) => { setFamilyFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部 Family</option>{families.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="text-[11px] font-semibold text-gray-500">Series<select value={seriesFilter} onChange={(event) => { setSeriesFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部 Series</option>{series.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="text-[11px] font-semibold text-gray-500">Software Version<select value={softwareVersionFilter} onChange={(event) => { setSoftwareVersionFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部 Version</option>{softwareVersions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        </div> : <div className="max-w-xs"><label className="text-[11px] font-semibold text-gray-500">Alias 类型<select value={kindFilter} onChange={(event) => { setKindFilter(event.target.value); setPage(1); }} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"><option value="">全部类型</option>{Object.entries(KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label></div>}
+        <div className="mt-3 flex justify-end"><button type="button" onClick={() => { setVendorFilter(''); setFamilyFilter(''); setSeriesFilter(''); setSoftwareVersionFilter(''); setKindFilter(''); setSearchText(''); setAppliedSearch(''); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:border-indigo-300 dark:border-gray-600 dark:text-gray-300">清除筛选</button></div>
       </section>
 
       {panel === 'models' ? (
         <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700"><div><h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Reviewed Product Models</h2><p className="text-[11px] text-gray-500">共 {models.length} 个首批型号 · 状态仍由目录迁移门禁控制</p></div><Eye className="h-4 w-4 text-gray-400" /></div>
+          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700"><div><h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Reviewed Product Models</h2><p className="text-[11px] text-gray-500">共 {total} 个匹配型号 · 当前第 {page} 页</p></div><Eye className="h-4 w-4 text-gray-400" /></div>
           {loading ? <div className="flex items-center justify-center gap-2 p-10 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />加载中…</div> : <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead className="bg-gray-50 text-[11px] text-gray-500 dark:bg-gray-900/60"><tr><th className="px-4 py-3">Vendor / Family</th><th className="px-4 py-3">Series</th><th className="px-4 py-3">Model</th><th className="px-4 py-3">OS / Train</th><th className="px-4 py-3">Software Version</th><th className="px-4 py-3">状态</th></tr></thead><tbody className="divide-y divide-gray-100 dark:divide-gray-700">{models.map((item) => <tr key={item.product_model_id} className="hover:bg-gray-50/80 dark:hover:bg-gray-900/40"><td className="px-4 py-3"><div className="font-semibold text-gray-800 dark:text-gray-100">{item.vendor_name}</div><div className="text-[11px] text-gray-500">{item.family_code}</div></td><td className="px-4 py-3"><div className="font-medium text-gray-700 dark:text-gray-200">{item.series_name}</div><div className="text-[11px] text-gray-500">{item.series_code}</div></td><td className="px-4 py-3"><div className="font-semibold text-indigo-700 dark:text-indigo-300">{item.model_code}</div><div className="max-w-[260px] truncate text-[11px] text-gray-500">{item.product_model_id}</div></td><td className="px-4 py-3"><div>{scopeValue(item, 'os_family')}</div><div className="text-[11px] text-gray-500">{scopeValue(item, 'software_train')}</div></td><td className="px-4 py-3"><div>{scopeValue(item, 'primary_version')}</div><div className="text-[11px] text-gray-500">兼容 {scopeValue(item, 'compatibility_version')}</div></td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${statusTone(item.status)}`}>{item.status}</span><div className="mt-1 text-[10px] text-gray-500">{item.review_status}</div></td></tr>)}</tbody></table></div>}
+          <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language="zh" alwaysVisible />
         </section>
       ) : (
         <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700"><div><h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Alias Review Queue</h2><p className="text-[11px] text-gray-500">前缀只产生候选；冲突必须人工澄清，当前不写入生产表</p></div><Tag className="h-4 w-4 text-gray-400" /></div>
           {loading ? <div className="flex items-center justify-center gap-2 p-10 text-xs text-gray-400"><Loader2 className="h-4 w-4 animate-spin" />加载中…</div> : <div className="overflow-x-auto"><table className="min-w-full text-left text-xs"><thead className="bg-gray-50 text-[11px] text-gray-500 dark:bg-gray-900/60"><tr><th className="px-4 py-3">Alias</th><th className="px-4 py-3">类型</th><th className="px-4 py-3">目标型号</th><th className="px-4 py-3">冲突 / 审核</th><th className="px-4 py-3">动作</th></tr></thead><tbody className="divide-y divide-gray-100 dark:divide-gray-700">{aliases.map((item) => <tr key={item.id} className="hover:bg-gray-50/80 dark:hover:bg-gray-900/40"><td className="px-4 py-3"><div className="font-semibold text-gray-800 dark:text-gray-100">{item.alias}</div><div className="text-[11px] text-gray-500">{item.normalized_alias}</div></td><td className="px-4 py-3"><span className="rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">{KIND_LABELS[item.alias_kind] || item.alias_kind}</span></td><td className="px-4 py-3"><div className="font-medium text-gray-700 dark:text-gray-200">{item.model?.model_code || item.product_model_id}</div><div className="text-[10px] text-gray-500">{item.model?.vendor_id} / {item.model?.series_code}</div></td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${statusTone(item.conflict_status)}`}>{item.conflict_status}</span><div className="mt-1 text-[10px] text-gray-500">{item.seed_status}</div></td><td className="px-4 py-3"><button type="button" onClick={() => setQuery(item.alias)} className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-[10px] font-semibold text-gray-600 hover:border-indigo-300 dark:border-gray-600 dark:text-gray-300">带入解析</button></td></tr>)}</tbody></table></div>}
+          <Pagination currentPage={page} totalItems={total} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language="zh" alwaysVisible />
         </section>
       )}
 

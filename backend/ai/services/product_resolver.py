@@ -110,9 +110,31 @@ class ProductResolver:
         for model, aliases in cls._MODEL_ALIASES.items():
             normalized_aliases = {normalize_alias(alias) for alias in aliases}
             if normalized in normalized_aliases:
+                # Keep the reviewed SKU when the operator supplied the full
+                # alias (for example ``CE6885-48YS8CQ``).  The short alias
+                # ``CE6885`` intentionally retains the legacy canonical key
+                # because it is a series/model prefix in older catalog rows.
+                # Returning the full alias here lets SQL match the exact
+                # hardware ``product_model`` without changing that legacy
+                # resolver contract.
+                base_alias = normalize_alias(model)
+                candidate_model = model
+                for alias in aliases:
+                    alias_text = normalize_alias(alias)
+                    if (
+                        alias_text == normalized
+                        and alias_text.startswith(f"{base_alias} ")
+                        and re.search(r"\s+\d", alias_text)
+                    ):
+                        # Prefer the SKU spelling with its dash when both
+                        # dashed and space-separated aliases normalize to the
+                        # same identity.
+                        candidate_model = str(alias).strip().lower()
+                        if "-" in str(alias):
+                            break
                 candidates.append({
                     "tenant_id": tenant_id,
-                    "product_model": model,
+                    "product_model": candidate_model,
                     "product_series": series_for(model),
                     "alias": query,
                     "match_method": "exact" if normalized == normalize_alias(aliases[0]) else "canonical",
@@ -153,7 +175,15 @@ class ProductResolver:
             "software_train": normalized.version if (normalized.version or "").upper().startswith("V") else None,
             "software_release": normalized.version if normalized.version and ("R" in normalized.version.upper() or "." in normalized.version) else None,
             "feature": normalized.topic,
-            "feature_domain": "routing" if normalized.topic in {"ospf", "bgp", "arp"} else "switching" if normalized.topic in {"vlan", "stp", "evpn", "vxlan"} else None,
+            "feature_domain": (
+                "routing" if normalized.topic in {"ospf", "bgp", "arp", "static_route", "loopback"}
+                else "switching" if normalized.topic in {"vlan", "stp", "lldp", "access_port", "trunk", "lacp"}
+                else "overlay" if normalized.topic in {"evpn", "vxlan"}
+                else "security" if normalized.topic == "acl"
+                else "management" if normalized.topic in {"ntp", "snmp", "ssh"}
+                else "reliability" if normalized.topic in {"vrrp"}
+                else None
+            ),
             "document_category": normalized.document_category,
             "cli_platform": None,
         }
@@ -170,10 +200,12 @@ class ProductResolver:
         projected = self._metadata_from_normalized(normalized)
         merged = {key: value for key, value in projected.items() if value not in (None, "")}
         merged.update({key: value for key, value in dict(metadata or {}).items() if value not in (None, "")})
+        # A concrete model token is preferred.  A reviewed family alias such
+        # as ``Catalyst 9300`` is also a canonical resolver identity (the
+        # catalog maps it to the c9300 family); CloudEngine 6800 remains a
+        # series-only scope unless a CE SKU is present.
         identity_query = normalized.model or (
-            normalized.product
-            if normalized.product not in {"CloudEngine 6800", "Catalyst 9300"}
-            else None
+            normalized.product if normalized.product != "CloudEngine 6800" else None
         )
         candidates = self._query_alias_candidates(identity_query or query, tenant_id=tenant_id) if identity_query else []
         identity_models = {str(item.get("product_model")) for item in candidates}
@@ -199,6 +231,13 @@ class ProductResolver:
         if candidates and match_method in {"prefix", "trigram"}:
             result.outcome = "candidates"
             result.retrieval_eligible = result.retrieval_eligible and len(identity_models) <= 1
+            # A fuzzy/short model alias can map to several hardware SKUs, but
+            # it is not a cross-platform ambiguity when the official registry
+            # proves a single CLI family.  Keep the vendor/platform hard gate
+            # and allow the RAG model applicability arrays to rank the exact
+            # SKU instead of dropping all inferred filters.
+            if len(result.platform_candidates) == 1:
+                result.ambiguous = False
         return result
 
     def resolve(self, metadata: Dict[str, Any], *, tenant_id: str = "tenant-default") -> EntityResolution:

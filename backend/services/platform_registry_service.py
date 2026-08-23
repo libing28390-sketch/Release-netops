@@ -330,19 +330,36 @@ def platform_codes_match(device_platform: Any, profile_platform: Any, parser_pla
     platform alias.
     """
     device_code = str(device_platform or "").strip().lower()
-    target_code = str(parser_platform or profile_platform or "").strip().lower()
-    if not device_code or not target_code:
+    profile_code = str(profile_platform or "").strip().lower()
+    parser_code = str(parser_platform or "").strip().lower()
+    if not device_code or not (profile_code or parser_code):
         return False
     profile_parser_codes = {
         str(item.get("platform_code") or "").strip().lower(): str(item.get("parser_platform") or "").strip().lower()
         for item in SYSTEM_PROFILES
     }
-    target_code = profile_parser_codes.get(target_code, target_code)
+    # A device normally stores the concrete Profile code (for example
+    # ``param_lab`` or ``hp_comware``), while older rows may store the shared
+    # parser/driver family. Accept either identity after normalisation; a
+    # custom Profile must not be rejected merely because its parser family is
+    # Cisco/Huawei/etc.
+    candidates = {
+        normalize_platform_code(value)
+        for value in (profile_code, parser_code)
+        if value
+    }
+    candidates.update(
+        profile_parser_codes.get(value, value)
+        for value in (profile_code, parser_code)
+        if value
+    )
     if device_code in {"h3c", "comware", "h3c_comware", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"}:
         device_code = "h3c_comware"
-    if target_code in {"h3c", "comware", "h3c_comware", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"}:
-        target_code = "h3c_comware"
-    return device_code == target_code or normalize_platform_code(device_code) == target_code
+    candidates = {
+        "h3c_comware" if value in {"h3c", "comware", "h3c_comware", "h3c_comware_v5", "h3c_comware_v7", "h3c_comware_v9"} else value
+        for value in candidates
+    }
+    return device_code in candidates or normalize_platform_code(device_code) in candidates
 
 
 def validate_platform_code(value: str) -> str:
@@ -1211,6 +1228,7 @@ def preview_platform_migration(user: dict[str, Any]) -> dict[str, Any]:
         ).fetchone()
         return {
             "read_only": True,
+            "legacy_compatibility_unchanged": True,
             "canonical_platform": "h3c_comware",
             "devices": counts,
             "device_conflicts": device_conflicts,

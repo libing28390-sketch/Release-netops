@@ -1,4 +1,4 @@
-"""ING-006 unified HTML/Markdown/TXT/PDF parser adapter boundary.
+"""ING-006 unified text/structured/HTML/PDF/DOCX parser adapter boundary.
 
 Adapters only decode and structurally extract source bytes.  They do not make
 trust, publication, prompt-injection, or content-cleaning decisions; those are
@@ -9,8 +9,12 @@ owned by later ING-007/ING-008 stages.  Every adapter returns the same bounded
 from __future__ import annotations
 
 import io
+import csv
+import json
 import re
 import zlib
+import zipfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any, Callable, Mapping, Protocol
@@ -19,7 +23,7 @@ from ai.services.knowledge_metadata import parse_markdown_document
 
 
 MAX_PARSE_BYTES = 20_000_000
-SUPPORTED_FORMATS = ("html", "markdown", "txt", "pdf")
+SUPPORTED_FORMATS = ("html", "markdown", "txt", "json", "yaml", "csv", "xml", "config", "pdf", "docx")
 _EXTENSION_FORMATS = {
     ".html": "html",
     ".htm": "html",
@@ -27,13 +31,30 @@ _EXTENSION_FORMATS = {
     ".markdown": "markdown",
     ".txt": "txt",
     ".text": "txt",
+    ".log": "txt",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".csv": "csv",
+    ".xml": "xml",
+    ".conf": "config",
+    ".cfg": "config",
+    ".ini": "config",
     ".pdf": "pdf",
+    ".docx": "docx",
 }
 _MIME_FORMATS = {
     "text/html": "html",
     "text/markdown": "markdown",
     "text/plain": "txt",
+    "application/json": "json",
+    "text/csv": "csv",
+    "application/xml": "xml",
+    "text/xml": "xml",
+    "application/yaml": "yaml",
+    "text/yaml": "yaml",
     "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
 }
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -122,6 +143,138 @@ class TxtParserAdapter:
     def parse(self, content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
         text = _decode_utf8(content)
         return ParsedDocument(self.format_name, text, _blocks_from_lines(text), {}, self.parser_name, self.parser_version)
+
+
+class JsonParserAdapter:
+    """Validate JSON and render it deterministically for retrieval."""
+
+    format_name = "json"
+    parser_name = "nexora-json"
+    parser_version = "1.0.0"
+
+    def parse(self, content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
+        text = _decode_utf8(content)
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise DocumentParserError("PARSER_JSON_INVALID", "JSON document is invalid") from exc
+        normalized = json.dumps(value, ensure_ascii=False, indent=2)
+        return ParsedDocument(
+            self.format_name,
+            normalized,
+            _blocks_from_lines(normalized, block_type="json_line"),
+            {"structured_format": "json"},
+            self.parser_name,
+            self.parser_version,
+        )
+
+
+class YamlParserAdapter:
+    """Validate YAML while preserving comments and operator-authored layout."""
+
+    format_name = "yaml"
+    parser_name = "nexora-yaml"
+    parser_version = "1.0.0"
+
+    def parse(self, content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
+        text = _decode_utf8(content)
+        try:
+            import yaml  # type: ignore
+            yaml.safe_load(text)
+        except ImportError as exc:
+            raise DocumentParserError("PARSER_YAML_UNAVAILABLE", "YAML parser is not available") from exc
+        except Exception as exc:
+            raise DocumentParserError("PARSER_YAML_INVALID", "YAML document is invalid") from exc
+        return ParsedDocument(
+            self.format_name,
+            text,
+            _blocks_from_lines(text, block_type="yaml_line"),
+            {"structured_format": "yaml"},
+            self.parser_name,
+            self.parser_version,
+        )
+
+
+class CsvParserAdapter:
+    """Parse CSV rows into searchable, delimiter-independent text blocks."""
+
+    format_name = "csv"
+    parser_name = "nexora-csv"
+    parser_version = "1.0.0"
+
+    def parse(self, content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
+        text = _decode_utf8(content)
+        try:
+            sample = text[:8192]
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|") if sample else csv.excel
+        except csv.Error:
+            dialect = csv.excel
+        try:
+            rows = list(csv.reader(io.StringIO(text), dialect=dialect, strict=True))
+        except csv.Error as exc:
+            raise DocumentParserError("PARSER_CSV_INVALID", "CSV document is invalid") from exc
+        if not rows:
+            raise DocumentParserError("PARSER_EMPTY_DOCUMENT", "Document content cannot be empty")
+        normalized = "\n".join(" | ".join(str(cell).strip() for cell in row).strip() for row in rows)
+        return ParsedDocument(
+            self.format_name,
+            normalized,
+            _blocks_from_lines(normalized, block_type="csv_row"),
+            {"structured_format": "csv", "row_count": len(rows)},
+            self.parser_name,
+            self.parser_version,
+        )
+
+
+class XmlParserAdapter:
+    """Validate XML and expose leaf text without indexing markup noise."""
+
+    format_name = "xml"
+    parser_name = "nexora-xml"
+    parser_version = "1.0.0"
+
+    def parse(self, content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
+        text = _decode_utf8(content)
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError as exc:
+            raise DocumentParserError("PARSER_XML_INVALID", "XML document is invalid") from exc
+        lines: list[str] = []
+        for element in root.iter():
+            children = list(element)
+            value = " ".join(part.strip() for part in element.itertext() if part and part.strip()).strip()
+            if value and not children:
+                lines.append(value)
+        normalized = "\n".join(lines) or text.strip()
+        return ParsedDocument(
+            self.format_name,
+            normalized,
+            _blocks_from_lines(normalized, block_type="xml_text"),
+            {"structured_format": "xml", "root_tag": str(root.tag)},
+            self.parser_name,
+            self.parser_version,
+            parse_status="parsed" if lines else "degraded",
+            warnings=() if lines else ("xml_text_extraction_degraded",),
+        )
+
+
+class ConfigParserAdapter:
+    """Keep CLI/config syntax lossless; syntax is intentionally not guessed."""
+
+    format_name = "config"
+    parser_name = "nexora-config"
+    parser_version = "1.0.0"
+
+    def parse(self, content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
+        text = _decode_utf8(content)
+        return ParsedDocument(
+            self.format_name,
+            text,
+            _blocks_from_lines(text, block_type="config_line"),
+            {"structured_format": "config"},
+            self.parser_name,
+            self.parser_version,
+        )
 
 
 class MarkdownParserAdapter:
@@ -333,6 +486,88 @@ class PdfParserAdapter:
         )
 
 
+class DocxParserAdapter:
+    """Extract readable paragraphs and table rows from an OOXML document.
+
+    The boundary intentionally ignores images, macros, embedded objects and
+    external relationships. It provides deterministic text for the normal
+    content-cleaning/chunking stages without a third-party DOCX dependency.
+    """
+
+    format_name = "docx"
+    parser_name = "nexora-docx"
+    parser_version = "1.0.0"
+    _NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+    @classmethod
+    def _paragraph_text(cls, paragraph: ET.Element) -> str:
+        parts: list[str] = []
+        for node in paragraph.iter():
+            local = str(node.tag).rsplit("}", 1)[-1]
+            if local == "t":
+                parts.append(node.text or "")
+            elif local == "tab":
+                parts.append("\t")
+            elif local in {"br", "cr"}:
+                parts.append("\n")
+        return "".join(parts).strip()
+
+    @classmethod
+    def _heading_level(cls, paragraph: ET.Element) -> int:
+        style = paragraph.find("./w:pPr/w:pStyle", cls._NS)
+        value = str(style.attrib.get(f"{{{cls._NS['w']}}}val") or "") if style is not None else ""
+        match = re.search(r"heading\s*([1-9])", value, flags=re.IGNORECASE)
+        return int(match.group(1)) if match else 0
+
+    def parse(self, content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as package:
+                document_xml = package.read("word/document.xml")
+        except (KeyError, zipfile.BadZipFile, OSError) as exc:
+            raise DocumentParserError("PARSER_DOCX_INVALID", "DOCX package is invalid or missing word/document.xml") from exc
+        try:
+            root = ET.fromstring(document_xml)
+        except ET.ParseError as exc:
+            raise DocumentParserError("PARSER_DOCX_INVALID", "DOCX XML document is invalid") from exc
+
+        blocks: list[ParsedBlock] = []
+        body = root.find("./w:body", self._NS)
+        if body is None:
+            raise DocumentParserError("PARSER_DOCX_INVALID", "DOCX body is missing")
+        for child in list(body):
+            local = str(child.tag).rsplit("}", 1)[-1]
+            if local == "p":
+                text = self._paragraph_text(child)
+                if not text:
+                    continue
+                level = self._heading_level(child)
+                rendered = f"{'#' * level} {text}" if level else text
+                blocks.append(ParsedBlock(rendered, "heading" if level else "paragraph", {"paragraph": len(blocks) + 1}))
+            elif local == "tbl":
+                for row_index, row in enumerate(child.findall("./w:tr", self._NS), start=1):
+                    cells: list[str] = []
+                    for cell in row.findall("./w:tc", self._NS):
+                        paragraphs = [
+                            self._paragraph_text(paragraph)
+                            for paragraph in cell.findall("./w:p", self._NS)
+                        ]
+                        cells.append(" ".join(value for value in paragraphs if value).strip())
+                    row_text = " | ".join(cells).strip()
+                    if row_text:
+                        blocks.append(ParsedBlock(row_text, "table_row", {"row": row_index}))
+        text = "\n\n".join(block.text for block in blocks)
+        return ParsedDocument(
+            self.format_name,
+            text,
+            tuple(blocks),
+            {},
+            self.parser_name,
+            self.parser_version,
+            parse_status="parsed" if text else "degraded",
+            warnings=() if text else ("docx_text_extraction_empty",),
+        )
+
+
 def _format_from_inputs(content: bytes, filename: str, content_type: str) -> str:
     normalized_mime = str(content_type or "").split(";", 1)[0].strip().lower()
     mime_format = _MIME_FORMATS.get(normalized_mime, "")
@@ -340,13 +575,16 @@ def _format_from_inputs(content: bytes, filename: str, content_type: str) -> str
     extension = next((suffix for suffix in _EXTENSION_FORMATS if lowered.endswith(suffix)), "")
     extension_format = _EXTENSION_FORMATS.get(extension, "")
     if mime_format and extension_format and mime_format != extension_format:
-        raise DocumentParserError("PARSER_FORMAT_MISMATCH", "Filename extension and content type disagree")
+        # Generic text/plain is compatible with CLI/config extensions; the
+        # extension still determines the richer structured parser contract.
+        if not ({mime_format, extension_format} <= {"txt", "config"}):
+            raise DocumentParserError("PARSER_FORMAT_MISMATCH", "Filename extension and content type disagree")
     if content.startswith(b"%PDF-"):
         detected = "pdf"
         if (mime_format and mime_format != "pdf") or (extension_format and extension_format != "pdf"):
             raise DocumentParserError("PARSER_FORMAT_MISMATCH", "PDF magic does not match the declared file format")
     else:
-        detected = mime_format or extension_format
+        detected = extension_format if (mime_format and extension_format and mime_format != extension_format) else (mime_format or extension_format)
     if detected not in SUPPORTED_FORMATS:
         raise DocumentParserError("PARSER_FORMAT_UNSUPPORTED", "Document format is not supported")
     if detected == "pdf" and not content.startswith(b"%PDF-"):
@@ -360,10 +598,16 @@ class DocumentParserRegistry:
             "html": HtmlParserAdapter(),
             "markdown": MarkdownParserAdapter(),
             "txt": TxtParserAdapter(),
+            "json": JsonParserAdapter(),
+            "yaml": YamlParserAdapter(),
+            "csv": CsvParserAdapter(),
+            "xml": XmlParserAdapter(),
+            "config": ConfigParserAdapter(),
             "pdf": PdfParserAdapter(),
+            "docx": DocxParserAdapter(),
         })
         if set(self._adapters) != set(SUPPORTED_FORMATS):
-            raise DocumentParserError("PARSER_REGISTRY_INVALID", "Parser registry must provide exactly four formats")
+            raise DocumentParserError("PARSER_REGISTRY_INVALID", "Parser registry must provide one adapter per supported format")
 
     def formats(self) -> tuple[str, ...]:
         return tuple(SUPPORTED_FORMATS)
@@ -389,7 +633,7 @@ document_parser_registry = DocumentParserRegistry()
 
 
 def parse_document(content: bytes, *, filename: str = "", content_type: str = "") -> ParsedDocument:
-    """Parse through the canonical four-format registry."""
+    """Parse through the canonical text/PDF/DOCX registry."""
     return document_parser_registry.parse(content, filename=filename, content_type=content_type)
 
 
@@ -397,12 +641,18 @@ __all__ = [
     "DocumentParserAdapter",
     "DocumentParserError",
     "DocumentParserRegistry",
+    "ConfigParserAdapter",
+    "CsvParserAdapter",
+    "DocxParserAdapter",
     "HtmlParserAdapter",
+    "JsonParserAdapter",
     "MarkdownParserAdapter",
     "ParsedBlock",
     "ParsedDocument",
     "PdfParserAdapter",
     "TxtParserAdapter",
+    "XmlParserAdapter",
+    "YamlParserAdapter",
     "document_parser_registry",
     "parse_document",
 ]

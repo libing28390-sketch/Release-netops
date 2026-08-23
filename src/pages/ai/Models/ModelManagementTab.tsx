@@ -1,12 +1,20 @@
-import React, { useEffect, useState } from 'react';
-import { Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle } from 'lucide-react';
 import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelRoute, AIProvider } from '../../../api/ai';
+import Pagination from '../../../components/Pagination';
 
 export const ModelManagementTab: React.FC = () => {
   const [models, setModels] = useState<AIModel[]>([]);
   const [routes, setRoutes] = useState<AIModelRoute[]>([]);
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [providerFilter, setProviderFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   // Modal
   const [showModal, setShowModal] = useState(false);
@@ -18,6 +26,7 @@ export const ModelManagementTab: React.FC = () => {
 
   const fetchData = async () => {
     setLoading(true);
+    setError('');
     try {
       const [mList, rList, pList] = await Promise.all([
         getAIModels(),
@@ -29,7 +38,7 @@ export const ModelManagementTab: React.FC = () => {
       setProviders(pList);
       if (pList.length > 0) setProviderId(pList[0].id);
     } catch (err: any) {
-      console.error(err);
+      setError(err?.message || '模型、Provider 或路由加载失败');
     } finally {
       setLoading(false);
     }
@@ -107,6 +116,25 @@ export const ModelManagementTab: React.FC = () => {
     { code: 'troubleshooting', label: '网络故障诊断' },
   ];
 
+  const filteredModels = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return models.filter((model) => {
+      const provider = providers.find((item) => item.id === model.provider_id);
+      const matchesSearch = !needle || [model.name, model.model_code, provider?.name, model.health_status]
+        .some((value) => String(value || '').toLowerCase().includes(needle));
+      const matchesProvider = !providerFilter || model.provider_id === providerFilter;
+      const matchesType = !typeFilter || model.model_type === typeFilter;
+      const matchesStatus = statusFilter === 'all' || (statusFilter === 'enabled' ? model.enabled : !model.enabled);
+      return matchesSearch && matchesProvider && matchesType && matchesStatus;
+    });
+  }, [models, providerFilter, providers, search, statusFilter, typeFilter]);
+  const visibleModels = filteredModels.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredModels.length / pageSize));
+    if (page > maxPage) setPage(maxPage);
+  }, [filteredModels.length, page, pageSize]);
+
   return (
     <div className="space-y-8">
       {/* Models Section */}
@@ -139,6 +167,15 @@ export const ModelManagementTab: React.FC = () => {
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索模型名称、Model Code、Provider 或健康状态" className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white" /></div>
+          <select value={providerFilter} onChange={(event) => { setProviderFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">全部 Provider</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select>
+          <select value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="">全部用途</option><option value="chat">Chat</option><option value="reasoning">Reasoning</option><option value="embedding">Embedding</option><option value="rerank">Rerank</option></select>
+          <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="rounded-lg border border-gray-200 px-3 py-2 text-xs dark:border-gray-600 dark:bg-gray-900 dark:text-white"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select>
+        </div>
+
+        {error && <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300"><AlertTriangle className="h-4 w-4" />{error}</div>}
+
         {loading ? (
           <div className="p-8 text-center text-gray-400">加载中...</div>
         ) : (
@@ -155,7 +192,7 @@ export const ModelManagementTab: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 dark:divide-gray-700 text-gray-700 dark:text-gray-300">
-                {models.map((m) => (
+                {visibleModels.map((m) => (
                   <tr key={m.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="py-3 px-4 font-semibold text-gray-900 dark:text-white">{m.name}</td>
                     <td className="py-3 px-4 font-mono text-xs text-indigo-600 dark:text-indigo-400">{m.model_code}</td>
@@ -193,6 +230,8 @@ export const ModelManagementTab: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            {!visibleModels.length && <div className="border-t border-gray-100 px-4 py-10 text-center text-sm text-gray-400 dark:border-gray-700">当前搜索和筛选没有匹配模型</div>}
+            <Pagination currentPage={page} totalItems={filteredModels.length} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language="zh" alwaysVisible />
           </div>
         )}
       </div>
@@ -219,6 +258,7 @@ export const ModelManagementTab: React.FC = () => {
                   <p className="text-xs text-gray-400 font-mono mt-0.5">{scene.code}</p>
                 </div>
                 <select
+                  aria-label={`${scene.label}模型路由`}
                   value={activeRoute?.model_id || ''}
                   onChange={(e) => handleRouteChange(scene.code, e.target.value)}
                   className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-900 dark:text-white font-medium"

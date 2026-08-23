@@ -152,6 +152,49 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database seeding failed: {e}", exc_info=True)
 
+    # Keep the reviewed configuration-template catalog searchable by the RAG
+    # engine as well as visible in the catalog UI.  The projection is
+    # idempotent and only publishes system-owned official templates, so it is
+    # safe on every startup and also repairs installations upgraded from a
+    # pre-projection release.
+    try:
+        from services.official_template_projection_service import (
+            project_official_templates_to_knowledge,
+        )
+
+        projection = project_official_templates_to_knowledge(
+            tenant_id="tenant-default",
+            created_by="system",
+        )
+        logger.info(
+            "[Knowledge] Official template projection checked: published=%s skipped=%s",
+            projection.get("published_count", 0),
+            projection.get("skipped_count", 0),
+        )
+
+        # The product registry is a separate official-only projection.  It
+        # supplies the model hard-gate for Huawei, H3C and Cisco queries; the
+        # operation is idempotent and reconciles legacy Huawei rows without
+        # duplicating them.
+        from services.official_product_catalog_service import (
+            ensure_official_product_registry_documents,
+        )
+
+        registry = ensure_official_product_registry_documents(
+            tenant_id="tenant-default",
+            created_by="system",
+        )
+        logger.info(
+            "[Knowledge] Official product registry checked: published=%s models=%s",
+            registry.get("published_count", 0),
+            registry.get("model_counts", {}),
+        )
+    except Exception as e:
+        # A catalog projection must not prevent the API from starting.  The
+        # catalog/import endpoints can retry after the database/provider is
+        # healthy, while the failure remains visible in server logs.
+        logger.warning(f"[Knowledge] Official template projection skipped: {e}", exc_info=True)
+
     # Backfill the evidence-first knowledge graph from existing normalized
     # topology observations.  Discovery runs call the same projection after
     # every rebuild; startup makes already-collected evidence visible on
@@ -792,6 +835,7 @@ else:
 
 def seed_data():
     from database import _USE_PG
+    from ai.prompts.manager import prompt_manager
     from services.tag_service import seed_builtin_tags, sync_all_device_status_tags
     if not _USE_PG and not os.path.exists(DB_PATH):
         return
@@ -805,6 +849,13 @@ def seed_data():
         synced_status_tags = sync_all_device_status_tags(conn)
         if synced_status_tags:
             logger.info("Synchronized system availability tags for %s device(s)", synced_status_tags)
+
+        # Keep the Prompt Center useful on a fresh or upgraded installation.
+        # The manager is idempotent and only inserts the reviewed system
+        # templates that are missing, so existing tenant-authored prompts are
+        # never overwritten.
+        prompt_manager.seed_initial_prompts()
+        logger.info("Prompt Center seed templates checked/completed.")
 
         # Check if devices table is empty
         # Mock device seeding removed per user request

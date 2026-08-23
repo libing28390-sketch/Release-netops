@@ -27,6 +27,11 @@ from services.official_seed_batch_service import (
     list_site_anomaly_alerts,
 )
 from services.ingestion_pipeline_service import IngestionPipelineError, ingestion_pipeline
+from services.official_source_supplement_service import (
+    OfficialSourceSupplementError,
+    list_official_source_suggestions,
+    review_official_source_suggestion,
+)
 
 
 router = APIRouter(prefix="/knowledge-v2/ingestion", tags=["knowledge-v2-ingestion"])
@@ -49,6 +54,10 @@ class OfficialUrlImportRequest(BaseModel):
     idempotency_key: str = Field(default="", max_length=256)
     request_id: str = Field(default="", max_length=256)
     max_retries: int = Field(default=1, ge=0, le=5)
+    # Legacy imports stop at the fetched manifest.  The explicit opt-in keeps
+    # that API contract intact while allowing reviewed official URLs to finish
+    # parse/clean/chunk/embed/index in the same trusted continuation.
+    publish_to_knowledge_base: bool = False
 
 
 class OfficialSeedBatchRequest(BaseModel):
@@ -74,6 +83,18 @@ class IngestionJobRetryRequest(BaseModel):
     request_id: str = Field(default="", max_length=256)
 
 
+class OfficialSourceSuggestionReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(..., pattern="^(approve|reject)$")
+    vendor: str = Field(default="", max_length=128)
+    product_model: str = Field(default="", max_length=256)
+    software_release: str = Field(default="", max_length=128)
+    feature: str = Field(default="", max_length=128)
+    url: str = Field(default="", max_length=4096)
+    source_kind: str = Field(default="", max_length=64)
+
+
 def _job_actor(user: dict[str, Any]) -> str:
     return str(user.get("id") or user.get("user_id") or user.get("username") or "system").strip() or "system"
 
@@ -95,6 +116,42 @@ def _call_job_control(fn, *args, **kwargs):
     except Exception as exc:
         logger.exception("Knowledge V2 ingestion job operation failed")
         raise HTTPException(status_code=500, detail={"code": "INGESTION_JOB_ERROR", "message": "Ingestion job operation failed"}) from exc
+
+
+def _call_official_supplement(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except OfficialSourceSupplementError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+
+
+@router.get("/official-source-suggestions")
+def api_list_official_source_suggestions(
+    status: str = Query(default="pending", max_length=32),
+    search: str = Query(default="", max_length=128),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    user=require_permission("knowledge_source", "read"),
+):
+    return {"success": True, "data": _call_official_supplement(
+        list_official_source_suggestions,
+        tenant_id=_job_tenant(user), status=status, search=search, page=page, page_size=page_size,
+    )}
+
+
+@router.post("/official-source-suggestions/{suggestion_id}/review")
+def api_review_official_source_suggestion(
+    suggestion_id: str,
+    payload: OfficialSourceSuggestionReviewRequest,
+    user=require_permission("knowledge_source", "update"),
+):
+    result = _call_official_supplement(
+        review_official_source_suggestion,
+        suggestion_id,
+        tenant_id=_job_tenant(user), user=user, decision=payload.decision,
+        fields=payload.model_dump(exclude={"decision"}),
+    )
+    return {"success": True, "data": result, "message": "Official source suggestion reviewed"}
 
 
 def _public_job_snapshot(job: Any) -> dict[str, Any]:
@@ -479,3 +536,71 @@ async def api_import_enterprise_sop(
     status = 202 if result.get("success") and result.get("continuation_required") else (200 if result.get("success") else 502)
     response.status_code = status
     return {"success": bool(result.get("success")), "data": result, "message": "Enterprise SOP import accepted" if status == 202 else "Enterprise SOP import failed"}
+
+
+@router.post("/enterprise-sop/batch")
+async def api_import_enterprise_sop_batch(
+    response: Response,
+    files: list[UploadFile] = File(...),
+    owner: str = Form(""),
+    department: str = Form("network-operations"),
+    description: str = Form("Batch enterprise SOP import"),
+    request_id: str = Form(""),
+    max_retries: int = Form(1),
+    user=require_permission("knowledge_source", "create"),
+):
+    """Create one governed ingestion job per PDF/DOCX with file-level commits."""
+    if not 1 <= len(files) <= 20:
+        raise HTTPException(status_code=400, detail={"code": "SOP_BATCH_COUNT_INVALID", "message": "Batch must contain between 1 and 20 files"})
+    buffered: list[tuple[UploadFile, bytes]] = []
+    total_bytes = 0
+    for file in files:
+        content = await _read_local_file(file)
+        total_bytes += len(content)
+        if total_bytes > 50_000_000:
+            raise HTTPException(status_code=413, detail={"code": "SOP_BATCH_TOO_LARGE", "message": "Batch exceeds the 50 MB total limit"})
+        buffered.append((file, content))
+
+    items: list[dict[str, Any]] = []
+    for index, (file, content) in enumerate(buffered):
+        filename = file.filename or f"document-{index + 1}"
+        try:
+            result = _public_import_result(_call_sop(
+                user,
+                {
+                    "title": filename.rsplit(".", 1)[0],
+                    "owner": owner,
+                    "department": department,
+                    "classification": "INTERNAL",
+                    "description": description,
+                    "request_id": f"{request_id}:{index + 1}" if request_id else "",
+                    "max_retries": max_retries,
+                },
+                content=content,
+                filename=filename,
+                content_type=file.content_type or "",
+            ))
+            items.append({
+                "filename": filename,
+                "status": "queued" if result.get("continuation_required") else ("succeeded" if result.get("success") else "failed"),
+                "success": bool(result.get("success")),
+                "job": result.get("job"),
+                "error": result.get("error"),
+            })
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"code": "SOP_IMPORT_FAILED", "message": str(exc.detail)}
+            items.append({"filename": filename, "status": "failed", "success": False, "job": None, "error": detail})
+
+    accepted = sum(1 for item in items if item["success"])
+    response.status_code = 202 if accepted else 422
+    return {
+        "success": accepted > 0,
+        "data": {
+            "strategy": "file_level_commit",
+            "total": len(items),
+            "accepted": accepted,
+            "failed": len(items) - accepted,
+            "items": items,
+        },
+        "message": f"Accepted {accepted} of {len(items)} enterprise SOP files",
+    }

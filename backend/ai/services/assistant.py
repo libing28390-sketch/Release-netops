@@ -25,11 +25,20 @@ from ai.services.citation_service import (
     build_grounded_citations,
     refusal_for_missing_evidence,
 )
+from services.official_config_template_service import _render_template, search_official_templates
+from services.official_source_suggestion_service import suggest_official_sources
+from services.official_source_supplement_service import record_official_source_suggestions
 from ai.services.copilot_contract import build_copilot_contract
 from ai.services.retrieval_trace_store import record_retrieval_trace, update_retrieval_trace
 from ai.services.metrics import ai_metrics
 from ai.security.sanitizer import sanitize_log_text
 from core.context import request_id_var, resolve_request_id
+
+
+# Only explicit knowledge/configuration/troubleshooting intents opt into
+# tenant RAG context. General conversation must not inherit an internal
+# document because a broad lexical search happened to find a weak match.
+_RAG_CONTEXT_INTENTS = {"knowledge", "config_search", "troubleshooting", "alarm_search"}
 
 logger = logging.getLogger(__name__)
 
@@ -113,19 +122,32 @@ def _done_event(started_at: float, extra: Optional[Dict[str, Any]] = None) -> st
     return _sse_event("done", payload)
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(*, knowledge_no_match: bool = False) -> str:
     import datetime
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return (
+    # Keep the trusted system clock readable without looking like a phone/IP
+    # identifier to the outbound classifier (hyphenated ISO timestamps can be
+    # mistaken for L2 data by conservative regexes).
+    now_str = datetime.datetime.now().strftime("%Y年%m月%d日 %H时%M分%S秒")
+    prompt = (
         f"Current System Time: {now_str}\n"
         "You are Nexora AI Assistant, an expert AI network operations copilot and assistant. "
         "For general questions, greetings, current time, common knowledge, programming, or network concept explanations, answer naturally, politely, and accurately. "
         "For enterprise network asset, topology, inventory, IP address, and telemetry queries within Nexora, always prioritize the provided real facts from CMDB/IPAM/Telemetry database. "
-        "Never invent non-existent network devices, IPs, or alarms when querying inventory facts. "
+        "Never invent network devices, IPs, or alarms that are not present in inventory facts. "
         "For knowledge requests, use exact retrieved knowledge chunks. "
         "If entity_resolution is ambiguous but clarification_required is false, keep each retrieved CLI platform's syntax in a separately labeled section and never merge commands across platforms. "
         "For network vendor CLI commands, use language tags like ```huawei, ```cisco, ```h3c, or ```bash."
     )
+    if knowledge_no_match:
+        prompt += (
+            "\nThe local knowledge base did not return a verified document for this request. "
+            "You may answer as a cloud general reference assistant when the security gateway permits it, "
+            "but you must clearly state that the answer is not a locally verified or official citation. "
+            "Do not claim that a command is valid for the named hardware or software release without evidence. "
+            "Give a useful example labelled by vendor, list the version and platform assumptions, and finish with "
+            "a short verification command or official document check. Never invent citations or URLs."
+        )
+    return prompt
 
 
 class AIAssistantService:
@@ -167,6 +189,42 @@ class AIAssistantService:
             "cli_platform",
         )
         return any(getattr(request, field_name, None) for field_name in identity_fields)
+
+    @staticmethod
+    def _knowledge_no_match_context(knowledge_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build the minimal context allowed for a cloud general-reference fallback.
+
+        A retrieval miss must not send raw RAG debug payloads, document bodies, or
+        tenant facts to a cloud provider.  Keep only the structured query scope
+        needed for the model to produce a useful, explicitly unverified answer;
+        the security gateway still classifies, minimizes and tokenizes the final
+        request before transport.
+        """
+        result = knowledge_result or {}
+        request = result.get("request")
+        resolution = result.get("resolution")
+        resolution_data = resolution.to_dict() if hasattr(resolution, "to_dict") else (resolution or {})
+        debug = result.get("debug") if isinstance(result.get("debug"), dict) else {}
+        fields = (
+            "vendor", "product_family", "product_series", "product_model", "os_family",
+            "os_generation", "software_train", "software_release", "cli_platform",
+            "document_category", "feature_domain", "feature", "subfeature",
+        )
+        query_scope = {
+            field: getattr(request, field, None)
+            for field in fields
+            if getattr(request, field, None) not in (None, "", [], {})
+        }
+        platforms = resolution_data.get("platform_candidates") or []
+        official_sources = suggest_official_sources(request, limit=3)
+        return {
+            "knowledge_status": "no_local_match",
+            "query_scope": query_scope,
+            "platform_candidates": [str(item) for item in platforms[:8]],
+            "local_candidate_count": int(debug.get("metadata_candidate_documents", debug.get("candidate_count", 0)) or 0),
+            "answer_mode": "cloud_general_reference_unverified",
+            "official_source_suggestions": official_sources,
+        }
 
     @staticmethod
     def build_knowledge_request(
@@ -275,6 +333,20 @@ class AIAssistantService:
             },
             request_id=request_id,
         )
+        if quality["no_match"]:
+            try:
+                record_official_source_suggestions(
+                    request,
+                    tenant_id=tenant_id or "tenant-default",
+                    trace_id=str(retrieval["retrieval_trace_id"]),
+                    request_id=request_id,
+                    query=message,
+                )
+            except Exception:
+                # Retrieval must remain available if the administrative task
+                # store is temporarily unavailable; the miss still fails
+                # closed and never pretends that a source was imported.
+                pass
         retrieval["request_id"] = request_id
         return {"request": request, "resolution": resolution, **retrieval}
 
@@ -339,6 +411,18 @@ class AIAssistantService:
             )
 
         request = knowledge_result.get("request")
+        official_sources = suggest_official_sources(request, limit=3)
+
+        def official_followup() -> str:
+            if not official_sources:
+                return ""
+            lines = ["\n\n官方补充入口（仅建议，不代表已导入或已验证）："]
+            for item in official_sources:
+                lines.append(
+                    f"- [{item['label']}]({item['url']})：{item['review_action']}；"
+                    "确认后通过知识库的‘官方 URL 导入’提交。"
+                )
+            return "\n".join(lines)
         category = getattr(request, "document_category", None)
         criteria = []
         for label, field_name in (
@@ -364,6 +448,7 @@ class AIAssistantService:
                 f"精确命中：{match_count} 份\n\n"
                 f"{registry_note}知识库没有同时满足上述条件的配置文档；"
                 "未使用其他平台内容或 CLI 输出替代配置来源。"
+                + official_followup()
             )
         if category == "troubleshooting":
             return (
@@ -371,11 +456,13 @@ class AIAssistantService:
                 f"精确检索条件：{criteria_text}\n"
                 f"精确命中：{match_count} 份\n\n"
                 "未使用 CLI 输出替代故障排查文档。"
+                + official_followup()
             )
         return (
             refusal_for_missing_evidence(intent="knowledge") + "\n\n"
             f"精确检索条件：{criteria_text}\n"
             f"精确命中：{match_count} 份"
+            + official_followup()
         )
 
     @staticmethod
@@ -386,6 +473,16 @@ class AIAssistantService:
             "huawei_vrp5_v200": "Huawei VRP5（V200）",
             "huawei_yunshan_v300": "Huawei YunShan（V300）",
             "huawei_yunshan_v600": "Huawei YunShan（V600）",
+            "huawei_vrp": "Huawei VRP",
+            "huawei_vrpv8": "Huawei VRP8",
+            "huawei_vrp_v200": "Huawei VRP（V200）",
+            "huawei_vrp_v300": "Huawei VRP（V300）",
+            "huawei_vrp_v600": "Huawei VRP（V600）",
+            "h3c_comware": "H3C Comware",
+            "h3c_comware7": "H3C Comware 7",
+            "cisco_iosxe": "Cisco IOS XE",
+            "cisco_ios": "Cisco IOS",
+            "cisco_nxos": "Cisco NX-OS",
         }
         if raw in labels:
             return labels[raw]
@@ -462,6 +559,11 @@ class AIAssistantService:
         lines = []
         for line in body.splitlines():
             stripped = line.strip()
+            # Chunking assigns this synthetic section when an imported file
+            # has no heading.  It is useful in the admin trace, but it is not
+            # an answer section and becomes noisy when repeated per chunk.
+            if stripped.lower() in {"general overview", "general overview:"}:
+                continue
             if stripped and any(stripped.lower().lstrip("- ").startswith(key) for key in internal_keys):
                 continue
             lines.append(line.rstrip())
@@ -469,11 +571,103 @@ class AIAssistantService:
         # The source uses generic text fences.  A Huawei tag makes the command
         # block easier to read in the Markdown renderer without changing it.
         cleaned = re.sub(r"```text\b", "```huawei", cleaned, flags=re.IGNORECASE)
-        return cleaned
+        # User-uploaded configuration documents can contain the same reviewed
+        # Jinja envelope as the official catalogue.  Render every answer path,
+        # not only the deterministic official-template path, so raw
+        # ``{{...}}`` syntax never reaches the operator-facing chat bubble.
+        cleaned = _render_template(cleaned)
+        return re.sub(r"{{\s*.*?\s*}}", "<PARAM>", cleaned, flags=re.DOTALL).strip()
+
+    @staticmethod
+    def _template_command_parts(content: str) -> tuple[str, str]:
+        """Separate a reviewed template's configuration from its checks.
+
+        Official templates store the configuration and verification commands as
+        two paragraphs.  Keeping them separate makes a broad configuration
+        query copyable and prevents ``display``/``show`` commands from being
+        mistaken for configuration input.
+        """
+        text = str(content or "").replace("\r\n", "\n").strip()
+        if not text:
+            return "", ""
+        blocks = [block.strip() for block in re.split(r"\n\s*\n", text) if block.strip()]
+        if len(blocks) > 1:
+            verification_index = None
+            for index, block in enumerate(blocks[1:], start=1):
+                if re.search(r"(?m)^\s*(?:display|show|copy\s+(?:running-config|run)|save)\b", block, re.I):
+                    verification_index = index
+                    break
+            if verification_index is not None:
+                config = "\n\n".join(blocks[:verification_index]).strip()
+                verification = "\n\n".join(blocks[verification_index:]).strip()
+                return config, verification
+        # Some imported templates have no blank line.  Split at the first
+        # verification command only when there is a preceding config command.
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if index > 0 and re.match(r"^\s*(?:display|show|copy\s+(?:running-config|run)|save)\b", line, re.I):
+                config = "\n".join(lines[:index]).strip()
+                verification = "\n".join(lines[index:]).strip()
+                return config, verification
+        return text, ""
+
+    @staticmethod
+    def _template_code_block(content: str, platform: str) -> str:
+        if not content:
+            return ""
+        language = "huawei" if "huawei" in platform.lower() else "h3c" if "h3c" in platform.lower() else "cisco" if "cisco" in platform.lower() else "text"
+        if content.lstrip().startswith("```"):
+            return content
+        return f"```{language}\n{content.strip()}\n```"
+
+    @classmethod
+    def _render_official_template_chunk(cls, item: Dict[str, Any]) -> str:
+        """Build an operator-facing answer for one reviewed CLI template."""
+        content = str(item.get("content") or "").strip()
+        # Official URL/template ingestion may wrap the command body in the
+        # synthetic ``General Overview`` chunk heading.  It is trace metadata,
+        # not a command, so remove it before splitting configuration/checks.
+        content = cls._knowledge_clean_section_body(content, str(item.get("platform") or ""))
+        content = re.sub(r"(?m)^#{1,6}\s+.*$", "", content).strip()
+        content = _render_template(content)
+        config, verification = cls._template_command_parts(content)
+        if not config and not verification:
+            return ""
+        title = str(item.get("document_name") or item.get("title") or "官方配置模板").strip()
+        description = str(item.get("description") or "").strip()
+        platform = str(item.get("platform") or item.get("cli_platform") or "").strip()
+        version = str(item.get("software_release") or item.get("document_version") or "").strip()
+        source = str(item.get("official_source") or item.get("official_reference") or "").strip()
+        rollback = _render_template(str(item.get("rollback") or "").strip())
+        parts = [f"#### {title}"]
+        if platform:
+            parts.append(f"适用 CLI：{cls._knowledge_platform_label(platform)}")
+        if version:
+            parts.append(f"适用版本：{version}")
+        if description:
+            parts.append(f"用途：{description}")
+        parts.append(
+            "执行前检查：确认设备型号、软件版本、接口/VLAN/IP/区域编号与变更窗口；先保存当前配置，"
+            "在一台设备或维护窗口内验证，Nexora 不会自动下发命令。"
+        )
+        parts.append("参数提示：命令中的示例 VLAN、地址、AS 号、接口和名称必须按现场规划替换；密钥只允许从密钥库注入。")
+        if config:
+            parts.append("**配置步骤**\n" + cls._template_code_block(config, platform))
+        if verification:
+            parts.append("**验证命令**\n" + cls._template_code_block(verification, platform))
+        if rollback:
+            parts.append("**回滚命令**\n" + cls._template_code_block(rollback, platform))
+        if source:
+            parts.append(f"官方依据：[查看已审核来源]({source})")
+        return "\n\n".join(parts)
 
     @classmethod
     def _render_knowledge_chunk(cls, item: Dict[str, Any]) -> tuple[str, str]:
         platform = cls._knowledge_platform_label(item.get("platform"))
+        if item.get("template_id") or item.get("knowledge_source_type") == "official_template":
+            rendered_template = cls._render_official_template_chunk(item)
+            if rendered_template:
+                return platform, rendered_template
         category = str(item.get("document_category") or "").lower()
         content = str(item.get("content") or "").strip()
         selected: List[str] = []
@@ -532,12 +726,20 @@ class AIAssistantService:
             "vlan": "VLAN",
             "arp": "ARP",
         }.get(feature.lower(), feature)
+        single_platform = len(grouped) == 1
+        resolved_platform = next(iter(grouped), "")
         if category == "configuration":
             subject = f"{feature_label} " if feature_label else ""
-            lead = (
-                f"未指定唯一 CLI 平台。下面按平台分别给出知识库中的 {subject}配置骨架，"
-                "命令不能跨平台混用；尖括号参数请按设备实际信息填写。"
-            )
+            if single_platform:
+                lead = (
+                    f"已按 {resolved_platform} 平台整理知识库中的 {subject}配置骨架。"
+                    "尖括号参数请按设备实际信息填写。"
+                )
+            else:
+                lead = (
+                    f"未指定唯一 CLI 平台。下面按平台分别给出知识库中的 {subject}配置骨架，"
+                    "命令不能跨平台混用；尖括号参数请按设备实际信息填写。"
+                )
         elif category == "cli_output":
             command_intro = ""
             if feature.lower() == "ospf":
@@ -546,13 +748,24 @@ class AIAssistantService:
                     "`Full` 表示邻接已建立，`2-Way` 表示双向通信但尚未形成 Full 邻接；"
                     "`Neighbor ID`、`Address`、`Interface` 分别是邻居 Router ID、对端地址和本端接口。"
                 )
-            lead = (
-                "未指定唯一 CLI 平台。"
-                + command_intro
-                + "下面按平台列出命令、重点字段和常见状态；不同平台的输出布局请分开理解。"
-            )
+            if single_platform:
+                lead = (
+                    f"已按 {resolved_platform} 平台整理知识库中的命令和输出说明。"
+                    + command_intro
+                    + "重点字段请结合设备实际回显判断。"
+                )
+            else:
+                lead = (
+                    "未指定唯一 CLI 平台。"
+                    + command_intro
+                    + "下面按平台列出命令、重点字段和常见状态；不同平台的输出布局请分开理解。"
+                )
         else:
-            lead = "未指定唯一 CLI 平台。下面按平台分别展示命中的可用内容，命令不能跨平台混用。"
+            lead = (
+                f"已按 {resolved_platform} 平台展示命中的知识库内容。"
+                if single_platform
+                else "未指定唯一 CLI 平台。下面按平台分别展示命中的可用内容，命令不能跨平台混用。"
+            )
 
         rendered_platforms = []
         for platform, entries in grouped.items():
@@ -691,9 +904,15 @@ class AIAssistantService:
                     grounded=bool(report.get("matched_count", 0) or report.get("analysis")),
                 ),
                 "request_id": request_id,
+                "execution_mode": "local_operation",
+                "external_egress": False,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "token_source": "local_zero",
                 "copilot": build_copilot_contract(
                     intent=intent, message=message, context=copilot_context,
-                    citations=report.get("citations", []) or [], runtime={},
+                    citations=report.get("citations", []) or [],
+                    runtime={"execution_mode": "local_operation", "external_egress": False, "input_tokens": 0, "output_tokens": 0},
                 ),
             }
         if intent == "device_search":
@@ -711,9 +930,8 @@ class AIAssistantService:
             mac_res = await mac_troubleshooting_service.troubleshoot_mac(filters["mac"], user_id=user_id)
             context_facts["mac_trace"] = mac_res.get("facts")
         
-        # 3. Retrieve relevant RAG knowledge chunks.  Knowledge queries use
-        # the structured intent/entity contract; generic questions retain the
-        # legacy lexical path for compatibility.
+        # 3. Retrieve RAG only for intents that explicitly need internal
+        # evidence; general chat remains a clean, non-tenant-context request.
         if intent == "knowledge":
             knowledge_result = self.retrieve_knowledge(
                 message,
@@ -729,7 +947,7 @@ class AIAssistantService:
             context_facts["knowledge_intent"] = knowledge_result["request"].__dict__
             context_facts["entity_resolution"] = knowledge_result["resolution"].to_dict()
             context_facts["retrieval_debug"] = knowledge_result.get("debug", {})
-        else:
+        elif intent in _RAG_CONTEXT_INTENTS:
             rag_chunks = rag_retriever.retrieve(
                 message,
                 top_k=3,
@@ -738,14 +956,24 @@ class AIAssistantService:
                 roles=roles,
                 site_ids=site_ids,
             )
+        else:
+            rag_chunks = []
         if rag_chunks:
             context_facts["knowledge_chunks"] = [
                 {
                     "content": c["content"],
                     "source": c["document_name"],
+                    "document_name": c.get("document_name"),
                     "section": c["section"],
                     "platform": c.get("cli_platform") or c.get("platform"),
                     "document_category": c.get("document_category"),
+                    "template_id": c.get("template_id") or (c.get("metadata") or {}).get("template_id"),
+                    "knowledge_source_type": c.get("knowledge_source_type") or (c.get("metadata") or {}).get("source_type"),
+                    "rollback": c.get("rollback") or (c.get("metadata") or {}).get("rollback"),
+                    "description": c.get("description") or (c.get("metadata") or {}).get("description"),
+                    "software_release": c.get("software_release") or (c.get("metadata") or {}).get("software_release"),
+                    "official_reference": c.get("source") or (c.get("metadata") or {}).get("official_reference"),
+                    "official_source": c.get("source") or (c.get("metadata") or {}).get("official_reference"),
                     "untrusted_data": True,
                 }
                 for c in rag_chunks
@@ -765,20 +993,20 @@ class AIAssistantService:
                         citation_warnings=citation_warnings,
                     )
 
-        if intent == "knowledge" and not rag_chunks:
-            return {
-                "answer": self._knowledge_no_match_answer(knowledge_result),
-                "intent": intent,
-                "facts_retrieved": False,
-                "citations": [],
-                "answer_contract": answer_contract(intent=intent, citations=[], grounded=False, no_match=True),
-                "retrieval": knowledge_trace,
-                "request_id": request_id,
-                "copilot": build_copilot_contract(
-                    intent=intent, message=message, context=copilot_context,
-                    retrieval=knowledge_trace, citations=[], runtime={},
-                ),
-            }
+        knowledge_no_match = intent == "knowledge" and not rag_chunks
+        if knowledge_no_match:
+            # Keep the normal LLM path alive for a useful DeepSeek/general
+            # answer.  The local miss is explicit in the prompt and the
+            # context is reduced to structured query metadata only; provider
+            # egress still goes through the security gateway.
+            context_facts = self._knowledge_no_match_context(knowledge_result)
+
+        # A plain general question in a blank composer is a public cloud
+        # conversation. Keep an explicit device/site/diagnostic scope
+        # internal, but do not let incidental non-sensitive context keys make
+        # every ChatGPT-style greeting require enterprise supplier evidence.
+        explicit_scope_keys = ("device_id", "interface", "site_id", "vendor", "platform", "time_range", "document_scope")
+        public_general_chat = intent == "general_qa" and not any(copilot_context.get(key) for key in explicit_scope_keys)
 
         # Keep retrieved command/configuration documents deterministic and
         # visibly separated by platform.  This prevents a provider from
@@ -795,14 +1023,20 @@ class AIAssistantService:
                 "answer_contract": answer_contract(intent=intent, citations=citations, grounded=True),
                 "retrieval": knowledge_trace,
                 "request_id": request_id,
+                "execution_mode": "local_knowledge",
+                "external_egress": False,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "token_source": "local_zero",
                 "copilot": build_copilot_contract(
                     intent=intent, message=message, context=copilot_context,
-                    retrieval=knowledge_trace, citations=citations, runtime={},
+                    retrieval=knowledge_trace, citations=citations,
+                    runtime={"execution_mode": "local_knowledge", "external_egress": False, "input_tokens": 0, "output_tokens": 0},
                 ),
             }
 
         # 4. Synthesize with LLM
-        sys_prompt = _build_system_prompt()
+        sys_prompt = _build_system_prompt(knowledge_no_match=knowledge_no_match)
 
         messages = [{"role": "system", "content": sys_prompt}]
         if history:
@@ -823,6 +1057,14 @@ class AIAssistantService:
                 tenant_id=tenant_id,
                 roles=roles,
                 selection_source=model_selection_source,
+                # CMDB/RAG context is read-only and is minimized/tokenized by
+                # the gateway before cloud egress.  Mark it INTERNAL
+                # explicitly so identifiers do not accidentally escalate the
+                # request to a provider's confidential-only boundary.
+                # An otherwise context-free general answer is PUBLIC by
+                # contract. Internal evidence is opt-in and remains INTERNAL
+                # so supplier assurance is still required before cloud egress.
+                data_classification="PUBLIC" if public_general_chat else ("INTERNAL" if context_facts else "PUBLIC"),
                 request_id=request_id,
             )
         except AISecurityBlockedException:
@@ -858,14 +1100,16 @@ class AIAssistantService:
             )
 
         answer = res.get("content", "")
-        if not answer and intent == "knowledge":
+        if not answer and knowledge_no_match:
             answer = self._knowledge_no_match_answer(knowledge_result)
+        external_egress = bool(res.get("provider_id"))
+        execution_mode = "provider_generated" if res.get("content") else "local_fallback"
         return {
             "answer": answer,
             "intent": intent,
-            "facts_retrieved": bool(context_facts),
+            "facts_retrieved": bool(context_facts) and not knowledge_no_match,
             "citations": citations,
-            "answer_contract": answer_contract(intent=intent, citations=citations, grounded=bool(citations or context_facts), no_match=bool(intent == "knowledge" and not citations)),
+            "answer_contract": answer_contract(intent=intent, citations=citations, grounded=bool(citations or context_facts) and not knowledge_no_match, no_match=knowledge_no_match),
             "retrieval": knowledge_trace,
             "request_id": res.get("request_id") or request_id,
             "model_id": res.get("model_id"),
@@ -873,6 +1117,12 @@ class AIAssistantService:
             "requested_model_id": res.get("requested_model_id"),
             "route_reason": res.get("route_reason"),
             "fallback_used": bool(res.get("fallback_used")),
+            "execution_mode": execution_mode,
+            "external_egress": external_egress,
+            "input_tokens": max(0, int(res.get("input_tokens") or 0)),
+            "output_tokens": max(0, int(res.get("output_tokens") or 0)),
+            "latency_ms": max(0, int((time.perf_counter() - llm_started_at) * 1000)),
+            "token_source": res.get("token_source"),
             "copilot": build_copilot_contract(
                 intent=intent,
                 message=message,
@@ -882,7 +1132,12 @@ class AIAssistantService:
                 runtime={
                     "device_connected": False,
                     "cli_executed": False,
-                    "external_egress": bool(res.get("provider_id")),
+                    "external_egress": external_egress,
+                    "execution_mode": execution_mode,
+                    "input_tokens": max(0, int(res.get("input_tokens") or 0)),
+                    "output_tokens": max(0, int(res.get("output_tokens") or 0)),
+                    "latency_ms": max(0, int((time.perf_counter() - llm_started_at) * 1000)),
+                    "knowledge_fallback": "cloud_general_reference" if knowledge_no_match else None,
                     "provider_id": res.get("provider_id"),
                     "model_id": res.get("model_id"),
                 },
@@ -987,12 +1242,27 @@ class AIAssistantService:
                     detail=f"\u6309 PostgreSQL \u5b9e\u9645\u8bb0\u5f55\u805a\u5408 {report.get('matched_count', 0)} \u53f0\u8bbe\u5907",
                     operation=active_step[2],
                 )
-                yield _meta_event({"intent": intent, "facts_retrieved": True, "citations": report.get("citations", [])})
+                yield _meta_event({
+                    "intent": intent,
+                    "facts_retrieved": True,
+                    "citations": report.get("citations", []),
+                    "execution_mode": "local_operation",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
                 report_step = ("report", "\u751f\u6210\u786e\u5b9a\u6027\u62a5\u8868", "natural_query_service.render_asset_analysis")
                 yield _progress_event(report_step[0], report_step[1], "running", operation=report_step[2])
                 yield _token_event(report.get("summary", ""))
                 yield _progress_event(report_step[0], report_step[1], "completed", detail="\u672a\u8c03\u7528\u5927\u6a21\u578b\u6539\u5199\u4e8b\u5b9e\u7edf\u8ba1", operation=report_step[2])
-                yield _done_event(started_at)
+                yield _done_event(started_at, extra={
+                    "execution_mode": "local_operation",
+                    "external_egress": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "token_source": "local_zero",
+                })
                 return
 
             if intent == "device_search":
@@ -1056,7 +1326,7 @@ class AIAssistantService:
                 context_facts["knowledge_intent"] = knowledge_result["request"].__dict__
                 context_facts["entity_resolution"] = knowledge_result["resolution"].to_dict()
                 context_facts["retrieval_debug"] = knowledge_result.get("debug", {})
-            else:
+            elif intent in _RAG_CONTEXT_INTENTS:
                 rag_chunks = rag_retriever.retrieve(
                     message,
                     top_k=3,
@@ -1065,14 +1335,49 @@ class AIAssistantService:
                     roles=roles,
                     site_ids=site_ids,
                 )
+            else:
+                rag_chunks = []
+            # Exact document retrieval is intentionally fail-closed.  When a
+            # configuration query is otherwise well-scoped, use only the
+            # reviewed local official template catalog as a second chance;
+            # never broaden to another vendor or an unverified web result.
+            if intent == "knowledge" and not rag_chunks and knowledge_result is not None:
+                template_request = knowledge_result.get("request")
+                template_chunks = search_official_templates(template_request, limit=5)
+                if template_chunks:
+                    rag_chunks = template_chunks
+                    knowledge_result["results"] = template_chunks
+                    debug = knowledge_result.setdefault("debug", {})
+                    debug.update({
+                        "template_fallback": True,
+                        "template_fallback_count": len(template_chunks),
+                        "template_fallback_source": "official_config_template_catalog",
+                    })
+                    context_facts["retrieval_debug"] = debug
+                    if knowledge_trace is not None:
+                        knowledge_trace["source"] = "local_official_template"
+                        knowledge_trace["status"] = "template_fallback"
+                        knowledge_trace["final_document_count"] = len(template_chunks)
+                        quality = knowledge_trace.get("runtime", {}).get("quality")
+                        if isinstance(quality, dict):
+                            quality["no_match"] = False
+                            quality["template_fallback"] = True
             if rag_chunks:
                 context_facts["knowledge_chunks"] = [
                     {
                         "content": c["content"],
                         "source": c["document_name"],
+                        "document_name": c.get("document_name"),
                         "section": c["section"],
                         "platform": c.get("cli_platform") or c.get("platform"),
                         "document_category": c.get("document_category"),
+                        "template_id": c.get("template_id") or (c.get("metadata") or {}).get("template_id"),
+                        "knowledge_source_type": c.get("knowledge_source_type") or (c.get("metadata") or {}).get("source_type"),
+                        "rollback": c.get("rollback") or (c.get("metadata") or {}).get("rollback"),
+                        "description": c.get("description") or (c.get("metadata") or {}).get("description"),
+                        "software_release": c.get("software_release") or (c.get("metadata") or {}).get("software_release"),
+                        "official_reference": c.get("source") or (c.get("metadata") or {}).get("official_reference"),
+                        "official_source": c.get("source") or (c.get("metadata") or {}).get("official_reference"),
                         "untrusted_data": True,
                     }
                     for c in rag_chunks
@@ -1098,22 +1403,24 @@ class AIAssistantService:
                 detail=f"命中 {len(rag_chunks) if rag_chunks else 0} 个知识片段",
                 operation=active_step[2],
             )
-            if intent == "knowledge" and not rag_chunks:
-                meta = {
-                    "intent": intent,
-                    "facts_retrieved": False,
-                    "citations": [],
-                    "answer_contract": answer_contract(intent=intent, citations=[], grounded=False, no_match=True),
-                    "retrieval": knowledge_trace,
-                    "copilot": build_copilot_contract(intent=intent, message=message, context=copilot_context, retrieval=knowledge_trace, citations=[], runtime={}),
-                }
-                yield _meta_event(meta)
-                no_match_step = ("knowledge_no_match", "返回知识库检索结果", "assistant.knowledge_no_match")
-                yield _progress_event(no_match_step[0], no_match_step[1], "running", operation=no_match_step[2])
-                yield _token_event(self._knowledge_no_match_answer(knowledge_result))
-                yield _progress_event(no_match_step[0], no_match_step[1], "completed", detail="已阻止生成未经知识库验证的通用配置", operation=no_match_step[2])
-                yield _done_event(started_at)
-                return
+            knowledge_no_match = intent == "knowledge" and not rag_chunks
+            if knowledge_no_match:
+                # Continue through the ordinary model path in general-reference
+                # mode.  Only structured query scope is retained for cloud
+                # egress; no raw document/debug/context payload is forwarded.
+                context_facts = self._knowledge_no_match_context(knowledge_result)
+
+            # A blank Copilot composer is a public conversation. Keep an
+            # explicit device/site/diagnostic scope internal, but do not let
+            # incidental non-sensitive context keys make every ChatGPT-style
+            # greeting require enterprise supplier assurance.
+            explicit_scope_keys = (
+                "device_id", "interface", "site_id", "vendor", "platform",
+                "time_range", "document_scope",
+            )
+            public_general_chat = intent == "general_qa" and not any(
+                copilot_context.get(key) for key in explicit_scope_keys
+            )
         except Exception:
             logger.error("Assistant read-only preparation failed code=%s", sanitize_log_text("ASSISTANT_CONTEXT_ERROR", limit=64))
             yield _progress_event(
@@ -1131,37 +1438,79 @@ class AIAssistantService:
         contract = answer_contract(
             intent=intent,
             citations=citations,
-            grounded=bool(citations or context_facts),
-            no_match=bool(intent == "knowledge" and not citations),
+            grounded=bool(citations or context_facts) and not knowledge_no_match,
+            no_match=knowledge_no_match,
         )
         route_meta: Dict[str, Any] = {}
+        use_grounded_retrieval_answer = (
+            intent == "knowledge"
+            and bool(rag_chunks)
+            and self._should_use_cross_platform_retrieval_answer(knowledge_result, rag_chunks)
+        )
         meta = {
             "request_id": request_id,
             "intent": intent,
-            "facts_retrieved": bool(context_facts),
+            "facts_retrieved": bool(context_facts) and not knowledge_no_match,
             "citations": citations,
             "answer_contract": contract,
             "requested_model_id": model_id,
             "selection_source": model_selection_source,
+            "execution_mode": "local_knowledge" if use_grounded_retrieval_answer else None,
+            "external_egress": False if use_grounded_retrieval_answer else None,
+            "input_tokens": 0 if use_grounded_retrieval_answer else None,
+            "output_tokens": 0 if use_grounded_retrieval_answer else None,
+            "token_source": "local_zero" if use_grounded_retrieval_answer else None,
             "copilot": build_copilot_contract(
                 intent=intent, message=message, context=copilot_context,
                 retrieval=knowledge_trace, citations=citations,
-                runtime={"device_connected": False, "cli_executed": False, "external_egress": True},
+                runtime={
+                    "device_connected": False,
+                    "cli_executed": False,
+                    # Grounded configuration/CLI answers are rendered from
+                    # local evidence and return before the provider call.
+                    # Final provider metadata changes this to true only after
+                    # the outbound adapter call actually starts.
+                    "external_egress": False,
+                    "execution_mode": "local_knowledge" if use_grounded_retrieval_answer else None,
+                    "input_tokens": 0 if use_grounded_retrieval_answer else None,
+                    "output_tokens": 0 if use_grounded_retrieval_answer else None,
+                    "knowledge_fallback": "cloud_general_reference" if knowledge_no_match else None,
+                },
             ),
         }
         if intent == "knowledge":
             meta["retrieval"] = knowledge_trace
         yield _meta_event(meta)
 
-        if intent == "knowledge" and self._should_use_cross_platform_retrieval_answer(knowledge_result, rag_chunks):
-            fallback_step = ("fallback", "按 CLI 平台整理知识库片段", "assistant.cross_platform_retrieval")
+        if use_grounded_retrieval_answer:
+            platform_count = len({
+                str(item.get("platform") or item.get("cli_platform") or "unknown")
+                for item in (context_facts.get("knowledge_chunks") or [])
+            })
+            fallback_step = (
+                "fallback",
+                "按 CLI 平台整理知识库片段" if platform_count > 1 else "整理知识库命令",
+                "assistant.cross_platform_retrieval" if platform_count > 1 else "assistant.grounded_knowledge_render",
+            )
             yield _progress_event(fallback_step[0], fallback_step[1], "running", operation=fallback_step[2])
             yield _token_event(self._knowledge_fallback_answer(context_facts.get("knowledge_chunks") or [], request=knowledge_result.get("request")))
-            yield _progress_event(fallback_step[0], fallback_step[1], "completed", detail="已按平台分隔检索结果", operation=fallback_step[2])
-            yield _done_event(started_at)
+            yield _progress_event(
+                fallback_step[0],
+                fallback_step[1],
+                "completed",
+                detail="已按平台分隔检索结果" if platform_count > 1 else "已整理检索结果",
+                operation=fallback_step[2],
+            )
+            yield _done_event(started_at, extra={
+                "execution_mode": "local_knowledge",
+                "external_egress": False,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "token_source": "local_zero",
+            })
             return
 
-        sys_prompt = _build_system_prompt()
+        sys_prompt = _build_system_prompt(knowledge_no_match=knowledge_no_match)
 
         messages = [{"role": "system", "content": sys_prompt}]
         if history:
@@ -1187,7 +1536,7 @@ class AIAssistantService:
                 # the authorized context as INTERNAL so the security gateway
                 # tokenizes identifiers instead of treating the whole
                 # request as CONFIDENTIAL and rejecting an INTERNAL provider.
-                data_classification="INTERNAL" if context_facts else None,
+                data_classification="PUBLIC" if public_general_chat else ("INTERNAL" if context_facts else "PUBLIC"),
                 request_id=request_id,
             ):
                 if token:
@@ -1308,11 +1657,19 @@ class AIAssistantService:
                 },
             )
 
+        external_egress = bool(route_meta.get("external_egress")) if route_meta else False
+        execution_mode = "provider_generated" if tokens_emitted > 0 else "local_fallback"
         if route_meta:
+            route_meta["execution_mode"] = execution_mode
+            route_meta["external_egress"] = external_egress
             route_meta["copilot"] = build_copilot_contract(
                 intent=intent, message=message, context=copilot_context,
                 retrieval=knowledge_trace, citations=citations,
-                runtime={"device_connected": False, "cli_executed": False, "external_egress": True,
+                runtime={"device_connected": False, "cli_executed": False, "external_egress": external_egress,
+                         "execution_mode": execution_mode,
+                         "input_tokens": max(0, int(route_meta.get("input_tokens") or 0)),
+                         "output_tokens": max(0, int(route_meta.get("output_tokens") or 0)),
+                         "latency_ms": max(0, int(route_meta.get("latency_ms") or 0)),
                          "provider_id": route_meta.get("provider_id"), "model_id": route_meta.get("model_id")},
             )
             yield _meta_event(route_meta)
@@ -1324,6 +1681,9 @@ class AIAssistantService:
             "model_id": route_meta.get("model_id") if route_meta else None,
             "provider_id": route_meta.get("provider_id") if route_meta else None,
             "route_reason": route_meta.get("route_reason") if route_meta else None,
+            "execution_mode": execution_mode,
+            "external_egress": external_egress,
+            "token_source": route_meta.get("token_source") if route_meta else ("local_zero" if execution_mode.startswith("local_") else None),
         } if route_meta or tokens_emitted else None
 
         yield _done_event(started_at, extra=done_extra)

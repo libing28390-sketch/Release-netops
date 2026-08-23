@@ -33,8 +33,38 @@ _PRODUCT_ALIASES: dict[str, str] = {
     "ce68xx": "CloudEngine 6800",
     "cloudengine6800": "CloudEngine 6800",
     "cloudengine 6800": "CloudEngine 6800",
+    "ce88": "CloudEngine 8800",
+    "ce8800": "CloudEngine 8800",
+    "cloudengine8800": "CloudEngine 8800",
+    "cloudengine 8800": "CloudEngine 8800",
+    "ce98": "CloudEngine 9800",
+    "ce9800": "CloudEngine 9800",
+    "cloudengine9800": "CloudEngine 9800",
+    "cloudengine 9800": "CloudEngine 9800",
+    "xh16800": "CloudEngine 16800",
+    "cloudenginexh16800": "CloudEngine 16800",
+    "cloudengine xh16800": "CloudEngine 16800",
+    "catalyst92": "Catalyst 9200",
+    "c9200": "Catalyst 9200",
+    "catalyst94": "Catalyst 9400",
+    "c9400": "Catalyst 9400",
     "catalyst93": "Catalyst 9300",
     "c9300": "Catalyst 9300",
+    "c9350": "C9350",
+    "catalyst95": "Catalyst 9500",
+    "c9500": "Catalyst 9500",
+    "c9550": "C9550",
+    "catalyst96": "Catalyst 9600",
+    "c9600": "Catalyst 9600",
+    "c9610": "C9610",
+    "n3k": "Nexus 3000",
+    "nexus3000": "Nexus 3000",
+    "nexus 3000": "Nexus 3000",
+    "nexus3550": "Nexus 3550",
+    "nexus 3550": "Nexus 3550",
+    "n9k": "Nexus 9000",
+    "nexus9000": "Nexus 9000",
+    "nexus 9000": "Nexus 9000",
     "s6520x": "S6520X",
 }
 
@@ -44,6 +74,15 @@ _FEATURE_ALIASES: dict[str, tuple[str, ...]] = {
     "arp": ("arp", "地址解析"),
     "vlan": ("vlan", "虚拟局域网"),
     "stp": ("stp", "生成树"),
+    "access_port": ("access port", "access-port", "接入口", "接入端口"),
+    "trunk": ("trunk", "中继端口", "trunk端口"),
+    "lacp": ("lacp", "eth-trunk", "etherchannel", "bridge-aggregation", "链路聚合"),
+    "loopback": ("loopback", "环回接口", "环回口"),
+    "static_route": ("static route", "static-route", "static routing", "静态路由", "ip route-static"),
+    "ntp": ("ntp", "网络时间协议"),
+    "snmp": ("snmp", "snmpv3", "简单网络管理协议"),
+    "ssh": ("ssh", "stelnet", "secure shell", "安全登录"),
+    "vrrp": ("vrrp", "网关冗余", "虚拟路由器冗余"),
     "lldp": ("lldp", "链路层发现"),
     "evpn": ("evpn",),
     "vxlan": ("vxlan",),
@@ -66,8 +105,12 @@ _REDaction_RE = re.compile(
 )
 _ASCII_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./:-]{1,127}")
 _MODEL_RE = re.compile(
-    r"(?i)\b(?:CE\s*\d{2,5}[A-Z0-9-]*|C\s*\d{3,4}|Catalyst\s*\d{2,5}[A-Z0-9-]*|"
-    r"S\d{2,5}(?:[-_][A-Z0-9]+)*|RG-[A-Z0-9-]+)\b"
+    # ``\b`` misses models adjacent to Chinese characters.  Restrict the
+    # boundary to ASCII letters/digits so ``交换机S5700的`` is normalized just
+    # like ``交换机 S5700 的`` without matching the middle of an ASCII token.
+    r"(?i)(?<![A-Z0-9])(?:N[3579]K-[A-Z0-9-]+|Nexus\s*(?:3000|3550|9000)(?:\s+Series)?|"
+    r"CE\s*\d{2,5}[A-Z0-9-]*|Catalyst\s*\d{2,5}[A-Z0-9-]*|C\s*\d{3,4}[A-Z0-9-]*|"
+    r"S\d{2,5}[A-Z]?(?:[-_][A-Z0-9]+)*|RG-[A-Z0-9-]+)(?![A-Z0-9])"
 )
 _VERSION_RE = re.compile(r"(?i)\b(?:V\d{3,4}(?:R\d+[A-Z]?\d*)?|\d+\.\d+(?:\.\d+){0,2})\b")
 _COMMAND_RE = re.compile(
@@ -98,8 +141,34 @@ def _canonical_product(raw: str) -> str:
     normalized = re.sub(r"\s+", "", raw).replace("-", "-").lower()
     if re.fullmatch(r"ce6\d{2,4}[a-z0-9-]*", normalized):
         return "CloudEngine 6800"
-    if re.fullmatch(r"(?:c9300|catalyst93)\w*", normalized):
+    if re.fullmatch(r"ce8\d{2,4}[a-z0-9-]*", normalized):
+        return "CloudEngine 8800"
+    if re.fullmatch(r"ce9\d{2,4}[a-z0-9-]*", normalized):
+        return "CloudEngine 9800"
+    if re.fullmatch(r"xh16800(?:-[a-z0-9-]+)?", normalized):
+        return "CloudEngine 16800"
+    if re.fullmatch(r"(?:c9200|catalyst92)[a-z0-9-]*", normalized):
+        return "Catalyst 9200"
+    if re.fullmatch(r"(?:c9300|catalyst93)[a-z0-9-]*", normalized):
         return "Catalyst 9300"
+    if re.fullmatch(r"(?:c9400|catalyst94)[a-z0-9-]*", normalized):
+        return "Catalyst 9400"
+    if re.fullmatch(r"(?:c9500|catalyst95)[a-z0-9-]*", normalized):
+        return "Catalyst 9500"
+    if re.fullmatch(r"(?:c9600|catalyst96)[a-z0-9-]*", normalized):
+        return "Catalyst 9600"
+    if re.fullmatch(r"c9350[a-z0-9-]*", normalized):
+        return "C9350"
+    if re.fullmatch(r"c9550[a-z0-9-]*", normalized):
+        return "C9550"
+    if re.fullmatch(r"c9610[a-z0-9-]*", normalized):
+        return "C9610"
+    if re.fullmatch(r"n3k-[a-z0-9-]+", normalized) or re.fullmatch(r"nexus3\d{3}", normalized):
+        return "Nexus 3000"
+    if re.fullmatch(r"nexus3550", normalized):
+        return "Nexus 3550"
+    if re.fullmatch(r"n9k-[a-z0-9-]+", normalized) or re.fullmatch(r"nexus9\d{3}", normalized):
+        return "Nexus 9000"
     return _PRODUCT_ALIASES.get(normalized, _PRODUCT_ALIASES.get(raw.lower(), raw.replace(" ", "")))
 
 
@@ -178,17 +247,31 @@ def normalize_query(query: str, *, tenant_id: str = "tenant-default", access_sco
     if product_match:
         token = re.sub(r"\s+", "", product_match.group(0)).upper()
         canonical = _canonical_product(token)
-        if token.upper().startswith(("CE", "C9300", "CATALYST93")):
+        upper_token = token.upper()
+        if upper_token.startswith(("CE", "XH16800", "C9200", "C9300", "C9350", "C9400", "C9500", "C9550", "C9600", "C9610", "CATALYST", "N3K-", "N9K-", "NEXUS")):
             product = canonical if canonical != token else token
-            if canonical != token and token not in {"CE6800", "CE68XX"}:
+            if canonical != token and token not in {"CE6800", "CE68XX"} and not token.upper().startswith(("CATALYST", "NEXUS")):
                 model = token
-        elif token.upper().startswith(("S", "RG-")):
+            elif upper_token.startswith(("C9", "N[3579]K-")) and not upper_token.startswith("CATALYST"):
+                model = token
+        elif upper_token.startswith(("S", "RG-")):
             # Huawei S-series identifiers are product-series scopes in the
             # catalog.  Even a concrete-looking S5735-L-V2 token must not be
             # promoted to a model identity before the reviewed hierarchy
             # resolver has selected a model.
-            product = canonical if canonical != token else token
-            model = None
+            # A suffix beginning with a port count (S9825-64D) is a concrete
+            # SKU.  Preserve the model token while using the base series for
+            # the catalog hard gate.  Family variants such as S5735-L-V2
+            # remain a series scope for backwards compatibility.
+            parts = token.split("-")
+            if len(parts) > 1 and (parts[1][:1].isdigit() or any(char.isdigit() for char in parts[1])):
+                product = parts[0]
+                if parts[1][:1].isalpha():
+                    product = f"{parts[0]}-{re.match(r'[A-Z]+', parts[1]).group(0)}"
+                model = token
+            else:
+                product = canonical if canonical != token else token
+                model = None
 
     os_family = _first_alias(text, dict(_OS_ALIASES))
     generation = None

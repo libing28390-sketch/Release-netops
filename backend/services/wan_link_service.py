@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import math
 import re
 import time
@@ -22,6 +23,9 @@ from services.snmp_counter_service import calculate_counter_delta
 from services.snmp_metric_profile_service import resolve_metric_profiles
 from services.snmp_service import collect_interface_data_detailed
 from services.vault_service import resolve_collector_credentials
+
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -55,6 +59,16 @@ def _apply_contract_utilization(item: dict[str, Any]) -> dict[str, Any]:
 
 def _row_dict(row: Any) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value or "{}")
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
 
 
 def _sample_table() -> str:
@@ -218,7 +232,10 @@ def _ensure_alert_rules(conn, link: dict[str, Any], now: str) -> None:
 
 def _sample_value(sample: dict[str, Any], metric: str) -> float | bool | None:
     if metric == "interface_down":
-        return str(sample.get("oper_status") or "unknown") != "up" and str(sample.get("collection_status")) == "success"
+        # Only an explicit IF-MIB ``down`` from a successful walk is a Down
+        # observation.  ``unknown``/``testing``/partial walks and transport
+        # failures must never be promoted to an interface-down alarm.
+        return str(sample.get("oper_status") or "unknown").lower() == "down" and str(sample.get("collection_status")) == "success"
     if metric.startswith("util_"):
         download = _num(sample.get("download_util_pct"))
         upload = _num(sample.get("upload_util_pct"))
@@ -272,28 +289,30 @@ def _evaluate_alerts(conn, link: dict[str, Any], now: str) -> int:
                 break
 
         event = conn.execute(
-            "SELECT * FROM wan_alert_events WHERE link_id = ? AND metric = ? AND status = 'firing' ORDER BY started_at DESC LIMIT 1",
+            "SELECT * FROM wan_alert_events WHERE link_id = ? AND metric = ? AND status IN ('firing', 'acknowledged') ORDER BY started_at DESC LIMIT 1",
             (link["id"], metric),
         ).fetchone()
         event_dict = _row_dict(event)
-        if in_maintenance:
-            if event_dict and event_dict.get("status") == "firing":
-                conn.execute("UPDATE wan_alert_events SET details = ?, updated_at = ? WHERE id = ?", (json.dumps({"suppressed": True, "reason": "maintenance_window"}), now, event_dict["id"]))
-            continue
-        if event_dict and event_dict.get("status") == "firing":
-            if recovered >= _required_samples(int(rule["recovery_duration_sec"]), interval):
+        recovery_required = _required_samples(int(rule["recovery_duration_sec"]), interval)
+        trigger_required = _required_samples(int(rule["duration_sec"]), interval)
+        latest = samples[0] if samples else {}
+        current_value = _sample_value(latest, metric)
+        if event_dict:
+            if recovered >= recovery_required:
                 conn.execute(
                     "UPDATE wan_alert_events SET status = 'resolved', recovered_at = ?, last_seen_at = ?, updated_at = ? WHERE id = ?",
                     (now, now, now, event_dict["id"]),
                 )
             else:
-                latest = samples[0] if samples else {}
-                current_value = _sample_value(latest, metric)
-                conn.execute("UPDATE wan_alert_events SET last_seen_at = ?, metric_value = ?, updated_at = ? WHERE id = ?", (now, current_value if not isinstance(current_value, bool) else None, now, event_dict["id"]))
+                details = _json_object(event_dict.get("details"))
+                if in_maintenance:
+                    details.update({"suppressed": True, "reason": "maintenance_window"})
+                conn.execute(
+                    "UPDATE wan_alert_events SET last_seen_at = ?, metric_value = ?, details = ?, updated_at = ? WHERE id = ?",
+                    (now, current_value if not isinstance(current_value, bool) else None, json.dumps(details, ensure_ascii=False), now, event_dict["id"]),
+                )
                 active_count += 1
-        elif triggered >= _required_samples(int(rule["duration_sec"]), interval):
-            latest = samples[0] if samples else {}
-            current_value = _sample_value(latest, metric)
+        elif triggered >= trigger_required:
             title = "接口 Down" if metric == "interface_down" else f"出口带宽利用率达到 {int(trigger_value or 0)}%"
             direction = ""
             if metric.startswith("util_"):
@@ -301,6 +320,9 @@ def _evaluate_alerts(conn, link: dict[str, Any], now: str) -> int:
                 up = _num(latest.get("upload_util_pct"))
                 direction = "download" if (down or 0) >= (up or 0) else "upload"
             event_key = f"wan:{link['id']}:{metric}:{uuid.uuid4().hex}"
+            details = {"duration_sec": rule["duration_sec"], "recovery_duration_sec": rule["recovery_duration_sec"]}
+            if in_maintenance:
+                details.update({"suppressed": True, "reason": "maintenance_window"})
             conn.execute(
                 """INSERT INTO wan_alert_events
                     (id, event_key, link_id, metric, severity, status, title, message,
@@ -308,7 +330,7 @@ def _evaluate_alerts(conn, link: dict[str, Any], now: str) -> int:
                    VALUES (?, ?, ?, ?, ?, 'firing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (f"wan-event-{uuid.uuid4().hex}", event_key, link["id"], metric, rule["severity"], title,
                  "达到持续时间阈值，已生成出口链路告警", current_value if not isinstance(current_value, bool) else None,
-                 trigger_value, direction, now, now, json.dumps({"duration_sec": rule["duration_sec"], "recovery_duration_sec": rule["recovery_duration_sec"]}), now, now),
+                 trigger_value, direction, now, now, json.dumps(details, ensure_ascii=False), now, now),
             )
             active_count += 1
     return active_count
@@ -385,32 +407,63 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
             status = "unknown"
 
         error_deltas: dict[str, Any] = {}
+        error_rates: dict[str, Any] = {}
+        error_rate_interval: float | None = None
+        if previous:
+            try:
+                previous_sampled = datetime.fromisoformat(str(previous.get("sampled_at")).replace("Z", "+00:00"))
+                if previous_sampled.tzinfo is None:
+                    previous_sampled = previous_sampled.replace(tzinfo=timezone.utc)
+                interval_seconds = (sampled_dt - previous_sampled).total_seconds()
+                if interval_seconds > 0:
+                    error_rate_interval = interval_seconds
+            except (TypeError, ValueError):
+                error_rate_interval = None
         delta_names = {
             "in_errors": "in_error_delta",
             "out_errors": "out_error_delta",
             "in_discards": "in_discard_delta",
             "out_discards": "out_discard_delta",
         }
+        rate_names = {
+            "in_errors": "in_error_rate",
+            "out_errors": "out_error_rate",
+            "in_discards": "in_discard_rate",
+            "out_discards": "out_discard_rate",
+        }
         for key, delta_name in delta_names.items():
             now_counter = _num(current.get(key))
             old_counter = _num(previous.get(key)) if previous else None
-            error_deltas[delta_name] = int(now_counter - old_counter) if now_counter is not None and old_counter is not None and now_counter >= old_counter else None
+            if now_counter is not None and old_counter is not None and now_counter >= old_counter:
+                error_deltas[delta_name] = int(now_counter - old_counter)
+            else:
+                error_deltas[delta_name] = None
+                if now_counter is not None and old_counter is not None and now_counter < old_counter:
+                    quality_flags[f"{key}_counter_reset"] = True
+            delta_value = error_deltas[delta_name]
+            error_rates[rate_names[key]] = round(delta_value / error_rate_interval, 6) if delta_value is not None and error_rate_interval else None
 
         values = (
             f"""INSERT INTO wan_link_samples_1m
-                (id, link_id, sampled_at, in_octets, out_octets, download_bps, upload_bps,
+                (id, link_id, sampled_at, in_octets, out_octets, in_errors, out_errors, in_discards, out_discards,
+                 download_bps, upload_bps,
                  download_util_pct, upload_util_pct, in_error_delta, out_error_delta,
-                 in_discard_delta, out_discard_delta, admin_status, oper_status,
+                 in_discard_delta, out_discard_delta, in_error_rate, out_error_rate,
+                 in_discard_rate, out_discard_rate, admin_status, oper_status,
                  collection_status, quality_flags, collection_latency_ms, created_at,
                  in_octets_hc, out_octets_hc, in_octets_32, out_octets_32, counter_width,
                  counter_source, counter_quality)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(link_id, sampled_at) DO UPDATE SET
                  in_octets = excluded.in_octets, out_octets = excluded.out_octets,
+                 in_errors = excluded.in_errors, out_errors = excluded.out_errors,
+                 in_discards = excluded.in_discards, out_discards = excluded.out_discards,
                  download_bps = excluded.download_bps, upload_bps = excluded.upload_bps,
                  download_util_pct = excluded.download_util_pct, upload_util_pct = excluded.upload_util_pct,
                  in_error_delta = excluded.in_error_delta, out_error_delta = excluded.out_error_delta,
                  in_discard_delta = excluded.in_discard_delta, out_discard_delta = excluded.out_discard_delta,
+                 in_error_rate = excluded.in_error_rate, out_error_rate = excluded.out_error_rate,
+                 in_discard_rate = excluded.in_discard_rate, out_discard_rate = excluded.out_discard_rate,
                  admin_status = excluded.admin_status, oper_status = excluded.oper_status,
                  collection_status = excluded.collection_status, quality_flags = excluded.quality_flags,
                  collection_latency_ms = excluded.collection_latency_ms,
@@ -418,9 +471,11 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
                  in_octets_32 = excluded.in_octets_32, out_octets_32 = excluded.out_octets_32,
                  counter_width = excluded.counter_width, counter_source = excluded.counter_source,
                  counter_quality = excluded.counter_quality""",
-            (f"wan-sample-{uuid.uuid4().hex}", link["id"], sampled_at, _bps(current.get("in_octets")), _bps(current.get("out_octets")),
-             derived["download_bps"], derived["upload_bps"], derived["download_util_pct"], derived["upload_util_pct"],
-             error_deltas["in_error_delta"], error_deltas["out_error_delta"], error_deltas["in_discard_delta"], error_deltas["out_discard_delta"],
+             (f"wan-sample-{uuid.uuid4().hex}", link["id"], sampled_at, _bps(current.get("in_octets")), _bps(current.get("out_octets")),
+              _bps(current.get("in_errors")), _bps(current.get("out_errors")), _bps(current.get("in_discards")), _bps(current.get("out_discards")),
+              derived["download_bps"], derived["upload_bps"], derived["download_util_pct"], derived["upload_util_pct"],
+              error_deltas["in_error_delta"], error_deltas["out_error_delta"], error_deltas["in_discard_delta"], error_deltas["out_discard_delta"],
+              error_rates["in_error_rate"], error_rates["out_error_rate"], error_rates["in_discard_rate"], error_rates["out_discard_rate"],
               current.get("admin_status") or "unknown", current.get("oper_status") or "unknown", collection_status, json.dumps(quality_flags), int((time.monotonic() - started) * 1000), sampled_at,
              _bps(current.get("in_octets_hc")), _bps(current.get("out_octets_hc")), _bps(current.get("in_octets_32")), _bps(current.get("out_octets_32")), current.get("counter_width"), current.get("counter_source"), current.get("counter_quality")),
         )
@@ -432,7 +487,7 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
             (link["id"],),
         ).fetchone()
         previous_down_count = int((dict(previous_current_row).get("consecutive_down_count") or 0) if previous_current_row else 0)
-        health = "unknown" if collection_status != "success" else "unavailable" if status == "down" else "critical" if max(_num(derived.get("download_util_pct")) or 0, _num(derived.get("upload_util_pct")) or 0) >= 95 else "degraded" if max(_num(derived.get("download_util_pct")) or 0, _num(derived.get("upload_util_pct")) or 0) >= 85 else "healthy"
+        health = "unknown" if collection_status != "success" or status == "unknown" else "unavailable" if status == "down" else "critical" if max(_num(derived.get("download_util_pct")) or 0, _num(derived.get("upload_util_pct")) or 0) >= 95 else "degraded" if max(_num(derived.get("download_util_pct")) or 0, _num(derived.get("upload_util_pct")) or 0) >= 85 else "healthy"
         conn.execute(
             """INSERT INTO wan_link_current_status
                 (link_id, sampled_at, download_bps, upload_bps, download_util_pct, upload_util_pct,
@@ -451,14 +506,18 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
                  last_success_at = COALESCE(excluded.last_success_at, wan_link_current_status.last_success_at),
                  consecutive_down_count = excluded.consecutive_down_count, updated_at = excluded.updated_at""",
             (link["id"], sampled_at, derived["download_bps"], derived["upload_bps"], derived["download_util_pct"], derived["upload_util_pct"],
-             status, status, collection_status, health, active_alerts, sampled_at if collection_status == "success" else None,
+             current.get("admin_status") or "unknown", status, collection_status, health, active_alerts, sampled_at if collection_status == "success" else None,
              previous_down_count + 1 if status == "down" else 0, sampled_at),
         )
         conn.commit()
         return {"link_id": link["id"], "collection_status": collection_status, "health_status": health}
     except Exception as exc:
         conn.rollback()
-        return {"link_id": link["id"], "collection_status": "failed", "error": str(exc)}
+        logger.exception("WAN link collection transaction failed for link %s", link.get("id"))
+        # Collection results may be returned to an operator or written to an
+        # audit record.  Keep database/credential internals out of that
+        # boundary and expose only a stable, actionable error code.
+        return {"link_id": link["id"], "collection_status": "failed", "error_code": "collection_failed", "error_message": "WAN collection failed"}
     finally:
         conn.close()
 
@@ -550,7 +609,7 @@ def list_wan_link_options(*, site_id: str = "", device_id: str = "") -> dict[str
         conn.close()
 
 
-def list_wan_links(*, page: int = 1, page_size: int = 20, site_id: str = "", provider: str = "", health_status: str = "", keyword: str = "") -> dict[str, Any]:
+def list_wan_links(*, page: int = 1, page_size: int = 20, site_id: str = "", provider: str = "", health_status: str = "", link_role: str = "", group_id: str = "", keyword: str = "") -> dict[str, Any]:
     conn = get_db_connection()
     try:
         page = max(1, int(page))
@@ -570,20 +629,28 @@ def list_wan_links(*, page: int = 1, page_size: int = 20, site_id: str = "", pro
         if health_status:
             clauses.append("COALESCE(c.health_status, 'unknown') = ?")
             params.append(health_status)
+        if link_role:
+            if link_role not in {"primary", "backup", "load_balanced"}:
+                raise ValueError("link_role must be primary, backup or load_balanced")
+            clauses.append("l.link_role = ?")
+            params.append(link_role)
+        if group_id:
+            clauses.append("EXISTS (SELECT 1 FROM wan_link_group_members gm WHERE gm.link_id = l.id AND gm.group_id = ?)")
+            params.append(group_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         total = int(conn.execute(f"SELECT COUNT(*) FROM wan_links l LEFT JOIN wan_link_current_status c ON c.link_id = l.id {where}", tuple(params)).fetchone()[0])
         summary_row = conn.execute(
             f"""SELECT COUNT(*) AS total_links,
                        SUM(CASE WHEN COALESCE(c.health_status, 'unknown') = 'healthy' THEN 1 ELSE 0 END) AS healthy_links,
                        COALESCE(SUM(c.active_alert_count), 0) AS active_alerts,
-                       COALESCE(SUM(c.download_bps), 0) AS download_bps,
-                       COALESCE(SUM(c.upload_bps), 0) AS upload_bps,
-                       COALESCE(MAX(CASE
+                       SUM(c.download_bps) AS download_bps,
+                       SUM(c.upload_bps) AS upload_bps,
+                       MAX(CASE
                            WHEN COALESCE(c.download_bps * 100.0 / NULLIF(l.contracted_download_bps, 0), 0)
                               > COALESCE(c.upload_bps * 100.0 / NULLIF(l.contracted_upload_bps, 0), 0)
                            THEN c.download_bps * 100.0 / NULLIF(l.contracted_download_bps, 0)
                            ELSE c.upload_bps * 100.0 / NULLIF(l.contracted_upload_bps, 0)
-                       END), 0) AS max_util_pct
+                       END) AS max_util_pct
                   FROM wan_links l LEFT JOIN wan_link_current_status c ON c.link_id = l.id {where}""",
             tuple(params),
         ).fetchone()
@@ -626,7 +693,10 @@ def _aggregate_history(rows: list[dict[str, Any]], step_seconds: int) -> list[di
         except (TypeError, ValueError):
             continue
         buckets.setdefault(bucket, []).append(row)
-    average_keys = ("download_bps", "upload_bps", "download_util_pct", "upload_util_pct")
+    average_keys = (
+        "download_bps", "upload_bps", "download_util_pct", "upload_util_pct",
+        "in_error_rate", "out_error_rate", "in_discard_rate", "out_discard_rate",
+    )
     sum_keys = ("in_error_delta", "out_error_delta", "in_discard_delta", "out_discard_delta")
     result: list[dict[str, Any]] = []
     for bucket, points in sorted(buckets.items()):
@@ -651,7 +721,11 @@ def get_wan_link_history(link_id: str, history_hours: int = 1, *, history_minute
         duration_minutes = max(5, min(int(history_minutes if history_minutes is not None else history_hours * 60), 43_200))
         cutoff_dt = _now() - timedelta(minutes=duration_minutes)
         cutoff = _iso(cutoff_dt)
-        if duration_minutes <= 360:
+        # 5-minute rollups feed both the 6h and 24h views; the latter is
+        # downsampled to 15-minute buckets below.  Switching directly to the
+        # hourly table at 24h would return hourly points while advertising a
+        # 15-minute resolution.
+        if duration_minutes <= 1440:
             history_source = "wan_link_samples_5m"
         elif duration_minutes <= 10_080:
             history_source = "wan_link_samples_1h"
@@ -662,6 +736,8 @@ def get_wan_link_history(link_id: str, history_hours: int = 1, *, history_minute
                 f"""SELECT '' AS id, link_id, bucket_start AS sampled_at,
                     avg_download_bps AS download_bps, avg_upload_bps AS upload_bps,
                     avg_download_util_pct AS download_util_pct, avg_upload_util_pct AS upload_util_pct,
+                    avg_in_error_rate AS in_error_rate, avg_out_error_rate AS out_error_rate,
+                    avg_in_discard_rate AS in_discard_rate, avg_out_discard_rate AS out_discard_rate,
                     in_error_total AS in_error_delta, out_error_total AS out_error_delta,
                     in_discard_total AS in_discard_delta, out_discard_total AS out_discard_delta,
                     CASE WHEN coverage_pct >= 80 THEN 'success' ELSE 'partial' END AS collection_status,
@@ -709,17 +785,50 @@ def get_wan_link(link_id: str) -> dict[str, Any] | None:
         conn.close()
 
 
-def list_wan_alert_events(*, page: int = 1, page_size: int = 20, status: str = "", severity: str = "", link_id: str = "", keyword: str = "") -> dict[str, Any]:
+def _normalize_alert_time(value: str, field: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
+
+
+def list_wan_alert_events(
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    status: str = "",
+    severity: str = "",
+    site_id: str = "",
+    provider: str = "",
+    link_id: str = "",
+    keyword: str = "",
+    start_at: str = "",
+    end_at: str = "",
+) -> dict[str, Any]:
     conn = get_db_connection()
     try:
         page = max(1, int(page))
         page_size = max(1, min(100, int(page_size)))
         clauses: list[str] = []
         params: list[Any] = []
-        for column, value in (("e.status", status), ("e.severity", severity), ("e.link_id", link_id)):
+        for column, value in (("e.status", status), ("e.severity", severity), ("l.site_id", site_id), ("l.provider", provider), ("e.link_id", link_id)):
             if value:
                 clauses.append(f"{column} = ?")
                 params.append(value)
+        if start_at:
+            clauses.append("e.started_at >= ?")
+            params.append(_normalize_alert_time(start_at, "start_at"))
+        if end_at:
+            clauses.append("e.started_at <= ?")
+            params.append(_normalize_alert_time(end_at, "end_at"))
+        if start_at and end_at:
+            start_value = _normalize_alert_time(start_at, "start_at")
+            end_value = _normalize_alert_time(end_at, "end_at")
+            if end_value < start_value:
+                raise ValueError("end_at must be after start_at")
         if keyword:
             clauses.append("(LOWER(e.title) LIKE LOWER(?) OR LOWER(e.message) LIKE LOWER(?) OR LOWER(l.link_name) LIKE LOWER(?))")
             token = f"%{keyword}%"
@@ -759,6 +868,57 @@ async def test_wan_link_collection(link_id: str) -> dict[str, Any] | None:
     if detail.get("status") == "success" and not matched:
         return {"link_id": link_id, "status": "interface_not_found", "error_code": "interface_not_found", "items": []}
     return {"link_id": link_id, "status": detail.get("status"), "error_code": detail.get("error_code"), "items": [matched] if matched else []}
+
+
+async def test_wan_link_configuration(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run a read-only collection test for an unsaved WAN binding.
+
+    The configuration form must prove the selected device/interface before a
+    write is accepted.  This path intentionally reuses the same credential
+    resolver and IF-MIB matcher as the periodic collector, but never creates a
+    link, baseline, or sample.
+    """
+    device_id = str(payload.get("device_id") or "").strip()
+    interface_id = str(payload.get("interface_id") or "").strip()
+    if not device_id or not interface_id:
+        return {"status": "invalid_configuration", "error_code": "device_interface_required", "items": []}
+    conn = get_db_connection()
+    try:
+        device = _row_dict(conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone())
+        iface = _row_dict(conn.execute("SELECT * FROM interfaces WHERE id = ? AND device_id = ?", (interface_id, device_id)).fetchone())
+        if not device or not iface:
+            return {"status": "invalid_configuration", "error_code": "device_interface_not_found", "items": []}
+        site_id = str(payload.get("site_id") or "").strip()
+        if site_id:
+            site = _row_dict(conn.execute("SELECT id, site_name FROM sites WHERE id = ?", (site_id,)).fetchone())
+            selected_values = {str(site.get(key) or "").strip() for key in ("id", "site_name")} if site else set()
+            device_values = {str(device.get(key) or "").strip() for key in ("site_id", "site")} - {""}
+            if not site or (selected_values and device_values and not selected_values.intersection(device_values)):
+                return {"status": "invalid_configuration", "error_code": "device_site_mismatch", "items": []}
+    finally:
+        conn.close()
+    credential = resolve_collector_credentials(device or {})
+    snmp = credential.get("snmp") or {}
+    ip = str(snmp.get("server") or (device or {}).get("ip_address") or "").strip()
+    community = str(snmp.get("community") or "").strip()
+    port = int(snmp.get("port") or (device or {}).get("snmp_port") or 161)
+    if not ip or not community:
+        return {"status": "not_configured", "error_code": "not_configured", "items": []}
+    interface_config = resolve_metric_profiles(device or {}).get("interface") or None
+    detail = await collect_interface_data_detailed(ip, community, port, interface_config)
+    match = _match_interface(
+        {"if_index": iface.get("if_index"), "interface_name": iface.get("interface_name")},
+        detail.get("items") or [],
+    )
+    if detail.get("status") == "success" and not match:
+        return {"status": "interface_not_found", "error_code": "interface_not_found", "items": []}
+    return {
+        "status": detail.get("status"),
+        "error_code": detail.get("error_code"),
+        "items": [match] if match else [],
+        "complete_items": detail.get("complete_items"),
+        "total_items": detail.get("total_items"),
+    }
 
 
 def upsert_wan_link(payload: dict[str, Any], link_id: str | None = None) -> dict[str, Any]:

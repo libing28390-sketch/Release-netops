@@ -206,9 +206,11 @@ def list_product_catalog(
     model: str = "",
     software_version: str = "",
     status: str = "all",
+    search: str = "",
 ) -> dict[str, Any]:
     tenant_id = _tenant(user)
     rows = _tenant_model_rows(tenant_id)
+    all_rows = list(rows)
     filters = {
         "vendor_id": _safe_text(vendor_id, field="vendor_id", max_length=64).casefold(),
         "family_code": _safe_text(family_code, field="family_code", max_length=64).casefold(),
@@ -216,6 +218,7 @@ def list_product_catalog(
         "model": _safe_text(model, field="model", max_length=128).casefold(),
         "software_version": _safe_text(software_version, field="software_version", max_length=128).casefold(),
         "status": _safe_text(status, field="status", max_length=32).casefold() or "all",
+        "search": _safe_text(search, field="search", max_length=256).casefold(),
     }
     if filters["status"] not in {"all", "draft", "active", "disabled", "archived"}:
         raise ProductCatalogError("CATALOG_STATUS_INVALID", "status filter is invalid")
@@ -240,6 +243,21 @@ def list_product_catalog(
         rows = [item for item in rows if version_matches(item)]
     if filters["status"] != "all":
         rows = [item for item in rows if str(item["status"]).casefold() == filters["status"]]
+    if filters["search"]:
+        needle = filters["search"]
+
+        def search_matches(item: dict[str, Any]) -> bool:
+            scope = item.get("software_scope") or {}
+            values = (
+                item.get("vendor_id"), item.get("vendor_name"), item.get("family_code"),
+                item.get("family_name"), item.get("series_code"), item.get("series_name"),
+                item.get("model_code"), item.get("display_name"), scope.get("os_family"),
+                scope.get("software_train"), scope.get("primary_version"),
+                scope.get("compatibility_version"), *(scope.get("software_versions") or []),
+            )
+            return any(needle in str(value or "").casefold() for value in values)
+
+        rows = [item for item in rows if search_matches(item)]
     rows = _official_rows(rows)
     return {
         "persistence_status": PERSISTENCE_STATUS,
@@ -251,6 +269,21 @@ def list_product_catalog(
         "mutable": False,
         "boundary": _collection_boundary(),
         "source_artifacts": [path.name for path in _PRODUCT_FILES],
+        "facets": {
+            "vendors": sorted({str(item.get("vendor_id") or "") for item in all_rows if item.get("vendor_id")}),
+            "families": sorted({str(item.get("family_code") or "") for item in all_rows if item.get("family_code")}),
+            "series": sorted({str(item.get("series_code") or "") for item in all_rows if item.get("series_code")}),
+            "software_versions": sorted({
+                str(value)
+                for item in all_rows
+                for value in (
+                    (item.get("software_scope") or {}).get("primary_version"),
+                    (item.get("software_scope") or {}).get("compatibility_version"),
+                    *((item.get("software_scope") or {}).get("software_versions") or []),
+                )
+                if value
+            }),
+        },
     }
 
 

@@ -316,7 +316,7 @@ To use your own custom/valid CA certificates:
 
 For custom environments or development.
 
-**Prerequisites:** Node.js 18+, Python 3.10+, PostgreSQL 17
+**Prerequisites:** Node.js 20+, Python 3.10+, PostgreSQL 17
 
 ```bash
 # 1. Clone
@@ -329,7 +329,7 @@ source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r backend/requirements.txt
 
 # 3. Frontend
-npm install
+npm ci --include=dev
 npm run build
 
 # 4. PostgreSQL
@@ -370,7 +370,7 @@ docker compose restart netops
 # Ubuntu systemd
 cd /opt/nexora-automation
 git pull
-npm install && npm run build
+npm ci --include=dev && npm run build
 pip install -r backend/requirements.txt
 sudo systemctl restart netops
 
@@ -634,7 +634,7 @@ Docker 部署配置中已默认启用 HTTPS。默认情况下，系统要求在 
 
 适用于自定义环境或开发调试。
 
-**前置条件**：Node.js 18+、Python 3.10+、PostgreSQL 17
+**前置条件**：Node.js 20+、Python 3.10+、PostgreSQL 17
 
 ```bash
 # 1. 克隆项目
@@ -647,7 +647,7 @@ source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r backend/requirements.txt
 
 # 3. 前端
-npm install
+npm ci --include=dev
 npm run build
 
 # 4. PostgreSQL
@@ -688,7 +688,7 @@ docker compose restart netops
 # Ubuntu systemd 部署
 cd /opt/nexora-automation
 git pull
-npm install && npm run build
+npm ci --include=dev && npm run build
 pip install -r backend/requirements.txt
 sudo systemctl restart netops
 
@@ -716,7 +716,7 @@ The Nexora Windows client runs the platform locally with a system-tray controlle
 - PostgreSQL 17.x with pgvector and the `pg_trgm` extension; provide a target database or an account that can create it. The detailed setup is in [docs/deploy/windows.md](docs/deploy/windows.md).
 - Internet access and UAC permission for the first-time dependency setup.
 
-The launcher can reuse Python 3.10–3.12 or install Python 3.11.9, and can reuse Node.js 18+ or download a portable Node.js 20.12.2 when `dist/` is missing. It also creates `.venv` and installs the backend and tray dependencies.
+The launcher can reuse Python 3.10–3.12 or install Python 3.11.9, and can reuse Node.js 20+ or download a portable Node.js 20.12.2 when `dist/` is missing. It also creates `.venv` and installs the backend and tray dependencies.
 
 #### 1. Install and start
 
@@ -747,7 +747,7 @@ Nexora Windows 客户端在本机运行后端服务，并通过系统托盘管�
 - PostgreSQL 17.x、pgvector、`pg_trgm`，以及目标业务数据库或 `CREATEDB` 权限。
 - 首次运行需要网络下载依赖，并允许 PostgreSQL 安装时的 UAC 提权。
 
-向导可以自动准备兼容的 Python 3.10–3.12（无兼容版本时安装 3.11.9）、Node.js 18+ 或便携版 Node.js 20.12.2，并在 `.venv` 中安装后端和托盘依赖。详细的 PostgreSQL 初始化步骤见 [docs/deploy/windows.md](docs/deploy/windows.md)。
+向导可以自动准备兼容的 Python 3.10–3.12（无兼容版本时安装 3.11.9）、Node.js 20+ 或便携版 Node.js 20.12.2，并在 `.venv` 中安装后端和托盘依赖。详细的 PostgreSQL 初始化步骤见 [docs/deploy/windows.md](docs/deploy/windows.md)。
 
 #### 1. 安装与启动
 

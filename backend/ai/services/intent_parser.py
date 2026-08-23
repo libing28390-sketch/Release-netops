@@ -15,7 +15,8 @@ from ai.services.query_normalizer import normalize_query
 _ASSET_ANALYSIS_AGGREGATION_MARKERS = (
     "\u7edf\u8ba1", "\u5206\u5e03", "\u5360\u6bd4", "\u805a\u5408", "\u6c47\u603b",
     "\u6982\u89c8", "\u5206\u6790", "\u6458\u8981", "\u6e05\u5355", "\u7eb3\u7ba1",
-    "aggregation", "breakdown", "distribution", "inventory overview",
+    "\u591a\u5c11\u53f0", "\u51e0\u53f0", "\u6570\u91cf", "aggregation", "breakdown", "distribution", "inventory overview",
+    "how many", "count",
 )
 
 _ASSET_ANALYSIS_DIMENSION_MARKERS = (
@@ -119,6 +120,19 @@ class IntentParser:
         "vlan": ("vlan", "虚拟局域网"),
         "bgp": ("bgp",),
         "stp": ("stp", "生成树"),
+        "access_port": ("access port", "access-port", "接入口", "接入端口"),
+        "trunk": ("trunk", "中继端口", "trunk端口"),
+        "lacp": ("lacp", "eth-trunk", "etherchannel", "bridge-aggregation", "链路聚合"),
+        "loopback": ("loopback", "环回接口", "环回口"),
+        "ntp": ("ntp", "网络时间协议"),
+        "snmp": ("snmp", "snmpv3", "简单网络管理协议"),
+        "vrrp": ("vrrp", "虚拟路由器冗余"),
+        "vxlan": ("vxlan",),
+        "evpn": ("evpn",),
+        "acl": ("acl", "访问控制列表"),
+        "static_route": ("static route", "static-route", "static routing", "静态路由", "ip route-static"),
+        "ssh": ("ssh", "stelnet", "secure shell", "安全登录"),
+        "lldp": ("lldp", "链路层发现"),
     }
 
     @staticmethod
@@ -127,18 +141,68 @@ class IntentParser:
         upper = text.upper()
         # Product Registry aliases are resolved to the canonical series.  The
         # model token is retained separately when it is explicit.
-        if re.search(r"\bCE\s*68(?:\d{2}|XX)?\b", upper) or "CLOUDENGINE 6800" in upper:
-            model_match = re.search(r"\bCE\s*\d{4,}[A-Z0-9-]*\b", upper)
-            model = model_match.group(0).replace(" ", "") if model_match else None
-            return "CloudEngine 6800", (None if model in {"CE6800", "CE68XX"} else model)
+        named_ce = re.search(r"(?<![A-Z0-9])CLOUDENGINE\s*(6800|8800|9800)(?![A-Z0-9])", upper)
+        if named_ce:
+            return f"CloudEngine {named_ce.group(1)}", None
+        ce_alias = re.search(r"(?<![A-Z0-9])CE\s*(68|88|98)(?:XX)?(?![A-Z0-9])", upper)
+        if ce_alias:
+            return {"68": "CloudEngine 6800", "88": "CloudEngine 8800", "98": "CloudEngine 9800"}[ce_alias.group(1)], None
+        ce_match = re.search(r"(?<![A-Z0-9])(?:CLOUDENGINE\s*)?CE\s*(6|8|9)(?:\d{2,4})(?:[A-Z0-9-]*)?(?![A-Z0-9])", upper)
+        if ce_match:
+            token = ce_match.group(0).replace(" ", "")
+            family = {"6": "CloudEngine 6800", "8": "CloudEngine 8800", "9": "CloudEngine 9800"}[ce_match.group(1)]
+            model = token if token not in {"CE6800", "CE68XX", "CE8800", "CE98XX", "CE9800"} else None
+            return family, model
+        xh_match = re.search(r"(?<![A-Z0-9])(?:CLOUDENGINE\s*)?XH16800(?:-[A-Z0-9-]+)?(?![A-Z0-9])", upper)
+        if xh_match:
+            token = xh_match.group(0).replace(" ", "")
+            return "CloudEngine 16800", (None if token == "XH16800" else token)
+        for prefix, series in (
+            ("C9350", "C9350"),
+            ("C9550", "C9550"),
+            ("C9610", "C9610"),
+        ):
+            exact = re.search(rf"(?<![A-Z0-9]){prefix}(?:-[A-Z0-9-]+)?(?![A-Z0-9])", upper)
+            if exact:
+                token = exact.group(0)
+                return series, (None if token == prefix else token)
+        catalyst_match = re.search(
+            r"(?<![A-Z0-9])(?:CATALYST\s*)?C?(9200|9300|9400|9500|9600)(?:[A-Z0-9-]*)?(?![A-Z0-9])",
+            upper,
+        )
+        if catalyst_match:
+            number = catalyst_match.group(1)
+            series = f"Catalyst {number}"
+            token = catalyst_match.group(0).replace(" ", "")
+            return series, (None if token in {f"C{number}", f"CATALYST{number}"} else token)
+        nexus_sku = re.search(r"(?<![A-Z0-9])N([39])K-[A-Z0-9-]+(?![A-Z0-9])", upper)
+        if nexus_sku:
+            token = nexus_sku.group(0)
+            return f"Nexus {'3000' if nexus_sku.group(1) == '3' else '9000'}", token
+        nexus_match = re.search(r"(?<![A-Z0-9])NEXUS\s*(3000|3550|9000)(?:\s+SERIES)?(?![A-Z0-9])", upper)
+        if nexus_match:
+            number = nexus_match.group(1)
+            return f"Nexus {number}", None
         # Operators commonly type a short Huawei family prefix (for example
         # S57) rather than a complete S5735-L-V2 model.  Keep the prefix as a
         # search scope; the resolver will expand it against registry series.
-        product_match = re.search(r"\bS\d{2,5}(?:[-_][A-Z0-9]+)*\b", upper)
+        # ``\b`` is ASCII-word based and does not create a boundary between
+        # Chinese text and an adjacent ASCII model (``交换机S5700的``).  Use
+        # ASCII lookarounds so mixed-language operator queries keep the model.
+        product_match = re.search(
+            r"(?<![A-Z0-9])S\d{2,5}[A-Z]?(?:[-_][A-Z0-9]+)*(?![A-Z0-9])",
+            upper,
+        )
         if product_match:
             token = product_match.group(0).replace("_", "-")
             # A series token such as S5735-L-V2 is not a concrete model.  Do
             # not over-constrain retrieval to a literal model column.
+            parts = token.split("-")
+            if len(parts) > 1 and (parts[1][:1].isdigit() or any(char.isdigit() for char in parts[1])):
+                series = parts[0]
+                if parts[1][:1].isalpha():
+                    series = f"{parts[0]}-{re.match(r'[A-Z]+', parts[1]).group(0)}"
+                return series, token
             return token, None
         return None, None
 
@@ -180,10 +244,22 @@ class IntentParser:
         series, model = self._normalise_product(normalized)
         result["product_series"] = series
         result["product_model"] = model
-        if series and not result["vendor"] and (series.upper().startswith(("CE", "S")) or series.lower().startswith("cloudengine")):
+        if series and not result["vendor"] and (
+            series.upper().startswith("CE") or series.lower().startswith("cloudengine")
+        ):
             # This is an alias lookup seed, not a CLI/platform inference; the
             # resolver verifies it against Product Registry before filtering.
             result["vendor"] = "Huawei"
+        elif series and not result["vendor"] and series.lower().startswith("nexus"):
+            # Nexus is a Cisco NX-OS product family; retaining the vendor here
+            # lets a bare "Nexus 9000" query use the same scoped RAG path as
+            # an explicit "Cisco Nexus 9000" query.
+            result["vendor"] = "Cisco"
+        elif series and not result["vendor"] and (
+            series.lower().startswith("catalyst")
+            or series.upper() in {"C9350", "C9550", "C9610"}
+        ):
+            result["vendor"] = "Cisco"
 
         train_match = re.search(r"\b(V[236]\d{2})(?:R\d+[A-Z]?\d*)?\b", normalized, re.IGNORECASE)
         if train_match:
@@ -223,8 +299,27 @@ class IntentParser:
         for feature, aliases in self._FEATURE_ALIASES.items():
             if any(alias in lower for alias in aliases):
                 result["feature"] = feature
-                result["feature_domain"] = "routing" if feature in {"ospf", "bgp", "arp"} else "switching" if feature in {"vlan", "stp"} else "addressing"
+                result["feature_domain"] = (
+                    "routing" if feature in {"ospf", "bgp", "arp", "loopback", "static_route"}
+                    else "switching" if feature in {"vlan", "stp", "lldp", "access_port", "trunk", "lacp"}
+                    else "security" if feature in {"acl"}
+                    else "management" if feature in {"ntp", "snmp", "ssh"}
+                    else "reliability" if feature in {"vrrp"}
+                    else "overlay" if feature in {"vxlan", "evpn"}
+                    else "addressing"
+                )
                 break
+        # The reviewed VXLAN/EVPN skeleton is shared by the Nexus 3000 and
+        # 9000 data-center families.  Preserve that legacy composite scope
+        # for overlay configuration queries while keeping a bare product or
+        # hardware lookup on the concrete ``Nexus 9000`` series so the model
+        # registry remains exact.
+        if (
+            result.get("product_series") == "Nexus 9000"
+            and not result.get("product_model")
+            and result.get("feature") in {"vxlan", "evpn"}
+        ):
+            result["product_series"] = "Nexus 3000/9000"
         device_match = re.search(r"\b(?:[A-Za-z][A-Za-z0-9_-]{2,}|\d{1,3}(?:\.\d{1,3}){3})\b", normalized)
         if device_match and device_match.group(0).lower() not in {"huawei", "cisco", "display", "ospf", "vlan", "arp"}:
             result["device_identifier"] = device_match.group(0)
@@ -243,7 +338,7 @@ class IntentParser:
             metadata.get("vendor")
             or metadata.get("product_series")
             or metadata.get("feature")
-            or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "hardware"))
+            or any(token in (query or "").lower() for token in ("配置", "命令", "回显", "故障", "ospf", "vlan", "arp", "access", "trunk", "lacp", "loopback", "ntp", "snmp", "vrrp", "static route", "静态路由", "acl", "ssh", "stelnet", "hardware"))
         )
 
     async def parse_intent(self, query: str, user_id: Optional[str] = None) -> Dict[str, Any]:

@@ -47,6 +47,10 @@ export interface WanLinkSample {
   out_error_delta?: number | null;
   in_discard_delta?: number | null;
   out_discard_delta?: number | null;
+  in_error_rate?: number | null;
+  out_error_rate?: number | null;
+  in_discard_rate?: number | null;
+  out_discard_rate?: number | null;
   oper_status?: string;
   collection_status?: string;
   quality_flags?: Record<string, unknown> | string;

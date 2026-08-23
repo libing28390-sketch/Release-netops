@@ -9,6 +9,7 @@ import json
 import hashlib
 import re
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from database.core import get_db_connection, _USE_PG
@@ -29,9 +30,10 @@ from ai.services.knowledge_metadata import (
     merge_metadata,
     metadata_columns,
     chunk_projection_metadata,
-    parse_markdown_document,
+    document_category_query_values,
     validate_metadata,
 )
+from ai.services.knowledge_source_parser import KnowledgeSourceParseError, parse_knowledge_source
 
 
 try:
@@ -65,7 +67,7 @@ _DEFAULT_DIRECTORY_NAMES = (
 )
 _DEFAULT_VENDOR_DIRECTORY_NAMES = ("huawei", "h3c", "cisco", "ruijie")
 _DIRECTORY_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
-_OFFICIAL_KNOWLEDGE_TYPES = ("official_vendor", "official_url", "official_local")
+_OFFICIAL_KNOWLEDGE_TYPES = ("official_vendor", "official_url", "official_local", "official_template")
 _ENTERPRISE_KNOWLEDGE_TYPES = ("internal_sop", "internal_standard", "case", "user_document", "sample")
 _DOCUMENT_ACTIONS = frozenset({"delete", "disable", "enable", "reparse", "rechunk", "reindex"})
 _CHUNK_DETAIL_SENSITIVE_KEY_RE = re.compile(
@@ -674,6 +676,8 @@ class KnowledgeService:
                 "software_train": software_train,
                 "software_release": software_release,
             "cli_platform": cli_platform,
+            # Keep the caller's value here so the query helper can match both
+            # canonical categories and legacy directory ids during migration.
             "document_category": document_category,
             "feature_domain": feature_domain,
             "source_trust_level": source_trust_level,
@@ -684,6 +688,15 @@ class KnowledgeService:
                     continue
                 if column not in document_columns:
                     where.append("1 = 0")
+                    continue
+                if column == "document_category":
+                    category_values = document_category_query_values(value)
+                    if not category_values:
+                        where.append("1 = 0")
+                        continue
+                    placeholders = ", ".join("?" for _ in category_values)
+                    where.append(f"LOWER(COALESCE(d.{column}, '')) IN ({placeholders})")
+                    params.extend(category_values)
                     continue
                 where.append(f"LOWER(COALESCE(d.{column}, '')) = ?")
                 params.append(normalized_value)
@@ -851,7 +864,13 @@ class KnowledgeService:
                 "series": [{"value": key, "count": value} for key, value in series.items()],
             }
 
-    def get_document_detail(self, doc_id: str, tenant_id: str = "tenant-default") -> Optional[Dict[str, Any]]:
+    def get_document_detail(
+        self,
+        doc_id: str,
+        tenant_id: str = "tenant-default",
+        *,
+        include_inactive: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         """Return one document's on-demand body, provenance and ordered chunks.
 
         The legacy ``ai_document`` table is still the V1-compatible index
@@ -874,10 +893,11 @@ class KnowledgeService:
                 "retrieval_index_version", "metadata_parse_status",
             ]
             selected_optional = [field for field in optional_columns if field in document_columns]
+            status_clause = "" if include_inactive else " AND d.status = 'active'"
             cursor.execute(
                 f"SELECT {', '.join(f'd.{field}' for field in base_columns + selected_optional)} "
                 "FROM ai_document d "
-                "WHERE d.id = ? AND d.status = 'active' "
+                f"WHERE d.id = ?{status_clause} "
                 "AND (d.tenant_id = ? OR d.tenant_id = 'tenant-default')",
                 (doc_id, tenant_id),
             )
@@ -1500,6 +1520,9 @@ class KnowledgeService:
         acl: Optional[Dict[str, Any]] = None,
         source_trust_level: str = "internal",
         metadata: Optional[Dict[str, Any]] = None,
+        source: Optional[str] = None,
+        db_connection: Any = None,
+        invalidate_cache: bool = True,
     ) -> Dict[str, Any]:
         now_iso = datetime.now(timezone.utc).isoformat()
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
@@ -1508,7 +1531,7 @@ class KnowledgeService:
         # retrieval content.  A malformed header is a hard indexing error;
         # callers receive the exact reason and the source is not persisted.
         try:
-            parsed_document = parse_markdown_document(str(content or ""))
+            parsed_document = parse_knowledge_source(str(content or ""), filename=name)
             source_metadata = metadata if isinstance(metadata, dict) else {}
             directory_path = (
                 source_metadata.get("knowledge_directory_path")
@@ -1520,6 +1543,8 @@ class KnowledgeService:
                 name=name,
                 allow_missing_required=parsed_document.metadata_parse_status == "missing",
             )
+        except KnowledgeSourceParseError as exc:
+            raise ValueError(f"知识文档文件格式无法解析: {exc.message}") from exc
         except (MetadataParseError, MetadataValidationError) as exc:
             raise ValueError(f"知识文档 Metadata 无法索引: {exc}") from exc
 
@@ -1574,14 +1599,16 @@ class KnowledgeService:
         contract = embedding_contract(embedding_provider)
         embedding_info = embedding_metadata()
 
-        with get_db_connection() as conn:
+        owns_connection = db_connection is None
+        connection_context = get_db_connection() if owns_connection else nullcontext(db_connection)
+        with connection_context as conn:
             cursor = conn.cursor()
             document_columns = self._table_columns(cursor, "ai_document")
             document_values = {
                 "id": doc_id,
                 "knowledge_base_id": knowledge_base_id,
                 "name": name,
-                "source": "upload",
+                "source": str(source or "upload"),
                 "vendor": document_vendor,
                 "platform": document_platform,
                 "status": "active",
@@ -1693,11 +1720,13 @@ class KnowledgeService:
                     f"VALUES ({', '.join('?' for _ in chunk_columns_ordered)})",
                     [chunk_values[key] for key in chunk_columns_ordered],
                 )
-            conn.commit()
+            if owns_connection:
+                conn.commit()
 
         # Exact invalidation occurs only after the document and all chunks are
         # committed; a failed transaction cannot evict a still-valid result.
-        retrieval_cache.invalidate_documents([doc_id])
+        if invalidate_cache:
+            retrieval_cache.invalidate_documents([doc_id])
 
         return {
             "document_id": doc_id,

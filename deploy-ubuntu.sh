@@ -40,7 +40,9 @@ fail()  { echo -e "${RED}[FAIL]${NC}  $*"; exit 1; }
 # ---------- 配置 ----------
 NODE_MAJOR=22
 PYTHON_MIN="3.10"
-GIT_REPO="${GIT_REPO:-https://github.com/libing28390-sketch/netsops.git}"
+# One-click deployments use the sanitized public release repository by
+# default. Developers can still override this with GIT_REPO.
+GIT_REPO="${GIT_REPO:-https://github.com/libing28390-sketch/Release-netops.git}"
 PROJECT_NAME="nexora-automation"
 SERVICE_NAME="netops"
 BACKEND_PORT=8003
@@ -347,7 +349,7 @@ NEED_NODE=0
 if command -v node &> /dev/null; then
     NODE_VER=$(node -v | tr -d 'v')
     NODE_MAJOR_CUR=$(echo "$NODE_VER" | cut -d. -f1)
-    if [ "$NODE_MAJOR_CUR" -ge 18 ]; then
+    if [ "$NODE_MAJOR_CUR" -ge 20 ]; then
         ok "Node.js v$NODE_VER (已安装)"
     else
         warn "Node.js v$NODE_VER 版本过低，将安装 v${NODE_MAJOR}"
@@ -387,7 +389,15 @@ ok "Python 依赖安装完成"
 # 5. Node.js 依赖 & 前端构建
 # ============================================================
 info "安装 Node.js 依赖..."
-npm install --prefer-offline 2>&1 | tail -5 || npm install 2>&1 | tail -10 || fail "npm install 失败，请检查网络或 package.json"
+if [ -f package-lock.json ]; then
+    npm ci --include=dev --prefer-offline 2>&1 | tail -5 || \
+        npm ci --include=dev 2>&1 | tail -10 || \
+        fail "npm ci 失败，请检查网络或 package-lock.json"
+else
+    npm install --include=dev --prefer-offline 2>&1 | tail -5 || \
+        npm install --include=dev 2>&1 | tail -10 || \
+        fail "npm install 失败，请检查网络或 package.json"
+fi
 ok "Node.js 依赖安装完成"
 
 info "构建前端生产版本..."

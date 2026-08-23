@@ -1,4 +1,4 @@
-import { apiRequest, createClientRequestId } from './http';
+import { apiRequest, authHeaders, createClientRequestId } from './http';
 
 export interface AIProvider {
   id: string;
@@ -20,6 +20,11 @@ export interface AIProvider {
   tags?: string[];
   data_region?: string;
   allowed_data_classification?: string;
+  no_training_confirmed?: boolean;
+  retention_days?: number | null;
+  data_processing_agreement_ref?: string | null;
+  agreement_reviewed_at?: string | null;
+  approved_endpoint_patterns?: string[];
 }
 
 export interface AIModel {
@@ -420,6 +425,23 @@ export async function getAISecurityEvents(limit = 100, offset = 0): Promise<AISe
   return apiRequest<AISecurityEvent[]>(`/api/ai/security/events?limit=${limit}&offset=${offset}`);
 }
 
+export interface AISecurityPage<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export async function getAISecurityEventsPage(query: { page?: number; page_size?: number; search?: string; decision?: string; classification?: string } = {}): Promise<AISecurityPage<AISecurityEvent>> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (typeof value === 'number') params.set(key, String(value));
+    else if (value?.trim()) params.set(key, value.trim());
+  });
+  return apiRequest<AISecurityPage<AISecurityEvent>>(`/api/ai/security/events/page?${params.toString()}`);
+}
+
 export async function exportAISecurityEvents(): Promise<string> {
   const response = await fetch('/api/ai/security/events/export', { headers: { Authorization: `Bearer ${localStorage.getItem('netops_token') || localStorage.getItem('token') || ''}` } });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -442,6 +464,15 @@ export interface AISecurityIncident {
 export async function getAISecurityIncidents(status = ''): Promise<AISecurityIncident[]> {
   const query = status ? `?status=${encodeURIComponent(status)}` : '';
   return apiRequest<AISecurityIncident[]>(`/api/ai/security/incidents${query}`);
+}
+
+export async function getAISecurityIncidentsPage(query: { page?: number; page_size?: number; search?: string; status?: string; severity?: string } = {}): Promise<AISecurityPage<AISecurityIncident>> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (typeof value === 'number') params.set(key, String(value));
+    else if (value?.trim()) params.set(key, value.trim());
+  });
+  return apiRequest<AISecurityPage<AISecurityIncident>>(`/api/ai/security/incidents/page?${params.toString()}`);
 }
 
 export async function resolveAISecurityIncident(id: string): Promise<{ id: string; status: string; resolved_at: string }> {
@@ -584,7 +615,13 @@ export interface AssistantStreamDoneMeta {
   model_id?: string;
   provider_id?: string;
   route_reason?: string;
+  execution_mode?: AIExecutionMode;
+  external_egress?: boolean;
+  token_source?: AITokenSource;
 }
+
+export type AIExecutionMode = 'local_knowledge' | 'local_operation' | 'provider_generated' | 'local_fallback' | 'legacy_unknown';
+export type AITokenSource = 'provider_reported' | 'estimated' | 'local_zero';
 
 export interface AssistantStreamCitation {
   event_version?: string;
@@ -641,6 +678,9 @@ export interface AssistantStreamMeta {
   latency_ms?: number;
   route_reason?: string;
   selection_source?: string;
+  execution_mode?: AIExecutionMode;
+  external_egress?: boolean;
+  token_source?: AITokenSource;
 }
 
 export interface CopilotContract {
@@ -654,7 +694,7 @@ export interface CopilotContract {
   next_checks?: string[];
   source_labels?: string[];
   recognized?: { vendor?: string; model?: string; os?: string; version?: string; ambiguous_candidates?: string[] };
-  runtime?: { device_connected?: boolean; cli_executed?: boolean; external_egress?: boolean; provider_id?: string; model_id?: string };
+  runtime?: { device_connected?: boolean; cli_executed?: boolean; external_egress?: boolean; provider_id?: string; model_id?: string; execution_mode?: AIExecutionMode; input_tokens?: number; output_tokens?: number; latency_ms?: number };
   context_budget?: { limit_chars?: number; used_chars?: number; truncated?: boolean; summary?: string };
   engineer_evidence?: { citations?: any[]; trace_available?: boolean };
   developer_trace?: Record<string, unknown>;
@@ -699,6 +739,14 @@ export interface AIConversationMessage {
   requested_model_id?: string;
   actual_model_id?: string;
   provider_id?: string;
+  route_reason?: string;
+  fallback_used?: boolean;
+  execution_mode?: AIExecutionMode;
+  external_egress?: boolean | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  latency_ms?: number | null;
+  token_source?: AITokenSource | null;
   created_at: string;
 }
 
@@ -1148,6 +1196,13 @@ export interface KnowledgeCatalogResponse {
   total: number;
   read_only: boolean;
   source_artifacts: string[];
+  facets?: {
+    vendors: string[];
+    families: string[];
+    series: string[];
+    software_versions: string[];
+  };
+  meta?: { pagination: { page: number; page_size: number; total: number; total_pages: number; sort_by: string; sort_order: string }; filters: Record<string, unknown> };
 }
 
 export interface KnowledgeCatalogAlias {
@@ -1174,6 +1229,7 @@ export interface KnowledgeCatalogAliasesResponse {
   total: number;
   read_only: boolean;
   source_artifact: string;
+  meta?: { pagination: { page: number; page_size: number; total: number; total_pages: number; sort_by: string; sort_order: string }; filters: Record<string, unknown> };
 }
 
 export interface KnowledgeCatalogResolveResponse {
@@ -1211,20 +1267,22 @@ function unwrapKnowledgeCatalogPayload<T>(payload: T | KnowledgeCatalogApiEnvelo
   return payload as T;
 }
 
-export async function getKnowledgeCatalog(filters: { vendor_id?: string; family_code?: string; series_code?: string; model?: string; software_version?: string; status?: string } = {}): Promise<KnowledgeCatalogResponse> {
+export async function getKnowledgeCatalog(filters: { search?: string; vendor_id?: string; family_code?: string; series_code?: string; model?: string; software_version?: string; status?: string; page?: number; page_size?: number; sort_by?: string; sort_order?: string } = {}): Promise<KnowledgeCatalogResponse> {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value?.trim()) params.set(key, value.trim());
+    if (typeof value === 'number') params.set(key, String(value));
+    else if (value?.trim()) params.set(key, value.trim());
   });
   const suffix = params.toString() ? `?${params.toString()}` : '';
   const payload = await apiRequest<KnowledgeCatalogResponse | KnowledgeCatalogApiEnvelope<KnowledgeCatalogResponse>>(`/api/v2/kb/catalog${suffix}`);
   return unwrapKnowledgeCatalogPayload(payload);
 }
 
-export async function getKnowledgeCatalogAliases(filters: { alias?: string; alias_kind?: string; conflict_status?: string } = {}): Promise<KnowledgeCatalogAliasesResponse> {
+export async function getKnowledgeCatalogAliases(filters: { alias?: string; alias_kind?: string; conflict_status?: string; page?: number; page_size?: number; sort_by?: string; sort_order?: string } = {}): Promise<KnowledgeCatalogAliasesResponse> {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value?.trim()) params.set(key, value.trim());
+    if (typeof value === 'number') params.set(key, String(value));
+    else if (value?.trim()) params.set(key, value.trim());
   });
   const suffix = params.toString() ? `?${params.toString()}` : '';
   const payload = await apiRequest<KnowledgeCatalogAliasesResponse | KnowledgeCatalogApiEnvelope<KnowledgeCatalogAliasesResponse>>(`/api/v2/kb/catalog/aliases${suffix}`);
@@ -1491,6 +1549,26 @@ export interface KnowledgeSourceRefreshStatus {
   error_code?: string;
 }
 
+export interface OfficialSourceSuggestion {
+  id: string;
+  trace_id: string;
+  request_id?: string | null;
+  vendor: string;
+  product_model?: string | null;
+  software_release?: string | null;
+  feature?: string | null;
+  label: string;
+  suggested_url: string;
+  reviewed_url?: string | null;
+  source_kind: string;
+  status: 'pending' | 'approved' | 'collecting' | 'imported' | 'failed' | 'rejected' | string;
+  recheck_trace_id?: string | null;
+  recheck_status?: string | null;
+  error_code?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface KnowledgeSourceEnvelope<T> { success: boolean; data: T; message?: string }
 
 export async function listKnowledgeSources(status = 'all'): Promise<KnowledgeSourceRegistry[]> {
@@ -1515,6 +1593,24 @@ export async function validateKnowledgeSource(sourceId: string): Promise<Record<
 
 export async function refreshKnowledgeSource(sourceId: string): Promise<Record<string, unknown>> {
   const payload = await apiRequest<KnowledgeSourceEnvelope<Record<string, unknown>>>(`/api/v2/kb/sources/${encodeURIComponent(sourceId)}/fetch`, { method: 'POST', body: JSON.stringify({ method: 'GET' }) });
+  return payload.data;
+}
+
+export async function listOfficialSourceSuggestions(status = 'pending', search = ''): Promise<{
+  items: OfficialSourceSuggestion[]; total: number; page: number; page_size: number; total_pages: number;
+}> {
+  const params = new URLSearchParams({ status, search, page: '1', page_size: '100' });
+  const payload = await apiRequest<KnowledgeSourceEnvelope<{ items: OfficialSourceSuggestion[]; total: number; page: number; page_size: number; total_pages: number }>>(`/api/v2/kb/ingestion/official-source-suggestions?${params.toString()}`);
+  return payload.data;
+}
+
+export async function reviewOfficialSourceSuggestion(suggestionId: string, fields: {
+  decision: 'approve' | 'reject'; vendor?: string; product_model?: string; software_release?: string;
+  feature?: string; url?: string; source_kind?: string;
+}): Promise<OfficialSourceSuggestion> {
+  const payload = await apiRequest<KnowledgeSourceEnvelope<OfficialSourceSuggestion>>(`/api/v2/kb/ingestion/official-source-suggestions/${encodeURIComponent(suggestionId)}/review`, {
+    method: 'POST', body: JSON.stringify(fields),
+  });
   return payload.data;
 }
 
@@ -1560,6 +1656,20 @@ export interface KnowledgeDocumentsQuery {
   signal?: AbortSignal;
 }
 
+const KNOWLEDGE_DOCUMENT_CATEGORY_ALIASES: Record<string, string> = {
+  '01_product': 'hardware',
+  '02_commands': 'command',
+  '03_configuration': 'configuration',
+  '04_cli_outputs': 'cli_output',
+  '05_troubleshooting': 'troubleshooting',
+  '06_examples': 'example',
+};
+
+function canonicalKnowledgeDocumentCategory(value?: string): string | undefined {
+  const normalized = value?.trim().toLowerCase().replace(/-/g, '_');
+  return normalized ? (KNOWLEDGE_DOCUMENT_CATEGORY_ALIASES[normalized] || normalized) : undefined;
+}
+
 export async function getKnowledgeDocuments({
   sourceType,
   knowledgeScope,
@@ -1600,7 +1710,7 @@ export async function getKnowledgeDocuments({
     ['software_train', softwareTrain],
     ['software_release', softwareRelease],
     ['cli_platform', cliPlatform],
-    ['document_category', documentCategory],
+    ['document_category', canonicalKnowledgeDocumentCategory(documentCategory)],
     ['feature_domain', featureDomain],
     ['status', status],
     ['source_trust_level', sourceTrustLevel],
@@ -1609,6 +1719,58 @@ export async function getKnowledgeDocuments({
     if (value?.trim()) params.set(key, value.trim());
   });
   return apiRequest(`/api/ai/assistant/documents?${params.toString()}`, { signal });
+}
+
+export async function exportKnowledgeDocuments(query: Omit<KnowledgeDocumentsQuery, 'page' | 'pageSize' | 'signal'> = {}): Promise<{ blob: Blob; filename: string; documentCount: number; contentBytes: number }> {
+  const params = new URLSearchParams();
+  if (query.sourceType) params.set('source_type', query.sourceType);
+  if (query.knowledgeScope && query.knowledgeScope !== 'all') params.set('knowledge_scope', query.knowledgeScope);
+  if (query.search?.trim()) params.set('search', query.search.trim());
+  if (query.directoryPath?.trim()) params.set('directory_path', query.directoryPath.trim());
+  const filterParams: Array<[string, string | undefined]> = [
+    ['vendor', query.vendor],
+    ['product_family', query.productFamily],
+    ['product_series', query.productSeries],
+    ['product_model', query.productModel],
+    ['os_family', query.osFamily],
+    ['os_generation', query.osGeneration],
+    ['software_train', query.softwareTrain],
+    ['software_release', query.softwareRelease],
+    ['cli_platform', query.cliPlatform],
+    ['document_category', canonicalKnowledgeDocumentCategory(query.documentCategory)],
+    ['feature_domain', query.featureDomain],
+    ['status', query.status],
+    ['source_trust_level', query.sourceTrustLevel],
+  ];
+  filterParams.forEach(([key, value]) => {
+    if (value?.trim()) params.set(key, value.trim());
+  });
+  const response = await fetch(`/api/ai/assistant/knowledge-export?${params.toString()}`, {
+    headers: authHeaders(false),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const detail = payload?.detail;
+    const message = typeof detail === 'string' ? detail : detail?.message || payload?.message || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return {
+    blob: await response.blob(),
+    filename: filenameMatch?.[1] || 'nexora-knowledge-export.zip',
+    documentCount: Number(response.headers.get('X-Knowledge-Export-Documents') || 0),
+    contentBytes: Number(response.headers.get('X-Knowledge-Export-Content-Bytes') || 0),
+  };
+}
+
+export async function importKnowledgeBundle(file: File): Promise<{ success: boolean; data: { document_count: number; atomic: boolean; official_claims?: string } }> {
+  const form = new FormData();
+  form.append('file', file);
+  return apiRequest('/api/ai/assistant/documents/import-bundle', {
+    method: 'POST',
+    body: form,
+  });
 }
 
 export async function getKnowledgeDocumentFacets({
@@ -1664,6 +1826,7 @@ export interface KnowledgeOfficialUrlImportPayload {
   product_family: string;
   version_scope: Record<string, string>;
   terms_review_status: string;
+  publish_to_knowledge_base?: boolean;
   reviewer?: string;
   name?: string;
   description?: string;
@@ -1694,6 +1857,10 @@ export interface KnowledgeMetadataPreview {
     source_trust_level: string;
     chunk_size: number;
     metadata_parse_status: string;
+    format: string;
+    parser_name: string;
+    parser_version: string;
+    parse_warnings: string[];
     metadata: Record<string, unknown>;
     metadata_columns: Record<string, unknown>;
     content_sha256: string;
@@ -1864,6 +2031,24 @@ export async function importKnowledgeEnterpriseSop(file: File, fields: {
     method: 'POST',
     body: form,
   });
+}
+
+export interface KnowledgeEnterpriseSopBatchItem {
+  filename: string;
+  status: 'queued' | 'succeeded' | 'failed';
+  success: boolean;
+  job?: KnowledgeIngestionJobSummary | null;
+  error?: { code?: string; message?: string } | null;
+}
+
+export async function importKnowledgeEnterpriseSopBatch(files: File[]): Promise<{
+  success: boolean;
+  data: { strategy: 'file_level_commit'; total: number; accepted: number; failed: number; items: KnowledgeEnterpriseSopBatchItem[] };
+}> {
+  const form = new FormData();
+  files.forEach((file) => form.append('files', file));
+  form.append('classification', 'INTERNAL');
+  return apiRequest('/api/v2/kb/ingestion/enterprise-sop/batch', { method: 'POST', body: form });
 }
 
 export async function addKnowledgeDocument(data: {

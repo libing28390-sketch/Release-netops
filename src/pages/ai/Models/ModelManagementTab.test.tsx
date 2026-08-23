@@ -73,13 +73,12 @@ describe('ModelManagementTab browser key paths', () => {
     const user = userEvent.setup();
     render(<ModelManagementTab />);
     expect(await screen.findByText('DeepSeek V4 Flash')).toBeTruthy();
-    expect(screen.getByText('DeepSeek 主供应商')).toBeTruthy();
+    expect(screen.getAllByText('DeepSeek 主供应商').some((element) => element.tagName === 'DIV')).toBe(true);
     await user.click(screen.getByTitle('设为当前用户默认'));
     expect(updateModel).toHaveBeenCalledWith(model.id, { is_default: true });
     expect(setDefault).toHaveBeenCalledWith(model.id);
 
-    const routeSelects = screen.getAllByRole('combobox');
-    await user.selectOptions(routeSelects[0], model.id);
+    await user.selectOptions(screen.getByRole('combobox', { name: '命令解释模型路由' }), model.id);
     await waitFor(() => expect(upsertRoute).toHaveBeenCalledWith({ scene: 'command_explain', model_id: model.id, enabled: true }));
   });
 

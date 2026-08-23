@@ -14,6 +14,7 @@ import {
   LockKeyhole,
   RefreshCw,
   Save,
+  Search,
   ShieldCheck,
   Skull,
   Workflow,
@@ -24,8 +25,8 @@ import {
   AISecurityPolicy,
   AISecurityIncident,
   getAISecurityPolicy,
-  getAISecurityEvents,
-  getAISecurityIncidents,
+  getAISecurityEventsPage,
+  getAISecurityIncidentsPage,
   resolveAISecurityIncident,
   exportAISecurityEvents,
   setAIKillSwitch,
@@ -34,6 +35,7 @@ import {
   testAISecurityPayload,
   updateAISecurityPolicy,
 } from '../../../api/ai';
+import Pagination from '../../../components/Pagination';
 
 const DEFAULT_POLICY: AISecurityPolicy = {
   external_ai_enabled: false,
@@ -119,15 +121,27 @@ export const SecurityPolicyTab: React.FC = () => {
   const [testing, setTesting] = useState(false);
   const [events, setEvents] = useState<Array<import('../../../api/ai').AISecurityEvent>>([]);
   const [incidents, setIncidents] = useState<AISecurityIncident[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [incidentsLoading, setIncidentsLoading] = useState(false);
+  const [eventPage, setEventPage] = useState(1);
+  const [eventPageSize, setEventPageSize] = useState(20);
+  const [eventTotal, setEventTotal] = useState(0);
+  const [eventSearch, setEventSearch] = useState('');
+  const [eventSearchApplied, setEventSearchApplied] = useState('');
+  const [eventDecision, setEventDecision] = useState('');
+  const [incidentPage, setIncidentPage] = useState(1);
+  const [incidentPageSize, setIncidentPageSize] = useState(20);
+  const [incidentTotal, setIncidentTotal] = useState(0);
+  const [incidentSearch, setIncidentSearch] = useState('');
+  const [incidentSearchApplied, setIncidentSearchApplied] = useState('');
+  const [incidentStatus, setIncidentStatus] = useState('');
+  const [incidentSeverity, setIncidentSeverity] = useState('');
 
-  const load = useCallback(async () => {
+  const loadPolicy = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [nextPolicy, nextEvents, nextIncidents] = await Promise.all([getAISecurityPolicy(), getAISecurityEvents(30), getAISecurityIncidents()]);
-      setPolicy(nextPolicy);
-      setEvents(nextEvents);
-      setIncidents(nextIncidents);
+      setPolicy(await getAISecurityPolicy());
     } catch (err) {
       setError(err instanceof Error ? err.message : '无法读取 AI 安全策略');
     } finally {
@@ -135,7 +149,41 @@ export const SecurityPolicyTab: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadEvents = useCallback(async () => {
+    setEventsLoading(true);
+    try {
+      const result = await getAISecurityEventsPage({ page: eventPage, page_size: eventPageSize, search: eventSearchApplied, decision: eventDecision });
+      setEvents(result.items);
+      setEventTotal(result.total);
+      if (result.page !== eventPage) setEventPage(result.page);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '无法读取安全审计事件');
+    } finally {
+      setEventsLoading(false);
+    }
+  }, [eventDecision, eventPage, eventPageSize, eventSearchApplied]);
+
+  const loadIncidents = useCallback(async () => {
+    setIncidentsLoading(true);
+    try {
+      const result = await getAISecurityIncidentsPage({ page: incidentPage, page_size: incidentPageSize, search: incidentSearchApplied, status: incidentStatus, severity: incidentSeverity });
+      setIncidents(result.items);
+      setIncidentTotal(result.total);
+      if (result.page !== incidentPage) setIncidentPage(result.page);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '无法读取安全事件响应记录');
+    } finally {
+      setIncidentsLoading(false);
+    }
+  }, [incidentPage, incidentPageSize, incidentSearchApplied, incidentSeverity, incidentStatus]);
+
+  const load = useCallback(async () => {
+    await Promise.all([loadPolicy(), loadEvents(), loadIncidents()]);
+  }, [loadEvents, loadIncidents, loadPolicy]);
+
+  useEffect(() => { void loadPolicy(); }, [loadPolicy]);
+  useEffect(() => { void loadEvents(); }, [loadEvents]);
+  useEffect(() => { void loadIncidents(); }, [loadIncidents]);
 
   const save = async (patch: Partial<AISecurityPolicy>) => {
     setSaving(true);
@@ -447,8 +495,15 @@ export const SecurityPolicyTab: React.FC = () => {
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-          <div className="flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><AlertTriangle className="h-4 w-4 text-rose-600" />安全事件响应</div><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">阻断请求只保留元数据证据；处理动作受租户和 Administrator 权限保护。</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{incidents.filter((item) => item.status !== 'resolved').length} 待处理</span></div>
-          <div className="mt-4 space-y-2">{incidents.slice(0, 20).map((incident) => <div key={incident.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 px-3 py-2 text-xs dark:border-slate-800"><span className="font-semibold text-slate-800 dark:text-slate-100">{incident.incident_type}</span><span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{incident.severity}</span><span className="text-slate-500">{incident.created_at}</span><span className="ml-auto text-slate-500">{incident.status}</span>{incident.status !== 'resolved' && <button type="button" onClick={() => void resolveIncident(incident.id)} className="rounded border border-emerald-200 px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:text-emerald-300">标记已解决</button>}</div>)}{incidents.length === 0 && <div className="py-4 text-center text-xs text-slate-400">暂无安全事件</div>}</div>
+          <div className="flex items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><AlertTriangle className="h-4 w-4 text-rose-600" />安全事件响应</div><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">阻断请求只保留元数据证据；处理动作受租户和 Administrator 权限保护。</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{incidentTotal} 条匹配</span></div>
+          <form onSubmit={(event) => { event.preventDefault(); setIncidentPage(1); setIncidentSearchApplied(incidentSearch.trim()); }} className="mt-4 flex flex-wrap gap-2">
+            <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={incidentSearch} onChange={(event) => setIncidentSearch(event.target.value)} placeholder="搜索请求 ID、任务、类型或分类" className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
+            <select value={incidentStatus} onChange={(event) => { setIncidentStatus(event.target.value); setIncidentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">全部状态</option><option value="open">待处理</option><option value="investigating">处理中</option><option value="resolved">已解决</option></select>
+            <select value={incidentSeverity} onChange={(event) => { setIncidentSeverity(event.target.value); setIncidentPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">全部级别</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+            <button type="submit" className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700">搜索</button>
+          </form>
+          <div className="mt-4 space-y-2">{incidentsLoading ? <div className="py-6 text-center text-xs text-slate-400">正在加载安全事件…</div> : incidents.map((incident) => <div key={incident.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 px-3 py-2 text-xs dark:border-slate-800"><span className="font-semibold text-slate-800 dark:text-slate-100">{incident.incident_type}</span><span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{incident.severity}</span><span className="text-slate-500">{incident.created_at}</span><span className="ml-auto text-slate-500">{incident.status}</span>{incident.status !== 'resolved' && <button type="button" onClick={() => void resolveIncident(incident.id)} className="rounded border border-emerald-200 px-2 py-1 font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:text-emerald-300">标记已解决</button>}</div>)}{!incidentsLoading && incidents.length === 0 && <div className="py-4 text-center text-xs text-slate-400">当前筛选没有匹配的安全事件</div>}</div>
+          <Pagination currentPage={incidentPage} totalItems={incidentTotal} itemsPerPage={incidentPageSize} onPageChange={setIncidentPage} onItemsPerPageChange={(size) => { setIncidentPageSize(size); setIncidentPage(1); }} language="zh" alwaysVisible />
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
@@ -457,14 +512,20 @@ export const SecurityPolicyTab: React.FC = () => {
               <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white"><Database className="h-4 w-4 text-cyan-600" />安全事件审计</div>
               <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">仅展示策略版本、分类、处置、Provider/Model 和请求 ID，不返回原始提示词或秘密。</p>
             </div>
-            <div className="flex items-center gap-2"><button type="button" onClick={() => void exportEvents()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">导出元数据</button><button type="button" onClick={() => void load()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">刷新事件</button></div>
+            <div className="flex items-center gap-2"><button type="button" onClick={() => void exportEvents()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">导出元数据</button><button type="button" onClick={() => void loadEvents()} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-cyan-300 dark:border-slate-700 dark:text-slate-300">刷新事件</button></div>
           </div>
+          <form onSubmit={(event) => { event.preventDefault(); setEventPage(1); setEventSearchApplied(eventSearch.trim()); }} className="mt-4 flex flex-wrap gap-2">
+            <div className="relative min-w-[240px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder="搜索 Request ID、Provider、Model 或错误码" className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
+            <select value={eventDecision} onChange={(event) => { setEventDecision(event.target.value); setEventPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">全部决定</option><option value="ALLOW">ALLOW</option><option value="MINIMIZE">MINIMIZE</option><option value="BLOCK">BLOCK</option></select>
+            <button type="submit" className="rounded-xl bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-700">搜索</button>
+          </form>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-left text-xs"><thead className="text-slate-400"><tr><th className="px-2 py-2">时间</th><th className="px-2 py-2">决定</th><th className="px-2 py-2">分类</th><th className="px-2 py-2">Provider / Model</th><th className="px-2 py-2">发现项</th></tr></thead><tbody>
-              {events.map((event) => <tr key={event.id} className="border-t border-slate-100 dark:border-slate-800"><td className="px-2 py-2 whitespace-nowrap text-slate-500">{event.created_at}</td><td className="px-2 py-2 font-semibold">{event.decision}</td><td className="px-2 py-2">{event.classification}</td><td className="px-2 py-2">{event.provider_id || '—'} / {event.model_id || '—'}</td><td className="px-2 py-2">{event.finding_categories?.join('、') || '无'}</td></tr>)}
+              {!eventsLoading && events.map((event) => <tr key={event.id} className="border-t border-slate-100 dark:border-slate-800"><td className="px-2 py-2 whitespace-nowrap text-slate-500">{event.created_at}</td><td className="px-2 py-2 font-semibold">{event.decision}</td><td className="px-2 py-2">{event.classification}</td><td className="px-2 py-2">{event.provider_id || '—'} / {event.model_id || '—'}</td><td className="px-2 py-2">{event.finding_categories?.join('、') || '无'}</td></tr>)}
             </tbody></table>
-            {events.length === 0 && <div className="py-6 text-center text-xs text-slate-400">暂无安全事件</div>}
+            {eventsLoading ? <div className="py-6 text-center text-xs text-slate-400">正在加载审计事件…</div> : events.length === 0 && <div className="py-6 text-center text-xs text-slate-400">当前筛选没有匹配的审计事件</div>}
           </div>
+          <Pagination currentPage={eventPage} totalItems={eventTotal} itemsPerPage={eventPageSize} onPageChange={setEventPage} onItemsPerPageChange={(size) => { setEventPageSize(size); setEventPage(1); }} language="zh" alwaysVisible />
         </section>
 
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
@@ -496,7 +557,7 @@ export const SecurityPolicyTab: React.FC = () => {
               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" />检查结果</div>
               {dryRun ? (
                 <div className="mt-4 space-y-3">
-                  <div className={`rounded-xl border px-3 py-2.5 text-sm font-bold ${decisionClass(dryRun.decision)}`}>
+                  <div role="status" aria-label="策略检查结果" className={`rounded-xl border px-3 py-2.5 text-sm font-bold ${decisionClass(dryRun.decision)}`}>
                     {dryRun.decision} <span className="ml-1 text-xs font-normal opacity-80">/ {dryRun.max_data_level}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs">

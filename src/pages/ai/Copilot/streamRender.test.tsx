@@ -107,4 +107,85 @@ describe('AssistantTab streaming render', () => {
       expect(screen.getByText('接口 GigabitEthernet0/0/1 处于 down 状态')).toBeTruthy();
     });
   });
+
+  it('labels a grounded answer as local with zero model tokens', async () => {
+    primeBackendMocks();
+    apiMocks.chatAssistantStream.mockImplementation(
+      async (
+        _message: string,
+        _history: unknown,
+        onToken: (t: string) => void,
+        onMeta: (meta: Record<string, unknown>) => void,
+        _onProgress: unknown,
+        onDone: (meta: Record<string, unknown>) => void,
+      ) => {
+        onMeta({ execution_mode: 'local_knowledge', external_egress: false, input_tokens: 0, output_tokens: 0 });
+        onToken('本地知识答案');
+        onDone({ execution_mode: 'local_knowledge', external_egress: false, input_tokens: 0, output_tokens: 0, duration_ms: 12 });
+      },
+    );
+
+    const user = userEvent.setup();
+    render(<AssistantTab />);
+    await user.type(screen.getByPlaceholderText('询问 Nexora AI，或输入 / 使用快捷指令...'), 'S5700 OSPF 配置');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(screen.getByText('本地知识直出')).toBeTruthy());
+    expect(screen.getByText('未发生外部调用')).toBeTruthy();
+    expect(screen.getByText('模型 Token：输入 0 / 输出 0')).toBeTruthy();
+  });
+
+  it('labels a real provider answer with its actual DeepSeek route and usage', async () => {
+    primeBackendMocks();
+    apiMocks.getAIProviders.mockResolvedValue([{ id: 'provider-deepseek', name: 'DeepSeek', enabled: true }]);
+    apiMocks.getAIModels.mockResolvedValue([{
+      id: 'model-deepseek-chat',
+      provider_id: 'provider-deepseek',
+      name: 'DeepSeek Chat',
+      model_code: 'deepseek-chat',
+      model_type: 'chat',
+      enabled: true,
+    }]);
+    apiMocks.chatAssistantStream.mockImplementation(
+      async (
+        _message: string,
+        _history: unknown,
+        onToken: (t: string) => void,
+        onMeta: (meta: Record<string, unknown>) => void,
+        _onProgress: unknown,
+        onDone: (meta: Record<string, unknown>) => void,
+      ) => {
+        onToken('云端回答');
+        onMeta({
+          execution_mode: 'provider_generated',
+          external_egress: true,
+          model_id: 'model-deepseek-chat',
+          provider_id: 'provider-deepseek',
+          input_tokens: 18,
+          output_tokens: 7,
+          token_source: 'provider_reported',
+        });
+        onDone({
+          execution_mode: 'provider_generated',
+          external_egress: true,
+          model_id: 'model-deepseek-chat',
+          provider_id: 'provider-deepseek',
+          input_tokens: 18,
+          output_tokens: 7,
+          token_source: 'provider_reported',
+          duration_ms: 42,
+        });
+      },
+    );
+
+    const user = userEvent.setup();
+    render(<AssistantTab />);
+    await user.type(screen.getByPlaceholderText('询问 Nexora AI，或输入 / 使用快捷指令...'), '你是谁');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(screen.getByText('DeepSeek 生成')).toBeTruthy());
+    expect(screen.getByText('已通过安全网关调用外部模型')).toBeTruthy();
+    expect(screen.getByText('实际模型：DeepSeek · deepseek-chat')).toBeTruthy();
+    expect(screen.getByText('实际 Token：输入 18 / 输出 7')).toBeTruthy();
+  });
 });

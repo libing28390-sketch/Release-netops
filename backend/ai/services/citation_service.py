@@ -86,7 +86,7 @@ def citation_from_chunk(item: Mapping[str, Any]) -> Citation:
         warnings.append("section_missing")
     if metadata.get("knowledge_stale") or metadata.get("stale"):
         warnings.append("knowledge_stale")
-    if status.lower() != "published" and source_type.startswith("official"):
+    if status.lower() not in {"published", "active"} and source_type.startswith("official"):
         warnings.append("official_source_not_published")
     validation = "pending"
     if status.lower() in {"disabled", "quarantined", "deleted", "archived"}:

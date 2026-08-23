@@ -66,6 +66,28 @@ def test_ing002_fetches_one_reviewed_url_and_stops_at_fetched_continuation(isola
     assert result["source"]["validation_status"] == "valid"
 
 
+def test_ing002_explicit_publish_completes_local_projection(isolated_db, make_user):
+    user = make_user("ing002-publisher", role="Operator")
+    body = b"OSPF configuration guide\nrouter ospf 1\n network 192.0.2.0 0.0.0.255 area 0"
+    result = import_single_official_url(
+        user,
+        _payload(idempotency_key="ing002-publish", publish_to_knowledge_base=True),
+        transport=_transport(lambda request: httpx.Response(200, headers={"content-type": "text/plain"}, content=body, request=request)),
+        resolver=_public,
+    )
+    assert result["success"] is True
+    assert result["published"] is True
+    assert result["continuation_required"] is False
+    assert result["job"]["phase"] == "completed"
+    assert result["job"]["execution_state"] == "succeeded"
+    assert result["publication"]["chunk_count"] >= 1
+    with isolated_db["module"].get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT source, knowledge_source_type, status FROM ai_document WHERE knowledge_source_type = 'official_url'"
+        ).fetchone()
+    assert row and row[0] == OFFICIAL_URL and row[1] == "official_url" and row[2] == "active"
+
+
 def test_ing002_same_idempotency_replays_version_without_second_fetch(isolated_db, make_user):
     user = make_user("ing002-replay", role="Operator")
     calls = []

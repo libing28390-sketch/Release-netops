@@ -648,7 +648,7 @@ const OutboundHealthPage: React.FC = () => {
       <div className="p-4 md:p-6">
         {view === 'overview' && <OutboundOverviewSummary data={outboundHealth} loading={outboundLoading} language={language} onRefresh={() => fetchOutboundHealth(undefined, outboundHistoryHours)} onOpenAvailability={() => setView('availability')} />}
         {view === 'links' && <WanLinkPanel />}
-        {view === 'alerts' && <WanAlertEventsPanel />}
+        {view === 'alerts' && <WanAlertEventsPanel onOpenEvent={(event) => { setView('links'); window.setTimeout(() => window.dispatchEvent(new CustomEvent('wan:focus-link', { detail: { linkId: event.link_id, startedAt: event.started_at } })), 0); }} />}
          {view === 'analysis' && <><WanCorrelationCockpit /><WanCorrelationEvidencePanel /><WanCapacityReviewPanel /></>}
          {view === 'operations' && <><WanOperationsPanel /><WanMaintenanceEditPanel /></>}
         {view === 'availability' && <>

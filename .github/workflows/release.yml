@@ -59,11 +59,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py NexoraTerminalAgent.exe data/textfsm_templates nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py NexoraTerminalAgent.exe data/textfsm_templates nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
           for path in "${required[@]}"; do
             test -e "$path" || { echo "[FAIL] Missing release input: $path"; exit 1; }
           done
-          npm ci --ignore-scripts
+          npm ci --include=dev --ignore-scripts
           npm run build
           python -m compileall -q backend
 
@@ -147,7 +147,7 @@ jobs:
           git init
           git add .
 
-          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json backend/requirements.txt backend/main.py NexoraTerminalAgent.exe nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
+          required=(Dockerfile docker-compose.yml .dockerignore .env.example package.json package-lock.json deploy-ubuntu.sh backend/requirements.txt backend/main.py NexoraTerminalAgent.exe nginx/Dockerfile nginx/.dockerignore nginx/nginx.conf nginx/docker-entrypoint.d/05-ensure-tls-certificate.sh scripts/deploy-docker.sh scripts/terminal_agent.py scripts/install-terminal-agent.sh scripts/install-terminal-agent.ps1 scripts/sync-frontend-dist.sh src)
           for path in "${required[@]}"; do
             test -n "$(git ls-files -- "$path" | head -n 1)" || { echo "[FAIL] Required release path missing: $path"; exit 1; }
           done

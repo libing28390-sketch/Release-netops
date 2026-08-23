@@ -25,9 +25,9 @@ from ai.services.knowledge_metadata import (
     MetadataValidationError,
     merge_metadata,
     metadata_columns,
-    parse_markdown_document,
     validate_metadata,
 )
+from ai.services.knowledge_source_parser import KnowledgeSourceParseError, parse_knowledge_source
 
 
 _TOKEN_VERSION = "metadata-preview-v1"
@@ -134,7 +134,7 @@ def _normalized_inputs(
     if not raw_content.strip():
         raise MetadataConfirmationError("METADATA_CONTENT_EMPTY", "Document content cannot be empty", status_code=400)
     try:
-        parsed = parse_markdown_document(raw_content)
+        parsed = parse_knowledge_source(raw_content, filename=name)
         directory_path = source_metadata.get("knowledge_directory_path") or source_metadata.get("source_relative_path")
         frontmatter = validate_metadata(
             parsed.metadata,
@@ -142,6 +142,13 @@ def _normalized_inputs(
             name=name,
             allow_missing_required=parsed.metadata_parse_status == "missing",
         )
+    except KnowledgeSourceParseError as exc:
+        raise MetadataConfirmationError(
+            "METADATA_SOURCE_PARSE_INVALID",
+            exc.message,
+            status_code=422,
+            details=exc.details,
+        ) from exc
     except MetadataParseError as exc:
         raise MetadataConfirmationError("METADATA_PARSE_INVALID", "Metadata Front Matter could not be parsed", status_code=422) from exc
     except MetadataValidationError as exc:
@@ -154,6 +161,7 @@ def _normalized_inputs(
 
     merged = merge_metadata(frontmatter, source_metadata)
     warnings: list[str] = []
+    warnings.extend(str(item) for item in parsed.warnings if str(item).strip())
     if parsed.metadata_parse_status == "missing":
         warnings.append("metadata_front_matter_missing_legacy_path")
         if vendor and str(vendor).strip().lower() != "all":
@@ -172,6 +180,10 @@ def _normalized_inputs(
         "source_trust_level": str(source_trust_level or "internal"),
         "chunk_size": int(chunk_size),
         "metadata_parse_status": parsed.metadata_parse_status,
+        "format": parsed.format,
+        "parser_name": parsed.parser_name,
+        "parser_version": parsed.parser_version,
+        "parse_warnings": list(parsed.warnings),
         "metadata": _safe_metadata(merged),
         "metadata_columns": _safe_metadata(metadata_columns(merged)),
         "content_sha256": hashlib.sha256(raw_content.encode("utf-8")).hexdigest(),

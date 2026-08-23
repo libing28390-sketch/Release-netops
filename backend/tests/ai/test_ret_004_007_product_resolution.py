@@ -32,3 +32,11 @@ def test_normalizer_and_resolver_preserve_unknown_product_as_unknown():
     assert resolution.match_method == "none"
     assert resolution.metadata.get("product_series") is None
     assert resolution.metadata.get("product_model") is None
+
+
+def test_full_huawei_sku_alias_remains_matchable_to_hardware_registry():
+    resolution = product_resolver.resolve_query("Huawei CE6885-48YS8CQ 型号")
+
+    assert resolution.match_method == "canonical"
+    assert resolution.metadata["product_series"] == "CloudEngine 6800"
+    assert resolution.metadata["product_model"] == "ce6885-48ys8cq"

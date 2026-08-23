@@ -35,7 +35,7 @@ import {
   Pencil,
   Info,
 } from 'lucide-react';
-import { getKnowledgeStats, getKnowledgeDocuments, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, previewKnowledgeDocumentMetadata, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison, type KnowledgeMetadataPreview } from '../../../api/ai';
+import { getKnowledgeStats, getKnowledgeDocuments, exportKnowledgeDocuments, importKnowledgeBundle, getKnowledgeDocument, getKnowledgeDocumentFacets, getKnowledgeAssetOptions, getKnowledgeDirectories, createKnowledgeDirectory, renameKnowledgeDirectory, deleteKnowledgeDirectory, addKnowledgeDocument, importKnowledgeOfficialUrl, importKnowledgeEnterpriseSop, importKnowledgeEnterpriseSopBatch, previewKnowledgeDocumentMetadata, clearSampleKnowledge, getKnowledgeDocumentActionImpact, deleteKnowledgeDocument, disableKnowledgeDocument, enableKnowledgeDocument, reparseKnowledgeDocument, rechunkKnowledgeDocument, reindexKnowledgeDocument, batchDeleteKnowledgeDocuments, compareKnowledgeDocumentVersions, publishKnowledgeDocumentVersion, supersedeKnowledgeDocumentVersion, rollbackKnowledgeDocumentVersion, type KnowledgeAssetOptionsResponse, type KnowledgeDirectoryNode, type KnowledgeDocument, type KnowledgeDocumentDetail, type KnowledgeDocumentFacets, type KnowledgeDocumentAction, type KnowledgeDocumentActionImpact, type KnowledgeDocumentVersionComparison, type KnowledgeMetadataPreview } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
 import { VENDOR_PLATFORMS } from '../../AssetManagement/constants';
 import SourceRegistryPanel from './SourceRegistryPanel';
@@ -77,6 +77,7 @@ interface FileQueueItem {
   directoryVendor?: string;
   directoryPath?: string;
   metadata?: Partial<QueueMetadataPreview>;
+  binaryFile?: File;
 }
 
 /* ── Supported text extensions ── */
@@ -412,6 +413,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [searchInput, setSearchInput] = useState('');
@@ -438,6 +440,7 @@ export const KnowledgeManagementTab: React.FC = () => {
   const [officialVendor, setOfficialVendor] = useState('Huawei');
   const [officialFamily, setOfficialFamily] = useState('');
   const [officialVersion, setOfficialVersion] = useState('');
+  const [officialCompatibilityVersion, setOfficialCompatibilityVersion] = useState('');
   const [officialName, setOfficialName] = useState('');
   const [officialTerms, setOfficialTerms] = useState('pending');
   const [enterpriseSopFile, setEnterpriseSopFile] = useState<File | null>(null);
@@ -468,6 +471,7 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   // Multi-file queue
   const [fileQueue, setFileQueue] = useState<FileQueueItem[]>([]);
+  const [bundleFiles, setBundleFiles] = useState<File[]>([]);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
   const [assetOptions, setAssetOptions] = useState<KnowledgeAssetOptionsResponse>({
@@ -517,6 +521,11 @@ export const KnowledgeManagementTab: React.FC = () => {
   const directoryVendorOptions = useMemo(
     () => assetOptions.vendors.filter((item) => Boolean(getKnowledgeDirectoryVendor(item.value))),
     [assetOptions.vendors],
+  );
+
+  const knowledgeVendorOptions = useMemo(
+    () => (documentFacets?.vendors || []).filter((item) => item.value && item.value !== 'UNKNOWN'),
+    [documentFacets?.vendors],
   );
 
   const fetchStatsAndDocs = useCallback(async () => {
@@ -573,6 +582,42 @@ export const KnowledgeManagementTab: React.FC = () => {
   useEffect(() => () => {
     documentsAbortRef.current?.abort();
   }, []);
+
+  const handleKnowledgeExport = useCallback(async () => {
+    if (exporting) return;
+    setExporting(true);
+    setDocumentActionNotice('');
+    try {
+      const exported = await exportKnowledgeDocuments({
+        sourceType: selectedFolder === 'all' ? undefined : selectedFolder,
+        knowledgeScope,
+        directoryPath: selectedDirectoryPath || undefined,
+        search: searchQuery,
+        vendor: semanticFilters.vendor,
+        productFamily: semanticFilters.productFamily,
+        productSeries: semanticFilters.productSeries,
+        productModel: semanticFilters.productModel,
+        osFamily: semanticFilters.osFamily,
+        softwareRelease: semanticFilters.softwareRelease,
+        documentCategory: semanticFilters.documentCategory,
+        featureDomain: semanticFilters.featureDomain,
+        status: semanticFilters.status,
+      });
+      const url = URL.createObjectURL(exported.blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = exported.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setDocumentActionNotice(`已导出 ${exported.documentCount} 篇文档（${formatFileSize(exported.contentBytes)}）。ZIP 内含 Markdown 与 manifest，导入时会重新切片和生成向量。`);
+    } catch (error: any) {
+      setDocumentActionNotice(error?.message || '知识库导出失败');
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting, knowledgeScope, searchQuery, selectedDirectoryPath, selectedFolder, semanticFilters]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -651,11 +696,41 @@ export const KnowledgeManagementTab: React.FC = () => {
     const zip = await JSZip.loadAsync(file);
     const items: FileQueueItem[] = [];
 
+    // Validate Nexora's control-plane manifest before accepting the bundle.
+    // Generic ZIPs without this manifest remain supported, but a malformed
+    // Nexora export must fail closed instead of importing a partial corpus.
+    const manifestEntry = Object.entries(zip.files).find(([path, entry]) => (
+      !entry.dir && path.split('/').pop()?.toLowerCase() === 'manifest.json'
+    ));
+    let manifest: any = null;
+    if (manifestEntry) {
+      try {
+        manifest = JSON.parse(await manifestEntry[1].async('string'));
+      } catch {
+        throw new Error('知识库导出包的 manifest.json 无法解析');
+      }
+      if (String(manifest?.schema_version || '').startsWith('knowledge-export-')) {
+        if (manifest?.embeddings_exported === true || manifest?.reindex_required_on_import !== true) {
+          throw new Error('知识库导出包缺少可移植的重建索引标记');
+        }
+        if (!Array.isArray(manifest?.documents)) {
+          throw new Error('知识库导出包缺少 documents 清单');
+        }
+      }
+    }
+
     for (const [relativePath, zipEntry] of Object.entries(zip.files)) {
       if (zipEntry.dir) continue;
       // skip hidden/system files
       const segments = relativePath.split('/');
+      if (segments.some(s => s === '..') || relativePath.startsWith('/')) {
+        throw new Error('ZIP 中包含不安全的目录路径');
+      }
       if (segments.some(s => s.startsWith('.'))) continue;
+      // A Nexora export ZIP carries a control-plane manifest alongside the
+      // Markdown sources.  The manifest is not knowledge content and must not
+      // become an accidental RAG document on round-trip import.
+      if (segments[segments.length - 1].toLowerCase() === 'manifest.json') continue;
 
       const ext = getFileExtension(relativePath);
       if (!TEXT_EXTENSIONS.includes(ext)) continue;
@@ -682,6 +757,12 @@ export const KnowledgeManagementTab: React.FC = () => {
         // skip binary/corrupted entries silently
       }
     }
+    if (manifest && String(manifest?.schema_version || '').startsWith('knowledge-export-')) {
+      const expected = Number(manifest.document_count || 0);
+      if (Number.isFinite(expected) && expected !== items.length) {
+        throw new Error(`知识库导出包文档数量不一致：清单 ${expected}，可导入 ${items.length}`);
+      }
+    }
     return items;
   };
 
@@ -693,7 +774,10 @@ export const KnowledgeManagementTab: React.FC = () => {
       const ext = getFileExtension(file.name);
 
       if (ext === '.zip') {
-        // Extract ZIP client-side
+        // Keep the original bundle for the server-side atomic import.  The
+        // client extraction remains a preview only; it must not perform a
+        // document-by-document commit on the normal knowledge upload path.
+        setBundleFiles((current) => [...current, file]);
         try {
           const zipItems = await extractZipFiles(file);
           if (zipItems.length === 0) {
@@ -709,14 +793,14 @@ export const KnowledgeManagementTab: React.FC = () => {
           } else {
             newItems.push(...zipItems);
           }
-        } catch {
+        } catch (error: any) {
           newItems.push({
             id: `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
             fileName: file.name,
             fileSize: file.size,
             content: '',
             status: 'error',
-            error: 'ZIP 解压失败，文件可能已损坏',
+            error: error?.message || 'ZIP 解压失败，文件可能已损坏',
           });
         }
       } else if (TEXT_EXTENSIONS.includes(ext)) {
@@ -739,14 +823,25 @@ export const KnowledgeManagementTab: React.FC = () => {
             error: '文件读取失败',
           });
         }
-      } else {
-        // Binary .docx/.pdf – placeholder
+      } else if (ext === '.pdf' || ext === '.docx') {
+        // Binary files remain opaque in the browser and are submitted to the
+        // governed server-side parser as a batch job.
         newItems.push({
           id: `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
           fileName: file.name,
           fileSize: file.size,
-          content: `[已导入二进制文件: ${file.name}]\n系统自动提取文档文本与结构索引并转换为 Standard Markdown...`,
+          content: '',
           status: 'pending',
+          binaryFile: file,
+        });
+      } else {
+        newItems.push({
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+          fileName: file.name,
+          fileSize: file.size,
+          content: '',
+          status: 'error',
+          error: `不支持的文件格式：${ext || '无扩展名'}`,
         });
       }
     }
@@ -777,6 +872,7 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   const clearQueue = () => {
     setFileQueue([]);
+    setBundleFiles([]);
   };
 
   const handleQuickUploadInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -813,6 +909,7 @@ export const KnowledgeManagementTab: React.FC = () => {
     setKnowledgeDirectory(node.path);
     setSelectedDirectoryPath(node.path);
     setFileQueue([]);
+    setBundleFiles([]);
     setBatchProgress({ done: 0, total: 0 });
     // This input is always mounted, so the directory action opens the native
     // picker directly. There is deliberately no second upload modal.
@@ -874,8 +971,8 @@ export const KnowledgeManagementTab: React.FC = () => {
       setIngestionError('官方来源必须使用 HTTPS URL，并由 Source Registry 做域名与重定向校验。');
       return;
     }
-    if (!officialFamily.trim() || !officialVersion.trim() || officialTerms !== 'approved') {
-      setIngestionError('请填写 Product Family、版本范围，并确认官方条款已审核。');
+    if (!officialFamily.trim() || !officialVersion.trim() || !officialCompatibilityVersion.trim() || officialTerms !== 'approved') {
+      setIngestionError('请填写 Product Family、主版本、兼容版本，并确认官方条款已审核。');
       return;
     }
     setIngestionSubmitting(true);
@@ -885,14 +982,16 @@ export const KnowledgeManagementTab: React.FC = () => {
         source_kind: 'product_page',
         vendor: officialVendor,
         product_family: officialFamily.trim(),
-        version_scope: { primary: officialVersion.trim() },
+        version_scope: { primary: officialVersion.trim(), compatibility: officialCompatibilityVersion.trim() },
         terms_review_status: 'approved',
+        publish_to_knowledge_base: true,
         name: officialName.trim(),
       });
       setIngestionMessage('官方来源导入任务已提交，后续状态由 Ingestion Job 管理。');
       setOfficialUrl('');
       setOfficialFamily('');
       setOfficialVersion('');
+      setOfficialCompatibilityVersion('');
       await fetchStatsAndDocs();
     } catch (error: any) {
       setIngestionError(error?.message || '官方来源导入失败');
@@ -1093,6 +1192,7 @@ export const KnowledgeManagementTab: React.FC = () => {
 
     setDirectUploading(false);
     setFileQueue([]);
+    setBundleFiles([]);
     await fetchStatsAndDocs();
     if (failures.length > 0) {
       setDirectUploadStatus({
@@ -1161,7 +1261,7 @@ export const KnowledgeManagementTab: React.FC = () => {
     const visibleRows = previews.slice(0, 8).map(({ candidate, preview }) => {
       const normalized = preview.normalized;
       const warning = preview.warnings.length > 0 ? `；提示 ${preview.warnings.length} 项` : '';
-      return `${candidate.label}: Vendor=${normalized.vendor || 'UNKNOWN'} / Platform=${normalized.platform || 'UNKNOWN'} / 状态=${normalized.metadata_parse_status}${warning}`;
+      return `${candidate.label}: 格式=${normalized.format || 'markdown'} / Parser=${normalized.parser_name || 'legacy'} / Vendor=${normalized.vendor || 'UNKNOWN'} / Platform=${normalized.platform || 'UNKNOWN'} / 状态=${normalized.metadata_parse_status}${warning}`;
     });
     const remainder = previews.length > visibleRows.length ? `\n其余 ${previews.length - visibleRows.length} 个文件已在同一服务端预览中校验。` : '';
     const confirmed = window.confirm(
@@ -1173,6 +1273,63 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   /* ── Batch submit all pending files ── */
   const handleBatchSubmit = async () => {
+    if (bundleFiles.length > 0) {
+      if (bundleFiles.length !== 1) {
+        window.alert('一次只能原子导入一个 Nexora 导出 ZIP；请先清空队列后再选择。');
+        return;
+      }
+      const bundle = bundleFiles[0];
+      setBatchSubmitting(true);
+      setBatchProgress({ done: 0, total: 1 });
+      try {
+        const result = await importKnowledgeBundle(bundle);
+        const imported = Number(result?.data?.document_count || 0);
+        setFileQueue((items) => items.map((item) => (
+          item.fromZip === bundle.name ? { ...item, status: 'done' as FileQueueStatus, error: undefined } : item
+        )));
+        setBatchProgress({ done: 1, total: 1 });
+        setDocumentActionNotice(`已原子导入 ${imported} 篇文档；目标主机将重新切片和生成向量，官方来源声明已降级为待复核。`);
+        setBundleFiles([]);
+        await fetchStatsAndDocs();
+      } catch (error: any) {
+        setFileQueue((items) => items.map((item) => (
+          item.fromZip === bundle.name ? { ...item, status: 'error' as FileQueueStatus, error: error?.message || 'ZIP 原子导入失败，已回滚' } : item
+        )));
+      } finally {
+        setBatchSubmitting(false);
+      }
+      return;
+    }
+    const binaryItems = fileQueue.filter((item) => item.status === 'pending' && item.binaryFile);
+    if (binaryItems.length > 0) {
+      const textPending = fileQueue.some((item) => item.status === 'pending' && item.content.trim());
+      if (textPending) {
+        window.alert('PDF/DOCX 与文本文件请分批提交，以便清楚展示每个服务端解析任务的状态。');
+        return;
+      }
+      setBatchSubmitting(true);
+      setBatchProgress({ done: 0, total: binaryItems.length });
+      setFileQueue((items) => items.map((item) => item.binaryFile && item.status === 'pending' ? { ...item, status: 'indexing' } : item));
+      try {
+        const result = await importKnowledgeEnterpriseSopBatch(binaryItems.map((item) => item.binaryFile as File));
+        const byName = new Map(result.data.items.map((item) => [item.filename, item]));
+        setFileQueue((items) => items.map((item) => {
+          if (!item.binaryFile) return item;
+          const outcome = byName.get(item.fileName);
+          if (!outcome) return { ...item, status: 'error', error: '服务端未返回该文件的任务状态' };
+          return outcome.success
+            ? { ...item, status: 'done', error: outcome.status === 'queued' ? '已创建解析任务，可在“采集任务”查看进度' : undefined }
+            : { ...item, status: 'error', error: outcome.error?.message || '服务端解析任务创建失败' };
+        }));
+        setBatchProgress({ done: result.data.total, total: result.data.total });
+        setDocumentActionNotice(`批量任务已受理 ${result.data.accepted}/${result.data.total} 个文件；采用文件级提交，失败文件不会污染成功文件。`);
+      } catch (error: any) {
+        setFileQueue((items) => items.map((item) => item.binaryFile && item.status === 'indexing' ? { ...item, status: 'error', error: error?.message || '批量解析任务创建失败' } : item));
+      } finally {
+        setBatchSubmitting(false);
+      }
+      return;
+    }
     const pendingItems = fileQueue.filter(item => item.status === 'pending' && item.content.trim());
     if (pendingItems.length === 0) return;
     if (!ensureAssetMetadataSelection()) return;
@@ -1314,6 +1471,9 @@ export const KnowledgeManagementTab: React.FC = () => {
 
   const sourceBadges: Record<string, { label: string; bg: string; color: string }> = {
     official_vendor: { label: '厂商官方资料', bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
+    official_url: { label: '官方 URL / 产品目录', bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
+    official_local: { label: '官方本地文件', bg: 'bg-blue-50 dark:bg-blue-950/60', color: 'text-blue-600 dark:text-blue-400' },
+    official_template: { label: '官方配置模板', bg: 'bg-cyan-50 dark:bg-cyan-950/60', color: 'text-cyan-600 dark:text-cyan-400' },
     internal_sop: { label: '企业内部 SOP', bg: 'bg-emerald-50 dark:bg-emerald-950/60', color: 'text-emerald-600 dark:text-emerald-400' },
     internal_standard: { label: '企业规范标准', bg: 'bg-indigo-50 dark:bg-indigo-950/60', color: 'text-indigo-600 dark:text-indigo-400' },
     case: { label: '故障排查案例', bg: 'bg-amber-50 dark:bg-amber-950/60', color: 'text-amber-600 dark:text-amber-400' },
@@ -1609,8 +1769,14 @@ export const KnowledgeManagementTab: React.FC = () => {
             企业网络知识库中心 (RAG Data Engine)
           </h2>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-            支持目录分类、多文件批量上传 (Markdown / HTML / PDF / DOCX / TXT / ZIP 压缩包) 与 Standard Markdown 解析。
+            支持目录分类、多文件批量上传 (Markdown / HTML / PDF / DOCX / TXT / ZIP 压缩包) 与统一服务端解析。
           </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
+            <span className="inline-flex items-center gap-1"><Info className="h-3 w-3 text-indigo-500" />自定义文档推荐 UTF-8 Markdown + Front Matter；JSON/YAML 使用 Nexora envelope。</span>
+            <a href="/downloads/nexora-knowledge-document-template.md" download="nexora-knowledge-document-template.md" className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-300"><FileText className="h-3 w-3" />Markdown 模板</a>
+            <a href="/downloads/nexora-knowledge-document-template.json" download="nexora-knowledge-document-template.json" className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-300"><FileCode className="h-3 w-3" />JSON 模板</a>
+            <a href="/downloads/nexora-knowledge-import-format.md" download="nexora-knowledge-import-format.md" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"><HelpCircle className="h-3 w-3" />格式说明</a>
+          </div>
         </div>
         <button type="button" onClick={() => { setShowModal(true); setInputMode('upload'); setIngestionError(''); }} className="hidden items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 sm:inline-flex">
           <UploadCloud className="h-3.5 w-3.5" />批量上传企业文件
@@ -1639,6 +1805,7 @@ export const KnowledgeManagementTab: React.FC = () => {
             <label className="text-[11px] text-slate-600 dark:text-slate-300">Vendor<select value={officialVendor} onChange={(event) => setOfficialVendor(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option>Huawei</option><option>Cisco</option><option>H3C</option><option>Ruijie</option></select></label>
             <label className="text-[11px] text-slate-600 dark:text-slate-300">Product Family<input value={officialFamily} onChange={(event) => setOfficialFamily(event.target.value)} placeholder="CloudEngine / Catalyst" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
             <label className="text-[11px] text-slate-600 dark:text-slate-300">版本范围<input value={officialVersion} onChange={(event) => setOfficialVersion(event.target.value)} placeholder="V800R022 / IOS XE 17.9" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300">兼容版本<input value={officialCompatibilityVersion} onChange={(event) => setOfficialCompatibilityVersion(event.target.value)} placeholder="兼容版本或系列" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
             <label className="text-[11px] text-slate-600 dark:text-slate-300">名称（可选）<input value={officialName} onChange={(event) => setOfficialName(event.target.value)} placeholder="官方产品页" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></label>
             <label className="text-[11px] text-slate-600 dark:text-slate-300">条款审核<select value={officialTerms} onChange={(event) => setOfficialTerms(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"><option value="pending">未审核</option><option value="approved">已审核并同意</option></select></label>
             <div className="flex items-end"><button type="submit" disabled={ingestionSubmitting} className="w-full rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{ingestionSubmitting ? '提交中…' : '提交官方导入任务'}</button></div>
@@ -1646,7 +1813,7 @@ export const KnowledgeManagementTab: React.FC = () => {
         )}
         {ingestionMode === 'enterprise_sop' && (
           <form onSubmit={handleEnterpriseSopImport} className="mt-4 grid gap-3 border-t border-emerald-100 pt-4 dark:border-emerald-900/50 md:grid-cols-2 xl:grid-cols-4">
-            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2">企业 SOP 文件（≤20 MB）<input type="file" accept=".md,.markdown,.txt,.html,.htm,.docx,.pdf,.yaml,.yml" onChange={(event) => setEnterpriseSopFile(event.target.files?.[0] || null)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
+            <label className="text-[11px] text-slate-600 dark:text-slate-300 md:col-span-2">企业 SOP 文件（≤20 MB）<input type="file" accept=".md,.markdown,.txt,.log,.html,.htm,.docx,.pdf,.json,.yaml,.yml,.csv,.xml,.conf,.cfg,.ini" onChange={(event) => setEnterpriseSopFile(event.target.files?.[0] || null)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
             <label className="text-[11px] text-slate-600 dark:text-slate-300">标题<input value={enterpriseTitle} onChange={(event) => setEnterpriseTitle(event.target.value)} placeholder="变更 SOP" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
             <label className="text-[11px] text-slate-600 dark:text-slate-300">负责人<input value={enterpriseOwner} onChange={(event) => setEnterpriseOwner(event.target.value)} placeholder="姓名或工号" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
             <label className="text-[11px] text-slate-600 dark:text-slate-300">所属部门<input value={enterpriseDepartment} onChange={(event) => setEnterpriseDepartment(event.target.value)} placeholder="网络运维部" className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white" required /></label>
@@ -1734,6 +1901,16 @@ export const KnowledgeManagementTab: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void handleKnowledgeExport()}
+                disabled={exporting || loading || permissionDenied || totalDocuments === 0}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-xs transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-900 dark:bg-indigo-950/30 dark:text-indigo-200"
+                title="导出当前筛选范围的知识文档与元数据"
+              >
+                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PackageOpen className="h-3.5 w-3.5" />}
+                {exporting ? '导出中…' : '导出当前筛选'}
+              </button>
               {selectedDocIds.size > 0 && (
                 <button
                   onClick={handleBatchDelete}
@@ -1819,7 +1996,7 @@ export const KnowledgeManagementTab: React.FC = () => {
                 aria-label="按厂商筛选"
               >
                 <option value="">全部厂商</option>
-                {assetOptions.vendors.map((item) => <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value)}</option>)}
+                {knowledgeVendorOptions.map((item) => <option key={item.value} value={item.value}>{getVendorDisplayLabel(item.value)}</option>)}
               </select>
               <input
                 value={semanticFilters.productFamily}
@@ -2350,13 +2527,19 @@ export const KnowledgeManagementTab: React.FC = () => {
                     </div>
                     <div className="text-[11px] text-gray-400 space-y-0.5">
                       <div>
-                        文本格式：<strong>.md / .html / .txt / .json / .yaml / .csv / .xml / .conf</strong>
+                        文本格式：<strong>.md / .html / .txt / .json / .yaml / .csv / .xml / .conf / .cfg / .ini / .log</strong>（服务端按扩展名校验并规范化）
                       </div>
                       <div>
-                        压缩包：<strong className="text-amber-500">.zip</strong> (自动解压提取全部文本文件)
+                        自定义文档：<strong>.md</strong> 使用 Front Matter；<strong>.json / .yaml</strong> 可使用 <strong>nexora-knowledge-document</strong> 的 metadata + content envelope；缺少 envelope 的结构化文件按正文处理，不会猜测型号。
                       </div>
                       <div>
-                        二进制：<strong>.docx / .pdf</strong> (预留)
+                        压缩包：<strong className="text-amber-500">.zip</strong>（Nexora 导出包走服务端原子回导；普通 ZIP 仅解压预览并按文件解析）
+                      </div>
+                      <div>
+                        二进制：<strong>.docx / .pdf</strong>（请使用“上传企业 SOP”入口，由服务端解析；解析失败不会入库）
+                      </div>
+                      <div className="pt-1 text-indigo-500 dark:text-indigo-300">
+                        Nexora 导出 ZIP 可直接回导：服务端会先完整校验 manifest、路径、大小与 SHA-256，确认后用一个事务原子写入；任一文件失败全部回滚。目标机重新切片和生成向量，不复制旧主机 Embedding，官方来源声明会降级为“待复核”。
                       </div>
                     </div>
                   </div>

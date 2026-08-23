@@ -30,6 +30,14 @@ class AIProviderBase(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=32)
     data_region: str = Field("unknown", max_length=64)
     allowed_data_classification: str = Field("PUBLIC", pattern="^(PUBLIC|INTERNAL|CONFIDENTIAL)$")
+    # Enterprise cloud egress evidence.  These remain false/empty until an
+    # administrator verifies the supplier agreement; the gateway fails closed
+    # for INTERNAL data when the evidence is incomplete.
+    no_training_confirmed: bool = False
+    retention_days: Optional[int] = Field(None, ge=0, le=3650)
+    data_processing_agreement_ref: Optional[str] = Field(None, max_length=256)
+    agreement_reviewed_at: Optional[str] = Field(None, max_length=64)
+    approved_endpoint_patterns: list[str] = Field(default_factory=list, max_length=32)
 
 
 class AIProviderCreate(AIProviderBase):
@@ -64,6 +72,11 @@ class AIProviderUpdate(BaseModel):
     tags: Optional[list[str]] = Field(None, max_length=32)
     data_region: Optional[str] = Field(None, max_length=64)
     allowed_data_classification: Optional[str] = Field(None, pattern="^(PUBLIC|INTERNAL|CONFIDENTIAL)$")
+    no_training_confirmed: Optional[bool] = None
+    retention_days: Optional[int] = Field(None, ge=0, le=3650)
+    data_processing_agreement_ref: Optional[str] = Field(None, max_length=256)
+    agreement_reviewed_at: Optional[str] = Field(None, max_length=64)
+    approved_endpoint_patterns: Optional[list[str]] = Field(None, max_length=32)
 
     @field_validator('provider_type')
     @classmethod

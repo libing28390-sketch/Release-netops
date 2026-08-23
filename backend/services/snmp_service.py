@@ -2813,6 +2813,27 @@ async def collect_interface_data_detailed(
         status = 'auth_failed' if any(token in message for token in ('authentication', 'authorization', 'community')) else 'timeout' if 'timeout' in message else 'device_unreachable'
         return {'status': status, 'items': [], 'error_code': status, 'error_message': type(exc).__name__}
     if result:
+        # A non-empty IF-MIB response is not automatically a complete poll:
+        # restricted SNMP views often return identity rows while omitting
+        # oper-status or one side of the octet counter pair.  Treat the walk
+        # as partial unless every returned physical interface has the minimum
+        # status + paired counter evidence required by WAN rate calculation.
+        complete_items = [
+            item for item in result
+            if str(item.get('status') or '').lower() in {'up', 'down'}
+            and item.get('counter_width') in {32, 64}
+            and item.get('in_octets') is not None
+            and item.get('out_octets') is not None
+        ]
+        if len(complete_items) != len(result):
+            return {
+                'status': 'partial',
+                'items': result,
+                'error_code': 'partial_data',
+                'error_message': 'SNMP IF-MIB walk returned incomplete interface evidence',
+                'complete_items': len(complete_items),
+                'total_items': len(result),
+            }
         return {'status': 'success', 'items': result, 'error_code': '', 'error_message': ''}
     # The underlying best-effort walker suppresses transport details. A
     # failed/empty walk is therefore recorded as timeout-like evidence rather

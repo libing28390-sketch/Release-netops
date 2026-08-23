@@ -26,6 +26,19 @@ def test_missing_scope_is_structured_follow_up_not_model_guess():
     assert contract["recognized"]["vendor"] is None
 
 
+def test_inventory_consultation_does_not_require_diagnostic_scope():
+    contract = build_copilot_contract(
+        intent="device_search",
+        message="我们现在有多少台设备",
+        context={},
+        citations=[{"source_type": "cmdb_system", "document": "devices"}, {"source_type": "cmdb_system", "document": "devices"}],
+    )
+    assert contract["required_evidence"] == []
+    assert contract["next_checks"] == []
+    assert contract["confidence"] == 0.95
+    assert contract["source_labels"] == ["realtime_device"]
+
+
 def test_context_budget_is_explainable_and_trace_has_no_raw_prompt():
     contract = build_copilot_contract(
         intent="troubleshooting",

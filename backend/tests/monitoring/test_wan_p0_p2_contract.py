@@ -59,6 +59,30 @@ def test_failed_collection_keeps_last_valid_rate_and_does_not_increment_down(iso
     assert status["consecutive_down_count"] == 0
 
 
+def test_error_and_discard_rates_use_actual_sample_interval(isolated_db):
+    from database import get_db_connection
+    from services.wan_link_service import _collect_link
+
+    conn = get_db_connection()
+    try:
+        link = _seed_link(conn)
+    finally:
+        conn.close()
+    base = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=2)
+    item = {"if_index": 7, "name": "GigabitEthernet0/0", "status": "up", "speed_mbps": 1000, "in_octets": 1_000_000_000, "out_octets": 500_000_000, "counter_width": 64, "in_errors": 10, "out_errors": 20, "in_discards": 3, "out_discards": 4}
+    _run_async(_collect_link(link, {"status": "success", "items": [item]}, base))
+    next_item = {**item, "in_octets": 2_500_000_000, "out_octets": 1_250_000_000, "in_errors": 70, "out_errors": 80, "in_discards": 33, "out_discards": 44}
+    _run_async(_collect_link(link, {"status": "success", "items": [next_item]}, base + timedelta(minutes=1)))
+    conn = get_db_connection()
+    try:
+        row = dict(conn.execute(f"SELECT in_error_delta, out_error_delta, in_error_rate, out_error_rate, in_discard_rate, out_discard_rate FROM {_sample_table()} WHERE link_id = ? ORDER BY sampled_at DESC LIMIT 1", (link["id"],)).fetchone())
+    finally:
+        conn.close()
+    assert row["in_error_delta"] == 60 and row["out_error_delta"] == 60
+    assert float(row["in_error_rate"]) == 1.0 and float(row["out_error_rate"]) == 1.0
+    assert float(row["in_discard_rate"]) == 0.5 and abs(float(row["out_discard_rate"]) - 2 / 3) < 1e-6
+
+
 def test_p1_rollup_and_p2_binding_contract(isolated_db):
     from database import get_db_connection
     from services.wan_p1_service import rollup_wan_samples_once
@@ -115,6 +139,62 @@ def test_alert_episode_can_recover_and_fire_again(isolated_db):
         conn.close()
 
 
+def test_alert_event_filters_support_site_provider_and_time_range(isolated_db):
+    from database import get_db_connection
+    from services.wan_link_service import list_wan_alert_events
+
+    conn = get_db_connection()
+    try:
+        link = _seed_link(conn)
+        conn.execute("UPDATE wan_links SET provider = ? WHERE id = ?", ("ISP-A", link["id"]))
+        conn.execute("INSERT INTO wan_alert_events (id, event_key, link_id, metric, severity, status, title, message, started_at, last_seen_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ("filter-event", "filter-key", link["id"], "interface_down", "critical", "resolved", "接口 Down", "test", "2026-08-23T10:00:00+00:00", "2026-08-23T10:05:00+00:00", "2026-08-23T10:00:00+00:00"))
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = list_wan_alert_events(site_id="site-default", provider="ISP-A", start_at="2026-08-23T09:00:00+00:00", end_at="2026-08-23T11:00:00+00:00")
+    assert result["total"] == 1
+    assert result["items"][0]["id"] == "filter-event"
+    assert list_wan_alert_events(provider="ISP-B")["total"] == 0
+
+
+def test_wan_summary_keeps_no_data_as_null_instead_of_zero(isolated_db):
+    from database import get_db_connection
+    from services.wan_link_service import list_wan_links
+
+    conn = get_db_connection()
+    try:
+        _seed_link(conn)
+    finally:
+        conn.close()
+    summary = list_wan_links(page=1, page_size=1)["summary"]
+    assert summary["download_bps"] is None
+    assert summary["upload_bps"] is None
+    assert summary["max_util_pct"] is None
+
+
+def test_wan_link_list_supports_role_and_group_filters(isolated_db):
+    from database import get_db_connection
+    from services.wan_link_service import list_wan_links
+    from services.wan_p1_service import upsert_wan_link_group
+
+    conn = get_db_connection()
+    try:
+        link = _seed_link(conn)
+        conn.execute("UPDATE wan_links SET link_role = ? WHERE id = ?", ("backup", link["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+
+    group = upsert_wan_link_group(
+        {"group_name": "HQ backup", "mode": "primary_backup", "site_id": "site-default", "members": [{"link_id": link["id"], "role": "backup"}]},
+        {"username": "operator"},
+    )
+    assert list_wan_links(link_role="backup")["total"] == 1
+    assert list_wan_links(group_id=group["id"])["total"] == 1
+    assert list_wan_links(link_role="primary")["total"] == 0
+
+
 def test_long_history_is_server_downsampled_with_contract_metadata(isolated_db):
     from database import get_db_connection
     from services.wan_link_service import get_wan_link_history
@@ -146,6 +226,25 @@ def test_history_resolution_supports_minute_shortcuts():
     assert _history_resolution(1440) == 900
     assert _history_resolution(10080) == 3600
     assert _history_resolution(43200) == 7200
+
+
+def test_24_hour_history_uses_five_minute_source_before_15_minute_downsample(isolated_db):
+    from database import get_db_connection
+    from services.wan_link_service import get_wan_link_history
+
+    conn = get_db_connection()
+    try:
+        link = _seed_link(conn)
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        for offset in range(0, 12 * 24):
+            bucket = (now - timedelta(minutes=5 * offset)).isoformat()
+            conn.execute("INSERT INTO wan_link_samples_5m (link_id, bucket_start, sample_count, coverage_pct, avg_download_bps, avg_upload_bps, avg_download_util_pct, avg_upload_util_pct, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (link["id"], bucket, 5, 100, 100_000_000, 50_000_000, 50, 25, bucket))
+        conn.commit()
+    finally:
+        conn.close()
+    history = get_wan_link_history("wan-link", history_minutes=1440)
+    assert history and history["resolution"] == 900
+    assert len(history["history"]) >= 80
 
 
 def test_contract_edit_recomputes_current_utilization(isolated_db):

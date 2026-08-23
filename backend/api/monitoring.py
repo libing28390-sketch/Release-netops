@@ -1691,6 +1691,7 @@ class WanLinkGroupPayload(BaseModel):
 _manual_probe_lock = threading.Lock()
 _manual_probe_last_at: dict[str, float] = {}
 _MANUAL_PROBE_COOLDOWN_SECONDS = 5.0
+_wan_collection_lock = threading.Lock()
 
 
 def _outbound_audit(request: Request, user: dict, event_type: str, summary: str, **kwargs) -> None:
@@ -1887,11 +1888,16 @@ def get_monitoring_wan_links(
     site_id: str = Query(default=''),
     provider: str = Query(default=''),
     health_status: str = Query(default=''),
+    link_role: str = Query(default=''),
+    group_id: str = Query(default=''),
     keyword: str = Query(default=''),
     user=require_role("Viewer"),
 ):
     from services.wan_link_service import list_wan_links
-    return list_wan_links(page=page, page_size=page_size, site_id=site_id, provider=provider, health_status=health_status, keyword=keyword)
+    try:
+        return list_wan_links(page=page, page_size=page_size, site_id=site_id, provider=provider, health_status=health_status, link_role=link_role, group_id=group_id, keyword=keyword)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={'code': 'INVALID_WAN_FILTER', 'message': str(exc)}) from exc
 
 
 @router.get('/monitoring/wan-links/{link_id}/history')
@@ -1916,6 +1922,15 @@ def get_monitoring_wan_link(link_id: str, user=require_role('Viewer')):
     if payload is None:
         raise HTTPException(status_code=404, detail={'code': 'WAN_LINK_NOT_FOUND', 'message': 'WAN link not found'})
     return {'item': payload}
+
+
+@router.post('/monitoring/wan-links/test-config')
+def test_monitoring_wan_link_configuration(payload: WanLinkPayload, request: Request, user=require_role('Operator')):
+    """Read-only pre-save test for a selected device/interface binding."""
+    from services.wan_link_service import test_wan_link_configuration
+    result = asyncio.run(test_wan_link_configuration(payload.model_dump(exclude_none=True)))
+    _outbound_audit(request, user, 'WAN_LINK_TEST_CONFIG', 'Tested an unsaved WAN link configuration', target_type='wan_link_configuration', target_id=payload.interface_id, details={'status': result.get('status'), 'error_code': result.get('error_code')})
+    return result
 
 
 @router.post('/monitoring/wan-links')
@@ -1971,13 +1986,22 @@ def trigger_monitoring_wan_collection(request: Request, user=require_role("Opera
     global _manual_probe_last_at
     actor_key = str(user.get('id') or user.get('username') or 'unknown')
     now = time.monotonic()
-    if now - _manual_probe_last_at.get(f'wan:{actor_key}', 0.0) < _MANUAL_PROBE_COOLDOWN_SECONDS:
-        raise HTTPException(status_code=429, detail={'code': 'WAN_RATE_LIMITED', 'message': 'Please wait before triggering another WAN collection'})
-    _manual_probe_last_at[f'wan:{actor_key}'] = now
-    from services.wan_link_service import run_wan_collection_once
-    result = run_wan_collection_once()
-    _outbound_audit(request, user, "WAN_COLLECTION_TRIGGER", "Manually triggered WAN link collection", target_type="wan_link_collection")
-    return result
+    with _manual_probe_lock:
+        if now - _manual_probe_last_at.get(f'wan:{actor_key}', 0.0) < _MANUAL_PROBE_COOLDOWN_SECONDS:
+            raise HTTPException(status_code=429, detail={'code': 'WAN_RATE_LIMITED', 'message': 'Please wait before triggering another WAN collection'})
+        _manual_probe_last_at[f'wan:{actor_key}'] = now
+    if not _wan_collection_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail={'code': 'WAN_COLLECTION_ALREADY_RUNNING', 'message': 'A WAN collection is already running'})
+    try:
+        from services.wan_link_service import run_wan_collection_once
+        result = run_wan_collection_once()
+        _outbound_audit(request, user, "WAN_COLLECTION_TRIGGER", "Manually triggered WAN link collection", target_type="wan_link_collection")
+        return result
+    except Exception as exc:
+        logger.exception("Manual WAN collection failed")
+        raise HTTPException(status_code=500, detail={'code': 'WAN_COLLECTION_FAILED', 'message': 'WAN collection failed'}) from exc
+    finally:
+        _wan_collection_lock.release()
 
 
 @router.post('/monitoring/wan-links/{link_id}/test')
@@ -1996,12 +2020,30 @@ def get_monitoring_wan_alert_events(
     page_size: int = Query(default=20, ge=1, le=100),
     status: str = Query(default=''),
     severity: str = Query(default=''),
+    site_id: str = Query(default=''),
+    provider: str = Query(default=''),
     link_id: str = Query(default=''),
     keyword: str = Query(default=''),
+    start_at: str = Query(default=''),
+    end_at: str = Query(default=''),
     user=require_role('Viewer'),
 ):
     from services.wan_link_service import list_wan_alert_events
-    return list_wan_alert_events(page=page, page_size=page_size, status=status, severity=severity, link_id=link_id, keyword=keyword)
+    try:
+        return list_wan_alert_events(
+            page=page,
+            page_size=page_size,
+            status=status,
+            severity=severity,
+            site_id=site_id,
+            provider=provider,
+            link_id=link_id,
+            keyword=keyword,
+            start_at=start_at,
+            end_at=end_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={'code': 'INVALID_ALERT_FILTER', 'message': str(exc)}) from exc
 
 
 @router.patch('/monitoring/wan-alert-events/{event_id}')

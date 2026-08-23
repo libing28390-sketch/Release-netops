@@ -187,10 +187,16 @@ def import_messages(*, conversation_id: str, tenant_id: str, user_id: str, messa
     return {"conversation": _conversation_result(conversation), "imported": imported, "skipped": skipped}
 
 
-def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: str, content: str, citations: list[dict[str, Any]] | None = None, reasoning_internal: str | None = None, requested_model_id: str | None = None, actual_model_id: str | None = None, provider_id: str | None = None, route_reason: str | None = None, fallback_used: bool = False) -> dict[str, Any]:
+def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: str, content: str, citations: list[dict[str, Any]] | None = None, reasoning_internal: str | None = None, requested_model_id: str | None = None, actual_model_id: str | None = None, provider_id: str | None = None, route_reason: str | None = None, fallback_used: bool = False, execution_mode: str | None = None, external_egress: bool | None = None, input_tokens: int | None = None, output_tokens: int | None = None, latency_ms: int | None = None, token_source: str | None = None) -> dict[str, Any]:
     if role not in {"system", "user", "assistant", "tool"}:
         raise ValueError("unsupported conversation role")
     safe_content = _safe_message_content(content, tenant_id=tenant_id, scope_id=conversation_id)
+    allowed_execution_modes = {"local_knowledge", "local_operation", "provider_generated", "local_fallback", "legacy_unknown"}
+    safe_execution_mode = execution_mode if execution_mode in allowed_execution_modes else None
+    safe_input_tokens = max(0, int(input_tokens)) if input_tokens is not None else None
+    safe_output_tokens = max(0, int(output_tokens)) if output_tokens is not None else None
+    safe_latency_ms = max(0, int(latency_ms)) if latency_ms is not None else None
+    safe_token_source = token_source if token_source in {"provider_reported", "estimated", "local_zero"} else None
     message_id = f"msg_{uuid.uuid4().hex[:20]}"
     now = _now()
     with get_db_connection() as conn:
@@ -203,10 +209,10 @@ def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: 
             conn.execute(
                 """
                 INSERT INTO ai_messages
-                    (id, conversation_id, sequence_no, role, content_safe, reasoning_internal, tool_calls_json, citations_json, token_count, requested_model_id, actual_model_id, provider_id, route_reason, fallback_used, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, conversation_id, sequence_no, role, content_safe, reasoning_internal, tool_calls_json, citations_json, token_count, requested_model_id, actual_model_id, provider_id, route_reason, fallback_used, execution_mode, external_egress, input_tokens, output_tokens, latency_ms, token_source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (message_id, conversation_id, int(next_seq), role, safe_content, (reasoning_internal or "")[:10000] or None, json.dumps(citations or [], ensure_ascii=False), token_count, requested_model_id, actual_model_id, provider_id, route_reason, int(fallback_used), now),
+                (message_id, conversation_id, int(next_seq), role, safe_content, (reasoning_internal or "")[:10000] or None, json.dumps(citations or [], ensure_ascii=False), token_count, requested_model_id, actual_model_id, provider_id, route_reason, int(fallback_used), safe_execution_mode, int(external_egress) if external_egress is not None else None, safe_input_tokens, safe_output_tokens, safe_latency_ms, safe_token_source, now),
             )
         except Exception:
             conn.execute(
@@ -215,7 +221,7 @@ def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: 
             )
         conn.execute("UPDATE ai_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         conn.commit()
-    return {"id": message_id, "conversation_id": conversation_id, "sequence_no": int(next_seq), "role": role, "content": safe_content, "citations": citations or [], "token_count": token_count, "created_at": now}
+    return {"id": message_id, "conversation_id": conversation_id, "sequence_no": int(next_seq), "role": role, "content": safe_content, "citations": citations or [], "token_count": token_count, "execution_mode": safe_execution_mode, "external_egress": external_egress, "input_tokens": safe_input_tokens, "output_tokens": safe_output_tokens, "latency_ms": safe_latency_ms, "token_source": safe_token_source, "created_at": now}
 
 
 def get_context(*, conversation_id: str, tenant_id: str, user_id: str, max_messages: int = 20) -> dict[str, Any]:
@@ -226,7 +232,7 @@ def get_context(*, conversation_id: str, tenant_id: str, user_id: str, max_messa
             raise LookupError("conversation not found")
         try:
             rows = conn.execute(
-                "SELECT id, sequence_no, role, content_safe, citations_json, token_count, requested_model_id, actual_model_id, provider_id, route_reason, fallback_used, created_at FROM ai_messages WHERE conversation_id = ? ORDER BY sequence_no DESC LIMIT ?",
+                "SELECT id, sequence_no, role, content_safe, citations_json, token_count, requested_model_id, actual_model_id, provider_id, route_reason, fallback_used, execution_mode, external_egress, input_tokens, output_tokens, latency_ms, token_source, created_at FROM ai_messages WHERE conversation_id = ? ORDER BY sequence_no DESC LIMIT ?",
                 (conversation_id, max_messages),
             ).fetchall()
         except Exception:
@@ -242,6 +248,8 @@ def get_context(*, conversation_id: str, tenant_id: str, user_id: str, max_messa
         except Exception:
             item["citations"] = []
         item["content"] = item.pop("content_safe")
+        if "external_egress" in item:
+            item["external_egress"] = None if item["external_egress"] is None else bool(item["external_egress"])
         items.append(item)
     return {"conversation": _conversation_result(conversation), "messages": items}
 

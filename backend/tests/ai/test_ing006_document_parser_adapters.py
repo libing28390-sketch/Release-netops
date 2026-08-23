@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 
 import pytest
 
 
-def test_ing006_registry_exposes_one_contract_for_all_four_formats():
+def test_ing006_registry_exposes_one_contract_for_all_supported_formats():
     from services.document_parser_adapters import document_parser_registry
 
-    assert document_parser_registry.formats() == ("html", "markdown", "txt", "pdf")
+    assert document_parser_registry.formats() == ("html", "markdown", "txt", "json", "yaml", "csv", "xml", "config", "pdf", "docx")
     for format_name in document_parser_registry.formats():
         adapter = document_parser_registry.get(format_name)
         assert adapter.format_name == format_name
@@ -46,6 +48,32 @@ def test_ing006_all_adapters_return_same_bounded_result_contract(filename, conte
     assert set(public) == {"format", "blocks", "metadata", "parser_name", "parser_version", "parse_status", "warnings"}
 
 
+def test_ing006_docx_adapter_extracts_headings_paragraphs_and_table_rows():
+    from services.document_parser_adapters import parse_document
+
+    document_xml = b'''<?xml version="1.0" encoding="UTF-8"?>
+    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <w:body>
+        <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>VLAN Guide</w:t></w:r></w:p>
+        <w:p><w:r><w:t>switchport mode access</w:t></w:r></w:p>
+        <w:tbl><w:tr><w:tc><w:p><w:r><w:t>Port</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>VLAN</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+      </w:body>
+    </w:document>'''
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED) as package:
+        package.writestr("word/document.xml", document_xml)
+    result = parse_document(
+        payload.getvalue(),
+        filename="guide.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    assert result.format == "docx"
+    assert result.text.splitlines()[0] == "# VLAN Guide"
+    assert "switchport mode access" in result.text
+    assert "Port | VLAN" in result.text
+    assert [block.block_type for block in result.blocks] == ["heading", "paragraph", "table_row"]
+
+
 def test_ing006_txt_normalizes_line_endings_and_records_line_locators():
     from services.document_parser_adapters import parse_document
 
@@ -71,6 +99,95 @@ def test_ing006_markdown_malformed_front_matter_is_stable_error():
         parse_document(b"---\n: invalid: [\n---\nbody", filename="guide.md", content_type="text/markdown")
     assert exc.value.code == "PARSER_MARKDOWN_FRONT_MATTER_INVALID"
     assert "invalid" not in str(exc.value).lower() or "yaml" not in str(exc.value).lower()
+
+
+@pytest.mark.parametrize(
+    ("filename", "content_type", "body", "format_name", "marker"),
+    [
+        ("inventory.json", "application/json", b'{"hostname":"sw-1","vendor":"Huawei"}', "json", '"hostname": "sw-1"'),
+        ("inventory.yaml", "application/yaml", b"hostname: sw-1\nvendor: Huawei\n", "yaml", "hostname: sw-1"),
+        ("inventory.csv", "text/csv", b"hostname,vendor\nsw-1,Huawei\n", "csv", "sw-1 | Huawei"),
+        ("inventory.xml", "application/xml", b"<device><hostname>sw-1</hostname><vendor>Huawei</vendor></device>", "xml", "sw-1"),
+        ("running.conf", "text/plain", b"system-view\nvlan 10\n", "config", "vlan 10"),
+    ],
+)
+def test_ing006_structured_formats_are_validated_and_normalized(filename, content_type, body, format_name, marker):
+    from services.document_parser_adapters import parse_document
+
+    result = parse_document(body, filename=filename, content_type=content_type)
+    assert result.format == format_name
+    assert marker in result.text
+    assert result.metadata["structured_format"] == format_name
+
+
+def test_ing006_custom_json_document_envelope_separates_metadata_from_body():
+    from ai.services.knowledge_source_parser import parse_knowledge_source
+
+    body = """{
+      "format": "nexora-knowledge-document",
+      "schema_version": "2.0",
+      "metadata": {
+        "document_id": "custom.cisco.vlan.v1",
+        "title": "Cisco VLAN",
+        "vendor": "Cisco",
+        "product_type": "network_switch",
+        "document_category": "configuration",
+        "source_type": "user_document",
+        "official_only": false,
+        "status": "draft"
+      },
+      "content": "# Cisco VLAN\\n\\ninterface GigabitEthernet1/0/1"
+    }"""
+
+    parsed = parse_knowledge_source(body, filename="custom.json")
+    assert parsed.metadata_parse_status == "parsed"
+    assert parsed.metadata["document_id"] == "custom.cisco.vlan.v1"
+    assert parsed.metadata["schema_version"] == "2.0"
+    assert parsed.content.startswith("# Cisco VLAN")
+    assert parsed.parser_name == "nexora-json-document-envelope"
+    assert "structured_document_envelope" in parsed.warnings
+
+
+def test_ing006_custom_yaml_document_envelope_rejects_missing_body():
+    from ai.services.knowledge_source_parser import KnowledgeSourceParseError, parse_knowledge_source
+
+    with pytest.raises(KnowledgeSourceParseError) as exc:
+        parse_knowledge_source(
+            "format: nexora-knowledge-document\nschema_version: '2.0'\nmetadata: {}\ncontent:\n",
+            filename="custom.yaml",
+        )
+    assert exc.value.code == "PARSER_DOCUMENT_ENVELOPE_INVALID"
+
+
+def test_ing006_published_custom_templates_are_parseable():
+    from ai.services.knowledge_document_contract import json_template, markdown_template
+    from ai.services.knowledge_source_parser import parse_knowledge_source
+
+    markdown = parse_knowledge_source(markdown_template(), filename="template.md")
+    assert markdown.metadata["schema_version"] == "2.0"
+    assert markdown.metadata["document_id"] == "custom.huawei.s5735.vlan.v1"
+    assert "配置步骤" in markdown.content
+
+    envelope = parse_knowledge_source(json_template(), filename="template.json")
+    assert envelope.metadata_parse_status == "parsed"
+    assert envelope.metadata["vendor"] == "Huawei"
+    assert "vlan batch 10" in envelope.content
+
+
+@pytest.mark.parametrize(
+    ("filename", "content_type", "body", "code"),
+    [
+        ("inventory.json", "application/json", b"{bad", "PARSER_JSON_INVALID"),
+        ("inventory.yaml", "application/yaml", b"a: [", "PARSER_YAML_INVALID"),
+        ("inventory.xml", "application/xml", b"<device>", "PARSER_XML_INVALID"),
+    ],
+)
+def test_ing006_structured_format_errors_are_fail_closed(filename, content_type, body, code):
+    from services.document_parser_adapters import DocumentParserError, parse_document
+
+    with pytest.raises(DocumentParserError) as exc:
+        parse_document(body, filename=filename, content_type=content_type)
+    assert exc.value.code == code
 
 
 def test_ing006_html_extracts_structural_blocks_and_marks_later_cleaning_stage():

@@ -90,6 +90,35 @@ _active_sessions: dict[str, dict] = {}
 mfa_store: dict[str, dict] = {}
 
 
+def _pam_session_columns(conn) -> set[str]:
+    """Return available PAM session columns for legacy/isolated databases.
+
+    The production schema is migrated to the complete PAM shape, but audit
+    readers are also used against older SQLite files and small read-only
+    fixtures.  Discovering columns lets the list/export path substitute safe
+    defaults instead of failing the entire history view when a post-migration
+    column (for example ``session_kind``) is absent.
+    """
+    try:
+        rows = conn.execute("PRAGMA table_info(pam_sessions)").fetchall()
+        return {str(row[1] if not hasattr(row, 'keys') else row['name']) for row in rows}
+    except Exception:
+        try:
+            rows = conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = ?",
+                ('pam_sessions',),
+            ).fetchall()
+            return {
+                str(row[0] if not hasattr(row, 'keys') else row['column_name'])
+                for row in rows
+            }
+        except Exception:
+            # The caller will still issue a useful query for the canonical
+            # schema; an empty set only occurs for an unusable connection.
+            return set()
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S+00:00')
 
@@ -501,10 +530,11 @@ def list_sessions(
         #   3. One-time startup recovery (for sessions orphaned by crash)
         # ────────────────────────────────────────────────────────────────
 
+        session_columns = _pam_session_columns(conn)
         conditions = []
         params = []
         tenant_id = str(user.get('tenant_id') or 'tenant-default') if isinstance(user, dict) else None
-        if tenant_id:
+        if tenant_id and 'tenant_id' in session_columns:
             conditions.append("(tenant_id = ? OR tenant_id = 'tenant-default' OR tenant_id IS NULL)")
             params.append(tenant_id)
         if status:
@@ -557,16 +587,37 @@ def list_sessions(
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ''
         total = conn.execute(f'SELECT COUNT(*) FROM pam_sessions {where}', params).fetchone()[0]
         offset = (page - 1) * page_size
+
+        # Keep the public response shape stable for databases that predate
+        # PAM web-session/audit migrations.  The normal schema selects the
+        # real columns; a legacy/fixture table receives conservative defaults
+        # for fields that were added later.
+        column_defaults = {
+            'session_kind': "'ssh_terminal'",
+            'web_profile_id': 'NULL',
+            'target_scheme': "''",
+            'target_path': "''",
+            'recording_status': "''",
+            'agent_id': 'NULL',
+            'last_heartbeat_at': 'NULL',
+        }
+        selected_columns = []
+        for name in (
+            'id', 'asset_id', 'device_id', 'requester_username', 'access_level',
+            'session_kind', 'web_profile_id', 'login_username', 'connect_method',
+            'target_ip', 'target_port', 'target_scheme', 'target_path', 'status',
+            'connected_at', 'closed_at', 'close_reason', 'duration_seconds',
+            'command_count', 'recording_path', 'recording_status', 'agent_id',
+            'last_heartbeat_at', 'risk_level', 'risk_summary',
+            'target_hostname', 'archived', 'created_at', 'updated_at',
+        ):
+            if name in session_columns:
+                selected_columns.append(name)
+            else:
+                selected_columns.append(f"{column_defaults.get(name, 'NULL')} AS {name}")
         rows = conn.execute(
             f'''
-            SELECT id, asset_id, device_id, requester_username, access_level,
-                   session_kind, web_profile_id, login_username, connect_method,
-                   target_ip, target_port, target_scheme, target_path, status,
-                   connected_at, closed_at, close_reason, duration_seconds,
-                   command_count, recording_path, recording_status, agent_id,
-                   last_heartbeat_at, risk_level, risk_summary,
-                   target_hostname, archived,
-                   created_at, updated_at
+            SELECT {', '.join(selected_columns)}
             FROM pam_sessions {where}
             ORDER BY created_at DESC LIMIT ? OFFSET ?
             ''',

@@ -101,6 +101,7 @@ def test_ing004_replays_same_tenant_key_and_deduplicates_same_content(isolated_d
         ("..\\escape.pdf", "application/pdf", _pdf(), "LOCAL_FILE_NAME_INVALID"),
         ("guide.exe", "application/octet-stream", b"MZ", "LOCAL_FILE_TYPE_FORBIDDEN"),
         ("guide.pdf", "application/pdf", b"not a pdf", "LOCAL_FILE_MAGIC_MISMATCH"),
+        ("guide.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", b"not a docx", "LOCAL_FILE_MAGIC_MISMATCH"),
         ("guide.md", "text/markdown", b"\x00binary", "LOCAL_FILE_BINARY_FORBIDDEN"),
     ],
 )

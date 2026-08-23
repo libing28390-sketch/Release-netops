@@ -21,6 +21,14 @@ def test_inventory_distribution_query_uses_deterministic_intent():
     assert intent["intent"] == "asset_analysis"
 
 
+def test_inventory_count_query_does_not_depend_on_llm_intent_parsing():
+    query = "我们现在有多少台设备"
+
+    assert is_asset_analysis_query(query) is True
+    intent = asyncio.run(intent_parser.parse_intent(query))
+    assert intent["intent"] == "asset_analysis"
+
+
 def test_asset_analysis_extracts_only_unambiguous_filters():
     filters = extract_asset_filters("\u7edf\u8ba1 Huawei \u6838\u5fc3\u4ea4\u6362\u673a WH-DC-02 \u7684\u7248\u672c")
 

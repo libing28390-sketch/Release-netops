@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from database.core import get_db_connection
 from ai.security.gateway import SecurityBlocked, SecurityPolicy, ai_security_gateway
@@ -20,6 +21,8 @@ from core.rbac import _get_current_user
 from ai.security.security_service import (
     audit_provider_adapters,
     create_security_incident,
+    count_security_events,
+    count_security_incidents,
     export_security_events,
     list_security_events,
     list_security_incidents,
@@ -353,6 +356,28 @@ def get_security_events(limit: int = 100, offset: int = 0, user=Depends(require_
     return list_security_events(tenant_id=tenant_id, limit=limit, offset=offset)
 
 
+@router.get("/events/page", response_model=Dict[str, Any])
+def get_security_events_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    search: str = Query(default="", max_length=256),
+    decision: str = Query(default="", max_length=32),
+    classification: str = Query(default="", max_length=32),
+    user=Depends(require_ai_permission("ai.security.events")),
+):
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    total = count_security_events(
+        tenant_id=tenant_id, search=search, decision=decision, classification=classification,
+    )
+    total_pages = max(1, math.ceil(total / page_size))
+    actual_page = min(page, total_pages)
+    items = list_security_events(
+        tenant_id=tenant_id, limit=page_size, offset=(actual_page - 1) * page_size,
+        search=search, decision=decision, classification=classification,
+    )
+    return {"items": items, "total": total, "page": actual_page, "page_size": page_size, "total_pages": total_pages}
+
+
 @router.get("/events/export")
 def export_security_event_log(user=Depends(require_ai_permission("ai.security.events"))):
     from fastapi.responses import PlainTextResponse
@@ -379,6 +404,34 @@ def get_security_incidents(
             status_code=400,
             detail={"code": "SECURITY_INCIDENT_QUERY_INVALID", "message": "Security incident query is invalid"},
         ) from exc
+
+
+@router.get("/incidents/page", response_model=Dict[str, Any])
+def get_security_incidents_page(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    status: Optional[str] = Query(default=None, max_length=32),
+    severity: str = Query(default="", max_length=32),
+    search: str = Query(default="", max_length=256),
+    user=Depends(require_ai_permission("ai.security.incident")),
+):
+    tenant_id = str(user.get("tenant_id") or "tenant-default")
+    try:
+        total = count_security_incidents(
+            tenant_id=tenant_id, status=status, severity=severity, search=search,
+        )
+        total_pages = max(1, math.ceil(total / page_size))
+        actual_page = min(page, total_pages)
+        items = list_security_incidents(
+            tenant_id=tenant_id, status=status, severity=severity, search=search,
+            limit=page_size, offset=(actual_page - 1) * page_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "SECURITY_INCIDENT_QUERY_INVALID", "message": "Security incident query is invalid"},
+        ) from exc
+    return {"items": items, "total": total, "page": actual_page, "page_size": page_size, "total_pages": total_pages}
 
 
 @router.post("/incidents", response_model=Dict[str, Any])

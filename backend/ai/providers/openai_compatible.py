@@ -155,6 +155,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         reasoning_effort: Optional[str] = None,
         user_id: Optional[str] = None,
         request_id: Optional[str] = None,
+        usage_sink: Optional[Dict[str, int]] = None,
     ) -> AsyncIterator[str]:
         url = self._get_endpoint()
         self._validate_endpoint(url)
@@ -163,6 +164,10 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             "messages": messages,
             "stream": True,
         }
+        if str(self.provider_type or "").lower() == "deepseek":
+            # DeepSeek emits a final usage-only chunk before [DONE]. Keep the
+            # mutable sink request-scoped so concurrent streams cannot mix.
+            payload["stream_options"] = {"include_usage": True}
         if temperature is not None:
             payload["temperature"] = temperature
         if max_tokens is not None:
@@ -211,6 +216,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                             chunk = json.loads(data_text)
                         except (TypeError, ValueError):
                             continue
+                        usage = chunk.get("usage")
+                        if usage_sink is not None and isinstance(usage, dict):
+                            usage_sink.update({
+                                "input_tokens": max(0, int(usage.get("prompt_tokens") or 0)),
+                                "output_tokens": max(0, int(usage.get("completion_tokens") or 0)),
+                            })
                         choices = chunk.get("choices") or []
                         if choices:
                             delta = choices[0].get("delta") or {}

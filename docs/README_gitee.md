@@ -269,7 +269,7 @@ docker compose restart netops    # Restart backend
 
 #### Option 3 — Manual Setup
 
-**Prerequisites:** Node.js 18+, Python 3.10+, PostgreSQL 17
+**Prerequisites:** Node.js 20+, Python 3.10+, PostgreSQL 17
 
 ```bash
 git clone https://gitee.com/leerbon/netops.git nexora-automation
@@ -281,7 +281,7 @@ source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r backend/requirements.txt
 
 # Frontend
-npm install
+npm ci --include=dev
 npm run build
 
 # Environment
@@ -494,7 +494,7 @@ docker compose restart netops    # 重启后端
 
 #### 方式三 — 手动部署
 
-**前置条件**：Node.js 18+、Python 3.10+、PostgreSQL 17
+**前置条件**：Node.js 20+、Python 3.10+、PostgreSQL 17
 
 ```bash
 git clone https://gitee.com/leerbon/netops.git nexora-automation
@@ -506,7 +506,7 @@ source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r backend/requirements.txt
 
 # 前端
-npm install
+npm ci --include=dev
 npm run build
 
 # 环境配置
@@ -590,7 +590,7 @@ nexora-automation/
 # Ubuntu systemd 部署
 cd /opt/nexora-automation
 git pull
-npm install && npm run build
+npm ci --include=dev && npm run build
 pip install -r backend/requirements.txt
 sudo systemctl restart netops
 

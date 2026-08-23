@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SecurityPolicyTab from './SecurityPolicyTab';
 import {
-  getAISecurityEvents,
-  getAISecurityIncidents,
+  getAISecurityEventsPage,
+  getAISecurityIncidentsPage,
   getAISecurityPolicy,
   setAIDevPassthrough,
   testAISecurityPayload,
@@ -13,8 +13,8 @@ import {
 } from '../../../api/ai';
 
 vi.mock('../../../api/ai', () => ({
-  getAISecurityEvents: vi.fn(),
-  getAISecurityIncidents: vi.fn(),
+  getAISecurityEventsPage: vi.fn(),
+  getAISecurityIncidentsPage: vi.fn(),
   getAISecurityPolicy: vi.fn(),
   resolveAISecurityIncident: vi.fn(),
   exportAISecurityEvents: vi.fn(),
@@ -47,8 +47,8 @@ const policy = {
 };
 
 const getPolicy = vi.mocked(getAISecurityPolicy);
-const getEvents = vi.mocked(getAISecurityEvents);
-const getIncidents = vi.mocked(getAISecurityIncidents);
+const getEvents = vi.mocked(getAISecurityEventsPage);
+const getIncidents = vi.mocked(getAISecurityIncidentsPage);
 const updatePolicy = vi.mocked(updateAISecurityPolicy);
 const setDevPassthrough = vi.mocked(setAIDevPassthrough);
 const testPayload = vi.mocked(testAISecurityPayload);
@@ -56,8 +56,8 @@ const testPayload = vi.mocked(testAISecurityPayload);
 describe('SecurityPolicyTab browser key paths', () => {
   beforeEach(() => {
     getPolicy.mockResolvedValue(policy as any);
-    getEvents.mockResolvedValue([]);
-    getIncidents.mockResolvedValue([]);
+    getEvents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, total_pages: 1 });
+    getIncidents.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, total_pages: 1 });
     updatePolicy.mockResolvedValue({ ...policy, external_ai_enabled: true } as any);
     testPayload.mockResolvedValue({ decision: 'MINIMIZE', max_data_level: 'INTERNAL', finding_categories: ['identifier'], payload_bytes: 42, reason: 'tokenized', external_call_made: false } as any);
     vi.stubGlobal('confirm', vi.fn(() => true));
@@ -80,7 +80,7 @@ describe('SecurityPolicyTab browser key paths', () => {
     expect(await screen.findByText('安全网关已就绪')).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: '运行策略检查' }));
-    expect(await screen.findByText('MINIMIZE')).toBeTruthy();
+    expect((await screen.findByRole('status', { name: '策略检查结果' })).textContent).toContain('MINIMIZE / INTERNAL');
     expect(testPayload).toHaveBeenCalledWith([{ role: 'user', content: expect.stringContaining('show interface') }]);
   });
 

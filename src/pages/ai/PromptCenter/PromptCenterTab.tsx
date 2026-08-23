@@ -8,6 +8,7 @@ import {
   Layers3,
   Plus,
   RefreshCw,
+  Search,
   SlidersHorizontal,
   Sparkles,
   X,
@@ -15,10 +16,12 @@ import {
 } from 'lucide-react';
 import { getAIPrompts, createAIPrompt, type AIPrompt } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
+import Pagination from '../../../components/Pagination';
 
 const sceneOptions = [
   { value: 'chat', label: 'AI Copilot 对话', shortLabel: 'Copilot', description: '面向运维人员的自然语言问答' },
   { value: 'troubleshooting', label: '网络故障排查', shortLabel: '故障排查', description: '结合设备状态定位网络问题' },
+  { value: 'command_explain', label: '命令解释与巡检', shortLabel: '命令解释', description: '解释 CLI 命令输出并标记异常' },
   { value: 'config_explain', label: '配置分析解释', shortLabel: '配置分析', description: '解释配置意图、风险与建议' },
   { value: 'config_diff', label: 'Diff 智能对比', shortLabel: 'Diff 对比', description: '识别变更影响并给出回退建议' },
   { value: 'alarm_analysis', label: '告警根因诊断', shortLabel: '告警分析', description: '从告警上下文提炼根因和处置动作' },
@@ -70,6 +73,11 @@ export const PromptCenterTab: React.FC = () => {
   const [selectedPrompt, setSelectedPrompt] = useState<AIPrompt | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [search, setSearch] = useState('');
+  const [sceneFilter, setSceneFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
@@ -132,6 +140,22 @@ export const PromptCenterTab: React.FC = () => {
   };
 
   const selectedScene = useMemo(() => (selectedPrompt ? sceneMap[selectedPrompt.scene] : null), [selectedPrompt]);
+  const filteredPrompts = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return prompts.filter((prompt) => {
+      const matchesSearch = !needle || [prompt.name, prompt.code, prompt.scene, prompt.system_prompt, prompt.user_prompt_template]
+        .some((value) => String(value || '').toLowerCase().includes(needle));
+      const matchesScene = !sceneFilter || prompt.scene === sceneFilter;
+      const matchesStatus = statusFilter === 'all' || (statusFilter === 'enabled' ? prompt.enabled : !prompt.enabled);
+      return matchesSearch && matchesScene && matchesStatus;
+    });
+  }, [prompts, sceneFilter, search, statusFilter]);
+  const visiblePrompts = filteredPrompts.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredPrompts.length / pageSize));
+    if (page > maxPage) setPage(maxPage);
+  }, [filteredPrompts.length, page, pageSize]);
 
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5 pb-8">
@@ -160,6 +184,12 @@ export const PromptCenterTab: React.FC = () => {
             </button>
           </div>
         </div>
+      </section>
+
+      <section className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="relative min-w-[260px] flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={zh ? '搜索名称、Code、场景或提示词内容' : 'Search name, code, scene, or prompt content'} className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs outline-none focus:border-violet-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></div>
+        <select value={sceneFilter} onChange={(event) => { setSceneFilter(event.target.value); setPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="">{zh ? '全部场景' : 'All scenes'}</option>{sceneOptions.map((option) => <option key={option.value} value={option.value}>{option.shortLabel}</option>)}</select>
+        <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"><option value="all">{zh ? '全部状态' : 'All statuses'}</option><option value="enabled">{zh ? '已启用' : 'Enabled'}</option><option value="disabled">{zh ? '已停用' : 'Disabled'}</option></select>
       </section>
 
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -192,9 +222,12 @@ export const PromptCenterTab: React.FC = () => {
           <p className="mx-auto mt-1.5 max-w-md text-sm leading-6 text-slate-500 dark:text-slate-400">{zh ? '创建第一个模板，把运维场景、模型角色和输入变量固定下来。' : 'Create the first template to define the operational scene, model role, and input variables.'}</p>
           <button type="button" onClick={() => setShowCreateModal(true)} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-600/20 transition hover:bg-violet-700"><Plus className="h-4 w-4" />{zh ? '添加第一个 Prompt' : 'Add your first Prompt'}</button>
         </div>
+      ) : filteredPrompts.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white/80 px-6 py-12 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-400">{zh ? '当前搜索和筛选没有匹配的 Prompt 模板' : 'No prompt templates match the current filters'}</div>
       ) : (
+        <div className="space-y-3">
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {prompts.map((prompt) => {
+          {visiblePrompts.map((prompt) => {
             const sceneInfo = sceneMap[prompt.scene] || { label: prompt.scene, shortLabel: prompt.scene, description: '自定义应用场景' };
             return (
               <article key={prompt.id} className="group relative flex min-h-[360px] flex-col overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm shadow-slate-200/50 transition duration-200 hover:-translate-y-0.5 hover:border-violet-200 hover:shadow-xl hover:shadow-violet-100/50 dark:border-slate-800 dark:bg-slate-900 dark:shadow-none dark:hover:border-violet-800">
@@ -233,6 +266,8 @@ export const PromptCenterTab: React.FC = () => {
               </article>
             );
           })}
+        </div>
+        <Pagination currentPage={page} totalItems={filteredPrompts.length} itemsPerPage={pageSize} onPageChange={setPage} onItemsPerPageChange={(size) => { setPageSize(size); setPage(1); }} language={language} alwaysVisible />
         </div>
       )}
 

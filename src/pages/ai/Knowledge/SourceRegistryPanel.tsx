@@ -2,10 +2,13 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Loader2, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import {
   getKnowledgeSourceRefreshStatus,
+  listOfficialSourceSuggestions,
   listKnowledgeSourceRefreshObservations,
   listKnowledgeSources,
   refreshKnowledgeSource,
+  reviewOfficialSourceSuggestion,
   validateKnowledgeSource,
+  type OfficialSourceSuggestion,
   type KnowledgeSourceRefreshObservation,
   type KnowledgeSourceRefreshStatus,
   type KnowledgeSourceRegistry,
@@ -43,6 +46,10 @@ export const SourceRegistryPanel: React.FC = () => {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [suggestions, setSuggestions] = useState<OfficialSourceSuggestion[]>([]);
+  const [suggestionStatus, setSuggestionStatus] = useState('pending');
+  const [selectedSuggestionId, setSelectedSuggestionId] = useState('');
+  const [reviewDraft, setReviewDraft] = useState({ vendor: '', product_model: '', software_release: '', feature: '', url: '', source_kind: '' });
 
   const loadSources = useCallback(async () => {
     setLoading(true);
@@ -57,6 +64,16 @@ export const SourceRegistryPanel: React.FC = () => {
       setLoading(false);
     }
   }, [statusFilter]);
+
+  const loadSuggestions = useCallback(async () => {
+    try {
+      const result = await listOfficialSourceSuggestions(suggestionStatus);
+      setSuggestions(result.items || []);
+      setSelectedSuggestionId((current) => result.items.some((item) => item.id === current) ? current : '');
+    } catch (err: any) {
+      setError(err?.message || '官方来源补充任务加载失败');
+    }
+  }, [suggestionStatus]);
 
   const loadDetail = useCallback(async (sourceId: string) => {
     if (!sourceId) {
@@ -81,9 +98,36 @@ export const SourceRegistryPanel: React.FC = () => {
   }, []);
 
   useEffect(() => { void loadSources(); }, [loadSources]);
+  useEffect(() => { void loadSuggestions(); }, [loadSuggestions]);
   useEffect(() => { void loadDetail(selectedId); }, [loadDetail, selectedId]);
 
   const selected = useMemo(() => sources.find((item) => item.id === selectedId) || null, [selectedId, sources]);
+  const selectedSuggestion = useMemo(() => suggestions.find((item) => item.id === selectedSuggestionId) || null, [selectedSuggestionId, suggestions]);
+
+  const selectSuggestion = (item: OfficialSourceSuggestion) => {
+    setSelectedSuggestionId(item.id);
+    setReviewDraft({
+      vendor: item.vendor || '', product_model: item.product_model || '', software_release: item.software_release || '',
+      feature: item.feature || '', url: item.reviewed_url || item.suggested_url || '', source_kind: item.source_kind || 'product_page',
+    });
+  };
+
+  const reviewSuggestion = async (decision: 'approve' | 'reject') => {
+    if (!selectedSuggestion || busy) return;
+    setBusy(`suggestion:${decision}`);
+    setError('');
+    setNotice('');
+    try {
+      await reviewOfficialSourceSuggestion(selectedSuggestion.id, { decision, ...(decision === 'approve' ? reviewDraft : {}) });
+      setNotice(decision === 'approve' ? '官方来源已进入校验、采集、入库与原 Trace 回检流程。' : '该来源建议已驳回。');
+      setSelectedSuggestionId('');
+      await Promise.all([loadSuggestions(), loadSources()]);
+    } catch (err: any) {
+      setError(err?.message || '官方来源补充任务处理失败');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const runSourceAction = async (action: 'validate' | 'refresh') => {
     if (!selectedId || busy) return;
@@ -120,6 +164,23 @@ export const SourceRegistryPanel: React.FC = () => {
 
       {error && <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300"><XCircle className="mt-0.5 h-4 w-4 shrink-0" />{error}</div>}
       {notice && <div className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />{notice}</div>}
+
+      <section className="rounded-2xl border border-amber-200 bg-amber-50/40 p-4 dark:border-amber-900/60 dark:bg-amber-950/10">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h3 className="text-sm font-bold text-slate-900 dark:text-white">未命中官方来源补充任务</h3><p className="mt-1 text-[11px] text-slate-500">Copilot 本地未命中后自动记录；管理员确认范围与 HTTPS 官方 URL 后，系统才会采集、入库并回检原 Trace。</p></div>
+          <select aria-label="补充任务状态" value={suggestionStatus} onChange={(event) => setSuggestionStatus(event.target.value)} className="rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs dark:border-amber-800 dark:bg-slate-900 dark:text-white"><option value="pending">待审核</option><option value="failed">失败</option><option value="collecting">采集中</option><option value="imported">已入库</option><option value="rejected">已驳回</option><option value="all">全部</option></select>
+        </div>
+        {suggestions.length === 0 ? <div className="mt-4 rounded-xl border border-dashed border-amber-200 px-3 py-6 text-center text-xs text-slate-400 dark:border-amber-900">当前没有该状态的补充任务。</div> : (
+          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+            <div className="max-h-72 space-y-2 overflow-y-auto">{suggestions.map((item) => <button key={item.id} type="button" onClick={() => selectSuggestion(item)} className={`w-full rounded-xl border p-3 text-left ${selectedSuggestionId === item.id ? 'border-amber-400 bg-white dark:bg-slate-900' : 'border-amber-100 bg-white/70 hover:border-amber-300 dark:border-amber-900/60 dark:bg-slate-900/50'}`}><div className="flex justify-between gap-2"><span className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">{item.label}</span><span className="text-[10px] text-amber-700">{item.status}</span></div><p className="mt-1 truncate text-[10px] text-slate-500">{item.vendor} · {item.product_model || '待填型号'} · {item.software_release || '待填版本'} · {item.feature || '待填功能'}</p><p className="mt-1 truncate text-[10px] text-slate-400">Trace {item.trace_id}</p></button>)}</div>
+            {selectedSuggestion ? <div className="grid gap-2 rounded-xl bg-white p-3 dark:bg-slate-900 sm:grid-cols-2">
+              {([['vendor', '厂商'], ['product_model', '型号'], ['software_release', '软件版本'], ['feature', '功能'], ['source_kind', '来源类型']] as const).map(([key, label]) => <label key={key} className="text-[10px] text-slate-500">{label}<input value={reviewDraft[key]} onChange={(event) => setReviewDraft((current) => ({ ...current, [key]: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></label>)}
+              <label className="text-[10px] text-slate-500 sm:col-span-2">官方 HTTPS URL<input value={reviewDraft.url} onChange={(event) => setReviewDraft((current) => ({ ...current, url: event.target.value }))} className="mt-1 w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" /></label>
+              <div className="flex gap-2 sm:col-span-2"><button type="button" disabled={Boolean(busy)} onClick={() => void reviewSuggestion('approve')} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{busy === 'suggestion:approve' ? '校验采集中…' : '确认并采集入库'}</button><button type="button" disabled={Boolean(busy)} onClick={() => void reviewSuggestion('reject')} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300">驳回</button></div>
+            </div> : <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-amber-200 text-xs text-slate-400 dark:border-amber-900">选择一条任务后确认厂商、型号、版本、功能与 URL。</div>}
+          </div>
+        )}
+      </section>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
         <section className="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">

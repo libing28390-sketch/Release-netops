@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Sparkles, BookOpen, ThumbsUp, ThumbsDown, Copy, SlidersHorizontal, Check, Clock3, ChevronDown, ChevronUp, ListChecks, Loader2, CheckCircle2, AlertCircle, ExternalLink, AlertTriangle, Terminal, RotateCcw, Pencil, Play } from 'lucide-react';
 import {
   AIConversationMessage,
+  AIExecutionMode,
+  AITokenSource,
   AssistantProcessStep,
   AssistantRetrievalTrace,
   CopilotContract,
@@ -72,6 +74,10 @@ interface ChatMessage {
   output_tokens?: number;
   route_model?: string;
   provider_id?: string;
+  route_reason?: string;
+  execution_mode?: AIExecutionMode;
+  external_egress?: boolean | null;
+  token_source?: AITokenSource | null;
   processing_steps?: AssistantProcessStep[];
   copilot?: CopilotContract;
   feedback?: 'positive' | 'negative';
@@ -103,8 +109,17 @@ const mapConversationMessage = (message: AIConversationMessage): ChatMessage => 
   role: message.role === 'user' ? 'user' : 'assistant',
   content: message.content || '',
   created_at: message.created_at,
-  route_model: message.actual_model_id || message.requested_model_id,
+  // requested_model_id is only the user's selection, not evidence that the
+  // provider was called. Only display the durable actual route here.
+  route_model: message.actual_model_id,
   provider_id: message.provider_id,
+  route_reason: message.route_reason,
+  execution_mode: message.execution_mode,
+  external_egress: message.external_egress,
+  input_tokens: typeof message.input_tokens === 'number' ? message.input_tokens : undefined,
+  output_tokens: typeof message.output_tokens === 'number' ? message.output_tokens : undefined,
+  latency_ms: typeof message.latency_ms === 'number' ? message.latency_ms : undefined,
+  token_source: message.token_source,
   sources: Array.isArray(message.citations)
     ? message.citations.map((item: any) => ({
       citation_id: String(item?.citation_id || ''),
@@ -786,6 +801,10 @@ export const AssistantTab: React.FC = () => {
                       copilot: meta.copilot || m.copilot,
                       route_model: meta.model_id || meta.requested_model_id || meta.copilot?.runtime?.model_id || m.route_model,
                       provider_id: meta.provider_id || meta.copilot?.runtime?.provider_id || m.provider_id,
+                      route_reason: meta.route_reason || m.route_reason,
+                      execution_mode: meta.execution_mode || meta.copilot?.runtime?.execution_mode || m.execution_mode,
+                      external_egress: meta.external_egress ?? meta.copilot?.runtime?.external_egress ?? m.external_egress,
+                      token_source: meta.token_source ?? m.token_source,
                       input_tokens: meta.input_tokens ?? m.input_tokens,
                       output_tokens: meta.output_tokens ?? m.output_tokens,
                       latency_ms: meta.latency_ms ?? m.latency_ms,
@@ -832,6 +851,10 @@ export const AssistantTab: React.FC = () => {
                     output_tokens: typeof done.output_tokens === 'number' ? done.output_tokens : m.output_tokens,
                     route_model: done.model_id || m.route_model,
                     provider_id: done.provider_id || m.provider_id,
+                    route_reason: done.route_reason || m.route_reason,
+                    execution_mode: done.execution_mode || m.execution_mode,
+                    external_egress: done.external_egress ?? m.external_egress,
+                    token_source: done.token_source ?? m.token_source,
                   };
                 }),
               };
@@ -891,7 +914,6 @@ export const AssistantTab: React.FC = () => {
                 const updatedMsg = {
                   ...m,
                   latency_ms: m.latency_ms ?? elapsed,
-                  route_model: m.route_model || selectedModel || 'deepseek-chat',
                   stream_status: 'completed' as const,
                 };
                 setActiveInspectorMsg((current) => current?.id === updatedMsg.id ? updatedMsg : current);
@@ -1132,17 +1154,75 @@ export const AssistantTab: React.FC = () => {
 
                 // Assistant Message (No Card Box, Pure Document-like Experience)
                 const isMessageStreaming = streamingMessageId === m.id;
+                const copilotIntent = String(m.copilot?.intent || '');
+                // Consultation/CMDB answers are complete read-only results,
+                // not diagnostic plans.  Keep the developer Trace available,
+                // but do not surface a generic evidence checklist in the
+                // conversation body.
+                const showCopilotSummary = Boolean(
+                  m.copilot
+                  && copilotIntent
+                  // Knowledge retrieval is a read-only lookup, not a
+                  // diagnostic/change plan.  Its answer already carries the
+                  // local-evidence or cloud-reference disclaimer, while the
+                  // generic vendor/model/version checklist is noisy here.
+                  && !['consultation', 'general_qa', 'chitchat', 'knowledge_retrieval'].includes(copilotIntent),
+                );
+                const actualModel = m.route_model
+                  ? availableModels.find((model) => model.id === m.route_model)
+                  : undefined;
+                const providerName = actualModel?.provider_name;
+                const displayProviderName = providerName?.toLowerCase() === 'deepseek' ? 'DeepSeek' : providerName;
+                const actualModelLabel = actualModel
+                  ? `${displayProviderName || actualModel.provider_name} · ${actualModel.model_code}`
+                  : (m.route_model || undefined);
+                const executionLabel = m.execution_mode === 'local_knowledge'
+                  ? '本地知识直出'
+                  : m.execution_mode === 'local_operation'
+                    ? '本地数据计算'
+                    : m.execution_mode === 'provider_generated'
+                      ? `${displayProviderName || '外部模型'} 生成`
+                      : m.execution_mode === 'local_fallback'
+                        ? '本地回退回答'
+                        : isMessageStreaming
+                          ? '执行路径确认中'
+                          : '历史消息 · 路由未知';
+                const executionBadgeClass = m.execution_mode === 'local_knowledge' || m.execution_mode === 'local_operation'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                  : m.execution_mode === 'provider_generated'
+                    ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300'
+                    : m.execution_mode === 'local_fallback'
+                      ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                      : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300';
                 return (
                   <div key={m.id} data-copilot-message-id={m.id} className="space-y-3 select-text">
                     {/* Assistant Title Header */}
-                    <div className="flex items-center justify-between select-none">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-white shadow-xs">
-                          <Sparkles className="w-3.5 h-3.5" />
+                    <div className="flex flex-wrap items-start justify-between gap-2 select-none">
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-white shadow-xs">
+                            <Sparkles className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="font-bold text-gray-900 dark:text-white text-sm tracking-tight">
+                            Nexora AI
+                          </span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${executionBadgeClass}`}>
+                            {executionLabel}
+                          </span>
                         </div>
-                        <span className="font-bold text-gray-900 dark:text-white text-sm tracking-tight">
-                          Nexora AI
-                        </span>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-8 text-[11px] text-gray-500 dark:text-gray-400">
+                          <span>{m.external_egress === true ? '已通过安全网关调用外部模型' : m.external_egress === false ? '未发生外部调用' : isMessageStreaming ? '外部调用状态确认中' : '外部调用状态未记录'}</span>
+                          {m.execution_mode === 'provider_generated' && actualModelLabel && <span>实际模型：{actualModelLabel}</span>}
+                          <span>
+                            {typeof m.input_tokens === 'number' && typeof m.output_tokens === 'number'
+                              ? m.token_source === 'provider_reported'
+                                ? `实际 Token：输入 ${m.input_tokens} / 输出 ${m.output_tokens}`
+                                : m.token_source === 'estimated'
+                                  ? `Token 估算：输入 ${m.input_tokens} / 输出 ${m.output_tokens}`
+                                  : `模型 Token：输入 ${m.input_tokens} / 输出 ${m.output_tokens}`
+                              : '模型 Token 未记录'}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
@@ -1161,11 +1241,11 @@ export const AssistantTab: React.FC = () => {
                       )}
                     </div>
 
-                    {m.copilot && (
+                    {m.copilot && showCopilotSummary && (
                       (m.copilot.required_evidence && m.copilot.required_evidence.length > 0) ||
                       (m.copilot.confirmed_facts && m.copilot.confirmed_facts.length > 0) ||
                       (m.copilot.next_checks && m.copilot.next_checks.length > 0) ||
-                      (m.copilot.intent && !['consultation', 'general_qa', 'chitchat'].includes(m.copilot.intent))
+                      (m.copilot.intent && !['consultation', 'general_qa', 'chitchat', 'knowledge_retrieval'].includes(m.copilot.intent))
                     ) && (
                       <div className="rounded-xl border border-indigo-100 dark:border-indigo-900/60 bg-indigo-50/60 dark:bg-indigo-950/20 p-3 text-xs space-y-2">
                         <div className="flex flex-wrap items-center gap-2 font-semibold text-indigo-700 dark:text-indigo-300">

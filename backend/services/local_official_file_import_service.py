@@ -12,6 +12,8 @@ import copy
 import hashlib
 import json
 import re
+import zipfile
+import io
 from datetime import datetime, timezone
 from typing import Any
 
@@ -49,11 +51,22 @@ _ALLOWED_EXTENSIONS = {
     ".md": "text/markdown",
     ".markdown": "text/markdown",
     ".txt": "text/plain",
+    ".log": "text/plain",
+    ".conf": "text/plain",
+    ".cfg": "text/plain",
+    ".ini": "text/plain",
     ".json": "application/json",
+    ".yaml": "application/yaml",
+    ".yml": "application/yaml",
+    ".csv": "text/csv",
     ".xml": "application/xml",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
-_TEXT_EXTENSIONS = set(_ALLOWED_EXTENSIONS) - {".pdf"}
-_TEXT_MIME_ALIASES = {"text/plain", "text/html", "text/markdown", "application/json", "application/xml"}
+_TEXT_EXTENSIONS = set(_ALLOWED_EXTENSIONS) - {".pdf", ".docx"}
+_TEXT_MIME_ALIASES = {
+    "text/plain", "text/html", "text/markdown", "application/json", "application/xml",
+    "text/xml", "application/yaml", "text/yaml", "text/csv",
+}
 
 
 class LocalOfficialFileImportError(ValueError):
@@ -143,15 +156,24 @@ def _filename_and_type(filename: Any, content_type: Any, data: bytes) -> tuple[s
     extension = name[dot:].lower() if dot > 0 else ""
     expected = _ALLOWED_EXTENSIONS.get(extension)
     if not expected:
-        raise LocalOfficialFileImportError("LOCAL_FILE_TYPE_FORBIDDEN", "Only reviewed PDF, HTML, Markdown, TXT, JSON or XML files are accepted")
+        raise LocalOfficialFileImportError("LOCAL_FILE_TYPE_FORBIDDEN", "Only reviewed PDF, DOCX, HTML, Markdown, TXT, JSON, YAML, CSV or XML files are accepted")
     declared = str(content_type or "").split(";", 1)[0].strip().lower()
     if declared and declared not in {"application/octet-stream", "binary/octet-stream"}:
-        compatible = declared == expected or (expected == "text/markdown" and declared in _TEXT_MIME_ALIASES) or (expected in {"text/html", "text/plain"} and declared in _TEXT_MIME_ALIASES)
+        compatible = declared == expected or (extension in _TEXT_EXTENSIONS and declared in _TEXT_MIME_ALIASES)
         if not compatible:
             raise LocalOfficialFileImportError("LOCAL_FILE_CONTENT_TYPE_MISMATCH", "Declared content type does not match the reviewed file type")
     if extension == ".pdf":
         if not data.startswith(b"%PDF-"):
             raise LocalOfficialFileImportError("LOCAL_FILE_MAGIC_MISMATCH", "PDF magic bytes are missing")
+    elif extension == ".docx":
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as package:
+                if "word/document.xml" not in package.namelist():
+                    raise LocalOfficialFileImportError("LOCAL_FILE_MAGIC_MISMATCH", "DOCX package is missing word/document.xml")
+        except LocalOfficialFileImportError:
+            raise
+        except (zipfile.BadZipFile, OSError) as exc:
+            raise LocalOfficialFileImportError("LOCAL_FILE_MAGIC_MISMATCH", "DOCX package is invalid") from exc
     else:
         if b"\x00" in data[:4096]:
             raise LocalOfficialFileImportError("LOCAL_FILE_BINARY_FORBIDDEN", "Text file contains binary control bytes")

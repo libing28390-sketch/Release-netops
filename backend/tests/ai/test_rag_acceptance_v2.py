@@ -305,17 +305,67 @@ def test_chat_stream_parses_intent_before_knowledge_retrieval(monkeypatch):
 
     events = asyncio.run(collect())
     assert any(event.startswith("event: token") for event in events)
-    assert any("当前没有匹配的配置指南" in event for event in events)
+    assert any('"content": "ok"' in event for event in events)
     assert any('"source": "local_rag"' in event and '"status": "no_match"' in event for event in events)
-    assert llm_calls == []
+    assert len(llm_calls) == 1
+    outbound_text = json.dumps(llm_calls[0], ensure_ascii=False)
+    assert "knowledge_status" in outbound_text
+    assert "no_local_match" in outbound_text
 
 
-def test_chat_no_match_does_not_ask_llm_to_invent_configuration(monkeypatch):
+def test_grounded_knowledge_stream_is_marked_not_external(monkeypatch):
     async def fake_parse_intent(message, user_id=None):
         return {"intent": "knowledge", "filters": {}, "knowledge_intent": {}}
 
-    async def unexpected_llm_call(**kwargs):
-        raise AssertionError("LLM must not synthesize an answer for an empty exact-match retrieval")
+    async def unexpected_chat_stream(**kwargs):
+        raise AssertionError("grounded knowledge should be rendered locally")
+        yield "unreachable"
+
+    class _Resolution:
+        def to_dict(self):
+            return {"ambiguous": False, "metadata": {}}
+
+    result = {
+        "request": SimpleNamespace(document_category="configuration", feature="ospf"),
+        "resolution": _Resolution(),
+        "results": [{
+            "content": "system-view ospf 1 display ospf peer brief",
+            "document_name": "Huawei OSPF",
+            "section": "configuration",
+            "cli_platform": "huawei_vrp",
+            "document_category": "configuration",
+        }],
+        "debug": {"candidate_count": 1},
+    }
+    monkeypatch.setattr(assistant_module.intent_parser, "parse_intent", fake_parse_intent)
+    monkeypatch.setattr(assistant_module.llm_gateway, "chat_stream", unexpected_chat_stream)
+    service = AIAssistantService()
+    monkeypatch.setattr(service, "retrieve_knowledge", lambda *args, **kwargs: result)
+
+    import asyncio
+
+    async def collect():
+        return [event async for event in service.chat_stream("Huawei OSPF config")]
+
+    events = asyncio.run(collect())
+    assert any('"external_egress": false' in event for event in events)
+    assert any("system-view" in event for event in events)
+
+
+def test_chat_no_match_uses_bounded_cloud_general_reference(monkeypatch):
+    async def fake_parse_intent(message, user_id=None):
+        return {"intent": "knowledge", "filters": {}, "knowledge_intent": {}}
+
+    llm_calls = []
+
+    async def fake_chat(**kwargs):
+        llm_calls.append(kwargs)
+        return {
+            "content": "云端通用参考",
+            "request_id": "req-test",
+            "model_id": "model-test",
+            "provider_id": "deepseek",
+        }
 
     class _Resolution:
         def to_dict(self):
@@ -328,7 +378,7 @@ def test_chat_no_match_does_not_ask_llm_to_invent_configuration(monkeypatch):
         "debug": {"candidate_count": 0},
     }
     monkeypatch.setattr(assistant_module.intent_parser, "parse_intent", fake_parse_intent)
-    monkeypatch.setattr(assistant_module.llm_gateway, "chat", unexpected_llm_call)
+    monkeypatch.setattr(assistant_module.llm_gateway, "chat", fake_chat)
     service = AIAssistantService()
     monkeypatch.setattr(service, "retrieve_knowledge", lambda *args, **kwargs: result)
 
@@ -337,5 +387,10 @@ def test_chat_no_match_does_not_ask_llm_to_invent_configuration(monkeypatch):
     answer = asyncio.run(service.chat("Huawei CE6800 OSPF config"))
     assert answer["facts_retrieved"] is False
     assert answer["citations"] == []
-    assert answer["answer"].startswith("当前没有匹配的配置指南")
-    assert "精确命中：0 份" in answer["answer"]
+    assert answer["answer"] == "云端通用参考"
+    assert answer["answer_contract"]["grounded"] is False
+    assert answer["answer_contract"]["no_match"] is True
+    assert len(llm_calls) == 1
+    outbound = json.dumps(llm_calls[0], ensure_ascii=False)
+    assert "no_local_match" in outbound
+    assert "knowledge_chunks" not in outbound

@@ -26,6 +26,15 @@ ROOT_CATEGORY_MAP = {
     "05_troubleshooting": "troubleshooting",
     "06_examples": "example",
 }
+DOCUMENT_CATEGORY_ALIASES = {
+    **ROOT_CATEGORY_MAP,
+    "hardware": "hardware",
+    "command": "command",
+    "configuration": "configuration",
+    "cli_output": "cli_output",
+    "troubleshooting": "troubleshooting",
+    "example": "example",
+}
 DIRECTORY_VENDOR_MAP = {
     "huawei": "Huawei",
     "h3c": "H3C",
@@ -200,7 +209,7 @@ def validate_metadata(
         else:
             raise MetadataValidationError("official_only must be a boolean")
 
-    category = str(result.get("document_category") or "").strip().lower()
+    category = canonical_document_category(result.get("document_category"))
     if category:
         result["document_category"] = category
     vendor = str(result.get("vendor") or "").strip()
@@ -252,15 +261,43 @@ def canonical_vendor(value: Any) -> str:
     }.get(normalized, str(value or "").strip())
 
 
+def canonical_document_category(value: Any) -> str:
+    """Normalize UI directory ids and semantic categories to one RAG value."""
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    return DOCUMENT_CATEGORY_ALIASES.get(normalized, normalized)
+
+
+def document_category_query_values(value: Any) -> tuple[str, ...]:
+    """Return canonical and legacy storage values during the migration window."""
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    canonical = canonical_document_category(normalized)
+    if not canonical:
+        return ()
+    return (canonical,) if normalized == canonical else (canonical, normalized)
+
+
 def merge_metadata(frontmatter: Mapping[str, Any], source_metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Merge source/audit metadata while giving Front Matter precedence."""
+    """Merge source/audit metadata while giving meaningful Front Matter precedence.
+
+    Validation adds nullable defaults (for example ``cli_platform: None``)
+    when a document has no Front Matter.  Those defaults must not erase a
+    trusted value supplied by the importer/template projection.  A real,
+    non-empty Front Matter value still wins over the source metadata.
+    """
 
     merged: dict[str, Any] = {}
     for key, value in (source_metadata or {}).items():
         if value is not None:
             merged[str(key)] = value
     for key, value in frontmatter.items():
-        merged[str(key)] = value
+        normalized_key = str(key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            # Preserve a meaningful source value when validation supplied an
+            # empty/default Front Matter value.  If no source value exists,
+            # retain the explicit empty value for schema completeness.
+            if normalized_key in merged:
+                continue
+        merged[normalized_key] = value
     return merged
 
 

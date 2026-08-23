@@ -675,8 +675,13 @@ def _send_command(device_info: dict, command: str, force_refresh: bool = False) 
     port = int(device_info.get('port') or device_info.get('management_port') or 22)
     from drivers.ssh_compat import is_ssh_port_open
     if not is_ssh_port_open(device_ip, port):
+        # A TCP probe is only an early diagnostic hint.  It can race with a
+        # device ACL/management-plane state change and, importantly, it does
+        # not prove that the subsequent Netmiko connection would fail.  Keep
+        # the warning for observability but still attempt the configured
+        # connection so callers get the real driver/auth error (and so a
+        # mocked driver in tests follows the same path as production).
         logger.warning("SSH port %s is closed/unreachable for %s", port, device_ip)
-        return ""
 
     credential_attempts = [
         (device_info.get('_ssh_username') or device_info.get('username') or '',

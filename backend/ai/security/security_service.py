@@ -80,20 +80,50 @@ def record_security_event(
     return event_id
 
 
-def list_security_events(*, tenant_id: str, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+def _security_event_filters(
+    *, tenant_id: str, search: str = "", decision: str = "", classification: str = "",
+) -> tuple[str, list[Any]]:
+    where = ["tenant_id = ?"]
+    params: list[Any] = [str(tenant_id)]
+    normalized_search = sanitize_text(str(search or "").strip())[:256].casefold()
+    normalized_decision = sanitize_text(str(decision or "").strip())[:32].casefold()
+    normalized_classification = sanitize_text(str(classification or "").strip())[:32].casefold()
+    if normalized_search:
+        where.append(
+            "(LOWER(COALESCE(request_id, '')) LIKE ? OR LOWER(COALESCE(provider_id, '')) LIKE ? "
+            "OR LOWER(COALESCE(model_id, '')) LIKE ? OR LOWER(COALESCE(error_code, '')) LIKE ?)"
+        )
+        needle = f"%{normalized_search}%"
+        params.extend([needle, needle, needle, needle])
+    if normalized_decision:
+        where.append("LOWER(COALESCE(decision, '')) = ?")
+        params.append(normalized_decision)
+    if normalized_classification:
+        where.append("LOWER(COALESCE(classification, '')) = ?")
+        params.append(normalized_classification)
+    return " AND ".join(where), params
+
+
+def list_security_events(
+    *, tenant_id: str, limit: int = 100, offset: int = 0,
+    search: str = "", decision: str = "", classification: str = "",
+) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 500))
     offset = max(0, int(offset))
+    where, params = _security_event_filters(
+        tenant_id=tenant_id, search=search, decision=decision, classification=classification,
+    )
     with get_db_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, request_id, policy_version, classification, data_region,
                    decision, disposition, provider_id, model_id,
                    finding_categories_json, payload_bytes, error_code, created_at
             FROM ai_security_events
-            WHERE tenant_id = ?
+            WHERE {where}
             ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
             """,
-            (str(tenant_id), limit, offset),
+            (*params, limit, offset),
         ).fetchall()
     result = []
     for row in rows:
@@ -109,6 +139,17 @@ def list_security_events(*, tenant_id: str, limit: int = 100, offset: int = 0) -
             "payload_bytes": row[10], "error_code": row[11], "created_at": row[12],
         })
     return result
+
+
+def count_security_events(
+    *, tenant_id: str, search: str = "", decision: str = "", classification: str = "",
+) -> int:
+    where, params = _security_event_filters(
+        tenant_id=tenant_id, search=search, decision=decision, classification=classification,
+    )
+    with get_db_connection() as conn:
+        row = conn.execute(f"SELECT COUNT(*) FROM ai_security_events WHERE {where}", tuple(params)).fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 def export_security_events(*, tenant_id: str) -> str:
@@ -201,17 +242,43 @@ def create_security_incident(
     }
 
 
-def list_security_incidents(*, tenant_id: str, status: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+def _security_incident_filters(
+    *, tenant_id: str, status: str | None = None, severity: str = "", search: str = "",
+) -> tuple[str, list[Any]]:
     normalized_status = str(status or "").strip().lower() or None
     if normalized_status and normalized_status not in _INCIDENT_STATUSES:
         raise ValueError("unsupported incident status")
-    limit = max(1, min(int(limit), 500))
-    offset = max(0, int(offset))
     where = "tenant_id = ?"
     params: list[Any] = [str(tenant_id)]
     if normalized_status:
         where += " AND status = ?"
         params.append(normalized_status)
+    normalized_severity = str(severity or "").strip().lower()
+    if normalized_severity and normalized_severity not in _INCIDENT_SEVERITIES:
+        raise ValueError("unsupported incident severity")
+    if normalized_severity:
+        where += " AND severity = ?"
+        params.append(normalized_severity)
+    normalized_search = sanitize_text(str(search or "").strip())[:256].casefold()
+    if normalized_search:
+        where += (
+            " AND (LOWER(COALESCE(request_id, '')) LIKE ? OR LOWER(COALESCE(task_id, '')) LIKE ? "
+            "OR LOWER(COALESCE(incident_type, '')) LIKE ? OR LOWER(COALESCE(category, '')) LIKE ?)"
+        )
+        needle = f"%{normalized_search}%"
+        params.extend([needle, needle, needle, needle])
+    return where, params
+
+
+def list_security_incidents(
+    *, tenant_id: str, status: str | None = None, limit: int = 100, offset: int = 0,
+    severity: str = "", search: str = "",
+) -> list[dict[str, Any]]:
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+    where, params = _security_incident_filters(
+        tenant_id=tenant_id, status=status, severity=severity, search=search,
+    )
     params.extend([limit, offset])
     with get_db_connection() as conn:
         rows = conn.execute(
@@ -225,6 +292,17 @@ def list_security_incidents(*, tenant_id: str, status: str | None = None, limit:
             tuple(params),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def count_security_incidents(
+    *, tenant_id: str, status: str | None = None, severity: str = "", search: str = "",
+) -> int:
+    where, params = _security_incident_filters(
+        tenant_id=tenant_id, status=status, severity=severity, search=search,
+    )
+    with get_db_connection() as conn:
+        row = conn.execute(f"SELECT COUNT(*) FROM ai_security_incidents WHERE {where}", tuple(params)).fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 def resolve_security_incident(*, tenant_id: str, incident_id: str, resolved_by: str) -> dict[str, Any]:

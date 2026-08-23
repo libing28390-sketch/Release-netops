@@ -89,6 +89,7 @@ def normalize_topology_platform(platform: str | None) -> str:
         'cisco_xe': 'cisco_ios',
         'huawei_vrpv8': 'huawei_vrp',
         'huawei': 'huawei_vrp',
+        'hp_comware': 'h3c_comware',
         'comware': 'h3c_comware',
         'ruijie_os': 'ruijie_rgos',
         'dptech': 'dptech_ios',
@@ -3230,6 +3231,7 @@ def get_topology_site_summaries() -> list[dict[str, Any]]:
 
     for grouped_rows in link_groups.values():
         active_rows = [row for row in grouped_rows if _link_operational_state(dict(row), now)[0] != 'stale']
+        stale_rows = [row for row in grouped_rows if _link_operational_state(dict(row), now)[0] == 'stale']
         row = active_rows[0] if active_rows else grouped_rows[0]
         source_site = _canonical_site_id(row['source_site_id'], site_aliases)
         target_site = _canonical_site_id(row['target_site_id'], site_aliases)
@@ -3237,12 +3239,16 @@ def get_topology_site_summaries() -> list[dict[str, Any]]:
         effective_state = 'unknown' if active_rows else 'stale'
         for site_id in site_ids:
             summary = ensure_site(site_id)
-            if effective_state == 'stale':
-                summary['stale_links'] += 1
-                continue
-            summary['link_count'] += 1
-            if source_site != target_site:
-                summary['cross_site_links'] += 1
+            # Keep stale evidence visible even when a newer member link keeps
+            # the endpoint pair active.  Deduplicate rows sharing the same
+            # link_key so directional/duplicate evidence does not inflate the
+            # site card, while still separating current and stale links.
+            stale_keys = {str(item['link_key'] or '') for item in stale_rows}
+            summary['stale_links'] += len(stale_keys) if stale_keys else 0
+            if effective_state != 'stale':
+                summary['link_count'] += 1
+                if source_site != target_site:
+                    summary['cross_site_links'] += 1
 
     for row in orphan_rows:
         ensure_site(str(row['site_id'] or ''))['orphan_devices'] = int(row['count'] or 0)

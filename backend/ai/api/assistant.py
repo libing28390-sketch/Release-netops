@@ -25,6 +25,14 @@ from ai.services.natural_query import natural_query_service
 from ai.services.ip_troubleshooting import ip_troubleshooting_service
 from ai.services.mac_troubleshooting import mac_troubleshooting_service
 from ai.services.knowledge_service import KnowledgeDocumentActionError, knowledge_service
+from ai.services.knowledge_export_service import (
+    KnowledgeExportError,
+    knowledge_export_service,
+)
+from ai.services.knowledge_bundle_import_service import (
+    KnowledgeBundleImportError,
+    import_knowledge_bundle,
+)
 from ai.services.metadata_confirmation_service import (
     MetadataConfirmationError,
     preview_document_metadata,
@@ -156,7 +164,25 @@ async def chat_assistant(req: ChatRequest, user=Depends(require_ai_permission("a
     )
     if req.conversation_id:
         try:
-            append_message(conversation_id=req.conversation_id, tenant_id=tenant_id, user_id=user_id, role="assistant", content=result.get("answer", ""), citations=result.get("citations") or [], requested_model_id=result.get("requested_model_id") or requested_model_id, actual_model_id=result.get("model_id"), provider_id=result.get("provider_id"), route_reason=result.get("route_reason"), fallback_used=bool(result.get("fallback_used")))
+            append_message(
+                conversation_id=req.conversation_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                role="assistant",
+                content=result.get("answer", ""),
+                citations=result.get("citations") or [],
+                requested_model_id=result.get("requested_model_id") or requested_model_id,
+                actual_model_id=result.get("model_id"),
+                provider_id=result.get("provider_id"),
+                route_reason=result.get("route_reason"),
+                fallback_used=bool(result.get("fallback_used")),
+                execution_mode=result.get("execution_mode"),
+                external_egress=result.get("external_egress"),
+                input_tokens=result.get("input_tokens"),
+                output_tokens=result.get("output_tokens"),
+                latency_ms=result.get("latency_ms"),
+                token_source=result.get("token_source"),
+            )
         except (LookupError, ValueError):
             # Do not discard a valid model answer when the safe-history write
             # rejects provider output or the client disconnects during cleanup.
@@ -254,8 +280,14 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                     sequence = event_sequence(part)
                     was_new = sse_stream_registry.record(stream_state, part)
                     payload = event_payload(part)
-                    if isinstance(payload, dict) and payload.get("model_id"):
-                        route_meta.update(payload)
+                    if isinstance(payload, dict):
+                        for key in (
+                            "requested_model_id", "model_id", "provider_id", "route_reason",
+                            "fallback_used", "execution_mode", "external_egress", "input_tokens",
+                            "output_tokens", "latency_ms", "duration_ms", "token_source",
+                        ):
+                            if key in payload and payload[key] is not None:
+                                route_meta[key] = payload[key]
                     if sequence is None:
                         if was_new:
                             yield part.rstrip() + "\n\n"
@@ -282,6 +314,12 @@ async def chat_assistant_stream(req: ChatRequest, user=Depends(require_ai_permis
                         provider_id=route_meta.get("provider_id"),
                         route_reason=route_meta.get("route_reason"),
                         fallback_used=bool(route_meta.get("fallback_used")),
+                        execution_mode=route_meta.get("execution_mode"),
+                        external_egress=route_meta.get("external_egress"),
+                        input_tokens=route_meta.get("input_tokens"),
+                        output_tokens=route_meta.get("output_tokens"),
+                        latency_ms=route_meta.get("latency_ms") or route_meta.get("duration_ms"),
+                        token_source=route_meta.get("token_source"),
                     )
                     stream_state.assistant_message_persisted = True
                 except (LookupError, ValueError):
@@ -653,6 +691,69 @@ def list_documents(
     )
 
 
+@router.get("/knowledge-export")
+def export_knowledge_documents(
+    source_type: Optional[str] = Query(default=None, max_length=64),
+    search: str = Query(default="", max_length=200),
+    directory_path: Optional[str] = Query(default=None, max_length=500),
+    knowledge_scope: Optional[str] = Query(default=None, max_length=32),
+    vendor: str = Query(default="", max_length=128),
+    product_family: str = Query(default="", max_length=256),
+    product_series: str = Query(default="", max_length=256),
+    product_model: str = Query(default="", max_length=256),
+    os_family: str = Query(default="", max_length=128),
+    os_generation: str = Query(default="", max_length=128),
+    software_train: str = Query(default="", max_length=128),
+    software_release: str = Query(default="", max_length=128),
+    cli_platform: str = Query(default="", max_length=128),
+    document_category: str = Query(default="", max_length=128),
+    feature_domain: str = Query(default="", max_length=128),
+    status: str = Query(default="active", max_length=32),
+    source_trust_level: str = Query(default="", max_length=32),
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    """Download a bounded, portable source/metadata ZIP for this tenant.
+
+    The bundle intentionally omits embeddings and server-owned ACL/identity
+    fields.  Re-importing it must run the normal chunking and embedding path.
+    """
+    try:
+        bundle = knowledge_export_service.build_export(
+            tenant_id=user.get("tenant_id") or "tenant-default",
+            source_type=source_type,
+            knowledge_scope=knowledge_scope,
+            search=search,
+            directory_path=directory_path,
+            vendor=vendor,
+            product_family=product_family,
+            product_series=product_series,
+            product_model=product_model,
+            os_family=os_family,
+            os_generation=os_generation,
+            software_train=software_train,
+            software_release=software_release,
+            cli_platform=cli_platform,
+            document_category=document_category,
+            feature_domain=feature_domain,
+            status=status,
+            source_trust_level=source_trust_level,
+        )
+    except KnowledgeExportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+    response = StreamingResponse(
+        iter([bundle["content"]]),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{bundle["filename"]}"',
+            "Content-Length": str(len(bundle["content"])),
+            "X-Knowledge-Export-Documents": str(bundle["document_count"]),
+            "X-Knowledge-Export-Content-Bytes": str(bundle["content_bytes"]),
+            "X-Knowledge-Export-Embeddings": "false",
+        },
+    )
+    return response
+
+
 @router.get("/documents/facets")
 def list_document_facets(
     source_type: Optional[str] = Query(default=None, max_length=64),
@@ -712,6 +813,36 @@ def add_document(payload: KnowledgeDocumentCreateRequest, user=Depends(require_a
         chunk_size=payload.chunk_size,
         metadata=payload.metadata,
     )
+
+
+@router.post("/documents/import-bundle")
+async def import_document_bundle(
+    file: UploadFile = File(...),
+    user=Depends(require_ai_permission("ai.knowledge.manage")),
+):
+    """Validate and import a Nexora export ZIP in one database transaction.
+
+    The destination always re-chunks/re-embeds locally.  Claims that a bundle
+    is an official source are downgraded to ``user_document`` until the URL is
+    explicitly re-reviewed through the official ingestion workflow.
+    """
+    max_bytes = 64 * 1024 * 1024
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=413, detail={"code": "KNOWLEDGE_BUNDLE_TOO_LARGE", "message": "知识库导出包超过 64 MB 限制"})
+    try:
+        result = import_knowledge_bundle(
+            content,
+            tenant_id=user.get("tenant_id") or "tenant-default",
+        )
+    except KnowledgeBundleImportError as exc:
+        detail: dict[str, Any] = {"code": exc.code, "message": str(exc)}
+        if exc.details is not None:
+            detail["details"] = exc.details
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"code": "KNOWLEDGE_BUNDLE_IMPORT_FAILED", "message": "知识库导出包导入失败，已回滚全部变更"}) from exc
+    return {"success": True, "data": result, "message": "知识库导出包已原子导入"}
 
 
 @router.post("/documents/metadata-preview")

@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from fnmatch import fnmatchcase
 from urllib.parse import urlparse
 from database.core import get_db_connection
 from ai.security.crypto import encrypt_api_key, mask_api_key, require_configured_master_key
@@ -43,6 +44,33 @@ def _validate_provider_endpoint(provider_type: str, base_url: str | None) -> Non
     raise HTTPException(status_code=400, detail="Provider base_url must use HTTPS; HTTP is allowed only for local Ollama endpoints")
 
 
+def _validate_endpoint_allowlist(
+    provider_type: str,
+    base_url: str | None,
+    patterns: list[str] | None,
+) -> list[str]:
+    """Validate and normalize the application-level egress endpoint allowlist."""
+
+    normalized = [str(item).strip().rstrip("/") for item in (patterns or []) if str(item).strip()]
+    if not base_url or str(provider_type).lower() in {"local", "ollama"}:
+        return normalized
+    if not normalized:
+        # Existing deployments are backfilled by m0166; a new provider with a
+        # configured HTTPS endpoint gets that exact endpoint as its initial
+        # approved destination instead of an implicit wildcard.
+        normalized = [str(base_url).rstrip("/")]
+    parsed_base = urlparse(str(base_url).rstrip("/"))
+    if parsed_base.scheme != "https" or not parsed_base.hostname:
+        raise HTTPException(status_code=400, detail="Cloud provider endpoint allowlist requires an HTTPS URL")
+    for pattern in normalized:
+        parsed_pattern = urlparse(pattern.replace("*", "allowlist-wildcard"))
+        if parsed_pattern.scheme != "https" or not parsed_pattern.hostname:
+            raise HTTPException(status_code=400, detail="approved_endpoint_patterns must contain HTTPS URL patterns")
+    if not any(fnmatchcase(str(base_url).rstrip("/"), pattern) for pattern in normalized):
+        raise HTTPException(status_code=400, detail="base_url is not covered by approved_endpoint_patterns")
+    return normalized
+
+
 def _row_to_provider(row) -> AIProviderResponse:
     # PostgreSQL TEXT/JSON adapters can return a JSON string, a decoded list,
     # or legacy `{}` from m0139's original default.  The public contract is
@@ -62,19 +90,35 @@ def _row_to_provider(row) -> AIProviderResponse:
     else:
         decoded_tags = []
     tags = [tag.strip() for tag in decoded_tags if isinstance(tag, str) and tag.strip()]
+    raw_patterns = row[23] if len(row) > 23 else None
+    if isinstance(raw_patterns, (list, tuple)):
+        decoded_patterns = list(raw_patterns)
+    else:
+        try:
+            parsed_patterns = json.loads(str(raw_patterns or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_patterns = []
+        decoded_patterns = parsed_patterns if isinstance(parsed_patterns, list) else []
     return AIProviderResponse(
         id=row[0], name=row[1], provider_type=row[2], base_url=row[3], api_key_masked=row[4],
         timeout=row[5], max_retries=row[6], proxy_url=row[7], enabled=bool(row[8]), created_by=row[9],
         created_at=row[10], updated_at=row[11], health_status=row[13] or "unknown", last_health_check_at=row[14],
         last_success_at=row[15], last_error_code=row[16], tags=tags, data_region=row[17] or "unknown",
         allowed_data_classification=row[18] or "PUBLIC",
+        no_training_confirmed=bool(row[19]) if len(row) > 19 else False,
+        retention_days=(int(row[20]) if len(row) > 20 and row[20] is not None else None),
+        data_processing_agreement_ref=(row[21] if len(row) > 21 else None),
+        agreement_reviewed_at=(row[22] if len(row) > 22 else None),
+        approved_endpoint_patterns=[item for item in decoded_patterns if isinstance(item, str) and item.strip()],
     )
 
 
 _PROVIDER_SELECT = """SELECT id, name, provider_type, base_url, api_key_masked, timeout,
        max_retries, proxy_url, enabled, created_by, created_at, updated_at,
        tags_json, health_status, last_health_check_at, last_success_at,
-       last_error_code, data_region, allowed_data_classification
+       last_error_code, data_region, allowed_data_classification,
+       no_training_confirmed, retention_days, data_processing_agreement_ref,
+       agreement_reviewed_at, approved_endpoint_patterns_json
        FROM ai_provider"""
 
 
@@ -86,7 +130,7 @@ def list_providers(user=Depends(require_ai_permission("ai.provider.manage"))):
         try:
             cursor.execute(_PROVIDER_SELECT + " ORDER BY created_at DESC")
         except Exception:
-            cursor.execute("SELECT id, name, provider_type, base_url, api_key_masked, timeout, max_retries, proxy_url, enabled, created_by, created_at, updated_at, NULL, 'unknown', NULL, NULL, NULL, 'unknown', 'PUBLIC' FROM ai_provider ORDER BY created_at DESC")
+            cursor.execute("SELECT id, name, provider_type, base_url, api_key_masked, timeout, max_retries, proxy_url, enabled, created_by, created_at, updated_at, NULL, 'unknown', NULL, NULL, NULL, 'unknown', 'PUBLIC', 0, NULL, NULL, NULL, '[]' FROM ai_provider ORDER BY created_at DESC")
         rows = cursor.fetchall()
         return [_row_to_provider(r) for r in rows]
 
@@ -99,6 +143,11 @@ def create_provider(payload: AIProviderCreate, user=Depends(require_ai_permissio
         'https://api.deepseek.com', 'https://api.deepseek.com/v1',
     }:
         raise HTTPException(status_code=400, detail='DeepSeek provider must use the official HTTPS endpoint')
+    approved_endpoint_patterns = _validate_endpoint_allowlist(
+        payload.provider_type,
+        payload.base_url,
+        payload.approved_endpoint_patterns,
+    )
     now_iso = datetime.now(timezone.utc).isoformat()
     p_id = f"prov_{uuid.uuid4().hex[:12]}"
     
@@ -121,13 +170,18 @@ def create_provider(payload: AIProviderCreate, user=Depends(require_ai_permissio
             INSERT INTO ai_provider (
                 id, name, provider_type, base_url, api_key_encrypted, api_key_masked,
                 timeout, max_retries, proxy_url, enabled, created_by, created_at, updated_at,
-                tags_json, health_status, data_region, allowed_data_classification
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?)
+                tags_json, health_status, data_region, allowed_data_classification,
+                no_training_confirmed, retention_days, data_processing_agreement_ref,
+                agreement_reviewed_at, approved_endpoint_patterns_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?, ?, ?, ?)
             """,
             (
                 p_id, payload.name, payload.provider_type, payload.base_url, enc_key, masked_key,
                 payload.timeout, payload.max_retries, payload.proxy_url, int(payload.enabled),
-                username, now_iso, now_iso, json.dumps(payload.tags, ensure_ascii=False), payload.data_region, payload.allowed_data_classification
+                username, now_iso, now_iso, json.dumps(payload.tags, ensure_ascii=False), payload.data_region,
+                payload.allowed_data_classification, int(payload.no_training_confirmed), payload.retention_days,
+                payload.data_processing_agreement_ref, payload.agreement_reviewed_at,
+                json.dumps(approved_endpoint_patterns, ensure_ascii=False)
             )
         )
         
@@ -199,6 +253,11 @@ def create_provider(payload: AIProviderCreate, user=Depends(require_ai_permissio
         proxy_url=payload.proxy_url, enabled=payload.enabled, created_by=username,
         created_at=now_iso, updated_at=now_iso, tags=payload.tags, data_region=payload.data_region,
         allowed_data_classification=payload.allowed_data_classification,
+        no_training_confirmed=payload.no_training_confirmed,
+        retention_days=payload.retention_days,
+        data_processing_agreement_ref=payload.data_processing_agreement_ref,
+        agreement_reviewed_at=payload.agreement_reviewed_at,
+        approved_endpoint_patterns=approved_endpoint_patterns,
     )
 
 
@@ -218,6 +277,13 @@ def update_provider(provider_id: str, payload: AIProviderUpdate, user=Depends(re
         _validate_provider_endpoint(next_type, next_url)
         if next_type == "deepseek" and next_url and next_url.rstrip('/') not in {'https://api.deepseek.com', 'https://api.deepseek.com/v1'}:
             raise HTTPException(status_code=400, detail='DeepSeek provider must use the official HTTPS endpoint')
+        approved_endpoint_patterns = None
+        if payload.approved_endpoint_patterns is not None:
+            approved_endpoint_patterns = _validate_endpoint_allowlist(
+                next_type,
+                next_url,
+                payload.approved_endpoint_patterns,
+            )
         if payload.name is not None and cursor.execute("SELECT id FROM ai_provider WHERE name = ? AND id <> ?", (payload.name, provider_id)).fetchone():
             raise HTTPException(status_code=409, detail="Provider name already exists")
         enc_key = row[1]
@@ -246,6 +312,13 @@ def update_provider(provider_id: str, payload: AIProviderUpdate, user=Depends(re
         if payload.tags is not None: fields.append("tags_json = ?"); params.append(json.dumps(payload.tags, ensure_ascii=False))
         if payload.data_region is not None: fields.append("data_region = ?"); params.append(payload.data_region)
         if payload.allowed_data_classification is not None: fields.append("allowed_data_classification = ?"); params.append(payload.allowed_data_classification)
+        if payload.no_training_confirmed is not None: fields.append("no_training_confirmed = ?"); params.append(int(payload.no_training_confirmed))
+        if payload.retention_days is not None: fields.append("retention_days = ?"); params.append(payload.retention_days)
+        if payload.data_processing_agreement_ref is not None: fields.append("data_processing_agreement_ref = ?"); params.append(payload.data_processing_agreement_ref)
+        if payload.agreement_reviewed_at is not None: fields.append("agreement_reviewed_at = ?"); params.append(payload.agreement_reviewed_at)
+        if payload.approved_endpoint_patterns is not None:
+            fields.append("approved_endpoint_patterns_json = ?")
+            params.append(json.dumps(approved_endpoint_patterns or [], ensure_ascii=False))
 
         fields.append("updated_at = ?")
         params.append(now_iso)

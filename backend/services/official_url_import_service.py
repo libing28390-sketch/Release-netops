@@ -10,6 +10,7 @@ publication remain explicit continuation phases owned by later ING tasks.
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -21,6 +22,8 @@ from services.ingestion_pipeline_service import (
 )
 from services.ingestion_idempotency_service import build_url_idempotency_key
 from services.document_version_service import DocumentVersionError, record_document_version
+from services.document_content_cleaning import parse_and_clean_document
+from services.official_document_publisher import publish_official_document
 from services.source_registry_service import (
     SourceRegistryError,
     collect_source,
@@ -176,6 +179,7 @@ def import_single_official_url(
     if source_kind not in _OFFICIAL_SOURCE_KINDS:
         raise OfficialUrlImportError("IMPORT_SOURCE_KIND_INVALID", "source_kind is not an official source kind")
     source_metadata = _metadata(payload, actor=actor)
+    publish_requested = bool(payload.get("publish_to_knowledge_base"))
     try:
         preflight = validate_official_url_input(raw_url, source_kind=source_kind, metadata=source_metadata)
     except SourceRegistryError as exc:
@@ -244,6 +248,12 @@ def import_single_official_url(
             name=source_name,
             description=description,
         )
+        captured: dict[str, Any] = {}
+
+        def _capture(body: bytes, response_content_type: str) -> None:
+            captured["content"] = body
+            captured["content_type"] = response_content_type
+
         result = collect_source(
             source["id"],
             {"method": "GET"},
@@ -254,13 +264,42 @@ def import_single_official_url(
             operational_policy=operational_policy,
             backoff_base_seconds=backoff_base_seconds,
             sleeper=sleeper,
+            content_sink=_capture if publish_requested else None,
         )
         version = result.get("version") or {}
+        cleaned = None
+        raw_content = captured.get("content") if publish_requested else None
+        if publish_requested:
+            if not isinstance(raw_content, bytes) or not raw_content:
+                raise OfficialUrlImportError("PUBLISH_CONTENT_EMPTY", "Official source content is empty")
+            cleaned = parse_and_clean_document(
+                raw_content,
+                # MIME/magic detection owns the format; leaving the filename
+                # empty avoids declaring HTML for a text/PDF response.
+                filename="",
+                content_type=str(captured.get("content_type") or version.get("response_content_type") or ""),
+            )
+            if not str(cleaned.text or "").strip():
+                raise OfficialUrlImportError("PUBLISH_CONTENT_EMPTY", "Official source has no searchable text")
+        raw_for_document = None
+        if isinstance(raw_content, bytes):
+            raw_hash = hashlib.sha256(raw_content).hexdigest()
+            if raw_hash == str(version.get("content_hash") or "") and len(raw_content) == int(version.get("byte_size") or 0):
+                try:
+                    raw_content.decode("utf-8")
+                    raw_for_document = raw_content
+                except UnicodeDecodeError:
+                    # PDF/binary sources retain the immutable source reference
+                    # in V2; the searchable normalized text is still indexed
+                    # by the local projection below.
+                    raw_for_document = None
         document_result = record_document_version(
             source,
             version,
             user,
             metadata={"source_kind": source_kind, **source_metadata},
+            original_content=raw_for_document,
+            normalized_content=cleaned.text if cleaned is not None else None,
             collection_id=payload.get("collection_id") or payload.get("knowledge_base_id"),
             document_kind="command_reference" if source_kind == "command_reference" else "official_manual",
         )
@@ -275,9 +314,33 @@ def import_single_official_url(
                 "document_version_id": (document_result.get("document_version") or {}).get("id"),
             },
         )
-        # The source manifest is complete, but parser/chunk/index phases are
-        # intentionally left for ING-006+ continuation workers.
-        job.update_progress(total_count=1, processed_count=0, actor=worker_id, request_id=request_id)
+        if publish_requested:
+            publication = publish_official_document(
+                user=user,
+                source=source,
+                source_version=version,
+                raw_content=raw_content,
+                content_type=str(captured.get("content_type") or version.get("response_content_type") or ""),
+                source_kind=source_kind,
+                payload=payload,
+                cleaned=cleaned,
+            )
+            job.advance_phase("parsed", actor=worker_id, request_id=request_id, evidence={"parser": publication.get("parser_name"), "parser_version": publication.get("parser_version")})
+            job.advance_phase("normalized", actor=worker_id, request_id=request_id, evidence={"cleaner": publication.get("cleaner_name"), "cleaner_version": publication.get("cleaner_version")})
+            job.advance_phase("classified", actor=worker_id, request_id=request_id, evidence={"document_category": (payload.get("document_category") or source_kind), "official_only": True})
+            job.advance_phase("chunked", actor=worker_id, request_id=request_id, evidence={"chunk_count": int(publication.get("chunk_count") or 0)})
+            job.advance_phase("embedded", actor=worker_id, request_id=request_id, evidence={"embedding": "knowledge_service"})
+            job.advance_phase("indexed", actor=worker_id, request_id=request_id, evidence={"projection": "ai_document/ai_document_chunk"})
+            job.advance_phase("validated", actor=worker_id, request_id=request_id, evidence={"content_hash": publication.get("content_hash")})
+            job.advance_phase("committed", actor=worker_id, request_id=request_id, evidence={"document_id": publication.get("document_id")})
+            job.update_progress(total_count=1, processed_count=1, parsed_count=1, succeeded_count=1, actor=worker_id, request_id=request_id)
+            job.advance_phase("completed", actor=worker_id, request_id=request_id, evidence={"published": True})
+            job.transition_execution_state("succeeded", actor=worker_id, request_id=request_id)
+        else:
+            # The source manifest is complete, but parser/chunk/index phases
+            # remain an explicit continuation for the legacy API contract.
+            publication = None
+            job.update_progress(total_count=1, processed_count=0, actor=worker_id, request_id=request_id)
         replayed = bool(
             version.get("deduplicated")
             or version.get("idempotency", {}).get("replayed")
@@ -297,7 +360,9 @@ def import_single_official_url(
             "merged": bool(document_result.get("merged")),
             "idempotency": version.get("idempotency") or {"decision": "new_version", "replayed": replayed},
             "replayed": replayed,
-            "continuation_required": not replayed,
+            "publication": publication,
+            "published": bool(publication),
+            "continuation_required": False if publish_requested else not replayed,
         }
     except (SourceRegistryError, IngestionPipelineError) as exc:
         source = locals().get("source")

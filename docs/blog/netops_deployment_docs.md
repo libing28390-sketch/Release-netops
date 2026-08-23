@@ -70,7 +70,7 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
 如果是首次启动，`NetOps.exe` 将会弹出基于 **PySide6 编写的 premium 精美暗黑风格图形部署向导**：
 1. **运行环境检测**：向导会自动校验本地环境，支持兼容的 Python 版本范围（`3.10` ~ `3.12`，含两端）以及 Node.js 版本（`18+`）。如果检测到未安装，向导会提供一键下载并静默部署 Fallback 包（如 Python 3.11.9）。
 2. **数据库配置**：平台强制绑定 **PostgreSQL 17.x**。若本地 `5432` 未响应，向导可以下载并静默安装官方 PostgreSQL 17.2；该安装包不包含 `pgvector`。用户需要另外安装与 PG17 匹配的 `pgvector`，并确保 `pg_trgm` 可用。向导会实际登录数据库，缺库时尝试建库，再创建/校验这两个扩展。
-3. **依赖构建**：自动在本地创建 Python 虚拟环境（`.venv`），利用虚拟环境的 `pip` 安装 `backend/requirements.txt`；同时自动调用 `npm install` 并运行前端编译流程（`npm run build`）。
+3. **依赖构建**：自动在本地创建 Python 虚拟环境（`.venv`），利用虚拟环境的 `pip` 安装 `backend/requirements.txt`；同时自动调用 `npm ci --include=dev` 并运行前端编译流程（`npm run build`）。
 4. **服务启动与浏览器拉起**：向导环境验证完成后，在完成页点击“启动平台客户端”，系统开启后台托盘并打开默认浏览器访问 `http://127.0.0.1:5010`。
 5. **后续使用**：下次启动 `NetOps.exe` 时，系统会复用已存在的 `.venv` 和 `.env`，重新验证数据库并同步 Nexora 桌面快捷方式，然后启动客户端。
 
@@ -81,7 +81,7 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
 如果您是技术栈人员，希望以命令行前台或注册本地托盘运行，可以按照以下步骤手动操作：
 
 #### ① 依赖环境初始化
-1. 确保安装了 Python 3.10-3.12、Node.js 18+、PostgreSQL 17.x，以及与 PG17 匹配的 `pgvector` 和 `pg_trgm`。
+1. 确保安装了 Python 3.10-3.12、Node.js 20+、PostgreSQL 17.x，以及与 PG17 匹配的 `pgvector` 和 `pg_trgm`。
 2. 创建虚拟环境并安装 Python 包：
    ```powershell
    python -m venv .venv
@@ -90,7 +90,7 @@ Windows 部署支持两种主流模式：**小白用户的图形向导一键部�
    ```
 3. 构建前端资源：
    ```powershell
-   npm install
+   npm ci --include=dev
    npm run build
    ```
 4. 数据库配置：在项目根目录复制生成 `.env` 文件，并正确配置 `DATABASE_URL` 指向您的 PostgreSQL 实例：

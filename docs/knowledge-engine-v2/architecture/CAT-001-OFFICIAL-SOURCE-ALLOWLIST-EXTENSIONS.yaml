@@ -1,0 +1,88 @@
+# Additive CAT-001 entries for the campus and data-center switch coverage
+# required by the Copilot retrieval contract.  This file is intentionally
+# separate from the frozen first-batch allowlist; both files are merged by the
+# source-registry loader and retain exact HTTPS host/path matching.
+contract_version: v1.0-additive
+status: reviewed_for_knowledge_backfill
+authority: official_vendor_documentation
+
+vendor_entries:
+  - vendor: Huawei
+    vendor_key: huawei
+    product_family: S5700/S6700
+    model_pattern: S(57|67)00
+    platform_code: huawei_vrp
+    os_family: VRP
+    primary_version: V200R024C10
+    compatibility_version: V200R023C00
+    official_hosts:
+      - host: support.huawei.com
+        path_prefixes:
+          - /enterprise/en/doc/EDOC1100459443/
+          - /enterprise/en/doc/EDOC1100333453/
+          - /enterprise/en/doc/EDOC1000047418/
+        source_urls:
+          - https://support.huawei.com/enterprise/en/doc/EDOC1100459443/d770f3cd/configuring-ospf-attributes-on-different-types-of-networks
+          - https://support.huawei.com/enterprise/en/doc/EDOC1100333453/ac09508/static-routes-and-dynamic-routes
+          - https://support.huawei.com/enterprise/en/doc/EDOC1000047418/2ebe2b92/setting-parameters-for-ospf-neighbor-relationship
+    source_authority: Huawei Enterprise Support
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, release_note]
+
+  - vendor: H3C
+    vendor_key: h3c
+    product_family: Comware 7 Switches
+    model_pattern: S(51|68|98|12)\d+
+    platform_code: h3c_comware
+    os_family: Comware 7
+    primary_version: Comware 7
+    compatibility_version: CMW710
+    official_hosts:
+      - host: www.h3c.com
+        path_prefixes:
+          - /en/d_201903/
+          - /en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/
+        source_urls:
+          - https://www.h3c.com/en/d_201903/1159013_294551_0.htm
+          - https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/H3C_CG-19994/07/202410/2284787_294551_0.htm
+          - https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/H3C_CG-18480/05/202404/2113517_294551_0.htm
+          - https://www.h3c.com/en/Support/Resource_Center/EN/Home/Public/00-Public/Technical_Documents/Configure___Deploy/Configuration_Guides/S12500X-AF_S12500-X_S9800_CG_R2700/05/
+    source_authority: H3C Support
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, release_note]
+
+  - vendor: Cisco
+    vendor_key: cisco
+    product_family: Catalyst 9300
+    model_pattern: C9300
+    platform_code: cisco_iosxe
+    os_family: IOS-XE
+    primary_version: 17.13.x
+    compatibility_version: 17.18.x
+    official_hosts:
+      - host: www.cisco.com
+        path_prefixes:
+          - /c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-13/
+        source_urls:
+          - https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9300/software/release/17-13/configuration_guide/rtng/b_1713_rtng_9300_cg/configuring_ospf.html
+    source_authority: Cisco IOS XE Documentation
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, release_note]
+
+  - vendor: Cisco
+    vendor_key: cisco
+    product_family: Nexus 3000/9000
+    model_pattern: Nexus(3|9)K
+    platform_code: cisco_nxos
+    os_family: NX-OS
+    primary_version: NX-OS 9.x
+    compatibility_version: NX-OS 10.x
+    official_hosts:
+      - host: www.cisco.com
+        path_prefixes:
+          - /c/en/us/td/docs/switches/datacenter/nexus3000/
+          - /c/en/us/td/docs/switches/datacenter/nexus9000/
+          - /c/en/us/td/docs/dcn/nx-os/nexus9000/
+        source_urls:
+          - https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus3000/sw/unicast/602_u1_1/l3_nx-os/l3_ospf.html
+          - https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/6-x/unicast/configuration/guide/l3_cli_nxos/l3_ospf.html
+          - https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/92x/vxlan-92x/configuration/guide/b-cisco-nexus-9000-series-nx-os-vxlan-configuration-guide-92x/b_Cisco_Nexus_9000_Series_NX-OS_VXLAN_Configuration_Guide_9x_chapter_0100.html
+    source_authority: Cisco Data Center Documentation
+    allowed_source_kinds: [product_support, configuration_guide, command_reference, release_note]

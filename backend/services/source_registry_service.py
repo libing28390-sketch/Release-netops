@@ -18,7 +18,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import yaml
@@ -211,29 +211,39 @@ def _canonicalize_url(value: Any) -> tuple[str, str, int, str]:
 
 
 def _load_official_allowlist() -> dict[str, list[dict[str, Any]]]:
-    path = Path(__file__).resolve().parents[2] / "docs" / "knowledge-engine-v2" / "architecture" / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST.yaml"
-    try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError) as exc:
-        raise SourceRegistryError("ALLOWLIST_UNAVAILABLE", "Official source allowlist is unavailable", status_code=503) from exc
+    architecture_dir = Path(__file__).resolve().parents[2] / "docs" / "knowledge-engine-v2" / "architecture"
+    paths = [
+        architecture_dir / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST.yaml",
+        # Vendor/product additions are intentionally additive.  Keeping them
+        # in a separate reviewed file preserves the CAT-001 baseline contract
+        # while allowing the catalog to grow without rewriting its evidence.
+        architecture_dir / "CAT-001-OFFICIAL-SOURCE-ALLOWLIST-EXTENSIONS.yaml",
+    ]
     entries: dict[str, list[dict[str, Any]]] = {}
-    for vendor in document.get("vendor_entries") or []:
-        vendor_name = str(vendor.get("vendor") or "")
-        for host_entry in vendor.get("official_hosts") or []:
-            host = str(host_entry.get("host") or "").strip().lower()
-            if not host or "*" in host:
-                continue
-            entries.setdefault(host, []).append(
-                {
-                    "vendor": vendor_name,
-                    "vendor_key": str(vendor.get("vendor_key") or ""),
-                    "product_family": str(vendor.get("product_family") or ""),
-                    "platform_code": str(vendor.get("platform_code") or ""),
-                    "os_family": str(vendor.get("os_family") or ""),
-                    "path_prefixes": [str(item) for item in host_entry.get("path_prefixes") or []],
-                    "allowed_source_kinds": set(str(item) for item in vendor.get("allowed_source_kinds") or []),
-                }
-            )
+    for index, path in enumerate(paths):
+        if index == 1 and not path.exists():
+            continue
+        try:
+            document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise SourceRegistryError("ALLOWLIST_UNAVAILABLE", "Official source allowlist is unavailable", status_code=503) from exc
+        for vendor in document.get("vendor_entries") or []:
+            vendor_name = str(vendor.get("vendor") or "")
+            for host_entry in vendor.get("official_hosts") or []:
+                host = str(host_entry.get("host") or "").strip().lower()
+                if not host or "*" in host:
+                    continue
+                entries.setdefault(host, []).append(
+                    {
+                        "vendor": vendor_name,
+                        "vendor_key": str(vendor.get("vendor_key") or ""),
+                        "product_family": str(vendor.get("product_family") or ""),
+                        "platform_code": str(vendor.get("platform_code") or ""),
+                        "os_family": str(vendor.get("os_family") or ""),
+                        "path_prefixes": [str(item) for item in host_entry.get("path_prefixes") or []],
+                        "allowed_source_kinds": set(str(item) for item in vendor.get("allowed_source_kinds") or []),
+                    }
+                )
     return entries
 
 
@@ -849,7 +859,7 @@ def create_source(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, An
                 rate_limit_per_minute, policy_version, policy_hash, metadata_json,
                 validation_status, validation_json, created_at, updated_at,
                 created_by, updated_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'https', ?, 'exact', ?, ?, 0, ?, ?, ?, ?, 1, ?, ?, 'unvalidated', '{}', ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'https', ?, 'exact', ?, ?, FALSE, ?, ?, ?, ?, 1, ?, ?, 'unvalidated', '{}', ?, ?, ?, ?)
             """,
             (
                 source_id, tenant_id, source_type, source_kind, name, description,
@@ -1028,7 +1038,7 @@ def enable_source(source_id: str, user: dict[str, Any]) -> dict[str, Any]:
             conn.commit()
             raise SourceRegistryError("SOURCE_VALIDATION_FAILED", "Source did not pass validation and remains non-active", status_code=409, details=result)
         conn.execute(
-            "UPDATE kb_source_registry SET status = 'active', fetch_enabled = 1, validation_status = 'valid', validation_json = ?, updated_at = ?, updated_by = ?, lock_version = lock_version + 1, disabled_at = NULL, disabled_by = NULL, disable_reason = NULL WHERE id = ? AND tenant_id = ?",
+            "UPDATE kb_source_registry SET status = 'active', fetch_enabled = TRUE, validation_status = 'valid', validation_json = ?, updated_at = ?, updated_by = ?, lock_version = lock_version + 1, disabled_at = NULL, disabled_by = NULL, disable_reason = NULL WHERE id = ? AND tenant_id = ?",
             (_json_dumps(result), now, _actor(user), source_id, tenant_id),
         )
         updated = _get_source_in_conn(conn, source_id, user, tenant_id=tenant_id)
@@ -1059,7 +1069,7 @@ def disable_source(source_id: str, user: dict[str, Any], *, reason: str = "") ->
             raise SourceRegistryError("REASON_TOO_LONG", "disable reason is too long")
         now = _now()
         conn.execute(
-            "UPDATE kb_source_registry SET status = 'disabled', fetch_enabled = 0, disabled_at = ?, disabled_by = ?, disable_reason = ?, updated_at = ?, updated_by = ?, lock_version = lock_version + 1 WHERE id = ? AND tenant_id = ?",
+                    "UPDATE kb_source_registry SET status = 'disabled', fetch_enabled = FALSE, disabled_at = ?, disabled_by = ?, disable_reason = ?, updated_at = ?, updated_by = ?, lock_version = lock_version + 1 WHERE id = ? AND tenant_id = ?",
             (now, _actor(user), reason, now, _actor(user), source_id, tenant_id),
         )
         updated = _get_source_in_conn(conn, source_id, user, tenant_id=tenant_id)
@@ -1114,7 +1124,7 @@ def quarantine_source_for_change(
             "refresh_observation_id": refresh_observation_id,
         }
         conn.execute(
-            "UPDATE kb_source_registry SET status = 'quarantined', fetch_enabled = 0, validation_status = 'invalid', validation_json = ?, updated_at = ?, updated_by = ?, lock_version = lock_version + 1 WHERE id = ? AND tenant_id = ?",
+            "UPDATE kb_source_registry SET status = 'quarantined', fetch_enabled = FALSE, validation_status = 'invalid', validation_json = ?, updated_at = ?, updated_by = ?, lock_version = lock_version + 1 WHERE id = ? AND tenant_id = ?",
             (_json_dumps(validation), now, _actor(user), source_id, tenant_id),
         )
         updated = _get_source_in_conn(conn, source_id, user, tenant_id=tenant_id)
@@ -1152,7 +1162,7 @@ def delete_source(source_id: str, user: dict[str, Any], *, reason: str = "") -> 
         reason = str(reason or "").strip()
         now = _now()
         conn.execute(
-            "UPDATE kb_source_registry SET status = 'deleted', fetch_enabled = 0, deleted_at = ?, deleted_by = ?, deletion_reason = ?, updated_at = ?, updated_by = ?, lock_version = lock_version + 1 WHERE id = ? AND tenant_id = ?",
+            "UPDATE kb_source_registry SET status = 'deleted', fetch_enabled = FALSE, deleted_at = ?, deleted_by = ?, deletion_reason = ?, updated_at = ?, updated_by = ?, lock_version = lock_version + 1 WHERE id = ? AND tenant_id = ?",
             (now, _actor(user), reason, now, _actor(user), source_id, tenant_id),
         )
         updated = _get_source_in_conn(conn, source_id, user, tenant_id=tenant_id)
@@ -1339,6 +1349,7 @@ def collect_source(
     operational_policy: bool = False,
     backoff_base_seconds: float = 0.0,
     sleeper: Any = None,
+    content_sink: Callable[[bytes, str], None] | None = None,
 ) -> dict[str, Any]:
     """Collect an active registry source through the CAT-004 safe boundary.
 
@@ -1347,7 +1358,9 @@ def collect_source(
     calls always use the fail-closed resolver and an HTTPX client with proxy
     environment variables disabled.  Response bodies are held only in memory
     long enough to compute the immutable SHA-256 version fact; the API returns
-    metadata and never returns the body.
+    metadata and never returns the body.  An internal ``content_sink`` may be
+    supplied by a trusted continuation worker to parse/publish the bytes in
+    the same request.  It is never serialized into the API result.
     """
     request = dict(payload or {})
     method = str(request.get("method") or "GET").strip().upper()
@@ -1486,7 +1499,13 @@ def collect_source(
             client_factory=client_factory,
             backoff_base_seconds=backoff_base_seconds,
             sleeper=sleeper or time.sleep,
-            conditional_headers={
+            # A trusted publication continuation needs the response body in
+            # memory for parsing/chunking.  Source versions intentionally keep
+            # only a hash/reference, so a conditional 304 cannot satisfy the
+            # continuation after a previous fetch.  Force a body fetch whenever
+            # a sink is present; the legacy manifest-only path keeps normal
+            # conditional requests and 304 replay semantics.
+            conditional_headers={} if content_sink is not None else {
                 "if-none-match": latest_version.get("source_etag") or "",
                 "if-modified-since": latest_version.get("source_last_modified") or "",
             },
@@ -1638,6 +1657,12 @@ def collect_source(
             "version": None,
             "policy": {"operational_enforced": bool(operational_policy), "terms_review": terms_review, "robots": robots_decision},
         }
+
+    if content_sink is not None:
+        # Keep the body inside the trusted ingestion boundary.  The callback
+        # is deliberately invoked only for a fresh GET response (304 and HEAD
+        # paths above have no new bytes to publish).
+        content_sink(result.content, result.content_type)
 
     policy = source.get("collection_policy") if isinstance(source.get("collection_policy"), dict) else {}
     version_payload = {

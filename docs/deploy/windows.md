@@ -16,7 +16,7 @@ Windows 客户端不需要预装 Docker。向导可以准备 Python、Python 依
 Python 和 Node.js 可以由向导自动处理：
 
 - Python：复用 3.10–3.12；没有兼容版本时下载 3.11.9。
-- Node.js：仅在前端 `dist/` 不存在时使用系统 Node.js 18+，否则下载便携版 Node.js 20.12.2。
+- Node.js：仅在前端 `dist/` 不存在时使用系统 Node.js 20+，否则下载便携版 Node.js 20.12.2。
 - Python 后端依赖以及 PySide6、Pillow、pystray 会安装到项目的 `.venv`，不会写入系统 Python 环境。
 
 ## PostgreSQL 初始化

@@ -33,9 +33,9 @@ from ai.services.knowledge_metadata import (
     merge_metadata,
     metadata_columns,
     chunk_projection_metadata,
-    parse_markdown_document,
     validate_metadata,
 )
+from ai.services.knowledge_source_parser import KnowledgeSourceParseError, parse_knowledge_source
 from ai.services.retrieval_contract import retrieval_cache
 from ai.services.metrics import ai_metrics
 
@@ -434,7 +434,10 @@ class KnowledgeReindexService:
     def _process_reparse(self, document: dict[str, Any], dry_run: bool) -> dict[str, int]:
         """Parse and persist metadata without touching document chunks."""
         raw = document.get("original_content") or document.get("normalized_content") or ""
-        parsed = parse_markdown_document(str(raw))
+        try:
+            parsed = parse_knowledge_source(str(raw), filename=str(document.get("name") or ""))
+        except KnowledgeSourceParseError as exc:
+            raise ValueError(f"知识文档文件格式无法解析: {exc.message}") from exc
         source_metadata: dict[str, Any] = {}
         raw_meta = document.get("metadata_json")
         if isinstance(raw_meta, dict):
@@ -511,7 +514,10 @@ class KnowledgeReindexService:
         original_content = str(document.get("original_content") or "")
         normalized_content = str(document.get("normalized_content") or "").strip()
         metadata_source = original_content or normalized_content
-        parsed = parse_markdown_document(metadata_source)
+        try:
+            parsed = parse_knowledge_source(metadata_source, filename=str(document.get("name") or ""))
+        except KnowledgeSourceParseError as exc:
+            raise ValueError(f"知识文档文件格式无法解析: {exc.message}") from exc
         source_metadata = {}
         raw_meta = document.get("metadata_json")
         if isinstance(raw_meta, dict):

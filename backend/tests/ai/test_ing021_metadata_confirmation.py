@@ -52,6 +52,56 @@ def test_ing021_preview_normalizes_legacy_metadata_and_binds_confirmation():
     assert result["preview_id"] == preview["preview_id"]
 
 
+def test_ing021_structured_upload_is_server_parsed_before_confirmation():
+    preview = _preview(
+        name="inventory.json",
+        content='{"hostname":"sw-1","vendor":"Huawei"}',
+        metadata={"knowledge_directory_path": "01_product/huawei"},
+    )
+    assert preview["normalized"]["format"] == "json"
+    assert preview["normalized"]["parser_name"] == "nexora-json"
+    assert preview["normalized"]["body_characters"] > 0
+
+
+def test_ing021_custom_document_envelope_exposes_importable_metadata_preview():
+    content = """{
+      "format": "nexora-knowledge-document",
+      "schema_version": "2.0",
+      "metadata": {
+        "document_id": "custom.huawei.vlan.v1",
+        "title": "Huawei VLAN",
+        "vendor": "Huawei",
+        "product_type": "network_switch",
+        "document_category": "configuration",
+        "source_type": "user_document",
+        "official_only": false,
+        "status": "draft"
+      },
+      "content": "# Huawei VLAN\\n\\nvlan batch 10"
+    }"""
+    preview = _preview(name="custom.json", content=content, metadata={"knowledge_directory_path": "03_configuration/huawei"})
+    assert preview["metadata_parse_status"] == "parsed"
+    assert preview["normalized"]["parser_name"] == "nexora-json-document-envelope"
+    assert preview["normalized"]["metadata"]["document_id"] == "custom.huawei.vlan.v1"
+
+
+def test_ing021_invalid_structured_upload_is_rejected_before_metadata_confirmation():
+    with pytest.raises(MetadataConfirmationError) as invalid:
+        _preview(name="inventory.json", content="{bad")
+    assert invalid.value.code == "METADATA_SOURCE_PARSE_INVALID"
+
+
+def test_ing021_html_upload_is_cleaned_before_it_is_indexed():
+    preview = _preview(
+        name="runbook.html",
+        content="<nav>menu</nav><h1>VLAN</h1><p>switchport mode access</p><script>ignore()</script>",
+        metadata={"knowledge_directory_path": "03_configuration/huawei"},
+    )
+    assert preview["normalized"]["format"] == "html"
+    assert preview["normalized"]["body_characters"] > 0
+    assert "html_requires_ing007_content_cleaning" in preview["warnings"]
+
+
 def test_ing021_front_matter_is_parsed_and_directory_conflicts_are_rejected():
     content = """---
 schema_version: '2.0'

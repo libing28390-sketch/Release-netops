@@ -26,6 +26,10 @@ IDENTIFICATION_COMMANDS: dict[str, tuple[str, ...]] = {
     "juniper_junos": ("show version",),
     "huawei_vrp": ("display version",),
     "h3c_comware": ("display version",),
+    # ``hp_comware`` is the Netmiko connection-driver name used by the
+    # concrete H3C profiles. It still needs an explicit approved probe when
+    # live identification resolves the immutable driver field.
+    "hp_comware": ("display version",),
     "zte_zxros": ("show version",),
     "ruijie_os": ("show version",),
     "dptech_ios": ("show version",),

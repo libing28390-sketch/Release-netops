@@ -276,7 +276,7 @@ bash scripts/deploy-docker.sh update
 ```bash
 cd /opt/nexora-automation
 git pull
-npm install && npm run build
+npm ci --include=dev && npm run build
 pip install -r backend/requirements.txt
 sudo systemctl restart netops
 ```
@@ -296,7 +296,7 @@ sudo systemctl restart netops
 ## Documentation / 关联详细文档导航
 
 *   **[Deployment Guide / 生产环境详尽部署指南](./DEPLOY.md)**：包含国内镜像网络加速、SSL/HTTPS 安全证书管理、数据卷持久化及安全防护。
-*   **[Quick Start Guide / 快速开始](./docs/deploy/docker.md)**：5分钟利用 Docker 容器搭建本平台的保姆级教程。
+*   **[Quick Start Guide / 快速开始](./docs/deploy/docker.md)**：包含在线构建和完全离线镜像导入部署流程。
 *   **[User Manual / 关联功能用户使用手册](./docs/walkthrough/)**：设备资产录入指南、物理机架三维上架、自动拓扑关系图、配置 Diff 比较等。
 
 <br/>

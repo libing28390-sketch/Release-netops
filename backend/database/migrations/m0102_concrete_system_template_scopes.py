@@ -72,7 +72,15 @@ def _scoped_identity(profile_code: str, source_filename: str) -> tuple[str, str,
     filename = Path(str(source_filename or "")).name
     stem = Path(filename).stem
     suffix = Path(filename).suffix or ".textfsm"
-    if stem.lower().startswith(f"{profile_code.lower()}_"):
+    # The canonical H3C BGP unicast grammar is a shared family input even
+    # though its file carries the parser-family prefix.  Keep the original
+    # basename in the scoped identity, but add the concrete Profile prefix so
+    # it cannot be confused with the V5/V9 variants during registry review.
+    shared_h3c_family = (
+        profile_code.lower() == "h3c_comware"
+        and stem.lower() == "h3c_comware_display_bgp_peer_ipv4_unicast"
+    )
+    if stem.lower().startswith(f"{profile_code.lower()}_") and not shared_h3c_family:
         scoped_stem = stem
     else:
         scoped_stem = f"{profile_code}__{stem}"

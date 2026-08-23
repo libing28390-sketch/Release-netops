@@ -82,6 +82,19 @@ def test_semantic_filters_are_server_side_and_tenant_scoped(monkeypatch):
     assert "kb_import" not in json.dumps(result, ensure_ascii=False)
 
 
+def test_directory_category_alias_is_normalized_to_semantic_category(monkeypatch):
+    connection = _connection()
+    monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
+
+    result = knowledge_service_module.KnowledgeService().list_documents(
+        tenant_id="tenant-a",
+        document_category="01_product",
+    )
+
+    assert result["total"] == 1
+    assert result["items"][0]["document_category"] == "01_product"
+
+
 def test_product_hierarchy_facets_are_bounded_and_tenant_scoped(monkeypatch):
     connection = _connection()
     monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
@@ -107,6 +120,29 @@ def test_official_and_enterprise_scopes_are_server_side(monkeypatch):
 
     assert [item["id"] for item in official["items"]] == ["doc-huawei"]
     assert [item["id"] for item in enterprise["items"]] == ["doc-cisco"]
+
+
+def test_official_scope_includes_governed_config_templates(monkeypatch):
+    connection = _connection()
+    connection.execute(
+        """
+        INSERT INTO ai_document (
+            id, knowledge_base_id, name, source, vendor, platform, status,
+            knowledge_source_type, tenant_id, acl_json, source_trust_level,
+            metadata_json, product_family, product_series, product_model,
+            os_family, software_release, feature_domain, document_category,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "doc-template", "kb-a", "Huawei VLAN template", "official", "Huawei", "huawei_vrp",
+            "active", "official_template", "tenant-a", "{}", "official", "{}", "CloudEngine",
+            "S5731", "S5731-H", "VRP", "V800R022", "vlan", "configuration", "2026-08-18", "2026-08-18",
+        ),
+    )
+    monkeypatch.setattr(knowledge_service_module, "get_db_connection", lambda: connection)
+    result = knowledge_service_module.KnowledgeService().list_documents(tenant_id="tenant-a", knowledge_scope="official")
+    assert {item["id"] for item in result["items"]} == {"doc-huawei", "doc-template"}
 
 
 def test_detail_contract_loads_body_source_and_explicit_version_history(monkeypatch):

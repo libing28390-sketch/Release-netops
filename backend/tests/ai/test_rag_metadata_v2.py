@@ -63,6 +63,15 @@ def test_unicode_and_directory_validation_do_not_override_frontmatter():
     assert merged["vendor"] == "Huawei"
 
 
+def test_nullable_validation_defaults_do_not_erase_source_metadata():
+    merged = merge_metadata(
+        {"cli_platform": None, "feature": "vlan"},
+        {"cli_platform": "huawei_vrp", "feature": "ospf"},
+    )
+    assert merged["cli_platform"] == "huawei_vrp"
+    assert merged["feature"] == "vlan"
+
+
 def test_directory_category_conflict_is_rejected():
     with pytest.raises(MetadataValidationError):
         validate_metadata(parse_markdown_document(_frontmatter()).metadata, directory_path="kb_import/05_troubleshooting/huawei")

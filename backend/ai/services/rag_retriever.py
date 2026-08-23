@@ -290,12 +290,44 @@ class RAGRetriever:
                             f"COALESCE(d.metadata_json -> '{key}', '[]'::jsonb) @> jsonb_build_array(?)"
                             for key in array_keys
                         )
-                        where.append(f"({scalar} OR ({array_expr}))")
+                        # A short, reviewed hardware alias such as CE6885 or
+                        # C9300 may be stored as the full SKU
+                        # (CE6885-48YS8CQ / C9300-24T) in the registry.  Keep
+                        # the exact equality and applicability-array checks,
+                        # but add a dash-boundary prefix only for a concrete
+                        # model prefix; a generic series remains governed by
+                        # product_series above.
+                        model_prefix = bool(
+                            column == "product_model"
+                            and re.fullmatch(r"[a-z]{1,3}\d{3,5}", value_text.strip(), re.IGNORECASE)
+                            and "-" not in value_text
+                        )
+                        prefix_clause = (
+                            f" OR LOWER(COALESCE(d.{column}, '')) LIKE LOWER(?)"
+                            if model_prefix and column in columns
+                            else ""
+                        )
+                        where.append(f"({scalar}{prefix_clause} OR ({array_expr}))")
                         params.append(scalar_value)
+                        if model_prefix and column in columns:
+                            params.append(f"{value_text}-%")
                         params.extend([scalar_value] * len(array_keys))
                 else:
-                    where.append(f"({scalar} OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))")
-                    params.extend([scalar_value, f"%{value_text}%"] if column in columns else [f"%{value_text}%"])
+                    model_prefix = bool(
+                        column == "product_model"
+                        and re.fullmatch(r"[a-z]{1,3}\d{3,5}", value_text.strip(), re.IGNORECASE)
+                        and "-" not in value_text
+                    )
+                    prefix_clause = (
+                        f" OR LOWER(COALESCE(d.{column}, '')) LIKE LOWER(?)"
+                        if model_prefix and column in columns
+                        else ""
+                    )
+                    where.append(f"({scalar}{prefix_clause} OR LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))")
+                    params.extend([scalar_value] if column in columns else [])
+                    if model_prefix and column in columns:
+                        params.append(f"{value_text}-%")
+                    params.append(f"%{value_text}%")
             else:
                 where.append(scalar)
                 if column in columns:
@@ -305,8 +337,28 @@ class RAGRetriever:
             # Never allow platform=all to satisfy a concrete command,
             # configuration, or CLI-output request.  Neutral documents are
             # represented by NULL, not the string all.
-            where.append("LOWER(d.cli_platform) = LOWER(?)")
-            params.append(str(request.cli_platform))
+            platform_value = str(request.cli_platform)
+            if "metadata_json" in columns and _USE_PG:
+                # Product registries use a specific train (for example
+                # huawei_vrp_v200), while a reviewed command skeleton may be
+                # intentionally published for the broader huawei_vrp family.
+                # The applicability array keeps that compatibility explicit
+                # instead of weakening the platform hard gate globally.
+                where.append(
+                    "(LOWER(d.cli_platform) = LOWER(?) OR "
+                    "COALESCE(d.metadata_json -> 'applicable_cli_platforms', '[]'::jsonb) "
+                    "@> jsonb_build_array(?))"
+                )
+                params.extend([platform_value, platform_value])
+            elif "metadata_json" in columns:
+                where.append(
+                    "(LOWER(d.cli_platform) = LOWER(?) OR "
+                    "LOWER(CAST(d.metadata_json AS TEXT)) LIKE LOWER(?))"
+                )
+                params.extend([platform_value, f'%' + platform_value + '%'])
+            else:
+                where.append("LOWER(d.cli_platform) = LOWER(?)")
+                params.append(platform_value)
         if request.rag_priority is not None and "rag_priority" in columns:
             where.append("COALESCE(d.rag_priority, 0) >= ?")
             params.append(int(request.rag_priority))
@@ -1053,17 +1105,24 @@ class RAGRetriever:
             resolved_filters["resolution"] = resolution.to_dict()
         except Exception:
             resolution = None
-        request = RetrievalRequest.from_mapping(
-            query,
-            top_k=top_k,
-            vendor=vendor,
-            cli_platform=platform,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            roles=roles,
-            site_ids=site_ids,
-            **resolved_filters,
-        )
+        # ``resolve_query`` can legitimately return vendor/cli_platform in
+        # the inferred metadata.  Build one mapping before constructing the
+        # dataclass; passing the same key once as a named argument and once
+        # through ``**resolved_filters`` raises ``TypeError`` and used to
+        # make direct/CLI conversations fail before SQL retrieval.
+        request_values = dict(resolved_filters)
+        if vendor is not None:
+            request_values["vendor"] = vendor
+        if platform is not None:
+            request_values["cli_platform"] = platform
+        request_values.update({
+            "top_k": top_k,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "roles": roles,
+            "site_ids": site_ids,
+        })
+        request = RetrievalRequest.from_mapping(query, request_values)
         return self.search(request, min_relevance=min_relevance)["results"]
 
 

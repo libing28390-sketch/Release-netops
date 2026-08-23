@@ -66,6 +66,12 @@ def test_cit_003_validator_rejects_allowlist_version_and_published_conflicts():
     assert warnings
 
 
+def test_cit_003_allows_active_official_rag_projection_without_false_warning():
+    citation = citation_from_chunk(_chunk(document_status="active"))
+    assert citation.validation == "validated_official"
+    assert "official_source_not_published" not in citation.warnings
+
+
 def test_cit_004_refusal_is_deterministic_and_requests_supplemental_context():
     message = refusal_for_missing_evidence(intent="troubleshooting")
     assert message == refusal_for_missing_evidence(intent="troubleshooting")

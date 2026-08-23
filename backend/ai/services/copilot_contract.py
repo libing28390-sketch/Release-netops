@@ -40,10 +40,13 @@ def build_copilot_contract(
     if hasattr(resolution, "to_dict"):
         resolution = resolution.to_dict()
     request = (retrieval or {}).get("request")
-    is_general_qa = str(intent) in {"general_qa", "chitchat"} and not any(
-        context.get(k) for k in ("device_id", "interface", "alert_ids", "vendor", "model")
-    )
-    if is_general_qa:
+    # Evidence requirements are intent-specific.  A CMDB inventory question
+    # is already answered by a read-only database query; asking for a device
+    # vendor/model/version/impact scope in that case is both misleading and
+    # noisy.  Those fields are required only when the assistant is about to
+    # diagnose a symptom or generate a device-specific change.
+    evidence_free_intents = {"general_qa", "chitchat", "device_search", "asset_analysis"}
+    if str(intent) in evidence_free_intents:
         required_fields = {}
     else:
         required_fields = {
@@ -59,7 +62,11 @@ def build_copilot_contract(
         facts.append(f"设备范围: {sanitize_text(str(context['device_id']))[:120]}")
     if context.get("interface"):
         facts.append(f"接口范围: {sanitize_text(str(context['interface']))[:120]}")
-    if retrieval and (retrieval.get("results") or retrieval.get("citations")):
+    if retrieval and (
+        retrieval.get("results")
+        or retrieval.get("citations")
+        or int(retrieval.get("final_document_count") or 0) > 0
+    ):
         facts.append("知识库返回了经过权限过滤的证据")
     if context.get("recent_changes"):
         facts.append("已关联最近变更")
@@ -67,7 +74,7 @@ def build_copilot_contract(
         facts.append("已关联拓扑邻居")
     if context.get("metrics"):
         facts.append("已关联性能指标")
-    if is_general_qa:
+    if str(intent) in evidence_free_intents:
         confidence = 0.95
         next_checks = []
     else:
@@ -84,8 +91,25 @@ def build_copilot_contract(
     source_labels = []
     for item in citations or []:
         source_type = str(item.get("source_type") or "enterprise").lower()
-        source_labels.append("official" if "official" in source_type else ("realtime_device" if "device" in source_type or "live" in source_type else "enterprise"))
-    source_labels = sorted(set(source_labels)) or (["model_inference"] if not citations else [])
+        source_labels.append(
+            "official"
+            if "official" in source_type
+            else (
+                "realtime_device"
+                if any(marker in source_type for marker in ("device", "live", "cmdb", "asset", "system"))
+                else "enterprise"
+            )
+        )
+    source_labels = sorted(set(source_labels))
+    if not source_labels:
+        # CMDB/IP/MAC handlers are deterministic read-only evidence sources,
+        # even when their response does not carry citation rows.  Reserve the
+        # model-inference label for true free-form synthesis/no-match paths.
+        source_labels = (
+            ["realtime_device"]
+            if str(intent) in {"device_search", "asset_analysis", "ip_location", "mac_location"}
+            else ["model_inference"]
+        )
     # Keep a deterministic, explainable budget for the structured Copilot
     # context.  Raw prompt/retrieval bodies are not exposed in this contract.
     context_limit = 12000
@@ -100,10 +124,11 @@ def build_copilot_contract(
     retrieval_trace = {}
     if isinstance(retrieval, dict):
         debug = retrieval.get("debug") if isinstance(retrieval.get("debug"), dict) else {}
+        final_document_count = int(retrieval.get("final_document_count") or 0)
         retrieval_trace = {
-            "status": "hit" if retrieval.get("results") else "no_match",
+            "status": retrieval.get("status") or ("hit" if retrieval.get("results") or final_document_count > 0 else "no_match"),
             "metadata_candidate_documents": debug.get("metadata_candidate_documents"),
-            "final_document_count": len(retrieval.get("results") or []),
+            "final_document_count": final_document_count or len(retrieval.get("results") or []),
             "vector_top_n": debug.get("vector_top_n"),
             "clarification_required": debug.get("clarification_required"),
         }
@@ -130,6 +155,10 @@ def build_copilot_contract(
             "external_egress": bool((runtime or {}).get("external_egress", False)),
             "provider_id": (runtime or {}).get("provider_id"),
             "model_id": (runtime or {}).get("model_id"),
+            "execution_mode": (runtime or {}).get("execution_mode"),
+            "input_tokens": (runtime or {}).get("input_tokens"),
+            "output_tokens": (runtime or {}).get("output_tokens"),
+            "latency_ms": (runtime or {}).get("latency_ms"),
         },
         "context_budget": {
             "limit_chars": context_limit,

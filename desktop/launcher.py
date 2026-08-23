@@ -96,7 +96,7 @@ def sync_bundled_textfsm_templates():
 SUPPORTED_PY_MIN = (3, 10)          # inclusive
 SUPPORTED_PY_MAX = (3, 12)          # inclusive
 PY_FALLBACK_VERSION = "3.11.9"      # installed only when no compatible Python exists
-NODE_MIN_MAJOR = 18                 # Node.js 18+ (any newer is fine)
+NODE_MIN_MAJOR = 20                 # cross-env@10 requires Node.js 20+
 
 # Setup logging
 def log_message(message):
@@ -491,7 +491,7 @@ class SetupWorker(QObject):
                 npm_available = False
                 npm_cmd = "npm"
                 # Reuse a system Node.js only when it meets the minimum major
-                # version (Node 18+). An older system Node falls back to the
+                # version (Node 20+). An older system Node falls back to the
                 # bundled/portable Node so the frontend build stays reliable.
                 try:
                     rn = subprocess.run(
@@ -559,12 +559,12 @@ class SetupWorker(QObject):
                         npm_cmd = local_npm_path
 
                 if npm_available:
-                    self.progress_signal.emit("正在安装前端依赖包 (npm install)...", 0.88)
+                    self.progress_signal.emit("正在安装前端依赖包 (npm install --include=dev)...", 0.88)
                     run_env = dict(os.environ)
                     if os.path.exists(local_node_dir):
                         run_env["PATH"] = local_node_dir + os.pathsep + run_env.get("PATH", "")
                     
-                    self.run_command([npm_cmd, "install"], cwd=PROJECT_ROOT, env=run_env)
+                    self.run_command([npm_cmd, "install", "--include=dev"], cwd=PROJECT_ROOT, env=run_env)
                     
                     self.progress_signal.emit("正在编译静态资源 (npm run build)...", 0.92)
                     self.run_command([npm_cmd, "run", "build"], cwd=PROJECT_ROOT, env=run_env)

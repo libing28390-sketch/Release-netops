@@ -1,0 +1,23 @@
+{
+  "format": "nexora-knowledge-document",
+  "schema_version": "2.0",
+  "metadata": {
+    "document_id": "custom.huawei.s5735.vlan.v1",
+    "title": "华为 S5735 VLAN 基础配置",
+    "vendor": "Huawei",
+    "product_type": "network_switch",
+    "document_category": "configuration",
+    "source_type": "user_document",
+    "official_only": false,
+    "status": "draft",
+    "product_model": "CloudEngine S5735-S24P4XE-V2",
+    "os_family": "VRP",
+    "cli_platform": "huawei_vrp_v600",
+    "feature_domain": "switching",
+    "feature": "vlan",
+    "risk_level": "low",
+    "verification_level": "operator_reviewed",
+    "rag_priority": 80
+  },
+  "content": "# 华为 S5735 VLAN 基础配置\n\n## 适用范围\n\n填写设备型号和版本。\n\n## 配置步骤\n\n```text\nsystem-view\nvlan batch 10\n```"
+}
