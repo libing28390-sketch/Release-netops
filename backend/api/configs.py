@@ -1572,6 +1572,7 @@ async def run_scheduled_backup(
             return
         device_rows = conn.execute(
             "SELECT id, asset_id, hostname, ip_address, platform, vendor, role, site, site_id, status, "
+            "platform_profile_id, "
             "config_backup_enabled, username, password, "
             "normal_username, normal_password, admin_username, admin_password, enable_password, "
             "credential_id, admin_credential_id, credential_source, vault_path, management_port "

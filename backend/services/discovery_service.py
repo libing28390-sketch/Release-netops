@@ -157,7 +157,6 @@ class DiscoveryService:
                         'action_code': action_code,
                         'platform_release_id': action_result.get('platform_release_id'),
                         'command_checksum': action_result.get('command_checksum'),
-                        'parser_template_version_id': action_result.get('parser_template_version_id'),
                         'success': bool(action_result.get('success')),
                         # Keep the CLI output in memory for the normalizer,
                         # but never persist a device echo/config in the

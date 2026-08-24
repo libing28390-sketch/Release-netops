@@ -211,6 +211,17 @@ async def run_scheduled_automation_job(job_id: str):
                 return
 
             d = dict(device)
+            if d.get('platform_profile_id'):
+                # Scheduled jobs store arbitrary CLI/script text. A bound
+                # network device must use a published registry action so the
+                # selected Profile also controls the TextFSM parser; do not
+                # let the scheduler become a second raw-command entry point.
+                async with results_lock:
+                    total_failed += 1
+                    failure_details.append(
+                        f"设备 {d.get('hostname') or dev_id} 已绑定平台，计划任务必须使用 platform action_code"
+                    )
+                return
             creds = resolve_device_credentials(d)
             if job.get('use_admin_creds', 0) == 1:
                 d['username'] = creds.get('admin_username') or ''

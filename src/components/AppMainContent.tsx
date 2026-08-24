@@ -45,7 +45,6 @@ const InspectionTab = lazy(() => import('../pages/InspectionTab'));
 const ExecutionScheduleTab = lazy(() => import('../pages/ExecutionScheduleTab'));
 const InspectionItemsTab = lazy(() => import('../pages/InspectionItemsTab'));
 const TextFSMTemplatesTab = lazy(() => import('../pages/TextFSMTemplatesTab'));
-const ParserRegistryTab = lazy(() => import('../pages/ParserRegistryTab'));
 const ScheduledJobsTab = lazy(() => import('../pages/ScheduledJobsTab'));
 const PlatformSettingsTab = lazy(() => import('../pages/PlatformSettingsTab'));
 const PlatformRegistryTab = lazy(() => import('../pages/PlatformRegistryTab'));
@@ -962,12 +961,6 @@ const AppMainContent: React.FC = () => {
       {activeTab === 'automation' && automationPage === 'textfsm-templates' && (
         <Suspense fallback={lazyPanelFallback}>
           <TextFSMTemplatesTab t={t} language={language} />
-        </Suspense>
-      )}
-
-      {activeTab === 'automation' && automationPage === 'textfsm-registry' && (
-        <Suspense fallback={lazyPanelFallback}>
-          <ParserRegistryTab language={language} currentUser={currentUser} showToast={showToast} />
         </Suspense>
       )}
 

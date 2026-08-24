@@ -40,6 +40,17 @@ from database.migrations.m0099_repair_unverified_parser_reviews import upgrade a
 from database.migrations.m0100_register_builtin_textfsm_templates import upgrade as builtin_textfsm_upgrade
 from database.migrations.m0101_split_platform_profiles import upgrade as split_platform_profiles_upgrade
 from database.migrations.m0102_concrete_system_template_scopes import upgrade as concrete_system_template_scopes_upgrade
+from database.migrations.m0170_h3c_v7_textfsm_namespace import upgrade as h3c_v7_textfsm_namespace_upgrade
+from database.migrations.m0171_h3c_operational_action_bindings import upgrade as h3c_operational_action_bindings_upgrade
+from database.migrations.m0172_repair_h3c_operational_template_import import upgrade as repair_h3c_operational_template_import_upgrade
+from database.migrations.m0173_bind_h3c_v7_link_aggregation_template import upgrade as bind_h3c_v7_link_aggregation_template_upgrade
+from database.migrations.m0174_repair_h3c_temperature_action_definition import upgrade as repair_h3c_temperature_action_definition_upgrade
+from database.migrations.m0175_reconcile_registry_field_contracts import upgrade as reconcile_registry_field_contracts_upgrade
+from database.migrations.m0176_sync_h3c_template_content import upgrade as sync_h3c_template_content_upgrade
+from database.migrations.m0177_sync_h3c_bfd_template_content import upgrade as sync_h3c_bfd_template_content_upgrade
+from database.migrations.m0178_unify_platform_action_labels import upgrade as unify_platform_action_labels_upgrade
+from database.migrations.m0179_finish_platform_action_labels import upgrade as finish_platform_action_labels_upgrade
+from database.migrations.m0180_detach_legacy_textfsm_versions import upgrade as detach_legacy_textfsm_versions_upgrade
 
 
 @pytest.fixture
@@ -128,6 +139,17 @@ def isolated_db():
         builtin_textfsm_upgrade(cursor, True)
         split_platform_profiles_upgrade(cursor, True)
         concrete_system_template_scopes_upgrade(cursor, True)
+        h3c_v7_textfsm_namespace_upgrade(cursor, True)
+        h3c_operational_action_bindings_upgrade(cursor, True)
+        repair_h3c_operational_template_import_upgrade(cursor, True)
+        bind_h3c_v7_link_aggregation_template_upgrade(cursor, True)
+        repair_h3c_temperature_action_definition_upgrade(cursor, True)
+        reconcile_registry_field_contracts_upgrade(cursor, True)
+        sync_h3c_template_content_upgrade(cursor, True)
+        sync_h3c_bfd_template_content_upgrade(cursor, True)
+        unify_platform_action_labels_upgrade(cursor, True)
+        finish_platform_action_labels_upgrade(cursor, True)
+        detach_legacy_textfsm_versions_upgrade(cursor, True)
         migration_conn.commit()
     finally:
         migration_conn.close()

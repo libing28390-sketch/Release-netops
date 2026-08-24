@@ -8,12 +8,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from database import get_db_connection
-from services.playbook_output_service import PlaybookOutputError, load_output
 from services.platform_registry_service import (
-    PlatformRegistryError,
     _assert_profile_access,
-    _row_dict,
-    redact_raw_output,
 )
 
 
@@ -43,14 +39,6 @@ def _parse_time(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
-
-
-def _json_object(value: Any) -> dict[str, Any]:
-    try:
-        parsed = json.loads(value or "{}") if isinstance(value, str) else value
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def _pct(numerator: int | float, denominator: int | float) -> float | None:
@@ -97,32 +85,17 @@ def _profile_health(conn, profile: dict[str, Any], user: dict[str, Any], range_h
     profile_id = str(profile["id"])
     current_release_id = str(profile.get("current_release_id") or "")
     actions = conn.execute(
-        "SELECT action_code, parser_template_version_id FROM platform_release_actions WHERE release_id = ?",
+        "SELECT action_code FROM platform_release_actions WHERE release_id = ?",
         (current_release_id,),
     ).fetchall() if current_release_id else []
     definition_count = int(conn.execute("SELECT COUNT(*) FROM action_definitions").fetchone()[0] or 0)
     action_count = len(actions)
-    template_count = sum(1 for row in actions if row["parser_template_version_id"])
-    version_ids = [str(row["parser_template_version_id"]) for row in actions if row["parser_template_version_id"]]
-    sample_total = 0
-    sample_passed = 0
-    for version_id in version_ids:
-        version = conn.execute(
-            "SELECT test_summary_json FROM parser_template_versions WHERE id = ?",
-            (version_id,),
-        ).fetchone()
-        if not version:
-            continue
-        summary = _json_object(version["test_summary_json"])
-        sample_total += int(summary.get("sample_count") or summary.get("regression_count") or 0)
-        if summary.get("passed") is True:
-            sample_passed += int(summary.get("sample_count") or summary.get("regression_count") or 1)
 
     current_time = _now()
     since = current_time - timedelta(hours=range_hours)
     tenant_sql, tenant_params = _tenant_filter(user, "r.tenant_id")
     run_rows = conn.execute(
-        "SELECT r.id, r.tenant_id, r.device_id, r.platform_release_id, r.action_code, r.parser_template_version_id, "
+        "SELECT r.id, r.tenant_id, r.device_id, r.platform_release_id, r.action_code, "
         "r.status, r.failure_stage, r.error_code, r.record_count, r.duration_ms, r.output_bytes, "
         "r.raw_output_encrypted, r.raw_output_expires_at, r.created_at, "
         "a.command AS action_command, "
@@ -145,15 +118,12 @@ def _profile_health(conn, profile: dict[str, Any], user: dict[str, Any], range_h
     freshness = max(0.0, 1.0 - ((age_hours or float(range_hours)) / max(float(range_hours), 1.0))) if last_time else 0.0
 
     command_coverage = _pct(action_count, definition_count)
-    template_coverage = _pct(template_count, action_count)
-    sample_pass_rate = _pct(sample_passed, sample_total)
     success_rate = _pct(success_count, run_count)
     parse_failure_rate = _pct(len(parse_failure_rows), run_count)
     if run_count:
         score = round(
-            min(100.0, (command_coverage or 0.0) * 0.20 + (template_coverage or 0.0) * 0.10
-                 + (sample_pass_rate if sample_pass_rate is not None else 0.0) * 0.10
-                 + (success_rate or 0.0) * 0.35
+            min(100.0, (command_coverage or 0.0) * 0.30
+                 + (success_rate or 0.0) * 0.45
                  + max(0.0, 100.0 - (parse_failure_rate or 0.0)) * 0.15
                  + freshness * 10.0),
         )
@@ -178,7 +148,6 @@ def _profile_health(conn, profile: dict[str, Any], user: dict[str, Any], range_h
             "duration_ms": int(row["duration_ms"] or 0),
             "created_at": row["created_at"],
             "raw_output_available": bool(row["raw_output_encrypted"] and row["raw_output_expires_at"]),
-            "parser_template_version_id": row["parser_template_version_id"],
         })
         if len(failure_queue) >= 50:
             break
@@ -211,8 +180,6 @@ def _profile_health(conn, profile: dict[str, Any], user: dict[str, Any], range_h
         "current_release_id": current_release_id or None,
         "range_hours": range_hours,
         "command_coverage_pct": command_coverage,
-        "template_coverage_pct": template_coverage,
-        "sample_pass_rate_pct": sample_pass_rate,
         "recent_run_count": run_count,
         "recent_success_rate_pct": success_rate,
         "recent_parse_failure_count": len(parse_failure_rows),
@@ -245,40 +212,3 @@ def get_profile_health(profile_id: str, user: dict[str, Any], *, range_hours: in
         return _profile_health(conn, profile, user, range_hours)
     finally:
         conn.close()
-
-
-def create_sample_from_failed_run(run_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
-    conn = get_db_connection()
-    try:
-        row = _row_dict(conn.execute("SELECT * FROM platform_action_runs WHERE id = ?", (run_id,)).fetchone())
-        if not row:
-            raise PlatformRegistryError("PLATFORM_RUN_NOT_FOUND", "Platform action run not found", status_code=404)
-        tenant_id = str(row.get("tenant_id") or "")
-        if user.get("role") != "Administrator" and tenant_id != str(user.get("tenant_id") or ""):
-            raise PlatformRegistryError("PLATFORM_RUN_SCOPE_DENIED", "Platform action run is outside the current tenant scope", status_code=403)
-        if row.get("status") != "FAILED":
-            raise PlatformRegistryError("PLATFORM_RUN_NOT_FAILED", "Only failed runs can become parser samples", status_code=409)
-        version_id = str(row.get("parser_template_version_id") or "")
-        if not version_id:
-            raise PlatformRegistryError("PLATFORM_RUN_NO_PARSER", "The failed run has no parser template", status_code=409)
-        try:
-            raw = load_output(row.get("raw_output_encrypted"), row.get("raw_output"))
-        except PlaybookOutputError as exc:
-            raise PlatformRegistryError(
-                "PLATFORM_RUN_OUTPUT_UNAVAILABLE",
-                "The failed run output is unavailable or expired",
-                status_code=409,
-            ) from exc
-        if not isinstance(raw, str) or not raw.strip():
-            raise PlatformRegistryError("PLATFORM_RUN_OUTPUT_UNAVAILABLE", "The failed run has no retained output", status_code=409)
-        sample_name = str(payload.get("sample_name") or f"failed-{run_id[:8]}").strip()[:128]
-    finally:
-        conn.close()
-
-    from services.parser_template_service import create_sample
-
-    return create_sample(
-        version_id,
-        {"sample_name": sample_name, "sample_output": redact_raw_output(raw), "expected_records": payload.get("expected_records") or []},
-        user,
-    )

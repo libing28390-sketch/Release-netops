@@ -113,7 +113,6 @@ def test_scheduler_interface_sync_uses_registry_actions_for_bound_device(monkeyp
 def test_playbook_action_step_uses_published_action_preview(monkeypatch):
     from api.playbooks import engine
 
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     monkeypatch.setattr(
         "services.platform_registry_service.preview_platform_action",
         lambda *_args, **_kwargs: {
@@ -137,10 +136,18 @@ def test_playbook_action_step_uses_published_action_preview(monkeypatch):
     assert result["actions"][0]["command"] == "show clock"
 
 
-def test_playbook_action_step_is_closed_with_registry_flag_off(monkeypatch):
+def test_playbook_action_step_remains_available_without_a_feature_flag(monkeypatch):
     from api.playbooks import engine
 
-    monkeypatch.delenv("PLATFORM_REGISTRY_ENABLED", raising=False)
+    monkeypatch.setattr(
+        "services.platform_registry_service.preview_platform_action",
+        lambda *_args, **_kwargs: {
+            "success": True,
+            "command": "show clock",
+            "command_checksum": "checksum",
+            "platform_release_id": "release-1",
+        },
+    )
     result = asyncio.run(
         engine._execute_registry_actions(
             "execution-1",
@@ -150,8 +157,8 @@ def test_playbook_action_step_is_closed_with_registry_flag_off(monkeypatch):
             actor={"id": "operator-1", "username": "operator", "role": "Operator", "tenant_id": "tenant-1"},
         )
     )
-    assert result["success"] is False
-    assert result["actions"][0]["error_code"] == "PLATFORM_REGISTRY_DISABLED"
+    assert result["success"] is True
+    assert result["actions"][0]["command"] == "show clock"
 
 
 def test_controlled_playbook_validator_rejects_raw_commands():

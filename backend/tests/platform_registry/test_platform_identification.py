@@ -6,6 +6,7 @@ import pytest
 
 from services.platform_identification_service import (
     _binding_compatibility,
+    _inventory_profile_code,
     bind_device,
     identify_device,
     identify_device_from_inventory,
@@ -44,6 +45,22 @@ def _insert_rule(conn, profile_id: str, *, pattern: str, confidence: float = 0.9
         (str(uuid.uuid4()), profile_id, "show version", match_type, pattern, confidence, "now"),
     )
     conn.commit()
+
+
+@pytest.mark.parametrize(
+    ("platform", "version", "vendor", "expected_profile", "expected_parser"),
+    [
+        ("h3c_comware", "5.20", "H3C", "hp_comware", "h3c_comware_v5"),
+        ("h3c_comware", "7.1.070", "H3C", "h3c_comware", "h3c_comware_v7"),
+        ("unknown", "9.1", "H3C", "h3c_comware9", "h3c_comware_v9"),
+        ("h3c_comware", "Comware custom", "H3C", "", "h3c_comware"),
+        ("unknown", "7.1.070", "", "", ""),
+    ],
+)
+def test_inventory_resolution_requires_h3c_evidence_and_known_major_version(
+    platform, version, vendor, expected_profile, expected_parser,
+):
+    assert _inventory_profile_code(platform, version, vendor) == (expected_profile, expected_parser)
 
 
 def test_binding_compatibility_blocks_high_risk_execution_for_unverified_platform():
@@ -89,7 +106,6 @@ def test_platform_detection_uses_snmp_inventory_version_without_cli_probe(isolat
 
     import api.platform_registry as platform_registry_api
 
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "0")
 
     def fail_if_cli_is_called(*_args, **_kwargs):
         raise AssertionError("SNMP-backed detection must not call the CLI probe")
@@ -101,7 +117,6 @@ def test_platform_detection_uses_snmp_inventory_version_without_cli_probe(isolat
 
 
 def test_platform_detection_probes_live_snmp_before_cli_when_version_is_not_cached(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "0")
     user = _user("tenant-1")
     conn = isolated_db["module"].get_db_connection()
     try:
@@ -165,7 +180,6 @@ def test_platform_detection_probes_live_snmp_before_cli_when_version_is_not_cach
 
 
 def test_platform_detection_falls_back_to_cli_when_snmp_has_no_version(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     user = _user("tenant-1")
     conn = isolated_db["module"].get_db_connection()
     try:
@@ -195,7 +209,6 @@ def test_platform_detection_falls_back_to_cli_when_snmp_has_no_version(isolated_
 
 
 def test_platform_identification_is_declarative_and_binding_is_locked(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     user = _user("tenant-1")
     cisco = create_profile(
         {"platform_code": "custom_cisco", "connection_driver": "cisco_ios", "parser_platform": "cisco_ios"},
@@ -296,7 +309,6 @@ def test_platform_identification_returns_conflict_and_rejects_cross_tenant(isola
 
 
 def test_live_identification_uses_bound_profile_connection_driver(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     user = _user("tenant-1")
     profile = create_profile(
         {"platform_code": "zte_5900_v6", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},

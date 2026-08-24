@@ -21,6 +21,11 @@ from core.textfsm import (
     delete_custom_template,
     get_supported_platforms,
     smart_parse_cli,
+    template_action_code,
+)
+from services.platform_registry_service import (
+    get_profile_action_commands,
+    iter_action_definitions,
 )
 from services.textfsm_sandbox_service import TextFSMSandboxError, parse_template_in_sandbox
 
@@ -31,6 +36,9 @@ logger = logging.getLogger(__name__)
 @router.get('/textfsm/templates')
 def api_list_templates(
     platform: str = Query('', description='按平台过滤'),
+    vendor: str = Query('', description='按厂商过滤'),
+    platform_family: str = Query('', description='按平台族过滤，例如 h3c_comware'),
+    version: str = Query('', description='按模板版本过滤，例如 v5|v7|v9|common'),
     exact_platform: bool = Query(False, description='是否仅匹配该平台值，不合并兼容别名'),
     search: str = Query('', description='关键字搜索'),
     source: str = Query('', description='按来源过滤：builtin|custom'),
@@ -39,7 +47,14 @@ def api_list_templates(
     _user=require_permission('textfsm', 'view'),
 ):
     """列出所有模板（内置 + 自定义），自定义模板同名时覆盖内置。"""
-    items = list_templates(platform_filter=platform, search=search, exact_platform=exact_platform)
+    items = list_templates(
+        platform_filter=platform,
+        search=search,
+        exact_platform=exact_platform,
+        vendor_filter=vendor,
+        platform_family_filter=platform_family,
+        version_filter=version,
+    )
     if source:
         items = [t for t in items if t.get('source') == source]
     
@@ -68,6 +83,78 @@ def api_list_platforms(_user=require_permission('textfsm', 'view')):
         'data': get_supported_platforms(),
         'message': '',
     }
+
+
+_H3C_ACTION_PROFILE_ALIASES = {
+    'h3c_comware_v5': 'hp_comware',
+    'h3c_comware_v7': 'h3c_comware',
+    'h3c_comware_v9': 'h3c_comware9',
+}
+_TEXTFSM_ACTION_GROUPS = {
+    'get_interface_brief': ('基础网络查询', 'Basic network queries'),
+    'get_interfaces': ('基础网络查询', 'Basic network queries'),
+    'get_ip_interfaces': ('基础网络查询', 'Basic network queries'),
+    'get_arp_table': ('基础网络查询', 'Basic network queries'),
+    'get_mac_table': ('基础网络查询', 'Basic network queries'),
+    'get_vlan_table': ('基础网络查询', 'Basic network queries'),
+    'get_lldp_neighbors': ('基础网络查询', 'Basic network queries'),
+    'get_transceivers': ('基础网络查询', 'Basic network queries'),
+    'get_link_aggregation': ('基础网络查询', 'Basic network queries'),
+    'get_route_table': ('路由协议分析', 'Routing protocol analysis'),
+    'get_bgp_neighbors': ('路由协议分析', 'Routing protocol analysis'),
+    'get_ospf_neighbors': ('路由协议分析', 'Routing protocol analysis'),
+    'get_isis_neighbors': ('路由协议分析', 'Routing protocol analysis'),
+    'get_stp': ('路由协议分析', 'Routing protocol analysis'),
+    'get_bfd_sessions': ('路由协议分析', 'Routing protocol analysis'),
+    'get_ntp_status': ('路由协议分析', 'Routing protocol analysis'),
+    'get_bgp_routes': ('路由协议分析', 'Routing protocol analysis'),
+    'get_version': ('系统状态监控', 'System status monitoring'),
+    'get_temperature': ('系统状态监控', 'System status monitoring'),
+    'get_fans': ('系统状态监控', 'System status monitoring'),
+    'get_power': ('系统状态监控', 'System status monitoring'),
+    'get_logbuffer': ('系统状态监控', 'System status monitoring'),
+    'get_interface_description': ('系统状态监控', 'System status monitoring'),
+    'get_uptime': ('系统状态监控', 'System status monitoring'),
+    'get_irf': ('系统状态监控', 'System status monitoring'),
+    'get_cpu': ('系统状态监控', 'System status monitoring'),
+    'get_memory': ('系统状态监控', 'System status monitoring'),
+}
+
+
+@router.get('/textfsm/action-options')
+def api_textfsm_action_options(
+    platform: str = Query('', description='具体解析平台，例如 h3c_comware_v7'),
+    _user=require_permission('textfsm', 'view'),
+):
+    """Return optional, human-readable action associations for template authoring."""
+    normalized_platform = str(platform or '').strip().lower()
+    profile_code = _H3C_ACTION_PROFILE_ALIASES.get(normalized_platform, normalized_platform)
+    try:
+        commands = get_profile_action_commands({
+            'platform_code': profile_code,
+            'parser_platform': normalized_platform,
+        })
+    except Exception:
+        commands = {}
+    items = []
+    for definition in iter_action_definitions():
+        action_code = str(definition.get('action_code') or '')
+        group_zh, group_en = _TEXTFSM_ACTION_GROUPS.get(
+            action_code,
+            ('其他查询', 'Other queries'),
+        )
+        items.append({
+            'action_code': action_code,
+            'name_zh': definition.get('name_zh') or action_code,
+            'name_en': definition.get('name_en') or action_code,
+            'purpose': definition.get('purpose') or '',
+            'risk': definition.get('risk') or 'low',
+            'command': commands.get(action_code),
+            'group_zh': group_zh,
+            'group_en': group_en,
+            'available': bool(commands.get(action_code)),
+        })
+    return {'success': True, 'data': items, 'message': ''}
 
 
 @router.get('/textfsm/command-suggestions')
@@ -100,6 +187,7 @@ def api_get_template(filename: str, _user=require_permission('textfsm', 'view'))
                 'source': source,
                 'editable': source == 'custom',
                 'default_sample': default_sample,
+                'action_code': template_action_code(content),
             },
             'message': '',
         }
@@ -124,6 +212,7 @@ def api_create_template(
     filename = (body.get('filename') or '').strip()
     platform = (body.get('platform') or '').strip().lower()
     command = (body.get('command') or '').strip().lower()
+    action_code = body.get('action_code')
     content = body.get('content') or ''
 
     if not content:
@@ -141,7 +230,7 @@ def api_create_template(
         filename = f"{filename}.textfsm"
 
     try:
-        result = save_custom_template(filename, content)
+        result = save_custom_template(filename, content, action_code=action_code)
         return {'success': True, 'data': result, 'message': '模板已保存'}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -162,7 +251,17 @@ def api_update_template(
         raise HTTPException(status_code=400, detail='模板内容不能为空')
 
     try:
-        result = save_custom_template(filename, content)
+        if 'action_code' not in body:
+            try:
+                existing_content, _ = get_template_content(filename)
+                action_code = template_action_code(existing_content)
+            except FileNotFoundError:
+                action_code = None
+        else:
+            # Explicit null/empty from the editor means "clear association";
+            # omission above means preserve the existing metadata.
+            action_code = str(body.get('action_code') or '').strip()
+        result = save_custom_template(filename, content, action_code=action_code)
         return {'success': True, 'data': result, 'message': '模板已更新'}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

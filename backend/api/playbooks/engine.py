@@ -119,7 +119,6 @@ async def _execute_notification_steps(
     if not notification_steps:
         return {"notifications": [], "notification_success": True}
 
-    enabled = os.environ.get("PLATFORM_REGISTRY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
     tenant_id = str((actor or {}).get("tenant_id") or device.get("tenant_id") or "").strip()
     safe_variables = _safe_notification_variables(variables)
     items: list[dict] = []
@@ -128,9 +127,7 @@ async def _execute_notification_steps(
         message = _render_template(step.get("message", ""), safe_variables).strip()
         severity = str(step.get("severity") or "info").strip().lower()
         item = {"title": title[:120], "severity": severity, "success": False}
-        if not enabled:
-            item["error_code"] = "PLATFORM_REGISTRY_DISABLED"
-        elif not tenant_id:
+        if not tenant_id:
             item["error_code"] = "NOTIFICATION_TENANT_REQUIRED"
         elif dry_run:
             item.update({"success": True, "status": "dry_run_skipped", "delivered": 0})
@@ -247,40 +244,6 @@ async def _execute_registry_actions(
     """Preview or execute Playbook action steps through the platform boundary."""
     from services.platform_registry_service import execute_platform_action, preview_platform_action
 
-    enabled = os.environ.get("PLATFORM_REGISTRY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
-    if not enabled:
-        from services.audit_service import log_audit_event
-        items = [
-            {
-                "action_code": step["action_code"],
-                "success": False,
-                "error_code": "PLATFORM_REGISTRY_DISABLED",
-                "error": "Platform registry action execution is disabled",
-            }
-            for step in action_steps
-        ]
-        log_audit_event(
-            event_type='PLAYBOOK_ACTION_REJECTED',
-            category='automation',
-            severity='high',
-            status='denied',
-            summary='Rejected controlled Playbook actions because platform registry is disabled',
-            actor_id=(actor or {}).get('id'),
-            actor_username=(actor or {}).get('username'),
-            actor_role=(actor or {}).get('role'),
-            target_type='playbook_execution',
-            target_id=execution_id,
-            execution_id=execution_id,
-            details={'device_id': device.get('id'), 'actions': [step['action_code'] for step in action_steps], 'error_code': 'PLATFORM_REGISTRY_DISABLED'},
-        )
-        await ws_manager.emit(execution_id, {
-            "type": "platform_actions",
-            "device_id": device.get("id"),
-            "actions": items,
-            "dry_run": dry_run,
-        })
-        return {"success": False, "actions": items, "commands": [], "output": json.dumps(items, ensure_ascii=False)}
-
     user = actor or {
         "id": "system-playbook",
         "username": "system-playbook",
@@ -307,7 +270,6 @@ async def _execute_registry_actions(
                 "resolved_command_checksum": result.get("resolved_command_checksum"),
                 "platform_release_id": result.get("platform_release_id"),
                 "release_checksum": result.get("release_checksum"),
-                "parser_template_version_id": result.get("parser_template_version_id"),
                 "records": result.get("records") or [],
                 "error_code": result.get("error_code"),
                 "error": result.get("error"),

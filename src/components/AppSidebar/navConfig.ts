@@ -122,7 +122,6 @@ export const navConfig: NavGroup[] = [
       { id: 'scheduled-jobs',      label: '定时作业',   labelEn: 'Scheduled Jobs',       path: '/automation/scheduled-jobs',      icon: 'Timer', requiredRole: 'Operator' },
       { id: 'inspection-metrics',  label: '巡检指标',   labelEn: 'Inspection Metrics',   path: '/automation/metrics',             icon: 'BarChart2' },
       { id: 'textfsm-templates',   label: '解析模板',   labelEn: 'Parse Templates',      path: '/automation/textfsm',             icon: 'FileCode2', requiredRole: 'Operator' },
-      { id: 'textfsm-registry',    label: '模板注册表', labelEn: 'Template Registry',     path: '/automation/textfsm-registry',    icon: 'GitBranch', requiredRole: 'Operator' },
       { id: 'scripts',             label: '操作管理',   labelEn: 'Operations',           path: '/automation/scripts',             icon: 'Code2', requiredRole: 'Operator' },
     ],
   },

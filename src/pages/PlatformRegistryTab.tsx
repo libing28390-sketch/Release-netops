@@ -1,10 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   Edit2,
-  ExternalLink,
   FileCode2,
   Filter,
   Layers3,
@@ -88,15 +86,6 @@ interface PlatformProfileDetail extends PlatformProfile {
     negate?: number | boolean;
     enabled?: number | boolean;
   }>;
-  parser_templates?: Array<{
-    id: string;
-    platform_code?: string;
-    template_code?: string;
-    name?: string;
-    source?: string;
-    status?: string;
-    version_count?: number;
-  }>;
 }
 
 interface RegistryCapabilities {
@@ -110,8 +99,6 @@ interface PlatformHealth {
   health_score?: number | null;
   health_status?: 'healthy' | 'warning' | 'critical' | 'unknown';
   command_coverage_pct?: number | null;
-  template_coverage_pct?: number | null;
-  sample_pass_rate_pct?: number | null;
   recent_run_count?: number;
   recent_success_rate_pct?: number | null;
   recent_parse_failure_count?: number;
@@ -131,7 +118,6 @@ interface PlatformHealth {
     command?: string | null;
     created_at?: string;
     raw_output_available?: boolean;
-    parser_template_version_id?: string | null;
   }>;
 }
 
@@ -160,7 +146,6 @@ interface ActionDefinition {
   max_records?: number;
   timeout_seconds?: number;
   command?: string | null;
-  parser_template_version_id?: string | null;
   field_contract_json?: string;
 }
 
@@ -174,31 +159,8 @@ const healthErrorLabel = (code: string | undefined, zh: boolean): string => {
   return labels[code] ? `${labels[code][zh ? 0 : 1]} (${code})` : code;
 };
 
-interface ParserVersionOption {
-  id: string;
-  template_id?: string;
-  version_number?: number;
-  status?: string;
-  checksum?: string;
-  field_contract_json?: string;
-  platform_code?: string;
-  template_code?: string;
-  name?: string;
-  source?: string;
-  command?: string | null;
-  source_filename?: string | null;
-}
-
 type DetailTab = 'overview' | 'mappings' | 'releases' | 'parser' | 'identification';
 type ReadinessFilter = 'all' | 'ready' | 'degraded';
-
-const normalizeBindingCommand = (value?: string | null): string => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
-
-const parserVersionMatchesCommand = (version: ParserVersionOption, command?: string | null): boolean => {
-  const templateCommand = normalizeBindingCommand(version.command);
-  const releaseCommand = normalizeBindingCommand(command);
-  return Boolean(templateCommand && releaseCommand && templateCommand === releaseCommand);
-};
 
 interface Props {
   language: string;
@@ -303,94 +265,6 @@ const sourceLabel = (value: string | undefined, zh: boolean): string => {
   return ({ SYSTEM: '系统', CUSTOM: '自定义', FORKED: '租户副本' } as Record<string, string>)[normalized] || normalized;
 };
 
-interface ParserVersionPickerProps {
-  zh: boolean;
-  ariaLabel: string;
-  versions: ParserVersionOption[];
-  value: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}
-
-const ParserVersionPicker: React.FC<ParserVersionPickerProps> = ({ zh, ariaLabel, versions, value, disabled, onChange }) => {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const rootRef = useRef<HTMLDivElement>(null);
-  const selected = versions.find((version) => version.id === value);
-  const normalizedSearch = search.trim().toLowerCase();
-  const filteredVersions = versions.filter((version) => (
-    !normalizedSearch
-      || [version.template_code, version.name, version.source_filename, version.command]
-        .some((field) => String(field || '').toLowerCase().includes(normalizedSearch))
-  ));
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const handleOutsideClick = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [open]);
-
-  const choose = (nextValue: string) => {
-    onChange(nextValue);
-    setOpen(false);
-    setSearch('');
-  };
-
-  return (
-    <div ref={rootRef} className="relative min-w-[220px] flex-1">
-      <button
-        type="button"
-        role="combobox"
-        aria-label={ariaLabel}
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-left text-[10px] text-slate-700 outline-none transition hover:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <span className="min-w-0 truncate">
-          {selected
-            ? `${selected.template_code || selected.id} · v${selected.version_number} · ${sourceLabel(selected.source, zh)}`
-            : (value ? (zh ? '当前版本与命令不匹配，请替换' : 'Current version does not match the command') : (zh ? '未绑定（无严格匹配的注册版）' : 'Not bound (no strict registry binding)'))}
-        </span>
-        <ChevronDown size={13} className={`shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && (
-        <div className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-          <div className="relative border-b border-slate-100 p-1.5">
-            <Search size={12} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              autoFocus
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder={zh ? '搜索模板编码、名称或文件名' : 'Search code, name, or filename'}
-              aria-label={zh ? '搜索解析模板' : 'Search parser templates'}
-              className="w-full rounded-lg bg-slate-50 py-1.5 pl-7 pr-2 text-[10px] text-slate-700 outline-none focus:bg-cyan-50/50"
-            />
-          </div>
-          <div role="listbox" aria-label={ariaLabel} className="max-h-60 overflow-y-auto p-1">
-            <button type="button" role="option" aria-selected={!value} onClick={() => choose('')} className={`flex w-full items-center rounded-lg px-2 py-2 text-left text-[10px] ${!value ? 'bg-cyan-50 text-cyan-700' : 'text-slate-600 hover:bg-slate-50'}`}>
-              <span className="min-w-0 flex-1 truncate">{zh ? '未绑定（无严格匹配的注册版）' : 'Not bound (no strict registry binding)'}</span>
-            </button>
-            {filteredVersions.map((version) => (
-              <button key={version.id} type="button" role="option" aria-selected={version.id === value} onClick={() => choose(version.id)} className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-[10px] ${version.id === value ? 'bg-cyan-50 text-cyan-700' : 'text-slate-600 hover:bg-slate-50'}`}>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{version.template_code || version.id} · v{version.version_number}</span>
-                  <span className="mt-0.5 block truncate text-[9px] text-slate-400">{version.name || version.source_filename || version.command || version.id} · {sourceLabel(version.source, zh)}</span>
-                </span>
-              </button>
-            ))}
-            {!filteredVersions.length && <div className="px-2 py-4 text-center text-[10px] text-slate-400">{zh ? '没有找到匹配的解析模板' : 'No matching parser template'}</div>}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
 const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const zh = language === 'zh';
   const navigate = useNavigate();
@@ -412,21 +286,17 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   const [actions, setActions] = useState<ActionDefinition[]>([]);
   const [actionsLoading, setActionsLoading] = useState(false);
   const [actionsError, setActionsError] = useState('');
-  const [parserVersions, setParserVersions] = useState<ParserVersionOption[]>([]);
-  const [parserVersionsLoading, setParserVersionsLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailTab, setDetailTab] = useState<DetailTab>('overview');
   const [health, setHealth] = useState<PlatformHealth | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
   const [healthError, setHealthError] = useState('');
-  const [sampleRunId, setSampleRunId] = useState('');
   const [identificationConflicts, setIdentificationConflicts] = useState<IdentificationConflict[]>([]);
   const [conflictsLoading, setConflictsLoading] = useState(false);
   const [actionReleaseId, setActionReleaseId] = useState('');
   const [actionSearch, setActionSearch] = useState('');
   const [editingActionCode, setEditingActionCode] = useState('');
   const [editingCommand, setEditingCommand] = useState('');
-  const [editingParserVersionId, setEditingParserVersionId] = useState('');
   const [actionSaving, setActionSaving] = useState(false);
   const [releaseDeleting, setReleaseDeleting] = useState(false);
   const [rejectReleaseId, setRejectReleaseId] = useState('');
@@ -556,28 +426,6 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
     }
   }, [zh]);
 
-  const loadParserVersions = useCallback(async (profileId: string) => {
-    if (!profileId) {
-      setParserVersions([]);
-      setParserVersionsLoading(false);
-      return;
-    }
-    setParserVersionsLoading(true);
-    try {
-      const response = await apiRequest<ApiEnvelope<ParserVersionOption[]>>(
-        `/api/platform-registry/profiles/${encodeURIComponent(profileId)}/parser-versions`,
-      );
-      if (profileId === selectedProfileId) setParserVersions(response.data || []);
-    } catch (cause) {
-      if (profileId === selectedProfileId) {
-        setParserVersions([]);
-        setActionsError(cause instanceof Error ? cause.message : (zh ? '可用解析版本加载失败' : 'Failed to load compatible parser versions'));
-      }
-    } finally {
-      if (profileId === selectedProfileId) setParserVersionsLoading(false);
-    }
-  }, [selectedProfileId, zh]);
-
   const loadHealth = useCallback(async (profileId: string) => {
     if (!profileId) {
       setHealth(null);
@@ -615,24 +463,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   useEffect(() => { void refreshProfiles(); }, [refreshProfiles]);
   useEffect(() => { void loadCapabilities(); }, [loadCapabilities]);
   useEffect(() => { void loadProfile(selectedProfileId); }, [loadProfile, selectedProfileId]);
-  useEffect(() => { void loadParserVersions(selectedProfileId); }, [loadParserVersions, selectedProfileId]);
   useEffect(() => { void loadHealth(selectedProfileId); }, [loadHealth, selectedProfileId]);
   useEffect(() => { void loadIdentificationConflicts(); }, [loadIdentificationConflicts]);
-
-  const createFailureSample = async (runId: string) => {
-    setSampleRunId(runId);
-    try {
-      await apiRequest(`/api/platform-registry/runs/${encodeURIComponent(runId)}/parser-sample`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      });
-      await loadHealth(selectedProfileId);
-    } catch (cause) {
-      setHealthError(cause instanceof Error ? cause.message : (zh ? '失败样例保存失败' : 'Failed to save parser sample'));
-    } finally {
-      setSampleRunId('');
-    }
-  };
 
   const vendors = useMemo(
     () => Array.from(new Set(profiles.map((profile) => profile.vendor).filter(Boolean))).sort(),
@@ -709,7 +541,12 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
   }, [actionReleaseId, loadActions, selectedProfileId]);
 
   const selectProfile = (profileId: string) => {
+    const nextProfile = profiles.find((profile) => profile.id === profileId);
     setSelectedProfileId(profileId);
+    // Do not reuse the previously selected profile's Release while the
+    // detail request is in flight; that transient mismatch used to produce
+    // a noisy 404 on the action-mapping endpoint.
+    setActionReleaseId(nextProfile?.current_release_id || '');
     setDetailTab('overview');
     setError('');
   };
@@ -821,15 +658,12 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
         method: 'PUT',
         body: JSON.stringify({
           command: editingCommand.trim(),
-          parser_template_version_id: editingParserVersionId || null,
-          field_contract: parseJsonObject(
-            parserVersions.find((version) => version.id === editingParserVersionId)?.field_contract_json
-              || action.field_contract_json,
-          ),
+          // TextFSM is resolved at execution time by the concrete platform
+          // version and exact command; it is not part of a command mapping.
+          field_contract: parseJsonObject(action.field_contract_json),
         }),
       });
       setEditingActionCode('');
-      setEditingParserVersionId('');
       await Promise.all([
         loadActions(selectedProfileId, activeRelease.id),
         loadProfile(selectedProfileId),
@@ -882,7 +716,6 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
     try {
       await apiRequest(`/api/platform-registry/releases/${encodeURIComponent(activeRelease.id)}`, { method: 'DELETE' });
       setEditingActionCode('');
-      setEditingParserVersionId('');
       setActionReleaseId(currentProfile.current_release_id || '');
       await Promise.all([refreshProfiles(), loadProfile(currentProfile.id)]);
     } catch (cause) {
@@ -970,7 +803,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                   <label className="text-xs font-semibold text-slate-600">{zh ? '连接驱动' : 'Connection driver'}<select value={createForm.connection_driver} onChange={(event) => setCreateForm((current) => ({ ...current, connection_driver: event.target.value }))} disabled={wizardMode === 'edit' && Number(currentProfile?.bound_device_count || 0) > 0} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:bg-slate-100"><option value="">{zh ? '请选择' : 'Select driver'}</option>{(capabilities?.allowed_connection_drivers || []).map((driver) => <option key={driver} value={driver}>{driver}</option>)}</select></label>
                   <label className="text-xs font-semibold text-slate-600">{zh ? '解析平台' : 'Parser platform'}<input value={createForm.parser_platform} onChange={(event) => setCreateForm((current) => ({ ...current, parser_platform: event.target.value }))} disabled={wizardMode === 'edit' && Number(currentProfile?.bound_device_count || 0) > 0} placeholder="acme_router" className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:bg-slate-100" /></label>
                   <div className="rounded-xl border border-cyan-100 bg-cyan-50/60 px-3 py-3 text-[11px] leading-5 text-cyan-800 sm:col-span-2">
-                    {zh ? '驱动必须来自后端 allowlist；解析模板需要后续在 TextFSM 页面创建、测试并发布后再绑定到动作。' : 'The driver must come from the backend allowlist. Create, test, and publish parser templates before binding them to actions.'}
+                    {zh ? '驱动必须来自后端 allowlist；TextFSM 模板可单独创建，执行时按平台版本和实际命令自动匹配。' : 'The driver must come from the backend allowlist. TextFSM templates are independent and are matched by platform version and exact command at runtime.'}
                   </div>
                   <label className="text-xs font-semibold text-slate-600 sm:col-span-2">{zh ? '平台说明' : 'Description'}<textarea value={createForm.description} onChange={(event) => setCreateForm((current) => ({ ...current, description: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-xs font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-100" /></label>
                 </div>
@@ -987,7 +820,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                     [zh ? '初始状态' : 'Initial state', wizardMode === 'edit' ? (zh ? '保留当前 Release 和绑定关系' : 'Existing releases and bindings are preserved') : (zh ? '自定义 / 启用 / 草稿 Release' : 'CUSTOM / ACTIVE / DRAFT release')],
                     ].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-50 px-3 py-2"><div className="text-[10px] text-slate-400">{label}</div><div className="mt-1 break-all text-xs font-semibold text-slate-700">{value || '-'}</div></div>)}
                   </div>
-                  <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3 text-[11px] leading-5 text-amber-800">{wizardMode === 'edit' ? (zh ? '已绑定设备的平台只允许修改名称、厂商和说明；平台编码、驱动和解析平台会被锁定。' : 'Profiles with bound devices only allow name, vendor, and description edits; platform code, driver, and parser platform are locked.') : (zh ? '创建不会自动发布或绑定设备；需要完成动作映射、TextFSM 回归和审批流后才可发布。' : 'Creation does not publish the profile or bind devices. Complete action mappings, TextFSM regression, and approval before publishing.')}</div>
+                  <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3 text-[11px] leading-5 text-amber-800">{wizardMode === 'edit' ? (zh ? '已绑定设备的平台只允许修改名称、厂商和说明；平台编码、驱动和解析平台会被锁定。' : 'Profiles with bound devices only allow name, vendor, and description edits; platform code, driver, and parser platform are locked.') : (zh ? '创建平台后可直接配置动作命令；TextFSM 不需要注册、发布或审核前置，验证通过即可使用。' : 'After creating a platform, configure action commands directly. TextFSM has no registration, publication, or approval prerequisite; a verified template can be used immediately.')}</div>
                 </div>
               )}
             </div>
@@ -1016,8 +849,8 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
               {canWrite
                 ? (zh ? '自定义平台支持新增、编辑和归档；系统内置平台只读，绑定设备后不能删除；发布仍需独立审批。' : 'Custom platforms support create, edit, and archive; built-in platforms are read-only and bound platforms cannot be deleted; publication still requires independent approval.')
                 : (zh
-                  ? '本页面默认只读；创建、编辑、审批和发布由 PLATFORM_REGISTRY_ENABLED 及后端权限共同控制。'
-                  : 'This page is read-only by default; create, edit, approval, and publish controls are gated by PLATFORM_REGISTRY_ENABLED and backend authorization.')}
+                  ? '本页面默认按角色权限控制；创建、编辑、审批和发布仍需通过后端权限与生命周期校验。'
+                  : 'This page is controlled by role permissions; create, edit, approval, and publish still require backend authorization and lifecycle checks.')}
             </div>
           </div>
         </div>
@@ -1244,7 +1077,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                           ))}
                         </div>
                         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5 text-[10px] leading-4 text-amber-900">
-                          <span>{zh ? '设备绑定与动作解析绑定是两条独立链路：这里的“绑定设备”只表示设备归属本 Profile；命令映射中的“未绑定”表示该 action_code 尚未绑定 TextFSM 版本，不会改写命令或回退到其他命令模板。' : 'Device binding and action parser binding are independent: “Bound devices” means devices belong to this profile; “Not bound” means that action_code has no TextFSM version and never rewrites the command or falls back to another command template.'}</span>
+                          <span>{zh ? '设备绑定只确定设备归属本 Profile；动作保存实际命令，执行时由设备的具体平台版本和命令精确匹配 TextFSM。没有模板时不改写命令、不跨版本猜测，并保留原始回显。' : 'Device binding only assigns the device to this Profile. Actions store the actual command; execution matches TextFSM by concrete platform version and exact command. Missing templates never rewrite or guess across versions, and raw output is preserved.'}</span>
                           <button type="button" onClick={() => setDetailTab('mappings')} className="shrink-0 font-semibold text-amber-800 underline underline-offset-2 hover:text-amber-950">{zh ? '查看命令映射' : 'View command mappings'}</button>
                         </div>
                         <div className="rounded-xl border border-slate-100 px-4 py-3">
@@ -1257,10 +1090,9 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                             )}
                           </div>
                           {healthError && <div className="mt-2 rounded-lg bg-rose-50 px-2.5 py-2 text-[10px] text-rose-700">{healthError}</div>}
-                          <div className="mt-3 grid gap-2 text-[10px] sm:grid-cols-4">
+                          <div className="mt-3 grid gap-2 text-[10px] sm:grid-cols-3">
                             {[
                               [zh ? '命令覆盖' : 'Commands', health?.command_coverage_pct == null ? '—' : `${health.command_coverage_pct}%`],
-                              [zh ? '模板覆盖' : 'Templates', health?.template_coverage_pct == null ? '—' : `${health.template_coverage_pct}%`],
                               [zh ? '执行成功率' : 'Success', health?.recent_success_rate_pct == null ? '—' : `${health.recent_success_rate_pct}%`],
                               [zh ? '解析失败' : 'Parse failures', health?.recent_parse_failure_count == null ? '—' : `${health.recent_parse_failure_count} (${health.recent_parse_failure_rate_pct || 0}%)`],
                             ].map(([label, value]) => (
@@ -1280,7 +1112,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                           {(health?.failure_queue || []).length > 0 && (
                             <div className="mt-3 border-t border-slate-100 pt-3">
                               <div className="mb-2 text-[10px] font-semibold text-slate-600">{zh ? '失败与未知输出待办' : 'Failure and unknown-output queue'}</div>
-                              <div className="mb-2 text-[9px] leading-4 text-slate-400">{zh ? '这里展示近 7 天动作遥测；原始回显不会直接暴露，只有保留回显且已绑定 TextFSM 版本时，才能转为脱敏样例。' : 'This queue shows action telemetry from the last 7 days. Raw output is not exposed directly; a retained output can become a redacted sample only when a TextFSM version is bound.'}</div>
+                              <div className="mb-2 text-[9px] leading-4 text-slate-400">{zh ? '这里展示近 7 天动作遥测；解析未匹配时仍可查看保留的脱敏原始回显，便于补充模板。' : 'This queue shows action telemetry from the last 7 days. An unmatched parse can still expose retained redacted raw output for template improvement.'}</div>
                               <div className="space-y-1.5">
                                 {(health?.failure_queue || []).slice(0, 5).map((failure) => (
                                   <div key={failure.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-rose-50/60 px-2.5 py-2 text-[10px] text-rose-700">
@@ -1293,11 +1125,6 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                                       </div>
                                       {failure.command && <code className="mt-1 block truncate text-[9px] text-rose-500/80">{failure.command}</code>}
                                     </div>
-                                    {failure.raw_output_available && failure.parser_template_version_id && (
-                                      <button type="button" onClick={() => void createFailureSample(failure.id)} disabled={sampleRunId === failure.id} className="font-semibold underline disabled:opacity-50">
-                                        {sampleRunId === failure.id ? (zh ? '保存中' : 'Saving') : (zh ? '转为脱敏样例' : 'Save redacted sample')}
-                                      </button>
-                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1313,25 +1140,20 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                             <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><FileCode2 size={15} className="text-cyan-600" />{zh ? '解析模板入口' : 'Parser template entry'}</div>
                             <button type="button" onClick={() => navigate('/automation/textfsm')} className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-700 hover:text-cyan-900">{zh ? '查看模板' : 'Open templates'}<ChevronRight size={13} /></button>
                           </div>
-                          <p className="mt-2 text-xs text-slate-500">{zh ? '解析平台已绑定到 Release；TextFSM 编辑、测试和结果预览在解析模板模块完成。' : 'The parser platform is bound to the release; editing and regression tests remain in Parse Templates.'}</p>
+                          <p className="mt-2 text-xs text-slate-500">{zh ? '设备绑定后，解析平台取设备确定的具体版本；模板保存即生效，执行时按具体平台版本和实际命令精确匹配。' : 'After binding, parsing uses the device’s concrete platform version. Saved templates take effect immediately and match by exact platform version and command.'}</p>
                         </div>
                       </div>
                     )}
 
                     {detailTab === 'parser' && (
                       <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-xs font-semibold text-slate-700">{zh ? '已绑定解析模板' : 'Bound parser templates'}</div>
-                          <button type="button" onClick={() => navigate('/automation/textfsm')} className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-700 hover:text-cyan-900">{zh ? '打开 TextFSM' : 'Open TextFSM'}<ChevronRight size={13} /></button>
-                        </div>
-                        {(currentProfile.parser_templates || []).length === 0 ? (
-                          <div className="rounded-xl border border-dashed border-slate-200 px-4 py-12 text-center text-xs text-slate-400">{zh ? '暂无平台级解析模板' : 'No platform-scoped parser templates'}</div>
-                        ) : (currentProfile.parser_templates || []).map((template) => (
-                          <div key={template.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-3">
-                            <div><div className="font-mono text-xs font-semibold text-slate-800">{template.template_code || template.id}</div><div className="mt-1 text-[11px] text-slate-500">{template.name || template.platform_code || '-'}</div></div>
-                            <div className="flex items-center gap-2 text-[10px] text-slate-500"><span className={`rounded-full px-2 py-1 font-semibold ring-1 ${statusClass(template.status)}`}>{statusLabel(template.status, zh)}</span><span>{template.version_count || 0} {zh ? '个版本' : 'versions'}</span></div>
+                        <div className="rounded-2xl border border-cyan-100 bg-cyan-50/60 px-4 py-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 text-xs font-semibold text-slate-700"><FileCode2 size={15} className="text-cyan-600" />{zh ? '直接解析模板' : 'Direct parser templates'}</div>
+                            <button type="button" onClick={() => navigate('/automation/textfsm')} className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-700 hover:text-cyan-900">{zh ? '打开 TextFSM' : 'Open TextFSM'}<ChevronRight size={13} /></button>
                           </div>
-                        ))}
+                          <p className="mt-2 text-xs leading-5 text-slate-600">{zh ? '这里不再维护模板注册、发布或版本绑定。请在 TextFSM 页面直接创建模板，选择厂商、平台版本和实际命令；保存后立即参与解析。Action 关联是可选项。' : 'Template registration, publication, and version binding are not maintained here. Create a template directly in TextFSM with vendor, platform version, and exact command; it is active immediately. Action association is optional.'}</p>
+                        </div>
                       </div>
                     )}
 
@@ -1367,7 +1189,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                               {canWrite && isCustomProfile && activeRelease?.status === 'DRAFT' && <button type="button" onClick={() => void deleteDraftRelease()} disabled={releaseDeleting} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={12} />{releaseDeleting ? (zh ? '删除中' : 'Deleting') : (zh ? '删除草稿' : 'Delete draft')}</button>}
                             </div>
                           </div>
-                          {activeRelease?.status === 'DRAFT' && <div className="mt-2 flex items-center gap-1.5 text-[10px] text-cyan-700"><Save size={12} />{zh ? '修改命令或 TextFSM 后，点击动作行内的“保存命令”；保存只更新当前 action_code。' : 'Edit the command or TextFSM, then use the row “Save command” button; only the current action_code is updated.'}</div>}
+                          {activeRelease?.status === 'DRAFT' && <div className="mt-2 flex items-center gap-1.5 text-[10px] text-cyan-700"><Save size={12} />{zh ? '修改实际命令后，点击动作行内的“保存命令”；TextFSM 不需要在这里单独绑定。' : 'Edit the exact command and use the row “Save command” button; TextFSM does not need a separate binding here.'}</div>}
                         </div>
                         {actionsError && <div className="mb-3 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">{actionsError}</div>}
                         <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2 text-[10px] leading-4 text-slate-600">
@@ -1387,24 +1209,6 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                               const requiredFields = parseJsonList(action.required_fields_json);
                               const consumers = parseJsonList(action.consumers_json);
                               const contract = parseJsonObject(action.field_contract_json);
-                              const boundParserVersion = parserVersions.find((version) => version.id === action.parser_template_version_id);
-                              const editingThisAction = editingActionCode === action.action_code;
-                              const commandForParserPicker = editingThisAction ? editingCommand : action.command;
-                              const compatibleParserVersions = parserVersions.filter((version) => parserVersionMatchesCommand(version, commandForParserPicker));
-                              const parserBindingMismatch = Boolean(
-                                action.parser_template_version_id
-                                  && boundParserVersion
-                                  && !parserVersionMatchesCommand(boundParserVersion, action.command),
-                              );
-                              const openParserVersion = (version: ParserVersionOption | undefined) => {
-                                if (!version?.template_id) return;
-                                const params = new URLSearchParams({
-                                  template_id: version.template_id,
-                                  version_id: version.id,
-                                });
-                                if (version.template_code) params.set('template_code', version.template_code);
-                                navigate(`/automation/textfsm-registry?${params.toString()}`);
-                              };
                               return (
                                 <div key={action.action_code} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
                                   <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1420,7 +1224,11 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                                   </div>
                                   <div className="mt-3 grid gap-2 text-[10px] sm:grid-cols-2">
                                     <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><span className="text-slate-400">{zh ? '实际命令' : 'Resolved command'}：</span><code className="break-all text-slate-700">{action.command || (zh ? '未映射' : 'Unmapped')}</code></div>
-                                     <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2"><span className="text-slate-400">{zh ? '解析版本' : 'Parser version'}：</span><span className={`break-all ${action.parser_template_version_id && !parserBindingMismatch ? 'text-slate-700' : 'font-medium text-amber-700'}`}>{boundParserVersion?.template_code ? `${boundParserVersion.template_code} · v${boundParserVersion.version_number}` : (action.parser_template_version_id || (zh ? '未绑定严格匹配的 TextFSM' : 'No strictly matching TextFSM binding'))}</span>{boundParserVersion?.template_id && <button type="button" onClick={() => openParserVersion(boundParserVersion)} className="ml-2 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50" title={zh ? '打开解析版本' : 'Open parser version'}><ExternalLink size={11} />{zh ? '打开模板' : 'Open template'}</button>}{parserBindingMismatch && <div className="mt-1 text-[10px] leading-4 text-rose-700">{zh ? '当前模板与实际命令不一致，不能继续使用；请替换为命令完全匹配的 PUBLISHED TextFSM。' : 'The bound template does not match the action command; replace it with a strictly matching PUBLISHED TextFSM.'}</div>}{!action.parser_template_version_id && action.command && <div className="mt-1 text-[10px] leading-4 text-amber-700">{zh ? '当前未绑定注册版 TextFSM；执行时只按原命令查找严格匹配模板，不会改写命令或回退到其他命令模板。' : 'No registry TextFSM version is bound; execution only looks up a template for the exact command and does not rewrite or fall back to another command template.'}</div>}{action.parser_template_version_id && !compatibleParserVersions.length && <div className="mt-1 text-[10px] leading-4 text-rose-700">{zh ? '没有与当前命令严格一致的已发布解析版本。' : 'No published parser version strictly matches the current command.'}</div>}</div>
+                                    <div className="rounded-lg border border-slate-100 bg-white px-2.5 py-2">
+                                      <span className="text-slate-400">{zh ? 'TextFSM 解析' : 'TextFSM parsing'}：</span>
+                                      <span className="font-medium text-cyan-700">{zh ? '按平台版本 + 实际命令自动匹配' : 'Automatic match by platform version + exact command'}</span>
+                                      <div className="mt-1 text-[10px] leading-4 text-slate-400">{zh ? '模板可在 TextFSM 页面直接创建；没有匹配模板时仍保留原始回显。' : 'Create templates directly in TextFSM; unmatched responses still keep the raw CLI output.'}</div>
+                                    </div>
                                   </div>
                                   {(requiredFields.length > 0 || consumers.length > 0 || Object.keys(contract).length > 0) && (
                                     <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1431,14 +1239,12 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                                   )}
                                   {editingActionCode === action.action_code ? (
                                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                                      <input value={editingCommand} onChange={(event) => { const nextCommand = event.target.value; setEditingCommand(nextCommand); const selectedVersion = parserVersions.find((version) => version.id === editingParserVersionId); if (editingParserVersionId && (!selectedVersion || !parserVersionMatchesCommand(selectedVersion, nextCommand))) setEditingParserVersionId(''); }} className="min-w-[240px] flex-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 font-mono text-[10px] outline-none focus:ring-2 focus:ring-cyan-100" aria-label={zh ? '动作命令' : 'Action command'} />
-                                      <ParserVersionPicker zh={zh} value={editingParserVersionId} versions={compatibleParserVersions} disabled={parserVersionsLoading} onChange={setEditingParserVersionId} ariaLabel={zh ? `动作 ${action.action_code} 的解析版本` : `Parser version for ${action.action_code}`} />
-                                      {editingParserVersionId && <button type="button" onClick={() => openParserVersion(parserVersions.find((version) => version.id === editingParserVersionId))} disabled={!parserVersions.some((version) => version.id === editingParserVersionId)} className="inline-flex items-center gap-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-[10px] font-semibold text-cyan-700 disabled:cursor-not-allowed disabled:opacity-40" title={zh ? '打开所选解析版本' : 'Open selected parser version'}><ExternalLink size={11} />{zh ? '打开模板' : 'Open template'}</button>}
+                                      <input value={editingCommand} onChange={(event) => setEditingCommand(event.target.value)} className="min-w-[240px] flex-1 rounded-lg border border-cyan-200 bg-white px-2.5 py-2 font-mono text-[10px] outline-none focus:ring-2 focus:ring-cyan-100" aria-label={zh ? '动作命令' : 'Action command'} />
                                       <button type="button" onClick={() => void saveActionMapping(action)} disabled={actionSaving} className="inline-flex items-center gap-1 rounded-lg bg-cyan-600 px-2.5 py-2 text-[10px] font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"><Save size={12} />{actionSaving ? (zh ? '保存中' : 'Saving') : (zh ? '保存命令' : 'Save command')}</button>
                                       <button type="button" onClick={() => setEditingActionCode('')} className="rounded-lg px-2.5 py-2 text-[10px] font-semibold text-slate-500 hover:bg-slate-100">{zh ? '取消' : 'Cancel'}</button>
                                     </div>
                                   ) : canWrite && isCustomProfile && activeRelease?.status === 'DRAFT' ? (
-                                    <button type="button" aria-label={zh ? '编辑命令/解析版本' : 'Edit command/parser'} onClick={() => { const currentVersion = parserVersions.find((version) => version.id === action.parser_template_version_id); setEditingActionCode(action.action_code); setEditingCommand(action.command || ''); setEditingParserVersionId(currentVersion && parserVersionMatchesCommand(currentVersion, action.command) ? currentVersion.id : ''); }} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[10px] font-semibold text-cyan-700 transition hover:border-cyan-400 hover:bg-cyan-50"><Save size={12} />{zh ? '编辑此动作的命令和解析版本' : 'Edit this action command and parser'}</button>
+                                    <button type="button" aria-label={zh ? '编辑动作命令' : 'Edit action command'} onClick={() => { setEditingActionCode(action.action_code); setEditingCommand(action.command || ''); }} className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 py-2 text-[10px] font-semibold text-cyan-700 transition hover:border-cyan-400 hover:bg-cyan-50"><Save size={12} />{zh ? '编辑此动作命令' : 'Edit this action command'}</button>
                                   ) : null}
                                 </div>
                               );

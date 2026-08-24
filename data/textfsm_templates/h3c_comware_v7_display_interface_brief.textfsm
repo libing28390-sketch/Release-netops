@@ -1,7 +1,7 @@
 Value Required INTERFACE (\S+)
 Value Required LINK ((?:UP|DOWN|ADM|Stby))
 Value PROTOCOL ((?:UP|DOWN|--)(?:\(s\))?)
-Value PRIMARY_IP (\S+)
+Value MAIN_IP (\S+)
 Value SPEED (\S+)
 Value DUPLEX (\S+)
 Value TYPE ((?:A|T|H|-))
@@ -16,7 +16,7 @@ Start
 
 RouteMode
   ^\s*(?:The\s+)?[Bb]rief\s+information\s+(?:of|on|about)\s+interfaces?(?:\(s\))?\s+(?:under|in)\s+bridge\s+mode:\s*$$ -> BridgeMode
-  ^\s*${INTERFACE}\s+${LINK}\s+${PROTOCOL}\s+${PRIMARY_IP}(?:\s+${DESCRIPTION})?\s*$$ -> Record
+  ^\s*${INTERFACE}\s+${LINK}\s+${PROTOCOL}\s+${MAIN_IP}(?:\s+${DESCRIPTION})?\s*$$ -> Record
   ^\s*$$
   ^.*
 

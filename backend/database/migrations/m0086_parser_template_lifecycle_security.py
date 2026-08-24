@@ -46,7 +46,8 @@ def upgrade(cursor, use_pg: bool) -> None:
     # Existing installations may contain samples created before the encrypted
     # column existed.  Preserve them only when the application key is
     # available; otherwise quarantine the raw value instead of leaving it in
-    # the database.  New writes are enforced by parser_template_service.
+    # the database.  The old lifecycle API was retired; current template
+    # writes are handled by the file-backed TextFSM endpoint.
     from core.crypto import encrypt_credential
 
     fallback_expiry = (datetime.now(timezone.utc) + timedelta(days=30)).replace(microsecond=0).isoformat()

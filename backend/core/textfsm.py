@@ -18,12 +18,41 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_TEMPLATE_ACTION_METADATA_RE = re.compile(
+    r'^\s*#\s*nexora[-_]action[-_]code\s*:\s*([a-z][a-z0-9_]{2,63})\s*$',
+    re.IGNORECASE,
+)
+
+
+def template_action_code(content: str) -> str:
+    """Read the optional action association embedded in a template comment."""
+    for line in str(content or '').splitlines():
+        match = _TEMPLATE_ACTION_METADATA_RE.match(line)
+        if match:
+            return match.group(1).lower()
+    return ''
+
+
+def _apply_template_action_metadata(content: str, action_code: str | None) -> str:
+    """Add/replace the optional action association without changing the rule."""
+    raw = str(content or '')
+    if action_code is None:
+        return raw
+    lines = [line for line in raw.splitlines() if not _TEMPLATE_ACTION_METADATA_RE.match(line)]
+    cleaned = '\n'.join(lines).lstrip('\n')
+    normalized_action = str(action_code or '').strip().lower()
+    if normalized_action:
+        if not re.fullmatch(r'[a-z][a-z0-9_]{2,63}', normalized_action):
+            raise ValueError('action_code 格式不正确')
+        cleaned = f'# nexora-action-code: {normalized_action}\n{cleaned}'
+    return f'{cleaned}\n' if cleaned else ''
+
 # ── 路径常量 ──────────────────────────────────────────────────────────
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 _PROJECT_ROOT = _BACKEND_DIR.parent
 _CUSTOM_TEMPLATES_DIR = _PROJECT_ROOT / "data" / "textfsm_templates"
-# Docker packages the release-owned templates outside the persistent data
-# volume.  This keeps public-repository updates visible without overwriting
+# Docker packages the application-default templates outside the persistent
+# data volume. This keeps repository updates visible without overwriting
 # templates edited or created by users in data/textfsm_templates.
 _PACKAGED_TEMPLATES_DIR = _PROJECT_ROOT / "release-textfsm-templates"
 
@@ -61,6 +90,30 @@ def resolve_textfsm_platform(platform: str | None) -> str | None:
     """Return the canonical parser platform without changing device identity."""
     raw = str(platform or '').strip().lower()
     return TEXTFSM_PLATFORM_MAP.get(raw, raw or None)
+
+
+def resolve_textfsm_parser_platform(platform: str | None, version: str | None = None) -> str | None:
+    """Resolve the concrete H3C grammar variant used by inventory detection.
+
+    ``h3c_comware`` remains the public parser family stored on a device. The
+    concrete V5/V7/V9 grammar is selected directly from the device profile,
+    while the Comware major version is the only inventory evidence strong
+    enough to select a variant automatically.
+    Unknown versions intentionally stay on the family key so the caller can
+    require an explicit manual selection.
+    """
+    raw = str(platform or '').strip().lower()
+    if raw in {'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9'}:
+        return raw
+    if raw in {'hp_comware', 'h3c_comware9', 'h3c', 'comware', ''}:
+        raw = 'h3c_comware'
+    if raw != 'h3c_comware':
+        return resolve_textfsm_platform(raw)
+
+    match = re.search(r'(?<!\d)([579])(?:\.|\b)', str(version or '').strip().lower())
+    if match:
+        return f'h3c_comware_v{match.group(1)}'
+    return 'h3c_comware'
 
 
 def _canonical_template_filename(filename: str) -> str:
@@ -191,6 +244,10 @@ def _template_filename(platform: str, command: str) -> str:
     例如：cisco_ios + 'show processes cpu' → cisco_ios_show_processes_cpu.textfsm
     """
     cmd_part = re.sub(r'[^a-zA-Z0-9]+', '_', command.strip().lower()).strip('_')
+    # A family-level filename is the explicit ``common`` namespace.  Do not
+    # silently rewrite it to V7: version selection belongs to the device
+    # profile, and a versionless template must remain available as a common
+    # fallback for every compatible profile.
     return f"{platform}_{cmd_part}.textfsm"
 
 
@@ -209,10 +266,22 @@ def _legacy_file_fallback_enabled() -> bool:
 
 def _template_filename_variants(platform: str, command: str) -> list[str]:
     """Return current custom naming first, then legacy NTC naming."""
-    names = [_template_filename(platform, command)]
-    legacy = _legacy_template_filename(platform, command)
-    if _legacy_file_fallback_enabled() and legacy not in names:
-        names.append(legacy)
+    commands = [command]
+    # Comware V7 has a dedicated description grammar, while V5/V9 can safely
+    # reuse their ordinary brief grammar when no version-specific description
+    # file exists. Keep the exact command first so the dedicated V7 template is
+    # selected whenever it is available.
+    if str(command or '').strip().lower() == 'display interface brief description':
+        commands.append('display interface brief')
+
+    names: list[str] = []
+    for candidate_command in commands:
+        current = _template_filename(platform, candidate_command)
+        if current not in names:
+            names.append(current)
+        legacy = _legacy_template_filename(platform, candidate_command)
+        if _legacy_file_fallback_enabled() and legacy not in names:
+            names.append(legacy)
     return names
 
 
@@ -304,6 +373,10 @@ _HUAWEI_H3C_COMMAND_MAPPING = [
     (re.compile(r'^dis(?:play)?\s+memory\b', re.I), 'display memory'),  # For HP Comware
     (re.compile(r'^dis(?:play)?\s+ip\s+routing-table\s+stat(?:istics)?\b', re.I), 'display ip routing-table statistics'),
     (re.compile(r'^dis(?:play)?\s+port\s+vlan\b', re.I), 'display port vlan'),
+    # The description form must precede the generic brief form; otherwise the
+    # word-boundary after ``brief`` would normalize the longer command to the
+    # wrong template namespace.
+    (re.compile(r'^dis(?:play)?\s+int(?:erface)?\s+br(?:ief)?\s+description\b', re.I), 'display interface brief description'),
     (re.compile(r'^dis(?:play)?\s+int(?:erface)?\s+br(?:ief)?\b', re.I), 'display interface brief'),
     (re.compile(r'^dis(?:play)?\s+arp(?:\s+all)?\b', re.I), 'display arp all'),
     (re.compile(r'^dis(?:play)?\s+ip\s+routing-table\s*$', re.I), 'display ip routing-table'),
@@ -870,6 +943,9 @@ def list_templates(
     search: str = '',
     *,
     exact_platform: bool = False,
+    vendor_filter: str = '',
+    platform_family_filter: str = '',
+    version_filter: str = '',
 ) -> list[dict[str, Any]]:
     """
     列出所有可用模板（内置 + 自定义），标注来源。
@@ -883,22 +959,37 @@ def list_templates(
         for f in sorted(builtin.glob('*.textfsm')):
             info = _parse_template_filename(f.name)
             if info:
-                templates[f.name] = {**info, 'source': 'builtin', 'filename': f.name}
+                templates[f.name] = {
+                    **_template_catalog_metadata(info),
+                    'source': 'builtin',
+                    'filename': f.name,
+                    'action_code': template_action_code(f.read_text(encoding='utf-8')),
+                }
 
-    # 2. 加载发布镜像中的模板；它们属于只读的发布默认值
+    # 2. 加载随应用打包的只读默认模板
     packaged = _get_packaged_templates_dir()
     if packaged:
         for f in sorted(packaged.glob('*.textfsm')):
             info = _parse_template_filename(f.name)
             if info:
-                templates[f.name] = {**info, 'source': 'builtin', 'filename': f.name}
+                templates[f.name] = {
+                    **_template_catalog_metadata(info),
+                    'source': 'builtin',
+                    'filename': f.name,
+                    'action_code': template_action_code(f.read_text(encoding='utf-8')),
+                }
 
     # 3. 自定义模板覆盖（或新增）
     _CUSTOM_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
     for f in sorted(_CUSTOM_TEMPLATES_DIR.glob('*.textfsm')):
-        info = _parse_template_filename(f.name)
-        if info:
-            templates[f.name] = {**info, 'source': 'custom', 'filename': f.name}
+            info = _parse_template_filename(f.name)
+            if info:
+                templates[f.name] = {
+                    **_template_catalog_metadata(info),
+                    'source': 'custom',
+                    'filename': f.name,
+                    'action_code': template_action_code(f.read_text(encoding='utf-8')),
+                }
 
     result = list(templates.values())
 
@@ -919,11 +1010,93 @@ def list_templates(
                 t for t in result
                 if (resolve_textfsm_platform(t.get('platform', '')) or t.get('platform', '').lower()) == requested_platform
             ]
+    if vendor_filter:
+        requested_vendor = _normalize_template_vendor(vendor_filter)
+        result = [
+            t for t in result
+            if str(t.get('vendor', '')).strip().lower() == requested_vendor
+        ]
+    if platform_family_filter:
+        requested_family = _normalize_template_platform_family(platform_family_filter)
+        result = [
+            t for t in result
+            if str(t.get('platform_family', '')).strip().lower() == requested_family
+        ]
+    if version_filter:
+        requested_version = _normalize_template_version(version_filter)
+        result = [
+            t for t in result
+            if str(t.get('version', '')).strip().lower() == requested_version
+        ]
     if search:
         s = search.lower()
         result = [t for t in result if s in t.get('filename', '').lower() or s in t.get('command', '').lower()]
 
     return result
+
+
+def _normalize_template_vendor(value: str | None) -> str:
+    raw = str(value or '').strip().lower()
+    aliases = {
+        '华为': 'huawei',
+        'huawei': 'huawei',
+        '华三': 'h3c',
+        'h3c': 'h3c',
+        '思科': 'cisco',
+        'cisco': 'cisco',
+        '锐捷': 'ruijie',
+        'ruijie': 'ruijie',
+    }
+    return aliases.get(raw, raw)
+
+
+def _normalize_template_platform_family(value: str | None) -> str:
+    raw = str(value or '').strip().lower()
+    if raw in {'huawei_vrpv8', 'huawei_vrp'}:
+        return 'huawei_vrp'
+    if raw.startswith('h3c_comware'):
+        return 'h3c_comware'
+    return resolve_textfsm_platform(raw) or raw
+
+
+def _normalize_template_version(value: str | None) -> str:
+    raw = str(value or '').strip().lower()
+    if raw in {'generic', 'default', 'common', '通用'}:
+        return 'common'
+    if raw and not raw.startswith('v') and raw.isdigit():
+        return f'v{raw}'
+    return raw
+
+
+def _template_catalog_metadata(info: dict[str, Any]) -> dict[str, Any]:
+    """Add stable hierarchy fields without changing the parser platform key."""
+    platform = str(info.get('platform') or '').strip().lower()
+    if platform.startswith('h3c_comware'):
+        vendor = 'h3c'
+        platform_family = 'h3c_comware'
+    elif platform.startswith('huawei_'):
+        vendor = 'huawei'
+        platform_family = 'huawei_vrp' if platform in {'huawei_vrp', 'huawei_vrpv8'} else platform
+    elif platform.startswith('cisco_'):
+        vendor = 'cisco'
+        platform_family = platform
+    else:
+        vendor = platform.split('_', 1)[0] if platform else ''
+        platform_family = platform
+
+    version = str(info.get('template_variant') or '').strip().lower()
+    if not version:
+        version = {
+            'huawei_vrp': 'v5',
+            'huawei_vrpv8': 'v8',
+        }.get(platform, 'common')
+
+    return {
+        **info,
+        'vendor': vendor,
+        'platform_family': platform_family,
+        'version': version,
+    }
 
 
 # Custom template filenames use underscores because they are safe filenames,
@@ -950,6 +1123,9 @@ _TEMPLATE_COMMAND_CANONICAL: dict[str, dict[str, str]] = {
         'display mac address': 'display mac-address',
     },
     'h3c_comware': {
+        'display cpu usage': 'display cpu-usage',
+        'display bgp routing table ipv4': 'display bgp routing-table ipv4',
+        'display ip routing table': 'display ip routing-table',
         'display ip routing table statistics': 'display ip routing-table statistics',
         'display ntp service status': 'display ntp-service status',
         'display link aggregation verbose': 'display link-aggregation verbose',
@@ -1011,18 +1187,22 @@ def _template_platform_candidates(platform: str) -> list[str]:
     selected = aliases.get(raw, normalized)
     if selected.startswith('h3c_comware_v5'):
         # V5 has its own command grammars.  Do not downgrade it to the V7
-        # grammar when a V5 template is missing.
-        return ['h3c_comware_v5']
+        # grammar when a V5 template is missing.  A versionless template is
+        # an explicit common grammar and is safe to try after the exact one.
+        return ['h3c_comware_v5', 'h3c_comware']
     if selected.startswith('h3c_comware_v9'):
-        # V9 currently shares a few stable grammars with the family baseline;
-        # the explicit fallback is to the canonical H3C family, never to an
-        # HP/legacy parser namespace.
+        # V9 has its own concrete grammar scope. Missing V9 templates must be
+        # reported as unsupported instead of falling through to V7. A common
+        # template is the only permitted fallback.
         return ['h3c_comware_v9', 'h3c_comware']
+    if selected.startswith('h3c_comware_v7'):
+        return ['h3c_comware_v7', 'h3c_comware']
     if selected == 'h3c_comware':
-        # The family namespace is intentionally exact.  A caller that knows a
-        # concrete V5/V9 profile must request that variant explicitly; broad
-        # fallback would mix incompatible command grammars.
-        return ['h3c_comware']
+        # Current H3C assets are Comware V7. Keep the family key as the
+        # persisted public identity, but prefer the current V7 grammar for
+        # legacy family callers and then allow a common template. Bound
+        # devices use an explicit V5/V7/V9 parser selector above.
+        return ['h3c_comware_v7', 'h3c_comware']
     candidates = [normalized] if normalized else []
     candidates.extend(_COMPATIBLE_PLATFORMS.get(normalized, []))
     return list(dict.fromkeys(candidates))
@@ -1225,7 +1405,12 @@ def get_template_content(filename: str) -> tuple[str, str]:
     raise FileNotFoundError(f"模板不存在: {filename}")
 
 
-def save_custom_template(filename: str, content: str) -> dict[str, Any]:
+def save_custom_template(
+    filename: str,
+    content: str,
+    *,
+    action_code: str | None = None,
+) -> dict[str, Any]:
     """
     保存自定义模板到 data/textfsm_templates/。
     会先验证模板语法。
@@ -1235,6 +1420,11 @@ def save_custom_template(filename: str, content: str) -> dict[str, Any]:
     filename = _canonical_template_filename(filename)
     if not filename.endswith('.textfsm') or '/' in filename or '\\' in filename or '..' in filename:
         raise ValueError(f"非法文件名: {filename}")
+
+    # An action association is optional metadata.  If an editor updates a
+    # template without sending the field, preserve any existing association
+    # already present in the submitted content.
+    content = _apply_template_action_metadata(content, action_code)
 
     # 验证语法
     try:
@@ -1251,6 +1441,7 @@ def save_custom_template(filename: str, content: str) -> dict[str, Any]:
         'filename': filename,
         'platform': info.get('platform', ''),
         'command': info.get('command', ''),
+        'action_code': template_action_code(content),
         'source': 'custom',
         'size': len(content),
     }

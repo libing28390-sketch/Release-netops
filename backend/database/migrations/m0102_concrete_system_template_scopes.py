@@ -38,6 +38,7 @@ def _profile_for_template(profile_defs: list[dict], filename: str) -> dict | Non
     stem = Path(filename).stem.lower()
     variant_profiles = {
         "h3c_comware_v5": "hp_comware",
+        "h3c_comware_v7": "h3c_comware",
         "h3c_comware_v9": "h3c_comware9",
     }
     for prefix, profile_code in variant_profiles.items():

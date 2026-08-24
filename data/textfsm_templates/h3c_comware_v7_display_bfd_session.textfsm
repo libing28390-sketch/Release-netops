@@ -8,6 +8,7 @@ Value INTERFACE (\S+)
 
 Start
   ^\s*${LOCAL_DISCRIMINATOR}/${REMOTE_DISCRIMINATOR}\s+${SOURCE_IP}\s+${DESTINATION_IP}\s+${STATUS}\s+${HOLDTIME}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*BFD\s+is\s+not\s+configured\.\s*$$
   ^\s*LD/RD\s+Source(?:Addr|IP)\s+Dest(?:Addr|inationIP)
   ^\s*(?:Total sessions|Total Session Num):
   ^\s*(?:IPv4|IPv6).*session.*:

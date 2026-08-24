@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -38,10 +37,6 @@ def _json(value: Any) -> str:
 
 def _checksum(value: Any) -> str:
     return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
-
-
-def _registry_enabled() -> bool:
-    return os.environ.get("PLATFORM_REGISTRY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _row(row) -> dict[str, Any] | None:
@@ -100,14 +95,13 @@ def _validate_definition(definition: dict[str, Any]) -> dict[str, Any]:
     phases = normalized.get("phases")
     if not isinstance(phases, dict):
         raise PlaybookVersionError("INVALID_PLAYBOOK_DEFINITION", "Playbook definition must include phases")
-    if _registry_enabled():
-        from api.playbooks.scenarios import validate_controlled_phases
-        errors = validate_controlled_phases(phases)
-        if errors:
-            raise PlaybookVersionError(
-                str(errors[0].get("code") or "INVALID_PLAYBOOK_DEFINITION"),
-                "Platform registry is enabled; Playbook steps must use bounded published action definitions",
-            )
+    from api.playbooks.scenarios import validate_controlled_phases
+    errors = validate_controlled_phases(phases)
+    if errors:
+        raise PlaybookVersionError(
+            str(errors[0].get("code") or "INVALID_PLAYBOOK_DEFINITION"),
+            "Playbook steps must use bounded published platform actions",
+        )
     return normalized
 
 

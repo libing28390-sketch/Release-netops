@@ -134,8 +134,8 @@ def test_h3c_bgp_unicast_and_no_suffix_use_distinct_textfsm_templates():
     unicast = smart_parse_cli(output, "display bgp peer ipv4 unicast", platform="h3c_comware")
     no_suffix = smart_parse_cli(output, "display bgp peer ipv4", platform="h3c_comware")
 
-    assert unicast["template"] == "h3c_comware_display_bgp_peer_ipv4_unicast.textfsm"
-    assert no_suffix["template"] == "h3c_comware_display_bgp_peer_ipv4.textfsm"
+    assert unicast["template"] == "h3c_comware_v7_display_bgp_peer_ipv4_unicast.textfsm"
+    assert no_suffix["template"] == "h3c_comware_v7_display_bgp_peer_ipv4.textfsm"
 
 
 def test_cisco_neighbor_collection_uses_lldp_only():
@@ -203,42 +203,42 @@ def test_cisco_neighbor_collection_uses_lldp_only():
             "h3c_comware",
             ("h3c", "h3c_comware", "display_bgp_peer_ipv4"),
             "comware_v7_s5560",
-            "h3c_comware_display_bgp_peer_ipv4_unicast.textfsm",
+            "h3c_comware_v7_display_bgp_peer_ipv4_unicast.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_bgp_routing_table_ipv4"),
             "comware_v7_router_b",
-            "h3c_comware_display_bgp_routing_table_ipv4.textfsm",
+            "h3c_comware_v7_display_bgp_routing_table_ipv4.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_logbuffer"),
             "comware_v7_s5130",
-            "h3c_comware_display_logbuffer.textfsm",
+            "h3c_comware_v7_display_logbuffer.textfsm",
             1,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_interface_brief"),
             "comware_v7",
-            "h3c_comware_display_interface_brief.textfsm",
+            "h3c_comware_v7_display_interface_brief.textfsm",
             3,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_lldp_neighbor_information_list"),
             "comware_v7_s5130",
-            "h3c_comware_display_lldp_neighbor_information_list.textfsm",
+            "h3c_comware_v7_display_lldp_neighbor_information_list.textfsm",
             3,
         ),
         (
             "h3c_comware",
             ("h3c", "h3c_comware", "display_vlan_brief"),
             "comware_v7_msr",
-            "h3c_comware_display_vlan_brief.textfsm",
+            "h3c_comware_v7_display_vlan_brief.textfsm",
             1,
         ),
         (
@@ -351,11 +351,11 @@ def test_comware9_does_not_collapse_to_comware7_before_dedicated_templates():
     ("platform", "expected_template"),
     [
         ("h3c_comware_v5", "h3c_comware_v5_display_interface_brief.textfsm"),
-        ("h3c_comware", "h3c_comware_display_interface_brief.textfsm"),
+        ("h3c_comware", "h3c_comware_v7_display_interface_brief_description.textfsm"),
         ("h3c_comware_v9", "h3c_comware_v9_display_interface_brief.textfsm"),
     ],
 )
-def test_h3c_interface_description_command_reuses_verified_brief_grammar(
+def test_h3c_interface_description_command_prefers_dedicated_grammar_and_keeps_legacy_fallback(
     platform: str,
     expected_template: str,
 ):
@@ -541,6 +541,31 @@ def test_comware7_real_world_ntp_status_is_structured(platform):
     assert record["CLOCK_STRATUM"] == "16"
     assert record["REFERENCE_CLOCK_ID"] == "none"
     assert record["POLL_INTERVAL"] == "8"
+
+
+@pytest.mark.parametrize("platform", ["h3c_comware"])
+def test_comware7_real_world_bfd_down_session_is_structured(platform):
+    output = """--- S6850_1 ---
+[display bfd session]
+ Total sessions: 1     Up sessions: 0     Init mode: Active
+
+ IPv4 session working in control packet mode:
+
+ LD/RD            SourceAddr      DestAddr        State  Holdtime    Interface
+ 32833/0          10.254.12.1     10.254.12.2     Down      /        Vlan112
+"""
+    result = smart_parse_cli(output, "display bfd session", platform=platform)
+
+    assert result["success"] is True
+    assert result["matched_rows"] == 1
+    record = result["data"][0]
+    assert record["LOCAL_DISCRIMINATOR"] == "32833"
+    assert record["REMOTE_DISCRIMINATOR"] == "0"
+    assert record["SOURCE_IP"] == "10.254.12.1"
+    assert record["DESTINATION_IP"] == "10.254.12.2"
+    assert record["STATUS"] == "Down"
+    assert record["HOLDTIME"] == "/"
+    assert record["INTERFACE"] == "Vlan112"
 
 
 @pytest.mark.parametrize(

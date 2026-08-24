@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,7 +16,6 @@ from services.platform_registry_service import (
     delete_release,
     execute_platform_action,
     is_safe_read_command,
-    list_compatible_parser_versions,
     list_profiles,
     list_release_actions,
     preview_platform_action,
@@ -25,33 +25,6 @@ from services.platform_registry_service import (
     iter_action_definitions,
 )
 from services.platform_registry_health_service import get_profile_health
-
-
-def _insert_published_parser(
-    conn,
-    *,
-    version_id,
-    tenant_id,
-    profile_id,
-    platform_code="cisco_ios",
-    command="show clock",
-    source_filename="cisco_ios_show_clock.textfsm",
-):
-    conn.execute(
-        """INSERT INTO parser_templates
-           (id, tenant_id, platform_profile_id, platform_code, template_code, source_filename,
-            command, name, source, status, created_by, created_at, updated_at, lock_version)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CUSTOM', 'ACTIVE', 'author', 'now', 'now', 1)""",
-        (f"template-{version_id}", tenant_id, profile_id, platform_code, f"TEMPLATE_{version_id.upper()}", source_filename, command, "custom"),
-    )
-    conn.execute(
-        """INSERT INTO parser_template_versions
-           (id, template_id, version_number, status, content, checksum, field_contract_json,
-            test_summary_json, created_by, created_at, updated_at)
-           VALUES (?, ?, 1, 'PUBLISHED', 'Value FIELD (.*)\\nStart\\n  ^${FIELD} -> Record', 'checksum', '{}', '{}', 'author', 'now', 'now')""",
-        (version_id, f"template-{version_id}"),
-    )
-    conn.commit()
 
 
 def test_migration_seeds_registry_and_action_catalog(isolated_db):
@@ -115,18 +88,15 @@ def test_migration_seeds_registry_and_action_catalog(isolated_db):
                WHERE p.platform_code = 'h3c_comware' AND r.status = 'PUBLISHED'"""
         ).fetchone()
         assert h3c_actions["count"] > 0
-        h3c_version = conn.execute(
-            """SELECT a.command, a.parser_template_version_id, t.source_filename, t.command AS template_command
+        h3c_action = conn.execute(
+            """SELECT a.command
                FROM platform_release_actions a
                JOIN platform_releases r ON r.id = a.release_id
                JOIN platform_profiles p ON p.id = r.profile_id
-               LEFT JOIN parser_template_versions v ON v.id = a.parser_template_version_id
-               LEFT JOIN parser_templates t ON t.id = v.template_id
                WHERE p.platform_code = 'h3c_comware' AND a.action_code = 'get_bgp_neighbors'"""
-        ).fetchone()
-        assert h3c_version["command"] == "display bgp peer ipv4 unicast"
-        assert h3c_version["source_filename"] == "h3c_comware__h3c_comware_display_bgp_peer_ipv4_unicast.textfsm"
-        assert h3c_version["template_command"] == "display bgp peer ipv4 unicast"
+         ).fetchone()
+        assert h3c_action["command"] == "display bgp peer ipv4 unicast"
+        assert (Path(__file__).parents[2] / ".." / "data" / "textfsm_templates" / "h3c_comware_v7_display_bgp_peer_ipv4_unicast.textfsm").resolve().exists()
     finally:
         conn.close()
 
@@ -347,139 +317,6 @@ def test_release_submitter_can_withdraw_in_review_release(isolated_db):
     assert withdrawn["status"] == "DRAFT"
 
 
-def test_release_action_rejects_cross_profile_parser_version(isolated_db):
-    author = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
-    profile = create_profile(
-        {"platform_code": "acme_lab", "name_zh": "测试平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
-        author,
-    )
-    other_profile = create_profile(
-        {"platform_code": "other_lab", "name_zh": "其他平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
-        author,
-    )
-    release = create_release(profile["id"], {}, author)
-    conn = isolated_db["module"].get_db_connection()
-    try:
-        _insert_published_parser(conn, version_id="other_version", tenant_id="tenant-1", profile_id=other_profile["id"])
-    finally:
-        conn.close()
-
-    with pytest.raises(PlatformRegistryError) as error:
-        update_release_action(
-            release["id"],
-            "get_clock",
-            {"command": "show clock", "parser_template_version_id": "other_version"},
-            author,
-        )
-    assert error.value.code == "PARSER_SCOPE_DENIED"
-
-
-def test_compatible_parser_versions_use_profile_parser_and_scope_rules(isolated_db):
-    owner = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
-    profile = create_profile(
-        {"platform_code": "acme_parser_lab", "name_zh": "测试平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
-        owner,
-    )
-    other_profile = create_profile(
-        {"platform_code": "other_parser_lab", "name_zh": "其他平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
-        owner,
-    )
-    conn = isolated_db["module"].get_db_connection()
-    try:
-        _insert_published_parser(conn, version_id="compatible_version", tenant_id="tenant-1", profile_id=profile["id"])
-        _insert_published_parser(conn, version_id="other_profile_version", tenant_id="tenant-1", profile_id=other_profile["id"])
-        _insert_published_parser(conn, version_id="wrong_platform_version", tenant_id="tenant-1", profile_id=profile["id"], platform_code="h3c_comware")
-        conn.execute(
-            """INSERT INTO parser_templates
-               (id, tenant_id, platform_profile_id, platform_code, template_code, source_filename,
-                name, source, status, created_by, created_at, updated_at, lock_version)
-               VALUES ('system-compatible-template', NULL, NULL, 'cisco_ios', 'SYSTEM_COMPATIBLE', '', 'system', 'SYSTEM', 'ACTIVE', 'system', 'now', 'now', 1)""",
-        )
-        conn.execute(
-            """INSERT INTO parser_template_versions
-               (id, template_id, version_number, status, content, checksum, field_contract_json,
-                test_summary_json, created_by, created_at, updated_at)
-               VALUES ('system-compatible-version', 'system-compatible-template', 1, 'PUBLISHED',
-                       'Value FIELD (.*)\\nStart\\n  ^${FIELD} -> Record', 'checksum', '{}', '{}', 'system', 'now', 'now')""",
-        )
-        conn.execute(
-            """INSERT INTO parser_templates
-               (id, tenant_id, platform_profile_id, platform_code, template_code, source_filename,
-                name, source, status, created_by, created_at, updated_at, lock_version)
-               VALUES ('draft-compatible-template', 'tenant-1', ?, 'cisco_ios', 'DRAFT_COMPATIBLE', '', 'draft', 'CUSTOM', 'ACTIVE', 'author', 'now', 'now', 1)""",
-            (profile["id"],),
-        )
-        conn.execute(
-            """INSERT INTO parser_template_versions
-               (id, template_id, version_number, status, content, checksum, field_contract_json,
-                test_summary_json, created_by, created_at, updated_at)
-               VALUES ('draft-compatible-version', 'draft-compatible-template', 1, 'DRAFT',
-                       'Value FIELD (.*)\\nStart\\n  ^${FIELD} -> Record', 'checksum', '{}', '{}', 'author', 'now', 'now')""",
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    versions = list_compatible_parser_versions(profile["id"], owner)
-    version_ids = {item["id"] for item in versions}
-    assert {"compatible_version", "system-compatible-version"} <= version_ids
-    assert {"other_profile_version", "wrong_platform_version", "draft-compatible-version"}.isdisjoint(version_ids)
-    assert all(item["status"] == "PUBLISHED" and item["platform_code"] == "cisco_ios" for item in versions)
-
-
-def test_release_action_can_replace_parser_version_within_same_profile(isolated_db):
-    owner = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
-    profile = create_profile(
-        {"platform_code": "replace_parser_lab", "name_zh": "替换平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
-        owner,
-    )
-    conn = isolated_db["module"].get_db_connection()
-    try:
-        _insert_published_parser(conn, version_id="replace_version_a", tenant_id="tenant-1", profile_id=profile["id"])
-        _insert_published_parser(conn, version_id="replace_version_b", tenant_id="tenant-1", profile_id=profile["id"])
-    finally:
-        conn.close()
-    release = create_release(profile["id"], {}, owner)
-    first = update_release_action(
-        release["id"],
-        "get_clock",
-        {"command": "show clock", "parser_template_version_id": "replace_version_a"},
-        owner,
-    )
-    assert first["parser_template_version_id"] == "replace_version_a"
-    second = update_release_action(
-        release["id"],
-        "get_clock",
-        {"command": "show clock", "parser_template_version_id": "replace_version_b"},
-        owner,
-    )
-    assert second["parser_template_version_id"] == "replace_version_b"
-    mapped = next(item for item in list_release_actions(profile["id"], owner, release["id"]) if item["action_code"] == "get_clock")
-    assert mapped["parser_template_version_id"] == "replace_version_b"
-
-
-def test_release_action_rejects_parser_command_mismatch(isolated_db):
-    owner = {"id": "author-mismatch", "username": "author-mismatch", "role": "Operator", "tenant_id": "tenant-1"}
-    profile = create_profile(
-        {"platform_code": "strict_parser_lab", "name_zh": "严格解析平台", "connection_driver": "netmiko", "parser_platform": "cisco_ios"},
-        owner,
-    )
-    conn = isolated_db["module"].get_db_connection()
-    try:
-        _insert_published_parser(conn, version_id="mismatch_version", tenant_id="tenant-1", profile_id=profile["id"], command="show clock")
-    finally:
-        conn.close()
-    release = create_release(profile["id"], {}, owner)
-    with pytest.raises(PlatformRegistryError) as error:
-        update_release_action(
-            release["id"],
-            "get_version",
-            {"command": "show version", "parser_template_version_id": "mismatch_version"},
-            owner,
-        )
-    assert error.value.code == "PARSER_COMMAND_MISMATCH"
-
-
 def test_execute_uses_published_release_and_returns_traceability(isolated_db):
     conn = isolated_db["module"].get_db_connection()
     try:
@@ -575,6 +412,61 @@ def test_execute_uses_published_release_and_returns_traceability(isolated_db):
     assert error.value.code == "UNSUPPORTED_ACTION"
 
 
+def test_h3c_v7_action_executes_with_the_published_v7_textfsm_template(isolated_db):
+    fixture = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "cli"
+        / "h3c"
+        / "h3c_comware"
+        / "display_cpu_usage"
+        / "comware_v7_summary.txt"
+    ).read_text(encoding="utf-8")
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        conn.execute(
+            """INSERT INTO devices
+               (id, hostname, ip_address, platform, status, username, password,
+                connection_method, platform_profile_id, platform_source, tenant_id)
+               VALUES ('h3c-v7-action-device', 'h3c-v7-edge', '192.0.2.77',
+                       'h3c_comware', 'active', 'u', 'p', 'mock',
+                       'system-profile-h3c_comware', 'SYSTEM', 'tenant-1')"""
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    class V7Driver:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send_command(self, command):
+            assert command == "display cpu-usage"
+            return SimpleNamespace(success=True, output=fixture, error=None)
+
+    class V7Factory:
+        @classmethod
+        def get_driver(cls, _driver_type, _device_info):
+            return V7Driver()
+
+    result = execute_platform_action(
+        "h3c-v7-action-device",
+        "get_cpu",
+        user={"id": "operator-v7", "username": "operator", "role": "Operator", "tenant_id": "tenant-1"},
+        driver_factory=V7Factory,
+    )
+
+    assert result["success"] is True
+    assert result["command"] == "display cpu-usage"
+    assert result["template"] == "h3c_comware_v7_display_cpu_usage.textfsm"
+    assert result["parser"] == "textfsm:h3c_comware_v7_display_cpu_usage.textfsm"
+    assert result["parser_selection"] == "automatic"
+    assert result["records"]
+
+
 def test_execute_applies_resolved_collector_credentials_before_driver(isolated_db, monkeypatch):
     conn = isolated_db["module"].get_db_connection()
     try:
@@ -654,7 +546,12 @@ def test_parameterized_action_preview_is_rendered_and_restricted(isolated_db):
         user,
     )
     release = create_release(profile["id"], {}, user)
-    update_release_action(release["id"], "get_route_table", {"command": "show ip route {{target}}"}, user)
+    update_release_action(
+        release["id"],
+        "get_route_table",
+        {"command": "show ip route {{target}}"},
+        user,
+    )
     transition_release(release["id"], "submit", user)
     transition_release(release["id"], "approve", reviewer)
     transition_release(release["id"], "publish", reviewer)

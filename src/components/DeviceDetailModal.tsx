@@ -61,6 +61,7 @@ interface DeviceDetailModalProps {
   snmpTestingId: string | null;
   onSnmpSyncNow: (deviceId: string) => void;
   snmpSyncingId: string | null;
+  onPlatformBindingSaved?: (binding: Pick<Device, 'platform' | 'platform_profile_id' | 'platform_locked'>) => void;
   onGoToAutomation: (device: Device) => void;
 }
 
@@ -228,6 +229,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   snmpTestingId,
   onSnmpSyncNow,
   snmpSyncingId,
+  onPlatformBindingSaved,
   onGoToAutomation,
 }) => {
   const ct = useChartTheme();
@@ -299,10 +301,18 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
     setPlatformBindingLoading(true);
     setPlatformError('');
     try {
-      await apiRequest(`/api/devices/${encodeURIComponent(viewingDevice.id)}/platform-binding`, {
+      const response = await apiRequest<{ data?: Device }>(`/api/devices/${encodeURIComponent(viewingDevice.id)}/platform-binding`, {
         method: 'PUT',
         body: JSON.stringify({ platform_profile_id: selectedPlatformProfileId, lock: lockPlatformBinding }),
       });
+      const saved = response.data;
+      if (saved) {
+        onPlatformBindingSaved?.({
+          platform: saved.platform || viewingDevice.platform,
+          platform_profile_id: saved.platform_profile_id || selectedPlatformProfileId,
+          platform_locked: saved.platform_locked ?? lockPlatformBinding,
+        });
+      }
       setPlatformError('');
       setPlatformResult((current) => current ? { ...current, status: 'BOUND' } : { status: 'BOUND' });
     } catch (cause) {

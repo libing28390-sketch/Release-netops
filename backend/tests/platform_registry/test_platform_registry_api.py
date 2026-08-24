@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
 from pydantic import ValidationError
 
 from api.platform_registry import (
@@ -12,34 +11,16 @@ from api.platform_registry import (
     PlatformProfileUpdateRequest,
     PlatformReleaseCreateRequest,
     PlatformRollbackRequest,
-    _require_registry_enabled,
-    api_list_compatible_parser_versions,
 )
 from core.rbac import authorize_resource, permission_catalog, RECOMMENDED_ROLE_PROFILES
 from services.platform_registry_service import preview_platform_migration
 
 
-def test_registry_write_and_execution_gate_is_closed_by_default(monkeypatch):
-    monkeypatch.delenv("PLATFORM_REGISTRY_ENABLED", raising=False)
-    with pytest.raises(HTTPException) as error:
-        _require_registry_enabled()
-    assert error.value.status_code == 503
-    assert error.value.detail["code"] == "PLATFORM_REGISTRY_DISABLED"
+def test_registry_capabilities_are_available_without_an_environment_gate():
+    from api.platform_registry import api_registry_capabilities
 
-
-def test_registry_write_and_execution_gate_can_be_enabled(monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
-    _require_registry_enabled()
-
-
-def test_parser_version_options_route_returns_profile_compatible_published_versions(isolated_db):
-    result = api_list_compatible_parser_versions(
-        "system-profile-cisco_ios",
-        {"id": "admin-1", "username": "admin", "role": "Administrator", "tenant_id": "tenant-1"},
-    )
-    assert result["success"] is True
-    assert result["data"]
-    assert all(item["status"] == "PUBLISHED" and item["platform_code"] == "cisco_ios" for item in result["data"])
+    result = api_registry_capabilities({"role": "Administrator", "tenant_id": "tenant-1"})
+    assert result["data"]["write_enabled"] is True
 
 
 def test_platform_write_request_models_reject_unknown_fields_and_bound_values():

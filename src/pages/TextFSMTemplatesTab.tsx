@@ -20,6 +20,22 @@ interface Template {
   command: string;
   source: 'builtin' | 'custom';
   stem?: string;
+  vendor?: string;
+  platform_family?: string;
+  version?: string;
+  template_variant?: string;
+  action_code?: string;
+}
+
+interface ActionOption {
+  action_code: string;
+  name_zh: string;
+  name_en: string;
+  purpose?: string;
+  command?: string | null;
+  group_zh?: string;
+  group_en?: string;
+  available?: boolean;
 }
 
 interface TestResult {
@@ -28,29 +44,115 @@ interface TestResult {
   fields: string[];
 }
 
-const SAMPLE_PLATFORMS = [
-  { value: '', label: '全部平台', labelEn: 'All Platforms' },
-  { value: 'cisco_ios', label: 'Cisco IOS' },
-  { value: 'cisco_xe', label: 'Cisco IOS-XE', labelEn: 'Cisco IOS-XE' },
-  { value: 'cisco_nxos', label: 'Cisco NX-OS' },
-  { value: 'cisco_xr', label: 'Cisco IOS-XR' },
-  { value: 'cisco_asa', label: 'Cisco ASA' },
-  { value: 'huawei_vrp', label: '华为 VRPv5' },
-  { value: 'huawei_vrpv8', label: '华为 VRPv8' },
-  // H3C is one public TextFSM family.  Comware generation/product
-  // differences are selected by the device Platform Profile and its
-  // registered template variant.
-  { value: 'h3c_comware', label: 'H3C Comware', labelEn: 'H3C Comware' },
-  { value: 'juniper_junos', label: 'Juniper JunOS' },
-  { value: 'arista_eos', label: 'Arista EOS' },
-  { value: 'ruijie_rgos', label: '锐捷 RGOS', labelEn: 'Ruijie RGOS' },
-  { value: 'zte_zxros', label: 'ZTE ZXROS' },
-  { value: 'dptech_ios', label: '迪普 DPTech Conplat', labelEn: 'DPTech Conplat' },
-  { value: 'maipu', label: 'Maipu Network OS' },
-  { value: 'paloalto_panos', label: 'Palo Alto' },
-  { value: 'fortinet', label: 'Fortinet' },
-  { value: 'hillstone_stoneos', label: '山石 StoneOS' },
+interface PlatformFamilyOption {
+  value: string;
+  vendor: string;
+  label: string;
+  labelEn: string;
+  versions: string[];
+}
+
+const VENDOR_OPTIONS = [
+  { value: 'cisco', label: '思科', labelEn: 'Cisco' },
+  { value: 'huawei', label: '华为', labelEn: 'Huawei' },
+  { value: 'h3c', label: '华三', labelEn: 'H3C' },
+  { value: 'juniper', label: 'Juniper', labelEn: 'Juniper' },
+  { value: 'arista', label: 'Arista', labelEn: 'Arista' },
+  { value: 'ruijie', label: '锐捷', labelEn: 'Ruijie' },
+  { value: 'zte', label: '中兴', labelEn: 'ZTE' },
+  { value: 'dptech', label: '迪普', labelEn: 'DPTech' },
+  { value: 'maipu', label: '迈普', labelEn: 'Maipu' },
+  { value: 'paloalto', label: 'Palo Alto', labelEn: 'Palo Alto' },
+  { value: 'fortinet', label: 'Fortinet', labelEn: 'Fortinet' },
+  { value: 'hillstone', label: '山石', labelEn: 'Hillstone' },
 ];
+
+const PLATFORM_FAMILIES: PlatformFamilyOption[] = [
+  { value: 'cisco_ios', vendor: 'cisco', label: 'IOS', labelEn: 'IOS', versions: ['common'] },
+  { value: 'cisco_xe', vendor: 'cisco', label: 'IOS-XE', labelEn: 'IOS-XE', versions: ['common'] },
+  { value: 'cisco_nxos', vendor: 'cisco', label: 'NX-OS', labelEn: 'NX-OS', versions: ['common'] },
+  { value: 'cisco_xr', vendor: 'cisco', label: 'IOS-XR', labelEn: 'IOS-XR', versions: ['common'] },
+  { value: 'cisco_asa', vendor: 'cisco', label: 'ASA', labelEn: 'ASA', versions: ['common'] },
+  { value: 'huawei_vrp', vendor: 'huawei', label: 'VRP', labelEn: 'VRP', versions: ['v5', 'v8'] },
+  // H3C remains one public parser family; the version selector exposes its
+  // concrete V5/V7/V9 grammar variants without changing the parser key.
+  { value: 'h3c_comware', vendor: 'h3c', label: 'Comware', labelEn: 'Comware', versions: ['common', 'v5', 'v7', 'v9'] },
+  { value: 'juniper_junos', vendor: 'juniper', label: 'JunOS', labelEn: 'JunOS', versions: ['common'] },
+  { value: 'arista_eos', vendor: 'arista', label: 'EOS', labelEn: 'EOS', versions: ['common'] },
+  { value: 'ruijie_rgos', vendor: 'ruijie', label: 'RGOS', labelEn: 'RGOS', versions: ['common'] },
+  { value: 'zte_zxros', vendor: 'zte', label: 'ZXROS', labelEn: 'ZXROS', versions: ['common'] },
+  { value: 'dptech_ios', vendor: 'dptech', label: 'Conplat', labelEn: 'Conplat', versions: ['common'] },
+  { value: 'maipu', vendor: 'maipu', label: 'Network OS', labelEn: 'Network OS', versions: ['common'] },
+  { value: 'paloalto_panos', vendor: 'paloalto', label: 'PAN-OS', labelEn: 'PAN-OS', versions: ['common'] },
+  { value: 'fortinet', vendor: 'fortinet', label: 'FortiOS', labelEn: 'FortiOS', versions: ['common'] },
+  { value: 'hillstone_stoneos', vendor: 'hillstone', label: 'StoneOS', labelEn: 'StoneOS', versions: ['common'] },
+];
+
+const VERSION_LABELS: Record<string, { label: string; labelEn: string }> = {
+  common: { label: '通用', labelEn: 'Common' },
+  v5: { label: 'V5', labelEn: 'V5' },
+  v7: { label: 'V7', labelEn: 'V7' },
+  v8: { label: 'V8', labelEn: 'V8' },
+  v9: { label: 'V9', labelEn: 'V9' },
+};
+
+const getVendorOption = (value: string) => VENDOR_OPTIONS.find((item) => item.value === value);
+const getPlatformFamilyOption = (value: string) => PLATFORM_FAMILIES.find((item) => item.value === value);
+
+const getConcreteEditorPlatform = (platformFamily: string, version: string): string => {
+  if (platformFamily === 'h3c_comware' && version !== 'common') return `${platformFamily}_${version}`;
+  if (platformFamily === 'huawei_vrp' && version === 'v8') return 'huawei_vrpv8';
+  return platformFamily;
+};
+
+const getEditorSelection = (platform: string, versionHint?: string) => {
+  const normalizedPlatform = String(platform || '').trim().toLowerCase();
+  const normalizedVersion = String(versionHint || '').trim().toLowerCase();
+  let platformFamily = normalizedPlatform;
+  let version = normalizedVersion;
+
+  const h3cVersion = normalizedPlatform.match(/^h3c_comware_(v5|v7|v9)$/)?.[1];
+  if (h3cVersion) {
+    platformFamily = 'h3c_comware';
+    version = h3cVersion;
+  } else if (normalizedPlatform === 'huawei_vrpv8') {
+    platformFamily = 'huawei_vrp';
+    version = 'v8';
+  } else if (normalizedPlatform === 'huawei_vrp' && !['v5', 'v8'].includes(version)) {
+    version = 'v5';
+  }
+
+  const family = getPlatformFamilyOption(platformFamily);
+  const supportedVersions = family?.versions || ['common'];
+  if (!supportedVersions.includes(version)) version = supportedVersions[0] || 'common';
+
+  return {
+    vendor: family?.vendor || normalizedPlatform.split('_', 1)[0] || 'cisco',
+    platformFamily: family?.value || platformFamily || 'cisco_ios',
+    version,
+  };
+};
+
+const getTemplateDisplayMeta = (template: Template) => {
+  const platform = String(template.platform || '').toLowerCase();
+  const familyValue = template.platform_family || (
+    platform.startsWith('h3c_comware') ? 'h3c_comware' :
+      platform.startsWith('huawei_') ? 'huawei_vrp' : platform
+  );
+  const vendorValue = template.vendor || (
+    platform.startsWith('h3c_comware') ? 'h3c' :
+      platform.startsWith('huawei_') ? 'huawei' : platform.split('_', 1)[0]
+  );
+  const versionValue = String(template.version || template.template_variant || 'common').toLowerCase();
+  const vendor = getVendorOption(vendorValue);
+  const family = getPlatformFamilyOption(familyValue);
+  const version = VERSION_LABELS[versionValue] || { label: versionValue.toUpperCase(), labelEn: versionValue.toUpperCase() };
+  return {
+    vendor: vendor ? { label: vendor.label, labelEn: vendor.labelEn } : { label: vendorValue, labelEn: vendorValue },
+    family: family ? { label: family.label, labelEn: family.labelEn } : { label: familyValue, labelEn: familyValue },
+    version,
+  };
+};
 
 const DEFAULT_TEMPLATE_CONTENT = `Value EXAMPLE_FIELD (\\S+)
 
@@ -65,13 +167,20 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const [platformFilter, setPlatformFilter] = useState('');
+  const [vendorFilter, setVendorFilter] = useState('');
+  const [platformFamilyFilter, setPlatformFamilyFilter] = useState('');
+  const [versionFilter, setVersionFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'' | 'builtin' | 'custom'>('');
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
-  const [editorPlatform, setEditorPlatform] = useState('');
+  const [editorVendor, setEditorVendor] = useState('cisco');
+  const [editorPlatformFamily, setEditorPlatformFamily] = useState('cisco_ios');
+  const [editorVersion, setEditorVersion] = useState('common');
   const [editorCommand, setEditorCommand] = useState('');
+  const [editorActionCode, setEditorActionCode] = useState('');
+  const [actionOptions, setActionOptions] = useState<ActionOption[]>([]);
+  const [actionOptionsLoading, setActionOptionsLoading] = useState(false);
   const [editorContent, setEditorContent] = useState(DEFAULT_TEMPLATE_CONTENT);
   const [editorReadonly, setEditorReadonly] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -103,12 +212,9 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (platformFilter) {
-        params.set('platform', platformFilter);
-        // The backend returns the canonical H3C family; v5/v9 differences are
-        // represented by the concrete template filename/profile binding.
-        params.set('exact_platform', 'true');
-      }
+      if (vendorFilter) params.set('vendor', vendorFilter);
+      if (platformFamilyFilter) params.set('platform_family', platformFamilyFilter);
+      if (versionFilter) params.set('version', versionFilter);
       if (search) params.set('search', search);
       if (sourceFilter) params.set('source', sourceFilter);
       params.set('page', String(page));
@@ -122,22 +228,85 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       }
     } catch (e) { /* noop */ }
     setLoading(false);
-  }, [platformFilter, search, sourceFilter, page, pageSize, authHeaders]);
+  }, [vendorFilter, platformFamilyFilter, versionFilter, search, sourceFilter, page, pageSize, authHeaders]);
 
   useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
 
   // Reset page on filter change
   useEffect(() => {
     setPage(1);
-  }, [search, platformFilter, sourceFilter]);
+  }, [search, vendorFilter, platformFamilyFilter, versionFilter, sourceFilter]);
+
+  const availablePlatformFamilies = useMemo(
+    () => PLATFORM_FAMILIES.filter((item) => !vendorFilter || item.vendor === vendorFilter),
+    [vendorFilter],
+  );
+
+  const availableVersions = useMemo(() => {
+    const families = platformFamilyFilter
+      ? PLATFORM_FAMILIES.filter((item) => item.value === platformFamilyFilter)
+      : availablePlatformFamilies;
+    return Array.from(new Set(families.flatMap((item) => item.versions)))
+      .sort((left, right) => {
+        const order = ['common', 'v5', 'v7', 'v8', 'v9'];
+        return order.indexOf(left) - order.indexOf(right);
+      });
+  }, [availablePlatformFamilies, platformFamilyFilter]);
+
+  const editorPlatform = useMemo(
+    () => getConcreteEditorPlatform(editorPlatformFamily, editorVersion),
+    [editorPlatformFamily, editorVersion],
+  );
+  const editorPlatformFamilies = useMemo(
+    () => PLATFORM_FAMILIES.filter((item) => item.vendor === editorVendor),
+    [editorVendor],
+  );
+  const editorVersionOptions = useMemo(
+    () => getPlatformFamilyOption(editorPlatformFamily)?.versions || ['common'],
+    [editorPlatformFamily],
+  );
+  const actionOptionGroups = useMemo(() => {
+    const groups = new Map<string, ActionOption[]>();
+    actionOptions
+      .filter((option) => option.available || option.action_code === editorActionCode)
+      .forEach((option) => {
+        const group = isZh ? (option.group_zh || '其他查询') : (option.group_en || 'Other queries');
+        groups.set(group, [...(groups.get(group) || []), option]);
+      });
+    return Array.from(groups.entries());
+  }, [actionOptions, editorActionCode, isZh]);
+
+  useEffect(() => {
+    if (!editorOpen) return undefined;
+    let active = true;
+    setActionOptionsLoading(true);
+    const params = new URLSearchParams({ platform: editorPlatform });
+    fetch(`/api/textfsm/action-options?${params.toString()}`, { headers: authHeaders })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (active) setActionOptions(payload?.data || []);
+      })
+      .catch(() => {
+        if (active) setActionOptions([]);
+      })
+      .finally(() => {
+        if (active) setActionOptionsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authHeaders, editorOpen, editorPlatform]);
 
   useAlertOverlayDismiss(editorOpen, () => setEditorOpen(false));
   useAlertOverlayDismiss(!!confirmDelete, () => setConfirmDelete(null));
 
   const openNewEditor = () => {
     setEditingTemplate(null);
-    setEditorPlatform('cisco_ios');
+    setEditorVendor('cisco');
+    setEditorPlatformFamily('cisco_ios');
+    setEditorVersion('common');
     setEditorCommand('');
+    setEditorActionCode('');
     setEditorContent(DEFAULT_TEMPLATE_CONTENT);
     setEditorReadonly(false);
     setSampleOutput('');
@@ -152,9 +321,13 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       const res = await fetch(`/api/textfsm/templates/${tpl.filename}`, { headers: authHeaders });
       if (!res.ok) throw new Error('Fetch failed');
       const json = await res.json();
+      const selection = getEditorSelection(tpl.platform, tpl.version || tpl.template_variant);
       setEditingTemplate(tpl);
-      setEditorPlatform(tpl.platform);
+      setEditorVendor(selection.vendor);
+      setEditorPlatformFamily(selection.platformFamily);
+      setEditorVersion(selection.version);
       setEditorCommand(tpl.command);
+      setEditorActionCode(json?.data?.action_code || tpl.action_code || '');
       setEditorContent(json?.data?.content || '');
       setEditorReadonly(tpl.source === 'builtin');
       setSampleOutput('');
@@ -182,7 +355,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
     try {
       const filename = editingTemplate?.filename || generateFilename();
       if (!filename) {
-        showToast('error', isZh ? '请填写平台和命令' : 'Platform and command required');
+        showToast('error', isZh ? '请填写厂商、平台、版本和命令' : 'Vendor, platform, version and command required');
         setSaving(false);
         return;
       }
@@ -192,8 +365,8 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
         ? `/api/textfsm/templates/${editingTemplate.filename}`
         : '/api/textfsm/templates';
       const body = editingTemplate
-        ? { content: editorContent }
-        : { platform: editorPlatform, command: editorCommand, content: editorContent };
+        ? { content: editorContent, action_code: editorActionCode || null }
+        : { platform: editorPlatform, command: editorCommand, action_code: editorActionCode || null, content: editorContent };
 
       const res = await fetch(url, {
         method,
@@ -305,7 +478,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       </AnimatePresence>
 
       {/* Filters */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-black/30" />
           <input
@@ -316,12 +489,47 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
           />
         </div>
         <select
-          value={platformFilter}
-          onChange={(e) => setPlatformFilter(e.target.value)}
+          value={vendorFilter}
+          onChange={(e) => {
+            setVendorFilter(e.target.value);
+            setPlatformFamilyFilter('');
+            setVersionFilter('');
+          }}
+          aria-label={isZh ? '厂商' : 'Vendor'}
           className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
         >
-          {SAMPLE_PLATFORMS.map((p) => (
-            <option key={p.value} value={p.value}>{isZh ? p.label : (p.labelEn || p.label)}</option>
+          <option value="">{isZh ? '全部厂商' : 'All Vendors'}</option>
+          {VENDOR_OPTIONS.map((vendor) => (
+            <option key={vendor.value} value={vendor.value}>{isZh ? vendor.label : vendor.labelEn}</option>
+          ))}
+        </select>
+        <select
+          value={platformFamilyFilter}
+          onChange={(e) => {
+            setPlatformFamilyFilter(e.target.value);
+            setVersionFilter('');
+          }}
+          aria-label={isZh ? '平台' : 'Platform'}
+          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
+        >
+          <option value="">{isZh ? '全部平台' : 'All Platforms'}</option>
+          {availablePlatformFamilies.map((platform) => (
+            <option key={platform.value} value={platform.value}>
+              {isZh ? platform.label : platform.labelEn}
+            </option>
+          ))}
+        </select>
+        <select
+          value={versionFilter}
+          onChange={(e) => setVersionFilter(e.target.value)}
+          aria-label={isZh ? '版本' : 'Version'}
+          className="px-3 py-2 rounded-lg bg-white border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
+        >
+          <option value="">{isZh ? '全部版本' : 'All Versions'}</option>
+          {availableVersions.map((version) => (
+            <option key={version} value={version}>
+              {isZh ? (VERSION_LABELS[version]?.label || version) : (VERSION_LABELS[version]?.labelEn || version)}
+            </option>
           ))}
         </select>
         <select
@@ -342,7 +550,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
             <thead className="bg-slate-50/80 text-black/40 text-[11px] font-semibold uppercase tracking-wider sticky top-0 z-10 border-b border-black/5">
               <tr>
                 <th className="text-left px-4 py-2.5">{isZh ? '文件名' : 'Filename'}</th>
-                <th className="text-left px-4 py-2.5">{isZh ? '平台' : 'Platform'}</th>
+                <th className="text-left px-4 py-2.5">{isZh ? '厂商 / 平台 / 版本' : 'Vendor / Platform / Version'}</th>
                 <th className="text-left px-4 py-2.5">{isZh ? '命令' : 'Command'}</th>
                 <th className="text-left px-4 py-2.5">{isZh ? '来源' : 'Source'}</th>
                 <th className="text-right px-4 py-2.5">{isZh ? '操作' : 'Actions'}</th>
@@ -355,13 +563,36 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
               {!loading && templates.length === 0 && (
                 <tr><td colSpan={5} className="text-center py-10 text-black/30">{isZh ? '没有匹配的模板' : 'No templates found'}</td></tr>
               )}
-              {!loading && templates.map((tpl) => (
+                {!loading && templates.map((tpl) => (
                 <tr key={tpl.filename} className="border-t border-black/[0.03] hover:bg-slate-50/50 transition-colors">
                   <td className="px-4 py-2.5 font-mono text-[11px] text-black/70">{tpl.filename}</td>
                   <td className="px-4 py-2.5">
-                    <span className="px-2 py-0.5 rounded bg-slate-100 text-black/60 text-[10px] font-semibold">{tpl.platform}</span>
+                    {(() => {
+                      const meta = getTemplateDisplayMeta(tpl);
+                      return (
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1 text-[10px] font-semibold">
+                            <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-cyan-700">
+                              {isZh ? meta.vendor.label : meta.vendor.labelEn}
+                            </span>
+                            <span className="text-black/25">/</span>
+                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-black/65">
+                              {isZh ? meta.family.label : meta.family.labelEn}
+                            </span>
+                            <span className="text-black/25">/</span>
+                            <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700">
+                              {isZh ? meta.version.label : meta.version.labelEn}
+                            </span>
+                          </div>
+                          <span className="font-mono text-[10px] text-black/35">{tpl.platform}</span>
+                        </div>
+                      );
+                    })()}
                   </td>
-                  <td className="px-4 py-2.5 text-black/60">{tpl.command || '—'}</td>
+                  <td className="px-4 py-2.5 text-black/60">
+                    <div>{tpl.command || '—'}</div>
+                    {tpl.action_code && <span className="mt-1 inline-flex rounded bg-violet-50 px-1.5 py-0.5 font-mono text-[9px] text-violet-700">{tpl.action_code}</span>}
+                  </td>
                   <td className="px-4 py-2.5">
                     {tpl.source === 'custom' ? (
                       <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">{isZh ? '自定义' : 'Custom'}</span>
@@ -433,18 +664,84 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                 {/* Left: Editor */}
                 <div className="flex flex-col gap-3 min-h-0">
                   {!editingTemplate && (
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+                      <div>
+                        <label className="text-[11px] font-semibold text-black/50 uppercase tracking-wider">{isZh ? '厂商' : 'Vendor'}</label>
+                        <select
+                          value={editorVendor}
+                          onChange={(e) => {
+                            const nextVendor = e.target.value;
+                            const nextFamily = PLATFORM_FAMILIES.find((item) => item.vendor === nextVendor);
+                            setEditorVendor(nextVendor);
+                            setEditorPlatformFamily(nextFamily?.value || '');
+                            setEditorVersion(nextFamily?.versions[0] || 'common');
+                          }}
+                          className="w-full mt-1 px-2.5 py-1.5 rounded-lg border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
+                        >
+                          {VENDOR_OPTIONS.map((vendor) => (
+                            <option key={vendor.value} value={vendor.value}>{isZh ? vendor.label : vendor.labelEn}</option>
+                          ))}
+                        </select>
+                      </div>
                       <div>
                         <label className="text-[11px] font-semibold text-black/50 uppercase tracking-wider">{isZh ? '平台' : 'Platform'}</label>
                         <select
-                          value={editorPlatform}
-                          onChange={(e) => setEditorPlatform(e.target.value)}
+                          value={editorPlatformFamily}
+                          onChange={(e) => {
+                            const nextFamily = getPlatformFamilyOption(e.target.value);
+                            setEditorPlatformFamily(e.target.value);
+                            setEditorVersion(nextFamily?.versions[0] || 'common');
+                          }}
                           className="w-full mt-1 px-2.5 py-1.5 rounded-lg border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
                         >
-                          {SAMPLE_PLATFORMS.filter((p) => p.value).map((p) => (
-                            <option key={p.value} value={p.value}>{p.label}</option>
+                          {editorPlatformFamilies.map((platform) => (
+                            <option key={platform.value} value={platform.value}>{isZh ? platform.label : platform.labelEn}</option>
                           ))}
                         </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-black/50 uppercase tracking-wider">{isZh ? '版本' : 'Version'}</label>
+                        <select
+                          value={editorVersion}
+                          onChange={(e) => setEditorVersion(e.target.value)}
+                          className="w-full mt-1 px-2.5 py-1.5 rounded-lg border border-black/10 text-xs focus:outline-none focus:border-[#00bceb]"
+                        >
+                          {editorVersionOptions.map((version) => (
+                            <option key={version} value={version}>
+                              {isZh ? (VERSION_LABELS[version]?.label || version) : (VERSION_LABELS[version]?.labelEn || version)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-black/50 uppercase tracking-wider">{isZh ? '关联 Action（可选）' : 'Action association (optional)'}</label>
+                        <select
+                          value={editorActionCode}
+                          disabled={actionOptionsLoading}
+                          onChange={(event) => {
+                            const nextActionCode = event.target.value;
+                            const selectedAction = actionOptions.find((option) => option.action_code === nextActionCode);
+                            setEditorActionCode(nextActionCode);
+                            if (selectedAction?.command) setEditorCommand(selectedAction.command);
+                          }}
+                          className="mt-1 w-full rounded-lg border border-black/10 px-2.5 py-1.5 text-xs outline-none focus:border-[#00bceb] disabled:bg-slate-50"
+                        >
+                          <option value="">{actionOptionsLoading ? (isZh ? '加载动作中…' : 'Loading actions…') : (isZh ? '不关联 Action' : 'No action')}</option>
+                          {actionOptionGroups.map(([group, options]) => (
+                            <optgroup key={group} label={group}>
+                              {options.map((option) => (
+                                <option key={option.action_code} value={option.action_code}>
+                                  {isZh ? option.name_zh : option.name_en} · {option.action_code}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                        {editorActionCode && (
+                          <div className="mt-1 truncate text-[9px] text-cyan-700/70">
+                            {actionOptions.find((option) => option.action_code === editorActionCode)?.command || (isZh ? '未配置平台命令' : 'No platform command configured')}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <label className="text-[11px] font-semibold text-black/50 uppercase tracking-wider">{isZh ? '命令' : 'Command'}</label>
@@ -459,8 +756,15 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                   )}
 
                   {!editingTemplate && generateFilename() && (
-                    <div className="text-[11px] text-black/40">
-                      {isZh ? '文件名:' : 'Filename:'} <span className="font-mono text-black/60">{generateFilename()}</span>
+                    <div className="space-y-1 text-[11px] text-black/40">
+                      <div>
+                        {isZh ? '文件名:' : 'Filename:'} <span className="font-mono text-black/60">{generateFilename()}</span>
+                      </div>
+                      <div className="text-[10px] text-cyan-700/70">
+                        {isZh
+                          ? '保存后直接加入模板列表；Action 关联是可选元数据，测试解析仅用于预览，不是保存前置条件。'
+                          : 'The template is saved directly; Action association is optional metadata, and parse testing is a preview, not a save prerequisite.'}
+                      </div>
                     </div>
                   )}
 

@@ -17,6 +17,7 @@ from api.devices import _record_instant_execution
 from services.config_approval_service import request_approval, verify_code, consume_approval
 from core.rbac import require_role
 from services.vault_service import resolve_device_credentials
+from services.operational_data_service import parse_device_cli_output
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -269,6 +270,17 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
         if not is_shell_script and final_command.strip().startswith('#!'):
             is_shell_script = True
 
+        # Resolve the target scope before branching into shell-script or CLI
+        # execution. Otherwise a shell script could bypass the registry guard
+        # that protects bound network devices from raw command execution.
+        target_rows = []
+        if device_ids:
+            placeholders = ','.join(['?'] * len(device_ids))
+            target_rows = conn.execute(
+                f'SELECT platform, device_category, platform_profile_id FROM devices WHERE id IN ({placeholders})',
+                device_ids,
+            ).fetchall()
+
         if is_shell_script:
             # Use a robust temp-file wrapping method to ensure shebang execution
             import uuid
@@ -280,23 +292,12 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
         else:
             commands = [c.strip() for c in final_command.split('\n') if c.strip()]
             is_server = False
-            if device_ids:
-                placeholders = ','.join(['?'] * len(device_ids))
-                rows = conn.execute(f'SELECT platform, device_category, platform_profile_id FROM devices WHERE id IN ({placeholders})', device_ids).fetchall()
-                if rows:
-                    if any(r.get('platform_profile_id') for r in rows):
-                        raise HTTPException(
-                            status_code=400,
-                            detail={
-                                'code': 'PLATFORM_ACTION_REQUIRED',
-                                'message': 'Registry-bound devices must execute published platform actions or Playbooks; raw automation commands are not allowed',
-                            },
-                        )
-                    is_server = all(
-                        any(t in str(r['platform'] or '').lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
-                        or str(r['device_category'] or '').lower() == 'server'
-                        for r in rows
-                    )
+            if target_rows:
+                is_server = all(
+                    any(t in str(row['platform'] or '').lower() for t in ('linux', 'ubuntu', 'centos', 'debian', 'redhat', 'server'))
+                    or str(row['device_category'] or '').lower() == 'server'
+                    for row in target_rows
+                )
 
             if is_server:
                 server_query_prefixes = (
@@ -354,11 +355,43 @@ async def execute_task(request: Request, payload: dict = Body(...), user: dict =
                         return f"Error:\n{guidance}\n\n[原始技术报错 (Original Technical Error)]:\n{err}"
                     return f"Error: {err}"
                 
-                result = await asyncio.get_event_loop().run_in_executor(None, lambda: "\n".join([_parse_res(r) for r in service.execute_commands(d, commands, is_config=is_config)]))
+                def _execute_and_parse():
+                    execution_rows = service.execute_commands(d, commands, is_config=is_config)
+                    rendered_outputs = []
+                    structured_rows = []
+                    for row, requested_command in zip(execution_rows, commands):
+                        rendered_outputs.append(_parse_res(row))
+                        output_text = str(row.get('output') or row.get('stdout') or '') if isinstance(row, dict) else ''
+                        parsed = None
+                        if not is_config and row.get('success') and output_text:
+                            parsed = parse_device_cli_output(d, requested_command, output_text)
+                        structured_rows.append({
+                            'command': requested_command,
+                            'success': bool(row.get('success')),
+                            'output': output_text,
+                            'records': parsed.get('records', []) if parsed else [],
+                            'parser': parsed.get('parser') if parsed else None,
+                            'parser_platform': parsed.get('parser_platform') if parsed else None,
+                            'template': parsed.get('template') if parsed else None,
+                            'template_action_code': parsed.get('template_action_code') if parsed else None,
+                            'parse_status': parsed.get('parse_status') if parsed else ('skipped' if is_config else 'unmatched'),
+                        })
+                    return '\n'.join(rendered_outputs), structured_rows
+
+                result, structured_rows = await asyncio.get_event_loop().run_in_executor(None, _execute_and_parse)
                 _record_instant_execution(d['id'], task_name, commands, 'completed', platform=d.get('platform'), output=result)
-                batch_results[d['id']] = {'status': 'success', 'output': result}
+                batch_results[d['id']] = {'status': 'success', 'output': result, 'commands': structured_rows}
         
-        return {"status": "completed", "results": batch_results} if len(device_ids) > 1 else {"status": "success", "output": list(batch_results.values())[0]['output']}
+        if len(device_ids) > 1:
+            return {"status": "completed", "results": batch_results}
+        single_result = next(iter(batch_results.values()))
+        return {
+            "status": "success",
+            "output": single_result['output'],
+            # Keep structured parsing visible for the common single-device
+            # quick-query path as well as the batch path.
+            "commands": single_result.get('commands', []),
+        }
     finally:
         conn.close()
 

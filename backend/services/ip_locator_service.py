@@ -1049,7 +1049,12 @@ def _check_local_device_ip(device_info: dict, target_ip: str, vrf: str = None) -
     if platform in _ARP_UNSUPPORTED_PLATFORMS:
         return None
 
-    if device_info.get('platform_profile_id') and not vrf:
+    if device_info.get('platform_profile_id'):
+        # The current registry action catalog has no VRF-aware local-interface
+        # action. Never fall through to a raw CLI command for a bound device;
+        # an unparsed result could be attributed to the wrong Profile.
+        if vrf:
+            return None
         try:
             from services.platform_registry_service import execute_platform_action
 

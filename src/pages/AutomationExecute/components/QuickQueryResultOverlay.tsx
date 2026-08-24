@@ -30,14 +30,12 @@ const formatParserLabel = (value: unknown, isZh: boolean): string => {
   const raw = String(value || '').trim();
   if (!raw) return isZh ? '未声明解析器' : 'Parser not reported';
 
-  const registryMatch = raw.match(/^textfsm-registry:([^:]+):v?(\d+)$/i);
-  if (registryMatch) {
-    return isZh
-      ? `TextFSM 注册表 · ${registryMatch[1]} · v${registryMatch[2]}`
-      : `TextFSM registry · ${registryMatch[1]} · v${registryMatch[2]}`;
+  if (raw.toLowerCase().startsWith('textfsm:')) {
+    const filename = raw.slice('textfsm:'.length).trim();
+    return isZh ? `TextFSM 自动匹配 · ${filename}` : `TextFSM automatic match · ${filename}`;
   }
   if (raw === 'platform-parser' || raw === 'platform-registry') {
-    return isZh ? '平台注册解析（兼容别名）' : 'Platform parser (alias compatible)';
+    return isZh ? '平台版本自动匹配' : 'Automatic platform-version match';
   }
   if (raw === 'ntc-templates') {
     return isZh ? 'NTC Templates（旧目录）' : 'NTC Templates (legacy catalog)';
@@ -316,14 +314,19 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                 )}
               </div>
               {(quickQueryStructured?.categories?.[0]?.parse_status === 'unmatched' ||
-                quickQueryStructured?.categories?.[0]?.parse_status === 'failed') && (
+                quickQueryStructured?.categories?.[0]?.parse_status === 'failed' ||
+                quickQueryStructured?.categories?.[0]?.parse_status === 'device_error') && (
                 <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-4 py-3 text-xs text-indigo-300">
                   <div className="flex items-center gap-2">
                     <span className="text-sm">🧩</span>
                     <span>
                       {isZh
-                        ? '该命令当前无匹配的结构化解析模板，前端仅展示原始回显。'
-                        : 'No parsing template matched this command. Raw output is shown.'}
+                        ? (quickQueryStructured?.categories?.[0]?.parse_status === 'device_error'
+                          ? '设备返回了命令错误回显，请检查 Profile 中的实际命令；前端保留原始回显。'
+                          : '该命令当前无匹配的结构化解析模板，前端仅展示原始回显。')
+                        : (quickQueryStructured?.categories?.[0]?.parse_status === 'device_error'
+                          ? 'The device returned a command error. Check the Profile command; raw output is preserved.'
+                          : 'No parsing template matched this command. Raw output is shown.')}
                     </span>
                   </div>
                   <button

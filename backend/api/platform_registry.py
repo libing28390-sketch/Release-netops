@@ -25,7 +25,6 @@ from services.platform_registry_service import (
     delete_profile,
     execute_platform_action,
     get_profile,
-    list_compatible_parser_versions,
     list_profiles,
     list_release_actions,
     preview_platform_migration,
@@ -45,7 +44,7 @@ from services.platform_identification_service import (
     identify_device_live,
     list_identification_conflicts,
 )
-from services.platform_registry_health_service import create_sample_from_failed_run, get_profile_health
+from services.platform_registry_health_service import get_profile_health
 
 router = APIRouter(prefix="/platform-registry", tags=["platform-registry"])
 logger = logging.getLogger(__name__)
@@ -99,7 +98,6 @@ class PlatformReleaseReviewRequest(_PlatformRequestModel):
 
 class PlatformActionUpdateRequest(_PlatformRequestModel):
     command: str = Field(..., min_length=1, max_length=512)
-    parser_template_version_id: str | None = Field(default=None, max_length=128)
     field_contract: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -111,11 +109,6 @@ class PlatformActionRequest(_PlatformRequestModel):
     device_id: str = Field(..., min_length=1, max_length=128)
     action_code: str = Field(..., min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]{2,63}$")
     parameters: dict[str, Any] = Field(default_factory=dict)
-
-
-class PlatformFailureSampleRequest(_PlatformRequestModel):
-    sample_name: str = Field(default="", max_length=128)
-    expected_records: list[Any] = Field(default_factory=list, max_length=10_000)
 
 
 class PlatformIdentifyRequest(BaseModel):
@@ -180,18 +173,6 @@ def _call(fn, *args, **kwargs):
         raise HTTPException(status_code=500, detail={"code": "PLATFORM_REGISTRY_ERROR", "message": "Platform registry operation failed"}) from exc
 
 
-def _require_registry_enabled() -> None:
-    enabled = os.environ.get("PLATFORM_REGISTRY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
-    if not enabled:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "PLATFORM_REGISTRY_DISABLED",
-                "message": "Platform registry write and execution APIs are disabled",
-            },
-        )
-
-
 @router.get("/profiles")
 def api_list_profiles(user=require_permission("platform", "read")):
     return {"success": True, "data": _call(list_profiles, user), "message": ""}
@@ -199,11 +180,13 @@ def api_list_profiles(user=require_permission("platform", "read")):
 
 @router.get("/capabilities")
 def api_registry_capabilities(user=require_permission("platform", "read")):
-    enabled = os.environ.get("PLATFORM_REGISTRY_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
     return {
         "success": True,
         "data": {
-            "write_enabled": enabled,
+            # Kept as a response compatibility field for older clients. Write
+            # access is now controlled only by RBAC and lifecycle checks; no
+            # environment feature gate can disable the registry.
+            "write_enabled": True,
             "allowed_connection_drivers": sorted(ALLOWED_CONNECTION_DRIVERS),
             "legacy_textfsm_fallback_enabled": os.environ.get("LEGACY_TEXTFSM_FILE_FALLBACK_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"},
             "legacy_command_catalog_enabled": os.environ.get("LEGACY_COMMAND_CATALOG_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"},
@@ -238,7 +221,6 @@ def api_list_identification_conflicts(
 
 @router.post("/profiles")
 def api_create_profile(payload: PlatformProfileCreateRequest, user=require_permission("platform", "create")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(create_profile, payload.model_dump(exclude_none=True), user), "message": "Platform profile created"}
 
 
@@ -248,7 +230,6 @@ def api_update_profile(
     payload: PlatformProfileUpdateRequest = ...,
     user=require_permission("platform", "update"),
 ):
-    _require_registry_enabled()
     return {
         "success": True,
         "data": _call(update_profile, profile_id, payload.model_dump(exclude_unset=True), user),
@@ -261,7 +242,6 @@ def api_delete_profile(
     profile_id: str = Path(..., min_length=1, max_length=128),
     user=require_permission("platform", "delete"),
 ):
-    _require_registry_enabled()
     return {"success": True, "data": _call(delete_profile, profile_id, user), "message": "Platform profile archived"}
 
 
@@ -270,22 +250,8 @@ def api_get_profile(profile_id: str = Path(..., min_length=1), user=require_perm
     return {"success": True, "data": _call(get_profile, profile_id, user), "message": ""}
 
 
-@router.get("/profiles/{profile_id}/parser-versions")
-def api_list_compatible_parser_versions(
-    profile_id: str = Path(..., min_length=1),
-    user=require_permission("command", "view"),
-):
-    """Return only published parser versions accepted by this profile."""
-    return {
-        "success": True,
-        "data": _call(list_compatible_parser_versions, profile_id, user),
-        "message": "",
-    }
-
-
 @router.post("/profiles/{profile_id}/releases")
 def api_create_release(profile_id: str, payload: PlatformReleaseCreateRequest | None = None, user=require_permission("platform", "edit_draft")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(create_release, profile_id, (payload or PlatformReleaseCreateRequest()).model_dump(), user), "message": "Draft release created"}
 
 
@@ -300,38 +266,32 @@ def api_list_actions(
 
 @router.delete("/releases/{release_id}")
 def api_delete_release(release_id: str, user=require_permission("platform", "edit_draft")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(delete_release, release_id, user), "message": "Draft release deleted"}
 
 
 @router.put("/releases/{release_id}/actions/{action_code}")
 def api_update_action(release_id: str, action_code: str, payload: PlatformActionUpdateRequest, user=require_permission("command", "edit_draft")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(update_release_action, release_id, action_code, payload.model_dump(exclude_none=True), user), "message": "Action mapping saved"}
 
 
 @router.post("/releases/{release_id}/validate")
 def api_validate_release(release_id: str, user=require_permission("platform", "edit_draft")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(validate_release, release_id, user), "message": ""}
 
 
 @router.post("/releases/{release_id}/submit")
 def api_submit_release(release_id: str, user=require_permission("platform", "submit")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(transition_release, release_id, "submit", user), "message": "Release submitted"}
 
 
 @router.post("/releases/{release_id}/withdraw")
 def api_withdraw_release(release_id: str, user=require_permission("platform", "submit")):
     """Let the original submitter return an in-review release to draft."""
-    _require_registry_enabled()
     return {"success": True, "data": _call(transition_release, release_id, "withdraw", user), "message": "Release withdrawn"}
 
 
 @router.post("/releases/{release_id}/approve")
 def api_approve_release(release_id: str, user=require_permission("platform", "approve")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(transition_release, release_id, "approve", user), "message": "Release approved"}
 
 
@@ -341,7 +301,6 @@ def api_reject_release(
     payload: PlatformReleaseReviewRequest | None = None,
     user=require_permission("platform", "approve"),
 ):
-    _require_registry_enabled()
     return {
         "success": True,
         "data": _call(
@@ -357,41 +316,23 @@ def api_reject_release(
 
 @router.post("/releases/{release_id}/publish")
 def api_publish_release(release_id: str, user=require_permission("platform", "publish")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(transition_release, release_id, "publish", user), "message": "Release published"}
 
 
 @router.post("/profiles/{profile_id}/rollback")
 def api_rollback_profile(profile_id: str, payload: PlatformRollbackRequest | None = None, user=require_permission("platform", "rollback")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(rollback_profile, profile_id, payload.release_id if payload else None, user), "message": "Platform rolled back"}
 
 
 @router.post("/actions/execute")
 def api_execute_action(payload: PlatformActionRequest, user=require_permission("command", "execute")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(execute_platform_action, payload.device_id.strip(), payload.action_code.strip(), user=user, parameters=payload.parameters), "message": ""}
 
 
 @router.post("/actions/preview")
 def api_preview_action(payload: PlatformActionRequest, user=require_permission("command", "execute")):
     """Resolve a published action and parameters without opening a device connection."""
-    _require_registry_enabled()
     return {"success": True, "data": _call(preview_platform_action, payload.device_id.strip(), payload.action_code.strip(), user=user, parameters=payload.parameters), "message": ""}
-
-
-@router.post("/runs/{run_id}/parser-sample")
-def api_create_sample_from_failed_run(
-    run_id: str = Path(..., min_length=1),
-    payload: PlatformFailureSampleRequest | None = None,
-    user=require_permission("sample_output", "upload"),
-):
-    _require_registry_enabled()
-    return {
-        "success": True,
-        "data": _call(create_sample_from_failed_run, run_id, (payload or PlatformFailureSampleRequest()).model_dump(), user),
-        "message": "Redacted failure output stored as an encrypted parser sample",
-    }
 
 
 @router.post("/devices/{device_id}/identify")
@@ -405,7 +346,6 @@ def api_identify_device(device_id: str, payload: PlatformIdentifyRequest, user=r
 
 @router.post("/devices/{device_id}/binding")
 def api_bind_device(device_id: str, payload: PlatformBindingRequest, user=require_permission("platform", "bind_device")):
-    _require_registry_enabled()
     return {
         "success": True,
         "data": _call(
@@ -422,7 +362,6 @@ def api_bind_device(device_id: str, payload: PlatformBindingRequest, user=requir
 
 @router.post("/devices/{device_id}/identify-live")
 def api_identify_device_live(device_id: str, user=require_permission("platform", "view")):
-    _require_registry_enabled()
     return {"success": True, "data": _call(identify_device_live, device_id, user), "message": ""}
 
 
@@ -434,7 +373,6 @@ def api_device_platform_detect(
 ):
     request = payload or PlatformDetectRequest()
     if request.observations:
-        _require_registry_enabled()
         data = _call(identify_device, device_id, request.observations, user, platform_code=request.platform_code)
     else:
         # SNMP/sysDescr-derived version is already inventory data. Prefer it
@@ -447,7 +385,6 @@ def api_device_platform_detect(
             # currently reachable SNMP agent is not needlessly bypassed.
             data = _call(identify_device_from_snmp, device_id, user)
         if data is None:
-            _require_registry_enabled()
             data = _call(identify_device_live, device_id, user)
     return {
         # Keep the compatibility endpoint's HTTP/API envelope stable; the
@@ -464,7 +401,6 @@ def api_device_platform_binding(
     payload: PlatformBindingRequest,
     user=require_permission("platform", "bind_device"),
 ):
-    _require_registry_enabled()
     return {
         "success": True,
         "data": _call(
@@ -484,7 +420,6 @@ def api_device_platform_binding_batch(
     payload: PlatformBatchBindingRequest,
     user=require_permission("platform", "bind_device"),
 ):
-    _require_registry_enabled()
     return {
         "success": True,
         "data": _call(

@@ -1920,7 +1920,7 @@ const App: React.FC = () => {
           showDetailsModal, viewingDevice, viewingDeviceAlerts, deviceDetailLoading, deviceConnectionChecks,
           connectionTestingDeviceId, deviceTrendRangeHours, setDeviceTrendRangeHours, deviceHealthTrend, deviceHealthTrendLoading,
           handleSnmpTest, snmpTestingId, handleSnmpSyncNow, snmpSyncingId,
-          setSelectedDevice, setShowDetailsModal,
+          setSelectedDevice, setViewingDevice, setShowDetailsModal,
           showSnmpTestResult, snmpTestResult, setShowSnmpTestResult,
           selectedAuditEvent, setSelectedAuditEvent,
           selectedFinding, setSelectedFinding, updateComplianceFinding,

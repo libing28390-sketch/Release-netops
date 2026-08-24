@@ -512,14 +512,27 @@ def _inventory_profile_code(platform: str, version: str, vendor: str) -> tuple[s
 
     raw_platform = str(platform or "").strip().lower()
     normalized_vendor = str(vendor or "").strip().lower()
+    if raw_platform in {"unknown", "generic"}:
+        raw_platform = ""
     # ``hp_comware`` and ``h3c_comware9`` are legacy/public profile values;
     # TextFSM should still resolve them through the canonical H3C family.
     if raw_platform in {"hp_comware", "h3c_comware9"}:
         raw_platform = "h3c_comware"
     if not raw_platform and normalized_vendor in {"h3c", "华三", "h3c.com"}:
         raw_platform = "h3c_comware"
+    # A version number alone is not vendor evidence. In particular, the
+    # generic resolver must not turn an unclassified device running e.g. 7.x
+    # into an H3C V7 suggestion. Keep the result unbound so the operator can
+    # choose a profile or provide an explicit CLI identification context.
+    if not raw_platform:
+        return "", ""
     parser_platform = resolve_textfsm_parser_platform(raw_platform, version)
     profile_code = _INVENTORY_PROFILE_BY_PARSER_VARIANT.get(parser_platform or "")
+    # ``h3c_comware`` is a parser family, not a concrete V5/V7/V9 profile.
+    # Unknown Comware versions must not silently fall through to the V7
+    # profile just because its platform code is the family name.
+    if parser_platform == "h3c_comware":
+        return "", parser_platform
     if not profile_code:
         profile_code = str(parser_platform or raw_platform or "").strip().lower()
     return profile_code, str(parser_platform or raw_platform or "").strip().lower()
@@ -771,7 +784,22 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
             raise _scope_denied("PLATFORM_SCOPE_DENIED")
         device = _load_device(conn, device_id, user, lock=True)
         if device.get("platform_locked") and not force:
-            raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", "Device platform binding is locked", status_code=409)
+            if str(device.get("platform_profile_id") or "") != str(platform_profile_id):
+                raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", "Device platform binding is locked", status_code=409)
+            # Re-saving the already selected Profile is an idempotent UI
+            # operation. The detail modal submits the current selection when
+            # the operator confirms it; a lock must protect identity changes,
+            # not turn an unchanged confirmation into a 409.
+            result = _load_device(conn, device_id, user)
+            result["compatibility"] = _binding_compatibility(device, profile)
+            result["binding_unchanged"] = True
+            result["platform_profile"] = {
+                "id": profile["id"],
+                "platform_code": profile["platform_code"],
+                "source": profile.get("source"),
+            }
+            conn.commit()
+            return result
         _assert_device_profile_platform(device, profile)
         conn.execute(
             """UPDATE devices SET platform_profile_id = ?, platform = ?, platform_source = ?,
@@ -841,7 +869,8 @@ def bind_devices_batch(
         for device_id in normalized_ids:
             device = _load_device(conn, device_id, user, lock=True)
             if device.get("platform_locked") and not force:
-                raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", f"Device {device_id} platform binding is locked", status_code=409)
+                if str(device.get("platform_profile_id") or "") != str(platform_profile_id):
+                    raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", f"Device {device_id} platform binding is locked", status_code=409)
             _assert_device_profile_platform(device, profile)
             old_and_new.append({
                 "device": device,

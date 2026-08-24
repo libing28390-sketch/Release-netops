@@ -46,7 +46,6 @@ def _definition():
 
 
 def test_playbook_version_lifecycle_is_immutable_and_audited(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     author = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
     reviewer = {"id": "reviewer-1", "username": "reviewer", "role": "Administrator", "tenant_id": "tenant-1"}
 
@@ -78,7 +77,6 @@ def test_playbook_version_lifecycle_is_immutable_and_audited(isolated_db, monkey
 
 
 def test_playbook_version_rejects_self_approval_and_cross_tenant_access(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     author = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
     other_tenant = {"id": "other-1", "username": "other", "role": "Operator", "tenant_id": "tenant-2"}
     version = create_version("tenant-playbook", {"definition": _definition()}, author)
@@ -93,7 +91,6 @@ def test_playbook_version_rejects_self_approval_and_cross_tenant_access(isolated
 
 
 def test_playbook_version_updates_draft_and_invalidates_validation(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     author = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
     reviewer = {"id": "reviewer-1", "username": "reviewer", "role": "Administrator", "tenant_id": "tenant-1"}
     version = create_version("editable-playbook", {"name": "v1", "definition": _definition()}, author)
@@ -115,7 +112,6 @@ def test_playbook_version_updates_draft_and_invalidates_validation(isolated_db, 
 
 
 def test_playbook_version_rollback_publishes_previous_version(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     author = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
     reviewer = {"id": "reviewer-1", "username": "reviewer", "role": "Administrator", "tenant_id": "tenant-1"}
 
@@ -138,8 +134,7 @@ def test_playbook_version_rollback_publishes_previous_version(isolated_db, monke
     assert all_versions[second["id"]]["status"] == "DEPRECATED"
 
 
-def test_playbook_version_rejects_raw_steps_when_registry_enabled(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
+def test_playbook_version_rejects_raw_steps(isolated_db):
     user = {"id": "author-1", "username": "author", "role": "Operator", "tenant_id": "tenant-1"}
     with pytest.raises(PlaybookVersionError) as error:
         create_version("unsafe-playbook", {"definition": {"phases": {"execute": ["show clock"]}}}, user)
@@ -305,7 +300,6 @@ def test_playbook_execution_approval_rejects_self_approval_and_blocks_execution(
 
 
 def test_execute_playbook_enters_approval_gate_without_starting_engine(isolated_db, monkeypatch):
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     monkeypatch.setattr("api.playbooks.routes.log_audit_event", lambda **_: None)
     scheduled = []
     monkeypatch.setattr("api.playbooks.routes.asyncio.create_task", lambda coroutine: scheduled.append(coroutine))
@@ -399,7 +393,6 @@ def test_controlled_notification_step_rejects_destinations_and_accepts_bounded_c
 
 def test_notification_step_is_tenant_scoped_and_filters_secret_variables(monkeypatch):
     calls = []
-    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
     monkeypatch.setattr(
         "services.notification_service.dispatch_to_tenant_users",
         lambda alert, tenant_id: calls.append((alert, tenant_id)) or [{"platform": "feishu", "success": True}],

@@ -122,7 +122,9 @@ export function getRouteContext(pathname: string): RouteContext {
     } else if (second === 'textfsm') {
       automationPage = 'textfsm-templates';
     } else if (second === 'textfsm-registry') {
-      automationPage = 'textfsm-registry';
+      // Keep old bookmarks working while the retired lifecycle URL points to
+      // the direct, save-as-active template page.
+      automationPage = 'textfsm-templates';
     } else if (second === 'platforms') {
       activeTab = 'platform-registry';
     } else if (second === 'scripts') {

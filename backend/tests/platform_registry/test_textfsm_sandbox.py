@@ -41,6 +41,24 @@ def test_field_contract_validates_normalized_records():
     assert error.value.code == "FIELD_CONTRACT_VIOLATION"
 
 
+def test_h3c_brief_field_names_are_adapted_to_registry_contract():
+    records = _normalize_records(
+        [{"INTERFACE": "Vlan100", "LINK": "UP", "PROTOCOL": "UP", "PRIMARY_IP": "10.0.0.1"}],
+        10,
+        expected_fields={"interface", "admin_status", "oper_status", "ip_address"},
+    )
+
+    assert records == [{
+        "interface": "Vlan100",
+        "link": "UP",
+        "protocol": "UP",
+        "primary_ip": "10.0.0.1",
+        "admin_status": "UP",
+        "oper_status": "UP",
+        "ip_address": "10.0.0.1",
+    }]
+
+
 def test_raw_output_redacts_credential_material():
     output = "username admin password P@ssw0rd\nsnmp-server community public ro\n"
     redacted = redact_raw_output(output)

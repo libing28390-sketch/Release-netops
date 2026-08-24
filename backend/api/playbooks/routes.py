@@ -4,7 +4,6 @@ import json
 import asyncio
 import logging
 import hashlib
-import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -60,10 +59,6 @@ from services.playbook_output_service import PlaybookOutputError, load_output
 
 router = APIRouter()
 logger = logging.getLogger("api.playbooks.routes")
-
-
-def _platform_registry_enabled() -> bool:
-    return os.environ.get('PLATFORM_REGISTRY_ENABLED', '0').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 def _create_playbook_execution_snapshot(
@@ -391,8 +386,7 @@ async def create_custom_scenario(request: Request, payload: dict = Body(...), us
     platform_phases = payload.get('platform_phases') or {}
     if default_platform not in platform_phases:
         raise HTTPException(status_code=400, detail='platform_phases must include the default platform')
-    if _platform_registry_enabled():
-        _ensure_controlled_phases(platform_phases, user=user, operation='create')
+    _ensure_controlled_phases(platform_phases, user=user, operation='create')
 
     # Prevent ID conflicts with built-ins and existing custom scenarios
     # IDs are globally unique in the legacy table, so collision detection must
@@ -1046,8 +1040,7 @@ async def preview_playbook(payload: dict = Body(...), user=require_permission("p
     except KeyError:
         raise HTTPException(status_code=400, detail=f"Platform '{platform}' not supported for this scenario")
 
-    if _platform_registry_enabled():
-        _ensure_controlled_phases(phases, user=user, operation='preview')
+    _ensure_controlled_phases(phases, user=user, operation='preview')
 
     action_codes = {
         phase: [
@@ -1066,7 +1059,7 @@ async def preview_playbook(payload: dict = Body(...), user=require_permission("p
         "post_check": _render_phase_commands(phases.get('post_check', []), variables),
         "rollback": _render_phase_commands(phases.get('rollback', []), variables),
         "action_codes": action_codes,
-        "registry_actions_enabled": _platform_registry_enabled(),
+        "registry_actions_enabled": True,
     }
 
 
@@ -1243,14 +1236,8 @@ async def execute_playbook(
     else:
         phases_def = custom_phases
         phases_for_execution = custom_phases
-    if _platform_registry_enabled():
-        _ensure_controlled_phases(phases_for_execution, user=user, operation='execute')
+    _ensure_controlled_phases(phases_for_execution, user=user, operation='execute')
     approval_steps = extract_approval_steps(phases_for_execution)
-    if approval_steps and not _platform_registry_enabled():
-        raise HTTPException(status_code=503, detail={
-            'code': 'PLATFORM_REGISTRY_DISABLED',
-            'message': 'Approval steps require the controlled Playbook registry to be enabled',
-        })
     scenario_name = selected_version.get('name') if selected_version else (scenario['name'] if scenario else payload.get('name', 'Custom Playbook'))
     scenario_risk = str((scenario or {}).get('risk') or 'low').lower()
     now_utc = datetime.now(timezone.utc)

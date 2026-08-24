@@ -45,10 +45,39 @@ def _ensure_column(cursor, table: str, column: str, definition: str, use_pg: boo
 
 
 def _derive_template_command(platform_code: str, source_filename: str) -> str:
-    """Use the shared canonical filename map only for migration backfill."""
-    from services.platform_registry_service import derive_template_command
+    """Derive a command only for this historical backfill migration.
 
-    return derive_template_command(platform_code, source_filename)
+    The running application no longer has a parser registry service.  Keep the
+    old migration self-contained so a fresh database can still be upgraded
+    through the historical schema without reintroducing that service.
+    """
+    filename = Path(str(source_filename or "")).name
+    if not filename.lower().endswith(".textfsm"):
+        return ""
+    stem = filename[:-len(".textfsm")]
+    normalized_platform = str(platform_code or "").strip().lower()
+    prefixes = (
+        "h3c_comware_v5_",
+        "h3c_comware_v7_",
+        "h3c_comware_v9_",
+        "h3c_comware_",
+        f"{normalized_platform}_",
+    )
+    prefix = next((candidate for candidate in prefixes if stem.lower().startswith(candidate)), "")
+    if not prefix:
+        return ""
+    raw_command = stem[len(prefix):].replace("_", " ").strip()
+    canonical = {
+        "display cpu usage": "display cpu-usage",
+        "display bgp routing table ipv4": "display bgp routing-table ipv4",
+        "display ip routing table": "display ip routing-table",
+        "display ip routing table statistics": "display ip routing-table statistics",
+        "display ntp service status": "display ntp-service status",
+        "display link aggregation verbose": "display link-aggregation verbose",
+        "display mac address": "display mac-address",
+        "display lldp neighbor information list": "display lldp neighbor-information list",
+    }
+    return canonical.get(raw_command.lower(), raw_command)
 
 
 def _ensure_h3c_unicast_template(cursor, now: str) -> str | None:

@@ -66,7 +66,6 @@ from api.ip_locator import router as ip_locator_router
 from api.inspections import router as inspections_router
 from api.collection_plans import router as collection_plans_router
 from api.textfsm_templates import router as textfsm_templates_router
-from api.parser_templates import router as parser_templates_router
 from api.platform_registry import router as platform_registry_router, device_registry_router
 from api.knowledge_sources import router as knowledge_sources_router
 from api.knowledge_v2_contract import router as knowledge_v2_contract_router
@@ -728,7 +727,6 @@ app.include_router(compliance_router,     prefix="/api")
 app.include_router(inspections_router,    prefix="/api")
 app.include_router(collection_plans_router, prefix="/api")
 app.include_router(textfsm_templates_router, prefix="/api")
-app.include_router(parser_templates_router, prefix="/api")
 app.include_router(platform_registry_router, prefix="/api")
 app.include_router(knowledge_sources_router, prefix="/api")
 app.include_router(knowledge_v2_contract_router, prefix="/api")

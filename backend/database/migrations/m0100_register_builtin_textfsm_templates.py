@@ -95,6 +95,7 @@ def _iter_builtin_templates(profile_defs):
             command_prefix = ""
             for variant_prefix, profile_code in (
                 ("h3c_comware_v5", "hp_comware"),
+                ("h3c_comware_v7", "h3c_comware"),
                 ("h3c_comware_v9", "h3c_comware9"),
             ):
                 if stem.startswith(f"{variant_prefix}_"):

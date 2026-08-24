@@ -186,6 +186,191 @@ def _normalize_platform(raw: str) -> str:
     p = str(raw or '').lower().strip()
     return _PLATFORM_ALIAS.get(p, p)
 
+
+_H3C_PROFILE_VARIANTS = {
+    'hp_comware': 'h3c_comware_v5',
+    'h3c_comware': 'h3c_comware_v7',
+    'h3c_comware9': 'h3c_comware_v9',
+    'h3c_comware_v5': 'h3c_comware_v5',
+    'h3c_comware_v7': 'h3c_comware_v7',
+    'h3c_comware_v9': 'h3c_comware_v9',
+}
+
+
+def _load_platform_profile_context(device_info: dict[str, Any]) -> dict[str, Any]:
+    """Load the concrete platform profile when a caller only has a device row.
+
+    Device records intentionally keep the public platform family (for example
+    ``h3c_comware``).  The bound profile is the authoritative source for the
+    concrete V5/V7/V9 grammar.  This lookup is best-effort so old/unbound
+    devices and fixture callers keep working without a registry schema.
+    """
+    profile = {
+        'platform_code': device_info.get('profile_platform_code') or device_info.get('platform_code'),
+        'parser_platform': device_info.get('profile_parser_platform') or device_info.get('parser_platform'),
+        'connection_driver': device_info.get('profile_connection_driver') or device_info.get('connection_driver'),
+    }
+    profile_id = str(device_info.get('platform_profile_id') or '').strip()
+    if profile_id and not profile.get('platform_code'):
+        try:
+            from database import get_db_connection
+            conn = get_db_connection()
+            try:
+                row = conn.execute(
+                    'SELECT platform_code, parser_platform, connection_driver '
+                    'FROM platform_profiles WHERE id = ?',
+                    (profile_id,),
+                ).fetchone()
+                if row:
+                    profile.update({
+                        'platform_code': row['platform_code'],
+                        'parser_platform': row['parser_platform'],
+                        'connection_driver': row['connection_driver'],
+                    })
+            finally:
+                conn.close()
+        except Exception:
+            # A platform profile is an enhancement to the legacy device row;
+            # failure to read it must not turn a read-only command into a
+            # connection failure.
+            pass
+    return {key: str(value or '').strip().lower() for key, value in profile.items()}
+
+
+def resolve_device_platform_context(device_info: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the deterministic transport, catalog, and parser identities.
+
+    ``public_platform`` is the value exposed by inventory.  ``catalog_platform``
+    selects the command catalog and ``parser_platform`` selects the concrete
+    TextFSM namespace.  In particular, all three H3C profiles use Netmiko's
+    ``hp_comware`` driver but select independent V5/V7/V9 template namespaces.
+    """
+    from core.platform_utils import normalize_device_platform
+    from core.textfsm import resolve_textfsm_parser_platform, resolve_textfsm_platform
+
+    raw_platform = str(device_info.get('platform') or '').strip().lower()
+    profile = _load_platform_profile_context(device_info)
+    profile_code = profile['platform_code']
+    profile_parser = profile['parser_platform']
+    vendor = str(device_info.get('vendor') or '').strip().lower()
+
+    public_platform = normalize_device_platform(vendor, raw_platform or profile_parser or profile_code or 'cisco_ios')
+    if raw_platform in {'hp_comware', 'h3c_comware9'} or profile_code in _H3C_PROFILE_VARIANTS:
+        public_platform = 'h3c_comware'
+
+    # The concrete profile code (hp_comware / h3c_comware9) outranks the
+    # shared parser family.  Otherwise every H3C device carrying the family
+    # value ``h3c_comware`` would be incorrectly routed to the V7 grammar.
+    explicit_candidates = (profile_code, profile_parser, raw_platform, public_platform)
+    parser_platform = next(
+        (_H3C_PROFILE_VARIANTS[item] for item in explicit_candidates if item in _H3C_PROFILE_VARIANTS),
+        '',
+    )
+    if not parser_platform:
+        version = (
+            device_info.get('platform_version')
+            or device_info.get('software_version')
+            or device_info.get('version')
+            or ''
+        )
+        parser_platform = resolve_textfsm_parser_platform(
+            profile_parser or raw_platform or public_platform,
+            str(version),
+        ) or profile_parser or raw_platform or public_platform
+
+    # A system profile code is also the command-catalog variant.  For a
+    # generic/custom profile, use its declared parser family instead of
+    # inventing a command catalog from the tenant-specific profile name.
+    catalog_platform = next(
+        (item for item in (profile_code, parser_platform, profile_parser, raw_platform, public_platform)
+         if item in COMMAND_CATALOG),
+        public_platform,
+    )
+    parser_family = resolve_textfsm_platform(parser_platform) or parser_platform
+    return {
+        'raw_platform': raw_platform,
+        'public_platform': public_platform,
+        'catalog_platform': catalog_platform,
+        'parser_platform': parser_platform,
+        'parser_family': parser_family,
+        'profile_platform_code': profile_code,
+        'connection_driver': profile['connection_driver'] or raw_platform,
+    }
+
+
+def parse_device_cli_output(
+    device_info: dict[str, Any],
+    command: str,
+    output: str,
+    *,
+    max_records: int | None = None,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Parse one device response using its concrete profile and exact command.
+
+    This is intentionally independent of the legacy parser-template registry.
+    A missing or non-matching template is a parse status, not a command
+    execution failure; callers can always display the original CLI output.
+    """
+    selected_context = context or resolve_device_platform_context(device_info)
+    from core.textfsm import get_template_content, smart_parse_cli, template_action_code
+
+    try:
+        result = smart_parse_cli(
+            output=str(output or ''),
+            command=str(command or ''),
+            platform=selected_context['parser_platform'],
+            version=str(device_info.get('version') or device_info.get('software_version') or ''),
+            model=str(device_info.get('model') or ''),
+        )
+        records = _normalize_records(result.get('data') or [])
+        if max_records is not None:
+            records = records[:max(0, int(max_records))]
+        template = str(result.get('template') or '').strip()
+        associated_action = ''
+        if template:
+            try:
+                template_content, _ = get_template_content(template)
+                associated_action = template_action_code(template_content)
+            except Exception:
+                associated_action = ''
+        device_message = str(result.get('message') or '')
+        if not result.get('success', True) and device_message.startswith('设备返回错误回显'):
+            parse_status = 'device_error'
+        else:
+            parse_status = 'matched' if records else 'unmatched'
+        parser = f"textfsm:{template}" if template else 'platform-parser'
+        return {
+            'records': records,
+            'count': len(records),
+            'parser': parser,
+            'template': template or None,
+            'template_source': result.get('template_source'),
+            'template_action_code': associated_action or None,
+            'parser_platform': selected_context['parser_platform'],
+            'parser_family': selected_context['parser_family'],
+            'parse_status': parse_status,
+            'confidence': result.get('confidence', 0.0),
+            'message': device_message,
+        }
+    except Exception as exc:
+        logger.warning(
+            'Automatic TextFSM parse failed platform=%s command=%s: %s',
+            selected_context.get('parser_platform'), command, exc,
+        )
+        return {
+            'records': [],
+            'count': 0,
+            'parser': 'platform-parser',
+            'template': None,
+            'template_source': None,
+            'parser_platform': selected_context['parser_platform'],
+            'parser_family': selected_context['parser_family'],
+            'parse_status': 'failed',
+            'confidence': 0.0,
+            'message': str(exc),
+        }
+
 # 按设备角色排除不适用的采集类别
 # router: 不采集 mac_table（交换表是二层交换功能）
 # access/switch: 不采集 bgp、ospf、bfd（纯接入层通常无路由协议邻居）
@@ -561,9 +746,11 @@ def _resolve_categories(
 
 
 def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[str]]:
-    # Prefer the published action catalog for system profiles.  A recognized
-    # profile with no mapping is explicitly unsupported; it must not inherit a
-    # stale vendor command from the legacy catalog.
+    # Prefer the published action catalog for system profiles.  The action
+    # catalog is the command source, not the TextFSM source: if a release has
+    # no mapping yet, a known platform still gets its explicit catalog command
+    # so a read-only collection can return raw output instead of failing at
+    # the parser-registration boundary.
     normalized_platform = _normalize_platform(platform)
     catalog = COMMAND_CATALOG.get(normalized_platform, {})
     action_by_category = {
@@ -573,6 +760,10 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
         'ospf': 'get_ospf_neighbors', 'isis': 'get_isis_neighbors', 'stp': 'get_stp',
         'eth_trunk': 'get_link_aggregation',
         'transceiver': 'get_transceivers', 'version': 'get_version',
+        'environment': 'get_temperature', 'fan': 'get_fans', 'power': 'get_power',
+        'ntp': 'get_ntp_status', 'bfd': 'get_bfd_sessions', 'logs': 'get_logbuffer',
+        'interface_description': 'get_interface_description', 'uptime': 'get_uptime',
+        'stack': 'get_irf',
     }
     from services.platform_registry_service import SYSTEM_PROFILES, resolve_action_mapping, normalize_platform_code
     canonical_profile = normalize_platform_code(normalized_platform)
@@ -606,7 +797,7 @@ def _resolve_commands(platform: str, categories: list[str]) -> dict[str, list[st
             try:
                 resolved[category] = [resolve_action_mapping(canonical_profile, action_code)['command']]
             except Exception:
-                resolved[category] = []
+                resolved[category] = catalog.get(category, []) if legacy_catalog_enabled else []
         elif legacy_catalog_enabled:
             resolved[category] = catalog.get(category, [])
         else:
@@ -632,6 +823,15 @@ _REGISTRY_ACTION_BY_CATEGORY = {
     'eth_trunk': 'get_link_aggregation',
     'transceiver': 'get_transceivers',
     'version': 'get_version',
+    'environment': 'get_temperature',
+    'fan': 'get_fans',
+    'power': 'get_power',
+    'ntp': 'get_ntp_status',
+    'bfd': 'get_bfd_sessions',
+    'logs': 'get_logbuffer',
+    'interface_description': 'get_interface_description',
+    'uptime': 'get_uptime',
+    'stack': 'get_irf',
 }
 
 _REGISTRY_VRF_ACTION_BY_CATEGORY = {
@@ -680,6 +880,13 @@ def _collect_registry_categories(
             }
             if platform_action_session is not None:
                 action_kwargs['_session'] = platform_action_session
+            # The quick-query surface must retain the raw command output for
+            # platform-action-backed commands. In particular, a valid empty result
+            # (for example, ``BFD is not configured.``) otherwise becomes an
+            # ambiguous "no raw output" message in the UI even though the
+            # action was executed successfully even when no direct template
+            # matched the returned output.
+            action_kwargs['include_raw_output'] = True
             result = execute_platform_action(str(device_info['id']), action_code, **action_kwargs)
             category_result['parser'] = result.get('parser') or category_result['parser']
             command = result.get('command')
@@ -690,15 +897,27 @@ def _collect_registry_categories(
                 category_result['raw_outputs'] = [{'command': command, 'output': raw_output}]
             category_result['records'] = result.get('records') or []
             category_result['count'] = len(category_result['records'])
+            # Action success means the read-only command completed.  Parsing
+            # is reported independently so an absent/incorrect template does
+            # not turn a valid device response into a transport failure.
             category_result['success'] = bool(result.get('success'))
-            category_result['parse_status'] = 'matched' if category_result['records'] else (
-                'unsupported_by_platform' if result.get('error_code') == 'UNSUPPORTED_ACTION' else 'unmatched'
+            category_result['parse_status'] = result.get('parse_status') or (
+                'matched' if category_result['records'] else 'unmatched'
             )
+            if result.get('parser_platform'):
+                category_result['parser_platform'] = result.get('parser_platform')
+            if result.get('template'):
+                category_result['template'] = result.get('template')
+            if result.get('template_source'):
+                category_result['template_source'] = result.get('template_source')
+            if result.get('template_action_code'):
+                category_result['template_action_code'] = result.get('template_action_code')
+            category_result['parser_selection'] = result.get('parser_selection') or 'automatic'
+            if result.get('parser_message'):
+                category_result['parser_message'] = result.get('parser_message')
             category_result['platform_release_id'] = result.get('platform_release_id')
             category_result['release_checksum'] = result.get('release_checksum')
             category_result['command_checksum'] = result.get('command_checksum')
-            category_result['parser_template_version_id'] = result.get('parser_template_version_id')
-            category_result['parser_template_checksum'] = result.get('parser_template_checksum')
             if result.get('error'):
                 category_result['error'] = result['error']
             if result.get('error_code'):
@@ -1698,10 +1917,8 @@ def collect_operational_data(
 
 
 def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_role: str = 'auto') -> dict[str, Any]:
-    if device_info.get('platform_profile_id'):
-        raise ValueError('Registry-bound devices require a published action_code; raw custom commands are not allowed')
-    from core.platform_utils import normalize_device_platform
-    platform = normalize_device_platform(device_info.get('vendor'), device_info.get('platform') or 'cisco_ios')
+    context = resolve_device_platform_context(device_info)
+    platform = context['public_platform']
     conn_params = _build_connection_params(device_info, auth_role=auth_role)
 
     commands = [line.strip() for line in str(command or '').splitlines() if line.strip()]
@@ -1716,7 +1933,9 @@ def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_
         'count': 0,
         'records': [],
         'raw_outputs': [],
-        'parser': 'ntc-templates',
+        'parser': 'platform-parser',
+        'parser_platform': context['parser_platform'],
+        'templates': [],
         'parse_status': 'unmatched',
     }
 
@@ -1738,7 +1957,19 @@ def collect_custom_command_data(device_info: dict[str, Any], command: str, auth_
                 )
                 category_result['raw_outputs'].append({'command': item, 'output': output})
                 try:
-                    records = _parse_with_ntc(platform, item, output)
+                    parse_result = parse_device_cli_output(
+                        device_info,
+                        item,
+                        output,
+                        context=context,
+                    )
+                    records = parse_result['records']
+                    category_result['parser'] = parse_result['parser']
+                    category_result['parser_platform'] = parse_result['parser_platform']
+                    if parse_result.get('template') and parse_result['template'] not in category_result['templates']:
+                        category_result['templates'].append(parse_result['template'])
+                    if parse_result['parse_status'] == 'failed' and category_result['parse_status'] != 'matched':
+                        category_result['parse_status'] = 'failed'
                     if records:
                         category_result['records'].extend(records)
                         category_result['count'] = len(category_result['records'])

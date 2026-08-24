@@ -17,7 +17,6 @@ const installPlatformFetch = (
   profiles: unknown[] = [],
   detail: unknown = {},
   actions: unknown[] = [],
-  parserVersions: unknown[] = [],
 ) => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -25,7 +24,6 @@ const installPlatformFetch = (
       return jsonResponse({ success: true, data: { write_enabled: writeEnabled, allowed_connection_drivers: ['netmiko'], legacy_textfsm_fallback_enabled: false, legacy_command_catalog_enabled: false } });
     }
     if (url.endsWith('/profiles')) return jsonResponse({ success: true, data: profiles });
-    if (url.includes('/parser-versions')) return jsonResponse({ success: true, data: parserVersions });
     if (url.includes('/actions')) return jsonResponse({ success: true, data: actions });
     if (url.match(/\/profiles\/[^/]+$/)) return jsonResponse({ success: true, data: detail });
     if (url.includes('/identification-conflicts')) return jsonResponse({ success: true, data: [] });
@@ -110,7 +108,7 @@ describe('PlatformRegistryTab', () => {
     expect((screen.getByRole('button', { name: '删除平台' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('offers only compatible published parser versions and sends the replacement id', async () => {
+  it('saves an exact action command without a TextFSM version binding', async () => {
     vi.unstubAllGlobals();
     const profile = {
       id: 'profile-1',
@@ -124,23 +122,15 @@ describe('PlatformRegistryTab', () => {
       current_release_id: 'release-1',
     };
     const release = { id: 'release-1', profile_id: 'profile-1', release_number: 1, status: 'DRAFT', parser_platform: 'cisco_ios', connection_driver: 'netmiko' };
-    const action = { action_code: 'get_clock', name_zh: '获取时钟', name_en: 'Get clock', command: 'show clock', parser_template_version_id: 'version-old', field_contract_json: '{}' };
-    const fetchMock = installPlatformFetch(true, [profile], { ...profile, releases: [release], current_release_id: 'release-1' }, [action], [
-      { id: 'version-new', template_id: 'template-new', template_code: 'CUSTOM_CLOCK', version_number: 2, status: 'PUBLISHED', source: 'CUSTOM', platform_code: 'cisco_ios', command: 'show clock', field_contract_json: '{"required":["clock"]}' },
-    ]);
+    const action = { action_code: 'get_clock', name_zh: '获取时钟', name_en: 'Get clock', command: 'show clock', field_contract_json: '{}' };
+    const fetchMock = installPlatformFetch(true, [profile], { ...profile, releases: [release], current_release_id: 'release-1' }, [action]);
     const user = userEvent.setup();
     render(<MemoryRouter><PlatformRegistryTab language="zh" currentUser={{ role: 'Operator' }} /></MemoryRouter>);
 
     await screen.findByRole('heading', { name: '测试平台' });
     await user.click(screen.getByRole('button', { name: '命令映射' }));
     expect(await screen.findByText('get_clock')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: '编辑命令/解析版本' }));
-    const parserPicker = screen.getByRole('combobox', { name: '动作 get_clock 的解析版本' });
-    expect(parserPicker).toBeTruthy();
-    await user.click(parserPicker);
-    await user.type(screen.getByRole('textbox', { name: '搜索解析模板' }), 'CUSTOM_CLOCK');
-    await user.click(screen.getByRole('option', { name: /CUSTOM_CLOCK/ }));
-    expect(screen.getByRole('button', { name: '打开模板' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '编辑动作命令' }));
     await user.click(screen.getByRole('button', { name: '保存命令' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -149,8 +139,7 @@ describe('PlatformRegistryTab', () => {
         method: 'PUT',
         body: JSON.stringify({
           command: 'show clock',
-          parser_template_version_id: 'version-new',
-          field_contract: { required: ['clock'] },
+          field_contract: {},
         }),
       }),
     ));
@@ -224,7 +213,6 @@ describe('PlatformRegistryTab', () => {
       }
       if (url.includes('/identification-conflicts')) return jsonResponse({ success: true, data: [] });
       if (url.includes('/actions')) return jsonResponse({ success: true, data: [action] });
-      if (url.includes('/parser-versions')) return jsonResponse({ success: true, data: [] });
       return jsonResponse({ success: true, data: {} });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -238,7 +226,7 @@ describe('PlatformRegistryTab', () => {
     const releasePicker = screen.getAllByRole('combobox').at(-1) as HTMLSelectElement;
     await waitFor(() => expect(releasePicker.value).toBe('release-new-draft'));
     expect(screen.getByRole('button', { name: '删除草稿' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: '编辑命令/解析版本' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '编辑动作命令' })).toBeTruthy();
     expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith(`/profiles/${profile.id}/releases`) && init?.method === 'POST')).toBe(true);
   });
 });

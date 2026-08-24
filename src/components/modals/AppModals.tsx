@@ -53,7 +53,7 @@ export const AppModals: React.FC<any> = (props) => {
     showDetailsModal, viewingDevice, viewingDeviceAlerts, deviceDetailLoading, deviceConnectionChecks,
     connectionTestingDeviceId, deviceTrendRangeHours, setDeviceTrendRangeHours, deviceHealthTrend, deviceHealthTrendLoading,
     handleSnmpTest, snmpTestingId, handleSnmpSyncNow, snmpSyncingId,
-    setSelectedDevice, setShowDetailsModal,
+    setSelectedDevice, setViewingDevice, setShowDetailsModal,
     // SnmpTestResultModal
     showSnmpTestResult, snmpTestResult, setShowSnmpTestResult,
     // AuditEventDetailModal
@@ -327,6 +327,11 @@ export const AppModals: React.FC<any> = (props) => {
           snmpTestingId={snmpTestingId}
           onSnmpSyncNow={handleSnmpSyncNow}
           snmpSyncingId={snmpSyncingId}
+          onPlatformBindingSaved={(binding) => {
+            if (typeof setViewingDevice === 'function') {
+              setViewingDevice((current: any) => current ? { ...current, ...binding } : current);
+            }
+          }}
           onGoToAutomation={(device) => {
             setSelectedDevice(device);
             setActiveTab('automation');

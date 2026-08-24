@@ -22,7 +22,7 @@ def test_all_h3c_parser_inputs_resolve_to_one_public_comware_family():
 def test_h3c_template_lookup_uses_the_canonical_h3c_filename():
     template = _find_template("h3c_comware", "display interface brief")
     assert template is not None
-    assert template.name == "h3c_comware_display_interface_brief.textfsm"
+    assert template.name == "h3c_comware_v7_display_interface_brief.textfsm"
 
 
 def test_internal_h3c_profile_selectors_route_to_explicit_grammar_variants():
@@ -60,4 +60,18 @@ def test_textfsm_catalog_exposes_one_public_h3c_family_with_explicit_variants():
     h3c = list_templates(platform_filter="h3c_comware", search="bgp", exact_platform=True)
 
     assert h3c and all(item["platform"] == "h3c_comware" for item in h3c)
-    assert {item.get("template_variant") for item in h3c} >= {"v5", "v9", None}
+    assert {item.get("template_variant") for item in h3c} >= {"v5", "v7", "v9"}
+
+
+def test_textfsm_catalog_supports_vendor_family_and_version_filters():
+    v7 = list_templates(
+        vendor_filter="h3c",
+        platform_family_filter="h3c_comware",
+        version_filter="v7",
+    )
+
+    assert v7
+    assert all(item["vendor"] == "h3c" for item in v7)
+    assert all(item["platform_family"] == "h3c_comware" for item in v7)
+    assert all(item["version"] == "v7" for item in v7)
+    assert all(item["filename"].startswith("h3c_comware_v7_") for item in v7)
