@@ -74,7 +74,8 @@ def _load_device(conn, device_id: str, user: dict[str, Any], *, lock: bool = Fal
         available_columns = {str(row[1]) for row in column_rows}
     preferred_columns = [
         "id", "hostname", "tenant_id", "site_id", "site", "device_group_id",
-        "vendor", "device_type", "platform", "platform_profile_id", "platform_source", "platform_locked",
+        "vendor", "device_type", "platform", "version", "os_version",
+        "platform_profile_id", "platform_source", "platform_locked",
     ]
     projection = ", ".join(column for column in preferred_columns if column in available_columns)
     row = _row_dict(conn.execute(
@@ -412,6 +413,270 @@ def identify_device(
     return result
 
 
+_INVENTORY_PROFILE_BY_PARSER_VARIANT = {
+    "h3c_comware_v5": "hp_comware",
+    "h3c_comware_v7": "h3c_comware",
+    "h3c_comware_v9": "h3c_comware9",
+}
+
+
+def _extract_version_from_text(value: str) -> str:
+    """Extract a concrete software version from SNMP or CLI identity text."""
+    text = str(value or "")
+    if not text:
+        return ""
+    patterns = (
+        r"\b[Ss]oftware\s+[Vv]ersion\s*[:：]?\s*([0-9][\w.()/-]*)",
+        r"\b[Vv]ersion\s*[:：]?\s*([0-9][\w.()/-]*)",
+        r"\b[Vv]\s*([0-9][\w.()/-]*)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip(".,;:")
+    return ""
+
+
+def _persist_discovered_version(device_id: str, version: str) -> None:
+    """Persist a discovered version without overwriting a deliberate value."""
+    normalized = str(version or "").strip()
+    if not normalized:
+        return
+    conn = get_db_connection()
+    try:
+        import database as database_module
+
+        if database_module._USE_PG:
+            column_rows = conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'devices'",
+            ).fetchall()
+            available_columns = {str(row[0]) for row in column_rows}
+        else:
+            column_rows = conn.execute("PRAGMA table_info(devices)").fetchall()
+            available_columns = {str(row[1]) for row in column_rows}
+        if "version" not in available_columns:
+            return
+        projection = ["version"]
+        if "asset_id" in available_columns:
+            projection.insert(0, "asset_id")
+        row = conn.execute(
+            f"SELECT {', '.join(projection)} FROM devices WHERE id = ?",
+            (device_id,),
+        ).fetchone()
+        if not row:
+            return
+        asset_id = str(row[0] or "").strip() if "asset_id" in available_columns else ""
+        current = str(row[1] or "").strip() if "asset_id" in available_columns else str(row[0] or "").strip()
+        if not current:
+            conn.execute("UPDATE devices SET version = ? WHERE id = ?", (normalized, device_id))
+            if asset_id:
+                conn.execute(
+                    """UPDATE physical_assets
+                       SET version = ?
+                       WHERE id = ? AND COALESCE(version, '') = ''""",
+                    (normalized, asset_id),
+                )
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def _inventory_device(conn, device_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Load the version/platform fields used by SNMP-first identification."""
+    scope = _assert_device_view(conn, device_id, user)
+    import database as database_module
+
+    if database_module._USE_PG:
+        column_rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'devices'",
+        ).fetchall()
+        available_columns = {str(row[0]) for row in column_rows}
+    else:
+        column_rows = conn.execute("PRAGMA table_info(devices)").fetchall()
+        available_columns = {str(row[1]) for row in column_rows}
+    preferred_columns = [
+        "id", "platform", "vendor", "device_type", "version", "os_version",
+        "platform_profile_id",
+    ]
+    projection = ", ".join(column for column in preferred_columns if column in available_columns)
+    row = _row_dict(conn.execute(
+        f"SELECT {projection} FROM devices WHERE id = ?",
+        (device_id,),
+    ).fetchone()) or {}
+    return {**scope, **row}
+
+
+def _inventory_profile_code(platform: str, version: str, vendor: str) -> tuple[str, str]:
+    """Resolve an inventory platform to a concrete registry profile code."""
+    from core.textfsm import resolve_textfsm_parser_platform
+
+    raw_platform = str(platform or "").strip().lower()
+    normalized_vendor = str(vendor or "").strip().lower()
+    # ``hp_comware`` and ``h3c_comware9`` are legacy/public profile values;
+    # TextFSM should still resolve them through the canonical H3C family.
+    if raw_platform in {"hp_comware", "h3c_comware9"}:
+        raw_platform = "h3c_comware"
+    if not raw_platform and normalized_vendor in {"h3c", "华三", "h3c.com"}:
+        raw_platform = "h3c_comware"
+    parser_platform = resolve_textfsm_parser_platform(raw_platform, version)
+    profile_code = _INVENTORY_PROFILE_BY_PARSER_VARIANT.get(parser_platform or "")
+    if not profile_code:
+        profile_code = str(parser_platform or raw_platform or "").strip().lower()
+    return profile_code, str(parser_platform or raw_platform or "").strip().lower()
+
+
+def _find_inventory_profile(conn, profile_code: str, user: dict[str, Any]) -> dict[str, Any] | None:
+    if not profile_code:
+        return None
+    clauses = ["p.platform_code = ?", "p.status <> 'ARCHIVED'"]
+    params: list[Any] = [profile_code]
+    tenant_id = str(user.get("tenant_id") or "")
+    if user.get("role") != "Administrator" or tenant_id:
+        clauses.append("(p.tenant_id IS NULL OR p.tenant_id = ?)")
+        params.append(tenant_id)
+    row = conn.execute(
+        """SELECT p.* FROM platform_profiles p
+           WHERE """ + " AND ".join(clauses) + """
+           ORDER BY CASE WHEN p.source = 'SYSTEM' THEN 0 ELSE 1 END, p.id
+           LIMIT 1""",
+        params,
+    ).fetchone()
+    return _row_dict(row) if row else None
+
+
+def identify_device_from_inventory(device_id: str, user: dict[str, Any]) -> dict[str, Any] | None:
+    """Identify a device from an already-collected inventory version.
+
+    The SNMP collector persists ``sysDescr``-derived data to ``devices.version``.
+    Once that value exists, this path only resolves metadata and registry
+    profiles; it deliberately never opens a CLI session or executes a probe.
+    ``None`` means there is no inventory version and the caller may use its
+    explicit CLI fallback.
+    """
+    conn = get_db_connection()
+    try:
+        device = _inventory_device(conn, device_id, user)
+        version = str(device.get("version") or device.get("os_version") or "").strip()
+        if not version:
+            return None
+        profile_code, parser_platform = _inventory_profile_code(
+            str(device.get("platform") or ""),
+            version,
+            str(device.get("vendor") or ""),
+        )
+        profile = _find_inventory_profile(conn, profile_code, user)
+    finally:
+        conn.close()
+
+    candidate = None
+    if profile:
+        candidate = {
+            "platform_profile_id": profile.get("id"),
+            "platform_code": profile.get("platform_code"),
+            "name_zh": profile.get("name_zh"),
+            "name_en": profile.get("name_en"),
+            "source": profile.get("source"),
+            "score": 1.0,
+            "matched_rule_count": 0,
+            "matched_rules": [],
+        }
+    return {
+        "device_id": device_id,
+        "source": "snmp_inventory",
+        "version": version,
+        "parser_platform": parser_platform,
+        "commands": [],
+        "success": bool(candidate),
+        "status": "MATCHED" if candidate else "NO_MATCH",
+        "suggestions": [candidate] if candidate else [],
+        "selected": candidate,
+    }
+
+
+def identify_device_from_snmp(device_id: str, user: dict[str, Any]) -> dict[str, Any] | None:
+    """Probe SNMP once when the persisted inventory has no version yet.
+
+    The background collector is intentionally periodic, so a device can be
+    reachable and return ``sysDescr`` while ``devices.version`` is still
+    blank. Auto-detection must not skip a currently healthy SNMP path merely
+    because that periodic write has not happened yet.
+    """
+    conn = get_db_connection()
+    try:
+        _assert_device_view(conn, device_id, user)
+        row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
+        device = _row_dict(row) or {}
+    finally:
+        conn.close()
+    if not device:
+        raise PlatformRegistryError("DEVICE_NOT_FOUND", "Device not found", status_code=404)
+
+    from services.snmp_service import collect_device_info
+    from services.vault_service import resolve_collector_credentials
+
+    credentials = resolve_collector_credentials(device)
+    snmp = credentials.get("snmp") or {}
+    community = str(snmp.get("community") or "").strip()
+    if not community:
+        return None
+    target = str(snmp.get("server") or device.get("ip_address") or "").strip()
+    if not target:
+        return None
+
+    import asyncio
+
+    info = asyncio.run(
+        collect_device_info(
+            target,
+            community,
+            int(snmp.get("port") or 161),
+        )
+    )
+    version = _extract_version_from_text(str(info.get("sys_descr") or ""))
+    if not version:
+        return None
+    _persist_discovered_version(device_id, version)
+
+    # Reuse the same profile resolution as the cached inventory path while
+    # preserving the UI-visible SNMP source label.
+    conn = get_db_connection()
+    try:
+        current = _inventory_device(conn, device_id, user)
+        profile_code, parser_platform = _inventory_profile_code(
+            str(current.get("platform") or device.get("platform") or ""),
+            version,
+            str(current.get("vendor") or device.get("vendor") or ""),
+        )
+        profile = _find_inventory_profile(conn, profile_code, user)
+    finally:
+        conn.close()
+
+    candidate = None
+    if profile:
+        candidate = {
+            "platform_profile_id": profile.get("id"),
+            "platform_code": profile.get("platform_code"),
+            "name_zh": profile.get("name_zh"),
+            "name_en": profile.get("name_en"),
+            "source": profile.get("source"),
+            "score": 1.0,
+            "matched_rule_count": 0,
+            "matched_rules": [],
+        }
+    return {
+        "device_id": device_id,
+        "source": "snmp_inventory",
+        "source_detail": "live",
+        "version": version,
+        "parser_platform": parser_platform,
+        "commands": [],
+        "success": bool(candidate),
+        "status": "MATCHED" if candidate else "NO_MATCH",
+        "suggestions": [candidate] if candidate else [],
+        "selected": candidate,
+    }
+
+
 def identify_device_live(device_id: str, user: dict[str, Any]) -> dict[str, Any]:
     """Collect only driver-provided identification commands in memory."""
     conn = get_db_connection()
@@ -465,6 +730,9 @@ def identify_device_live(device_id: str, user: dict[str, Any]) -> dict[str, Any]
     if len(observations) != len(commands):
         raise PlatformRegistryError("IDENTIFICATION_COMMAND_FAILED", "Device identification command did not return a result", status_code=502)
     result = identify_platforms(observations, user)
+    discovered_version = _extract_version_from_text("\n".join(observations.values()))
+    if discovered_version:
+        _persist_discovered_version(device_id, discovered_version)
     _persist_identification_conflict(
         device_id,
         observations,
@@ -474,7 +742,13 @@ def identify_device_live(device_id: str, user: dict[str, Any]) -> dict[str, Any]
     )
     # Raw output stays in this process only; the API returns suggestions and
     # approved command names, never the device response itself.
-    return {"device_id": device_id, "connection_driver": connection_driver, "commands": list(commands), **result}
+    return {
+        "device_id": device_id,
+        "connection_driver": connection_driver,
+        "commands": list(commands),
+        **({"source": "cli", "version": discovered_version} if discovered_version else {}),
+        **result,
+    }
 
 
 def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], *, lock: bool = False, force: bool = False) -> dict[str, Any]:

@@ -8,11 +8,14 @@ from services.platform_identification_service import (
     _binding_compatibility,
     bind_device,
     identify_device,
+    identify_device_from_inventory,
+    identify_device_from_snmp,
     identify_device_live,
     identify_platforms,
     list_identification_conflicts,
 )
 from services.platform_registry_service import PlatformRegistryError, create_profile
+from api.platform_registry import PlatformDetectRequest, api_device_platform_detect
 
 
 def _user(tenant: str, role: str = "Operator"):
@@ -53,6 +56,142 @@ def test_binding_compatibility_blocks_high_risk_execution_for_unverified_platfor
     assert {item["code"] for item in result["warnings"]} == {
         "VENDOR_PLATFORM_MISMATCH", "PLATFORM_ADAPTATION_UNVERIFIED",
     }
+
+
+def test_platform_detection_uses_snmp_inventory_version_without_cli_probe(isolated_db, monkeypatch):
+    user = _user("tenant-1")
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        columns = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'devices'",
+            ).fetchall()
+        }
+        if "version" not in columns:
+            conn.execute("ALTER TABLE devices ADD COLUMN version TEXT DEFAULT ''")
+        device_id = _insert_device(conn, "tenant-1", device_id="snmp-version-device")
+        conn.execute(
+            "UPDATE devices SET platform = ?, version = ? WHERE id = ?",
+            ("h3c_comware", "7.1.070", device_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = identify_device_from_inventory(device_id, user)
+    assert result is not None
+    assert result["source"] == "snmp_inventory"
+    assert result["version"] == "7.1.070"
+    assert result["parser_platform"] == "h3c_comware_v7"
+    assert result["selected"]["platform_code"] == "h3c_comware"
+    assert result["commands"] == []
+
+    import api.platform_registry as platform_registry_api
+
+    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "0")
+
+    def fail_if_cli_is_called(*_args, **_kwargs):
+        raise AssertionError("SNMP-backed detection must not call the CLI probe")
+
+    monkeypatch.setattr(platform_registry_api, "identify_device_live", fail_if_cli_is_called)
+    response = api_device_platform_detect(device_id, PlatformDetectRequest(), user)
+    assert response["success"] is True
+    assert response["message"] == "SNMP inventory version used; CLI probe skipped"
+
+
+def test_platform_detection_probes_live_snmp_before_cli_when_version_is_not_cached(isolated_db, monkeypatch):
+    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "0")
+    user = _user("tenant-1")
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        columns = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'devices'",
+            ).fetchall()
+        }
+        if "version" not in columns:
+            conn.execute("ALTER TABLE devices ADD COLUMN version TEXT DEFAULT ''")
+        device_id = _insert_device(conn, "tenant-1", device_id="live-snmp-version-device")
+        conn.execute(
+            "UPDATE devices SET platform = ?, version = ? WHERE id = ?",
+            ("h3c_comware", "", device_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    async def fake_collect_device_info(_ip, _community, _port):
+        return {
+            "sys_name": "S6850-1",
+            "sys_descr": "H3C Comware Platform Software, Software Version 7.1.070, Alpha 7170",
+        }
+
+    import services.snmp_service as snmp_service
+    import services.vault_service as vault_service
+    monkeypatch.setattr(snmp_service, "collect_device_info", fake_collect_device_info)
+    monkeypatch.setattr(
+        vault_service,
+        "resolve_collector_credentials",
+        lambda _device: {"snmp": {"server": "192.0.2.10", "community": "test", "port": 161}},
+    )
+
+    result = identify_device_from_snmp(device_id, user)
+    assert result is not None
+    assert result["source"] == "snmp_inventory"
+    assert result["source_detail"] == "live"
+    assert result["version"] == "7.1.070"
+    assert result["parser_platform"] == "h3c_comware_v7"
+
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        assert conn.execute("SELECT version FROM devices WHERE id = ?", (device_id,)).fetchone()[0] == "7.1.070"
+    finally:
+        conn.close()
+
+    import api.platform_registry as platform_registry_api
+
+    monkeypatch.setattr(platform_registry_api, "identify_device_from_inventory", lambda *_args: None)
+    monkeypatch.setattr(platform_registry_api, "identify_device_from_snmp", lambda *_args: result)
+
+    def fail_if_cli_is_called(*_args, **_kwargs):
+        raise AssertionError("Live SNMP detection must not call the CLI fallback")
+
+    monkeypatch.setattr(platform_registry_api, "identify_device_live", fail_if_cli_is_called)
+    response = api_device_platform_detect(device_id, PlatformDetectRequest(), user)
+    assert response["success"] is True
+    assert response["message"] == "SNMP inventory version used; CLI probe skipped"
+
+
+def test_platform_detection_falls_back_to_cli_when_snmp_has_no_version(isolated_db, monkeypatch):
+    monkeypatch.setenv("PLATFORM_REGISTRY_ENABLED", "1")
+    user = _user("tenant-1")
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        device_id = _insert_device(conn, "tenant-1", device_id="cli-fallback-device")
+    finally:
+        conn.close()
+
+    import api.platform_registry as platform_registry_api
+
+    monkeypatch.setattr(platform_registry_api, "identify_device_from_inventory", lambda *_args: None)
+    monkeypatch.setattr(platform_registry_api, "identify_device_from_snmp", lambda *_args: None)
+    cli_result = {
+        "device_id": device_id,
+        "source": "cli",
+        "version": "7.1.070",
+        "status": "MATCHED",
+        "commands": ["display version"],
+        "suggestions": [],
+        "selected": None,
+    }
+    monkeypatch.setattr(platform_registry_api, "identify_device_live", lambda *_args: cli_result)
+
+    response = api_device_platform_detect(device_id, PlatformDetectRequest(), user)
+    assert response["success"] is True
+    assert response["data"] == cli_result
+    assert response["message"] == ""
 
 
 def test_platform_identification_is_declarative_and_binding_is_locked(isolated_db, monkeypatch):

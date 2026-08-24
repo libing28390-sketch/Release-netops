@@ -40,6 +40,8 @@ from services.platform_identification_service import (
     bind_device,
     bind_devices_batch,
     identify_device,
+    identify_device_from_inventory,
+    identify_device_from_snmp,
     identify_device_live,
     list_identification_conflicts,
 )
@@ -430,13 +432,30 @@ def api_device_platform_detect(
     payload: PlatformDetectRequest | None = None,
     user=require_permission("platform", "view"),
 ):
-    _require_registry_enabled()
     request = payload or PlatformDetectRequest()
     if request.observations:
+        _require_registry_enabled()
         data = _call(identify_device, device_id, request.observations, user, platform_code=request.platform_code)
     else:
-        data = _call(identify_device_live, device_id, user)
-    return {"success": True, "data": data, "message": ""}
+        # SNMP/sysDescr-derived version is already inventory data. Prefer it
+        # before the gated CLI probe so auto-detection never opens SSH merely
+        # to rediscover a version that SNMP has already supplied.
+        data = _call(identify_device_from_inventory, device_id, user)
+        if data is None:
+            # The periodic collector may not have persisted its latest
+            # sysDescr yet. Probe SNMP once before falling back to CLI so a
+            # currently reachable SNMP agent is not needlessly bypassed.
+            data = _call(identify_device_from_snmp, device_id, user)
+        if data is None:
+            _require_registry_enabled()
+            data = _call(identify_device_live, device_id, user)
+    return {
+        # Keep the compatibility endpoint's HTTP/API envelope stable; the
+        # identification outcome (MATCHED/NO_MATCH/CONFLICT) remains in data.
+        "success": True,
+        "data": data,
+        "message": "SNMP inventory version used; CLI probe skipped" if data.get("source") == "snmp_inventory" else "",
+    }
 
 
 @device_registry_router.put("/devices/{device_id}/platform-binding")
