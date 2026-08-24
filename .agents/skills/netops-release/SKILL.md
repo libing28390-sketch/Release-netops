@@ -18,6 +18,7 @@ description: Prepare and review Nexora NetOps releases across Vite builds, FastA
 
 - Production uses PostgreSQL.
 - Preserve existing Windows, Docker, and Ubuntu paths unless the request narrows support.
+- Treat `.env` as cross-platform data in release scripts: normalize LF/CRLF values before invoking Docker or PostgreSQL, and verify both line-ending forms when changing configuration parsing.
 - Do not publish, push tags, deploy, or alter live infrastructure without explicit authorization.
 - Keep version values consistent across package, backend version, packaging metadata, and release workflow.
 

@@ -77,8 +77,13 @@ set_env_value() {
 }
 
 env_value() {
-    local key="$1"
-    grep -E "^${key}=" .env | tail -n 1 | cut -d= -f2- || true
+    local key="$1" value
+    value="$(grep -E "^${key}=" .env | tail -n 1 | cut -d= -f2- || true)"
+    # .env may have been edited on Windows and contain CRLF line endings.
+    # Keep dotenv values as data, but do not pass the trailing CR to Docker or
+    # PostgreSQL as part of the username/database name.
+    value="${value%$'\r'}"
+    printf '%s' "$value"
 }
 
 is_placeholder() {
