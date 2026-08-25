@@ -139,6 +139,15 @@ services:
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - TLS_COMMON_NAME=${TLS_COMMON_NAME:-localhost}
+      # Production does not need an outbound proxy for the reverse proxy.
+      # Explicitly clear host/Docker-injected proxy variables so internal
+      # health checks never get sent to an external proxy.
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - ALL_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - all_proxy=
     ports:
       - "80:80"
       - "443:443"
@@ -158,7 +167,7 @@ services:
         hard: 65536
     logging: *container-logging
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://netops:8003/api/health/live"]
+      test: ["CMD", "wget", "-Y", "off", "-qO-", "http://netops:8003/api/health/live"]
       interval: 30s
       timeout: 5s
       retries: 3
