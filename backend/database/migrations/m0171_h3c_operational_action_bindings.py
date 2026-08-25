@@ -185,20 +185,34 @@ def _register_new_templates(cursor, now: str) -> dict[str, str]:
                     now,
                 ),
             )
-        cursor.execute(
-            """INSERT INTO parser_template_versions (
-                 id, template_id, version_number, status, content, checksum,
-                 field_contract_json, test_summary_json, created_by, created_at, updated_at
-               ) VALUES (?, ?, 1, 'PUBLISHED', ?, ?, '{}', '{\"imported\":true}',
-                         'system', ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                 template_id = excluded.template_id,
-                 content = excluded.content,
-                 checksum = excluded.checksum,
-                 status = 'PUBLISHED',
-                 updated_at = excluded.updated_at""",
-            (version_id, template_id, content, _checksum(content), now, now),
-        )
+        existing_version = cursor.execute(
+            """SELECT id FROM parser_template_versions
+               WHERE template_id = ? AND version_number = 1""",
+            (template_id,),
+        ).fetchone()
+        if existing_version:
+            version_id = str(existing_version[0])
+            cursor.execute(
+                """UPDATE parser_template_versions
+                   SET content = ?, checksum = ?, status = 'PUBLISHED', updated_at = ?
+                   WHERE id = ?""",
+                (content, _checksum(content), now, version_id),
+            )
+        else:
+            cursor.execute(
+                """INSERT INTO parser_template_versions (
+                     id, template_id, version_number, status, content, checksum,
+                     field_contract_json, test_summary_json, created_by, created_at, updated_at
+                   ) VALUES (?, ?, 1, 'PUBLISHED', ?, ?, '{}', '{\"imported\":true}',
+                             'system', ?, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     template_id = excluded.template_id,
+                     content = excluded.content,
+                     checksum = excluded.checksum,
+                     status = 'PUBLISHED',
+                     updated_at = excluded.updated_at""",
+                (version_id, template_id, content, _checksum(content), now, now),
+            )
         versions[_normalize(command)] = version_id
     return versions
 

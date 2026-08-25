@@ -26,14 +26,8 @@ import type {
 import { connectionCheckBadgeMeta, formatConnectionCheckTime } from '../utils/connectionHelpers';
 import { useChartTheme } from '../hooks/useChartTheme';
 import { apiRequest } from '../api/http';
-
-interface PlatformProfileOption {
-  id: string;
-  platform_code: string;
-  name_zh?: string;
-  name_en?: string;
-  source?: string;
-}
+import PlatformProfileSelector, { type PlatformProfileOption } from './PlatformProfileSelector';
+import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
 
 interface PlatformIdentificationResult {
   status?: string;
@@ -268,13 +262,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
     .join(' / ');
   const identificationVersion = String(platformResult?.version || viewingDevice.version || '').trim();
   const platformAlreadyBound = Boolean(viewingDevice.platform_profile_id);
-  const compatiblePlatformProfiles = useMemo(() => {
-    const rawPlatform = String(viewingDevice.platform || '').trim().toLowerCase();
-    if (!rawPlatform || rawPlatform === 'unknown' || rawPlatform === 'generic') return platformProfiles;
-    const exact = platformProfiles.filter((profile) => String(profile.platform_code || '').trim().toLowerCase() === rawPlatform);
-    const selected = platformProfiles.find((profile) => profile.id === selectedPlatformProfileId);
-    return selected && !exact.some((profile) => profile.id === selected.id) ? [...exact, selected] : exact;
-  }, [platformProfiles, selectedPlatformProfileId, viewingDevice.platform]);
+  const deviceVendor = inferPlatformVendor(viewingDevice.vendor, viewingDevice.platform);
 
   useEffect(() => {
     let active = true;
@@ -302,7 +290,9 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
       );
       setPlatformResult(response.data);
       const selected = response.data?.selected?.platform_profile_id;
-      if (selected) setSelectedPlatformProfileId(selected);
+      // Detection is a suggestion. Never replace an existing manual binding
+      // just because a later probe produced a different candidate.
+      if (selected && !viewingDevice.platform_profile_id) setSelectedPlatformProfileId(selected);
     } catch (cause) {
       setPlatformError(cause instanceof Error ? cause.message : (language === 'zh' ? '自动识别失败' : 'Platform detection failed'));
     } finally {
@@ -314,6 +304,11 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
     if (!selectedPlatformProfileId) {
       setPlatformMessage('');
       setPlatformError(language === 'zh' ? '请选择要绑定的平台' : 'Select a platform to bind');
+      return;
+    }
+    if (!deviceVendor) {
+      setPlatformMessage('');
+      setPlatformError(language === 'zh' ? '设备厂商未知，不能绑定平台。请先补充厂商或完成自动识别。' : 'The device vendor is unknown; add it or run detection before binding.');
       return;
     }
     const sameBinding = String(viewingDevice.platform_profile_id || '') === String(selectedPlatformProfileId || '')
@@ -349,7 +344,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
     try {
       const response = await apiRequest<{ data?: Device & { binding_unchanged?: boolean } }>(`/api/devices/${encodeURIComponent(viewingDevice.id)}/platform-binding`, {
         method: 'PUT',
-        body: JSON.stringify({ platform_profile_id: selectedPlatformProfileId, lock: bindingLock }),
+        body: JSON.stringify({ platform_profile_id: selectedPlatformProfileId, lock: bindingLock, force: platformChanged }),
       });
       const saved = response.data;
       const bindingUnchanged = Boolean(saved?.binding_unchanged);
@@ -531,7 +526,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div>
                     <h4 className="text-[10px] font-bold uppercase tracking-widest text-cyan-900">{language === 'zh' ? '平台识别与绑定' : 'Platform identification & binding'}</h4>
-                    <p className="mt-1 text-[11px] text-cyan-800/70">{platformAlreadyBound ? (language === 'zh' ? '已绑定平台只读，影响自动化驱动、命令和解析模板。' : 'The bound platform is read-only and controls the automation driver, commands, and parser.') : (language === 'zh' ? '首次绑定后自动锁定，并决定自动化驱动、命令和解析模板。' : 'The first binding is locked automatically and controls the automation driver, commands, and parser.')}</p>
+                    <p className="mt-1 text-[11px] text-cyan-800/70">{platformAlreadyBound ? (language === 'zh' ? '当前绑定控制自动化驱动、命令和解析模板；修改已有绑定需要管理员确认。' : 'The current binding controls the automation driver, commands, and parser; changing it requires Administrator confirmation.') : (language === 'zh' ? '首次绑定后自动锁定，并决定自动化驱动、命令和解析模板。' : 'The first binding is locked automatically and controls the automation driver, commands, and parser.')}</p>
                   </div>
                   <button type="button" onClick={() => void detectPlatform()} disabled={platformDetectionLoading} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-cyan-700 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
                     {platformDetectionLoading ? <RotateCcw size={12} className="animate-spin" /> : <Activity size={12} />}
@@ -539,14 +534,21 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                   </button>
                 </div>
                 <div className="space-y-2">
-                  <select value={selectedPlatformProfileId} onChange={(event) => setSelectedPlatformProfileId(event.target.value)} disabled={platformProfilesLoading || platformBindingLoading || platformAlreadyBound} className="w-full rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500">
-                    <option value="">{platformProfilesLoading ? (language === 'zh' ? '正在加载平台…' : 'Loading platforms…') : (language === 'zh' ? '选择人工绑定平台' : 'Select platform for manual binding')}</option>
-                    {compatiblePlatformProfiles.map((profile) => <option key={profile.id} value={profile.id}>{language === 'zh' ? (profile.name_zh || profile.platform_code) : (profile.name_en || profile.platform_code)} · {profile.source || 'CUSTOM'}</option>)}
-                  </select>
+                  <PlatformProfileSelector
+                    profiles={platformProfiles}
+                    value={selectedPlatformProfileId}
+                    language={language}
+                    allowedVendor={deviceVendor}
+                    requireVendor
+                    disabled={platformProfilesLoading || platformBindingLoading}
+                    title={language === 'zh' ? '选择同厂商的平台版本' : 'Select a platform version from the same vendor'}
+                    onChange={(profile) => setSelectedPlatformProfileId(profile?.id || '')}
+                  />
+                  {deviceVendor && <p className="mt-1 text-[10px] text-cyan-800/70">{language === 'zh' ? `设备厂商：${platformVendorLabel(deviceVendor, language)}；只能选择同厂商平台。` : `Device vendor: ${platformVendorLabel(deviceVendor, language)}; only same-vendor platforms are available.`}</p>}
                   <div className="flex justify-end">
                     <button type="button" onClick={() => void bindPlatform()} disabled={platformBindingLoading || !selectedPlatformProfileId} className="rounded-lg border border-cyan-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-800 disabled:opacity-50">{platformBindingLoading ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存绑定' : 'Save binding')}</button>
                   </div>
-                  {platformResult && <div className="text-[11px] text-cyan-900/80"><span className="font-semibold">{platformResult.status || '—'}</span>{identificationVersion ? <span className="ml-2">{language === 'zh' ? '版本' : 'Version'} {identificationVersion}</span> : null}{platformResult.commands?.length ? <span className="ml-2 text-cyan-700/70">{platformResult.commands.join(', ')}</span> : null}{!platformAlreadyBound && platformResult.suggestions?.length ? <div className="mt-1 space-y-1">{platformResult.suggestions.slice(0, 3).map((item) => <button type="button" key={item.platform_profile_id || item.platform_code} onClick={() => item.platform_profile_id && setSelectedPlatformProfileId(item.platform_profile_id)} className="block w-full rounded-md px-1.5 py-1 text-left hover:bg-cyan-50">{item.name_zh || item.platform_code} <span className="text-cyan-700/60">{identificationVersion ? `${language === 'zh' ? '· 版本' : '· Version'} ${identificationVersion}` : `${language === 'zh' ? '· 匹配分' : '· Score'} ${Number(item.score || 0).toFixed(2)}`}</span></button>)}</div> : null}</div>}
+                  {platformResult && <div className="text-[11px] text-cyan-900/80"><span className="font-semibold">{platformResult.status || '—'}</span>{identificationVersion ? <span className="ml-2">{language === 'zh' ? '版本' : 'Version'} {identificationVersion}</span> : null}{platformResult.commands?.length ? <span className="ml-2 text-cyan-700/70">{platformResult.commands.join(', ')}</span> : null}{platformResult.suggestions?.length ? <div className="mt-1 space-y-1">{platformResult.suggestions.slice(0, 3).map((item) => <button type="button" key={item.platform_profile_id || item.platform_code} onClick={() => item.platform_profile_id && setSelectedPlatformProfileId(item.platform_profile_id)} className="block w-full rounded-md px-1.5 py-1 text-left hover:bg-cyan-50">{item.name_zh || item.platform_code} <span className="text-cyan-700/60">{identificationVersion ? `${language === 'zh' ? '· 版本' : '· Version'} ${identificationVersion}` : `${language === 'zh' ? '· 匹配分' : '· Score'} ${Number(item.score || 0).toFixed(2)}`}</span></button>)}</div> : null}</div>}
                   {platformMessage && <div className="text-[11px] font-semibold text-emerald-700">{platformMessage}</div>}
                   {platformError && <div className="text-[11px] text-rose-700">{platformError}</div>}
                 </div>

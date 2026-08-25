@@ -38,12 +38,18 @@ def test_approval_requires_complete_scope_and_creates_collection_job(isolated_db
         )
     assert incomplete.value.code == "OFFICIAL_SUGGESTION_SCOPE_INCOMPLETE"
 
-    monkeypatch.setattr(service, "import_single_official_url", lambda user, payload: {
-        "success": True,
-        "continuation_required": True,
-        "source": {"id": "source-1"},
-        "job": {"id": "job-1"},
-    })
+    captured_payload: dict[str, object] = {}
+
+    def import_official_url(user, payload):
+        captured_payload.update(payload)
+        return {
+            "success": True,
+            "continuation_required": True,
+            "source": {"id": "source-1"},
+            "job": {"id": "job-1"},
+        }
+
+    monkeypatch.setattr(service, "import_single_official_url", import_official_url)
     reviewed = service.review_official_source_suggestion(
         item["id"], tenant_id="tenant-a", user={"id": "admin"}, decision="approve",
         fields={
@@ -54,3 +60,4 @@ def test_approval_requires_complete_scope_and_creates_collection_job(isolated_db
     assert reviewed["status"] == "collecting"
     assert reviewed["source_registry_id"] == "source-1"
     assert reviewed["ingestion_job_id"] == "job-1"
+    assert captured_payload["terms_review_status"] == "approved"

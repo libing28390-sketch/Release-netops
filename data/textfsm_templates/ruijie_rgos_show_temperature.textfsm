@@ -1,12 +1,31 @@
-Value SLOT (\d+)
-Value MODEL (\S+)
-Value TEMP_NAME (\S+)
-Value WARNING_TEMP (\d+)
-Value SHUTDOWN_TEMP (\d+)
-Value CURRENT_TEMP (\d+)
-Value STATUS (ok|warning|alarm|\S+)
+# nexora-action-code: get_temperature
+Value Filldown SLOT (\d+)
+Value CARD_TYPE (\S+)
+Value Required SENSOR (\S+)
+Value TEMPERATURE (-?\d+(?:\.\d+)?)
+Value WARNING (-?\d+(?:\.\d+)?)
+Value CRITICAL (-?\d+(?:\.\d+)?)
+Value STATUS (ok|OK|normal|Normal|alarm|Alarm|warning|Warning|fault|Fault|\S+)
 
 Start
-  ^Slot\s+Card_type\s+Temp_name
-  ^-+
-  ^${SLOT}\s+${MODEL}\s+${TEMP_NAME}\s+${WARNING_TEMP}\s+${SHUTDOWN_TEMP}\s+${CURRENT_TEMP}\s+${STATUS}\s*$$ -> Record
+  ^.*#\s*show\s+ -> Next
+  ^Slot\s+${SLOT}: -> TableOld
+  ^\s*Slot\s+Card_type\s+Temp_name\s+Warning\s+Shutdown\s+Current\s+Status -> TableNew
+  ^\s*Temperature: -> Next
+  ^\s*$$
+  ^. -> Next
+
+TableNew
+  ^-+ -> Next
+  ^\s*\(Celsius\) -> Next
+  ^\s*${SLOT}\s+${CARD_TYPE}\s+${SENSOR}\s+${WARNING}\s+${CRITICAL}\s+${TEMPERATURE}\s+${STATUS}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+TableOld
+  ^\s*Sensor\s+Temperature\(C\)\s+Warning\(C\)\s+Critical\(C\)\s+Status -> Next
+  ^\s*[-+\s]+$$ -> Next
+  ^\s*${SENSOR}\s+${TEMPERATURE}\s+${WARNING}\s+${CRITICAL}\s+${STATUS}\s*$$ -> Record
+  ^Slot\s+${SLOT}: -> Next
+  ^\s*$$
+  ^. -> Next

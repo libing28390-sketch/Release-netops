@@ -196,6 +196,27 @@ _H3C_PROFILE_VARIANTS = {
     'h3c_comware_v9': 'h3c_comware_v9',
 }
 
+_PROFILE_PARSER_VARIANTS = {
+    **_H3C_PROFILE_VARIANTS,
+    'huawei_vrp5': 'huawei_vrp5',
+    'huawei_vrp8': 'huawei_vrpv8',
+    'huawei_vrp_unknown': 'huawei_vrp_unknown',
+    'h3c_comware_unknown': 'h3c_comware_unknown',
+    'maipu_mypower_v6': 'maipu_mypower_v6',
+    'maipu_mypower_v8': 'maipu_mypower_v8',
+    'maipu_mypower_v9': 'maipu_mypower_v9',
+    'maipu_mypower_unknown': 'maipu_mypower_unknown',
+    'ruijie_rgos_v10': 'ruijie_rgos_v10',
+    'ruijie_rgos_v11': 'ruijie_rgos_v11',
+    'ruijie_rgos_v12': 'ruijie_rgos_v12',
+    'ruijie_rgos_unknown': 'ruijie_rgos_unknown',
+    'zte_zxros': 'zte_zxros',
+    'zte_rosng': 'zte_rosng',
+    'zte_os_unknown': 'zte_os_unknown',
+    'dptech_conplat': 'dptech_conplat',
+    'dptech_conplat_unknown': 'dptech_conplat_unknown',
+}
+
 
 def _load_platform_profile_context(device_info: dict[str, Any]) -> dict[str, Any]:
     """Load the concrete platform profile when a caller only has a device row.
@@ -263,7 +284,7 @@ def resolve_device_platform_context(device_info: dict[str, Any]) -> dict[str, An
     # value ``h3c_comware`` would be incorrectly routed to the V7 grammar.
     explicit_candidates = (profile_code, profile_parser, raw_platform, public_platform)
     parser_platform = next(
-        (_H3C_PROFILE_VARIANTS[item] for item in explicit_candidates if item in _H3C_PROFILE_VARIANTS),
+        (_PROFILE_PARSER_VARIANTS[item] for item in explicit_candidates if item in _PROFILE_PARSER_VARIANTS),
         '',
     )
     if not parser_platform:

@@ -130,21 +130,44 @@ def iter_action_definitions() -> tuple[dict[str, Any], ...]:
 SYSTEM_PROFILES: tuple[dict[str, Any], ...] = (
     {"platform_code": "cisco_ios", "name_zh": "Cisco IOS", "name_en": "Cisco IOS", "vendor": "Cisco", "connection_driver": "cisco_ios", "parser_platform": "cisco_ios"},
     {"platform_code": "huawei_vrp", "name_zh": "Huawei VRP", "name_en": "Huawei VRP", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrp"},
+    # Concrete vendor/version profiles are the authoritative targets used by
+    # manual inventory binding.  The older family profiles above remain
+    # available for backwards-compatible device records.
+    {"platform_code": "huawei_vrp5", "name_zh": "华为 VRP V5", "name_en": "Huawei VRP V5", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrp"},
+    {"platform_code": "huawei_vrp8", "name_zh": "华为 VRP V8", "name_en": "Huawei VRP V8", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrpv8"},
+    {"platform_code": "huawei_vrp_unknown", "name_zh": "华为 VRP 未知版本", "name_en": "Huawei VRP Unknown", "vendor": "Huawei", "connection_driver": "huawei_vrp", "parser_platform": "huawei_vrp"},
     # The profile IDs/codes remain concrete so V5/V7/V9 can carry different
     # commands and template releases.  Their public parser family is one
     # canonical H3C key; ``hp_comware`` remains only the Netmiko driver name.
     {"platform_code": "hp_comware", "name_zh": "H3C Comware V5", "name_en": "H3C Comware V5", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
     {"platform_code": "h3c_comware", "name_zh": "H3C Comware V7", "name_en": "H3C Comware V7", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
     {"platform_code": "h3c_comware9", "name_zh": "H3C Comware V9", "name_en": "H3C Comware V9", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
+    {"platform_code": "h3c_comware_v5", "name_zh": "华三 Comware V5", "name_en": "H3C Comware V5", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
+    {"platform_code": "h3c_comware_v7", "name_zh": "华三 Comware V7", "name_en": "H3C Comware V7", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
+    {"platform_code": "h3c_comware_v9", "name_zh": "华三 Comware V9", "name_en": "H3C Comware V9", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
+    {"platform_code": "h3c_comware_unknown", "name_zh": "华三 Comware 未知版本", "name_en": "H3C Comware Unknown", "vendor": "H3C", "connection_driver": "hp_comware", "parser_platform": "h3c_comware"},
     {"platform_code": "juniper_junos", "name_zh": "Juniper Junos", "name_en": "Juniper Junos", "vendor": "Juniper", "connection_driver": "juniper_junos", "parser_platform": "juniper_junos"},
     {"platform_code": "arista_eos", "name_zh": "Arista EOS", "name_en": "Arista EOS", "vendor": "Arista", "connection_driver": "arista_eos", "parser_platform": "arista_eos"},
     {"platform_code": "zte_5900_v6", "name_zh": "中兴 5900 V6", "name_en": "ZTE 5900 V6", "vendor": "ZTE", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},
     {"platform_code": "zte_zsrv2_v3", "name_zh": "中兴 ZSRV2 V3", "name_en": "ZTE ZSRV2 V3", "vendor": "ZTE", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},
+    {"platform_code": "zte_zxros", "name_zh": "中兴 ZXROS", "name_en": "ZTE ZXROS", "vendor": "ZTE", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},
+    {"platform_code": "zte_rosng", "name_zh": "中兴 ROSng", "name_en": "ZTE ROSng", "vendor": "ZTE", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},
+    {"platform_code": "zte_os_unknown", "name_zh": "中兴 未知系统", "name_en": "ZTE Unknown OS", "vendor": "ZTE", "connection_driver": "zte_zxros", "parser_platform": "zte_zxros"},
     {"platform_code": "raisecom_ros", "name_zh": "瑞斯康达 ROS", "name_en": "Raisecom ROS", "vendor": "Raisecom", "connection_driver": "raisecom_ros", "parser_platform": "raisecom_ros"},
     {"platform_code": "ruijie_s6k_rgos12", "name_zh": "锐捷 S6K RGOS 12", "name_en": "Ruijie S6K RGOS 12", "vendor": "Ruijie", "connection_driver": "ruijie_os", "parser_platform": "ruijie_rgos"},
     {"platform_code": "ruijie_eg_rgos11", "name_zh": "锐捷 EG RGOS 11", "name_en": "Ruijie EG RGOS 11", "vendor": "Ruijie", "connection_driver": "ruijie_os", "parser_platform": "ruijie_rgos"},
+    {"platform_code": "ruijie_rgos_v10", "name_zh": "锐捷 RGOS V10", "name_en": "Ruijie RGOS V10", "vendor": "Ruijie", "connection_driver": "ruijie_os", "parser_platform": "ruijie_rgos"},
+    {"platform_code": "ruijie_rgos_v11", "name_zh": "锐捷 RGOS V11", "name_en": "Ruijie RGOS V11", "vendor": "Ruijie", "connection_driver": "ruijie_os", "parser_platform": "ruijie_rgos"},
+    {"platform_code": "ruijie_rgos_v12", "name_zh": "锐捷 RGOS V12", "name_en": "Ruijie RGOS V12", "vendor": "Ruijie", "connection_driver": "ruijie_os", "parser_platform": "ruijie_rgos"},
+    {"platform_code": "ruijie_rgos_unknown", "name_zh": "锐捷 RGOS 未知版本", "name_en": "Ruijie RGOS Unknown", "vendor": "Ruijie", "connection_driver": "ruijie_os", "parser_platform": "ruijie_rgos"},
     {"platform_code": "dptech_fw_s211", "name_zh": "迪普 FW S211", "name_en": "DPtech FW S211", "vendor": "DPtech", "connection_driver": "dptech_ios", "parser_platform": "dptech_ios"},
+    {"platform_code": "dptech_conplat", "name_zh": "迪普 ConPlat", "name_en": "DPtech ConPlat", "vendor": "DPtech", "connection_driver": "dptech_ios", "parser_platform": "dptech_ios"},
+    {"platform_code": "dptech_conplat_unknown", "name_zh": "迪普 ConPlat 未知系统", "name_en": "DPtech ConPlat Unknown", "vendor": "DPtech", "connection_driver": "dptech_ios", "parser_platform": "dptech_ios"},
     {"platform_code": "maipu_s3330_v9", "name_zh": "迈普 S3330 V9", "name_en": "Maipu S3330 V9", "vendor": "Maipu", "connection_driver": "maipu", "parser_platform": "maipu"},
+    {"platform_code": "maipu_mypower_v6", "name_zh": "迈普 MyPower V6", "name_en": "Maipu MyPower V6", "vendor": "Maipu", "connection_driver": "maipu", "parser_platform": "maipu"},
+    {"platform_code": "maipu_mypower_v8", "name_zh": "迈普 MyPower V8", "name_en": "Maipu MyPower V8", "vendor": "Maipu", "connection_driver": "maipu", "parser_platform": "maipu"},
+    {"platform_code": "maipu_mypower_v9", "name_zh": "迈普 MyPower V9", "name_en": "Maipu MyPower V9", "vendor": "Maipu", "connection_driver": "maipu", "parser_platform": "maipu"},
+    {"platform_code": "maipu_mypower_unknown", "name_zh": "迈普 MyPower 未知版本", "name_en": "Maipu MyPower Unknown", "vendor": "Maipu", "connection_driver": "maipu", "parser_platform": "maipu"},
 )
 
 PLATFORM_ALIASES = {
@@ -158,6 +181,51 @@ PLATFORM_ALIASES = {
     "maipu": "maipu_s3330_v9",
     "raisecom": "raisecom_ros", "瑞斯康达": "raisecom_ros",
 }
+
+PLATFORM_CATALOG_METADATA: dict[str, dict[str, str]] = {
+    "huawei_vrp5": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v5"},
+    "huawei_vrp8": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "v8"},
+    "huawei_vrp_unknown": {"catalog_vendor": "huawei", "platform_family": "huawei_vrp", "version": "unknown"},
+    "h3c_comware_v5": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v5"},
+    "h3c_comware_v7": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v7"},
+    "h3c_comware_v9": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "v9"},
+    "h3c_comware_unknown": {"catalog_vendor": "h3c", "platform_family": "h3c_comware", "version": "unknown"},
+    "maipu_mypower_v6": {"catalog_vendor": "maipu", "platform_family": "maipu_mypower", "version": "v6"},
+    "maipu_mypower_v8": {"catalog_vendor": "maipu", "platform_family": "maipu_mypower", "version": "v8"},
+    "maipu_mypower_v9": {"catalog_vendor": "maipu", "platform_family": "maipu_mypower", "version": "v9"},
+    "maipu_mypower_unknown": {"catalog_vendor": "maipu", "platform_family": "maipu_mypower", "version": "unknown"},
+    "ruijie_rgos_v10": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "v10"},
+    "ruijie_rgos_v11": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "v11"},
+    "ruijie_rgos_v12": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "v12"},
+    "ruijie_rgos_unknown": {"catalog_vendor": "ruijie", "platform_family": "ruijie_rgos", "version": "unknown"},
+    "zte_zxros": {"catalog_vendor": "zte", "platform_family": "zte_zxros", "version": "common"},
+    "zte_rosng": {"catalog_vendor": "zte", "platform_family": "zte_rosng", "version": "common"},
+    "zte_os_unknown": {"catalog_vendor": "zte", "platform_family": "zte_os_unknown", "version": "common"},
+    "dptech_conplat": {"catalog_vendor": "dptech", "platform_family": "dptech_conplat", "version": "common"},
+    "dptech_conplat_unknown": {"catalog_vendor": "dptech", "platform_family": "dptech_conplat_unknown", "version": "common"},
+}
+
+PLATFORM_FAMILY_ALIASES: dict[str, tuple[str, ...]] = {
+    "huawei_vrp": ("huawei", "huawei_vrp"),
+    "maipu_mypower": ("maipu", "maipu_mypower"),
+    "ruijie_rgos": ("ruijie", "ruijie_os", "ruijie_rgos"),
+    "dptech_conplat": ("dptech", "dptech_ios", "dptech_conplat"),
+    "zte_zxros": ("zte", "zte_zxros"),
+}
+
+
+def _with_platform_catalog_metadata(profile: dict[str, Any]) -> dict[str, Any]:
+    """Expose the same vendor/family/version contract as the TextFSM catalog."""
+    code = str(profile.get("platform_code") or "").strip().lower()
+    metadata = PLATFORM_CATALOG_METADATA.get(code)
+    if metadata:
+        return {**profile, **metadata}
+    return {
+        **profile,
+        "catalog_vendor": str(profile.get("vendor") or "").strip().lower(),
+        "platform_family": str(profile.get("parser_platform") or code).strip().lower(),
+        "version": "common",
+    }
 
 # The commands are explicit data, never inferred from a requested vendor and
 # never allowed to silently fall back to Cisco.
@@ -204,6 +272,10 @@ PLATFORM_ACTION_COMMANDS["cisco_ios"].update({"get_bgp_routes": "show ip bgp", "
 PLATFORM_ACTION_COMMANDS["huawei_vrp"].update({"get_bgp_routes": "display bgp routing-table", "get_bgp_routes_vrf": "display bgp vpnv4 vpn-instance {{vrf}} routing-table"})
 PLATFORM_ACTION_COMMANDS["h3c_comware"].update({"get_bgp_routes": "display bgp routing-table ipv4 unicast", "get_bgp_routes_vrf": "display bgp vpnv4 vpn-instance {{vrf}} routing-table"})
 PLATFORM_ACTION_COMMANDS["ruijie_rgos"].update({"get_bgp_routes": "show ip bgp", "get_bgp_routes_vrf": "show ip bgp vrf {{vrf}}"})
+
+# Huawei VRP V8 uses the same published action catalog as the legacy VRP
+# family while retaining a distinct parser namespace in the registry.
+PLATFORM_ACTION_COMMANDS["huawei_vrpv8"] = dict(PLATFORM_ACTION_COMMANDS["huawei_vrp"])
 
 # A parser platform describes the parser/driver family.  A platform profile
 # is the concrete vendor + product/version identity.  Most profiles can use
@@ -387,6 +459,16 @@ def platform_codes_match(device_platform: Any, profile_platform: Any, parser_pla
         for value in (profile_code, parser_code)
         if value
     }
+    for value in (profile_code, parser_code):
+        metadata = PLATFORM_CATALOG_METADATA.get(value)
+        if not metadata:
+            continue
+        family = str(metadata.get("platform_family") or "").strip().lower()
+        if family:
+            candidates.add(family)
+            candidates.update(PLATFORM_FAMILY_ALIASES.get(family, ()))
+            if family.endswith("_unknown"):
+                candidates.add(family[:-8])
     candidates.update(
         profile_parser_codes.get(value, value)
         for value in (profile_code, parser_code)
@@ -639,7 +721,7 @@ def list_profiles(user: dict[str, Any]) -> list[dict[str, Any]]:
                 WHERE p.status <> 'ARCHIVED' {scope_sql} ORDER BY p.source, p.platform_code""",
             [*device_stats_params, *params],
         ).fetchall()
-        return [_row_dict(row) for row in rows]
+        return [_with_platform_catalog_metadata(_row_dict(row) or {}) for row in rows]
     finally:
         conn.close()
 

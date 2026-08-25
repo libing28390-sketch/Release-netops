@@ -1,10 +1,10 @@
-# TextFSM 功能开关与权限状态收口 Walkthrough
+# TextFSM 能力与权限状态收口 Walkthrough
 
 ## 目标 / Goal
 
-将 `PLATFORM_REGISTRY_ENABLED` 的后端能力状态明确返回给 TextFSM 注册表页面。开关关闭时，页面进入只读审查模式：SYSTEM 模板仍可执行不持久化的 Sandbox，租户模板写入、Fork、版本流转、样例持久化和历史回归均不可用。所有新增提示均通过页面已有的 `language` / `zh` 分支提供中英文文案。
+将后端能力状态明确返回给 TextFSM 注册表页面。页面根据能力状态和资源权限控制写入：SYSTEM 模板仍可执行不持久化的 Sandbox，租户模板写入、Fork、版本流转、样例持久化和历史回归均经过权限与生命周期校验。所有新增提示均通过页面已有的 `language` / `zh` 分支提供中英文文案。
 
-Expose the backend TextFSM capability state to the registry page. When `PLATFORM_REGISTRY_ENABLED` is disabled, the page becomes read-only: SYSTEM templates retain non-persistent Sandbox testing, while tenant writes, forks, lifecycle transitions, sample persistence, and historical regression are unavailable. New messages use the existing `language` / `zh` branch for bilingual system-following text.
+Expose the backend TextFSM capability state to the registry page. The page uses capability state and resource permissions to control writes: SYSTEM templates retain non-persistent Sandbox testing, while tenant writes, forks, lifecycle transitions, sample persistence, and historical regression remain subject to backend authorization and lifecycle checks. New messages use the existing `language` / `zh` branch for bilingual system-following text.
 
 ## 实施内容 / Implementation
 

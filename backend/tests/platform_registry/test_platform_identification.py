@@ -5,15 +5,18 @@ import uuid
 import pytest
 
 from services.platform_identification_service import (
+    _assert_device_profile_platform,
     _binding_compatibility,
     _inventory_profile_code,
     bind_device,
+    bind_devices_batch,
     identify_device,
     identify_device_from_inventory,
     identify_device_from_snmp,
     identify_device_live,
     identify_platforms,
     list_identification_conflicts,
+    unbind_devices_batch,
 )
 from services.platform_registry_service import PlatformRegistryError, create_profile
 from api.platform_registry import PlatformDetectRequest, api_device_platform_detect
@@ -50,9 +53,9 @@ def _insert_rule(conn, profile_id: str, *, pattern: str, confidence: float = 0.9
 @pytest.mark.parametrize(
     ("platform", "version", "vendor", "expected_profile", "expected_parser"),
     [
-        ("h3c_comware", "5.20", "H3C", "hp_comware", "h3c_comware_v5"),
-        ("h3c_comware", "7.1.070", "H3C", "h3c_comware", "h3c_comware_v7"),
-        ("unknown", "9.1", "H3C", "h3c_comware9", "h3c_comware_v9"),
+        ("h3c_comware", "5.20", "H3C", "h3c_comware_v5", "h3c_comware_v5"),
+        ("h3c_comware", "7.1.070", "H3C", "h3c_comware_v7", "h3c_comware_v7"),
+        ("unknown", "9.1", "H3C", "h3c_comware_v9", "h3c_comware_v9"),
         ("h3c_comware", "Comware custom", "H3C", "", "h3c_comware"),
         ("unknown", "7.1.070", "", "", ""),
     ],
@@ -73,6 +76,58 @@ def test_binding_compatibility_blocks_high_risk_execution_for_unverified_platfor
     assert {item["code"] for item in result["warnings"]} == {
         "VENDOR_PLATFORM_MISMATCH", "PLATFORM_ADAPTATION_UNVERIFIED",
     }
+
+
+def test_manual_binding_rejects_cross_vendor_and_accepts_same_vendor_family():
+    with pytest.raises(PlatformRegistryError) as mismatch:
+        _assert_device_profile_platform(
+            {"vendor": "Huawei", "platform": "unknown"},
+            {"vendor": "H3C", "platform_code": "h3c_comware_v7", "parser_platform": "h3c_comware"},
+        )
+    assert mismatch.value.code == "PLATFORM_VENDOR_MISMATCH"
+
+    _assert_device_profile_platform(
+        {"vendor": "Huawei", "platform": "huawei_vrp"},
+        {"vendor": "Huawei", "platform_code": "huawei_vrp8", "parser_platform": "huawei_vrpv8"},
+    )
+
+
+def test_concrete_catalog_batch_binding_and_unbinding(isolated_db):
+    user = _user("tenant-1", "Administrator")
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        device_ids = [
+            _insert_device(conn, "tenant-1", device_id="batch-huawei-1"),
+            _insert_device(conn, "tenant-1", device_id="batch-huawei-2"),
+        ]
+        conn.execute(
+            "UPDATE devices SET platform = ? WHERE id IN (?, ?)",
+            ("huawei_vrp", *device_ids),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    bound = bind_devices_batch(
+        device_ids,
+        "system-profile-huawei_vrp8",
+        user,
+        lock=True,
+    )
+    assert bound["device_count"] == 2
+    assert bound["platform_code"] == "huawei_vrp8"
+
+    unbound = unbind_devices_batch(device_ids, user, force=True)
+    assert unbound["device_count"] == 2
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT platform, platform_profile_id, platform_locked FROM devices WHERE id IN (?, ?) ORDER BY id",
+            tuple(device_ids),
+        ).fetchall()
+        assert all(row[0] == "huawei_vrpv8" and row[1] is None and row[2] == 0 for row in rows)
+    finally:
+        conn.close()
 
 
 def test_platform_detection_uses_snmp_inventory_version_without_cli_probe(isolated_db, monkeypatch):
@@ -101,7 +156,7 @@ def test_platform_detection_uses_snmp_inventory_version_without_cli_probe(isolat
     assert result["source"] == "snmp_inventory"
     assert result["version"] == "7.1.070"
     assert result["parser_platform"] == "h3c_comware_v7"
-    assert result["selected"]["platform_code"] == "h3c_comware"
+    assert result["selected"]["platform_code"] == "h3c_comware_v7"
     assert result["commands"] == []
 
     import api.platform_registry as platform_registry_api

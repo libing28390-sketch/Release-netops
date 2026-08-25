@@ -39,7 +39,7 @@
 - 新增 `m0085_system_profile_adaptation_status`，国产 SYSTEM Profile 在缺少真实生产回显时标记为 `UNVERIFIED/MISSING`，不伪造样例或模板。
 - 资源权限目录和推荐角色已落地，平台/TextFSM/Playbook 审批、发布、回滚使用资源级权限依赖。
 - 最终 PostgreSQL 门禁：迁移版本 **85**；平台注册专项 **37 passed**；vendor audit **281 passed**；完整后端 **447 passed, 1 warning, 25 subtests passed**；Python compile、lint、build、diff check 全部通过。
-- P0 已完成并通过质量门禁；`PLATFORM_REGISTRY_ENABLED=0` 默认策略保持不变，P1 开始建设 TextFSM 注册表开发、样例上传/测试和发布前回归闭环。
+- P0 已完成并通过质量门禁；默认保持受权限与生命周期控制，P1 开始建设 TextFSM 注册表开发、样例上传/测试和发布前回归闭环。
 
 ## P1 首片：TextFSM 注册表与平台识别
 

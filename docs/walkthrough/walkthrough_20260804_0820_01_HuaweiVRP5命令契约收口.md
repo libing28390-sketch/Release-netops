@@ -45,6 +45,6 @@ git diff --check
 ## 剩余风险/后续建议
 
 - 需在真实 VRP5 设备确认 `display eth-trunk` 的可执行性，尤其是不同 VRP5 版本差异。
-- 需完成 P0-2：TextFSM 页面在 `PLATFORM_REGISTRY_ENABLED=0` 时隐藏/禁用写入操作，并保持中英文随系统语言。
+- 需完成 P0-2：TextFSM 页面根据能力状态和资源权限隐藏/禁用写入操作，并保持中英文随系统语言。
 - 需完成 PostgreSQL fresh/upgrade、完整后端测试、页面写流程和真实设备验收后，才能关闭整份任务清单。
 

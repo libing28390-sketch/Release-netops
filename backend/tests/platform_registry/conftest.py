@@ -51,6 +51,7 @@ from database.migrations.m0177_sync_h3c_bfd_template_content import upgrade as s
 from database.migrations.m0178_unify_platform_action_labels import upgrade as unify_platform_action_labels_upgrade
 from database.migrations.m0179_finish_platform_action_labels import upgrade as finish_platform_action_labels_upgrade
 from database.migrations.m0180_detach_legacy_textfsm_versions import upgrade as detach_legacy_textfsm_versions_upgrade
+from database.migrations.m0182_concrete_platform_binding_catalog import upgrade as concrete_platform_binding_catalog_upgrade
 
 
 @pytest.fixture
@@ -150,6 +151,7 @@ def isolated_db():
         unify_platform_action_labels_upgrade(cursor, True)
         finish_platform_action_labels_upgrade(cursor, True)
         detach_legacy_textfsm_versions_upgrade(cursor, True)
+        concrete_platform_binding_catalog_upgrade(cursor, True)
         migration_conn.commit()
     finally:
         migration_conn.close()

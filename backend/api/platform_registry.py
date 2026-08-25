@@ -38,6 +38,7 @@ from services.platform_registry_service import (
 from services.platform_identification_service import (
     bind_device,
     bind_devices_batch,
+    unbind_devices_batch,
     identify_device,
     identify_device_from_inventory,
     identify_device_from_snmp,
@@ -132,6 +133,23 @@ class PlatformBatchBindingRequest(BaseModel):
     device_ids: list[str] = Field(..., min_length=1, max_length=200)
     platform_profile_id: str = Field(..., min_length=1, max_length=128)
     lock: bool = False
+    force: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("device_ids")
+    @classmethod
+    def validate_device_ids(cls, value: list[str]) -> list[str]:
+        normalized = [str(item).strip() for item in value]
+        if any(not item for item in normalized):
+            raise ValueError("device_ids must contain non-empty values")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("device_ids must not contain duplicates")
+        return normalized
+
+
+class PlatformBatchUnbindingRequest(BaseModel):
+    device_ids: list[str] = Field(..., min_length=1, max_length=200)
     force: bool = False
 
     model_config = ConfigDict(extra="forbid")
@@ -431,4 +449,21 @@ def api_device_platform_binding_batch(
             force=payload.force,
         ),
         "message": "Batch device platform binding saved",
+    }
+
+
+@device_registry_router.post("/devices/platform-binding/batch/unbind")
+def api_device_platform_binding_batch_unbind(
+    payload: PlatformBatchUnbindingRequest,
+    user=require_permission("platform", "bind_device"),
+):
+    return {
+        "success": True,
+        "data": _call(
+            unbind_devices_batch,
+            payload.device_ids,
+            user,
+            force=payload.force,
+        ),
+        "message": "Batch device platform binding removed",
     }

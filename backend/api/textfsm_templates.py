@@ -22,6 +22,8 @@ from core.textfsm import (
     get_supported_platforms,
     smart_parse_cli,
     template_action_code,
+    resolve_textfsm_platform,
+    resolve_textfsm_template_namespace,
 )
 from services.platform_registry_service import (
     get_profile_action_commands,
@@ -129,10 +131,16 @@ def api_textfsm_action_options(
     """Return optional, human-readable action associations for template authoring."""
     normalized_platform = str(platform or '').strip().lower()
     profile_code = _H3C_ACTION_PROFILE_ALIASES.get(normalized_platform, normalized_platform)
+    parser_platform = resolve_textfsm_platform(normalized_platform) or normalized_platform
+    # The action catalog is maintained at the parser-family level for the
+    # planned concrete template namespaces.  VRP8 has a legacy parser alias
+    # with the same command catalog as the shared Huawei VRP family.
+    if parser_platform == 'huawei_vrpv8':
+        parser_platform = 'huawei_vrp'
     try:
         commands = get_profile_action_commands({
             'platform_code': profile_code,
-            'parser_platform': normalized_platform,
+            'parser_platform': parser_platform,
         })
     except Exception:
         commands = {}
@@ -207,10 +215,13 @@ def api_create_template(
     如果同名的内置模板存在，自定义模板会覆盖内置（parse 时优先使用自定义）。
 
     请求体：
-      { "filename": "xxx.textfsm" 或  "platform"+"command" 自动生成, "content": "..." }
+      { "filename": "xxx.textfsm" 或  "platform"+"command" 自动生成,
+        "platform_family": "huawei_vrp", "version": "v8", "content": "..." }
     """
     filename = (body.get('filename') or '').strip()
     platform = (body.get('platform') or '').strip().lower()
+    platform_family = (body.get('platform_family') or '').strip().lower()
+    version = (body.get('version') or '').strip().lower()
     command = (body.get('command') or '').strip().lower()
     action_code = body.get('action_code')
     content = body.get('content') or ''
@@ -220,6 +231,11 @@ def api_create_template(
 
     # 如果没有显式 filename，则从 platform + command 生成
     if not filename:
+        platform = resolve_textfsm_template_namespace(
+            platform,
+            platform_family=platform_family,
+            version=version,
+        )
         if not platform or not command:
             raise HTTPException(status_code=400, detail='必须提供 filename 或 (platform + command)')
         import re

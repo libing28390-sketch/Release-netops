@@ -1,4 +1,0 @@
-Value LOG (.+)
-
-Start
-  ^${LOG}$$ -> Record

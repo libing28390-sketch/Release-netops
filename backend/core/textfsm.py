@@ -62,28 +62,105 @@ _PACKAGED_TEMPLATES_DIR = _PROJECT_ROOT / "release-textfsm-templates"
 # ``h3c_comware_v9``.  ``hp_comware`` is deliberately not a TextFSM alias: it
 # is only the literal Netmiko device_type at the transport adapter boundary.
 TEXTFSM_PLATFORM_MAP = {
+    # Planned concrete template namespaces.  These codes are kept distinct
+    # on disk while resolving to the existing parser/driver families at
+    # runtime.
+    'huawei_vrp5': 'huawei_vrp',
+    'huawei_vrp8': 'huawei_vrpv8',
+    'huawei_vrp_unknown': 'huawei_vrp',
     'h3c': 'h3c_comware',
     'comware': 'h3c_comware',
     'h3c_comware': 'h3c_comware',
     'h3c_comware_v5': 'h3c_comware',
     'h3c_comware_v7': 'h3c_comware',
     'h3c_comware_v9': 'h3c_comware',
+    'h3c_comware_unknown': 'h3c_comware',
     'ruijie': 'ruijie_rgos',
     'ruijie_os': 'ruijie_rgos',
     'ruijie_rgos': 'ruijie_rgos',
+    'ruijie_rgos_v10': 'ruijie_rgos',
+    'ruijie_rgos_v11': 'ruijie_rgos',
+    'ruijie_rgos_v12': 'ruijie_rgos',
+    'ruijie_rgos_unknown': 'ruijie_rgos',
     'dptech': 'dptech_ios',
     'dptech_ios': 'dptech_ios',
     'dptech_conplat': 'dptech_ios',
     'dptech_conplat_fw': 'dptech_ios',
+    'dptech_conplat_unknown': 'dptech_ios',
     'maipu': 'maipu',
     'mypower': 'maipu',
     'maipu_mypower': 'maipu',
+    'maipu_mypower_v6': 'maipu',
+    'maipu_mypower_v8': 'maipu',
+    'maipu_mypower_v9': 'maipu',
+    'maipu_mypower_unknown': 'maipu',
     'zte': 'zte_zxros',
     'zxros': 'zte_zxros',
     '中兴 zxros': 'zte_zxros',
     'zte_zxros': 'zte_zxros',
+    'zte_rosng': 'zte_zxros',
+    'zte_os_unknown': 'zte_zxros',
     'raisecom': 'raisecom_ros',
     'raisecom_ros': 'raisecom_ros',
+}
+
+_PLANNED_TEMPLATE_PLATFORM_CANDIDATES = {
+    'huawei_vrp5': ['huawei_vrp5', 'huawei_vrp'],
+    'huawei_vrp8': ['huawei_vrp8', 'huawei_vrpv8', 'huawei_vrp'],
+    'huawei_vrp_unknown': ['huawei_vrp_unknown', 'huawei_vrp'],
+    'h3c_comware_v5': ['h3c_comware_v5', 'h3c_comware'],
+    'h3c_comware_v7': ['h3c_comware_v7', 'h3c_comware'],
+    'h3c_comware_v9': ['h3c_comware_v9', 'h3c_comware'],
+    'h3c_comware_unknown': ['h3c_comware_unknown', 'h3c_comware'],
+    'maipu_mypower': ['maipu_mypower', 'maipu'],
+    'maipu_mypower_v6': ['maipu_mypower_v6', 'maipu_mypower', 'maipu'],
+    'maipu_mypower_v8': ['maipu_mypower_v8', 'maipu_mypower', 'maipu'],
+    'maipu_mypower_v9': ['maipu_mypower_v9', 'maipu_mypower', 'maipu'],
+    'maipu_mypower_unknown': ['maipu_mypower_unknown', 'maipu_mypower', 'maipu'],
+    'ruijie_rgos_v10': ['ruijie_rgos_v10', 'ruijie_rgos'],
+    'ruijie_rgos_v11': ['ruijie_rgos_v11', 'ruijie_rgos'],
+    'ruijie_rgos_v12': ['ruijie_rgos_v12', 'ruijie_rgos'],
+    'ruijie_rgos_unknown': ['ruijie_rgos_unknown', 'ruijie_rgos'],
+    'zte_rosng': ['zte_rosng', 'zte_zxros'],
+    'zte_os_unknown': ['zte_os_unknown', 'zte_zxros'],
+    'dptech_conplat': ['dptech_conplat', 'dptech_ios'],
+    'dptech_conplat_unknown': ['dptech_conplat_unknown', 'dptech_conplat', 'dptech_ios'],
+}
+
+_PLANNED_TEMPLATE_PLATFORM_VERSIONS = {
+    'huawei_vrp5': 'v5',
+    'huawei_vrp8': 'v8',
+    'huawei_vrp_unknown': 'unknown',
+    'h3c_comware_v5': 'v5',
+    'h3c_comware_v7': 'v7',
+    'h3c_comware_v9': 'v9',
+    'h3c_comware_unknown': 'unknown',
+    'maipu_mypower_v6': 'v6',
+    'maipu_mypower_v8': 'v8',
+    'maipu_mypower_v9': 'v9',
+    'maipu_mypower_unknown': 'unknown',
+    'ruijie_rgos_v10': 'v10',
+    'ruijie_rgos_v11': 'v11',
+    'ruijie_rgos_v12': 'v12',
+    'ruijie_rgos_unknown': 'unknown',
+}
+
+_PLANNED_TEMPLATE_PLATFORM_BY_SELECTION = {
+    ('huawei_vrp', 'v5'): 'huawei_vrp5',
+    ('huawei_vrp', 'v8'): 'huawei_vrp8',
+    ('huawei_vrp', 'unknown'): 'huawei_vrp_unknown',
+    ('h3c_comware', 'v5'): 'h3c_comware_v5',
+    ('h3c_comware', 'v7'): 'h3c_comware_v7',
+    ('h3c_comware', 'v9'): 'h3c_comware_v9',
+    ('h3c_comware', 'unknown'): 'h3c_comware_unknown',
+    ('maipu_mypower', 'v6'): 'maipu_mypower_v6',
+    ('maipu_mypower', 'v8'): 'maipu_mypower_v8',
+    ('maipu_mypower', 'v9'): 'maipu_mypower_v9',
+    ('maipu_mypower', 'unknown'): 'maipu_mypower_unknown',
+    ('ruijie_rgos', 'v10'): 'ruijie_rgos_v10',
+    ('ruijie_rgos', 'v11'): 'ruijie_rgos_v11',
+    ('ruijie_rgos', 'v12'): 'ruijie_rgos_v12',
+    ('ruijie_rgos', 'unknown'): 'ruijie_rgos_unknown',
 }
 
 def resolve_textfsm_platform(platform: str | None) -> str | None:
@@ -1052,10 +1129,20 @@ def _normalize_template_vendor(value: str | None) -> str:
 
 def _normalize_template_platform_family(value: str | None) -> str:
     raw = str(value or '').strip().lower()
-    if raw in {'huawei_vrpv8', 'huawei_vrp'}:
+    if raw in {'huawei_vrp5', 'huawei_vrp8', 'huawei_vrp_unknown', 'huawei_vrpv8', 'huawei_vrp'}:
         return 'huawei_vrp'
     if raw.startswith('h3c_comware'):
         return 'h3c_comware'
+    if raw == 'maipu' or raw.startswith('maipu_mypower'):
+        return 'maipu_mypower'
+    if raw in {'ruijie', 'ruijie_os'} or raw.startswith('ruijie_rgos'):
+        return 'ruijie_rgos'
+    if raw in {'zte_zxros', 'zte_rosng', 'zte_os_unknown'}:
+        return raw
+    if raw in {'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'}:
+        return 'dptech_conplat'
+    if raw == 'dptech_conplat_unknown':
+        return raw
     return resolve_textfsm_platform(raw) or raw
 
 
@@ -1068,6 +1155,33 @@ def _normalize_template_version(value: str | None) -> str:
     return raw
 
 
+def resolve_textfsm_template_namespace(
+    platform: str | None,
+    *,
+    platform_family: str | None = None,
+    version: str | None = None,
+) -> str:
+    """Resolve a template filename namespace from the editor selection.
+
+    The UI sends both the selected platform family and version.  Keep the
+    concrete namespace in the filename so the catalog can distinguish parser
+    variants, while accepting legacy callers that only send ``platform``.
+    """
+    candidate = str(platform or '').strip().lower()
+    family = _normalize_template_platform_family(platform_family or candidate)
+    normalized_version = _normalize_template_version(version)
+
+    if family and normalized_version:
+        concrete = _PLANNED_TEMPLATE_PLATFORM_BY_SELECTION.get((family, normalized_version))
+        if concrete:
+            return concrete
+        # Maipu historically used the family key for its common grammar.
+        if family == 'maipu_mypower' and normalized_version == 'common':
+            return 'maipu'
+
+    return candidate or family
+
+
 def _template_catalog_metadata(info: dict[str, Any]) -> dict[str, Any]:
     """Add stable hierarchy fields without changing the parser platform key."""
     platform = str(info.get('platform') or '').strip().lower()
@@ -1076,7 +1190,24 @@ def _template_catalog_metadata(info: dict[str, Any]) -> dict[str, Any]:
         platform_family = 'h3c_comware'
     elif platform.startswith('huawei_'):
         vendor = 'huawei'
-        platform_family = 'huawei_vrp' if platform in {'huawei_vrp', 'huawei_vrpv8'} else platform
+        platform_family = 'huawei_vrp' if platform in {
+            'huawei_vrp', 'huawei_vrpv8', 'huawei_vrp5', 'huawei_vrp8', 'huawei_vrp_unknown',
+        } else platform
+    elif platform == 'maipu' or platform.startswith('maipu_mypower'):
+        vendor = 'maipu'
+        platform_family = 'maipu_mypower'
+    elif platform in {'ruijie', 'ruijie_os', 'ruijie_rgos'} or platform.startswith('ruijie_rgos_'):
+        vendor = 'ruijie'
+        platform_family = 'ruijie_rgos'
+    elif platform in {'dptech', 'dptech_ios', 'dptech_conplat', 'dptech_conplat_fw'}:
+        vendor = 'dptech'
+        platform_family = 'dptech_conplat'
+    elif platform == 'dptech_conplat_unknown':
+        vendor = 'dptech'
+        platform_family = 'dptech_conplat_unknown'
+    elif platform in {'zte_zxros', 'zte_rosng', 'zte_os_unknown'}:
+        vendor = 'zte'
+        platform_family = platform
     elif platform.startswith('cisco_'):
         vendor = 'cisco'
         platform_family = platform
@@ -1089,7 +1220,7 @@ def _template_catalog_metadata(info: dict[str, Any]) -> dict[str, Any]:
         version = {
             'huawei_vrp': 'v5',
             'huawei_vrpv8': 'v8',
-        }.get(platform, 'common')
+        }.get(platform, _PLANNED_TEMPLATE_PLATFORM_VERSIONS.get(platform, 'common'))
 
     return {
         **info,
@@ -1148,7 +1279,9 @@ def _canonical_template_command(platform: str, command: str) -> str:
     raw = re.sub(r'\s+', ' ', str(command or '').strip().lower())
     comparison_key = raw.replace('-', ' ')
     platform_key = str(platform or '').lower()
-    if platform_key.startswith('h3c_comware_v'):
+    if platform_key in {'huawei_vrp5', 'huawei_vrp8', 'huawei_vrp_unknown'}:
+        platform_key = 'huawei_vrp'
+    elif platform_key.startswith('h3c_comware_'):
         platform_key = 'h3c_comware'
     return _TEMPLATE_COMMAND_CANONICAL.get(platform_key, {}).get(comparison_key, command)
 
@@ -1161,6 +1294,8 @@ def _template_platform_candidates(platform: str) -> list[str]:
     explicit and one-way rather than a public compatibility alias list.
     """
     raw = str(platform or '').strip().lower()
+    if raw in _PLANNED_TEMPLATE_PLATFORM_CANDIDATES:
+        return list(_PLANNED_TEMPLATE_PLATFORM_CANDIDATES[raw])
     aliases = {
         'huawei': 'huawei_vrp',
         'vrp': 'huawei_vrp',
@@ -1340,26 +1475,25 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
     known_platforms = [
         'cisco_ios', 'cisco_xe', 'cisco_nxos', 'cisco_xr', 'cisco_asa', 'cisco_ftd', 'cisco_fxos',
         'cisco_wlc', 'cisco_viptela', 'cisco_s300', 'cisco_s200', 'cisco_apic',
-        'huawei_vrp', 'huawei_vrpv8', 'huawei_smartax', 'huawei_ont',
+        'huawei_vrp_unknown', 'huawei_vrp5', 'huawei_vrp8', 'huawei_vrpv8', 'huawei_vrp',
+        'huawei_smartax', 'huawei_ont',
         # H3C uses one public parser family.  Variant prefixes are explicit
         # grammar selectors and are checked before the family prefix.
-        'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9', 'h3c_comware',
+        'h3c_comware_unknown', 'h3c_comware_v5', 'h3c_comware_v7', 'h3c_comware_v9', 'h3c_comware',
         'juniper_junos', 'juniper_screenos',
         'arista_eos',
         'paloalto_panos',
         'fortinet',
         'checkpoint_gaia',
         'hillstone_stoneos',
+        'ruijie_rgos_unknown', 'ruijie_rgos_v10', 'ruijie_rgos_v11', 'ruijie_rgos_v12', 'ruijie_rgos',
         'ruijie_os',
-        'ruijie_rgos',
-        'zte_zxros',
+        'zte_os_unknown', 'zte_rosng', 'zte_zxros',
         'raisecom_ros',
-        'maipu',
+        'maipu_mypower_unknown', 'maipu_mypower_v6', 'maipu_mypower_v8', 'maipu_mypower_v9',
+        'maipu_mypower', 'maipu',
         'dcn_dcnos',
-        'dptech_ios',
-        'dptech',
-        'dptech_conplat',
-        'dptech_conplat_fw',
+        'dptech_conplat_unknown', 'dptech_conplat_fw', 'dptech_conplat', 'dptech_ios', 'dptech',
         'fiberhome_fengine',
         'linux',
         'alcatel_aos', 'alcatel_sros',
@@ -1378,8 +1512,8 @@ def _parse_template_filename(filename: str) -> dict[str, Any] | None:
             command_part = stem[len(platform) + 1:]
             command = command_part.replace('_', ' ')
             public_platform = 'h3c_comware' if platform.startswith('h3c_comware') else platform
-            template_variant = None
-            if platform.startswith('h3c_comware_v'):
+            template_variant = _PLANNED_TEMPLATE_PLATFORM_VERSIONS.get(platform)
+            if platform.startswith('h3c_comware_v') or platform == 'h3c_comware_unknown':
                 template_variant = platform.rsplit('_', 1)[-1]
             return {
                 'platform': public_platform,
@@ -1461,10 +1595,15 @@ def save_custom_template(
     path.write_text(content, encoding='utf-8')
 
     info = _parse_template_filename(filename) or {}
+    metadata = _template_catalog_metadata(info)
     return {
         'filename': filename,
-        'platform': info.get('platform', ''),
-        'command': info.get('command', ''),
+        'platform': metadata.get('platform', ''),
+        'platform_family': metadata.get('platform_family', ''),
+        'vendor': metadata.get('vendor', ''),
+        'version': metadata.get('version', ''),
+        'template_variant': metadata.get('template_variant', ''),
+        'command': metadata.get('command', ''),
         'action_code': template_action_code(content),
         'source': 'custom',
         'size': len(content),

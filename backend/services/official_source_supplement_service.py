@@ -142,7 +142,10 @@ def review_official_source_suggestion(
                 "vendor": vendor,
                 "product_family": model,
                 "version_scope": {"primary": release, "compatibility": release},
-                "terms_review_status": "reviewed",
+                # The administrator's explicit approval is the terms gate for
+                # this reviewed official URL.  Keep the value aligned with the
+                # import boundary contract (approved/waived/not_required).
+                "terms_review_status": "approved",
                 "reviewer": reviewer,
                 "reviewed_at": now,
                 "name": f"{vendor} {model} {feature}",

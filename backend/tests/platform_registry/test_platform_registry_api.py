@@ -7,6 +7,7 @@ from api.platform_registry import (
     PlatformActionRequest,
     PlatformActionUpdateRequest,
     PlatformBatchBindingRequest,
+    PlatformBatchUnbindingRequest,
     PlatformProfileCreateRequest,
     PlatformProfileUpdateRequest,
     PlatformReleaseCreateRequest,
@@ -52,12 +53,16 @@ def test_platform_binding_request_models_normalize_and_reject_duplicate_batches(
         platform_profile_id="profile-1",
     )
     assert request.device_ids == ["device-1", "device-2"]
+    unbind_request = PlatformBatchUnbindingRequest(device_ids=[" device-1 "])
+    assert unbind_request.device_ids == ["device-1"]
 
     with pytest.raises(ValidationError):
         PlatformBatchBindingRequest(
             device_ids=["device-1", " device-1"],
             platform_profile_id="profile-1",
         )
+    with pytest.raises(ValidationError):
+        PlatformBatchUnbindingRequest(device_ids=["device-1", " device-1"])
 
 
 def test_operator_cannot_approve_publish_or_rollback_resources():

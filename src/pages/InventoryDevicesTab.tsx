@@ -4,13 +4,14 @@ import { useInventoryTableActions } from '../hooks/useInventoryTableActions';
 import {
   Upload, Download, Plus, Search, Activity,
   AlertTriangle, CheckCircle2, XCircle, Server, Router,
-  Shield, Trash2, SlidersHorizontal, Tag, RefreshCw, X, WifiOff,
+  Shield, Trash2, SlidersHorizontal, Tag, RefreshCw, X, WifiOff, Settings2,
 } from 'lucide-react';
 import type { Device, DeviceConnectionCheckSummary, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
 import DeviceTable, { DEFAULT_COLUMNS, type ColumnVisibility, type ColumnKey } from '../components/DeviceList/DeviceTable';
 import TagFilterDropdown from '../components/TagFilterDropdown';
 import PageHero from '../components/PageHero';
+import BatchPlatformBindingModal from '../components/BatchPlatformBindingModal';
 
 /* ─── Column Visibility Toggle ─── */
 const COLUMN_LABELS: Record<ColumnKey, { zh: string; en: string }> = {
@@ -128,6 +129,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   const [batchTagOpen, setBatchTagOpen] = useState(false);
   const [batchTagIds, setBatchTagIds] = useState<string[]>([]);
   const [batchTagLoading, setBatchTagLoading] = useState(false);
+  const [batchPlatformOpen, setBatchPlatformOpen] = useState(false);
   const batchTagRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -579,6 +581,17 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                 <span>{zh ? '批量配置变更' : 'Batch Config'}</span>
               </button>
 
+              <button
+                type="button"
+                onClick={() => setBatchPlatformOpen(true)}
+                disabled={selectedDeviceIds.length > 200}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-200 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-700 shadow-2xs transition-all hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-cyan-500/30 dark:bg-zinc-800 dark:text-cyan-300 dark:hover:bg-cyan-950/40"
+                title={selectedDeviceIds.length > 200 ? (zh ? '批量平台操作最多支持 200 台设备' : 'Batch platform operations support up to 200 devices') : undefined}
+              >
+                <Settings2 size={13} className="text-cyan-500" />
+                <span>{zh ? '批量平台' : 'Batch Platform'}</span>
+              </button>
+
               <div ref={batchTagRef} className="relative">
                 <button
                   onClick={() => setBatchTagOpen(!batchTagOpen)}
@@ -668,6 +681,20 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
         </div>
 
       </div>
+      {batchPlatformOpen && (
+        <BatchPlatformBindingModal
+          deviceIds={selectedDeviceIds}
+          devices={inventoryRows}
+          language={language}
+          onClose={() => setBatchPlatformOpen(false)}
+          onCompleted={async () => {
+            setBatchPlatformOpen(false);
+            setSelectedDeviceIds([]);
+            await fetchInventory();
+            onRefresh();
+          }}
+        />
+      )}
     </div>
   );
 };

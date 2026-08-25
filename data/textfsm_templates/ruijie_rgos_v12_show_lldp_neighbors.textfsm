@@ -1,0 +1,38 @@
+# nexora-action-code: get_lldp_neighbors
+Value Required DEVICE_ID (\S+)
+Value LOCAL_INTERFACE (\S+)
+Value PORT_ID (\S+(?:\s+[0-9\/\.\:\-_]+)?)
+Value CAPABILITY ([A-Za-z0-9](?:,\s*[A-Za-z0-9])*)
+Value HOLD_TIME (\d+\S*(?:\s+\d+\S*)?)
+
+Start
+  ^Capability\s+codes: -> Header
+  ^System\s+Name\s+Local\s+Intf -> TableNew
+  ^Device\s+ID\s+Local\s+Intf -> TableOld
+  ^.*#\s*show\s+ -> Next
+  ^\s*$$
+  ^. -> Next
+
+Header
+  ^System\s+Name\s+Local\s+Intf -> TableNew
+  ^Device\s+ID\s+Local\s+Intf -> TableOld
+  ^\s*$$
+  ^. -> Next
+
+TableNew
+  ^\s*${DEVICE_ID}\s+${LOCAL_INTERFACE}\s+${PORT_ID}\s+${CAPABILITY}\s+${HOLD_TIME}\s*$$ -> CheckWrap
+  ^\s*[A-Za-z0-9\-_]+\s*$$ -> Next
+  ^\s*$$
+  ^. -> Next
+
+CheckWrap
+  ^\s*[A-Za-z0-9\-_]+\s*$$ -> Record TableNew
+  ^\s*${DEVICE_ID}\s+${LOCAL_INTERFACE}\s+${PORT_ID}\s+${CAPABILITY}\s+${HOLD_TIME}\s*$$ -> Continue.Record
+  ^\s*${DEVICE_ID}\s+${LOCAL_INTERFACE}\s+${PORT_ID}\s+${CAPABILITY}\s+${HOLD_TIME}\s*$$ -> CheckWrap
+  ^\s*$$ -> Record TableNew
+  ^. -> Record TableNew
+
+TableOld
+  ^\s*${DEVICE_ID}\s+${LOCAL_INTERFACE}\s+${HOLD_TIME}\s+${CAPABILITY}\s+${PORT_ID}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

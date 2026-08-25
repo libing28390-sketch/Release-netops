@@ -1569,11 +1569,35 @@ export interface OfficialSourceSuggestion {
   updated_at: string;
 }
 
-interface KnowledgeSourceEnvelope<T> { success: boolean; data: T; message?: string }
+interface KnowledgeSourceEnvelope<T> {
+  success: boolean;
+  data: T;
+  message?: string;
+  meta?: {
+    pagination?: { page: number; page_size: number; total: number; total_pages: number; sort_by?: string; sort_order?: string };
+  };
+}
 
-export async function listKnowledgeSources(status = 'all'): Promise<KnowledgeSourceRegistry[]> {
-  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRegistry[]>>(`/api/v2/kb/sources?status=${encodeURIComponent(status)}`);
-  return payload.data || [];
+export interface KnowledgeSourcePage {
+  items: KnowledgeSourceRegistry[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+}
+
+export async function listKnowledgeSources(status = 'all', page = 1, pageSize = 20): Promise<KnowledgeSourcePage> {
+  const params = new URLSearchParams({ status, page: String(page), page_size: String(pageSize) });
+  const payload = await apiRequest<KnowledgeSourceEnvelope<KnowledgeSourceRegistry[]>>(`/api/v2/kb/sources?${params.toString()}`);
+  const pagination = payload.meta?.pagination;
+  const items = payload.data || [];
+  return {
+    items,
+    page: pagination?.page || page,
+    page_size: pagination?.page_size || pageSize,
+    total: pagination?.total ?? items.length,
+    total_pages: pagination?.total_pages || 1,
+  };
 }
 
 export async function getKnowledgeSourceRefreshStatus(sourceId: string): Promise<KnowledgeSourceRefreshStatus> {

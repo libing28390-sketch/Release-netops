@@ -13,6 +13,7 @@ from services.audit_service import log_audit_event
 from services.device_health_service import annotate_devices_with_health, normalize_hardware_status
 from services.site_identity_service import canonical_site_name
 from services.operational_data_service import collect_operational_data, collect_custom_command_data
+from services.platform_identification_service import _canonical_vendor
 from services import tag_service
 from core.crypto import encrypt_credential, decrypt_credential
 from core.config import settings
@@ -98,6 +99,16 @@ def _vendor_from_platform(platform: str) -> str:
         return 'Arista'
     if 'juniper' in p or 'junos' in p:
         return 'Juniper'
+    if 'ruijie' in p or 'rgos' in p:
+        return 'Ruijie'
+    if 'zte' in p or 'zxros' in p or 'rosng' in p:
+        return 'ZTE'
+    if 'maipu' in p or 'mypower' in p:
+        return 'Maipu'
+    if 'dptech' in p or 'conplat' in p:
+        return 'DPTech'
+    if 'raisecom' in p or 'ros' in p:
+        return 'Raisecom'
     return ''
 
 
@@ -108,6 +119,7 @@ def _resolve_platform_binding(
     *,
     existing: dict | None = None,
     clear_existing: bool = False,
+    device_vendor: object = None,
 ) -> tuple[str, str, str, int]:
     """Resolve a concrete registry profile while keeping legacy device writes valid.
 
@@ -137,13 +149,21 @@ def _resolve_platform_binding(
     profile_id = str(submitted or '').strip()
     if profile_id:
         profile = conn.execute(
-            'SELECT id, platform_code, status FROM platform_profiles WHERE id = ?',
+            'SELECT id, platform_code, vendor, status FROM platform_profiles WHERE id = ?',
             (profile_id,),
         ).fetchone()
         if not profile:
             raise HTTPException(status_code=400, detail='Platform profile not found')
         if str(profile['status'] or '').upper() == 'ARCHIVED':
             raise HTTPException(status_code=400, detail='Archived platform profiles cannot be assigned to devices')
+        resolved_device_vendor = _canonical_vendor(device_vendor) or _canonical_vendor(fallback_platform)
+        profile_vendor = profile['vendor'] if hasattr(profile, 'keys') and 'vendor' in profile.keys() else ''
+        target_vendor = _canonical_vendor(profile_vendor)
+        if resolved_device_vendor and target_vendor and resolved_device_vendor != target_vendor:
+            raise HTTPException(
+                status_code=409,
+                detail='Device vendor and target platform vendor must match',
+            )
         if existing_profile_id:
             return (
                 str(profile['platform_code']),
@@ -2272,6 +2292,7 @@ def create_device(device: dict = Body(...)):
             conn,
             device.get('platform_profile_id'),
             device.get('platform'),
+            device_vendor=device.get('vendor'),
         )
     except HTTPException:
         conn.close()
@@ -2488,6 +2509,7 @@ def update_device(device_id: str, device: dict = Body(...)):
             device.get('platform', existing_row['platform']),
             existing=existing_device,
             clear_existing=clear_platform_binding,
+            device_vendor=device.get('vendor') or existing_device.get('vendor'),
         )
 
         cred_source = (device.get('credential_source') or existing_row['credential_source'] or 'local').lower()

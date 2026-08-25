@@ -74,8 +74,8 @@ describe('KUI-018 knowledge administration responsive gates', () => {
 
   it('keeps retrieval trace empty state responsive and redacted in dark mode', async () => {
     render(<RetrievalTracePanel />);
-    expect(await screen.findByText(/暂无 Trace/)).toBeTruthy();
-    const root = screen.getByText('Retrieval Trace 管理员查看器').closest('div.mx-auto');
+    expect(await screen.findByText(/暂无检索记录/)).toBeTruthy();
+    const root = screen.getByText('检索过程追踪').closest('div.mx-auto');
     expect(root?.className).toContain('dark:text-slate-100');
     expect(root?.className).toContain('w-full');
     expect((await screen.findAllByText(/默认脱敏/)).length).toBeGreaterThan(0);

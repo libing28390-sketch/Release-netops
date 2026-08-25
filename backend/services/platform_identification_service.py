@@ -126,8 +126,8 @@ def _assert_device_view(conn, device_id: str, user: dict[str, Any]) -> dict[str,
 def _binding_compatibility(device: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     """Return a safe compatibility result before a binding is persisted."""
     warnings: list[dict[str, str]] = []
-    device_vendor = str(device.get("vendor") or "").strip().lower()
-    profile_vendor = str(profile.get("vendor") or "").strip().lower()
+    device_vendor = _infer_device_vendor(device)
+    profile_vendor = _canonical_vendor(profile.get("catalog_vendor") or profile.get("vendor"))
     if device_vendor and profile_vendor and device_vendor != profile_vendor:
         warnings.append({
             "code": "VENDOR_PLATFORM_MISMATCH",
@@ -147,6 +147,76 @@ def _binding_compatibility(device: dict[str, Any], profile: dict[str, Any]) -> d
     }
 
 
+_VENDOR_ALIASES: tuple[tuple[str, str], ...] = (
+    ("huawei", "huawei"),
+    ("华为", "huawei"),
+    ("h3c", "h3c"),
+    ("hpcomware", "h3c"),
+    ("hp", "h3c"),
+    ("华三", "h3c"),
+    ("cisco", "cisco"),
+    ("思科", "cisco"),
+    ("juniper", "juniper"),
+    ("junos", "juniper"),
+    ("瞻博", "juniper"),
+    ("arista", "arista"),
+    ("锐捷", "ruijie"),
+    ("ruijie", "ruijie"),
+    ("zte", "zte"),
+    ("中兴", "zte"),
+    ("maipu", "maipu"),
+    ("迈普", "maipu"),
+    ("dptech", "dptech"),
+    ("迪普", "dptech"),
+    ("raisecom", "raisecom"),
+    ("瑞斯康达", "raisecom"),
+    ("fortinet", "fortinet"),
+    ("飞塔", "fortinet"),
+)
+
+
+def _canonical_vendor(value: Any) -> str:
+    """Normalize vendor aliases so an H3C/HP-Comware legacy value is one vendor."""
+    normalized = re.sub(r"[\s_\-./]+", "", str(value or "").strip().lower())
+    if normalized in {"", "unknown", "generic", "none", "null", "na", "n/a", "unassigned"}:
+        return ""
+    for alias, canonical in sorted(_VENDOR_ALIASES, key=lambda item: len(item[0]), reverse=True):
+        alias_normalized = re.sub(r"[\s_\-./]+", "", alias.lower())
+        if normalized == alias_normalized or alias_normalized in normalized:
+            return canonical
+    return normalized
+
+
+def _infer_device_vendor(device: dict[str, Any]) -> str:
+    """Resolve a device vendor from explicit inventory data or its platform family."""
+    for value in (
+        device.get("vendor"),
+        device.get("platform"),
+        device.get("device_type"),
+    ):
+        vendor = _canonical_vendor(value)
+        if vendor:
+            return vendor
+    return ""
+
+
+def _assert_device_profile_vendor(device: dict[str, Any], profile: dict[str, Any]) -> None:
+    """Reject a registry binding that crosses vendor boundaries.
+
+    Older imported assets can still have no vendor/platform identity. Those
+    rows are allowed through this check for backwards compatibility, but any
+    identity that can be resolved must agree with the target profile.
+    """
+    device_vendor = _infer_device_vendor(device)
+    profile_vendor = _canonical_vendor(profile.get("catalog_vendor") or profile.get("vendor"))
+    if device_vendor and profile_vendor and device_vendor != profile_vendor:
+        raise PlatformRegistryError(
+            "PLATFORM_VENDOR_MISMATCH",
+            "设备厂商与目标平台注册表厂商不一致，请选择同一厂商的平台",
+            status_code=409,
+        )
+
+
 def _assert_device_profile_platform(device: dict[str, Any], profile: dict[str, Any]) -> None:
     """Require an explicit device platform to match the target Profile.
 
@@ -155,9 +225,7 @@ def _assert_device_profile_platform(device: dict[str, Any], profile: dict[str, A
     the target Profile or one of its declared aliases.
     """
     device_platform = str(device.get("platform") or "").strip().lower()
-    if device_platform in {"", "unknown", "generic"}:
-        return
-    if not platform_codes_match(
+    if device_platform not in {"", "unknown", "generic"} and not platform_codes_match(
         device_platform,
         profile.get("platform_code"),
         profile.get("parser_platform"),
@@ -167,6 +235,7 @@ def _assert_device_profile_platform(device: dict[str, Any], profile: dict[str, A
             "设备当前平台与目标平台注册表不一致，请选择同一平台后再绑定",
             status_code=409,
         )
+    _assert_device_profile_vendor(device, profile)
 
 
 def _match(rule: dict[str, Any], output: str) -> bool:
@@ -414,9 +483,10 @@ def identify_device(
 
 
 _INVENTORY_PROFILE_BY_PARSER_VARIANT = {
-    "h3c_comware_v5": "hp_comware",
-    "h3c_comware_v7": "h3c_comware",
-    "h3c_comware_v9": "h3c_comware9",
+    "huawei_vrpv8": "huawei_vrp8",
+    "h3c_comware_v5": "h3c_comware_v5",
+    "h3c_comware_v7": "h3c_comware_v7",
+    "h3c_comware_v9": "h3c_comware_v9",
 }
 
 
@@ -955,5 +1025,76 @@ def bind_devices_batch(
     except Exception as exc:
         conn.rollback()
         raise PlatformRegistryError("PLATFORM_BATCH_BIND_FAILED", "Batch platform binding failed") from exc
+    finally:
+        conn.close()
+
+
+def unbind_devices_batch(
+    device_ids: list[str],
+    user: dict[str, Any],
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Remove explicit platform Profile bindings from a bounded device batch.
+
+    Unbinding is deliberately separate from binding.  It clears only the
+    registry reference and lock, while retaining the legacy parser-family
+    value on ``devices.platform`` so an operator can recover connectivity and
+    bind a corrected concrete profile afterwards.  Removing an existing
+    binding is an identity change and therefore requires Administrator force.
+    """
+    normalized_ids = [str(item or "").strip() for item in device_ids or []]
+    if not normalized_ids or len(normalized_ids) > 200 or any(not item for item in normalized_ids):
+        raise PlatformRegistryError("INVALID_DEVICE_BATCH", "device_ids must contain 1-200 non-empty values")
+    if len(set(normalized_ids)) != len(normalized_ids):
+        raise PlatformRegistryError("DUPLICATE_DEVICE_BATCH", "device_ids must not contain duplicates")
+    if force and user.get("role") != "Administrator":
+        raise _scope_denied("PLATFORM_BIND_FORCE_FORBIDDEN")
+
+    conn = get_db_connection()
+    try:
+        old_bindings: list[dict[str, Any]] = []
+        for device_id in normalized_ids:
+            device = _load_device(conn, device_id, user, lock=True)
+            existing_profile_id = str(device.get("platform_profile_id") or "").strip()
+            if existing_profile_id and not force:
+                raise PlatformRegistryError(
+                    "PLATFORM_BINDING_LOCKED",
+                    f"Device {device_id} platform binding requires Administrator force to remove",
+                    status_code=409,
+                )
+            old_bindings.append({"device": device, "old_profile_id": existing_profile_id})
+
+        for item in old_bindings:
+            device = item["device"]
+            conn.execute(
+                """UPDATE devices
+                   SET platform_profile_id = NULL, platform_source = 'LEGACY', platform_locked = 0
+                   WHERE id = ?""",
+                (device["id"],),
+            )
+
+        conn.commit()
+        return {
+            "success": True,
+            "atomic": True,
+            "device_count": len(old_bindings),
+            "unbound": True,
+            "items": [
+                {
+                    "device_id": item["device"]["id"],
+                    "hostname": item["device"].get("hostname") or "",
+                    "old_platform": item["device"].get("platform") or "",
+                    "old_platform_profile_id": item["old_profile_id"] or None,
+                }
+                for item in old_bindings
+            ],
+        }
+    except PlatformRegistryError:
+        conn.rollback()
+        raise
+    except Exception as exc:
+        conn.rollback()
+        raise PlatformRegistryError("PLATFORM_BATCH_UNBIND_FAILED", "Batch platform unbinding failed") from exc
     finally:
         conn.close()

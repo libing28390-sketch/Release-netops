@@ -1,0 +1,37 @@
+# nexora-action-code: get_cpu
+Value Filldown SLOT (\d+)
+Value Filldown MODEL (\S+)
+Value Filldown CPU_5S (\d+(?:\.\d+)?)
+Value Filldown CPU_1M (\d+(?:\.\d+)?)
+Value Filldown CPU_5M (\d+(?:\.\d+)?)
+Value List CORE_ID (\d+)
+Value List CORE_5S (\d+(?:\.\d+)?)
+Value List CORE_1M (\d+(?:\.\d+)?)
+Value List CORE_5M (\d+(?:\.\d+)?)
+Value List PROC_NO (\d+)
+Value List PROC_5S (\d+(?:\.\d+)?)
+Value List PROC_1M (\d+(?:\.\d+)?)
+Value List PROC_5M (\d+(?:\.\d+)?)
+Value List PROCESS (\S+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^\[Slot\s+${SLOT}:\s*${MODEL}\]
+  ^\[Slot\s+${SLOT}\]
+  # 格式 1：旧版单行格式
+  ^CPU\s+utilization\s+for\s+five\s+seconds:\s*${CPU_5S}%\s*,\s*one\s+minute:\s*${CPU_1M}%\s*,\s*five\s+minutes:\s*${CPU_5M}%
+  # 格式 2：新版分行格式（支持浮点小数与 'in'）
+  ^CPU\s+utilization\s+in\s+five\s+seconds:\s*${CPU_5S}%
+  ^CPU\s+utilization\s+in\s+one\s+minute:\s*${CPU_1M}%
+  ^CPU\s+utilization\s+in\s+five\s+minutes:\s*${CPU_5M}%
+  # 核心利用率行
+  ^Core\s+${CORE_ID}:\s+five\s+seconds:\s*${CORE_5S}%\s*,\s*one\s+minute:\s*${CORE_1M}%\s*,\s*five\s+minutes:\s*${CORE_5M}%
+  # 进程表头
+  ^\s*NO\s+5Sec\s+1Min\s+5Min\s+Process -> ProcessTable
+  ^\s*$$
+  ^. -> Next
+
+ProcessTable
+  ^\s*${PROC_NO}\s+${PROC_5S}%\s+${PROC_1M}%\s+${PROC_5M}%\s+${PROCESS}\s*$$
+  ^\s*$$
+  ^. -> Next

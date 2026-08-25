@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Edit2, Eye, EyeOff, Plus, Search, X } from '
 import type { Device, TagDefinition } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
 import { apiRequest } from '../api/http';
+import { inferPlatformVendor, platformVendorLabel } from '../utils/platformVendor';
 
 type DeviceFormMode = 'add' | 'edit';
 
@@ -153,6 +154,15 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
   const selectedPlatformValue = form.platform_profile_id || form.platform || 'cisco_ios';
   const selectedRegistryProfile = registryPlatforms.find((profile) => profile.id === form.platform_profile_id);
   const missingRegistryProfile = form.platform_profile_id && !selectedRegistryProfile;
+  const formVendor = inferPlatformVendor(form.vendor, form.platform);
+  const compatibleRegistryPlatforms = registryPlatforms.filter((profile) => {
+    if (!formVendor) return true;
+    return inferPlatformVendor(profile.vendor, profile.platform_code) === formVendor;
+  });
+  const compatibleLegacyPlatformOptions = platformOptions.filter((option) => {
+    if (!formVendor) return true;
+    return inferPlatformVendor(option.value) === formVendor;
+  });
 
   const handlePlatformChange = (value: string) => {
     const profile = registryPlatforms.find((item) => item.id === value);
@@ -160,6 +170,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
       onFormChange({
         ...form,
         platform: profile.platform_code,
+        vendor: profile.vendor || form.vendor,
         platform_profile_id: profile.id,
         platform_source: 'MANUAL',
         platform_locked: false,
@@ -259,9 +270,9 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                     {form.platform || form.platform_profile_id}
                   </option>
                 )}
-                {registryPlatforms.length > 0 && (
+                {compatibleRegistryPlatforms.length > 0 && (
                   <optgroup label={language === 'zh' ? '平台注册' : 'Platform Registry'}>
-                    {registryPlatforms.map((profile) => (
+                    {compatibleRegistryPlatforms.map((profile) => (
                       <option key={profile.id} value={profile.id}>
                         {language === 'zh' ? (profile.name_zh || profile.name_en || profile.platform_code) : (profile.name_en || profile.name_zh || profile.platform_code)}
                         {profile.vendor ? ` · ${profile.vendor}` : ''}
@@ -270,7 +281,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
                   </optgroup>
                 )}
                 <optgroup label={language === 'zh' ? '兼容驱动（未绑定注册表）' : 'Legacy driver (unbound)'}>
-                  {platformOptions.map((option) => (
+                  {compatibleLegacyPlatformOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </optgroup>
@@ -278,7 +289,8 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
               <p className="mt-1 text-[10px] text-black/40">
                 {selectedRegistryProfile
                   ? (language === 'zh' ? `已绑定：${selectedRegistryProfile.platform_code}` : `Bound to ${selectedRegistryProfile.platform_code}`)
-                  : (language === 'zh' ? '选择注册表平台后，设备会绑定到具体产品/版本。' : 'Choose a registry profile to bind the concrete product/version.')}
+                  : (language === 'zh' ? '选择注册表平台后，设备会绑定到具体产品/版本。平台只展示同厂商选项。' : 'Choose a registry profile to bind the concrete product/version. Only same-vendor options are shown.')}
+                {formVendor && <span className="ml-1">· {language === 'zh' ? `厂商：${platformVendorLabel(formVendor, language)}` : `Vendor: ${platformVendorLabel(formVendor, language)}`}</span>}
               </p>
             </div>
             <div>
