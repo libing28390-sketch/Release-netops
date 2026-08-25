@@ -164,6 +164,7 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         snmp_port INTEGER DEFAULT 161,
         snmp_cpu_oid TEXT DEFAULT '',
         snmp_memory_oid TEXT DEFAULT '',
+        snmp_metric_profile_id TEXT DEFAULT '',
         cpu_history TEXT DEFAULT '[]',
         memory_history TEXT DEFAULT '[]',
         temp INTEGER DEFAULT 35,
@@ -180,9 +181,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     )
     ''')
 
-    # Model-scoped SNMP metric overrides.  The versioned migration creates the
-    # same table for existing installations; keeping the baseline idempotent
-    # also makes fresh databases usable before the migration runner completes.
+    # SNMP metric template definitions.  Device selection is stored explicitly
+    # on devices; vendor/model are metadata and filtering fields only.
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS snmp_metric_profiles (
         id TEXT PRIMARY KEY,
@@ -195,7 +195,9 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         updated_by TEXT NOT NULL DEFAULT '',
-        UNIQUE (vendor_key, model_key)
+        template_name TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT 'custom',
+        official_preset_id TEXT NOT NULL DEFAULT ''
     )
     ''')
     cursor.execute(
@@ -2551,6 +2553,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
         cursor.execute("ALTER TABLE devices ADD COLUMN snmp_cpu_oid TEXT DEFAULT ''")
     if 'snmp_memory_oid' not in columns:
         cursor.execute("ALTER TABLE devices ADD COLUMN snmp_memory_oid TEXT DEFAULT ''")
+    if 'snmp_metric_profile_id' not in columns:
+        cursor.execute("ALTER TABLE devices ADD COLUMN snmp_metric_profile_id TEXT DEFAULT ''")
     if 'cpu_history' not in columns:
         cursor.execute('ALTER TABLE devices ADD COLUMN cpu_history TEXT DEFAULT "[]"')
     if 'memory_history' not in columns:

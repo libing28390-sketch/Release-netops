@@ -23,9 +23,22 @@ const VENDOR_BADGES: Record<string, { label: string; color: string; bg: string }
   sql: { label: 'SQL Query', color: '#ec4899', bg: 'rgba(236, 72, 153, 0.12)' },
 };
 
+const normalizeMarkdownContent = (value: string): string => (
+  value.replace(/\b(https?)\\:\/\//gi, '$1://')
+);
+
+const normalizeSafeHref = (value: string | undefined): string | null => {
+  const href = String(value || '').trim()
+    .replace(/^<|>$/g, '')
+    .replace(/^https?\\:\/\//i, (match) => match.replace('\\', ''));
+  if (/^(?:https?|mailto):/i.test(href) || href.startsWith('/') || href.startsWith('#')) return href;
+  return null;
+};
+
 const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ language, code }) => {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  const pointerCopyTriggered = React.useRef(false);
   const langKey = (language || '').toLowerCase();
   const badgeInfo = VENDOR_BADGES[langKey] || {
     label: language ? `${language.toUpperCase()} Code` : 'CLI / Text',
@@ -34,12 +47,27 @@ const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ languag
   };
 
   const handleCopy = async () => {
+    setCopyFailed(false);
     const copiedSuccessfully = await copyTextWithFallback(code);
     setCopyFailed(!copiedSuccessfully);
     if (!copiedSuccessfully) return;
 
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType !== 'mouse') return;
+    pointerCopyTriggered.current = true;
+    void handleCopy();
+    window.setTimeout(() => {
+      pointerCopyTriggered.current = false;
+    }, 0);
+  };
+
+  const handleButtonClick = () => {
+    if (pointerCopyTriggered.current) return;
+    void handleCopy();
   };
 
   return (
@@ -56,7 +84,8 @@ const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ languag
 
       <button
         type="button"
-        onClick={handleCopy}
+        onPointerUp={handlePointerUp}
+        onClick={handleButtonClick}
         aria-label={copied ? '已复制代码' : '复制代码'}
         title={copyFailed ? '复制失败，请检查浏览器权限' : copied ? '已复制代码' : '复制代码'}
         className={`p-1.5 rounded-md transition ${
@@ -68,6 +97,7 @@ const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ languag
         }`}
       >
         {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+        <span>{copied ? '已复制' : copyFailed ? '复制失败' : '复制'}</span>
         <span className="sr-only">{copied ? '已复制代码' : '复制代码'}</span>
       </button>
     </div>
@@ -132,16 +162,20 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
           th: ({ children }) => <th className="px-3.5 py-2 font-medium">{children}</th>,
           td: ({ children }) => <td className="px-3.5 py-2">{children}</td>,
           hr: () => <hr className="my-4 border-gray-200 dark:border-gray-700" />,
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            const safeHref = normalizeSafeHref(href);
+            if (!safeHref) return <span>{children}</span>;
+            return (
+              <a
+                href={safeHref}
+                target={safeHref.startsWith('http') ? '_blank' : undefined}
+                rel={safeHref.startsWith('http') ? 'noopener noreferrer' : undefined}
+                className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
+              >
+                {children}
+              </a>
+            );
+          },
           code({ inline, className: codeClassName, children, ...props }: any) {
             const match = /language-(\w+)/.exec(codeClassName || '');
             const language = match ? match[1] : '';
@@ -171,7 +205,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
           },
         }}
       >
-        {content}
+        {normalizeMarkdownContent(content)}
       </ReactMarkdown>
     </div>
   );

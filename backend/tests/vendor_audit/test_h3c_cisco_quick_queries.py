@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import services.operational_data_service as operational_service
-from core.textfsm import smart_parse_cli
+from core.textfsm import list_template_suggestions, smart_parse_cli
 from services.operational_data_service import NTC_PLATFORM_MAP, _resolve_commands
 
 
@@ -122,6 +122,24 @@ def test_platform_catalog_keeps_h3c_and_cisco_command_families_separate():
 
     assert NTC_PLATFORM_MAP["cisco_xe"] == "cisco_ios"
     assert NTC_PLATFORM_MAP["h3c_comware_v9"] == "h3c_comware"
+
+
+def test_comware_suggestions_keep_abbreviated_query_in_the_selected_version():
+    v7_suggestions = list_template_suggestions("h3c_comware_v7", "display ver", 8)
+    assert any(
+        item["command"] == "display version"
+        and item["filename"].startswith("h3c_comware_v7_")
+        for item in v7_suggestions
+    )
+    assert not any(item["filename"].startswith("h3c_comware_v5_") for item in v7_suggestions)
+
+    v5_suggestions = list_template_suggestions("h3c_comware_v5", "dis ver", 8)
+    assert any(
+        item["command"] == "display version"
+        and item["filename"].startswith("h3c_comware_v5_")
+        for item in v5_suggestions
+    )
+    assert not any(item["filename"].startswith("h3c_comware_v7_") for item in v5_suggestions)
 
 
 def test_h3c_bgp_unicast_and_no_suffix_use_distinct_textfsm_templates():

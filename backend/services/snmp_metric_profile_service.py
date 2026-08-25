@@ -21,7 +21,6 @@ from typing import Any
 from database import get_db_connection
 from services.snmp_counter_service import validate_counter_bits
 from services.snmp_service import (
-    DEFAULT_INTERFACE_CONFIG,
     SYS_UPTIME,
     normalize_interface_config,
     normalize_metric_oid,
@@ -29,7 +28,7 @@ from services.snmp_service import (
 
 
 _PROFILE_CACHE_TTL = 60.0
-_profile_cache: dict[tuple[str, str], dict[str, Any]] | None = None
+_profile_cache: dict[str, dict[str, Any]] | None = None
 _profile_cache_expires_at = 0.0
 _profile_cache_lock = threading.Lock()
 
@@ -69,14 +68,6 @@ HEALTH_METRIC_KEYS = (
 # Alert rules deliberately do not store a second copy of an OID.  These
 # bindings describe which collector and which model-template section owns the
 # observation, so the alert engine and the SNMP template editor stay aligned.
-# The interface defaults below are read from the same IF-MIB configuration
-# consumed by ``collect_interface_health``/``collect_interface_data``.
-_INTERFACE_DEFAULT_OIDS = {
-    key: value
-    for key, value in DEFAULT_INTERFACE_CONFIG.items()
-    if key.endswith("_oid")
-}
-
 ALERT_METRIC_COLLECTION_BINDINGS: dict[str, dict[str, Any]] = {
     "cpu": {
         "collection_source": "snmp_template",
@@ -93,8 +84,8 @@ ALERT_METRIC_COLLECTION_BINDINGS: dict[str, dict[str, Any]] = {
             "metric_definitions.cpu.capacity_oid",
         ],
         "default_oids": {},
-        "description": "优先使用已验证的型号模板 CPU 定义；没有模板定义时才使用厂商内置采集器。",
-        "description_en": "Use the verified model-template CPU definition first, then the built-in vendor collector.",
+        "description": "只使用已在 SNMP 指标模板中应用的型号 CPU 定义；未应用模板时不采集该指标。",
+        "description_en": "Use only the applied model-template CPU definition; do not collect this metric before a template is applied.",
     },
     "memory": {
         "collection_source": "snmp_template",
@@ -111,8 +102,8 @@ ALERT_METRIC_COLLECTION_BINDINGS: dict[str, dict[str, Any]] = {
             "metric_definitions.memory.capacity_oid",
         ],
         "default_oids": {},
-        "description": "优先使用已验证的型号模板内存定义；比例计算方式由模板 mode 决定。",
-        "description_en": "Use the verified model-template memory definition; the template mode controls the percentage formula.",
+        "description": "只使用已在 SNMP 指标模板中应用的型号内存定义；比例计算方式由模板 mode 决定。",
+        "description_en": "Use only the applied model-template memory definition; the template mode controls the percentage formula.",
     },
     "temperature_high": {
         "collection_source": "snmp_template",
@@ -164,18 +155,9 @@ ALERT_METRIC_COLLECTION_BINDINGS: dict[str, dict[str, Any]] = {
             "interface_config.if_out_octets_oid",
             "interface_config.if_high_speed_oid",
         ],
-        "default_oids": {
-            key: _INTERFACE_DEFAULT_OIDS[key]
-            for key in (
-                "if_hc_in_octets_oid",
-                "if_hc_out_octets_oid",
-                "if_in_octets_oid",
-                "if_out_octets_oid",
-                "if_high_speed_oid",
-            )
-        },
-        "description": "接口利用率使用 Counter64 成对优先、Counter32 成对回退，并按 ifHighSpeed 计算带宽。",
-        "description_en": "Interface utilization prefers paired Counter64 values, falls back to paired Counter32 values, and uses ifHighSpeed for bandwidth.",
+        "default_oids": {},
+        "description": "接口利用率只使用已应用模板中的 Counter64/Counter32 与 ifHighSpeed OID；未应用模板时不采集。",
+        "description_en": "Interface utilization uses only the applied template's Counter64/Counter32 and ifHighSpeed OIDs; collection is disabled until a template is applied.",
     },
     "interface_down": {
         "collection_source": "snmp_template",
@@ -185,9 +167,9 @@ ALERT_METRIC_COLLECTION_BINDINGS: dict[str, dict[str, Any]] = {
         "template_section": "接口指标 / 运行状态",
         "template_metric": "interface",
         "oid_paths": ["interface_config.if_oper_status_oid"],
-        "default_oids": {"if_oper_status_oid": _INTERFACE_DEFAULT_OIDS["if_oper_status_oid"]},
-        "description": "接口 DOWN 告警读取 ifOperStatus，并只在 UP→DOWN 状态变化时触发。",
-        "description_en": "Interface-down alerts read ifOperStatus and trigger only on an UP-to-DOWN transition.",
+        "default_oids": {},
+        "description": "接口 DOWN 告警只读取已应用模板中的 ifOperStatus，并只在 UP→DOWN 状态变化时触发。",
+        "description_en": "Interface-down alerts read ifOperStatus from the applied template and trigger only on an UP-to-DOWN transition.",
     },
     "interconnect_down": {
         "collection_source": "snmp_template",
@@ -197,9 +179,9 @@ ALERT_METRIC_COLLECTION_BINDINGS: dict[str, dict[str, Any]] = {
         "template_section": "接口指标 / 互联口运行状态",
         "template_metric": "interface",
         "oid_paths": ["interface_config.if_oper_status_oid"],
-        "default_oids": {"if_oper_status_oid": _INTERFACE_DEFAULT_OIDS["if_oper_status_oid"]},
-        "description": "互联口 DOWN 与普通接口共用 ifOperStatus，区别只来自拓扑端口识别。",
-        "description_en": "Interconnect-down uses the same ifOperStatus as ordinary interfaces; topology identifies the interconnect port.",
+        "default_oids": {},
+        "description": "互联口 DOWN 与普通接口共用已应用模板中的 ifOperStatus，区别只来自拓扑端口识别。",
+        "description_en": "Interconnect-down uses ifOperStatus from the applied template; topology identifies the interconnect port.",
     },
     "interface_flap": {
         "collection_source": "snmp_template",
@@ -212,12 +194,9 @@ ALERT_METRIC_COLLECTION_BINDINGS: dict[str, dict[str, Any]] = {
             "interface_config.if_oper_status_oid",
             "interface_config.if_last_change_oid",
         ],
-        "default_oids": {
-            key: _INTERFACE_DEFAULT_OIDS[key]
-            for key in ("if_oper_status_oid", "if_last_change_oid")
-        },
-        "description": "接口震荡基于连续采样的 ifOperStatus UP/DOWN 翻转判断，并使用 ifLastChange 辅助校验。",
-        "description_en": "Interface flapping is based on sampled ifOperStatus transitions, with ifLastChange as supporting evidence.",
+        "default_oids": {},
+        "description": "接口震荡只使用已应用模板中的 ifOperStatus/ifLastChange，基于连续采样判断 UP/DOWN 翻转。",
+        "description_en": "Interface flapping uses ifOperStatus/ifLastChange from the applied template and sampled UP/DOWN transitions.",
     },
     "interface_error_rate_high": {
         "collection_source": "snmp_template",
@@ -242,27 +221,9 @@ ALERT_METRIC_COLLECTION_BINDINGS: dict[str, dict[str, Any]] = {
             "interface_config.dot3_hc_internal_mac_rx_errors_oid",
             "interface_config.dot3_hc_symbol_errors_oid",
         ],
-        "default_oids": {
-            key: _INTERFACE_DEFAULT_OIDS[key]
-            for key in (
-                "if_in_errors_oid",
-                "if_out_errors_oid",
-                "if_in_discards_oid",
-                "if_out_discards_oid",
-                "if_hc_in_ucast_pkts_oid",
-                "if_hc_in_multicast_pkts_oid",
-                "if_hc_in_broadcast_pkts_oid",
-                "if_hc_out_ucast_pkts_oid",
-                "if_hc_out_multicast_pkts_oid",
-                "if_hc_out_broadcast_pkts_oid",
-                "dot3_hc_fcs_errors_oid",
-                "dot3_hc_frame_too_long_oid",
-                "dot3_hc_internal_mac_rx_errors_oid",
-                "dot3_hc_symbol_errors_oid",
-            )
-        },
-        "description": "错误率优先使用 IF-MIB Counter64 包计数增量；通用错误/丢弃与 EtherLike FCS/CRC 分开采集，避免把通用错误误显示成 CRC。",
-        "description_en": "Error rate prefers IF-MIB Counter64 packet deltas; generic errors/discards and EtherLike FCS/CRC are collected separately.",
+        "default_oids": {},
+        "description": "错误率只使用已应用模板中的接口错误、丢弃、包计数和 EtherLike OID，避免另行回退到内置 OID。",
+        "description_en": "Error rate uses only interface error, discard, packet, and EtherLike OIDs from the applied template; no built-in OID fallback is used.",
     },
     "snmp_unreachable": {
         "collection_source": "snmp_probe",
@@ -439,6 +400,21 @@ def _row_value(row: Any, key: str, default: Any = None) -> Any:
     except (KeyError, IndexError, TypeError):
         return default
     return default if value is None else value
+
+
+def _table_columns(conn, table: str) -> set[str]:
+    """Read table columns for narrow compatibility with pre-m0181 test DBs.
+
+    Production connections are migrated before collectors start.  Keeping this
+    adapter here lets isolated service tests and a briefly older read-only
+    connection fail gracefully while the explicit-column path remains the
+    normal behavior.
+    """
+    try:
+        cursor = conn.execute(f"SELECT * FROM {table} LIMIT 0")
+        return {str(description[0]) for description in (cursor.description or [])}
+    except Exception:
+        return set()
 
 
 def normalize_model_key(value: Any) -> str:
@@ -756,34 +732,41 @@ def invalidate_metric_profile_cache() -> None:
         _profile_cache_expires_at = 0.0
 
 
-def _load_profile_cache() -> dict[tuple[str, str], dict[str, Any]]:
+def _load_profile_cache() -> dict[str, dict[str, Any]]:
     global _profile_cache, _profile_cache_expires_at
     now = time.monotonic()
     with _profile_cache_lock:
         if _profile_cache is not None and now < _profile_cache_expires_at:
             return _profile_cache
 
-        profiles: dict[tuple[str, str], dict[str, Any]] = {}
+        profiles: dict[str, dict[str, Any]] = {}
         conn = get_db_connection()
         try:
             # Load every saved row so callers can distinguish an exact model
-            # match from an executable model profile.  Only verified
-            # definitions are placed in the effective collector mapping below;
-            # unverified/failed rows remain visible as association metadata.
+            # match from an executable model profile.  The saved template is
+            # the sole OID source once it is applied. Verification status is
+            # retained as quality metadata and must not cause a silent fall
+            # back to a vendor-specific OID set.
             rows = conn.execute("SELECT * FROM snmp_metric_profiles").fetchall()
             for row in rows:
                 hardware_definitions = _profile_metric_definitions(row)
                 interface_definition = _profile_interface_config(row)
                 hardware_status = str(_row_value(row, 'verification_status', 'unverified') or 'unverified').casefold()
                 interface_status = str(_row_value(row, 'interface_verification_status', 'unverified') or 'unverified').casefold()
-                hardware = hardware_definitions if hardware_status == 'verified' else {}
-                interface = interface_definition if interface_status == 'verified' else {}
-                profiles[(str(_row_value(row, "vendor_key", "")), str(_row_value(row, "model_key", "")))] = {
-                    "profile_id": str(_row_value(row, "id", "")),
-                    "metrics": hardware,
-                    "interface": interface,
+                effective_hardware_definitions = {} if hardware_status == 'failed' else hardware_definitions
+                effective_interface_definition = {} if interface_status == 'failed' else interface_definition
+                profile_id = str(_row_value(row, "id", ""))
+                if not profile_id:
+                    continue
+                profiles[profile_id] = {
+                    "profile_id": profile_id,
+                    "metrics": effective_hardware_definitions,
+                    "interface": effective_interface_definition,
                     "profile_vendor": str(_row_value(row, "vendor_name", "") or ""),
                     "profile_model": str(_row_value(row, "model_name", "") or ""),
+                    "template_name": str(_row_value(row, "template_name", "") or ""),
+                    "source": str(_row_value(row, "source", "legacy") or "legacy"),
+                    "official_preset_id": str(_row_value(row, "official_preset_id", "") or ""),
                     "profile_status": hardware_status,
                     "interface_profile_status": interface_status,
                     "configured": bool(hardware_definitions),
@@ -791,7 +774,9 @@ def _load_profile_cache() -> dict[tuple[str, str], dict[str, Any]]:
                 }
         except Exception:
             # A collector may briefly start before an additive migration has
-            # completed; use built-in vendor logic until the next refresh.
+            # completed. Do not fall back to a vendor OID set: the explicit
+            # template contract must fail closed until the profile table is
+            # readable again.
             profiles = {}
         finally:
             conn.close()
@@ -804,55 +789,53 @@ def _load_profile_cache() -> dict[tuple[str, str], dict[str, Any]]:
 def resolve_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
     """Resolve the effective definition for one device.
 
-    Precedence is per metric: device exception -> verified exact vendor/model
-    profile -> built-in vendor collector.  An unverified/failed profile is
-    deliberately invisible to the collector, but remains exposed through the
-    returned association metadata so the UI cannot silently hide a mismatch.
+    A migrated device's explicit ``snmp_metric_profile_id`` is the only source
+    of SNMP metric OIDs. Legacy per-device CPU/memory OID fields and
+    vendor/model matching are intentionally ignored. A missing/unconfigured
+    template is represented explicitly instead of falling back to a
+    vendor-specific hard-coded collector. The narrow missing-key compatibility
+    branch exists only for pre-m0181 partial objects used during upgrades.
     """
     metrics: dict[str, dict[str, Any]] = {}
     sources: dict[str, str] = {}
     interface: dict[str, Any] = {}
     profile: dict[str, Any] = {}
-    for metric, field in (("cpu", "snmp_cpu_oid"), ("memory", "snmp_memory_oid")):
-        oid = _safe_oid(device.get(field))
-        if oid:
-            metrics[metric] = normalize_metric_config({"oid": oid, "mode": "direct_percent"})
-            sources[metric] = "device_override"
-
     profile_id = ""
-    model_key = normalize_model_key(device.get("model"))
-    if model_key:
-        profile = _load_profile_cache().get(
-            (normalize_vendor_key(device.get("vendor"), device.get("platform")), model_key),
-            {},
-        )
-        profile_id = str(profile.get("profile_id") or "")
-        for metric, config in (profile.get("metrics") or {}).items():
-            if metric not in metrics and config:
-                metrics[metric] = dict(config)
-                sources[metric] = "verified_model_profile"
-        if profile.get('interface'):
-            interface = dict(profile['interface'])
+    has_explicit_binding_field = "snmp_metric_profile_id" in device
+    profile_id = str(device.get("snmp_metric_profile_id") or "").strip()
+    if profile_id:
+        profile = _load_profile_cache().get(profile_id, {})
+    elif not has_explicit_binding_field:
+        # Compatibility for callers that still pass a pre-m0181 partial device
+        # object.  Real migrated device rows always contain the field, and an
+        # empty value on those rows intentionally means "not applied".
+        device_vendor = normalize_vendor_key(device.get("vendor"), device.get("platform"))
+        device_model = normalize_model_key(device.get("model"))
+        for candidate in _load_profile_cache().values():
+            if (
+                normalize_vendor_key(candidate.get("profile_vendor"), "") == device_vendor
+                and normalize_model_key(candidate.get("profile_model")) == device_model
+            ):
+                profile = candidate
+                profile_id = str(candidate.get("profile_id") or "")
+                break
+    if profile_id and not profile:
+        profile = _load_profile_cache().get(profile_id, {})
+    for metric, config in (profile.get("metrics") or {}).items():
+        if config:
+            metrics[metric] = dict(config)
+            sources[metric] = "snmp_template"
+    if profile.get('interface'):
+        interface = dict(profile['interface'])
 
     metric_sources = {
-        metric: sources.get(metric, "builtin_vendor_collector")
+        metric: sources.get(metric, "template_not_applied")
         for metric in HEALTH_METRIC_KEYS
     }
-    has_device_override = any(source == "device_override" for source in sources.values())
-    has_verified_model_profile = any(
-        source == "verified_model_profile"
-        for source in sources.values()
-    ) or bool(interface)
-    if has_device_override and has_verified_model_profile:
-        profile_source = "mixed"
-    elif has_device_override:
-        profile_source = "device_override"
-    elif has_verified_model_profile:
-        profile_source = "model_profile"
-    elif profile.get("profile_id") and profile.get("configured"):
-        profile_source = "template_blocked"
-    else:
-        profile_source = "builtin_default"
+    template_applied = bool(
+        profile_id and (profile.get("configured") or profile.get("interface_configured"))
+    )
+    profile_source = "snmp_template" if template_applied else "template_not_applied"
 
     return {
         "profile_id": profile_id,
@@ -862,11 +845,16 @@ def resolve_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
         "metric_keys": sorted(metric for metric, config in metrics.items() if config),
         "profile_vendor": str(profile.get("profile_vendor") or ""),
         "profile_model": str(profile.get("profile_model") or ""),
+        "template_name": str(profile.get("template_name") or ""),
+        "template_source": str(profile.get("source") or "none"),
+        "official_preset_id": str(profile.get("official_preset_id") or ""),
         "profile_status": str(profile.get("profile_status") or "none"),
         "interface_profile_status": str(profile.get("interface_profile_status") or "none"),
         "profile_source": profile_source,
         "interface": interface,
-        "interface_source": "verified_model_profile" if interface else "builtin_if_mib",
+        "interface_source": "snmp_template" if interface else "template_not_applied",
+        "template_applied": template_applied,
+        "template_required": True,
     }
 
 
@@ -881,22 +869,14 @@ def resolve_health_metric_profiles(device: Mapping[str, Any]) -> dict[str, Any]:
     resolved["metrics"] = health_metrics
     resolved["metric_keys"] = sorted(health_metrics)
     resolved["metric_sources"] = {
-        metric: (resolved.get("sources") or {}).get(metric, "builtin_vendor_collector")
+        metric: (resolved.get("sources") or {}).get(metric, "template_not_applied")
         for metric in HEALTH_METRIC_KEYS
     }
-    health_sources = resolved["metric_sources"]
-    has_device_override = any(source == "device_override" for source in health_sources.values())
-    has_model_profile = any(source == "verified_model_profile" for source in health_sources.values()) or bool(resolved.get("interface"))
-    if has_device_override and has_model_profile:
-        resolved["profile_source"] = "mixed"
-    elif has_device_override:
-        resolved["profile_source"] = "device_override"
-    elif has_model_profile:
-        resolved["profile_source"] = "model_profile"
-    elif resolved.get("profile_id") and resolved.get("profile_status") in {"unverified", "failed"}:
-        resolved["profile_source"] = "template_blocked"
-    else:
-        resolved["profile_source"] = "builtin_default"
+    resolved["profile_source"] = (
+        "snmp_template"
+        if resolved.get("template_applied")
+        else "template_not_applied"
+    )
     resolved["collection_mode"] = "health_only"
     return resolved
 
@@ -912,11 +892,14 @@ def annotate_devices_with_snmp_profile(devices: list[dict[str, Any]]) -> list[di
                 "id": resolved.get("profile_id") or None,
                 "vendor": resolved.get("profile_vendor") or None,
                 "model": resolved.get("profile_model") or None,
+                "name": resolved.get("template_name") or None,
                 "status": resolved.get("profile_status") or "none",
-                "source": resolved.get("profile_source") or "builtin_default",
+                "source": resolved.get("profile_source") or "template_not_applied",
+                "template_source": resolved.get("template_source") or "none",
+                "official_preset_id": resolved.get("official_preset_id") or None,
                 "metric_keys": resolved.get("metric_keys") or [],
                 "metric_sources": resolved.get("metric_sources") or {},
-                "interface_source": resolved.get("interface_source") or "builtin_if_mib",
+                "interface_source": resolved.get("interface_source") or "template_not_applied",
                 "interface_status": resolved.get("interface_profile_status") or "none",
                 "collection_mode": resolved.get("collection_mode") or "health_only",
             }
@@ -927,11 +910,14 @@ def annotate_devices_with_snmp_profile(devices: list[dict[str, Any]]) -> list[di
                 "id": None,
                 "vendor": None,
                 "model": None,
+                "name": None,
                 "status": "none",
-                "source": "builtin_default",
+                "source": "template_not_applied",
+                "template_source": "none",
+                "official_preset_id": None,
                 "metric_keys": [],
-                "metric_sources": {metric: "builtin_vendor_collector" for metric in HEALTH_METRIC_KEYS},
-                "interface_source": "builtin_if_mib",
+                "metric_sources": {metric: "template_not_applied" for metric in HEALTH_METRIC_KEYS},
+                "interface_source": "template_not_applied",
                 "interface_status": "none",
                 "collection_mode": "health_only",
             }
@@ -954,10 +940,19 @@ def _profile_to_dict(row: Any) -> dict[str, Any]:
     interface_config = _profile_interface_config(row)
     cpu_config = metric_definitions.get("cpu", {})
     memory_config = metric_definitions.get("memory", {})
+    vendor = str(_row_value(row, "vendor_name", "") or "")
+    model = str(_row_value(row, "model_name", "") or "")
+    template_name = str(_row_value(row, "template_name", "") or "").strip()
+    source = str(_row_value(row, "source", "custom") or "custom").strip().casefold()
+    if source not in {"official", "custom", "legacy", "inventory"}:
+        source = "custom"
     return {
         "profile_id": str(_row_value(row, "id", "")),
-        "vendor": str(_row_value(row, "vendor_name", "")),
-        "model": str(_row_value(row, "model_name", "")),
+        "vendor": vendor,
+        "model": model,
+        "template_name": template_name or " / ".join(part for part in (vendor, model) if part),
+        "source": source,
+        "official_preset_id": str(_row_value(row, "official_preset_id", "") or ""),
         "cpu_oid": str(cpu_config.get("oid") or ""),
         "memory_oid": str(memory_config.get("oid") or ""),
         "cpu_config": cpu_config,
@@ -977,44 +972,131 @@ def _profile_to_dict(row: Any) -> dict[str, Any]:
         "last_test_message": str(_row_value(row, "last_test_message", "") or ""),
         "updated_at": _row_value(row, "updated_at"),
         "updated_by": str(_row_value(row, "updated_by", "") or ""),
+        "bound_device_count": 0,
+        "unbound_device_count": 0,
     }
 
 
 def _collector_status(configured: bool, verification_status: Any, matched_device_count: int) -> str:
     """Describe whether a saved profile can actually be consumed by collectors."""
     if not configured:
-        return "builtin_only"
+        return "template_required"
     if matched_device_count <= 0:
         return "no_matching_device"
     status = str(verification_status or "unverified").casefold()
-    if status == "verified":
-        return "active"
     if status == "failed":
         return "blocked_failed"
-    return "blocked_unverified"
+    # Applying a profile is the explicit source-selection action. Live
+    # verification remains visible as quality metadata, but it must never
+    # switch the collector to a different hard-coded OID set.
+    return "active"
 
 
 def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any]]:
-    """Collect discovered model groups and configured definitions for the UI."""
-    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    """Collect saved templates and inventory candidates for the UI.
+
+    A saved row is one independently selectable template.  ``bound_device_count``
+    is intentionally derived from the device foreign-key-like reference, not
+    from vendor/model matching.  Inventory-only rows are retained so operators
+    can see devices that still need a manual template choice.
+    """
     device_rows = conn.execute(
         """
-        SELECT MIN(id) AS sample_device_id, vendor, platform, model, COUNT(*) AS device_count
+        SELECT id, hostname, ip_address, vendor, platform, model, status,
+               snmp_metric_profile_id
         FROM devices
         WHERE COALESCE(TRIM(model), '') <> ''
-        GROUP BY vendor, platform, model
+        ORDER BY CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'online' THEN 0 ELSE 1 END,
+                 CASE WHEN COALESCE(TRIM(ip_address), '') <> '' THEN 0 ELSE 1 END,
+                 COALESCE(hostname, ''), id
         """
     ).fetchall()
-    for row in device_rows:
-        vendor = normalize_vendor_name(_row_value(row, "vendor", ""), _row_value(row, "platform", ""))
-        model = _clean_text(_row_value(row, "model", ""))
+
+    inventory: dict[tuple[str, str], dict[str, Any]] = {}
+    devices_by_profile: dict[str, list[dict[str, Any]]] = {}
+    for raw in device_rows:
+        device = dict(raw)
+        vendor = normalize_vendor_name(device.get("vendor"), device.get("platform"))
+        model = _clean_text(device.get("model"))
         key = (vendor.casefold(), normalize_model_key(model))
-        group = groups.setdefault(
+        item = inventory.setdefault(
             key,
             {
-                "profile_id": None,
                 "vendor": vendor,
                 "model": model,
+                "devices": [],
+                "platforms": [],
+            },
+        )
+        item["devices"].append(device)
+        platform = _clean_text(device.get("platform"), 128)
+        if platform and platform not in item["platforms"]:
+            item["platforms"].append(platform)
+        profile_id = str(device.get("snmp_metric_profile_id") or "").strip()
+        if profile_id:
+            devices_by_profile.setdefault(profile_id, []).append(device)
+
+    def _sample(devices: list[dict[str, Any]]) -> dict[str, Any]:
+        if not devices:
+            return {"sample_device_id": None, "sample_device_ip": None, "sample_device_status": None}
+        device = devices[0]
+        return {
+            "sample_device_id": str(device.get("id") or "") or None,
+            "sample_device_ip": str(device.get("ip_address") or "") or None,
+            "sample_device_status": str(device.get("status") or "") or None,
+        }
+
+    profiles = conn.execute("SELECT * FROM snmp_metric_profiles ORDER BY vendor_name, model_name, id").fetchall()
+    items: list[dict[str, Any]] = []
+    saved_identity_keys: set[tuple[str, str]] = set()
+    for row in profiles:
+        profile = _profile_to_dict(row)
+        profile_id = str(profile.get("profile_id") or "")
+        vendor_key = str(_row_value(row, "vendor_key", "") or "").casefold()
+        model_key = str(_row_value(row, "model_key", "") or "")
+        identity_key = (
+            vendor_key or normalize_vendor_key(profile.get("vendor"), ""),
+            model_key or normalize_model_key(profile.get("model")),
+        )
+        saved_identity_keys.add(identity_key)
+        identity = inventory.get(identity_key, {"devices": [], "platforms": []})
+        bound_devices = devices_by_profile.get(profile_id, [])
+        all_devices = identity.get("devices", [])
+        unbound_devices = [device for device in all_devices if not str(device.get("snmp_metric_profile_id") or "").strip()]
+        sample = _sample(bound_devices or all_devices)
+        profile.update(
+            {
+                "device_count": len(bound_devices),
+                "bound_device_count": len(bound_devices),
+                "inventory_device_count": len(all_devices),
+                "unbound_device_count": len(unbound_devices),
+                "matched_device_count": len(bound_devices),
+                "sample_device_id": sample["sample_device_id"],
+                "sample_device_ip": sample["sample_device_ip"],
+                "sample_device_status": sample["sample_device_status"],
+                "platforms": sorted(identity.get("platforms", [])),
+            }
+        )
+        items.append(profile)
+
+    # Keep a discoverable row for a model identity that has no saved template.
+    # It is explicitly marked as inventory so the UI cannot mistake discovery
+    # coverage for an actual binding.
+    for identity_key, identity in inventory.items():
+        if identity_key in saved_identity_keys:
+            continue
+        all_devices = identity.get("devices", [])
+        sample = _sample(all_devices)
+        items.append(
+            {
+                "profile_id": None,
+                "vendor": identity.get("vendor", ""),
+                "model": identity.get("model", ""),
+                "template_name": " / ".join(
+                    part for part in (identity.get("vendor", ""), identity.get("model", "")) if part
+                ),
+                "source": "inventory",
+                "official_preset_id": "",
                 "cpu_oid": "",
                 "memory_oid": "",
                 "cpu_config": {},
@@ -1032,42 +1114,34 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
                 "last_test_at": None,
                 "last_test_device_id": "",
                 "last_test_message": "",
-                "device_count": 0,
-                "sample_device_id": None,
-                "platforms": [],
+                "device_count": len(all_devices),
+                "bound_device_count": 0,
+                "inventory_device_count": len(all_devices),
+                "unbound_device_count": len(all_devices),
+                "matched_device_count": 0,
+                "sample_device_id": sample["sample_device_id"],
+                "sample_device_ip": sample["sample_device_ip"],
+                "sample_device_status": sample["sample_device_status"],
+                "platforms": sorted(identity.get("platforms", [])),
                 "updated_at": None,
                 "updated_by": "",
-            },
+            }
         )
-        group["device_count"] += int(_row_value(row, "device_count", 0) or 0)
-        if not group["sample_device_id"]:
-            group["sample_device_id"] = str(_row_value(row, "sample_device_id", "") or "") or None
-        platform = _clean_text(_row_value(row, "platform", ""), 128)
-        if platform and platform not in group["platforms"]:
-            group["platforms"].append(platform)
-
-    profiles = conn.execute("SELECT * FROM snmp_metric_profiles ORDER BY vendor_name, model_name").fetchall()
-    for row in profiles:
-        profile = _profile_to_dict(row)
-        key = (str(_row_value(row, "vendor_key", "")), str(_row_value(row, "model_key", "")))
-        group = groups.setdefault(
-            key,
-            {**profile, "device_count": 0, "sample_device_id": None, "platforms": []},
-        )
-        group.update(profile)
 
     query = _clean_text(search, 128).casefold()
-    items = list(groups.values())
     if query:
         items = [
             item for item in items
-            if query in str(item["vendor"]).casefold()
-            or query in str(item["model"]).casefold()
-            or any(query in str(platform).casefold() for platform in item["platforms"])
+            if query in str(item.get("vendor") or "").casefold()
+            or query in str(item.get("model") or "").casefold()
+            or query in str(item.get("template_name") or "").casefold()
+            or query in str(item.get("source") or "").casefold()
+            or any(query in str(platform).casefold() for platform in item.get("platforms", []))
         ]
+
     for item in items:
-        item["platforms"] = sorted(item["platforms"])
-        matched_device_count = int(item.get("device_count") or 0)
+        item["platforms"] = sorted(item.get("platforms", []))
+        matched_device_count = int(item.get("bound_device_count") or 0)
         item["matched_device_count"] = matched_device_count
         hardware_status = _collector_status(
             bool(item.get("configured")),
@@ -1088,7 +1162,7 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
         elif item.get("interface_configured"):
             item["collector_status"] = interface_status
         else:
-            item["collector_status"] = "builtin_only"
+            item["collector_status"] = "template_required"
         item["profile_applied_device_count"] = (
             matched_device_count if item["collector_status"] == "active" else 0
         )
@@ -1097,7 +1171,14 @@ def _collect_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any
             if item["collector_status"] in {"blocked_unverified", "blocked_failed"}
             else 0
         )
-    return sorted(items, key=lambda item: (str(item["vendor"]).casefold(), str(item["model"]).casefold()))
+    return sorted(
+        items,
+        key=lambda item: (
+            str(item.get("vendor") or "").casefold(),
+            str(item.get("model") or "").casefold(),
+            str(item.get("template_name") or "").casefold(),
+        ),
+    )
 
 
 def list_model_metric_profiles(conn, search: str = "") -> list[dict[str, Any]]:
@@ -1138,55 +1219,83 @@ def get_model_metric_profile_mapping(conn, profile_id: str) -> dict[str, Any]:
     """Return a deterministic, read-only mapping coverage report.
 
     This is intentionally separate from live SNMP testing.  A live sample
-    proves that the OIDs work on one device; this report proves which inventory
-    devices will receive the profile, which ones have an explicit exception,
-    and whether the profile is actually eligible for the collector cache.
+    proves that the OIDs work on one device; this report proves which devices
+    have explicitly selected the profile.  Vendor/model similarity is shown
+    only as inventory context and never grants collection coverage.
     """
     row = conn.execute("SELECT * FROM snmp_metric_profiles WHERE id = ?", (profile_id,)).fetchone()
     if not row:
         raise ValueError("Model metric profile not found")
     vendor_key = str(_row_value(row, "vendor_key", ""))
     model_key = str(_row_value(row, "model_key", ""))
-    device_rows = conn.execute(
-        """
-        SELECT id, hostname, ip_address, vendor, platform, model,
-               snmp_cpu_oid, snmp_memory_oid
-        FROM devices
-        WHERE LOWER(TRIM(COALESCE(model, ''))) = LOWER(TRIM(?))
-        ORDER BY hostname, id
-        """,
-        (_row_value(row, "model_name", ""),),
-    ).fetchall()
+    device_columns = _table_columns(conn, "devices")
+    explicit_binding_schema = "snmp_metric_profile_id" in device_columns
+    if explicit_binding_schema:
+        device_rows = conn.execute(
+            """
+            SELECT id, hostname, ip_address, vendor, platform, model, status,
+                   snmp_metric_profile_id
+            FROM devices
+            WHERE snmp_metric_profile_id = ?
+            ORDER BY CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'online' THEN 0 ELSE 1 END,
+                     CASE WHEN COALESCE(TRIM(ip_address), '') <> '' THEN 0 ELSE 1 END,
+                     hostname, id
+            """,
+            (profile_id,),
+        ).fetchall()
+        inventory_rows = conn.execute(
+            """
+            SELECT id, vendor, platform, model, snmp_metric_profile_id
+            FROM devices
+            WHERE LOWER(TRIM(COALESCE(model, ''))) = LOWER(TRIM(?))
+            """,
+            (_row_value(row, "model_name", ""),),
+        ).fetchall()
+    else:
+        device_rows = conn.execute(
+            """
+            SELECT id, hostname, ip_address, vendor, platform, model, status,
+                   snmp_cpu_oid, snmp_memory_oid
+            FROM devices
+            WHERE LOWER(TRIM(COALESCE(model, ''))) = LOWER(TRIM(?))
+            ORDER BY CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'online' THEN 0 ELSE 1 END,
+                     CASE WHEN COALESCE(TRIM(ip_address), '') <> '' THEN 0 ELSE 1 END,
+                     hostname, id
+            """,
+            (_row_value(row, "model_name", ""),),
+        ).fetchall()
+        inventory_rows = device_rows
+    metric_definitions = _profile_metric_definitions(row)
+    interface_config = _profile_interface_config(row)
 
     matching: list[dict[str, Any]] = []
     same_model_other_vendor = 0
-    cpu_overrides = 0
-    memory_overrides = 0
+    for raw_device in inventory_rows:
+        device = dict(raw_device)
+        if normalize_vendor_key(device.get("vendor"), device.get("platform")) != vendor_key:
+            same_model_other_vendor += 1
+
     for raw_device in device_rows:
         device = dict(raw_device)
-        is_vendor_match = normalize_vendor_key(device.get("vendor"), device.get("platform")) == vendor_key
-        is_model_match = normalize_model_key(device.get("model")) == model_key
-        if not is_model_match:
-            continue
-        if not is_vendor_match:
-            same_model_other_vendor += 1
-            continue
-        cpu_override = bool(_safe_oid(device.get("snmp_cpu_oid")))
-        memory_override = bool(_safe_oid(device.get("snmp_memory_oid")))
-        cpu_overrides += int(cpu_override)
-        memory_overrides += int(memory_override)
+        if not explicit_binding_schema:
+            if normalize_model_key(device.get("model")) != model_key:
+                continue
+            if normalize_vendor_key(device.get("vendor"), device.get("platform")) != vendor_key:
+                continue
         matching.append({
             "device_id": str(device.get("id") or ""),
             "hostname": str(device.get("hostname") or device.get("ip_address") or device.get("id") or ""),
             "ip_address": str(device.get("ip_address") or ""),
-            "cpu_source": "device_override" if cpu_override else "model_profile",
-            "memory_source": "device_override" if memory_override else "model_profile",
+            "status": str(device.get("status") or "unknown"),
+            "vendor": str(device.get("vendor") or ""),
+            "model": str(device.get("model") or ""),
+            "profile_id": profile_id,
+            "cpu_source": "snmp_template" if "cpu" in metric_definitions else "template_not_applied",
+            "memory_source": "snmp_template" if "memory" in metric_definitions else "template_not_applied",
         })
 
     status = str(_row_value(row, "verification_status", "unverified") or "unverified")
     interface_status = str(_row_value(row, "interface_verification_status", "unverified") or "unverified")
-    metric_definitions = _profile_metric_definitions(row)
-    interface_config = _profile_interface_config(row)
     configured = bool(metric_definitions)
     interface_configured = bool(interface_config)
     hardware_collector_status = _collector_status(configured, status, len(matching))
@@ -1198,11 +1307,14 @@ def get_model_metric_profile_mapping(conn, profile_id: str) -> dict[str, Any]:
     elif interface_configured:
         collector_status = interface_collector_status
     else:
-        collector_status = 'builtin_only'
+        collector_status = 'template_required'
     return {
         "profile_id": profile_id,
         "vendor": str(_row_value(row, "vendor_name", "")),
         "model": str(_row_value(row, "model_name", "")),
+        "template_name": str(_row_value(row, "template_name", "") or ""),
+        "source": str(_row_value(row, "source", "custom") or "custom"),
+        "official_preset_id": str(_row_value(row, "official_preset_id", "") or ""),
         "verification_status": status,
         "collector_status": collector_status,
         "hardware_collector_status": hardware_collector_status,
@@ -1211,13 +1323,21 @@ def get_model_metric_profile_mapping(conn, profile_id: str) -> dict[str, Any]:
         "interface_configured": interface_configured,
         "interface_config": interface_config,
         "matched_device_count": len(matching),
+        "bound_device_count": len(matching),
+        "inventory_device_count": len(inventory_rows),
+        "unbound_device_count": sum(
+            1 for raw_device in inventory_rows
+            if not explicit_binding_schema
+            or not str(_row_value(raw_device, "snmp_metric_profile_id", "") or "").strip()
+        ),
         "profile_applied_device_count": len(matching) if collector_status == "active" else 0,
         "blocked_device_count": len(matching) if collector_status in {"blocked_unverified", "blocked_failed"} else 0,
-        "cpu_device_override_count": cpu_overrides,
-        "memory_device_override_count": memory_overrides,
+        "cpu_device_override_count": 0,
+        "memory_device_override_count": 0,
         "metric_keys": sorted(metric_definitions),
         "same_model_other_vendor_count": same_model_other_vendor,
         "sample_device_id": matching[0]["device_id"] if matching else None,
+        "sample_device_status": matching[0]["status"] if matching else None,
         "devices": matching[:100],
         "truncated": len(matching) > 100,
     }
@@ -1287,7 +1407,149 @@ def _profile_identity(conn, payload: Mapping[str, Any], existing: Any = None) ->
     return vendor, model, vendor.casefold(), normalize_model_key(model)
 
 
-def create_model_metric_profile(conn, payload: Mapping[str, Any], updated_by: str = "") -> dict[str, Any]:
+def _normalized_binding_ids(device_ids: Any) -> list[str]:
+    if isinstance(device_ids, str):
+        raw_ids = [device_ids]
+    elif isinstance(device_ids, (list, tuple, set, frozenset)):
+        raw_ids = list(device_ids)
+    else:
+        raise ValueError("device_ids must be a non-empty list")
+    normalized: list[str] = []
+    for raw_id in raw_ids:
+        device_id = _clean_text(raw_id, 128)
+        if device_id and device_id not in normalized:
+            normalized.append(device_id)
+    if not normalized:
+        raise ValueError("at least one device_id is required")
+    return normalized
+
+
+def list_model_metric_profile_devices(conn, profile_id: str) -> list[dict[str, Any]]:
+    """Return only safe inventory fields for devices bound to a template."""
+    normalized_profile_id = _clean_text(profile_id, 128)
+    if not conn.execute(
+        "SELECT id FROM snmp_metric_profiles WHERE id = ?",
+        (normalized_profile_id,),
+    ).fetchone():
+        raise ValueError("Model metric profile not found")
+    rows = conn.execute(
+        """
+        SELECT id, hostname, ip_address, vendor, platform, model, status,
+               snmp_metric_profile_id
+        FROM devices
+        WHERE snmp_metric_profile_id = ?
+        ORDER BY CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'online' THEN 0 ELSE 1 END,
+                 CASE WHEN COALESCE(TRIM(ip_address), '') <> '' THEN 0 ELSE 1 END,
+                 COALESCE(hostname, ''), id
+        """,
+        (normalized_profile_id,),
+    ).fetchall()
+    return [
+        {
+            "device_id": str(_row_value(row, "id", "") or ""),
+            "hostname": str(_row_value(row, "hostname", "") or ""),
+            "ip_address": str(_row_value(row, "ip_address", "") or ""),
+            "vendor": str(_row_value(row, "vendor", "") or ""),
+            "platform": str(_row_value(row, "platform", "") or ""),
+            "model": str(_row_value(row, "model", "") or ""),
+            "status": str(_row_value(row, "status", "unknown") or "unknown"),
+            "profile_id": normalized_profile_id,
+        }
+        for row in rows
+    ]
+
+
+def bind_model_metric_profile(
+    conn,
+    profile_id: str,
+    device_ids: Any,
+) -> dict[str, Any]:
+    """Bind a template to explicit devices, replacing their prior choice."""
+    normalized_profile_id = _clean_text(profile_id, 128)
+    profile_row = conn.execute(
+        "SELECT * FROM snmp_metric_profiles WHERE id = ?",
+        (normalized_profile_id,),
+    ).fetchone()
+    if not profile_row:
+        raise ValueError("Model metric profile not found")
+    normalized_device_ids = _normalized_binding_ids(device_ids)
+    placeholders = ", ".join("?" for _ in normalized_device_ids)
+    rows = conn.execute(
+        f"SELECT id FROM devices WHERE id IN ({placeholders})",
+        tuple(normalized_device_ids),
+    ).fetchall()
+    found_ids = {str(_row_value(row, "id", "") or "") for row in rows}
+    missing_ids = [device_id for device_id in normalized_device_ids if device_id not in found_ids]
+    if missing_ids:
+        raise ValueError(f"Device not found: {', '.join(missing_ids[:5])}")
+    conn.execute(
+        f"UPDATE devices SET snmp_metric_profile_id = ? WHERE id IN ({placeholders})",
+        (normalized_profile_id, *normalized_device_ids),
+    )
+    invalidate_metric_profile_cache()
+    devices = list_model_metric_profile_devices(conn, normalized_profile_id)
+    result = _profile_to_dict(profile_row)
+    result.update(
+        {
+            "bound_device_count": len(devices),
+            "device_count": len(devices),
+            "devices": devices,
+        }
+    )
+    return result
+
+
+def unbind_model_metric_profile(
+    conn,
+    profile_id: str,
+    device_ids: Any,
+) -> dict[str, Any]:
+    """Remove a template choice from explicit devices without deleting them."""
+    normalized_profile_id = _clean_text(profile_id, 128)
+    profile_row = conn.execute(
+        "SELECT * FROM snmp_metric_profiles WHERE id = ?",
+        (normalized_profile_id,),
+    ).fetchone()
+    if not profile_row:
+        raise ValueError("Model metric profile not found")
+    normalized_device_ids = _normalized_binding_ids(device_ids)
+    placeholders = ", ".join("?" for _ in normalized_device_ids)
+    rows = conn.execute(
+        f"SELECT id, snmp_metric_profile_id FROM devices WHERE id IN ({placeholders})",
+        tuple(normalized_device_ids),
+    ).fetchall()
+    by_id = {str(_row_value(row, "id", "") or ""): str(_row_value(row, "snmp_metric_profile_id", "") or "") for row in rows}
+    missing_ids = [device_id for device_id in normalized_device_ids if device_id not in by_id]
+    if missing_ids:
+        raise ValueError(f"Device not found: {', '.join(missing_ids[:5])}")
+    not_bound = [device_id for device_id in normalized_device_ids if by_id.get(device_id) != normalized_profile_id]
+    if not_bound:
+        raise ValueError(f"Device is not bound to this template: {', '.join(not_bound[:5])}")
+    conn.execute(
+        f"UPDATE devices SET snmp_metric_profile_id = '' WHERE id IN ({placeholders})",
+        tuple(normalized_device_ids),
+    )
+    invalidate_metric_profile_cache()
+    devices = list_model_metric_profile_devices(conn, normalized_profile_id)
+    result = _profile_to_dict(profile_row)
+    result.update(
+        {
+            "bound_device_count": len(devices),
+            "device_count": len(devices),
+            "devices": devices,
+        }
+    )
+    return result
+
+
+def create_model_metric_profile(
+    conn,
+    payload: Mapping[str, Any],
+    updated_by: str = "",
+    *,
+    source: str = "custom",
+    official_preset_id: str = "",
+) -> dict[str, Any]:
     vendor, model, vendor_key, model_key = _profile_identity(conn, payload)
     interface_config = _validated_interface_values(payload)
     metric_definitions = _validated_profile_values(payload, allow_empty=bool(interface_config))
@@ -1295,48 +1557,179 @@ def create_model_metric_profile(conn, payload: Mapping[str, Any], updated_by: st
         raise ValueError("at least one hardware metric or an interface OID definition is required")
     cpu_config = metric_definitions.get("cpu", {})
     memory_config = metric_definitions.get("memory", {})
-    if conn.execute(
-        "SELECT id FROM snmp_metric_profiles WHERE vendor_key = ? AND model_key = ?",
-        (vendor_key, model_key),
-    ).fetchone():
-        raise ValueError("A profile already exists for this vendor and model")
+    normalized_source = _clean_text(source, 32).casefold() or "custom"
+    if normalized_source not in {"official", "custom", "legacy"}:
+        normalized_source = "custom"
+    template_name = _clean_text(
+        payload.get("template_name")
+        if payload.get("template_name") is not None
+        else " / ".join(part for part in (vendor, model) if part),
+        160,
+    )
 
     now = _utc_now()
     profile_id = f"snmp-profile-{uuid.uuid4().hex[:12]}"
-    conn.execute(
-        """
-        INSERT INTO snmp_metric_profiles
-            (id, vendor_key, vendor_name, model_key, model_name,
-             cpu_oid, memory_oid, cpu_config_json, memory_config_json,
-             metric_definitions_json, interface_config_json,
-             created_at, updated_at, updated_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            profile_id,
-            vendor_key,
-            vendor,
-            model_key,
-            model,
-            str(cpu_config.get("oid") or ""),
-            str(memory_config.get("oid") or ""),
-            _config_json(cpu_config),
-            _config_json(memory_config),
-            _config_json(metric_definitions),
-            _config_json(interface_config),
-            now,
-            now,
-            updated_by,
-        ),
-    )
+    profile_columns = _table_columns(conn, "snmp_metric_profiles")
+    if {"template_name", "source", "official_preset_id"}.issubset(profile_columns):
+        conn.execute(
+            """
+            INSERT INTO snmp_metric_profiles
+                (id, vendor_key, vendor_name, model_key, model_name,
+                 cpu_oid, memory_oid, cpu_config_json, memory_config_json,
+                 metric_definitions_json, interface_config_json,
+                 created_at, updated_at, updated_by, template_name, source,
+                 official_preset_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                profile_id,
+                vendor_key,
+                vendor,
+                model_key,
+                model,
+                str(cpu_config.get("oid") or ""),
+                str(memory_config.get("oid") or ""),
+                _config_json(cpu_config),
+                _config_json(memory_config),
+                _config_json(metric_definitions),
+                _config_json(interface_config),
+                now,
+                now,
+                updated_by,
+                template_name,
+                normalized_source,
+                _clean_text(official_preset_id, 160),
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO snmp_metric_profiles
+                (id, vendor_key, vendor_name, model_key, model_name,
+                 cpu_oid, memory_oid, cpu_config_json, memory_config_json,
+                 metric_definitions_json, interface_config_json,
+                 created_at, updated_at, updated_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                profile_id,
+                vendor_key,
+                vendor,
+                model_key,
+                model,
+                str(cpu_config.get("oid") or ""),
+                str(memory_config.get("oid") or ""),
+                _config_json(cpu_config),
+                _config_json(memory_config),
+                _config_json(metric_definitions),
+                _config_json(interface_config),
+                now,
+                now,
+                updated_by,
+            ),
+        )
     invalidate_metric_profile_cache()
     return dict(conn.execute("SELECT * FROM snmp_metric_profiles WHERE id = ?", (profile_id,)).fetchone())
 
 
-def update_model_metric_profile(conn, profile_id: str, payload: Mapping[str, Any], updated_by: str = "") -> dict[str, Any]:
+def apply_official_model_preset(conn, preset_id: str, updated_by: str = "") -> dict[str, Any]:
+    """Materialize one official preset as the model profile used by devices.
+
+    Official presets are kept in the read-only catalog until an operator
+    explicitly applies one. Applying a preset makes the existing
+    ``snmp_metric_profiles`` resolver the single source of truth for the
+    device list and collectors. Verification remains visible as quality
+    metadata; it never switches collection to another OID source.
+    """
+    normalized_preset_id = str(preset_id or "").strip()
+    if not normalized_preset_id:
+        raise ValueError("preset_id is required")
+
+    # Import lazily to keep the metric-profile service independent from the
+    # MIB catalog during application startup and test isolation.
+    from services.snmp_preset_service import list_preset_profiles
+
+    preset = next(
+        (item for item in list_preset_profiles() if str(item.get("id") or "") == normalized_preset_id),
+        None,
+    )
+    if not preset:
+        raise ValueError("Official SNMP preset not found")
+    if preset.get("testable") is False or not preset.get("metric_definitions"):
+        raise ValueError("This official SNMP preset must be verified before it can be applied")
+
+    payload = {
+        "vendor": preset.get("vendor"),
+        "model": preset.get("model"),
+        "metric_definitions": preset.get("metric_definitions") or {},
+        "interface_config": preset.get("interface_config") or {},
+    }
+    vendor, model, vendor_key, model_key = _profile_identity(conn, payload)
+    profile_columns = _table_columns(conn, "snmp_metric_profiles")
+    if {"official_preset_id", "source"}.issubset(profile_columns):
+        existing = conn.execute(
+            """
+            SELECT * FROM snmp_metric_profiles
+            WHERE official_preset_id = ? AND LOWER(COALESCE(source, '')) = 'official'
+            ORDER BY updated_at DESC, id
+            LIMIT 1
+            """,
+            (normalized_preset_id,),
+        ).fetchone()
+    else:
+        # Pre-m0181 isolated databases had one row per vendor/model.  The
+        # application migration removes that uniqueness before this path is
+        # used in production; this branch only keeps old service fixtures
+        # readable during an upgrade window.
+        existing = conn.execute(
+            "SELECT * FROM snmp_metric_profiles WHERE vendor_key = ? AND model_key = ?",
+            (vendor_key, model_key),
+        ).fetchone()
+    if existing:
+        payload = {
+            **payload,
+            "template_name": _row_value(existing, "template_name", "")
+            or " / ".join(part for part in (vendor, model) if part),
+        }
+        profile = update_model_metric_profile(
+            conn,
+            str(_row_value(existing, "id", "")),
+            payload,
+            updated_by,
+            allow_official=True,
+        )
+        applied_mode = "updated"
+    else:
+        profile = create_model_metric_profile(
+            conn,
+            payload,
+            updated_by,
+            source="official",
+            official_preset_id=normalized_preset_id,
+        )
+        applied_mode = "created"
+
+    profile["applied_preset_id"] = normalized_preset_id
+    profile["applied_preset_family_id"] = str(preset.get("family_id") or "")
+    profile["applied_mode"] = applied_mode
+    profile["source"] = "official" if {"official_preset_id", "source"}.issubset(profile_columns) else "official_preset"
+    return profile
+
+
+def update_model_metric_profile(
+    conn,
+    profile_id: str,
+    payload: Mapping[str, Any],
+    updated_by: str = "",
+    *,
+    allow_official: bool = False,
+) -> dict[str, Any]:
     row = conn.execute("SELECT * FROM snmp_metric_profiles WHERE id = ?", (profile_id,)).fetchone()
     if not row:
         raise ValueError("Model metric profile not found")
+    current_source = str(_row_value(row, "source", "custom") or "custom").casefold()
+    if current_source == "official" and not allow_official:
+        raise ValueError("Official templates are read-only; clone the template before editing")
     vendor, model, vendor_key, model_key = _profile_identity(conn, payload, row)
     interface_config = _validated_interface_values(payload)
     metric_definitions = _validated_profile_values(payload, allow_empty=bool(interface_config))
@@ -1344,45 +1737,85 @@ def update_model_metric_profile(conn, profile_id: str, payload: Mapping[str, Any
         raise ValueError("at least one hardware metric or an interface OID definition is required")
     cpu_config = metric_definitions.get("cpu", {})
     memory_config = metric_definitions.get("memory", {})
-    conflict = conn.execute(
-        "SELECT id FROM snmp_metric_profiles WHERE vendor_key = ? AND model_key = ? AND id <> ?",
-        (vendor_key, model_key, profile_id),
-    ).fetchone()
-    if conflict:
-        raise ValueError("A profile already exists for this vendor and model")
+    template_name = _clean_text(
+        payload.get("template_name")
+        if payload.get("template_name") is not None
+        else _row_value(row, "template_name", "")
+        or " / ".join(part for part in (vendor, model) if part),
+        160,
+    )
+    official_preset_id = str(_row_value(row, "official_preset_id", "") or "")
 
     now = _utc_now()
-    conn.execute(
-        """
-        UPDATE snmp_metric_profiles
-        SET vendor_key = ?, vendor_name = ?, model_key = ?, model_name = ?,
-            cpu_oid = ?, memory_oid = ?, cpu_config_json = ?, memory_config_json = ?,
-            metric_definitions_json = ?, interface_config_json = ?,
-            verification_status = 'unverified', last_test_at = NULL,
-            last_test_device_id = '',
-            last_test_message = 'Metric definition changed; live verification required',
-            interface_verification_status = 'unverified', interface_last_test_at = NULL,
-            interface_last_test_device_id = '',
-            interface_last_test_message = 'Interface definition changed; live verification required',
-            updated_at = ?, updated_by = ?
-        WHERE id = ?
-        """,
-        (
-            vendor_key,
-            vendor,
-            model_key,
-            model,
-            str(cpu_config.get("oid") or ""),
-            str(memory_config.get("oid") or ""),
-            _config_json(cpu_config),
-            _config_json(memory_config),
-            _config_json(metric_definitions),
-            _config_json(interface_config),
-            now,
-            updated_by,
-            profile_id,
-        ),
-    )
+    profile_columns = _table_columns(conn, "snmp_metric_profiles")
+    if {"template_name", "source", "official_preset_id"}.issubset(profile_columns):
+        conn.execute(
+            """
+            UPDATE snmp_metric_profiles
+            SET vendor_key = ?, vendor_name = ?, model_key = ?, model_name = ?,
+                cpu_oid = ?, memory_oid = ?, cpu_config_json = ?, memory_config_json = ?,
+                metric_definitions_json = ?, interface_config_json = ?,
+                template_name = ?, source = ?, official_preset_id = ?,
+                verification_status = 'unverified', last_test_at = NULL,
+                last_test_device_id = '',
+                last_test_message = 'Metric definition changed; live verification required',
+                interface_verification_status = 'unverified', interface_last_test_at = NULL,
+                interface_last_test_device_id = '',
+                interface_last_test_message = 'Interface definition changed; live verification required',
+                updated_at = ?, updated_by = ?
+            WHERE id = ?
+            """,
+            (
+                vendor_key,
+                vendor,
+                model_key,
+                model,
+                str(cpu_config.get("oid") or ""),
+                str(memory_config.get("oid") or ""),
+                _config_json(cpu_config),
+                _config_json(memory_config),
+                _config_json(metric_definitions),
+                _config_json(interface_config),
+                template_name,
+                current_source,
+                official_preset_id,
+                now,
+                updated_by,
+                profile_id,
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE snmp_metric_profiles
+            SET vendor_key = ?, vendor_name = ?, model_key = ?, model_name = ?,
+                cpu_oid = ?, memory_oid = ?, cpu_config_json = ?, memory_config_json = ?,
+                metric_definitions_json = ?, interface_config_json = ?,
+                verification_status = 'unverified', last_test_at = NULL,
+                last_test_device_id = '',
+                last_test_message = 'Metric definition changed; live verification required',
+                interface_verification_status = 'unverified', interface_last_test_at = NULL,
+                interface_last_test_device_id = '',
+                interface_last_test_message = 'Interface definition changed; live verification required',
+                updated_at = ?, updated_by = ?
+            WHERE id = ?
+            """,
+            (
+                vendor_key,
+                vendor,
+                model_key,
+                model,
+                str(cpu_config.get("oid") or ""),
+                str(memory_config.get("oid") or ""),
+                _config_json(cpu_config),
+                _config_json(memory_config),
+                _config_json(metric_definitions),
+                _config_json(interface_config),
+                now,
+                updated_by,
+                profile_id,
+            ),
+        )
     invalidate_metric_profile_cache()
     return dict(conn.execute("SELECT * FROM snmp_metric_profiles WHERE id = ?", (profile_id,)).fetchone())
 
@@ -1429,6 +1862,13 @@ def mark_model_metric_profile_test(
 def delete_model_metric_profile(conn, profile_id: str) -> bool:
     if not conn.execute("SELECT id FROM snmp_metric_profiles WHERE id = ?", (profile_id,)).fetchone():
         raise ValueError("Model metric profile not found")
+    if "snmp_metric_profile_id" in _table_columns(conn, "devices"):
+        binding = conn.execute(
+            "SELECT COUNT(*) AS count FROM devices WHERE snmp_metric_profile_id = ?",
+            (profile_id,),
+        ).fetchone()
+        if int(_row_value(binding, "count", 0) or 0) > 0:
+            raise ValueError("Template is still bound to devices; unbind it before deleting")
     conn.execute("DELETE FROM snmp_metric_profiles WHERE id = ?", (profile_id,))
     invalidate_metric_profile_cache()
     return True
@@ -1442,6 +1882,8 @@ __all__ = [
     "HEALTH_METRIC_KEYS",
     "ALERT_METRIC_COLLECTION_BINDINGS",
     "annotate_devices_with_snmp_profile",
+    "apply_official_model_preset",
+    "bind_model_metric_profile",
     "create_model_metric_profile",
     "delete_model_metric_profile",
     "get_model_metric_profile_mapping",
@@ -1449,6 +1891,7 @@ __all__ = [
     "invalidate_metric_profile_cache",
     "list_model_metric_profiles",
     "list_model_metric_profiles_page",
+    "list_model_metric_profile_devices",
     "list_alert_metric_collections",
     "mark_model_metric_profile_test",
     "metric_config_hash",
@@ -1457,6 +1900,7 @@ __all__ = [
     "normalize_model_key",
     "normalize_vendor_key",
     "normalize_vendor_name",
+    "unbind_model_metric_profile",
     "profile_metric_config",
     "profile_metric_definitions",
     "validate_metric_definitions",

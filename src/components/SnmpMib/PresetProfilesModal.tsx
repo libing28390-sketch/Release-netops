@@ -11,9 +11,13 @@ import {
   X,
 } from 'lucide-react';
 import { apiRequest } from '../../api/http';
+import { formatMetricValue, formatRawValue, summarizeRawValue } from './components/metricResultFormatters';
 
 export interface ModelPresetItem {
   id?: string;
+  /** Present when this binding dialog is opened for an existing custom/official profile. */
+  profile_id?: string;
+  source?: string;
   family_id?: string;
   vendor: string;
   model: string;
@@ -82,6 +86,8 @@ interface PresetProfilesModalProps {
   open: boolean;
   onClose: () => void;
   onApplyPreset: (preset: ModelPresetItem) => void;
+  onApplyOfficialPreset?: (preset: ModelPresetItem) => Promise<void>;
+  initialPreset?: Pick<ModelPresetItem, 'vendor' | 'model'> | null;
   language: string;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
@@ -90,6 +96,8 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
   open,
   onClose,
   onApplyPreset,
+  onApplyOfficialPreset,
+  initialPreset = null,
   language,
   showToast,
 }) => {
@@ -108,6 +116,7 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
   const [testVersion, setTestVersion] = useState<'1' | '2c'>('2c');
   const [testingPreset, setTestingPreset] = useState(false);
   const [presetTestResult, setPresetTestResult] = useState<PresetTestResult | null>(null);
+  const [applyingPreset, setApplyingPreset] = useState(false);
 
   const loadPresets = async () => {
     setLoading(true);
@@ -117,7 +126,11 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
       );
       const items = Array.isArray(res.data) ? res.data : [];
       setPresets(items);
+      const preferred = initialPreset
+        ? items.find(item => item.vendor === initialPreset.vendor && item.model === initialPreset.model)
+        : null;
       setSelectedPreset(current => {
+        if (preferred) return preferred;
         if (current && items.some(item => item.vendor === current.vendor && item.model === current.model)) {
           return current;
         }
@@ -144,6 +157,7 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
       setTestVersion('2c');
       setTestingPreset(false);
       setPresetTestResult(null);
+      setApplyingPreset(false);
       void loadPresets();
     }
   }, [open]);
@@ -194,6 +208,17 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
       return filteredPresets[0] || null;
     });
   }, [filteredPresets]);
+
+  const applyOfficialPreset = async () => {
+    if (!selectedPreset || !onApplyOfficialPreset) return;
+    setApplyingPreset(true);
+    try {
+      await onApplyOfficialPreset(selectedPreset);
+      onClose();
+    } finally {
+      setApplyingPreset(false);
+    }
+  };
 
   useEffect(() => {
     setPresetTestResult(null);
@@ -614,6 +639,8 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
                     </div>
                   )}
 
+                  {!onApplyOfficialPreset && (
+                    <>
                   {/* Read-only one-click test for the selected official preset */}
                   <div className="rounded-xl border border-[#00bceb]/20 bg-[#00bceb]/[.035] p-3 text-xs text-black/70 dark:text-white/75">
                     <div className="flex items-center gap-1.5 font-semibold text-[#008aad] dark:text-[#00c2e8]">
@@ -709,19 +736,27 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
                               {presetTestResult.hardware.message} · {presetTestResult.hardware.metric_count} {zh ? '项' : 'metrics'}
                             </div>
                             <div className="mt-1.5 grid gap-1 sm:grid-cols-2">
-                              {Object.entries(presetTestResult.hardware.metrics || {}).map(([key, detail]) => (
-                                <div key={key} className="rounded border border-black/6 bg-white/45 px-2 py-1.5 dark:border-white/8 dark:bg-white/[.03]">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="font-medium">{key}</span>
-                                    <span className={detail.status === 'ok' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}>
-                                      {detail.status || '-'}
-                                    </span>
+                              {Object.entries(presetTestResult.hardware.metrics || {}).map(([key, detail]) => {
+                                const hasRawValue = detail.raw_value !== undefined && detail.raw_value !== detail.value;
+                                return (
+                                  <div key={key} className="min-w-0 rounded border border-black/6 bg-white/45 px-2 py-1.5 dark:border-white/8 dark:bg-white/[.03]">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="truncate font-medium" title={key}>{key}</span>
+                                      <span className={detail.status === 'ok' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}>
+                                        {detail.status || '-'}
+                                      </span>
+                                    </div>
+                                    <div className="mt-0.5 break-words font-mono text-[10px] text-black/55 dark:text-white/55">
+                                      {formatMetricValue(key, detail, zh)}
+                                    </div>
+                                    {hasRawValue && (
+                                      <div className="mt-0.5 truncate text-[9px] text-black/40 dark:text-white/40" title={formatRawValue(detail.raw_value)}>
+                                        {zh ? '原始摘要：' : 'Raw summary: '}{summarizeRawValue(detail.raw_value, zh)}
+                                      </div>
+                                    )}
                                   </div>
-                                  <div className="mt-0.5 font-mono text-[10px] text-black/55 dark:text-white/55">
-                                    {String(detail.value ?? '-')} {detail.unit || ''}
-                                  </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -749,22 +784,37 @@ const PresetProfilesModal: React.FC<PresetProfilesModalProps> = ({
                       </div>
                     )}
                   </div>
+                    </>
+                  )}
                 </div>
 
-                <div className="mt-5 border-t border-black/8 pt-3 dark:border-white/8">
+                <div className="mt-5 space-y-2 border-t border-black/8 pt-3 dark:border-white/8">
+                  {onApplyOfficialPreset && (
+                    <button
+                      type="button"
+                      disabled={applyingPreset || selectedPreset.testable === false || Object.keys(selectedPreset.metric_definitions || {}).length === 0}
+                      onClick={() => void applyOfficialPreset()}
+                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#00a9ce] py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1] disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      {applyingPreset ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                      {applyingPreset
+                          ? (zh ? '准备绑定…' : 'Preparing binding…')
+                        : selectedPreset.testable === false
+                          ? (zh ? '文档范围条目，需先核验 OID' : 'Documentation-only row; verify OIDs first')
+                          : (zh ? `测试并绑定（${selectedPreset.vendor} ${selectedPreset.model}）` : `Test & bind (${selectedPreset.vendor} ${selectedPreset.model})`)}
+                    </button>
+                  )}
                   <button
                     type="button"
-                    disabled={selectedPreset.testable === false || Object.keys(selectedPreset.metric_definitions || {}).length === 0}
+                    disabled={applyingPreset || selectedPreset.testable === false || Object.keys(selectedPreset.metric_definitions || {}).length === 0}
                     onClick={() => {
                       onApplyPreset(selectedPreset);
                       onClose();
                     }}
-                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#00a9ce] py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1] disabled:cursor-not-allowed disabled:opacity-45"
+                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-[#00bceb]/30 bg-[#00bceb]/8 py-2 text-xs font-semibold text-[#008aad] hover:bg-[#00bceb]/15 disabled:cursor-not-allowed disabled:opacity-45 dark:text-[#00bceb]"
                   >
-                    <Check size={15} />
-                    {selectedPreset.testable === false
-                      ? zh ? '文档范围条目，需先核验 OID' : 'Documentation-only row; verify OIDs first'
-                      : zh ? `复制并自定义此预置（${selectedPreset.vendor} ${selectedPreset.model}）` : `Clone & Customize (${selectedPreset.vendor} ${selectedPreset.model})`}
+                    <Sparkles size={14} />
+                    {zh ? '复制并自定义' : 'Clone & customize'}
                   </button>
                 </div>
               </div>

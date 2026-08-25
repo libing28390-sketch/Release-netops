@@ -272,6 +272,32 @@ def test_binding_rejects_an_explicit_device_platform_from_another_profile(isolat
     assert error.value.code == "PLATFORM_PROFILE_MISMATCH"
 
 
+def test_platform_binding_is_immutable_after_first_assignment(isolated_db):
+    user = _user("tenant-1")
+    first = create_profile(
+        {"platform_code": "stable_first", "connection_driver": "cisco_ios", "parser_platform": "cisco_ios"}, user,
+    )
+    second = create_profile(
+        {"platform_code": "stable_second", "connection_driver": "cisco_ios", "parser_platform": "cisco_ios"}, user,
+    )
+    conn = isolated_db["module"].get_db_connection()
+    try:
+        device_id = _insert_device(conn, "tenant-1", device_id="immutable-platform-device")
+    finally:
+        conn.close()
+
+    bound = bind_device(device_id, first["id"], user)
+    assert bound["platform_profile_id"] == first["id"]
+    assert bound["platform_locked"] == 1
+
+    repeated = bind_device(device_id, first["id"], user, lock=True)
+    assert repeated["binding_unchanged"] is True
+
+    with pytest.raises(PlatformRegistryError) as changed:
+        bind_device(device_id, second["id"], user)
+    assert changed.value.code == "PLATFORM_BINDING_LOCKED"
+
+
 def test_platform_identification_returns_conflict_and_rejects_cross_tenant(isolated_db):
     user = _user("tenant-1")
     other = _user("tenant-2")

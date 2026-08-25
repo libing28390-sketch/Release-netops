@@ -367,6 +367,7 @@ async def _collect_link(link: dict[str, Any], collected: dict[str, Any] | None =
                     community,
                     port,
                     interface_config,
+                    template_only=True,
                 )
             collection_status = str(detail.get("status") or "timeout")
             items = detail.get("items") or []
@@ -863,7 +864,13 @@ async def test_wan_link_collection(link_id: str) -> dict[str, Any] | None:
     if not ip or not community:
         return {"link_id": link_id, "status": "not_configured", "error_code": "not_configured", "items": []}
     interface_config = resolve_metric_profiles(device).get('interface') or None
-    detail = await collect_interface_data_detailed(ip, community, port, interface_config)
+    detail = await collect_interface_data_detailed(
+        ip,
+        community,
+        port,
+        interface_config,
+        template_only=True,
+    )
     matched = _match_interface(link, detail.get("items") or [])
     if detail.get("status") == "success" and not matched:
         return {"link_id": link_id, "status": "interface_not_found", "error_code": "interface_not_found", "items": []}
@@ -905,7 +912,13 @@ async def test_wan_link_configuration(payload: dict[str, Any]) -> dict[str, Any]
     if not ip or not community:
         return {"status": "not_configured", "error_code": "not_configured", "items": []}
     interface_config = resolve_metric_profiles(device or {}).get("interface") or None
-    detail = await collect_interface_data_detailed(ip, community, port, interface_config)
+    detail = await collect_interface_data_detailed(
+        ip,
+        community,
+        port,
+        interface_config,
+        template_only=True,
+    )
     match = _match_interface(
         {"if_index": iface.get("if_index"), "interface_name": iface.get("interface_name")},
         detail.get("items") or [],
@@ -1059,7 +1072,13 @@ def run_wan_collection_once() -> dict[str, Any]:
             interface_config = resolve_metric_profiles(device).get('interface') or None
             detail = {"status": "not_configured", "items": [], "error_code": "not_configured", "error_message": "SNMP credentials are not configured"}
             if ip and community:
-                detail = await collect_interface_data_detailed(ip, community, port, interface_config)
+                detail = await collect_interface_data_detailed(
+                    ip,
+                    community,
+                    port,
+                    interface_config,
+                    template_only=True,
+                )
             return await asyncio.gather(*[_collect_link(link, detail) for link in group])
 
         grouped_results = await asyncio.gather(*[collect_group(group) for group in grouped.values()])

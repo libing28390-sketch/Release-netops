@@ -70,6 +70,12 @@ const authHeaders = (): Record<string, string> => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
+// Keep the realtime view tight enough for quick SNMP verification. The
+// backend collector runs on roughly a 60-second cycle, while this page polls
+// every 30 seconds, so a one-minute window is sufficient without showing
+// stale samples as current data.
+const REALTIME_WINDOW_MINUTES = 1;
+
 /* ── Radial gauge (circular progress) for percentage metrics ── */
 const RadialGauge: React.FC<{
   value: number | null;
@@ -282,7 +288,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
   }, [deviceRows, selectedId]);
 
   const fetchRealtime = useCallback(async (deviceId: string, signal?: AbortSignal) => {
-    const resp = await fetch(`/api/monitoring/device/${deviceId}/realtime?window_minutes=15&limit=1000`, {
+    const resp = await fetch(`/api/monitoring/device/${deviceId}/realtime?window_minutes=${REALTIME_WINDOW_MINUTES}&limit=1000`, {
       headers: authHeaders(),
       signal,
     });
@@ -915,8 +921,8 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                     </div>
                     <p className="text-[11px] text-gray-400 mt-0.5">
                       {zh
-                        ? '仅显示当前 UP 接口；IN/OUT 速率使用 SNMP Counter64 计算，分栏显示丢弃与 CRC 错误。'
-                        : 'UP interfaces only; IN/OUT rates use SNMP Counter64 byte counters.'}
+                        ? `仅显示最近 ${REALTIME_WINDOW_MINUTES} 分钟内的 UP 接口；IN/OUT 速率使用 SNMP Counter64 计算，分栏显示丢弃与 CRC 错误。`
+                        : `UP interfaces sampled within the last ${REALTIME_WINDOW_MINUTES} minute; IN/OUT rates use SNMP Counter64 byte counters.`}
                     </p>
                   </div>
                   {realtimeData?.summary && (

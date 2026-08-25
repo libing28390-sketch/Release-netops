@@ -255,6 +255,8 @@ export const AssistantTab: React.FC = () => {
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [activeInspectorMsg, setActiveInspectorMsg] = useState<ChatMessage | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyFailedId, setCopyFailedId] = useState<string | null>(null);
+  const [selectedText, setSelectedText] = useState<{ messageId: string; text: string } | null>(null);
   const [expandedSourcesId, setExpandedSourcesId] = useState<string | null>(null);
   const [expandedProcessId, setExpandedProcessId] = useState<string | null>(null);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
@@ -276,6 +278,7 @@ export const AssistantTab: React.FC = () => {
   const loadedSessionIdsRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const selectionBeforeContextMenuRef = useRef<CopilotSelectionSnapshot | null>(null);
+  const selectedTextRef = useRef<{ messageId: string; text: string } | null>(null);
   const isSelectingTextRef = useRef(false);
   const shouldStickToBottomRef = useRef(true);
   const restoringSelectionRef = useRef(false);
@@ -291,17 +294,32 @@ export const AssistantTab: React.FC = () => {
     const rememberSelection = () => {
       if (restoringSelectionRef.current) return;
       const selection = window.getSelection();
-      if (!selection || !hasTextSelection(selection)) return;
+      if (!selection || !hasTextSelection(selection)) {
+        setSelectedText(null);
+        return;
+      }
 
       const anchorElement = selection.anchorNode instanceof Element
         ? selection.anchorNode
         : selection.anchorNode?.parentElement;
-      const messageRoot = anchorElement?.closest('[data-copilot-message-id]');
-      if (!messageRoot || !messageRoot.contains(selection.focusNode)) return;
+      const messageContent = anchorElement?.closest('[data-copilot-message-content]');
+      const messageRoot = messageContent?.closest('[data-copilot-message-id]');
+      if (!messageContent || !messageRoot || !messageContent.contains(selection.focusNode)) {
+        setSelectedText(null);
+        return;
+      }
 
-      const range = cloneSelectionWithin(selection, messageRoot);
+      const range = cloneSelectionWithin(selection, messageContent);
       if (range) {
-        selectionBeforeContextMenuRef.current = { range, messageRoot };
+        const text = selection.toString();
+        if (!text.trim()) {
+          setSelectedText(null);
+          return;
+        }
+        const nextSelectedText = { messageId: messageRoot.getAttribute('data-copilot-message-id') || '', text };
+        selectedTextRef.current = nextSelectedText;
+        setSelectedText(nextSelectedText);
+        selectionBeforeContextMenuRef.current = { range, messageRoot: messageContent };
       }
     };
 
@@ -311,7 +329,7 @@ export const AssistantTab: React.FC = () => {
 
     const restoreSelectionForContextMenu = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      const messageRoot = target?.closest('[data-copilot-message-id]');
+      const messageRoot = target?.closest('[data-copilot-message-content]');
       const snapshot = selectionBeforeContextMenuRef.current;
       if (!snapshot || !messageRoot || snapshot.messageRoot !== messageRoot) return;
 
@@ -621,7 +639,7 @@ export const AssistantTab: React.FC = () => {
     }
     if (event.button !== 2) return;
 
-    const messageRoot = event.currentTarget.closest('[data-copilot-message-id]');
+    const messageRoot = event.currentTarget.closest('[data-copilot-message-content]');
     const range = cloneSelectionWithin(window.getSelection(), event.currentTarget);
     if (messageRoot && range) {
       selectionBeforeContextMenuRef.current = { range, messageRoot };
@@ -961,7 +979,12 @@ export const AssistantTab: React.FC = () => {
   const handleCopyMessage = async (id: string, text: string) => {
     try {
       const copiedSuccessfully = await copyTextWithFallback(text);
-      if (!copiedSuccessfully) return;
+      if (!copiedSuccessfully) {
+        setCopyFailedId(id);
+        window.setTimeout(() => setCopyFailedId((current) => current === id ? null : current), 2500);
+        return;
+      }
+      setCopyFailedId(null);
       setCopiedId(id);
       window.setTimeout(() => setCopiedId(null), 2000);
     } catch (e) {
@@ -1112,6 +1135,7 @@ export const AssistantTab: React.FC = () => {
                     <div key={m.id} data-copilot-message-id={m.id} className="flex flex-col items-end gap-1 select-text">
                       <div
                         className="max-w-[78%] cursor-text rounded-[20px] rounded-tr-none bg-[#f4f4f5] px-4 py-3 font-sans text-sm leading-relaxed text-gray-900 selection:bg-indigo-200 selection:text-gray-900 dark:bg-gray-800 dark:text-gray-100 dark:selection:bg-indigo-700/70 dark:selection:text-white"
+                        data-copilot-message-content="true"
                         style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
                         onMouseDownCapture={handleMessageMouseDown}
                       >
@@ -1229,8 +1253,8 @@ export const AssistantTab: React.FC = () => {
                     {/* Content Rendered via MarkdownRenderer */}
                     <div
                       className="cursor-text pl-1 text-gray-800 select-text selection:bg-indigo-200 selection:text-gray-900 dark:text-gray-100 dark:selection:bg-indigo-700/70 dark:selection:text-white"
+                      data-copilot-message-content="true"
                       style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
-                      onMouseDownCapture={handleMessageMouseDown}
                     >
                       {isMessageStreaming ? (
                         <div className="whitespace-pre-wrap break-words leading-relaxed select-text">
@@ -1344,17 +1368,39 @@ export const AssistantTab: React.FC = () => {
 
                     {/* Assistant Action Bar (Copy, Like, Regenerate, Inspector Toggle) */}
                     <div className="flex items-center gap-3 pt-1 text-gray-400 select-none text-xs">
+                      {selectedText?.messageId === m.id && (
+                        <button
+                          type="button"
+                          onPointerDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            const liveSelection = window.getSelection()?.toString() || '';
+                            const savedSelection = selectionBeforeContextMenuRef.current?.range.toString() || '';
+                            const cachedSelection = selectedTextRef.current?.messageId === m.id ? selectedTextRef.current.text : '';
+                            const textToCopy = liveSelection.trim() ? liveSelection : cachedSelection.trim() ? cachedSelection : savedSelection.trim() ? savedSelection : selectedText.text;
+                            void handleCopyMessage(`${m.id}:selection`, textToCopy);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md p-1 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                          title="复制选中内容"
+                          aria-label="复制选中内容"
+                        >
+                          {copiedId === `${m.id}:selection` ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className={`h-3.5 w-3.5 ${copyFailedId === `${m.id}:selection` ? 'text-rose-500' : ''}`} />}
+                          <span className={copyFailedId === `${m.id}:selection` ? 'text-rose-500' : ''}>{copyFailedId === `${m.id}:selection` ? '复制失败' : copiedId === `${m.id}:selection` ? '已复制' : '复制选中'}</span>
+                        </button>
+                      )}
                       <button
                         type="button"
+                        onPointerDown={(event) => event.preventDefault()}
                         onClick={() => handleCopyMessage(m.id, m.content)}
-                        className="hover:text-gray-700 dark:hover:text-gray-200 flex items-center gap-1 p-1 transition"
+                        className="inline-flex items-center gap-1 rounded-md p-1 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
                         title="复制全文"
+                        aria-label="复制全文"
                       >
                         {copiedId === m.id ? (
                           <Check className="w-3.5 h-3.5 text-emerald-500" />
                         ) : (
-                          <Copy className="w-3.5 h-3.5" />
+                          <Copy className={`w-3.5 h-3.5 ${copyFailedId === m.id ? 'text-rose-500' : ''}`} />
                         )}
+                        <span className={copyFailedId === m.id ? 'text-rose-500' : ''}>{copyFailedId === m.id ? '复制失败' : copiedId === m.id ? '已复制' : '复制全文'}</span>
                       </button>
 
                       <button type="button" onClick={() => handleRetryMessage(m)} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="重试本次问题">

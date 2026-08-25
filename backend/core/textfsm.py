@@ -1240,11 +1240,22 @@ def list_template_suggestions(platform: str, query: str, limit: int = 8) -> list
 
     Every returned command comes from a real built-in or custom template;
     compatible platform entries are considered only after the exact platform.
+    A concrete H3C variant only sees its own grammar plus explicitly common
+    templates.  ``list_templates`` intentionally exposes H3C variants under
+    the public ``h3c_comware`` family, so the version-aware restriction must
+    be applied here before command deduplication.
     """
     normalized_query = str(query or '').strip()
     if len(normalized_query) < 2:
         return []
 
+    normalized_platform = str(platform or '').strip().lower()
+    requested_h3c_variant = normalized_platform if normalized_platform in {
+        'h3c_comware_v5',
+        'h3c_comware_v7',
+        'h3c_comware_v9',
+    } else ''
+    requested_h3c_version = requested_h3c_variant.rsplit('_', 1)[-1] if requested_h3c_variant else ''
     platform_candidates = _template_platform_candidates(platform)
     if not platform_candidates:
         return []
@@ -1253,15 +1264,27 @@ def list_template_suggestions(platform: str, query: str, limit: int = 8) -> list
         item for item in list_templates()
         if str(item.get('platform') or '').lower() in platform_rank
     ]
+    if requested_h3c_version:
+        templates = [
+            item for item in templates
+            if str(item.get('platform') or '').lower() != 'h3c_comware'
+            or str(item.get('version') or '').strip().lower() in {requested_h3c_version, 'common'}
+        ]
 
     ranked: list[tuple[int, int, dict[str, Any]]] = []
     for item in templates:
         command = str(item.get('command') or '').strip()
         score = _fuzzy_command_score(normalized_query, command)
         if score:
+            item_platform = str(item.get('platform') or '').lower()
+            if requested_h3c_version and item_platform == 'h3c_comware':
+                item_version = str(item.get('version') or '').strip().lower()
+                template_rank = 0 if item_version == requested_h3c_version else 1
+            else:
+                template_rank = platform_rank.get(item_platform, 99)
             ranked.append((
                 score,
-                platform_rank.get(str(item.get('platform') or '').lower(), 99),
+                template_rank,
                 item,
             ))
 
@@ -1292,6 +1315,7 @@ def list_template_suggestions(platform: str, query: str, limit: int = 8) -> list
             'command': item.get('command', ''),
             'filename': item.get('filename', ''),
             'source': item.get('source', ''),
+            'version': item.get('version', ''),
             'score': score,
         }
         for score, _platform_rank, item in ranked

@@ -21,13 +21,18 @@ TASK_TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "timeout",
 TASK_ACTIVE_STATES = frozenset({"queued", "running", "cancelling"})
 
 
-def _safe_message_content(content: str, *, tenant_id: str, scope_id: str) -> str:
+def _safe_message_content(content: str, *, tenant_id: str, scope_id: str, role: str = "user") -> str:
     text = str(content or "")[:200_000]
     findings = classify_text(text)
     if any(item.level >= DataLevel.L4_PROHIBITED for item in findings):
         raise ValueError("message contains prohibited secret or full configuration data")
     if any(item.level >= DataLevel.L3_SENSITIVE for item in findings):
         text = str(minimize(text, max_text_chars=8000))
+    # Assistant output has already passed the outbound security gateway. Keep
+    # its identifiers readable in persisted history so links, addresses, and
+    # CLI examples remain useful after the in-memory token vault expires.
+    if role == "assistant":
+        return text
     return tokenize_text(text, tenant_id=tenant_id, task_id=scope_id, vault=token_vault)
 
 
@@ -158,9 +163,10 @@ def clear_messages(*, conversation_id: str, tenant_id: str, user_id: str) -> dic
 def import_messages(*, conversation_id: str, tenant_id: str, user_id: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
     """Safely migrate legacy browser messages into a server conversation.
 
-    Only user/assistant messages are accepted.  Every item goes through the
-    same classifier/minimizer/tokenizer as normal chat persistence; unsafe
-    legacy items are skipped instead of being written in raw form.
+    Only user/assistant messages are accepted. Every item goes through the
+    classifier/minimizer; user content is tokenized while assistant content
+    remains readable for links and copy/paste. Unsafe legacy items are skipped
+    instead of being written in raw form.
     """
     imported = 0
     skipped = 0
@@ -190,7 +196,7 @@ def import_messages(*, conversation_id: str, tenant_id: str, user_id: str, messa
 def append_message(*, conversation_id: str, tenant_id: str, user_id: str, role: str, content: str, citations: list[dict[str, Any]] | None = None, reasoning_internal: str | None = None, requested_model_id: str | None = None, actual_model_id: str | None = None, provider_id: str | None = None, route_reason: str | None = None, fallback_used: bool = False, execution_mode: str | None = None, external_egress: bool | None = None, input_tokens: int | None = None, output_tokens: int | None = None, latency_ms: int | None = None, token_source: str | None = None) -> dict[str, Any]:
     if role not in {"system", "user", "assistant", "tool"}:
         raise ValueError("unsupported conversation role")
-    safe_content = _safe_message_content(content, tenant_id=tenant_id, scope_id=conversation_id)
+    safe_content = _safe_message_content(content, tenant_id=tenant_id, scope_id=conversation_id, role=role)
     allowed_execution_modes = {"local_knowledge", "local_operation", "provider_generated", "local_fallback", "legacy_unknown"}
     safe_execution_mode = execution_mode if execution_mode in allowed_execution_modes else None
     safe_input_tokens = max(0, int(input_tokens)) if input_tokens is not None else None
@@ -247,7 +253,15 @@ def get_context(*, conversation_id: str, tenant_id: str, user_id: str, max_messa
             item["citations"] = json.loads(item.pop("citations_json") or "[]")
         except Exception:
             item["citations"] = []
-        item["content"] = item.pop("content_safe")
+        # Conversation content is tokenized at rest. The caller has already
+        # passed the tenant/user ownership check above, so resolve only the
+        # exact token scope for this conversation before returning it to the
+        # authorized UI or reusing it as model history.
+        item["content"] = token_vault.resolve_text(
+            item.pop("content_safe"),
+            tenant_id=tenant_id,
+            task_id=conversation_id,
+        )
         if "external_egress" in item:
             item["external_egress"] = None if item["external_egress"] is None else bool(item["external_egress"])
         items.append(item)

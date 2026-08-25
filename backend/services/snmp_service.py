@@ -192,6 +192,9 @@ DEFAULT_INTERFACE_CONFIG = {
     'if_high_speed_oid': IF_HIGH_SPEED,
     'if_speed_oid': IF_SPEED,
     'if_last_change_oid': IF_LAST_CHANGE,
+    # sysUpTime is used only to interpret ifLastChange; the applied interface
+    # template owns this OID just like the rest of the interface table.
+    'sys_uptime_oid': '1.3.6.1.2.1.1.3.0',
     'if_in_octets_oid': IF_IN_OCTETS,
     'if_out_octets_oid': IF_OUT_OCTETS,
     'if_hc_in_octets_oid': IF_HC_IN,
@@ -216,6 +219,12 @@ DEFAULT_INTERFACE_CONFIG = {
     'counter_mode': 'auto',
 }
 
+# A live template validation should fail fast for optional OIDs that are not
+# exposed by the device's SNMP view.  The underlying bulk walker has its own
+# retry/fallback path, so without an outer bound one missing OID can consume
+# two full walk timeouts before the validation response is returned.
+INTERFACE_PROBE_OID_TIMEOUT_SECONDS = 2.5
+
 _INTERFACE_OID_FIELDS = tuple(
     key for key in DEFAULT_INTERFACE_CONFIG if key.endswith('_oid')
 )
@@ -227,6 +236,7 @@ _INTERFACE_OID_ALIASES = {
     'if_high_speed': 'if_high_speed_oid',
     'if_speed': 'if_speed_oid',
     'if_last_change': 'if_last_change_oid',
+    'sys_uptime': 'sys_uptime_oid',
     'if_in_octets': 'if_in_octets_oid',
     'if_out_octets': 'if_out_octets_oid',
     'if_hc_in_oid': 'if_hc_in_octets_oid',
@@ -1042,6 +1052,9 @@ def _runtime_metric_config(config: Mapping[str, Any] | None, legacy_oid: str = "
         "status": "status_code",
     }
     mode = aliases.get(mode, mode)
+    read_strategy = str(raw.get("read_strategy") or raw.get("collection") or "auto").strip().casefold()
+    if read_strategy not in {"auto", "get", "walk"}:
+        read_strategy = "auto"
     default_unit = (
         "%"
         if mode in {"direct_percent", "used_total_percent", "used_free_percent", "counter_rate_percent"}
@@ -1064,6 +1077,7 @@ def _runtime_metric_config(config: Mapping[str, Any] | None, legacy_oid: str = "
         "unit": str(raw.get("unit") or default_unit).strip(),
         "aggregation": str(raw.get("aggregation") or "average").strip().casefold(),
         "selector": str(raw.get("selector") or "").strip().strip("."),
+        "read_strategy": read_strategy,
         "scale": raw.get("scale", 1),
         "offset": raw.get("offset", 0),
     }
@@ -1084,6 +1098,22 @@ def _runtime_code_values(value: Any) -> list[int]:
     return result
 
 
+def _metric_prefers_walk(config: Mapping[str, Any], oid: str) -> bool:
+    """Choose a table walk without delaying on a column-root GET.
+
+    Scalar SNMP values conventionally end in ``.0``.  The explicit
+    ``read_strategy`` field can override the default GET-then-WALK behavior
+    for unusual agents.
+    """
+    normalized_oid = str(oid or '').strip().strip('.')
+    if not normalized_oid or str(config.get('selector') or '').strip():
+        return False
+    strategy = str(config.get('read_strategy') or 'auto').strip().casefold()
+    if strategy == 'get':
+        return False
+    return strategy == 'walk'
+
+
 async def _read_typed_points(
     ip: str,
     community: str,
@@ -1091,10 +1121,17 @@ async def _read_typed_points(
     port: int,
     selector: str = "",
     version: str = '2c',
+    prefer_walk: bool = False,
 ) -> list[tuple[str, SnmpTypedValue]]:
     if not oid:
         return []
     version_kwargs = {} if str(version or '2c').strip().lower() in {'', 'v2c', '2c', '2'} else {'version': version}
+    if prefer_walk and not selector:
+        # Vendor entity metrics are usually table columns, not scalar OIDs.
+        # A GET against the column root can wait for the transport timeout
+        # before the subsequent WALK starts.  When the template identifies a
+        # table-root read, WALK it directly and avoid that wasted round trip.
+        return await _snmp_walk_typed(ip, community, oid, port, **version_kwargs)
     if not selector:
         direct = await _snmp_get_typed(ip, community, oid, port, **version_kwargs)
         if direct is not None:
@@ -1235,6 +1272,7 @@ async def _collect_metric_definition(
     persist_counter: bool = True,
     version: str = '2c',
     aggregation_override: str | None = None,
+    read_strategy_override: str | None = None,
 ) -> dict[str, Any]:
     """Collect one typed metric definition without implicit reinterpretation."""
     normalized = _runtime_metric_config(config)
@@ -1245,11 +1283,22 @@ async def _collect_metric_definition(
         # for the OID and interpretation mode).
         normalized = dict(normalized)
         normalized["aggregation"] = aggregation_override
+    if read_strategy_override:
+        normalized = dict(normalized)
+        normalized["read_strategy"] = str(read_strategy_override).strip().casefold()
     mode = normalized["mode"]
     aggregation = normalized["aggregation"]
 
     if mode == "direct_percent":
-        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"], version=version)
+        points = await _read_typed_points(
+            ip,
+            community,
+            normalized["oid"],
+            port,
+            normalized["selector"],
+            version=version,
+            prefer_walk=_metric_prefers_walk(normalized, normalized["oid"]),
+        )
         if not points:
             return _definition_result(normalized, value=None, status="missing", passed=False, message="OID returned no numeric value")
         types = [point.snmp_type for _, point in points]
@@ -1287,7 +1336,15 @@ async def _collect_metric_definition(
         )
 
     if mode == "direct_value":
-        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"], version=version)
+        points = await _read_typed_points(
+            ip,
+            community,
+            normalized["oid"],
+            port,
+            normalized["selector"],
+            version=version,
+            prefer_walk=_metric_prefers_walk(normalized, normalized["oid"]),
+        )
         if not points:
             return _definition_result(normalized, value=None, status="missing", passed=False, message="OID returned no numeric value")
         types = [point.snmp_type for _, point in points]
@@ -1342,7 +1399,15 @@ async def _collect_metric_definition(
         )
 
     if mode == "status_code":
-        points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"], version=version)
+        points = await _read_typed_points(
+            ip,
+            community,
+            normalized["oid"],
+            port,
+            normalized["selector"],
+            version=version,
+            prefer_walk=_metric_prefers_walk(normalized, normalized["oid"]),
+        )
         if not points:
             return _definition_result(normalized, value=None, status="missing", passed=False, message="Status OID returned no numeric value")
         types = [point.snmp_type for _, point in points]
@@ -1376,9 +1441,25 @@ async def _collect_metric_definition(
         )
 
     if mode in {"used_total_percent", "used_free_percent"}:
-        used_points = await _read_typed_points(ip, community, normalized["used_oid"], port, normalized["selector"], version=version)
+        used_points = await _read_typed_points(
+            ip,
+            community,
+            normalized["used_oid"],
+            port,
+            normalized["selector"],
+            version=version,
+            prefer_walk=_metric_prefers_walk(normalized, normalized["used_oid"]),
+        )
         denominator_oid = normalized["total_oid"] if mode == "used_total_percent" else normalized["free_oid"]
-        denominator_points = await _read_typed_points(ip, community, denominator_oid, port, normalized["selector"], version=version)
+        denominator_points = await _read_typed_points(
+            ip,
+            community,
+            denominator_oid,
+            port,
+            normalized["selector"],
+            version=version,
+            prefer_walk=_metric_prefers_walk(normalized, denominator_oid),
+        )
         pairs = _pair_points(used_points, denominator_points)
         types = [point.snmp_type for _, used, total in pairs for point in (used, total)]
         if not pairs:
@@ -1411,8 +1492,24 @@ async def _collect_metric_definition(
     if mode != "counter_rate_percent":
         return _definition_result(normalized, value=None, status="unsupported_mode", passed=False, message="Unsupported metric mode")
 
-    points = await _read_typed_points(ip, community, normalized["oid"], port, normalized["selector"], version=version)
-    capacity_points = await _read_typed_points(ip, community, normalized["capacity_oid"], port, normalized["selector"], version=version)
+    points = await _read_typed_points(
+        ip,
+        community,
+        normalized["oid"],
+        port,
+        normalized["selector"],
+        version=version,
+        prefer_walk=_metric_prefers_walk(normalized, normalized["oid"]),
+    )
+    capacity_points = await _read_typed_points(
+        ip,
+        community,
+        normalized["capacity_oid"],
+        port,
+        normalized["selector"],
+        version=version,
+        prefer_walk=_metric_prefers_walk(normalized, normalized["capacity_oid"]),
+    )
     pairs = _pair_points(points, capacity_points)
     configured_bits = normalized.get("counter_bits")
     try:
@@ -1646,13 +1743,17 @@ async def collect_device_metrics(
     metric_profile_id: str = '',
     bypass_cache: bool = False,
     version: str = '2c',
+    template_only: bool = False,
 ) -> dict:
     """
     Collect the standard hardware set (CPU, memory, temperature, fan, PSU,
     storage, voltage, and power) from a single device.
-    Returns metric values plus typed quality details.  A configured metric is
-    fail-closed: an invalid custom definition does not silently fall back to a
-    different vendor OID and present a misleading value.
+    Returns metric values plus typed quality details.  When ``template_only``
+    is enabled, the caller is enforcing the platform-wide SNMP template
+    contract: only definitions supplied by the applied model template are
+    read, and missing definitions produce no SNMP request.  This prevents a
+    monitoring path from silently switching to ``VENDOR_OIDS`` or HOST-RESOURCES
+    MIB values.
     """
     vendor = _resolve_platform(platform)
     version_key = str(version or '2c').strip().lower()
@@ -1662,7 +1763,7 @@ async def collect_device_metrics(
         version_key = '2c'
     else:
         raise ValueError('Unsupported SNMP version; use 1 or 2c')
-    custom_oids = custom_oids or {}
+    custom_oids = {} if template_only else (custom_oids or {})
     custom_cpu_oid = _safe_metric_oid(custom_oids.get('cpu') or custom_oids.get('cpu_oid'))
     custom_memory_oid = _safe_metric_oid(
         custom_oids.get('memory')
@@ -1683,11 +1784,11 @@ async def collect_device_metrics(
             {key: dict(value) for key, value in configured_metrics.items()},
             sort_keys=True,
             default=str,
-        ).encode('utf-8')
+    ).encode('utf-8')
     ).hexdigest()[:16]
     cache_key = (
         f"metrics:{ip}:{port}:{version_key}:{vendor}:{community_token}:"
-        f"{metric_profile_id}:{device_id}:{metric_token}"
+        f"{metric_profile_id}:{device_id}:{int(template_only)}:{metric_token}"
     )
     if not bypass_cache:
         cached = _get_result_cache(cache_key)
@@ -1706,40 +1807,116 @@ async def collect_device_metrics(
         'power_watts': None,
         'hardware_metrics': {},
         'metric_details': {},
+        'collection_source': 'snmp_template' if template_only else 'builtin_vendor_collector',
+        'collection_status': 'template_applied' if template_only and configured_metrics else 'template_not_applied' if template_only else 'legacy_builtin',
     }
 
+    def _template_missing_detail(metric: str) -> dict[str, Any]:
+        return {
+            'metric': metric,
+            'value': None,
+            'raw_value': None,
+            'status': 'template_not_applied',
+            'passed': False,
+            'message': 'No applied SNMP metric template definition is available for this device model',
+            'source': 'snmp_template',
+        }
+
+    def _template_read_strategy(definition: Mapping[str, Any]) -> str | None:
+        """Prefer WALK for saved table-root templates, keep scalar GETs."""
+        normalized = _runtime_metric_config(definition)
+        if normalized.get('selector'):
+            return None
+        oids = (
+            normalized.get('oid'),
+            normalized.get('used_oid'),
+            normalized.get('total_oid'),
+            normalized.get('free_oid'),
+            normalized.get('capacity_oid'),
+        )
+        return 'walk' if any(str(oid or '').strip() and not str(oid).strip().endswith('.0') for oid in oids) else None
+
+    template_definition_results: dict[str, dict[str, Any]] = {}
     try:
+        if template_only and configured_metrics:
+            async def _collect_template_definition(
+                metric: str,
+                definition: Mapping[str, Any],
+            ) -> tuple[str, dict[str, Any]]:
+                try:
+                    detail = await _collect_metric_definition(
+                        ip,
+                        community,
+                        definition,
+                        port,
+                        device_id=device_id,
+                        profile_id=metric_profile_id,
+                        metric_name=metric,
+                        version=version_key,
+                        aggregation_override=(
+                            'max' if vendor == 'h3c_comware' and metric in {'cpu', 'memory'} else None
+                        ),
+                        read_strategy_override=_template_read_strategy(definition),
+                    )
+                except Exception as exc:
+                    detail = _definition_result(
+                        _runtime_metric_config(definition),
+                        value=None,
+                        status='probe_error',
+                        passed=False,
+                        message=type(exc).__name__,
+                    )
+                return metric, detail
+
+            collected = await asyncio.gather(*(
+                _collect_template_definition(metric, definition)
+                for metric, definition in configured_metrics.items()
+            ))
+            template_definition_results = dict(collected)
+
         for metric, result_key, default_collector in (
             ('cpu', 'cpu_usage', _collect_default_cpu_metric),
             ('memory', 'memory_usage', _collect_default_memory_metric),
         ):
             definition = configured_metrics.get(metric)
             if definition:
-                detail = await _collect_metric_definition(
-                    ip,
-                    community,
-                    definition,
-                    port,
-                    device_id=device_id,
-                    profile_id=metric_profile_id,
-                    metric_name=metric,
-                    version=version_key,
-                    aggregation_override=(
-                        'max' if vendor == 'h3c_comware' and metric in {'cpu', 'memory'} else None
-                    ),
-                )
+                detail = template_definition_results.get(metric)
+                if detail is None:
+                    detail = await _collect_metric_definition(
+                        ip,
+                        community,
+                        definition,
+                        port,
+                        device_id=device_id,
+                        profile_id=metric_profile_id,
+                        metric_name=metric,
+                        version=version_key,
+                        aggregation_override=(
+                            'max' if vendor == 'h3c_comware' and metric in {'cpu', 'memory'} else None
+                        ),
+                        read_strategy_override=_template_read_strategy(definition) if template_only else None,
+                    )
                 result['metric_details'][metric] = detail
                 result['hardware_metrics'][metric] = detail.get('value')
                 # Do not reinterpret an invalid configured OID with a built-in
                 # OID. Missing data must remain visible to the operator.
                 result[result_key] = detail.get('value')
+            elif template_only:
+                result[result_key] = None
+                result['metric_details'][metric] = _template_missing_detail(metric)
             else:
                 result[result_key] = await default_collector(ip, community, vendor, oids, port, version_key)
             result['hardware_metrics'][metric] = result[result_key]
 
         # ── Temperature, Fan, PSU ──
         h3c_entity_health: tuple[str | None, str | None] | None = None
-        if vendor == 'fortinet_fortios':
+        if template_only:
+            # Every hardware metric must come from the applied model
+            # template.  The definition loop below handles any configured
+            # temperature/fan/PSU/storage/etc. entries; no vendor fallback is
+            # allowed for an omitted entry.
+            pass
+        elif vendor == 'fortinet_fortios':
             try:
                 names = await _snmp_walk_versioned(ip, community, oids['sensor_name'], port, version_key)
                 values = await _snmp_walk_versioned(ip, community, oids['temp'], port, version_key) # temp/fan/psu point to the same OID
@@ -1948,31 +2125,50 @@ async def collect_device_metrics(
         # CPU/memory. Built-in vendor logic above remains the fallback when
         # no model definition exists; a configured definition always wins,
         # including a deliberate None on a failed probe.
-        for metric, result_key in (
-            ('temperature', 'temp'),
-            ('fan', 'fan_status'),
-            ('power_supply', 'psu_status'),
-            ('uptime', 'uptime'),
-            ('storage', 'storage_usage'),
-            ('voltage', 'voltage'),
-            ('power', 'power_watts'),
-        ):
-            definition = configured_metrics.get(metric)
-            if not definition:
-                continue
-            detail = await _collect_metric_definition(
-                ip,
-                community,
-                definition,
-                port,
-                device_id=device_id,
-                profile_id=metric_profile_id,
-                metric_name=metric,
-                version=version_key,
-            )
-            result['metric_details'][metric] = detail
-            result['hardware_metrics'][metric] = detail.get('value')
-            result[result_key] = detail.get('value')
+        if template_only:
+            for metric, result_key in (
+                ('cpu', 'cpu_usage'),
+                ('memory', 'memory_usage'),
+                ('temperature', 'temp'),
+                ('fan', 'fan_status'),
+                ('power_supply', 'psu_status'),
+                ('uptime', 'uptime'),
+                ('storage', 'storage_usage'),
+                ('voltage', 'voltage'),
+                ('power', 'power_watts'),
+            ):
+                detail = template_definition_results.get(metric)
+                if detail is None:
+                    continue
+                result['metric_details'][metric] = detail
+                result['hardware_metrics'][metric] = detail.get('value')
+                result[result_key] = detail.get('value')
+        else:
+            for metric, result_key in (
+                ('temperature', 'temp'),
+                ('fan', 'fan_status'),
+                ('power_supply', 'psu_status'),
+                ('uptime', 'uptime'),
+                ('storage', 'storage_usage'),
+                ('voltage', 'voltage'),
+                ('power', 'power_watts'),
+            ):
+                definition = configured_metrics.get(metric)
+                if not definition:
+                    continue
+                detail = await _collect_metric_definition(
+                    ip,
+                    community,
+                    definition,
+                    port,
+                    device_id=device_id,
+                    profile_id=metric_profile_id,
+                    metric_name=metric,
+                    version=version_key,
+                )
+                result['metric_details'][metric] = detail
+                result['hardware_metrics'][metric] = detail.get('value')
+                result[result_key] = detail.get('value')
     except Exception as e:
         logger.warning(f"SNMP metrics collection failed for {ip}: {e}")
 
@@ -1994,7 +2190,7 @@ async def collect_device_metrics(
 
     # ── HR-MIB fallback (HOST-RESOURCES-MIB, RFC 2790) ──────────────────────
     # 当厂商私有 OID 无法访问时（SNMP view 限制等），用标准 MIB 兜底
-    if result['cpu_usage'] is None and 'cpu' not in configured_metrics:
+    if not template_only and result['cpu_usage'] is None and 'cpu' not in configured_metrics:
         try:
             rows = await _snmp_walk_versioned(ip, community, HR_PROCESSOR_LOAD, port, version_key)
             if rows:
@@ -2004,7 +2200,7 @@ async def collect_device_metrics(
         except Exception:
             pass
 
-    if result['memory_usage'] is None and 'memory' not in configured_metrics:
+    if not template_only and result['memory_usage'] is None and 'memory' not in configured_metrics:
         try:
             used_rows = await _snmp_walk_versioned(ip, community, HR_STORAGE_USED, port, version_key)
             size_rows = await _snmp_walk_versioned(ip, community, HR_STORAGE_SIZE, port, version_key)
@@ -2041,6 +2237,8 @@ async def collect_interface_data(
     community: str = 'public',
     port: int = 161,
     interface_config: Mapping[str, Any] | None = None,
+    *,
+    template_only: bool = False,
 ) -> list[dict]:
     """
     Collect interface table via standard IF-MIB (works for all vendors).
@@ -2050,14 +2248,18 @@ async def collect_interface_data(
     walks are issued in parallel via asyncio.gather to reduce per-device
     collection latency. Uses GetBulk to drastically reduce UDP packets.
     """
+    if template_only and not interface_config:
+        return []
     config = normalize_interface_config(interface_config) if interface_config else dict(DEFAULT_INTERFACE_CONFIG)
     if not config.get('enabled', True):
+        if template_only:
+            return []
         config = dict(DEFAULT_INTERFACE_CONFIG)
     community_token = hashlib.sha256(str(community or '').encode('utf-8')).hexdigest()[:12]
     config_token = hashlib.sha256(
         json.dumps(config, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
     ).hexdigest()[:16]
-    cache_key = f"intf:{ip}:{port}:{community_token}:{config_token}"
+    cache_key = f"intf:{ip}:{port}:{int(template_only)}:{community_token}:{config_token}"
     cached = _get_result_cache(cache_key)
     if cached is not None:
         return cached
@@ -2110,7 +2312,7 @@ async def collect_interface_data(
             _walk(config['dot3_hc_internal_mac_rx_errors_oid']),
             _walk(config['dot3_hc_symbol_errors_oid']),
             _walk(config['dot3_fcs_errors_oid']),
-            _snmp_get(ip, community, SYS_UPTIME, port),
+            _snmp_get(ip, community, config.get('sys_uptime_oid', ''), port),
             _snmp_bulk_walk(ip, community, config['if_last_change_oid'], port),
         )
 
@@ -2412,6 +2614,8 @@ async def collect_interface_health(
     community: str = 'public',
     port: int = 161,
     interface_config: Mapping[str, Any] | None = None,
+    *,
+    template_only: bool = False,
 ) -> list[dict]:
     """Collect only interface identity and oper state for device health.
 
@@ -2422,14 +2626,18 @@ async def collect_interface_health(
     bulk walks (ifName, ifDescr fallback, and ifOperStatus) and returns the
     legacy row shape with counter fields left unset for safe consumers.
     """
+    if template_only and not interface_config:
+        return []
     config = normalize_interface_config(interface_config) if interface_config else dict(DEFAULT_INTERFACE_CONFIG)
     if not config.get('enabled', True):
+        if template_only:
+            return []
         config = dict(DEFAULT_INTERFACE_CONFIG)
     community_token = hashlib.sha256(str(community or '').encode('utf-8')).hexdigest()[:12]
     config_token = hashlib.sha256(
         json.dumps(config, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
     ).hexdigest()[:16]
-    cache_key = f"intf-health:{ip}:{port}:{community_token}:{config_token}"
+    cache_key = f"intf-health:{ip}:{port}:{int(template_only)}:{community_token}:{config_token}"
     cached = _get_result_cache(cache_key)
     if cached is not None:
         return cached
@@ -2559,8 +2767,14 @@ async def probe_interface_definition(
             # existing collectors and tests that replace the walker remain
             # compatible.  SNMPv1 explicitly uses the version-aware path.
             if version_key == '2c':
-                return await _snmp_bulk_walk(ip, community, oid, port)
-            return await _snmp_bulk_walk(ip, community, oid, port, version=version_key)
+                return await asyncio.wait_for(
+                    _snmp_bulk_walk(ip, community, oid, port),
+                    timeout=INTERFACE_PROBE_OID_TIMEOUT_SECONDS,
+                )
+            return await asyncio.wait_for(
+                _snmp_bulk_walk(ip, community, oid, port, version=version_key),
+                timeout=INTERFACE_PROBE_OID_TIMEOUT_SECONDS,
+            )
         except Exception:
             return []
 
@@ -2569,8 +2783,14 @@ async def probe_interface_definition(
             return []
         try:
             if version_key == '2c':
-                return await _snmp_bulk_walk_typed(ip, community, oid, port)
-            return await _snmp_bulk_walk_typed(ip, community, oid, port, version=version_key)
+                return await asyncio.wait_for(
+                    _snmp_bulk_walk_typed(ip, community, oid, port),
+                    timeout=INTERFACE_PROBE_OID_TIMEOUT_SECONDS,
+                )
+            return await asyncio.wait_for(
+                _snmp_bulk_walk_typed(ip, community, oid, port, version=version_key),
+                timeout=INTERFACE_PROBE_OID_TIMEOUT_SECONDS,
+            )
         except Exception:
             return []
 
@@ -2797,6 +3017,8 @@ async def collect_interface_data_detailed(
     community: str = 'public',
     port: int = 161,
     interface_config: Mapping[str, Any] | None = None,
+    *,
+    template_only: bool = False,
 ) -> dict:
     """Return IF-MIB data with an explicit, secret-free collection outcome.
 
@@ -2806,8 +3028,21 @@ async def collect_interface_data_detailed(
     interface-down sample. This wrapper keeps the old API stable while adding
     the stricter contract for the WAN domain.
     """
+    if template_only and not interface_config:
+        return {
+            'status': 'template_not_applied',
+            'items': [],
+            'error_code': 'snmp_template_not_applied',
+            'error_message': 'No applied SNMP interface template is available for this device model',
+        }
     try:
-        result = await collect_interface_data(ip, community, port, interface_config)
+        result = await collect_interface_data(
+            ip,
+            community,
+            port,
+            interface_config,
+            template_only=template_only,
+        )
     except Exception as exc:  # pragma: no cover - defensive boundary
         message = str(exc).lower()
         status = 'auth_failed' if any(token in message for token in ('authentication', 'authorization', 'community')) else 'timeout' if 'timeout' in message else 'device_unreachable'

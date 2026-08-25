@@ -8,6 +8,7 @@ from services.snmp_counter_service import calculate_counter_delta
 from services.snmp_metric_profile_service import (
     _collector_status,
     annotate_devices_with_snmp_profile,
+    apply_official_model_preset,
     get_model_metric_profile_mapping,
     invalidate_metric_profile_cache,
     normalize_interface_config,
@@ -18,6 +19,7 @@ from services.snmp_service import (
     SnmpTypedValue,
     _collect_metric_definition,
     _collect_h3c_fan_psu_status,
+    collect_device_metrics,
     collect_interface_data,
     collect_interface_health,
     probe_interface_definition,
@@ -314,6 +316,28 @@ def test_interface_probe_requires_paired_counter_width(monkeypatch) -> None:
     assert result["counter_supported"] == 1
 
 
+def test_interface_probe_bounds_unresponsive_oid_walks(monkeypatch) -> None:
+    async def slow_walk(*_args, **_kwargs):
+        await asyncio.sleep(10)
+        return []
+
+    monkeypatch.setattr("services.snmp_service._snmp_bulk_walk", slow_walk)
+    monkeypatch.setattr("services.snmp_service._snmp_bulk_walk_typed", slow_walk)
+    result = asyncio.run(
+        asyncio.wait_for(
+            probe_interface_definition(
+                "192.0.2.1",
+                "public",
+                normalize_interface_config({"counter_mode": "64"}),
+            ),
+            timeout=4,
+        )
+    )
+
+    assert result["passed"] is False
+    assert result["status"] == "missing"
+
+
 def test_interface_collector_honors_forced_counter_width(monkeypatch) -> None:
     async def fake_bulk(_ip, _community, oid, _port):
         if oid.endswith(".1.1.1.1"):
@@ -595,19 +619,214 @@ def test_health_profile_resolution_filters_non_health_metrics_and_keeps_template
 
     assert resolved["profile_id"] == "profile-health-1"
     assert resolved["profile_status"] == "verified"
-    assert resolved["profile_source"] == "model_profile"
+    assert resolved["profile_source"] == "snmp_template"
     assert resolved["metric_keys"] == ["cpu", "temperature"]
     assert "storage" not in resolved["metrics"]
-    assert resolved["metric_sources"]["memory"] == "builtin_vendor_collector"
+    assert resolved["metric_sources"]["memory"] == "template_not_applied"
 
     assert association["id"] == "profile-health-1"
-    assert association["source"] == "model_profile"
+    assert association["source"] == "snmp_template"
     assert association["collection_mode"] == "health_only"
 
 
+def test_apply_official_preset_materializes_the_profile_used_by_device_resolution(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE snmp_metric_profiles (
+            id TEXT PRIMARY KEY,
+            vendor_key TEXT NOT NULL,
+            vendor_name TEXT NOT NULL DEFAULT '',
+            model_key TEXT NOT NULL,
+            model_name TEXT NOT NULL DEFAULT '',
+            cpu_oid TEXT NOT NULL DEFAULT '',
+            memory_oid TEXT NOT NULL DEFAULT '',
+            cpu_config_json TEXT NOT NULL DEFAULT '{}',
+            memory_config_json TEXT NOT NULL DEFAULT '{}',
+            metric_definitions_json TEXT NOT NULL DEFAULT '{}',
+            interface_config_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by TEXT NOT NULL DEFAULT '',
+            verification_status TEXT NOT NULL DEFAULT 'unverified',
+            last_test_at TEXT,
+            last_test_device_id TEXT NOT NULL DEFAULT '',
+            last_test_message TEXT NOT NULL DEFAULT '',
+            interface_verification_status TEXT NOT NULL DEFAULT 'unverified',
+            interface_last_test_at TEXT,
+            interface_last_test_device_id TEXT NOT NULL DEFAULT '',
+            interface_last_test_message TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    preset = {
+        "id": "md-h3c-s6800-v7",
+        "family_id": "md-h3c-comware-v7",
+        "vendor": "H3C",
+        "model": "S6800",
+        "metric_definitions": {
+            "cpu": {"mode": "direct_percent", "oid": "1.3.6.1.4.1.25506.1"},
+        },
+        "interface_config": {},
+        "testable": True,
+    }
+    monkeypatch.setattr("services.snmp_preset_service.list_preset_profiles", lambda: [preset])
+    try:
+        created = apply_official_model_preset(conn, preset["id"], updated_by="operator")
+        assert created["applied_mode"] == "created"
+        assert created["source"] == "official_preset"
+
+        updated = apply_official_model_preset(conn, preset["id"], updated_by="operator")
+        assert updated["applied_mode"] == "updated"
+        assert updated["id"] == created["id"]
+
+        monkeypatch.setattr("services.snmp_metric_profile_service.get_db_connection", lambda: conn)
+        invalidate_metric_profile_cache()
+        resolved = resolve_health_metric_profiles({"vendor": "H3C", "platform": "h3c_comware", "model": "S6800"})
+        association = annotate_devices_with_snmp_profile(
+            [{"id": "device-1", "vendor": "H3C", "platform": "h3c_comware", "model": "S6800"}]
+        )[0]["snmp_metric_profile"]
+        assert resolved["profile_id"] == created["id"]
+        assert association["id"] == created["id"]
+        assert association["status"] == "unverified"
+    finally:
+        invalidate_metric_profile_cache()
+        conn.close()
+
+
+def test_template_resolution_ignores_legacy_device_oids_without_an_applied_profile(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE snmp_metric_profiles (
+            id TEXT, vendor_key TEXT, vendor_name TEXT, model_key TEXT,
+            model_name TEXT, cpu_oid TEXT, memory_oid TEXT,
+            cpu_config_json TEXT, memory_config_json TEXT,
+            metric_definitions_json TEXT, verification_status TEXT
+        )
+        """
+    )
+    monkeypatch.setattr("services.snmp_metric_profile_service.get_db_connection", lambda: conn)
+    invalidate_metric_profile_cache()
+    try:
+        resolved = resolve_health_metric_profiles(
+            {
+                "vendor": "H3C",
+                "platform": "h3c_comware",
+                "model": "S6800",
+                "snmp_cpu_oid": "1.3.6.1.4.1.25506.99.1",
+                "snmp_memory_oid": "1.3.6.1.4.1.25506.99.2",
+            }
+        )
+    finally:
+        invalidate_metric_profile_cache()
+        conn.close()
+
+    assert resolved["profile_source"] == "template_not_applied"
+    assert resolved["metrics"] == {}
+    assert resolved["metric_sources"]["cpu"] == "template_not_applied"
+    assert resolved["metric_sources"]["memory"] == "template_not_applied"
+
+
+def test_template_only_hardware_collection_never_reads_builtin_oids(monkeypatch) -> None:
+    requested: list[str] = []
+
+    async def fail_walk(*_args, **_kwargs):
+        requested.append("walk")
+        raise AssertionError("template-only collection must not read a built-in OID")
+
+    monkeypatch.setattr("services.snmp_service._snmp_walk_versioned", fail_walk)
+    result = asyncio.run(
+        collect_device_metrics(
+            "192.0.2.199",
+            "h3c_comware",
+            "public",
+            161,
+            bypass_cache=True,
+            template_only=True,
+        )
+    )
+
+    assert requested == []
+    assert result["collection_source"] == "snmp_template"
+    assert result["collection_status"] == "template_not_applied"
+    assert result["cpu_usage"] is None
+    assert result["memory_usage"] is None
+    assert result["metric_details"]["cpu"]["status"] == "template_not_applied"
+
+
+def test_template_only_hardware_template_columns_are_walked_in_parallel(monkeypatch) -> None:
+    active = 0
+    max_active = 0
+    requested: list[str] = []
+
+    async def fake_walk(_ip, _community, oid, _port, **_kwargs):
+        nonlocal active, max_active
+        requested.append(oid)
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return [('1', SnmpTypedValue(42, 'gauge', 32))]
+
+    async def fail_get(*_args, **_kwargs):
+        raise AssertionError('table-root template metrics should not probe with GET first')
+
+    monkeypatch.setattr('services.snmp_service._snmp_walk_typed', fake_walk)
+    monkeypatch.setattr('services.snmp_service._snmp_get_typed', fail_get)
+    definitions = {
+        'cpu': {'mode': 'direct_percent', 'oid': '1.3.6.1.4.1.25506.1.6'},
+        'memory': {'mode': 'direct_percent', 'oid': '1.3.6.1.4.1.25506.1.8'},
+        'temperature': {'mode': 'direct_value', 'oid': '1.3.6.1.4.1.25506.1.12'},
+        'fan': {'mode': 'status_code', 'oid': '1.3.6.1.4.1.25506.1.19', 'status_ok_values': [42]},
+        'power_supply': {'mode': 'status_code', 'oid': '1.3.6.1.4.1.25506.1.19', 'status_ok_values': [42]},
+        'uptime': {'mode': 'direct_value', 'oid': '1.3.6.1.4.1.25506.1.11'},
+    }
+
+    result = asyncio.run(
+        collect_device_metrics(
+            '192.0.2.200',
+            'h3c_comware',
+            'public',
+            161,
+            custom_metrics=definitions,
+            bypass_cache=True,
+            template_only=True,
+        )
+    )
+
+    assert max_active >= 2
+    assert len(requested) == len(definitions)
+    assert all(result['metric_details'][key]['status'] == 'ok' for key in definitions)
+
+
+def test_template_only_interface_collection_never_reads_default_if_mib(monkeypatch) -> None:
+    requested: list[str] = []
+
+    async def fail_bulk(*_args, **_kwargs):
+        requested.append("bulk")
+        raise AssertionError("template-only interface collection must not read default IF-MIB OIDs")
+
+    monkeypatch.setattr("services.snmp_service._snmp_bulk_walk", fail_bulk)
+    result = asyncio.run(
+        collect_interface_data(
+            "192.0.2.198",
+            "public",
+            161,
+            None,
+            template_only=True,
+        )
+    )
+
+    assert requested == []
+    assert result == []
+
+
 def test_saved_profile_status_distinguishes_match_and_activation() -> None:
-    assert _collector_status(False, "unverified", 3) == "builtin_only"
-    assert _collector_status(True, "unverified", 3) == "blocked_unverified"
+    assert _collector_status(False, "unverified", 3) == "template_required"
+    assert _collector_status(True, "unverified", 3) == "active"
     assert _collector_status(True, "failed", 3) == "blocked_failed"
     assert _collector_status(True, "verified", 3) == "active"
     assert _collector_status(True, "verified", 0) == "no_matching_device"
@@ -630,7 +849,8 @@ def test_profile_mapping_uses_canonical_vendor_and_exact_model() -> None:
         """
         CREATE TABLE devices (
             id TEXT, hostname TEXT, ip_address TEXT, vendor TEXT,
-            platform TEXT, model TEXT, snmp_cpu_oid TEXT, snmp_memory_oid TEXT
+            platform TEXT, model TEXT, status TEXT,
+            snmp_cpu_oid TEXT, snmp_memory_oid TEXT
         )
         """
     )
@@ -660,20 +880,22 @@ def test_profile_mapping_uses_canonical_vendor_and_exact_model() -> None:
         """
         INSERT INTO devices
             (id, hostname, ip_address, vendor, platform, model,
-             snmp_cpu_oid, snmp_memory_oid)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             status, snmp_cpu_oid, snmp_memory_oid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
-            ("device-1", "core-sw-01", "192.0.2.10", "Cisco", "cisco_ios", "C9300-48P", "", ""),
-            ("device-2", "other-vendor", "192.0.2.11", "H3C", "h3c_comware", "C9300-48P", "", ""),
-            ("device-3", "other-model", "192.0.2.12", "Cisco", "cisco_ios", "C9300-49P", "", ""),
+            ("device-1", "core-sw-01", "192.0.2.10", "Cisco", "cisco_ios", "C9300-48P", "offline", "", ""),
+            ("device-2", "other-vendor", "192.0.2.11", "H3C", "h3c_comware", "C9300-48P", "online", "", ""),
+            ("device-3", "other-model", "192.0.2.12", "Cisco", "cisco_ios", "C9300-49P", "online", "", ""),
+            ("device-4", "core-sw-04", "192.0.2.14", "Cisco", "cisco_ios", "C9300-48P", "online", "", ""),
         ],
     )
 
     mapping = get_model_metric_profile_mapping(conn, "profile-1")
 
-    assert mapping["matched_device_count"] == 1
-    assert mapping["sample_device_id"] == "device-1"
+    assert mapping["matched_device_count"] == 2
+    assert mapping["sample_device_id"] == "device-4"
+    assert mapping["sample_device_status"] == "online"
     assert mapping["same_model_other_vendor_count"] == 1
-    assert mapping["collector_status"] == "blocked_unverified"
-    assert mapping["devices"][0]["device_id"] == "device-1"
+    assert mapping["collector_status"] == "active"
+    assert mapping["devices"][0]["device_id"] == "device-4"

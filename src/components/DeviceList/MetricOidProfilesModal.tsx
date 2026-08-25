@@ -4,6 +4,7 @@ import { apiRequest } from '../../api/http';
 import OidPickerModal, { MibNodeItem } from '../SnmpMib/OidPickerModal';
 import MibUploadModal from '../SnmpMib/MibUploadModal';
 import PresetProfilesModal, { ModelPresetItem } from '../SnmpMib/PresetProfilesModal';
+import TemplateBindingModal from '../SnmpMib/TemplateBindingModal';
 
 import {
   MetricRow,
@@ -29,7 +30,6 @@ import {
 import {
   ProfileForm,
   MetricProfileEditor,
-  InterfaceTestResult,
 } from '../SnmpMib/components/MetricProfileEditor';
 import { CandidateDevice } from '../SnmpMib/components/LiveWalkInspector';
 import type { InspectorTab } from '../SnmpMib/components/LiveWalkInspector';
@@ -162,10 +162,8 @@ const MetricOidProfilesModal: React.FC<Props> = ({
   const [presets, setPresets] = useState<ModelPresetItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [testingId, setTestingId] = useState<string | null>(null);
   const [initialLiveInspectorOpen, setInitialLiveInspectorOpen] = useState(false);
   const [initialInspectorTab, setInitialInspectorTab] = useState<InspectorTab>('snmpwalk');
-  const [autoRunHardwareTest, setAutoRunHardwareTest] = useState(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -173,6 +171,7 @@ const MetricOidProfilesModal: React.FC<Props> = ({
 
   // Editor State
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingOfficialProfile, setEditingOfficialProfile] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [form, setForm] = useState<ProfileForm>({
     vendor: '',
@@ -181,16 +180,15 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     interfaceConfig: { ...DEFAULT_INTERFACE_CONFIG },
   });
   const [candidateDevices, setCandidateDevices] = useState<CandidateDevice[]>([]);
-  const [lastTestDetails, setLastTestDetails] = useState<{
-    hardware?: Record<string, any>;
-    interface?: InterfaceTestResult;
-  } | null>(null);
 
   // Sub-Modals
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<{ metricKey: string; field: string } | null>(null);
   const [mibModalOpen, setMibModalOpen] = useState(false);
   const [presetModalOpen, setPresetModalOpen] = useState(false);
+  const [presetInitialSelection, setPresetInitialSelection] = useState<Pick<ModelPresetItem, 'vendor' | 'model'> | null>(null);
+  const [bindingPreset, setBindingPreset] = useState<ModelPresetItem | null>(null);
+  const [bindingFallbackDevice, setBindingFallbackDevice] = useState<CandidateDevice | undefined>(undefined);
   const [autoMatchResult, setAutoMatchResult] = useState<{
     matched_series?: string;
     confidence?: number;
@@ -273,9 +271,9 @@ const MetricOidProfilesModal: React.FC<Props> = ({
 
   const resetForm = () => {
     setEditingId(null);
+    setEditingOfficialProfile(false);
     setInitialLiveInspectorOpen(false);
     setInitialInspectorTab('snmpwalk');
-    setAutoRunHardwareTest(false);
     setForm({
       vendor: '',
       model: '',
@@ -283,25 +281,29 @@ const MetricOidProfilesModal: React.FC<Props> = ({
       interfaceConfig: { ...DEFAULT_INTERFACE_CONFIG },
     });
     setCandidateDevices([]);
-    setLastTestDetails(null);
     setAutoMatchResult(null);
   };
 
   const openCreate = () => {
     resetForm();
-    setInitialLiveInspectorOpen(true);
-    setInitialInspectorTab('snmpwalk');
     setEditorOpen(true);
   };
 
+  const isOfficialProfile = (profile: MetricOidProfile) => Boolean(
+    profile.source === 'official' ||
+    profile.source === 'official_preset' ||
+    profile.official_preset_id ||
+    profile.applied_preset_id
+  );
+
   const startEdit = async (
     profile: MetricOidProfile,
-    options: { openLiveInspector?: boolean; initialTab?: InspectorTab; autoRunHardwareTest?: boolean } = {},
+    options: { openLiveInspector?: boolean; initialTab?: InspectorTab } = {},
   ) => {
     setEditingId(profile.profile_id);
+    setEditingOfficialProfile(isOfficialProfile(profile));
     setInitialLiveInspectorOpen(Boolean(options.openLiveInspector));
     setInitialInspectorTab(options.initialTab || 'snmpwalk');
-    setAutoRunHardwareTest(Boolean(options.autoRunHardwareTest));
     const rows = rowsFromProfile(profile);
     setForm({
       vendor: profile.vendor,
@@ -310,7 +312,6 @@ const MetricOidProfilesModal: React.FC<Props> = ({
       interfaceConfig: interfaceConfigFromProfile(profile),
     });
     setCandidateDevices([]);
-    setLastTestDetails(null);
     setEditorOpen(true);
 
     // Fetch candidate devices for live WALK inspector
@@ -335,7 +336,6 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     options: {
       openLiveInspector?: boolean;
       initialTab?: InspectorTab;
-      autoRunHardwareTest?: boolean;
       candidateDevices?: CandidateDevice[];
     } = {},
   ) => {
@@ -357,9 +357,9 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     });
 
     setEditingId(null);
+    setEditingOfficialProfile(false);
     setInitialLiveInspectorOpen(Boolean(options.openLiveInspector));
     setInitialInspectorTab(options.initialTab || 'snmpwalk');
-    setAutoRunHardwareTest(Boolean(options.autoRunHardwareTest));
     setForm({
       vendor: preset.vendor,
       model: preset.model,
@@ -369,7 +369,6 @@ const MetricOidProfilesModal: React.FC<Props> = ({
         : { ...DEFAULT_INTERFACE_CONFIG },
     });
     setCandidateDevices(options.candidateDevices || []);
-    setLastTestDetails(null);
     setEditorOpen(true);
     showToast(
       zh
@@ -398,7 +397,6 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     });
 
     setInitialInspectorTab('snmpwalk');
-    setAutoRunHardwareTest(false);
     setForm(prev => ({
       vendor: preset.vendor || prev.vendor,
       model: preset.model || prev.model,
@@ -409,10 +407,130 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     }));
     setEditorOpen(true);
     setPresetModalOpen(false);
+    setPresetInitialSelection(null);
     showToast(
       zh ? `已套用预置模板：${preset.vendor} ${preset.model}` : `Applied preset: ${preset.vendor} ${preset.model}`,
       'success',
     );
+  };
+
+  const openPresetLibrary = (preset?: ModelPresetItem) => {
+    setPresetInitialSelection(preset ? { vendor: preset.vendor, model: preset.model } : null);
+    setPresetModalOpen(true);
+  };
+
+  const openOfficialBinding = async (preset: ModelPresetItem, fallbackDevice?: CandidateDevice) => {
+    setPresetModalOpen(false);
+    setPresetInitialSelection(null);
+    setBindingFallbackDevice(fallbackDevice);
+    setBindingPreset(preset);
+  };
+
+  const openProfileBinding = (profile: MetricOidProfile) => {
+    if (!profile.profile_id) return;
+    setPresetModalOpen(false);
+    setPresetInitialSelection(null);
+    setBindingFallbackDevice(undefined);
+    setBindingPreset({
+      profile_id: profile.profile_id,
+      vendor: profile.vendor,
+      model: profile.model,
+      category: 'Network Device',
+      description: profile.template_name || `${profile.vendor} / ${profile.model}`,
+      metric_definitions: profile.metric_definitions || {},
+      interface_config: profile.interface_config || {},
+      source: profile.source,
+    });
+  };
+
+  const confirmOfficialPreset = async (
+    preset: ModelPresetItem,
+    deviceIds: string[],
+    removedDeviceIds: string[],
+  ) => {
+    if (preset.profile_id) {
+      try {
+        if (deviceIds.length) {
+          await apiRequest(
+            `/api/platform-registry/snmp-metric-profiles/${preset.profile_id}/bindings`,
+            { method: 'POST', body: JSON.stringify({ device_ids: deviceIds }) },
+          );
+        }
+        if (removedDeviceIds.length) {
+          await apiRequest(
+            `/api/platform-registry/snmp-metric-profiles/${preset.profile_id}/bindings/unbind`,
+            { method: 'POST', body: JSON.stringify({ device_ids: removedDeviceIds }) },
+          );
+        }
+        await loadProfiles();
+        onChanged?.();
+        setBindingPreset(null);
+        setBindingFallbackDevice(undefined);
+        showToast(
+          zh
+            ? `模板绑定已更新：${deviceIds.length} 台设备保留，${removedDeviceIds.length} 台设备解绑`
+            : `Template bindings updated: ${deviceIds.length} kept, ${removedDeviceIds.length} unbound`,
+          'success',
+        );
+        return;
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : (zh ? '模板绑定更新失败' : 'Failed to update template bindings'), 'error');
+        throw error;
+      }
+    }
+
+    if (!preset.id) {
+      showToast(zh ? '官方预置缺少唯一标识，无法应用' : 'This official preset has no stable identifier', 'error');
+      throw new Error('Official preset has no id');
+    }
+    if (preset.testable === false || Object.keys(preset.metric_definitions || {}).length === 0) {
+      showToast(
+        zh
+          ? `【${preset.vendor} ${preset.model}】需要先核验具体 OID`
+          : `[${preset.vendor} ${preset.model}] must be verified before applying`,
+        'info',
+      );
+      throw new Error('Official preset is not ready to apply');
+    }
+
+    try {
+      const applied = await apiRequest<{ success: boolean; data?: { id?: string; profile_id?: string } }>(
+        '/api/platform-registry/snmp-metric-profiles/apply-preset',
+        {
+          method: 'POST',
+          body: JSON.stringify({ preset_id: preset.id }),
+        },
+      );
+      const refreshedProfiles = await loadProfiles();
+      let profileId = applied.data?.profile_id || applied.data?.id || '';
+      if (!profileId) {
+        profileId = refreshedProfiles.find(profile => (
+          (profile.official_preset_id === preset.id || profile.applied_preset_id === preset.id) && profile.profile_id
+        ))?.profile_id || '';
+      }
+      if (!profileId) {
+        throw new Error(zh ? '官方模板已生成，但未返回可绑定的模板 ID' : 'The official template was created without a bindable profile ID');
+      }
+      if (deviceIds.length) {
+        await apiRequest(
+          `/api/platform-registry/snmp-metric-profiles/${profileId}/bindings`,
+          { method: 'POST', body: JSON.stringify({ device_ids: deviceIds }) },
+        );
+      }
+      onChanged?.();
+      setBindingPreset(null);
+      setBindingFallbackDevice(undefined);
+      showToast(
+        zh
+          ? `官方模板已保存，并绑定 ${deviceIds.length} 台设备；其他同型号设备不会自动套用`
+          : `Official template saved and bound to ${deviceIds.length} device(s); other devices with the same model are not changed`,
+        'success',
+      );
+
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : (zh ? '应用模板失败' : 'Failed to apply template'), 'error');
+      throw error;
+    }
   };
 
   const openOidPicker = (metricKey: string, field: string) => {
@@ -591,29 +709,35 @@ const MetricOidProfilesModal: React.FC<Props> = ({
           }),
         },
       );
-      const savedProfileId = String(saved.data?.profile_id || saved.data?.id || editingId || '');
+      const savedProfileId = saved.data?.profile_id || saved.data?.id || '';
       await loadProfiles();
       setEditorOpen(false);
       resetForm();
-      showToast(zh ? '型号指标模板保存成功' : 'Profile saved successfully', 'success');
+      showToast(
+        zh
+          ? isEdit
+            ? '型号指标模板保存成功'
+            : '模板保存成功，请选择设备并绑定'
+          : isEdit
+            ? 'Profile saved successfully'
+            : 'Profile saved; select devices to bind it',
+        'success',
+      );
+      if (!isEdit && savedProfileId) {
+        setBindingFallbackDevice(undefined);
+        setBindingPreset({
+          profile_id: savedProfileId,
+          vendor: form.vendor.trim(),
+          model: form.model.trim(),
+          category: 'Network Device',
+          description: `${form.vendor.trim()} / ${form.model.trim()}`,
+          metric_definitions: metricDefinitions,
+          interface_config: interfacePayload,
+          source: 'custom',
+        });
+      }
       onChanged?.();
 
-      // Non-blocking mapping & validation test
-      if (savedProfileId) {
-        void (async () => {
-          try {
-            const mappingResponse = await apiRequest<{ success: boolean; data: MetricProfileMapping }>(
-              '/api/platform-registry/snmp-metric-profiles/' + savedProfileId + '/mapping-validation',
-            );
-            const mapping = mappingResponse.data;
-            if (mapping.sample_device_id) {
-              void testProfile({ profile_id: savedProfileId, sample_device_id: mapping.sample_device_id });
-            }
-          } catch {
-            // Background validation ignore
-          }
-        })();
-      }
     } catch (error) {
       showToast(
         error instanceof Error ? error.message : zh ? '保存失败' : 'Save failed',
@@ -629,15 +753,19 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     if (
       !window.confirm(
         zh
-          ? '删除后该型号将回退到系统内置厂商默认采集逻辑，确定删除吗？'
-          : 'Delete profile and fall back to built-in vendor default?',
+          ? editingOfficialProfile
+            ? '删除当前已保存的官方模板记录前，需先在“绑定设备”中解绑所有设备；官方模板库仍会保留。确定删除吗？'
+            : '删除自定义模板前，需先在“绑定设备”中解绑所有设备。确定删除吗？'
+          : editingOfficialProfile
+            ? 'Unbind all devices first, then delete this saved official template record? The catalog template will remain available.'
+            : 'Unbind all devices first, then delete this custom template?',
       )
     )
       return;
     setSaving(true);
     try {
       await apiRequest('/api/platform-registry/snmp-metric-profiles/' + editingId, { method: 'DELETE' });
-      showToast(zh ? '指标模板已删除' : 'Profile deleted', 'success');
+      showToast(zh ? (editingOfficialProfile ? '官方模板记录已删除，官方模板仍保留' : '自定义指标模板已删除') : (editingOfficialProfile ? 'Saved official template record deleted; the catalog template remains available' : 'Custom profile deleted'), 'success');
       await loadProfiles();
       onChanged?.();
       setEditorOpen(false);
@@ -654,8 +782,12 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     if (
       !window.confirm(
         zh
-          ? `确定要删除型号模板【${profile.vendor} ${profile.model}】并回退到系统内置默认采集规则吗？`
-          : `Delete profile [${profile.vendor} ${profile.model}] and fall back to default?`,
+          ? isOfficialProfile(profile)
+            ? `确定要删除【${profile.vendor} ${profile.model}】的官方模板记录吗？请先解绑全部设备，官方模板仍会保留。`
+            : `确定要删除自定义模板【${profile.vendor} ${profile.model}】吗？请先解绑全部设备。`
+          : isOfficialProfile(profile)
+            ? `Delete the saved official template record for [${profile.vendor} ${profile.model}]? Unbind all devices first; the catalog remains available.`
+            : `Delete custom profile [${profile.vendor} ${profile.model}]? Unbind all devices first.`,
       )
     ) {
       return;
@@ -666,7 +798,9 @@ const MetricOidProfilesModal: React.FC<Props> = ({
         method: 'DELETE',
       });
       showToast(
-        zh ? `已删除型号模板【${profile.model}】` : `Deleted profile [${profile.model}]`,
+        zh
+          ? (isOfficialProfile(profile) ? `已删除【${profile.model}】官方模板记录，官方模板仍保留` : `已删除自定义模板【${profile.model}】`)
+          : (isOfficialProfile(profile) ? `Deleted the saved official template record for [${profile.model}]; the catalog remains` : `Deleted custom profile [${profile.model}]`),
         'success',
       );
       await loadProfiles();
@@ -678,48 +812,6 @@ const MetricOidProfilesModal: React.FC<Props> = ({
     }
   };
 
-  const testProfile = async (profile: Pick<MetricOidProfile, 'profile_id' | 'sample_device_id'>) => {
-    if (!profile.profile_id || !profile.sample_device_id) {
-      showToast(zh ? '该型号没有可验证的样例设备' : 'No sample device available', 'error');
-      return;
-    }
-    setTestingId(profile.profile_id);
-    try {
-      const endpoint = '/api/platform-registry/snmp-metric-profiles/' + profile.profile_id + '/test';
-      const response = await apiRequest<{
-        success: boolean;
-        data: {
-          passed: boolean;
-          hardware_passed?: boolean | null;
-          interface_passed?: boolean | null;
-          message?: string;
-          sample_hostname?: string;
-          metrics?: Record<string, any>;
-          interface?: InterfaceTestResult;
-        };
-      }>(endpoint, {
-        method: 'POST',
-        body: JSON.stringify({ device_id: profile.sample_device_id }),
-      });
-      const result = response.data;
-      setLastTestDetails({ hardware: result.metrics, interface: result.interface });
-      const message = result.passed
-        ? zh
-          ? '在线验证通过：' + (result.sample_hostname || '样例设备')
-          : 'Verification passed: ' + (result.sample_hostname || 'sample device')
-        : zh
-          ? '验证失败：' + (result.message || '请检查接口 OID、位宽与 SNMP 认证')
-          : 'Verification failed: ' + (result.message || 'Check OIDs, counter width, and SNMP view');
-      showToast(message, result.passed ? 'success' : 'error');
-      await loadProfiles();
-      onChanged?.();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : zh ? '验证请求失败' : 'Verification request failed', 'error');
-    } finally {
-      setTestingId(null);
-    }
-  };
-
   const validateMapping = async (profile: MetricOidProfile) => {
     if (!profile.profile_id) return;
     try {
@@ -728,15 +820,19 @@ const MetricOidProfilesModal: React.FC<Props> = ({
       const response = await apiRequest<{ success: boolean; data: MetricProfileMapping }>(endpoint);
       const mapping = response.data;
       const message = zh
-        ? `映射范围：匹配 ${mapping.matched_device_count} 台 · 生效 ${mapping.profile_applied_device_count} 台 · 阻断 ${mapping.blocked_device_count} 台 · 指标 ${(mapping.metric_keys || []).map(k => metricLabel(k, true)).join('、') || '无'}`
-        : `Mapping: ${mapping.matched_device_count} matched · ${mapping.profile_applied_device_count} active · ${mapping.blocked_device_count} blocked`;
+          ? mapping.profile_applied_device_count > 0
+            ? `已确认：${mapping.profile_applied_device_count} 台设备正在使用该模板${mapping.blocked_device_count > 0 ? `，${mapping.blocked_device_count} 台待处理` : ''}`
+            : mapping.matched_device_count > 0
+            ? `模板已绑定 ${mapping.matched_device_count} 台设备，当前采集状态仍需关注`
+            : '模板已保存，当前没有绑定设备'
+        : mapping.profile_applied_device_count > 0
+          ? `Confirmed: ${mapping.profile_applied_device_count} device(s) are using this template${mapping.blocked_device_count > 0 ? `; ${mapping.blocked_device_count} pending` : ''}`
+          : mapping.matched_device_count > 0
+            ? `Template is bound to ${mapping.matched_device_count} device(s); review the current collection state`
+            : 'Template saved; no devices are bound';
       showToast(
         message,
-        mapping.collector_status === 'active' ||
-          mapping.collector_status === 'builtin_only' ||
-          mapping.collector_status === 'no_matching_device'
-          ? 'info'
-          : 'error',
+        mapping.profile_applied_device_count > 0 ? 'success' : 'info',
       );
     } catch (error) {
       showToast(error instanceof Error ? error.message : zh ? '映射校验失败' : 'Mapping validation failed', 'error');
@@ -769,11 +865,11 @@ const MetricOidProfilesModal: React.FC<Props> = ({
               <Cpu size={18} className="text-[#009ec4]" />
               {zh ? 'SNMP 型号指标模板与 MIB 知识库' : 'SNMP Model Metric Profiles & MIB Repository'}
             </div>
-            <p className="mt-1 text-[11px] text-black/45 dark:text-white/45">
-              {zh
-                ? '按厂商与产品族聚合展示完整适配型号；第二列仅呈现采集指标，末列提供 SNMP Walk 与关联设备入口。'
-                : 'Group supported models by vendor and product family; keep metrics, SNMP Walk, and linked devices visible.'}
-            </p>
+              <p className="mt-1 text-[11px] text-black/45 dark:text-white/45">
+                {zh
+                  ? '官方模板匹配后，选择设备测试并确认绑定；已绑定型号可管理或解绑，不适配时再新建自定义模板。'
+                  : 'Match an official template, test a device, and confirm the binding; manage or unbind bound models, and create a custom profile only when needed.'}
+              </p>
           </div>
           {!embedded && (
             <button
@@ -808,12 +904,14 @@ const MetricOidProfilesModal: React.FC<Props> = ({
               void loadPresets();
             }}
             onOpenCreate={openCreate}
-            onOpenPresets={() => setPresetModalOpen(true)}
+            onOpenPresets={openPresetLibrary}
+            onApplyOfficialPreset={openOfficialBinding}
+            onOpenBinding={openProfileBinding}
             onOpenMibs={() => setMibModalOpen(true)}
             onEdit={startEdit}
             onDeleteProfile={handleDeleteFromRow}
             onOpenSnmpWalk={(item, target) => {
-              if ('profile_id' in item) {
+              if ('cpu_oid' in item) {
                 void startEdit(item, { openLiveInspector: true, initialTab: 'snmpwalk' });
               } else {
                 handleClonePreset(item, {
@@ -824,17 +922,12 @@ const MetricOidProfilesModal: React.FC<Props> = ({
               }
             }}
             onOpenCollectionResult={(item, target) => {
-              if ('profile_id' in item) {
-                void startEdit(item, {
-                  openLiveInspector: true,
-                  initialTab: 'validate',
-                  autoRunHardwareTest: true,
-                });
+              if ('cpu_oid' in item) {
+                void startEdit(item, { openLiveInspector: true, initialTab: 'validate' });
               } else {
                 handleClonePreset(item, {
                   openLiveInspector: true,
                   initialTab: 'validate',
-                  autoRunHardwareTest: Boolean(target),
                   candidateDevices: target ? [target] : [],
                 });
               }
@@ -846,17 +939,16 @@ const MetricOidProfilesModal: React.FC<Props> = ({
 
       {/* Editor Modal */}
       {editorOpen && (
-        <MetricProfileEditor
-          editingId={editingId}
+           <MetricProfileEditor
+             editingId={editingId}
+           isOfficialProfile={editingOfficialProfile}
           form={form}
           saving={saving}
           language={language}
           candidateDevices={candidateDevices}
           initialLiveInspectorOpen={initialLiveInspectorOpen}
           initialInspectorTab={initialInspectorTab}
-          autoRunHardwareTest={autoRunHardwareTest}
           autoMatchResult={autoMatchResult}
-          lastTestDetails={lastTestDetails}
           onChangeForm={setForm}
           onSave={saveProfile}
           onDelete={deleteProfile}
@@ -889,10 +981,28 @@ const MetricOidProfilesModal: React.FC<Props> = ({
 
       <PresetProfilesModal
         open={presetModalOpen}
-        onClose={() => setPresetModalOpen(false)}
+        initialPreset={presetInitialSelection}
+        onClose={() => {
+          setPresetModalOpen(false);
+          setPresetInitialSelection(null);
+        }}
         onApplyPreset={handleApplyPreset}
+        onApplyOfficialPreset={openOfficialBinding}
         language={language}
         showToast={showToast}
+      />
+
+      <TemplateBindingModal
+        open={Boolean(bindingPreset)}
+        template={bindingPreset}
+        fallbackDevice={bindingFallbackDevice}
+        language={language}
+        showToast={showToast}
+        onClose={() => {
+          setBindingPreset(null);
+          setBindingFallbackDevice(undefined);
+        }}
+        onConfirm={confirmOfficialPreset}
       />
     </div>
   );

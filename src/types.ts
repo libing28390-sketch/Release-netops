@@ -13,8 +13,11 @@ export interface SnmpMetricProfileAssociation {
   id?: string | null;
   vendor?: string | null;
   model?: string | null;
+  name?: string | null;
   status?: string;
   source?: string;
+  template_source?: string;
+  official_preset_id?: string | null;
   metric_keys?: string[];
   metric_sources?: Record<string, string>;
   interface_source?: string;
@@ -89,6 +92,8 @@ export interface Device {
   /** Optional device-specific OIDs that return CPU/memory usage percentages. */
   snmp_cpu_oid?: string;
   snmp_memory_oid?: string;
+  /** Explicitly selected SNMP metric template; empty means not applied. */
+  snmp_metric_profile_id?: string | null;
   /** Effective vendor/model SNMP template association used by health polling. */
   snmp_metric_profile?: SnmpMetricProfileAssociation;
   management_port?: number;

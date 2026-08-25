@@ -37,6 +37,7 @@ interface PlatformProfileOption {
 
 interface PlatformIdentificationResult {
   status?: string;
+  version?: string;
   commands?: string[];
   selected?: { platform_profile_id?: string; platform_code?: string; name_zh?: string; name_en?: string } | null;
   suggestions?: Array<{ platform_profile_id?: string; platform_code?: string; name_zh?: string; name_en?: string; score?: number }>;
@@ -196,18 +197,29 @@ const SNMP_PROFILE_STATUS_ZH: Record<string, string> = {
   none: '未配置',
 };
 const SNMP_PROFILE_SOURCE_ZH: Record<string, string> = {
+  snmp_template: 'SNMP 型号模板',
+  official: '官方内置模板',
+  custom: '自定义模板',
+  legacy: '迁移的旧模板',
   model_profile: '型号模板',
-  device_override: '单台覆盖',
-  mixed: '模板 + 单台覆盖',
+  device_override: '旧版单台覆盖（已忽略）',
+  mixed: 'SNMP 型号模板',
   template_blocked: '模板未生效',
-  builtin_default: '内置默认',
+  template_not_applied: '未应用 SNMP 模板',
+  builtin_default: '已停用的内置默认',
 };
 const SNMP_PROFILE_SOURCE_EN: Record<string, string> = {
+  snmp_template: 'SNMP model template',
+  official: 'Official built-in template',
+  custom: 'Custom template',
+  legacy: 'Migrated legacy template',
+  none: 'No template selected',
   model_profile: 'Model template',
-  device_override: 'Device override',
-  mixed: 'Template + override',
+  device_override: 'Legacy device override (ignored)',
+  mixed: 'SNMP model template',
   template_blocked: 'Template blocked',
-  builtin_default: 'Built-in default',
+  template_not_applied: 'SNMP template not applied',
+  builtin_default: 'Disabled built-in default',
 };
 
 const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
@@ -239,13 +251,14 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const [platformBindingLoading, setPlatformBindingLoading] = useState(false);
   const [platformResult, setPlatformResult] = useState<PlatformIdentificationResult | null>(null);
   const [platformError, setPlatformError] = useState('');
+  const [platformMessage, setPlatformMessage] = useState('');
   const [selectedPlatformProfileId, setSelectedPlatformProfileId] = useState(viewingDevice.platform_profile_id || '');
   const [lockPlatformBinding, setLockPlatformBinding] = useState(Boolean(viewingDevice.platform_locked));
   const snmpProfile = viewingDevice.snmp_metric_profile;
   const snmpProfileStatus = snmpProfile?.status || 'none';
-  const snmpProfileSource = snmpProfile?.source || 'builtin_default';
+  const snmpProfileSource = snmpProfile?.template_source || snmpProfile?.source || 'template_not_applied';
   const snmpProfileName = snmpProfile?.id
-    ? [snmpProfile.vendor, snmpProfile.model].filter(Boolean).join(' · ') || snmpProfile.id
+    ? snmpProfile.name || [snmpProfile.vendor, snmpProfile.model].filter(Boolean).join(' · ') || snmpProfile.id
     : (language === 'zh' ? '未关联型号模板' : 'No model template');
   const snmpMetricLabels: Record<string, string> = language === 'zh'
     ? { cpu: 'CPU', memory: '内存', temperature: '温度', fan: '风扇', power_supply: '电源' }
@@ -253,6 +266,8 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const snmpHealthMetrics = (snmpProfile?.metric_keys || [])
     .map((key) => snmpMetricLabels[key] || key)
     .join(' / ');
+  const identificationVersion = String(platformResult?.version || viewingDevice.version || '').trim();
+  const platformAlreadyBound = Boolean(viewingDevice.platform_profile_id);
   const compatiblePlatformProfiles = useMemo(() => {
     const rawPlatform = String(viewingDevice.platform || '').trim().toLowerCase();
     if (!rawPlatform || rawPlatform === 'unknown' || rawPlatform === 'generic') return platformProfiles;
@@ -264,9 +279,10 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   useEffect(() => {
     let active = true;
     setSelectedPlatformProfileId(viewingDevice.platform_profile_id || '');
-    setLockPlatformBinding(Boolean(viewingDevice.platform_locked));
+    setLockPlatformBinding(Boolean(viewingDevice.platform_locked) || !viewingDevice.platform_profile_id);
     setPlatformResult(null);
     setPlatformError('');
+    setPlatformMessage('');
     setPlatformProfilesLoading(true);
     void apiRequest<{ data: PlatformProfileOption[] }>('/api/platform-registry/profiles')
       .then((response) => { if (active) setPlatformProfiles(response.data || []); })
@@ -278,6 +294,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
   const detectPlatform = async () => {
     setPlatformDetectionLoading(true);
     setPlatformError('');
+    setPlatformMessage('');
     try {
       const response = await apiRequest<{ data: PlatformIdentificationResult }>(
         `/api/devices/${encodeURIComponent(viewingDevice.id)}/platform-detect`,
@@ -295,25 +312,58 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
 
   const bindPlatform = async () => {
     if (!selectedPlatformProfileId) {
+      setPlatformMessage('');
       setPlatformError(language === 'zh' ? '请选择要绑定的平台' : 'Select a platform to bind');
       return;
     }
+    const sameBinding = String(viewingDevice.platform_profile_id || '') === String(selectedPlatformProfileId || '')
+      && Boolean(viewingDevice.platform_locked) === Boolean(lockPlatformBinding);
+    const selectedProfile = platformProfiles.find((profile) => profile.id === selectedPlatformProfileId);
+    const currentProfile = platformProfiles.find((profile) => profile.id === viewingDevice.platform_profile_id);
+    const selectedProfileName = selectedProfile
+      ? (language === 'zh' ? (selectedProfile.name_zh || selectedProfile.platform_code) : (selectedProfile.name_en || selectedProfile.platform_code))
+      : selectedPlatformProfileId;
+    const currentProfileName = currentProfile
+      ? (language === 'zh' ? (currentProfile.name_zh || currentProfile.platform_code) : (currentProfile.name_en || currentProfile.platform_code))
+      : (viewingDevice.platform || (language === 'zh' ? '未绑定' : 'Unbound'));
+    if (sameBinding) {
+      setPlatformError('');
+      setPlatformMessage(language === 'zh'
+        ? `已绑定当前平台：${selectedProfileName}，无需重复绑定。`
+        : `Already bound to ${selectedProfileName}; no duplicate binding is needed.`);
+      setPlatformResult((current) => current ? { ...current, status: 'BOUND' } : { status: 'BOUND' });
+      return;
+    }
+    const platformChanged = Boolean(viewingDevice.platform_profile_id)
+      && String(viewingDevice.platform_profile_id) !== String(selectedPlatformProfileId);
+    if (platformChanged) {
+      const confirmed = window.confirm(language === 'zh'
+        ? `平台绑定会影响自动化执行所使用的驱动、命令和解析模板。\n\n当前平台：${currentProfileName}\n切换为：${selectedProfileName}\n\n确认切换平台吗？`
+        : `Platform binding controls the driver, command catalog, and parser used by automation.\n\nCurrent platform: ${currentProfileName}\nSwitch to: ${selectedProfileName}\n\nConfirm the platform change?`);
+      if (!confirmed) return;
+    }
+    const bindingLock = platformAlreadyBound ? lockPlatformBinding : true;
     setPlatformBindingLoading(true);
     setPlatformError('');
+    setPlatformMessage('');
     try {
-      const response = await apiRequest<{ data?: Device }>(`/api/devices/${encodeURIComponent(viewingDevice.id)}/platform-binding`, {
+      const response = await apiRequest<{ data?: Device & { binding_unchanged?: boolean } }>(`/api/devices/${encodeURIComponent(viewingDevice.id)}/platform-binding`, {
         method: 'PUT',
-        body: JSON.stringify({ platform_profile_id: selectedPlatformProfileId, lock: lockPlatformBinding }),
+        body: JSON.stringify({ platform_profile_id: selectedPlatformProfileId, lock: bindingLock }),
       });
       const saved = response.data;
+      const bindingUnchanged = Boolean(saved?.binding_unchanged);
       if (saved) {
         onPlatformBindingSaved?.({
           platform: saved.platform || viewingDevice.platform,
           platform_profile_id: saved.platform_profile_id || selectedPlatformProfileId,
-          platform_locked: saved.platform_locked ?? lockPlatformBinding,
+          platform_locked: saved.platform_locked ?? bindingLock,
         });
       }
       setPlatformError('');
+      setPlatformMessage(language === 'zh'
+        ? (bindingUnchanged ? `已绑定当前平台：${selectedProfileName}，无需重复绑定。` : `平台绑定已保存：${selectedProfileName}`)
+        : (bindingUnchanged ? `Already bound to ${selectedProfileName}; no duplicate binding is needed.` : `Platform binding saved: ${selectedProfileName}`));
       setPlatformResult((current) => current ? { ...current, status: 'BOUND' } : { status: 'BOUND' });
     } catch (cause) {
       setPlatformError(cause instanceof Error ? cause.message : (language === 'zh' ? '平台绑定失败' : 'Platform binding failed'));
@@ -481,7 +531,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div>
                     <h4 className="text-[10px] font-bold uppercase tracking-widest text-cyan-900">{language === 'zh' ? '平台识别与绑定' : 'Platform identification & binding'}</h4>
-                    <p className="mt-1 text-[11px] text-cyan-800/70">{language === 'zh' ? '只使用连接驱动提供的版本命令；锁定后自动识别只提示差异。' : 'Uses only driver-provided version commands; locked bindings are not overwritten by detection.'}</p>
+                    <p className="mt-1 text-[11px] text-cyan-800/70">{platformAlreadyBound ? (language === 'zh' ? '已绑定平台只读，影响自动化驱动、命令和解析模板。' : 'The bound platform is read-only and controls the automation driver, commands, and parser.') : (language === 'zh' ? '首次绑定后自动锁定，并决定自动化驱动、命令和解析模板。' : 'The first binding is locked automatically and controls the automation driver, commands, and parser.')}</p>
                   </div>
                   <button type="button" onClick={() => void detectPlatform()} disabled={platformDetectionLoading} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-cyan-700 px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-50">
                     {platformDetectionLoading ? <RotateCcw size={12} className="animate-spin" /> : <Activity size={12} />}
@@ -489,17 +539,16 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                   </button>
                 </div>
                 <div className="space-y-2">
-                  <select value={selectedPlatformProfileId} onChange={(event) => setSelectedPlatformProfileId(event.target.value)} disabled={platformProfilesLoading || platformBindingLoading} className="w-full rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-cyan-500">
+                  <select value={selectedPlatformProfileId} onChange={(event) => setSelectedPlatformProfileId(event.target.value)} disabled={platformProfilesLoading || platformBindingLoading || platformAlreadyBound} className="w-full rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-xs text-slate-700 outline-none focus:border-cyan-500 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500">
                     <option value="">{platformProfilesLoading ? (language === 'zh' ? '正在加载平台…' : 'Loading platforms…') : (language === 'zh' ? '选择人工绑定平台' : 'Select platform for manual binding')}</option>
                     {compatiblePlatformProfiles.map((profile) => <option key={profile.id} value={profile.id}>{language === 'zh' ? (profile.name_zh || profile.platform_code) : (profile.name_en || profile.platform_code)} · {profile.source || 'CUSTOM'}</option>)}
                   </select>
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="inline-flex items-center gap-2 text-[11px] text-cyan-900"><input type="checkbox" checked={lockPlatformBinding} onChange={(event) => setLockPlatformBinding(event.target.checked)} />{language === 'zh' ? '人工锁定绑定' : 'Lock manual binding'}</label>
+                  <div className="flex justify-end">
                     <button type="button" onClick={() => void bindPlatform()} disabled={platformBindingLoading || !selectedPlatformProfileId} className="rounded-lg border border-cyan-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-cyan-800 disabled:opacity-50">{platformBindingLoading ? (language === 'zh' ? '保存中…' : 'Saving…') : (language === 'zh' ? '保存绑定' : 'Save binding')}</button>
                   </div>
-                  <div className="text-[11px] text-cyan-900/70">{language === 'zh' ? '当前：' : 'Current: '}<span className="font-semibold">{viewingDevice.platform || 'unknown'}</span>{viewingDevice.platform_locked ? (language === 'zh' ? ' · 已锁定' : ' · locked') : ''}</div>
-                  {platformResult && <div className="rounded-lg border border-cyan-200 bg-white px-2.5 py-2 text-[11px] text-cyan-900"><span className="font-semibold">{platformResult.status || '—'}</span>{platformResult.commands?.length ? <span className="ml-2 text-cyan-700/70">{platformResult.commands.join(', ')}</span> : null}{platformResult.suggestions?.length ? <div className="mt-1 space-y-1">{platformResult.suggestions.slice(0, 3).map((item) => <button type="button" key={item.platform_profile_id || item.platform_code} onClick={() => item.platform_profile_id && setSelectedPlatformProfileId(item.platform_profile_id)} className="block w-full rounded-md px-1.5 py-1 text-left hover:bg-cyan-50">{item.name_zh || item.platform_code} <span className="text-cyan-700/60">({Number(item.score || 0).toFixed(2)})</span></button>)}</div> : null}</div>}
-                  {platformError && <div className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2 text-[11px] text-rose-700">{platformError}</div>}
+                  {platformResult && <div className="text-[11px] text-cyan-900/80"><span className="font-semibold">{platformResult.status || '—'}</span>{identificationVersion ? <span className="ml-2">{language === 'zh' ? '版本' : 'Version'} {identificationVersion}</span> : null}{platformResult.commands?.length ? <span className="ml-2 text-cyan-700/70">{platformResult.commands.join(', ')}</span> : null}{!platformAlreadyBound && platformResult.suggestions?.length ? <div className="mt-1 space-y-1">{platformResult.suggestions.slice(0, 3).map((item) => <button type="button" key={item.platform_profile_id || item.platform_code} onClick={() => item.platform_profile_id && setSelectedPlatformProfileId(item.platform_profile_id)} className="block w-full rounded-md px-1.5 py-1 text-left hover:bg-cyan-50">{item.name_zh || item.platform_code} <span className="text-cyan-700/60">{identificationVersion ? `${language === 'zh' ? '· 版本' : '· Version'} ${identificationVersion}` : `${language === 'zh' ? '· 匹配分' : '· Score'} ${Number(item.score || 0).toFixed(2)}`}</span></button>)}</div> : null}</div>}
+                  {platformMessage && <div className="text-[11px] font-semibold text-emerald-700">{platformMessage}</div>}
+                  {platformError && <div className="text-[11px] text-rose-700">{platformError}</div>}
                 </div>
               </div>
 
@@ -540,8 +589,9 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
                 <div className="space-y-1.5 text-sm">
                   <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '关联模板' : 'Profile'}</span><span className="max-w-[190px] truncate text-right font-medium text-cyan-950" title={snmpProfileName}>{snmpProfileName}</span></div>
                   <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '来源' : 'Source'}</span><span className="text-right font-medium text-cyan-950">{language === 'zh' ? SNMP_PROFILE_SOURCE_ZH[snmpProfileSource] || snmpProfileSource : SNMP_PROFILE_SOURCE_EN[snmpProfileSource] || snmpProfileSource}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '模板 ID' : 'Template ID'}</span><span className="max-w-[190px] truncate text-right font-mono text-[11px] font-medium text-cyan-950" title={viewingDevice.snmp_metric_profile_id || ''}>{viewingDevice.snmp_metric_profile_id || '—'}</span></div>
                   <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '状态' : 'Status'}</span><span className={`text-right font-semibold ${snmpProfileStatus === 'verified' ? 'text-emerald-700' : snmpProfileStatus === 'failed' ? 'text-red-600' : 'text-amber-700'}`}>{language === 'zh' ? SNMP_PROFILE_STATUS_ZH[snmpProfileStatus] || snmpProfileStatus : snmpProfileStatus}</span></div>
-                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '健康指标' : 'Health metrics'}</span><span className="max-w-[190px] truncate text-right font-medium text-cyan-950" title={snmpHealthMetrics || 'Built-in health metrics'}>{snmpHealthMetrics || (language === 'zh' ? '内置健康指标' : 'Built-in health metrics')}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-cyan-900/50">{language === 'zh' ? '健康指标' : 'Health metrics'}</span><span className="max-w-[190px] truncate text-right font-medium text-cyan-950" title={snmpHealthMetrics || 'No template metrics'}>{snmpHealthMetrics || (language === 'zh' ? '未配置模板指标' : 'No template metrics')}</span></div>
                 </div>
               </div>
             </div>

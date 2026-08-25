@@ -38,19 +38,21 @@ const SnmpTestResultModal: React.FC<SnmpTestResultModalProps> = ({ open, languag
   const hardwareEntries = Object.entries(result?.hardware_metrics || {});
   const sourceLabel = (key: string, detail: { source?: string }) => {
     const source = result?.metric_sources?.[key] || detail.source || '';
-    if (source === 'verified_model_profile' || source === 'template_definition') return isZh ? 'SNMP 型号模板' : 'SNMP model template';
-    if (source === 'device_override') return isZh ? '设备单台覆盖' : 'Device override';
-    return isZh ? '厂商内置采集器' : 'Vendor built-in collector';
+    if (source === 'snmp_template' || source === 'verified_model_profile' || source === 'template_definition') return isZh ? 'SNMP 型号模板' : 'SNMP model template';
+    if (source === 'device_override') return isZh ? '旧版单台覆盖（已忽略）' : 'Legacy device override (ignored)';
+    return isZh ? '未应用 SNMP 模板' : 'SNMP template not applied';
   };
   const profileSourceLabel = (source?: string) => {
-    if (!isZh) return source || 'builtin_default';
+    if (!isZh) return source || 'template_not_applied';
     return ({
+      snmp_template: 'SNMP 型号模板',
       model_profile: '型号模板',
       verified_model_profile: '型号模板',
-      device_override: '单台覆盖',
-      mixed: '模板 + 单台覆盖',
-      builtin_default: '内置默认',
-    } as Record<string, string>)[source || 'builtin_default'] || source || '内置默认';
+      device_override: '旧版单台覆盖（已忽略）',
+      mixed: 'SNMP 型号模板',
+      template_not_applied: '未应用 SNMP 模板',
+      builtin_default: '已停用的内置默认',
+    } as Record<string, string>)[source || 'template_not_applied'] || source || '未应用 SNMP 模板';
   };
   const profileStatusLabel = (status?: string) => {
     if (!isZh) return status || 'none';

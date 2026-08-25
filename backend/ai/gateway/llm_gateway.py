@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from database.core import get_db_connection
 from ai.security.crypto import decrypt_api_key
 from ai.security.gateway import AISecurityGateway, SecurityBlocked, ai_security_gateway
+from ai.security.output import StreamingOutputResolver
 from ai.security.tokenization import opaque_user_id
 from ai.security.sanitizer import sanitize_log_text
 from ai.security.security_service import create_security_incident, record_security_event
@@ -285,14 +286,6 @@ class LLMGateway:
         requested_rank = self._classification_rank(data_classification)
         if requested_rank >= self._classification_rank("CONFIDENTIAL") and not self._is_local_provider(fallback):
             return False
-        if requested_rank == self._classification_rank("INTERNAL") and not self._is_local_provider(fallback):
-            if (
-                not bool(fallback.get("no_training_confirmed"))
-                or fallback.get("retention_days") is None
-                or not str(fallback.get("data_processing_agreement_ref") or "").strip()
-                or str(fallback.get("data_region") or "unknown").lower() == "unknown"
-            ):
-                return False
         return self._classification_rank(fallback.get("allowed_data_classification")) >= max(
             self._classification_rank(primary.get("allowed_data_classification")), requested_rank
         )
@@ -1051,6 +1044,11 @@ class LLMGateway:
 
         processed_messages = secure_payload.messages
         full_content = []
+        stream_resolver = StreamingOutputResolver(
+            tenant_id=tenant,
+            task_id=task,
+            vault=self.security_gateway.vault,
+        )
         self._log_security_audit(
             request_id=request_id,
             tenant_id=tenant,
@@ -1131,7 +1129,12 @@ class LLMGateway:
         try:
             async for chunk in _stream_candidate(model_info):
                 full_content.append(chunk)
-                yield self.security_gateway.resolve_output(chunk, tenant_id=tenant, task_id=task)
+                resolved_chunk = stream_resolver.push(chunk)
+                if resolved_chunk:
+                    yield resolved_chunk
+            resolved_tail = stream_resolver.flush()
+            if resolved_tail:
+                yield resolved_tail
 
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             combined_txt = "".join(full_content)
@@ -1168,9 +1171,19 @@ class LLMGateway:
                     self._authorize_model(fallback_info, tenant_id=tenant, user_id=user_id, roles=roles)
                     if not self._fallback_is_compatible(model_info, fallback_info):
                         raise AIModelNotFoundException("Fallback model is not compatible with the selected data policy")
+                    fallback_resolver = StreamingOutputResolver(
+                        tenant_id=tenant,
+                        task_id=task,
+                        vault=self.security_gateway.vault,
+                    )
                     async for chunk in _stream_candidate(fallback_info):
                         full_content.append(chunk)
-                        yield self.security_gateway.resolve_output(chunk, tenant_id=tenant, task_id=task)
+                        resolved_chunk = fallback_resolver.push(chunk)
+                        if resolved_chunk:
+                            yield resolved_chunk
+                    resolved_tail = fallback_resolver.flush()
+                    if resolved_tail:
+                        yield resolved_tail
                     ai_metrics.fallback_event(
                         scene,
                         model_info.get("provider_id"),

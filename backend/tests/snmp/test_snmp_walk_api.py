@@ -182,6 +182,7 @@ def test_snmp_hardware_test_returns_metric_results_without_oid_rows(monkeypatch)
         metric_profile_id='',
         bypass_cache=False,
         version='2c',
+        template_only=False,
     ):
         calls.append({
             'custom_metrics': custom_metrics,
@@ -189,6 +190,7 @@ def test_snmp_hardware_test_returns_metric_results_without_oid_rows(monkeypatch)
             'metric_profile_id': metric_profile_id,
             'bypass_cache': bypass_cache,
             'version': version,
+            'template_only': template_only,
         })
         return {
             'cpu_usage': 18,
@@ -254,12 +256,26 @@ def test_snmp_hardware_test_returns_metric_results_without_oid_rows(monkeypatch)
     assert response['data']['metric_count'] == 5
     assert set(response['data']['metrics']) == {'temperature', 'cpu', 'memory', 'fan', 'power_supply'}
     assert response['data']['metrics']['temperature']['source'] == 'template_definition'
-    assert response['data']['metrics']['fan']['source'] == 'builtin_vendor_collector'
+    assert response['data']['metrics']['fan']['source'] == 'snmp_template'
     assert 'rows' not in response['data']
     assert calls[0]['version'] == '2c'
     assert calls[0]['bypass_cache'] is True
+    assert calls[0]['template_only'] is True
     assert calls[0]['device_id'] == 'device-1'
     assert set(calls[0]['custom_metrics']) == {'temperature', 'cpu'}
+
+
+def test_snmp_hardware_test_requires_an_explicit_target() -> None:
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(
+            devices_api.test_snmp_hardware_metrics(
+                {'metric_definitions': {}},
+                user={'role': 'Operator'},
+            )
+        )
+
+    assert error.value.status_code == 400
+    assert 'device_id' in str(error.value.detail)
 
 
 def test_snmp_interface_test_validates_submitted_template_and_returns_samples(monkeypatch) -> None:

@@ -69,6 +69,10 @@ describe('ProviderManagementTab browser key paths', () => {
 
     await user.click(screen.getByRole('button', { name: '添加 Provider' }));
     expect(screen.getByRole('dialog')).toBeTruthy();
+    expect(screen.queryByText('云端供应商证明（内部数据必填）')).toBeNull();
+    expect(screen.queryByText('供应商无训练条款已核验')).toBeNull();
+    expect(screen.queryByText('协议 / DPA 编号')).toBeNull();
+    expect(screen.queryByText(/批准端点模式/)).toBeNull();
     await user.type(screen.getByLabelText('Provider 名称'), '备用 OpenAI');
     await user.type(screen.getByLabelText('API Key'), 'sk-test-only');
     expect(screen.getByLabelText('API Key').getAttribute('type')).toBe('password');
@@ -80,6 +84,10 @@ describe('ProviderManagementTab browser key paths', () => {
     await user.selectOptions(screen.getByLabelText('允许数据分类'), 'INTERNAL');
     await user.click(screen.getByRole('button', { name: '确认添加' }));
     await waitFor(() => expect(createProvider).toHaveBeenCalledWith(expect.objectContaining({ name: '备用 OpenAI', api_key: 'sk-test-only', data_region: 'global', allowed_data_classification: 'INTERNAL' })));
+    expect(createProvider.mock.calls[0][0]).not.toHaveProperty('no_training_confirmed');
+    expect(createProvider.mock.calls[0][0]).not.toHaveProperty('retention_days');
+    expect(createProvider.mock.calls[0][0]).not.toHaveProperty('data_processing_agreement_ref');
+    expect(createProvider.mock.calls[0][0]).not.toHaveProperty('approved_endpoint_patterns');
   });
 
   it('shows the empty state and a recoverable request error', async () => {

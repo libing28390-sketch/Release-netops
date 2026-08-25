@@ -41,15 +41,14 @@ export interface InterfaceTestResult {
 
 interface MetricProfileEditorProps {
   editingId: string | null;
+  isOfficialProfile?: boolean;
   form: ProfileForm;
   saving: boolean;
   language: string;
   candidateDevices?: CandidateDevice[];
   initialLiveInspectorOpen?: boolean;
   initialInspectorTab?: InspectorTab;
-  autoRunHardwareTest?: boolean;
   autoMatchResult?: { matched_series?: string; confidence?: number; preset?: ModelPresetItem } | null;
-  lastTestDetails?: { hardware?: Record<string, any>; interface?: InterfaceTestResult } | null;
   onChangeForm: (updater: (prev: ProfileForm) => ProfileForm) => void;
   onSave: () => void;
   onDelete: () => void;
@@ -61,13 +60,13 @@ interface MetricProfileEditorProps {
 
 export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
   editingId,
+  isOfficialProfile = false,
   form,
   saving,
   language,
   candidateDevices = [],
   initialLiveInspectorOpen = false,
   initialInspectorTab = 'snmpwalk',
-  autoRunHardwareTest = false,
   autoMatchResult,
   onChangeForm,
   onSave,
@@ -163,7 +162,7 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
         <div className="flex items-center justify-between border-b border-black/6 px-5 py-3 dark:border-white/8">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold text-black/85 dark:text-white/90">
-              {editingId ? (zh ? '编辑型号 SNMP 模板' : 'Edit SNMP Template') : zh ? '新增型号 SNMP 模板' : 'New SNMP Template'}
+              {editingId ? (zh ? '管理型号 SNMP 模板' : 'Manage SNMP Template') : zh ? '新增自定义 SNMP 模板' : 'New Custom SNMP Template'}
             </span>
           </div>
           <button
@@ -209,6 +208,13 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
                 placeholder={zh ? '例如：S5008V6 / S5135S-16T4S / S5590-28SX-EI / C9300-48P' : '例如：C9300-48P / S6800-54QT'}
               />
             </label>
+          </div>
+
+          <div className="mb-3.5 rounded-lg border border-[#00bceb]/25 bg-[#00bceb]/[0.05] px-3 py-2 text-[11px] leading-4 text-[#006b83] dark:border-[#00bceb]/25 dark:bg-[#00bceb]/[0.08] dark:text-[#8eeaff]">
+            <span className="font-semibold">{zh ? '模板匹配规则：' : 'Template matching: '}</span>
+            {zh
+              ? 'H3C 不是固定要求，请选择设备的实际厂商。保存后会按“厂商 + 精确型号”作为该型号的 SNMP 采集模板；S6850-1 应选择 H3C / S6800。仅在官方模板未匹配或不适配时使用自定义模板。'
+              : 'H3C is not mandatory. Select the device’s actual vendor. Saving activates this profile for the exact vendor + model; S6850-1 should use H3C / S6800. Use a custom profile only when no official template matches or fits.'}
           </div>
 
           {/* Smart Auto Match Recommendation Capsule */}
@@ -298,7 +304,6 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
                 metrics={form.metrics}
                 interfaceConfig={form.interfaceConfig}
                 initialTab={initialInspectorTab}
-                autoRunHardwareTest={autoRunHardwareTest}
                 saving={saving}
                 showToast={showToast}
                 onTestResult={setLiveTestResult}
@@ -362,7 +367,7 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
               className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-500/10 dark:text-red-400"
             >
               <Trash2 size={13} />
-              {zh ? '删除模板' : 'Delete'}
+              {isOfficialProfile ? (zh ? '解绑官方模板' : 'Unbind official template') : (zh ? '删除自定义模板' : 'Delete custom template')}
             </button>
           ) : (
             <div />
@@ -379,12 +384,14 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
           <button
             type="button"
             onClick={onSave}
-            disabled={saving}
+            disabled={saving || isOfficialProfile}
             aria-label={zh ? '保存型号模板' : 'Save Profile'}
               className="inline-flex items-center gap-1 rounded-lg bg-[#00a9ce] px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1] disabled:opacity-45"
             >
               <Save size={13} />
-              {saving ? (zh ? '保存中...' : 'Saving...') : zh ? '保存型号模板' : 'Save Template'}
+              {isOfficialProfile
+                ? (zh ? '官方模板只读' : 'Official template is read-only')
+                : saving ? (zh ? '保存中...' : 'Saving...') : zh ? '保存型号模板' : 'Save Template'}
             </button>
           </div>
         </div>

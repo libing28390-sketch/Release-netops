@@ -359,9 +359,20 @@ export const AutomationExecuteTab: React.FC<AutomationExecuteTabProps> = (props)
   const filteredQuickQueryRecords = useMemo(() => {
     if (!quickQueryTable.records) return [];
     if (!quickQuerySearch.trim()) return quickQueryTable.records;
-    const q = quickQuerySearch.toLowerCase().trim();
+    const q = quickQuerySearch.trim().toLocaleLowerCase();
+    const searchableValue = (value: unknown): string => {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'object') {
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return String(value);
+        }
+      }
+      return String(value);
+    };
     return quickQueryTable.records.filter((rec) => {
-      return Object.values(rec).some((val) => String(val || '').toLowerCase().includes(q));
+      return Object.values(rec).some((val) => searchableValue(val).toLocaleLowerCase().includes(q));
     });
   }, [quickQueryTable.records, quickQuerySearch]);
 

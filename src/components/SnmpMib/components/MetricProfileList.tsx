@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
+  Check,
   Database,
   Activity,
+  Loader2,
   Plus,
   RefreshCw,
   Search,
@@ -21,6 +23,7 @@ export interface MetricOidProfile {
   profile_id: string | null;
   vendor: string;
   model: string;
+  template_name?: string;
   cpu_oid: string;
   memory_oid: string;
   cpu_config?: Record<string, unknown>;
@@ -38,6 +41,7 @@ export interface MetricOidProfile {
     | 'blocked_unverified'
     | 'blocked_failed'
     | 'no_matching_device'
+    | 'template_required'
     | 'builtin_only'
     | string;
   interface_config?: Record<string, unknown>;
@@ -45,7 +49,16 @@ export interface MetricOidProfile {
   interface_verification_status?: 'verified' | 'failed' | 'unverified' | string;
   interface_collector_status?: string;
   sample_device_id?: string | null;
+  sample_device_ip?: string | null;
+  sample_device_status?: string | null;
   platforms: string[];
+  source?: string;
+  official_preset_id?: string;
+  bound_device_count?: number;
+  inventory_device_count?: number;
+  unbound_device_count?: number;
+  applied_preset_id?: string;
+  applied_preset_family_id?: string;
 }
 
 export type StatusFilterType = 'all' | 'verified' | 'unverified' | 'failed' | 'configured' | 'default';
@@ -65,7 +78,9 @@ interface MetricProfileListProps {
   onPageSizeChange: (size: number) => void;
   onRefresh: () => void;
   onOpenCreate: () => void;
-  onOpenPresets: () => void;
+  onOpenPresets: (preset?: ModelPresetItem) => void;
+  onApplyOfficialPreset?: (preset: ModelPresetItem, fallbackDevice?: CandidateDevice) => Promise<void>;
+  onOpenBinding?: (profile: MetricOidProfile) => void;
   onOpenMibs: () => void;
   onEdit: (profile: MetricOidProfile) => void;
   onDeleteProfile?: (profile: MetricOidProfile) => void;
@@ -146,9 +161,9 @@ const profilesForPresetGroup = (group: PresetDisplayGroup, profiles: MetricOidPr
 };
 
 // Inventory-only rows are generated when a device has no saved model profile.
-// They expose the collector's built-in CPU/memory fallback, but are not
-// templates managed by this page. Keep them available for official-preset
-// linked-device counts while excluding them from the template list itself.
+// They are model matches only, not templates managed by this page. Keep them
+// available for official-preset matching counts while excluding them from the
+// applied-template list itself.
 const isBuiltinFallbackProfile = (profile: MetricOidProfile) => (
   !profile.profile_id && !profile.configured && !profile.interface_configured
 );
@@ -168,6 +183,8 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
   onRefresh,
   onOpenCreate,
   onOpenPresets,
+  onApplyOfficialPreset,
+  onOpenBinding,
   onOpenMibs,
   onEdit,
   onDeleteProfile,
@@ -180,6 +197,7 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
   const [vendorFilter, setVendorFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilterType>('all');
   const [activeTab, setActiveTab] = useState<ProfileTabType>('all');
+  const [applyingPresetKey, setApplyingPresetKey] = useState<string | null>(null);
 
   // Sync external search prop if changed
   useEffect(() => {
@@ -208,8 +226,8 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [profiles, presets]);
 
-  // Client-side quick filter on saved custom profiles. Inventory-only fallback
-  // rows (for example H3C F1090/S6800) are not templates and stay hidden.
+  // Client-side quick filter on saved custom profiles. Inventory-only model
+  // matches (for example H3C F1090/S6800) are not templates and stay hidden.
   const filteredProfiles = useMemo(() => {
     return profiles.filter(profile => !isBuiltinFallbackProfile(profile)).filter(profile => {
       // Vendor filter
@@ -265,6 +283,17 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
     onPageChange(1);
   };
 
+  const applyOfficialPreset = async (preset: ModelPresetItem, fallbackDevice?: CandidateDevice) => {
+    if (!onApplyOfficialPreset || applyingPresetKey) return;
+    const key = `${preset.vendor}:${preset.model}`;
+    setApplyingPresetKey(key);
+    try {
+      await onApplyOfficialPreset(preset, fallbackDevice);
+    } finally {
+      setApplyingPresetKey(null);
+    }
+  };
+
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/6 dark:border-white/8">
       {/* Top Filter and Actions Bar */}
@@ -296,7 +325,7 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                     : 'text-black/55 hover:text-black/80 dark:text-white/55 dark:hover:text-white/80'
                 }`}
               >
-                {zh ? '已配置型号' : 'Custom Models'}
+                {zh ? '已绑定型号' : 'Bound Models'}
                 <span className="ml-1 text-[10px] opacity-60">({filteredProfiles.length})</span>
               </button>
             )}
@@ -382,7 +411,15 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenPresets()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#00bceb]/25 bg-[#00bceb]/10 px-3 py-1.5 text-xs font-semibold text-[#008aad] shadow-sm hover:bg-[#00bceb]/20 dark:text-[#00bceb]"
+          >
+            <Sparkles size={13} />
+            {zh ? '官方模板' : 'Official Templates'}
+          </button>
           <button
             type="button"
             onClick={onOpenMibs}
@@ -397,9 +434,16 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
             className="inline-flex items-center gap-1.5 rounded-lg bg-[#00a9ce] px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1]"
           >
             <Plus size={14} />
-            {zh ? '新建模板' : 'New Profile'}
+            {zh ? '新建自定义模板' : 'New Profile'}
           </button>
         </div>
+      </div>
+
+      <div className="flex items-center gap-1.5 border-b border-black/5 bg-[#00bceb]/[0.035] px-3 py-2 text-[10px] text-black/55 dark:border-white/6 dark:text-white/55">
+        <Check size={12} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+        {zh
+          ? '流程：①匹配官方型号；②选择设备测试并确认绑定；③已绑定型号可管理/解绑；④无匹配或不适配时再新建自定义模板。'
+          : 'Flow: match an official model; choose a device, test, and confirm binding; manage or unbind from Bound Models; create a custom template only when there is no match or the official template does not fit.'}
       </div>
 
       {/* Table Content */}
@@ -419,7 +463,7 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
               <tr>
                 <th className="w-[34%] px-3.5 py-2.5 font-medium">{zh ? '厂商 / 适配型号' : 'Vendor / Supported Models'}</th>
                 <th className="w-[42%] px-3 py-2.5 font-medium">{zh ? '采集指标' : 'Collected Metrics'}</th>
-                <th className="w-[24%] px-3 py-2.5 font-medium">{zh ? 'SNMP Walk / 关联设备' : 'SNMP Walk / Linked Devices'}</th>
+                <th className="w-[24%] px-3 py-2.5 font-medium">{zh ? '绑定与管理' : 'Binding & Management'}</th>
               </tr>
             </thead>
             <tbody>
@@ -428,17 +472,48 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                 filteredPresetGroups.map(group => {
                   const preset = group.primary;
                   const linkedProfiles = profilesForPresetGroup(group, profiles);
-                  const linkedDeviceCount = linkedProfiles.reduce(
-                    (count, profile) => count + Number(profile.device_count || 0),
-                    0,
+                  const officialProfiles = linkedProfiles.filter(profile => Boolean(
+                    profile.source === 'official' ||
+                    profile.source === 'official_preset' ||
+                    profile.official_preset_id ||
+                    profile.applied_preset_id,
+                  ));
+                  const inventoryDeviceCount = group.models.reduce((count, model) => {
+                    const modelCount = linkedProfiles
+                      .filter(profile => modelDisplayKey(profile.model) === modelDisplayKey(model))
+                      .reduce(
+                        (max, profile) => Math.max(
+                          max,
+                          Number(profile.inventory_device_count ?? profile.device_count ?? 0),
+                        ),
+                        0,
+                      );
+                    return count + modelCount;
+                  }, 0);
+                  const appliedProfile = officialProfiles.find(profile => Boolean(profile.profile_id));
+                  const sampleProfile = officialProfiles.find(profile => profile.sample_device_id)
+                    || linkedProfiles.find(profile => profile.sample_device_id)
+                    || appliedProfile;
+                  const exactTargetPreset = sampleProfile
+                    ? group.items.find(item => modelDisplayKey(item.model) === modelDisplayKey(sampleProfile.model))
+                    : undefined;
+                  const targetPreset = exactTargetPreset || group.primary;
+                  const hasAppliedProfile = Boolean(
+                    appliedProfile?.profile_id && Number(
+                      appliedProfile.bound_device_count ?? appliedProfile.device_count ?? 0,
+                    ) > 0,
                   );
-                  const sampleProfile = linkedProfiles.find(profile => profile.sample_device_id);
+                  const canDirectApply = Boolean(exactTargetPreset && onApplyOfficialPreset && !hasAppliedProfile);
+                  const isApplying = applyingPresetKey === `${targetPreset.vendor}:${targetPreset.model}`;
                   const sampleDevice = sampleProfile?.sample_device_id
                     ? {
                         device_id: sampleProfile.sample_device_id,
                         hostname: `${sampleProfile.vendor} ${sampleProfile.model}`,
+                        ip_address: sampleProfile.sample_device_ip || undefined,
+                        status: sampleProfile.sample_device_status || undefined,
                       }
                     : undefined;
+                  const sampleStatus = String(sampleDevice?.status || '').trim().toLowerCase();
                   return (
                     <tr
                       key={`preset-group:${group.key}`}
@@ -493,32 +568,57 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                         <div className="flex flex-wrap items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => onOpenCollectionResult?.(preset, sampleDevice)}
-                            className="inline-flex items-center gap-1 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm hover:bg-emerald-500/15 dark:text-emerald-300"
-                            title={zh ? '打开硬件指标采集结果' : 'Open collected metric results'}
+                            onClick={() => {
+                              if (canDirectApply) {
+                                void applyOfficialPreset(targetPreset, sampleDevice);
+                              } else {
+                                onOpenPresets(targetPreset);
+                              }
+                            }}
+                            disabled={Boolean(applyingPresetKey) || hasAppliedProfile}
+                            className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-semibold shadow-sm ${
+                              hasAppliedProfile
+                                ? 'cursor-default bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300'
+                                : 'bg-[#00a9ce] text-white hover:bg-[#008fb1]'
+                            }`}
+                            title={canDirectApply
+                              ? (zh ? `测试并绑定官方模板：${targetPreset.vendor} ${targetPreset.model}` : `Test and bind the official template: ${targetPreset.vendor} ${targetPreset.model}`)
+                              : hasAppliedProfile
+                                ? (zh ? '官方模板已应用；实际设备绑定请在“已绑定型号”中管理或解绑' : 'The official template is applied; manage or unbind actual device bindings from Bound Models')
+                                 : (zh ? '选择具体型号后进入官方模板绑定流程' : 'Choose an exact model to start the official template binding flow')}
                           >
-                            <Activity size={11} />
-                            {zh ? '采集结果' : 'Collected'}
+                            {isApplying ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                            {isApplying
+                              ? (zh ? '应用中…' : 'Applying…')
+                              : canDirectApply
+                                ? (zh ? '测试并绑定' : 'Test & bind')
+                                : hasAppliedProfile
+                                   ? (zh ? '官方已应用' : 'Applied')
+                               : (zh ? '选择型号并绑定' : 'Select & bind')}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => onOpenSnmpWalk?.(preset, sampleDevice)}
-                            className="inline-flex items-center gap-1 rounded-md border border-[#00bceb]/30 bg-[#00bceb]/10 px-2.5 py-1 text-[10px] font-semibold text-[#008aad] shadow-sm hover:bg-[#00bceb]/20 dark:text-[#00bceb]"
-                            title={zh ? '打开此厂商模板的 SNMP Walk 调试工具' : 'Open SNMP Walk for this vendor template'}
-                          >
-                            <Terminal size={11} />
-                            {zh ? 'SNMP Walk' : 'SNMP Walk'}
-                          </button>
-                          <span className="inline-flex items-center gap-1 rounded-md bg-black/[.04] px-2 py-1 text-[10px] text-black/55 dark:bg-white/[.06] dark:text-white/60" title={zh ? '当前资产中与适配型号匹配的设备数量' : 'Inventory devices matching the supported models'}>
+                          <span className="inline-flex items-center gap-1 rounded-md bg-black/[.04] px-2 py-1 text-[10px] text-black/55 dark:bg-white/[.06] dark:text-white/60" title={zh ? '按官方模板厂商和型号匹配到的设备候选数，不代表这些设备已经绑定模板' : 'Candidate devices matching the official vendor and model; this is not the number of devices bound to the template'}>
                             <Server size={11} />
-                            {zh ? `关联设备 ${linkedDeviceCount} 台` : `${linkedDeviceCount} linked`}
+                            {zh ? `候选设备 ${inventoryDeviceCount} 台` : `${inventoryDeviceCount} candidate devices`}
                           </span>
                         </div>
                         <div className="mt-1.5 text-[9px] text-black/40 dark:text-white/40">
-                          {linkedProfiles.length > 0
-                            ? (zh ? '已在资产目录中发现匹配型号' : 'Matching models found in inventory')
-                            : (zh ? '暂未发现匹配的受管设备' : 'No matching managed device found')}
+                          {hasAppliedProfile
+                            ? (zh ? '官方模板已应用；实际绑定数量请查看“已绑定型号”中的模板记录' : 'Official template is applied; see the Bound Models template row for the actual binding count')
+                            : inventoryDeviceCount > 0
+                              ? canDirectApply
+                                ? (zh ? `已发现 ${inventoryDeviceCount} 台候选设备；测试只需选择其中一台` : `${inventoryDeviceCount} candidate device(s) found; test only one of them`)
+                                : (zh ? '按厂商+型号找到候选设备；选择具体型号后进入测试与绑定流程' : 'Candidate devices found by vendor + model; choose an exact model to start the test-and-bind flow')
+                              : (zh ? '暂未发现匹配的受管设备' : 'No matching managed device found')}
                         </div>
+                        {sampleDevice && (
+                          <div className={`mt-1 text-[9px] ${sampleStatus === 'online' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                            {sampleStatus === 'online'
+                              ? (zh ? `快速读取样例：在线设备 ${sampleDevice.ip_address || sampleDevice.hostname}` : `Quick-read sample: online device ${sampleDevice.ip_address || sampleDevice.hostname}`)
+                              : sampleStatus
+                                ? (zh ? `快速读取样例：当前无在线设备，已回退 ${sampleDevice.ip_address || sampleDevice.hostname}` : `Quick-read sample: no online device; fell back to ${sampleDevice.ip_address || sampleDevice.hostname}`)
+                                : (zh ? `快速读取样例：设备状态待确认 ${sampleDevice.ip_address || sampleDevice.hostname}` : `Quick-read sample: device status pending ${sampleDevice.ip_address || sampleDevice.hostname}`)}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
@@ -527,16 +627,33 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
               {/* 2. Custom Model Profiles Rows (rendered if activeTab is 'all' or 'custom') */}
               {(activeTab === 'all' || activeTab === 'custom') &&
                 filteredProfiles.map(profile => {
-                  const matchedDeviceCount = Number(profile.matched_device_count ?? profile.device_count ?? 0);
+                  const matchedDeviceCount = Number(profile.bound_device_count ?? profile.matched_device_count ?? 0);
+                  const isOfficialApplied = Boolean(
+                    profile.source === 'official' ||
+                    profile.source === 'official_preset' ||
+                    profile.official_preset_id ||
+                    profile.applied_preset_id,
+                  );
 
                   return (
                     <tr
-                      key={`${profile.vendor}:${profile.model}`}
+                      key={profile.profile_id || `${profile.vendor}:${profile.model}:${profile.template_name || 'template'}`}
                       className="border-t border-black/5 transition-colors hover:bg-black/[.015] dark:border-white/6 dark:hover:bg-white/[.015]"
                     >
                       {/* Vendor and Model */}
                       <td className="max-w-[240px] px-3.5 py-2.5">
-                        <div className="truncate font-semibold text-black/80 dark:text-white/85">{profile.vendor}</div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="truncate font-semibold text-black/80 dark:text-white/85">{profile.vendor}</div>
+                          <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-semibold ${
+                            isOfficialApplied
+                              ? 'bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300'
+                              : 'bg-black/[.05] text-black/45 dark:bg-white/[.08] dark:text-white/50'
+                          }`}>
+                            {isOfficialApplied
+                               ? (zh ? '官方已绑定' : 'Official bound')
+                               : (zh ? '自定义模板' : 'Custom')}
+                          </span>
+                        </div>
                         <div className="truncate font-mono text-[10px] text-black/45 dark:text-white/45">
                           {profile.model}
                         </div>
@@ -595,25 +712,39 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                             title={zh ? '查看关联设备清单' : 'View linked devices'}
                           >
                             <Server size={11} />
-                            {zh ? `关联设备 ${matchedDeviceCount} 台` : `${matchedDeviceCount} linked`}
+                            {matchedDeviceCount > 0
+                              ? (zh ? `已绑定 ${matchedDeviceCount} 台` : `${matchedDeviceCount} bound`)
+                              : (zh ? '未绑定设备' : 'No devices bound')}
                           </button>
+                          {profile.profile_id && onOpenBinding && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenBinding(profile)}
+                              className="inline-flex items-center gap-1 rounded-md border border-violet-500/25 bg-violet-500/10 px-2.5 py-1 text-[10px] font-semibold text-violet-700 shadow-sm hover:bg-violet-500/15 dark:text-violet-300"
+                              title={zh ? '选择设备并绑定或解绑模板' : 'Select devices to bind or unbind this template'}
+                            >
+                              <Server size={11} />
+                              {zh ? '绑定设备' : 'Bind devices'}
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => onEdit(profile)}
                             className="inline-flex items-center gap-1 rounded-md bg-[#00a9ce] px-2.5 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-[#008fb1]"
-                            title={zh ? '修改模板' : 'Edit profile'}
+                            title={zh ? '管理模板' : 'Manage profile'}
                           >
                             <Pencil size={11} />
-                            {zh ? '修改' : 'Edit'}
+                            {zh ? '管理' : 'Manage'}
                           </button>
                           {profile.profile_id && (
                             <button
                               type="button"
                               onClick={() => onDeleteProfile?.(profile)}
-                              className="rounded-md border border-red-500/20 p-1.5 text-red-600 hover:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
-                              title={zh ? '删除此模板并回退系统默认' : 'Delete profile and use default'}
+                              className="inline-flex items-center gap-1 rounded-md border border-red-500/20 px-2 py-1 text-[10px] font-semibold text-red-600 hover:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
+                              title={zh ? '删除已保存模板记录（需先解绑设备）' : 'Delete saved template record (unbind devices first)'}
                             >
                               <Trash2 size={11} />
+                              {zh ? '删除' : 'Delete'}
                             </button>
                           )}
                         </div>

@@ -17,18 +17,8 @@ def _gateway(*, classifications=("PUBLIC", "INTERNAL", "CONFIDENTIAL")) -> AISec
     )
 
 
-def test_internal_cloud_requires_supplier_assurance() -> None:
+def test_internal_cloud_does_not_require_supplier_assurance() -> None:
     gateway = _gateway()
-    with pytest.raises(SecurityBlocked) as exc:
-        gateway.protect(
-            [{"role": "user", "content": "请说明园区交换机的 VLAN 规划"}],
-            provider_type="deepseek",
-            data_classification="INTERNAL",
-            data_region="cn",
-            provider_allowed_classification="INTERNAL",
-        )
-    assert exc.value.reason_code == "AI_SECURITY_PROVIDER_ASSURANCE_REQUIRED"
-
     payload = gateway.protect(
         [{"role": "user", "content": "请说明园区交换机的 VLAN 规划"}],
         provider_type="deepseek",
@@ -40,6 +30,18 @@ def test_internal_cloud_requires_supplier_assurance() -> None:
         provider_data_processing_agreement_ref="dpa-2026-001",
     )
     assert payload.metadata["classification"] == "INTERNAL"
+
+    # Supplier assurance fields are no longer part of the Provider setup
+    # flow.  They remain accepted as legacy arguments for compatibility, but
+    # they must not be required for an otherwise allowed INTERNAL request.
+    payload_without_legacy_assurance = gateway.protect(
+        [{"role": "user", "content": "请说明园区交换机的 VLAN 规划"}],
+        provider_type="deepseek",
+        data_classification="INTERNAL",
+        data_region="cn",
+        provider_allowed_classification="INTERNAL",
+    )
+    assert payload_without_legacy_assurance.metadata["classification"] == "INTERNAL"
 
 
 def test_cloud_confidential_is_blocked_but_local_is_allowed() -> None:

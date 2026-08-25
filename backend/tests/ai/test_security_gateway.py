@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from ai.security.gateway import AISecurityGateway, SecurityBlocked, SecurityPolicy
+from ai.security.output import StreamingOutputResolver
 from ai.security.tokenization import ScopedTokenVault
 
 
@@ -74,3 +75,16 @@ def test_provider_output_dlp_redacts_credentials_and_dangerous_markup():
     )
     assert "NeverShowThis" not in result
     assert "<script>" not in result
+
+
+def test_streaming_output_resolves_tokens_split_across_provider_chunks():
+    vault = ScopedTokenVault(ttl_seconds=120)
+    token = vault.put("192.0.2.10", kind="IP", tenant_id="tenant-a", task_id="task-1")
+    resolver = StreamingOutputResolver(tenant_id="tenant-a", task_id="task-1", vault=vault)
+
+    first = resolver.push(f"See https://example.com and {token[:12]}")
+    second = resolver.push(f"{token[12:]} in the answer.")
+
+    assert first == "See https://example.com and "
+    assert second == "192.0.2.10 in the answer."
+    assert resolver.flush() == ""

@@ -22,6 +22,7 @@ import {
 import { apiRequest } from '../../../api/http';
 import { MetricRow, metricLabel, toPayload } from './MetricRowItem';
 import type { InterfaceOidConfig } from './InterfaceConfigSection';
+import { formatMetricValue, formatRawValue, summarizeRawValue } from './metricResultFormatters';
 
 export type SnmpWalkVersion = '1' | '2c';
 export type SnmpWalkTargetStatus = 'idle' | 'loading' | 'matched' | 'multiple' | 'none' | 'error';
@@ -87,6 +88,7 @@ export interface CandidateDevice {
   device_id: string;
   hostname: string;
   ip_address?: string;
+  status?: string;
 }
 
 export interface SnmpWalkRow {
@@ -115,7 +117,6 @@ interface LiveWalkInspectorProps {
   metrics: MetricRow[];
   interfaceConfig?: InterfaceOidConfig;
   initialTab?: InspectorTab;
-  autoRunHardwareTest?: boolean;
   saving?: boolean;
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   onTestResult?: (result: SnmpHardwareTestResult) => void;
@@ -128,6 +129,7 @@ const selectClass =
   'w-full rounded-md border border-black/8 bg-transparent px-2.5 py-1.5 text-xs outline-none focus:border-[#00bceb]/55 dark:border-white/10';
 const tinyLabelClass = 'mb-1 block text-[10px] font-medium text-black/50 dark:text-white/50';
 const DEFAULT_HARDWARE_METRIC_KEYS = ['cpu', 'memory', 'temperature', 'fan', 'power_supply'];
+const candidateStatusRank = (status?: string) => String(status || '').trim().toLowerCase() === 'online' ? 0 : 1;
 
 const QUICK_OIDS = [
   { label: 'H3C 实体扩展根', oid: '1.3.6.1.4.1.25506.2.6.1.1.1', desc: 'HH3C Entity Ext MIB' },
@@ -238,19 +240,6 @@ const statusLabel = (status: string, zh: boolean) => {
   return zh ? '未知' : 'Unknown';
 };
 
-const formatValue = (detail: SnmpMetricProbeResult, zh: boolean) => {
-  if (detail.value === true) return zh ? '正常' : 'Normal';
-  if (detail.value === false) return zh ? '异常' : 'Abnormal';
-  if (detail.value === null || detail.value === undefined || detail.value === '') return '—';
-  return `${String(detail.value)}${detail.unit ? ` ${detail.unit}` : ''}`;
-};
-
-const formatRawValue = (value: unknown) => {
-  if (Array.isArray(value)) return value.join(', ');
-  if (value === null || value === undefined || value === '') return '—';
-  return String(value);
-};
-
 const formatInterfaceSample = (sample: SnmpInterfaceCheckResult['sample'], zh: boolean) => {
   const first = sample?.[0];
   if (!first) return '';
@@ -264,7 +253,6 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
   metrics,
   interfaceConfig,
   initialTab = 'snmpwalk',
-  autoRunHardwareTest = false,
   saving = false,
   showToast,
   onTestResult,
@@ -274,7 +262,6 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
   const [metricTesting, setMetricTesting] = useState(false);
   const [interfaceTesting, setInterfaceTesting] = useState(false);
   const [walkTesting, setWalkTesting] = useState(false);
-  const autoRunDeviceRef = useRef<string | null>(null);
 
   // Target State
   const [walkIp, setWalkIp] = useState('');
@@ -294,17 +281,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
   // Probe Test Results
   const [testResult, setTestResult] = useState<SnmpHardwareTestResult | null>(null);
   const [interfaceTestResult, setInterfaceTestResult] = useState<SnmpInterfaceTestResult | null>(null);
-
-  // Auto pick candidate device on load if available
-  useEffect(() => {
-    if (candidateDevices.length > 0 && !walkDeviceId) {
-      const first = candidateDevices[0];
-      setWalkDeviceId(first.device_id);
-      setWalkIp(first.ip_address || '');
-      setWalkTargetStatus('matched');
-      setWalkTargetLabel(`${first.hostname}${first.ip_address ? ` (${first.ip_address})` : ''}`);
-    }
-  }, [candidateDevices]);
+  const autoSelectedCandidateRef = useRef('');
 
   const interfaceConfigFingerprint = useMemo(
     () => JSON.stringify(interfaceConfig || null),
@@ -344,6 +321,27 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     () => new Set(configuredMetrics.map(item => item.row.key)),
     [configuredMetrics],
   );
+  const orderedCandidateDevices = useMemo(
+    () => [...candidateDevices].sort((left, right) => (
+      candidateStatusRank(left.status) - candidateStatusRank(right.status)
+      || left.hostname.localeCompare(right.hostname)
+      || left.device_id.localeCompare(right.device_id)
+    )),
+    [candidateDevices],
+  );
+  useEffect(() => {
+    const candidate = orderedCandidateDevices.find(item => String(item.ip_address || '').trim());
+    const ip = String(candidate?.ip_address || '').trim();
+    if (!candidate || !ip || autoSelectedCandidateRef.current === candidate.device_id) return;
+    if (walkTargetStatus !== 'idle' || walkIp.trim() || walkDeviceId) return;
+
+    autoSelectedCandidateRef.current = candidate.device_id;
+    setWalkDeviceId(candidate.device_id);
+    setWalkIp(ip);
+    setWalkTargetStatus('matched');
+    setWalkTargetLabel(`${candidate.hostname}${ip ? ` (${ip})` : ''}`);
+    setWalkTargetError('');
+  }, [orderedCandidateDevices, walkDeviceId, walkIp, walkTargetStatus]);
   const hasTemplateExtras = configuredMetrics.some(item => !DEFAULT_HARDWARE_METRIC_KEYS.includes(item.row.key));
 
   const handleSelectCandidate = (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -412,6 +410,10 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
       showToast(zh ? '请先选择样例设备或输入 IP' : 'Select a device or enter an IP first', 'error');
       return;
     }
+    if (walkTargetStatus !== 'matched') {
+      showToast(zh ? '请先选择设备或按回车确认 IP' : 'Select a device or confirm the IP first', 'error');
+      return;
+    }
     const targetOid = walkOidInput.trim().replace(/^\./, '');
     if (!targetOid) {
       showToast(zh ? '请输入要 WALK 的 OID 根节点' : 'Enter a root OID to walk', 'error');
@@ -463,10 +465,14 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     }
   };
 
-  const executeHardwareTest = async (deviceIdOverride?: string) => {
-    const targetDeviceId = deviceIdOverride || walkDeviceId;
+  const executeHardwareTest = async () => {
+    const targetDeviceId = walkDeviceId;
     if (!walkIp.trim() && !targetDeviceId) {
       showToast(zh ? '请先选择样例设备或输入 IP' : 'Select a device or enter an IP first', 'error');
+      return;
+    }
+    if (walkTargetStatus !== 'matched') {
+      showToast(zh ? '请先选择设备或按回车确认 IP' : 'Select a device or confirm the IP first', 'error');
       return;
     }
     if (!targetDeviceId) {
@@ -508,20 +514,6 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     }
   };
 
-  useEffect(() => {
-    if (!autoRunHardwareTest || candidateDevices.length === 0) return;
-    const first = candidateDevices[0];
-    if (!first?.device_id || autoRunDeviceRef.current === first.device_id) return;
-
-    autoRunDeviceRef.current = first.device_id;
-    setActiveTab('validate');
-    setWalkDeviceId(first.device_id);
-    setWalkIp(first.ip_address || '');
-    setWalkTargetStatus('matched');
-    setWalkTargetLabel(`${first.hostname}${first.ip_address ? ` (${first.ip_address})` : ''}`);
-    void executeHardwareTest(first.device_id);
-  }, [autoRunHardwareTest, candidateDevices, executeHardwareTest]);
-
   const executeInterfaceTest = async () => {
     if (!interfaceConfig?.enabled) {
       showToast(zh ? '请先启用接口模板' : 'Enable the interface template first', 'error');
@@ -529,6 +521,10 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
     }
     if (!walkIp.trim() && !walkDeviceId) {
       showToast(zh ? '请先选择样例设备或输入 IP' : 'Select a device or enter an IP first', 'error');
+      return;
+    }
+    if (walkTargetStatus !== 'matched') {
+      showToast(zh ? '请先选择设备或按回车确认 IP' : 'Select a device or confirm the IP first', 'error');
       return;
     }
     if (!walkDeviceId) {
@@ -635,7 +631,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
             <button
               type="button"
               onClick={() => void executeHardwareTest()}
-              disabled={metricTesting || interfaceTesting || saving}
+              disabled={metricTesting || interfaceTesting || saving || walkTargetStatus !== 'matched'}
               className="inline-flex items-center gap-1 rounded-lg bg-[#00a9ce] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1] disabled:opacity-45"
             >
               <Activity size={13} className={metricTesting ? 'animate-spin' : ''} />
@@ -644,7 +640,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
             <button
               type="button"
               onClick={executeInterfaceTest}
-              disabled={metricTesting || interfaceTesting || saving || !interfaceConfig?.enabled}
+              disabled={metricTesting || interfaceTesting || saving || !interfaceConfig?.enabled || walkTargetStatus !== 'matched'}
               className="inline-flex items-center gap-1 rounded-lg border border-[#00a9ce]/40 bg-white/75 px-3 py-1.5 text-xs font-semibold text-[#007391] shadow-sm hover:bg-white disabled:opacity-45 dark:bg-white/[.08] dark:text-[#00c2e8] dark:hover:bg-white/[.12]"
             >
               <CheckCircle2 size={13} className={interfaceTesting ? 'animate-spin' : ''} />
@@ -658,12 +654,12 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
       <div className="mt-3 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {candidateDevices.length > 0 && (
           <label className="block">
-            <span className={tinyLabelClass}>{zh ? '从匹配资产快速选择' : 'Select matched device'}</span>
+            <span className={tinyLabelClass}>{zh ? '从匹配资产快速选择（在线优先）' : 'Select matched device (online first)'}</span>
             <select value={walkDeviceId} onChange={handleSelectCandidate} className={selectClass}>
               <option value="">{zh ? '选择匹配型号的设备...' : 'Choose matched device...'}</option>
-              {candidateDevices.map(device => (
+              {orderedCandidateDevices.map(device => (
                 <option key={device.device_id} value={device.device_id}>
-                  {device.hostname} {device.ip_address ? `(${device.ip_address})` : ''}
+                  {device.hostname} {device.ip_address ? `(${device.ip_address})` : ''}{candidateStatusRank(device.status) === 0 ? (zh ? ' · 在线' : ' · online') : ''}
                 </option>
               ))}
             </select>
@@ -782,7 +778,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
               <button
                 type="button"
                 onClick={executeSnmpWalk}
-                disabled={walkTesting || saving}
+                disabled={walkTesting || saving || walkTargetStatus !== 'matched'}
                 className="inline-flex items-center gap-1 rounded-lg bg-[#00a9ce] px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#008fb1] disabled:opacity-45"
               >
                 <Play size={13} className={walkTesting ? 'animate-spin' : ''} />
@@ -985,39 +981,50 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
               <div className="mt-2.5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {Object.entries(testResult.metrics || {}).map(([key, detail]) => {
                   const tone = statusTone(detail.status);
+                  const hasRawValue = detail.raw_value !== undefined && detail.raw_value !== detail.value;
                   return (
-                    <div key={key} className={`rounded-lg border p-2.5 ${tone.box}`}>
+                    <div key={key} className={`flex min-h-[148px] min-w-0 flex-col rounded-lg border p-2.5 ${tone.box}`}>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-black/75 dark:text-white/80">{metricLabel(key, zh)}</span>
+                        <span className="min-w-0 truncate text-xs font-semibold text-black/75 dark:text-white/80" title={metricLabel(key, zh)}>{metricLabel(key, zh)}</span>
                         <span className={`inline-flex items-center gap-1 text-[10px] font-semibold ${tone.text}`}>
                           {tone.icon}
                           {statusLabel(detail.status, zh)}
                         </span>
                       </div>
-                      <div className={`mt-2 text-base font-semibold ${tone.text}`}>{formatValue(detail, zh)}</div>
-                      {detail.raw_value !== undefined && detail.raw_value !== detail.value && (
-                        <div className="mt-1 text-[10px] text-black/45 dark:text-white/45">
-                          {zh ? '原始值：' : 'Raw: '}{formatRawValue(detail.raw_value)}
+                      <div
+                        className={`mt-2 min-h-7 break-words text-lg font-semibold leading-7 tabular-nums ${tone.text}`}
+                        title={key === 'uptime' ? `${formatRawValue(detail.value)}${detail.unit ? ` ${detail.unit}` : ''}` : undefined}
+                      >
+                        {formatMetricValue(key, detail, zh)}
+                      </div>
+                      {hasRawValue && (
+                        <div
+                          className="mt-1 min-w-0 truncate text-[10px] text-black/45 dark:text-white/45"
+                          title={formatRawValue(detail.raw_value)}
+                        >
+                          {zh ? '原始摘要：' : 'Raw summary: '}{summarizeRawValue(detail.raw_value, zh)}
                         </div>
                       )}
                       {detail.message && (
-                        <div className="mt-1 text-[10px] leading-4 text-black/50 dark:text-white/50">{detail.message}</div>
+                        <div className="mt-1 max-h-8 overflow-hidden text-[10px] leading-4 text-black/50 dark:text-white/50">{detail.message}</div>
                       )}
-                      {detail.source && (
-                        <div className={`mt-2 inline-flex rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${detail.source === 'template_definition' ? 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-300' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300'}`}>
-                          {detail.source === 'template_definition'
-                            ? (zh ? '来源：已关联 SNMP 型号模板' : 'Source: linked SNMP model template')
-                            : (zh ? '来源：厂商内置采集器' : 'Source: vendor built-in collector')}
-                        </div>
-                      )}
-                      <details className="mt-1.5 text-[9px] text-black/35 dark:text-white/35">
-                        <summary className="cursor-pointer select-none hover:text-black/60 dark:hover:text-white/60">
-                          {zh ? '查看采集定义' : 'View collection definition'}
-                        </summary>
-                        <div className="mt-1 break-all font-mono">
-                          {detail.mode || '—'} · {detail.oid || '—'}{detail.rows ? ` · ${detail.rows} ${zh ? '行' : 'rows'}` : ''}
-                        </div>
-                      </details>
+                      <div className="mt-auto pt-2">
+                        {detail.source && (
+                          <div className={`inline-flex max-w-full truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${detail.source === 'template_definition' ? 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-300' : 'bg-slate-500/10 text-slate-600 dark:text-slate-300'}`} title={detail.source}>
+                            {detail.source === 'template_definition'
+                              ? (zh ? '来源：已关联 SNMP 型号模板' : 'Source: linked SNMP model template')
+                              : (zh ? '来源：厂商内置采集器' : 'Source: vendor built-in collector')}
+                          </div>
+                        )}
+                        <details className="mt-1.5 text-[9px] text-black/35 dark:text-white/35">
+                          <summary className="cursor-pointer select-none hover:text-black/60 dark:hover:text-white/60">
+                            {zh ? '查看采集定义' : 'View collection definition'}
+                          </summary>
+                          <div className="mt-1 break-all font-mono">
+                            {detail.mode || '—'} · {detail.oid || '—'}{detail.rows ? ` · ${detail.rows} ${zh ? '行' : 'rows'}` : ''}
+                          </div>
+                        </details>
+                      </div>
                     </div>
                   );
                 })}

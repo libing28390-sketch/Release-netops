@@ -93,12 +93,6 @@ const getTestDescription = (result: ProviderTestResult, zh: boolean) => {
       : 'The security gateway rejected this request because the Provider data-classification ceiling is too low. Edit the Provider to raise it.';
   }
 
-  if (result.error_code === 'AI_SECURITY_PROVIDER_ASSURANCE_REQUIRED') {
-    return zh
-      ? '安全网关拒绝了内部数据：请补充数据区域、无训练确认、留存期限和数据处理协议编号；机密/秘密数据只能走本地模型。'
-      : 'The gateway rejected INTERNAL data. Record the data region, no-training confirmation, retention period, and DPA reference; confidential/secret data must use a local model.';
-  }
-
   if (result.error_code === 'AI_SECURITY_POLICY_DISABLED') {
     return zh
       ? '安全网关当前未启用外部 AI 出口，请先在 AI 安全网关中启用。'
@@ -161,11 +155,6 @@ export const ProviderManagementTab: React.FC = () => {
   const [timeout, setTimeout] = useState(30);
   const [dataRegion, setDataRegion] = useState('unknown');
   const [allowedDataClassification, setAllowedDataClassification] = useState('PUBLIC');
-  const [noTrainingConfirmed, setNoTrainingConfirmed] = useState(false);
-  const [retentionDays, setRetentionDays] = useState('');
-  const [dataProcessingAgreementRef, setDataProcessingAgreementRef] = useState('');
-  const [agreementReviewedAt, setAgreementReviewedAt] = useState('');
-  const [approvedEndpointPatterns, setApprovedEndpointPatterns] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const fetchProviders = async () => {
@@ -279,11 +268,6 @@ export const ProviderManagementTab: React.FC = () => {
     setTimeout(provider.timeout || 30);
     setDataRegion(provider.data_region || 'unknown');
     setAllowedDataClassification(provider.allowed_data_classification || 'PUBLIC');
-    setNoTrainingConfirmed(Boolean(provider.no_training_confirmed));
-    setRetentionDays(provider.retention_days == null ? '' : String(provider.retention_days));
-    setDataProcessingAgreementRef(provider.data_processing_agreement_ref || '');
-    setAgreementReviewedAt(provider.agreement_reviewed_at || '');
-    setApprovedEndpointPatterns((provider.approved_endpoint_patterns || []).join('\n'));
     setShowModal(true);
   };
 
@@ -291,17 +275,10 @@ export const ProviderManagementTab: React.FC = () => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const assurance = {
-        no_training_confirmed: noTrainingConfirmed,
-        retention_days: retentionDays.trim() ? Number(retentionDays) : null,
-        data_processing_agreement_ref: dataProcessingAgreementRef.trim() || null,
-        agreement_reviewed_at: agreementReviewedAt.trim() || null,
-        approved_endpoint_patterns: approvedEndpointPatterns.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean),
-      };
       if (editingId) {
-        await updateAIProvider(editingId, { name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, timeout, data_region: dataRegion, allowed_data_classification: allowedDataClassification, ...assurance });
+        await updateAIProvider(editingId, { name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, timeout, data_region: dataRegion, allowed_data_classification: allowedDataClassification });
       } else {
-        await createAIProvider({ name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, default_model_code: defaultModelCode || undefined, timeout, data_region: dataRegion, enabled: true, allowed_data_classification: allowedDataClassification, ...assurance });
+        await createAIProvider({ name, provider_type: providerType, base_url: baseUrl || undefined, api_key: apiKey || undefined, default_model_code: defaultModelCode || undefined, timeout, data_region: dataRegion, enabled: true, allowed_data_classification: allowedDataClassification });
       }
       setShowModal(false);
       setEditingId(null);
@@ -313,11 +290,6 @@ export const ProviderManagementTab: React.FC = () => {
       setTimeout(30);
       setDataRegion('unknown');
       setAllowedDataClassification('PUBLIC');
-      setNoTrainingConfirmed(false);
-      setRetentionDays('');
-      setDataProcessingAgreementRef('');
-      setAgreementReviewedAt('');
-      setApprovedEndpointPatterns('');
       await fetchProviders();
       showToast(zh ? (editingId ? 'Provider 已更新' : 'Provider 已添加') : (editingId ? 'Provider updated' : 'Provider added'), 'success');
     } catch (err: unknown) {
@@ -385,7 +357,7 @@ export const ProviderManagementTab: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => { setEditingId(null); setApiKey(''); setShowApiKey(false); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setNoTrainingConfirmed(false); setRetentionDays(''); setDataProcessingAgreementRef(''); setAgreementReviewedAt(''); setApprovedEndpointPatterns(''); setShowModal(true); }}
+              onClick={() => { setEditingId(null); setApiKey(''); setShowApiKey(false); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setShowModal(true); }}
               className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-slate-950"
             >
               <Plus className="h-4 w-4" />
@@ -577,11 +549,6 @@ export const ProviderManagementTab: React.FC = () => {
                         const region = DATA_REGION_OPTIONS.find((option) => option.value === provider.data_region?.toLowerCase());
                         return <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">{zh ? `区域: ${region?.zh || provider.data_region}` : `Region: ${region?.en || provider.data_region}`}</span>;
                       })()}
-                      {provider.provider_type !== 'local' && provider.provider_type !== 'ollama' && (
-                        <span className={`rounded-full px-2 py-0.5 ${provider.no_training_confirmed && provider.retention_days != null && provider.data_processing_agreement_ref && provider.data_region && provider.data_region !== 'unknown' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                          {provider.no_training_confirmed && provider.retention_days != null && provider.data_processing_agreement_ref && provider.data_region && provider.data_region !== 'unknown' ? (zh ? '内部数据证明已登记' : 'INTERNAL assurance recorded') : (zh ? '内部数据证明未完成' : 'INTERNAL assurance incomplete')}
-                        </span>
-                      )}
                     </div>
                   </div>
 
@@ -753,35 +720,6 @@ export const ProviderManagementTab: React.FC = () => {
                   <p className="mt-1.5 text-[10px] text-slate-400">{zh ? '网关不会向该 Provider 发送高于此级别的数据。' : 'The gateway will not send data above this level to the Provider.'}</p>
                 </div>
 
-                {providerType !== 'local' && providerType !== 'ollama' && (
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-900/60 dark:bg-amber-950/20">
-                    <div className="flex items-start gap-2">
-                      <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                      <div>
-                        <p className="text-xs font-bold text-amber-900 dark:text-amber-100">{zh ? '云端供应商证明（内部数据必填）' : 'Cloud provider assurance (required for INTERNAL)'}</p>
-                        <p className="mt-1 text-[10px] leading-5 text-amber-800/80 dark:text-amber-200/80">{zh ? '只有确认无训练、留存期限、数据区域和 DPA/企业协议后，内部上下文才允许发送到云端；机密/秘密数据仍只能使用本地模型。' : 'INTERNAL context requires no-training, retention, region, and DPA evidence; confidential/secret data remains local-only.'}</p>
-                      </div>
-                    </div>
-                    <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-amber-900 dark:text-amber-100">
-                      <input type="checkbox" checked={noTrainingConfirmed} onChange={(event) => setNoTrainingConfirmed(event.target.checked)} />
-                      {zh ? '供应商无训练条款已核验' : 'No-training terms verified'}
-                    </label>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                      <label className="text-[10px] font-bold text-amber-900 dark:text-amber-100">{zh ? '最长留存天数' : 'Retention days'}
-                        <input type="number" min={0} max={3650} value={retentionDays} onChange={(event) => setRetentionDays(event.target.value)} placeholder="例如 30" className="mt-1 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-amber-900/70 dark:bg-slate-950 dark:text-white" />
-                      </label>
-                      <label className="text-[10px] font-bold text-amber-900 dark:text-amber-100">{zh ? '协议 / DPA 编号' : 'DPA / agreement reference'}
-                        <input value={dataProcessingAgreementRef} onChange={(event) => setDataProcessingAgreementRef(event.target.value)} placeholder="例如 DPA-2026-001" className="mt-1 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-amber-900/70 dark:bg-slate-950 dark:text-white" />
-                      </label>
-                    </div>
-                    <label className="mt-3 block text-[10px] font-bold text-amber-900 dark:text-amber-100">{zh ? '核验时间（ISO 或日期）' : 'Review time (ISO/date)'}
-                      <input value={agreementReviewedAt} onChange={(event) => setAgreementReviewedAt(event.target.value)} placeholder="2026-08-23" className="mt-1 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-amber-900/70 dark:bg-slate-950 dark:text-white" />
-                    </label>
-                    <label className="mt-3 block text-[10px] font-bold text-amber-900 dark:text-amber-100">{zh ? '批准端点模式（每行一个；留空将批准当前 Base URL）' : 'Approved endpoint patterns (one per line; blank approves current Base URL)'}
-                      <textarea value={approvedEndpointPatterns} onChange={(event) => setApprovedEndpointPatterns(event.target.value)} rows={2} placeholder="https://api.deepseek.com" className="mt-1 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 font-mono text-[11px] text-slate-900 dark:border-amber-900/70 dark:bg-slate-950 dark:text-white" />
-                    </label>
-                  </div>
-                )}
               </div>
 
               <div className="mt-6 flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 dark:border-slate-800 sm:flex-row sm:justify-end">

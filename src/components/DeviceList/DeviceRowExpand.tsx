@@ -39,13 +39,13 @@ const DeviceRowExpand: React.FC<DeviceRowExpandProps> = ({
   const h = HEALTH_CFG[device.health_status || 'unknown'] || HEALTH_CFG.unknown;
   const snmpProfile = device.snmp_metric_profile;
   const profileStatus = snmpProfile?.status || 'none';
-  const profileSource = snmpProfile?.source || 'builtin_default';
+  const profileSource = snmpProfile?.source || 'template_not_applied';
   const profileStatusLabel = zh
     ? ({ verified: '已验证', unverified: '待验证', failed: '验证失败', none: '未配置' } as Record<string, string>)[profileStatus] || profileStatus
     : ({ verified: 'Verified', unverified: 'Pending', failed: 'Failed', none: 'Not configured' } as Record<string, string>)[profileStatus] || profileStatus;
   const profileSourceLabel = zh
-    ? ({ model_profile: '型号模板', device_override: '单台覆盖', mixed: '模板 + 单台覆盖', template_blocked: '模板未生效', builtin_default: '内置默认' } as Record<string, string>)[profileSource] || profileSource
-    : ({ model_profile: 'Model template', device_override: 'Device override', mixed: 'Template + override', template_blocked: 'Template blocked', builtin_default: 'Built-in default' } as Record<string, string>)[profileSource] || profileSource;
+    ? ({ snmp_template: 'SNMP 型号模板', model_profile: '型号模板', device_override: '旧版单台覆盖（已忽略）', mixed: 'SNMP 型号模板', template_blocked: '模板未生效', template_not_applied: '未应用 SNMP 模板', builtin_default: '已停用的内置默认' } as Record<string, string>)[profileSource] || profileSource
+    : ({ snmp_template: 'SNMP model template', model_profile: 'Model template', device_override: 'Legacy device override (ignored)', mixed: 'SNMP model template', template_blocked: 'Template blocked', template_not_applied: 'SNMP template not applied', builtin_default: 'Disabled built-in default' } as Record<string, string>)[profileSource] || profileSource;
   const healthMetricLabels: Record<string, string> = zh
     ? { cpu: 'CPU', memory: '内存', temperature: '温度', fan: '风扇', power_supply: '电源' }
     : { cpu: 'CPU', memory: 'Memory', temperature: 'Temp', fan: 'Fan', power_supply: 'PSU' };

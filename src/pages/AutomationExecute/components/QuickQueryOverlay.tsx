@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Terminal, X, Zap } from 'lucide-react';
 import type { Device } from '../../../types';
@@ -18,8 +18,39 @@ interface CommandSuggestion {
   command: string;
   filename: string;
   source: 'builtin' | 'custom' | string;
+  version?: string;
   score: number;
 }
+
+const resolveSuggestionPlatform = (device: Pick<Device, 'platform' | 'version'>): string => {
+  const platform = String(device.platform || '').trim().toLowerCase();
+  const version = String(device.version || '').trim().toLowerCase();
+
+  if (platform === 'hp_comware' || platform.includes('h3c_comware_v5')) return 'h3c_comware_v5';
+  if (platform.includes('h3c_comware_v7')) return 'h3c_comware_v7';
+  if (platform === 'h3c_comware9' || platform.includes('h3c_comware_v9')) return 'h3c_comware_v9';
+
+  if (platform === 'h3c_comware' || platform === 'h3c' || platform === 'comware') {
+    const majorVersion = version.match(/(?:^|[^\d])([579])(?:\.|\b)/)?.[1];
+    return majorVersion ? `h3c_comware_v${majorVersion}` : 'h3c_comware';
+  }
+
+  return platform;
+};
+
+const suggestionVariantFromFilename = (filename: string): string => {
+  const match = String(filename || '').toLowerCase().match(/^(h3c_comware_v[579])_/);
+  return match?.[1] || '';
+};
+
+const isConcreteH3cVariant = (value: string): boolean => /^h3c_comware_v[579]$/.test(value);
+
+const formatSuggestionScope = (platform: string, isZh: boolean): string => {
+  const h3cMatch = platform.match(/^h3c_comware_v([579])$/);
+  if (h3cMatch) return `H3C Comware V${h3cMatch[1]}`;
+  if (platform === 'h3c_comware') return isZh ? 'H3C Comware 平台族' : 'H3C Comware family';
+  return platform.replace(/_/g, ' ') || (isZh ? '当前设备平台' : 'Target platform');
+};
 
 export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
   isZh,
@@ -33,7 +64,17 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
   const [customCommand, setCustomCommand] = useState('');
   const [suggestions, setSuggestions] = useState<CommandSuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
-  const targetSignature = targetDevices.map((device) => `${device.id}:${device.platform || ''}`).join('|');
+  const [suggestionsQueried, setSuggestionsQueried] = useState(false);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<CommandSuggestion | null>(null);
+  const targetSignature = targetDevices.map((device) => `${device.id}:${device.platform || ''}:${device.version || ''}`).join('|');
+  const targetSuggestionPlatforms = useMemo(
+    () => Array.from(new Set(targetDevices.map(resolveSuggestionPlatform).filter(Boolean))),
+    [targetSignature],
+  );
+  const targetSuggestionPlatformSignature = targetSuggestionPlatforms.join('|');
+  const suggestionScopeLabel = targetSuggestionPlatforms.length === 1
+    ? formatSuggestionScope(targetSuggestionPlatforms[0], isZh)
+    : (isZh ? '按选中设备版本分别匹配' : 'Match each selected device version');
   const isZteTarget = targetDevices.length > 0 && targetDevices.every(
     (device) => String(device.platform || '').trim().toLowerCase() === 'zte_zxros'
   );
@@ -42,6 +83,7 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
   useEffect(() => {
     if (hasTargets) {
       setCustomCommand(isZteTarget ? 'show lldp neighbor' : '');
+      setSelectedSuggestion(null);
     }
   }, [hasTargets, isZteTarget, targetSignature]);
 
@@ -50,13 +92,22 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
     if (!hasTargets || query.length < 2) {
       setSuggestions([]);
       setSuggestionsLoading(false);
+      setSuggestionsQueried(false);
+      return;
+    }
+    if (selectedSuggestion && query === selectedSuggestion.command.trim()) {
       return;
     }
 
     const controller = new AbortController();
+    setSuggestions([]);
+    setSuggestionsQueried(false);
     const timer = window.setTimeout(async () => {
-      const platforms = Array.from(new Set(targetDevices.map((device) => device.platform).filter(Boolean)));
-      if (platforms.length === 0) return;
+      const platforms = targetSuggestionPlatforms;
+      if (platforms.length === 0) {
+        setSuggestionsQueried(true);
+        return;
+      }
       setSuggestionsLoading(true);
       try {
         const token = localStorage.getItem('netops_token');
@@ -70,12 +121,26 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
         const unique = new Map<string, CommandSuggestion>();
         responses.flatMap((response) => Array.isArray(response?.data) ? response.data : [])
           .forEach((item: CommandSuggestion) => {
-            const key = `${item.platform}:${item.command}`;
+            const itemPlatform = String(item.platform || '').trim().toLowerCase();
+            const itemVersion = String(item.version || '').trim().toLowerCase();
+            const itemVariant = suggestionVariantFromFilename(item.filename)
+              || (itemPlatform === 'h3c_comware' && /^v[579]$/.test(itemVersion) ? `h3c_comware_${itemVersion}` : itemPlatform);
+            const concreteTargetVariants = new Set(platforms.filter(isConcreteH3cVariant));
+            // Never leak a different concrete H3C grammar into the candidate list.
+            // A versionless family template remains an explicit, safe fallback.
+            if (concreteTargetVariants.size > 0 && isConcreteH3cVariant(itemVariant) && !concreteTargetVariants.has(itemVariant)) {
+              return;
+            }
+            const key = `${item.platform}:${item.filename || item.command}`;
             if (!unique.has(key)) unique.set(key, item);
           });
         setSuggestions(Array.from(unique.values()).slice(0, 12));
+        setSuggestionsQueried(true);
       } catch (error: any) {
-        if (error?.name !== 'AbortError') setSuggestions([]);
+        if (error?.name !== 'AbortError') {
+          setSuggestions([]);
+          setSuggestionsQueried(false);
+        }
       } finally {
         if (!controller.signal.aborted) setSuggestionsLoading(false);
       }
@@ -85,7 +150,9 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [customCommand, hasTargets, targetDevices]);
+  }, [customCommand, hasTargets, selectedSuggestion, targetSuggestionPlatformSignature]);
+
+  const showSuggestionPanel = hasTargets && !selectedSuggestion && customCommand.trim().length >= 2 && (suggestionsLoading || suggestionsQueried);
 
   const handleRunCustom = () => {
     if (!customCommand.trim()) return;
@@ -154,30 +221,57 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
             {/* Custom Command Input Section */}
             <div className="flex-shrink-0 px-6 py-4 bg-white border-b border-slate-200/80 flex flex-col sm:flex-row sm:items-end gap-3">
               <div className="flex-1">
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                  {isZh ? '✏️ 自定义查看命令查询 (仅支持只读查看指令，如 show/display 等)' : '✏️ Custom Check Command (e.g. show/display)'}
-                </label>
+                <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                      {isZh ? '✏️ 自定义查看命令查询' : '✏️ Custom Check Command'}
+                    </label>
+                    <p className="mt-1 text-[10px] font-medium text-slate-400">
+                      {isZh ? '仅支持只读查看指令，如 show/display；候选不跨具体版本回退' : 'Read-only show/display commands; suggestions never cross concrete versions'}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-cyan-100 bg-cyan-50 px-2.5 py-1 text-[10px] font-bold text-cyan-700">
+                    {isZh ? `匹配范围：${suggestionScopeLabel}` : `Scope: ${suggestionScopeLabel}`}
+                  </span>
+                </div>
                 <div className="relative">
                   <input
                     type="text"
                     value={customCommand}
-                    onChange={(e) => setCustomCommand(e.target.value)}
+                    onChange={(e) => {
+                      setCustomCommand(e.target.value);
+                      setSelectedSuggestion(null);
+                    }}
                     placeholder={isZh ? '例如: display current-configuration 或 show version' : 'e.g. show version or display ospf peer'}
-                    className="netops-terminal-font w-full pl-4 pr-16 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm font-semibold shadow-inner focus:outline-none focus:bg-white focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 transition-all"
+                    className="netops-terminal-font w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-4 pr-20 text-sm font-semibold text-slate-800 shadow-inner transition-all focus:border-cyan-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         handleRunCustom();
                       }
                     }}
                   />
+                  {selectedSuggestion && (
+                    <button
+                      type="button"
+                      aria-label={isZh ? '清除已选模板' : 'Clear selected template'}
+                      title={isZh ? `清除已选模板：${selectedSuggestion.filename}` : `Clear selected template: ${selectedSuggestion.filename}`}
+                      onClick={() => {
+                        setSelectedSuggestion(null);
+                        setCustomCommand('');
+                      }}
+                      className="absolute right-8 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 font-mono select-none">
                     ↵
                   </div>
-                  {(suggestionsLoading || suggestions.length > 0) && (
+                  {showSuggestionPanel && (
                     <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-cyan-100 bg-white shadow-2xl shadow-slate-900/15">
                       {suggestionsLoading && suggestions.length === 0 ? (
                         <div className="px-4 py-3 text-xs font-medium text-slate-400">
-                          {isZh ? '正在匹配已有 TextFSM 模板…' : 'Searching existing TextFSM templates…'}
+                          {isZh ? `正在匹配 ${suggestionScopeLabel} 的 TextFSM 模板…` : `Searching TextFSM templates for ${suggestionScopeLabel}…`}
                         </div>
                       ) : suggestions.length > 0 ? (
                         <div className="max-h-64 overflow-auto py-1">
@@ -189,6 +283,8 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
                               onClick={() => {
                                 setCustomCommand(suggestion.command);
                                 setSuggestions([]);
+                                setSuggestionsQueried(false);
+                                setSelectedSuggestion(suggestion);
                               }}
                               className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-cyan-50"
                             >
@@ -204,7 +300,10 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
                         </div>
                       ) : (
                         <div className="px-4 py-3 text-xs font-medium text-slate-400">
-                          {isZh ? '当前设备平台未找到匹配模板' : 'No matching template for the target platform'}
+                          <p>{isZh ? '当前设备版本未找到匹配模板' : 'No matching template for the device version'}</p>
+                          <p className="mt-1 text-[10px] font-normal text-slate-300">
+                            {isZh ? '仍可执行命令，并在结果中查看原始回显或进入解析调试。' : 'You can still run the command and inspect raw output or open the parser debugger.'}
+                          </p>
                         </div>
                       )}
                     </div>
@@ -218,7 +317,9 @@ export const QuickQueryOverlay: React.FC<QuickQueryOverlayProps> = ({
                   className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-bold text-sm shadow-md shadow-cyan-500/10 hover:shadow-cyan-500/20 active:scale-[0.98] transition-all disabled:opacity-40 flex items-center justify-center gap-2"
                 >
                   <Zap size={15} />
-                  {isZh ? '执行查询' : 'Run Query'}
+                  {selectedSuggestion
+                    ? (isZh ? '执行已选模板' : 'Run Selected Template')
+                    : (isZh ? '执行查询' : 'Run Query')}
                 </button>
               </div>
             </div>

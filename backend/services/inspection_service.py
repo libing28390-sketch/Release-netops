@@ -654,6 +654,7 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
                     custom_metrics=resolved_metrics.get('metrics') or {},
                     device_id=str(device.get('id') or ''),
                     metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
+                    template_only=True,
                 )
             )
         except Exception as e:
@@ -666,6 +667,7 @@ def _collect_snmp_for_inspection(device: dict) -> tuple[dict, list[dict]]:
                     community,
                     port,
                     resolved_metrics.get('interface') or None,
+                    template_only=True,
                 )
             )
         except Exception as e:

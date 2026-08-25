@@ -19,8 +19,10 @@ def test_alert_metric_catalog_uses_snmp_templates_for_hardware_and_interface_met
         "interface_error_rate_high",
     }
     assert {key for key, value in catalog.items() if value["template_linked"]} == template_metrics
-    assert catalog["interface_util"]["default_oids"]["if_hc_in_octets_oid"] == "1.3.6.1.2.1.31.1.1.1.6"
-    assert catalog["interface_error_rate_high"]["default_oids"]["if_in_errors_oid"] == "1.3.6.1.2.1.2.2.1.14"
+    assert catalog["interface_util"]["default_oids"] == {}
+    assert "applied template" in catalog["interface_util"]["description_en"]
+    assert catalog["interface_error_rate_high"]["default_oids"] == {}
+    assert "no built-in OID fallback" in catalog["interface_error_rate_high"]["description_en"]
     assert catalog["temperature_high"]["oid_paths"] == ["metric_definitions.temperature.oid"]
 
 

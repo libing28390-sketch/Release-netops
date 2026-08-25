@@ -43,7 +43,6 @@ class SecurityBlocked(Exception):
             "AI_SECURITY_KILL_SWITCH": "AI 外部调用已被安全开关暂停。",
             "AI_SECURITY_POLICY_DISABLED": "当前安全策略不允许外部 AI 调用。",
             "AI_SECURITY_PROVIDER_DENIED": "当前供应商未通过安全策略。",
-            "AI_SECURITY_PROVIDER_ASSURANCE_REQUIRED": "该供应商尚未完成无训练、留存期限或数据处理协议核验，内部数据未发送。",
             "AI_SECURITY_CLASSIFICATION_DENIED": "当前数据分类不允许发送到该模型。",
             "AI_SECURITY_SCOPE_DENIED": "当前请求超出授权数据范围。",
             "AI_SECURITY_SENSITIVE_DATA": "检测到敏感内容，请移除凭据或缩小上下文后重试。",
@@ -224,11 +223,10 @@ class AISecurityGateway:
         if data_classification is not None and requested_classification is None:
             raise SecurityBlocked("unknown data classification", reason_code="AI_SECURITY_CLASSIFICATION_DENIED", findings=findings)
 
-        # Cloud egress is deliberately stricter than the generic policy.  A
-        # caller may mark CMDB/RAG context INTERNAL, but it must not silently
-        # fall through to a cloud provider until the supplier's no-training,
-        # retention and DPA evidence has been recorded.  CONFIDENTIAL/SECRET
-        # never leave the local boundary, regardless of passthrough mode.
+        # Cloud egress keeps the generic classification boundary.  INTERNAL
+        # context may use a cloud provider when the provider policy allows it;
+        # CONFIDENTIAL/SECRET never leave the local boundary, regardless of
+        # provider settings or passthrough mode.
         is_local_provider = normalized_provider in {"local", "ollama"}
         if data_classification is not None and not is_local_provider and requested_classification in {
             DataClassification.CONFIDENTIAL,
@@ -239,19 +237,6 @@ class AISecurityGateway:
                 reason_code="AI_SECURITY_CLASSIFICATION_DENIED",
                 findings=findings,
             )
-        if data_classification is not None and not is_local_provider and requested_classification == DataClassification.INTERNAL:
-            missing_assurance = (
-                not bool(provider_no_training_confirmed)
-                or provider_retention_days is None
-                or not str(provider_data_processing_agreement_ref or "").strip()
-                or normalized_region == "unknown"
-            )
-            if missing_assurance:
-                raise SecurityBlocked(
-                    "INTERNAL cloud egress requires verified supplier assurance",
-                    reason_code="AI_SECURITY_PROVIDER_ASSURANCE_REQUIRED",
-                    findings=findings,
-                )
         has_injection = any(item.category == "prompt_injection" for item in findings)
         if tools and any(_tool_is_unsafe(tool) for tool in tools):
             raise SecurityBlocked("raw write-capable or unrestricted tool is not allowed", findings=findings, reason_code="AI_SECURITY_UNSAFE_TOOL")
@@ -385,18 +370,6 @@ class AISecurityGateway:
                 reason_code="AI_SECURITY_CLASSIFICATION_DENIED",
                 findings=findings,
             )
-        if data_classification is not None and not is_local_provider and requested_classification == DataClassification.INTERNAL:
-            if (
-                not bool(provider_no_training_confirmed)
-                or provider_retention_days is None
-                or not str(provider_data_processing_agreement_ref or "").strip()
-                or normalized_region == "unknown"
-            ):
-                raise SecurityBlocked(
-                    "INTERNAL cloud embedding requires verified supplier assurance",
-                    reason_code="AI_SECURITY_PROVIDER_ASSURANCE_REQUIRED",
-                    findings=findings,
-                )
         if passthrough_active:
             action = SecurityAction.ALLOW
             safe_texts = values

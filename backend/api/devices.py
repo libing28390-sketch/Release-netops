@@ -43,9 +43,12 @@ from services.snmp_preset_service import (
     match_profile_for_model,
 )
 from services.snmp_metric_profile_service import (
+    apply_official_model_preset,
+    bind_model_metric_profile,
     create_model_metric_profile,
     delete_model_metric_profile,
     get_model_metric_profile_mapping,
+    list_model_metric_profile_devices,
     list_model_metric_profiles_page,
     mark_model_metric_profile_test,
     normalize_model_key,
@@ -57,6 +60,7 @@ from services.snmp_metric_profile_service import (
     SUPPORTED_METRIC_KEYS,
     annotate_devices_with_snmp_profile,
     resolve_health_metric_profiles,
+    unbind_model_metric_profile,
     update_model_metric_profile,
 )
 from drivers.ssh_compat import build_ssh_error_guidance, get_ssh_error_code
@@ -113,8 +117,21 @@ def _resolve_platform_binding(
     selected, so the backend must make the profile code authoritative and
     persist the binding atomically with the device row.
     """
+    existing_profile_id = str(existing.get('platform_profile_id') or '').strip() if existing is not None else ''
+    submitted_profile_id = str(platform_profile_id or '').strip()
+    if existing_profile_id:
+        if submitted_profile_id and submitted_profile_id != existing_profile_id:
+            raise HTTPException(
+                status_code=409,
+                detail='Device platform binding is immutable after first assignment',
+            )
+        if not submitted_profile_id and not clear_existing:
+            platform_profile_id = existing_profile_id
+        elif submitted_profile_id:
+            platform_profile_id = submitted_profile_id
+
     submitted = platform_profile_id
-    if submitted is None and existing is not None and not clear_existing:
+    if not submitted and existing is not None and not clear_existing:
         submitted = existing.get('platform_profile_id')
 
     profile_id = str(submitted or '').strip()
@@ -127,10 +144,17 @@ def _resolve_platform_binding(
             raise HTTPException(status_code=400, detail='Platform profile not found')
         if str(profile['status'] or '').upper() == 'ARCHIVED':
             raise HTTPException(status_code=400, detail='Archived platform profiles cannot be assigned to devices')
+        if existing_profile_id:
+            return (
+                str(profile['platform_code']),
+                profile_id,
+                str(existing.get('platform_source') or 'MANUAL'),
+                int(existing.get('platform_locked') or 0),
+            )
         return str(profile['platform_code']), profile_id, 'MANUAL', 0
 
     platform = str(fallback_platform or '').strip() or 'cisco_ios'
-    if existing is not None and platform_profile_id is None and not clear_existing:
+    if existing is not None and not submitted and not clear_existing:
         return (
             platform,
             str(existing.get('platform_profile_id') or ''),
@@ -808,6 +832,7 @@ def read_devices(
                 'd.id, d.hostname, d.ip_address, d.platform, d.status, d.compliance, d.sn, d.model, d.version, '
                 'd.role, d.site, d.uptime, d.connection_method, d.cpu_usage, d.memory_usage, d.temp, '
                 'd.snmp_cpu_oid, d.snmp_memory_oid, '
+                'd.snmp_metric_profile_id, '
                 'd.site_id, d.fan_status, d.psu_status, d.sys_name, d.sys_location, d.sys_contact, d.asset_id, d.vendor, '
                 'd.device_category, d.management_port, d.lifecycle_status, '
                 'd.platform_profile_id, d.platform_source, d.platform_locked'
@@ -1056,6 +1081,7 @@ def _find_exact_snmp_walk_target(ip: str) -> dict[str, Any] | None:
                  AND (LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?))
                    OR LOWER(TRIM(COALESCE(d.ip_address, ''))) = LOWER(TRIM(?)))
                ORDER BY CASE WHEN LOWER(TRIM(COALESCE(pa.management_ip, ''))) = LOWER(TRIM(?)) THEN 0 ELSE 1 END,
+                        CASE WHEN LOWER(TRIM(COALESCE(d.status, ''))) = 'online' THEN 0 ELSE 1 END,
                         d.id
                LIMIT 1''',
             (query, query, query),
@@ -1285,6 +1311,7 @@ async def test_snmp_hardware_metrics(payload: dict = Body(default={}), user=requ
             metric_profile_id=str(payload.get('metric_profile_id') or 'live-test'),
             bypass_cache=True,
             version=version,
+            template_only=True,
         )
     except Exception as exc:
         logger.warning('SNMP hardware metric test failed for %s: %s', host, type(exc).__name__)
@@ -1343,28 +1370,28 @@ async def test_snmp_hardware_metrics(payload: dict = Body(default={}), user=requ
             'status': status,
             'passed': status == 'ok',
             'message': (
-                'Built-in vendor collector returned a valid value'
+                'Applied SNMP template returned a valid value'
                 if status == 'ok'
-                else 'Built-in vendor collector returned no value'
+                else 'Applied SNMP template returned no value'
                 if status == 'missing'
-                else 'Built-in vendor collector reported an abnormal state'
+                else 'Applied SNMP template reported an abnormal state'
             ),
-            'mode': 'builtin_vendor_collector',
+            'mode': 'snmp_template',
             'oid': '',
             'unit': default_units[metric],
-            'source': 'builtin_vendor_collector',
+            'source': 'snmp_template',
         }
 
     statuses = [str(item.get('status') or '').casefold() for item in metric_results.values()]
     if statuses and all(status == 'ok' for status in statuses):
         overall_status = 'ok'
-        message = 'All default health hardware metrics returned valid values'
+        message = 'All applied SNMP template health metrics returned valid values'
     elif any(status in {'fail', 'warning', 'probe_error'} for status in statuses):
         overall_status = 'abnormal'
         message = 'One or more hardware metrics reported an abnormal state'
     else:
         overall_status = 'unknown'
-        message = 'Default health hardware metrics were read, but one or more values are missing or invalid'
+        message = 'Applied SNMP template health metrics were read, but one or more values are missing or invalid'
 
     return {
         'success': True,
@@ -1500,6 +1527,131 @@ def create_snmp_metric_profile(payload: dict = Body(...), user=require_role("Ope
         conn.close()
 
 
+@router.post("/platform-registry/snmp-metric-profiles/apply-preset")
+def apply_snmp_metric_preset(payload: dict = Body(...), user=require_role("Operator")):
+    conn = get_db_connection()
+    preset_id = str(payload.get("preset_id") or "").strip()
+    try:
+        profile = apply_official_model_preset(
+            conn,
+            preset_id,
+            updated_by=user.get("username", "system"),
+        )
+        conn.commit()
+        log_audit_event(
+            conn=conn,
+            event_type="snmp_metric_profile.apply_preset",
+            category="configuration",
+            severity="info",
+            status="success",
+            summary=f"Applied official SNMP preset {preset_id}",
+            actor_username=user.get("username", ""),
+            actor_role=user.get("role", ""),
+            target_type="snmp_metric_profile",
+            target_id=profile.get("id", ""),
+            details={
+                "preset_id": preset_id,
+                "vendor": profile.get("vendor_name", ""),
+                "model": profile.get("model_name", ""),
+                "applied_mode": profile.get("applied_mode", ""),
+            },
+        )
+        conn.commit()
+        return {"success": True, "data": profile}
+    except ValueError as exc:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.get("/platform-registry/snmp-metric-profiles/{profile_id}/bindings")
+def list_snmp_metric_profile_bindings(profile_id: str, user=require_role("Viewer")):
+    conn = get_db_connection()
+    try:
+        return {
+            "success": True,
+            "data": {
+                "profile_id": profile_id,
+                "devices": list_model_metric_profile_devices(conn, profile_id),
+            },
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.post("/platform-registry/snmp-metric-profiles/{profile_id}/bindings")
+def bind_snmp_metric_profile_devices(
+    profile_id: str,
+    payload: dict = Body(...),
+    user=require_role("Operator"),
+):
+    conn = get_db_connection()
+    try:
+        result = bind_model_metric_profile(conn, profile_id, payload.get("device_ids"))
+        conn.commit()
+        log_audit_event(
+            conn=conn,
+            event_type="snmp_metric_profile.bind",
+            category="configuration",
+            severity="info",
+            status="success",
+            summary=f"Bound SNMP metric profile {profile_id} to devices",
+            actor_username=user.get("username", ""),
+            actor_role=user.get("role", ""),
+            target_type="snmp_metric_profile",
+            target_id=profile_id,
+            details={
+                "device_count": len(result.get("devices") or []),
+                "device_ids": [device.get("device_id") for device in result.get("devices") or []],
+            },
+        )
+        conn.commit()
+        return {"success": True, "data": result}
+    except ValueError as exc:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
+@router.post("/platform-registry/snmp-metric-profiles/{profile_id}/bindings/unbind")
+def unbind_snmp_metric_profile_devices(
+    profile_id: str,
+    payload: dict = Body(...),
+    user=require_role("Operator"),
+):
+    conn = get_db_connection()
+    try:
+        result = unbind_model_metric_profile(conn, profile_id, payload.get("device_ids"))
+        conn.commit()
+        log_audit_event(
+            conn=conn,
+            event_type="snmp_metric_profile.unbind",
+            category="configuration",
+            severity="info",
+            status="success",
+            summary=f"Unbound SNMP metric profile {profile_id} from devices",
+            actor_username=user.get("username", ""),
+            actor_role=user.get("role", ""),
+            target_type="snmp_metric_profile",
+            target_id=profile_id,
+            details={
+                "remaining_device_count": len(result.get("devices") or []),
+                "device_ids": [device.get("device_id") for device in result.get("devices") or []],
+            },
+        )
+        conn.commit()
+        return {"success": True, "data": result}
+    except ValueError as exc:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        conn.close()
+
+
 @router.put("/platform-registry/snmp-metric-profiles/{profile_id}")
 def update_snmp_metric_profile(profile_id: str, payload: dict = Body(...), user=require_role("Operator")):
     conn = get_db_connection()
@@ -1528,7 +1680,8 @@ def update_snmp_metric_profile(profile_id: str, payload: dict = Body(...), user=
         return {"success": True, "data": profile}
     except ValueError as exc:
         conn.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        status_code = 409 if "read-only" in str(exc).casefold() else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     finally:
         conn.close()
 
@@ -1555,14 +1708,15 @@ def delete_snmp_metric_profile(profile_id: str, user=require_role("Operator")):
         return {"success": True, "data": {"profile_id": profile_id}}
     except ValueError as exc:
         conn.rollback()
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        status_code = 409 if "still bound" in str(exc).casefold() else 404
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     finally:
         conn.close()
 
 
 @router.get("/platform-registry/snmp-metric-profiles/{profile_id}/mapping-validation")
 def validate_snmp_metric_profile_mapping(profile_id: str, user=require_role("Viewer")):
-    """Report which inventory devices will receive a model profile."""
+    """Report which devices explicitly selected this template."""
     conn = get_db_connection()
     try:
         return {
@@ -1581,12 +1735,12 @@ async def test_snmp_metric_profile(
     payload: dict = Body(default={}),
     user=require_role("Operator"),
 ):
-    """Live-test a model profile against one matching device.
+    """Live-test a model profile against one selected device.
 
     Hardware and interface definitions are verified independently.  A custom
     interface mapping is activated only after its identity table and selected
-    paired counter width pass; an unverified/failed section falls back to its
-    built-in collector without disabling the other section.
+    paired counter width pass. Verification is quality metadata and does not
+    create or remove an explicit device binding.
     """
     conn = get_db_connection()
     try:
@@ -1606,17 +1760,24 @@ async def test_snmp_metric_profile(
         else:
             candidate_rows = conn.execute(
                 "SELECT * FROM devices WHERE LOWER(TRIM(COALESCE(model, ''))) = LOWER(TRIM(?)) "
-                "ORDER BY CASE WHEN status = 'online' THEN 0 ELSE 1 END, hostname",
+                "ORDER BY CASE WHEN LOWER(TRIM(COALESCE(status, ''))) = 'online' THEN 0 ELSE 1 END, "
+                "CASE WHEN COALESCE(TRIM(ip_address), '') <> '' THEN 0 ELSE 1 END, hostname",
                 (profile['model_name'],),
             ).fetchall()
     finally:
         conn.close()
 
-    matching = [
-        dict(row) for row in candidate_rows
-        if normalize_model_key(row['model']) == str(profile['model_key'] or '')
-        and normalize_vendor_key(row['vendor'], row['platform']) == str(profile['vendor_key'] or '')
-    ]
+    if requested_device_id:
+        # An operator may test a draft against the exact device selected in
+        # the binding dialog.  Manual binding is deliberately not restricted
+        # by vendor/model heuristics.
+        matching = [dict(row) for row in candidate_rows]
+    else:
+        matching = [
+            dict(row) for row in candidate_rows
+            if normalize_model_key(row['model']) == str(profile['model_key'] or '')
+            and normalize_vendor_key(row['vendor'], row['platform']) == str(profile['vendor_key'] or '')
+        ]
     if not matching:
         raise HTTPException(status_code=400, detail='No device matches this vendor/model profile')
 
@@ -3141,7 +3302,7 @@ async def snmp_test(device_id: str):
             "error_code": "snmp_not_configured",
             "metric_profile_id": resolved_metrics.get('profile_id') or None,
             "metric_profile_status": resolved_metrics.get('profile_status') or 'none',
-            "metric_profile_source": resolved_metrics.get('profile_source') or 'builtin_default',
+            "metric_profile_source": resolved_metrics.get('profile_source') or 'template_not_applied',
             "metric_sources": resolved_metrics.get('metric_sources') or {},
             "collection_mode": "health_only",
         }
@@ -3156,7 +3317,7 @@ async def snmp_test(device_id: str):
                "hardware_collection_status": "pending",
                "metric_profile_id": resolved_metrics.get('profile_id') or None,
                "metric_profile_status": resolved_metrics.get('profile_status') or 'none',
-               "metric_profile_source": resolved_metrics.get('profile_source') or 'builtin_default',
+               "metric_profile_source": resolved_metrics.get('profile_source') or 'template_not_applied',
                "metric_sources": resolved_metrics.get('metric_sources') or {},
                "collection_mode": "health_only"}
 
@@ -3219,6 +3380,7 @@ async def snmp_test(device_id: str):
                 device_id=str(device_data.get('id') or device_id),
                 metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
                 bypass_cache=True,
+                template_only=True,
             )
             hardware = prefetched_metrics.get('hardware_metrics') or {}
             results['hardware_metrics'] = {
@@ -3275,6 +3437,7 @@ async def snmp_test(device_id: str):
                             community,
                             port,
                             resolved_metrics.get('interface') or None,
+                            template_only=True,
                         ),
                         collect_device_metrics(
                             snmp_ip,
@@ -3284,6 +3447,7 @@ async def snmp_test(device_id: str):
                             custom_metrics=resolved_metrics.get('metrics') or {},
                             device_id=str(device_data.get('id') or device_id),
                             metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
+                            template_only=True,
                         ),
                     )
                 else:
@@ -3294,6 +3458,7 @@ async def snmp_test(device_id: str):
                             community,
                             port,
                             resolved_metrics.get('interface') or None,
+                            template_only=True,
                         ),
                     )
                     metrics = prefetched

@@ -1204,6 +1204,7 @@ async def _process_device_raw(device, cycle_tick: int):
                     custom_metrics=resolved_metrics.get('metrics') or {},
                     device_id=str(device.get('id') or ''),
                     metric_profile_id=str(resolved_metrics.get('profile_id') or ''),
+                    template_only=True,
                 )
                 cpu_usage = metrics.get('cpu_usage')
                 memory_usage = metrics.get('memory_usage')
@@ -1377,7 +1378,7 @@ async def _process_device_raw(device, cycle_tick: int):
                 now_ts = _time.monotonic()
                 now_iso = _utc_now_iso()
                 interface_config = resolved_metrics.get('interface') or None
-                interface_profile_id = str(resolved_metrics.get('profile_id') or 'builtin-if-mib')
+                interface_profile_id = str(resolved_metrics.get('profile_id') or 'template-not-applied')
                 interface_config_hash = hashlib.sha256(
                     json.dumps(interface_config or {}, sort_keys=True, separators=(',', ':'), default=str).encode('utf-8')
                 ).hexdigest()[:32]
@@ -1391,16 +1392,20 @@ async def _process_device_raw(device, cycle_tick: int):
                     snmp_community,
                     snmp_port,
                     interface_config,
+                    template_only=True,
                 )
                 if not intf_data:
                     record_collection_result(
                         dev_id,
                         'snmp_interfaces',
-                        status='failed',
+                        status='template_required' if not interface_config else 'failed',
                         transport='udp',
                         source='snmp',
-                        error_code='snmp_interface_table_empty',
-                        error_message='SNMP interface table is empty',
+                        error_code='snmp_template_not_applied' if not interface_config else 'snmp_interface_table_empty',
+                        error_message=(
+                            'No applied SNMP interface template is available for this device model'
+                            if not interface_config else 'SNMP interface table is empty'
+                        ),
                     )
                 if intf_data:
                     snmp_available = True
@@ -1429,7 +1434,7 @@ async def _process_device_raw(device, cycle_tick: int):
                                 1 for row in intf_data
                                 if row.get('status') in {'up', 'down', 'testing'}
                             ),
-                            'interface_source': resolved_metrics.get('interface_source', 'builtin_if_mib'),
+                            'interface_source': resolved_metrics.get('interface_source', 'template_not_applied'),
                         },
                     )
                     topology_ports = load_topology_ports(dev_id)
@@ -1790,22 +1795,45 @@ async def _process_device_raw(device, cycle_tick: int):
                 metadata={'reason': 'server_asset'},
             )
         else:
+            metric_count = sum(value is not None for value in metric_values)
+            profile_metrics = resolved_metrics.get('metrics') or {}
+            profile_status = str(resolved_metrics.get('profile_status') or '').casefold()
+            if profile_status == 'failed':
+                collection_status = 'failed'
+                collection_error_code = 'snmp_template_verification_failed'
+                collection_error_message = 'Applied SNMP hardware template verification failed'
+            elif not profile_metrics:
+                collection_status = 'template_required'
+                collection_error_code = 'snmp_template_not_applied'
+                collection_error_message = 'No applied SNMP hardware metric template is available for this device model'
+            elif not snmp_available:
+                collection_status = 'failed'
+                collection_error_code = snmp_error_code or 'snmp_no_response'
+                collection_error_message = snmp_error_message or 'SNMP collection returned no data'
+            elif metric_count < len(metric_values):
+                collection_status = 'partial'
+                collection_error_code = 'snmp_metrics_partial'
+                collection_error_message = 'Applied SNMP template returned only a subset of health metrics'
+            else:
+                collection_status = 'success'
+                collection_error_code = ''
+                collection_error_message = ''
             record_collection_result(
                 dev_id,
                 'snmp_metrics',
-                status='success' if snmp_available else ('not_configured' if not snmp_community else 'failed'),
+                status=collection_status if snmp_community else 'not_configured',
                 transport='udp',
                 source='snmp',
                 duration_ms=(_time.perf_counter() - collection_started) * 1000,
                 coverage_total=len(metric_values),
-                coverage_supported=sum(value is not None for value in metric_values),
-                error_code='' if snmp_available else (snmp_error_code or 'snmp_no_response'),
-                error_message='' if snmp_available else (snmp_error_message or 'SNMP collection returned no data'),
+                coverage_supported=metric_count,
+                error_code=collection_error_code if snmp_community else 'snmp_not_configured',
+                error_message=collection_error_message if snmp_community else 'SNMP credentials are not configured',
                 metadata={
                     'collection_mode': 'health_only',
                     'metric_profile_id': resolved_metrics.get('profile_id') or None,
                     'metric_profile_status': resolved_metrics.get('profile_status') or 'none',
-                    'metric_profile_source': resolved_metrics.get('profile_source') or 'builtin_default',
+                    'metric_profile_source': resolved_metrics.get('profile_source') or 'template_not_applied',
                     'metric_sources': resolved_metrics.get('metric_sources') or {},
                     'metric_details': metric_details,
                 },

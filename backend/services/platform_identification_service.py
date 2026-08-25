@@ -783,9 +783,15 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
         if profile_tenant and profile_tenant != user_tenant and user.get("role") != "Administrator":
             raise _scope_denied("PLATFORM_SCOPE_DENIED")
         device = _load_device(conn, device_id, user, lock=True)
+        existing_profile_id = str(device.get("platform_profile_id") or "").strip()
+        requested_profile_id = str(platform_profile_id).strip()
+        if existing_profile_id and existing_profile_id != requested_profile_id and not force:
+            raise PlatformRegistryError(
+                "PLATFORM_BINDING_LOCKED",
+                "Device platform binding is immutable after first assignment; administrator force is required to change it",
+                status_code=409,
+            )
         if device.get("platform_locked") and not force:
-            if str(device.get("platform_profile_id") or "") != str(platform_profile_id):
-                raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", "Device platform binding is locked", status_code=409)
             # Re-saving the already selected Profile is an idempotent UI
             # operation. The detail modal submits the current selection when
             # the operator confirms it; a lock must protect identity changes,
@@ -800,7 +806,19 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
             }
             conn.commit()
             return result
+        if existing_profile_id == requested_profile_id and not force and not lock:
+            result = _load_device(conn, device_id, user)
+            result["compatibility"] = _binding_compatibility(device, profile)
+            result["binding_unchanged"] = True
+            result["platform_profile"] = {
+                "id": profile["id"],
+                "platform_code": profile["platform_code"],
+                "source": profile.get("source"),
+            }
+            conn.commit()
+            return result
         _assert_device_profile_platform(device, profile)
+        effective_lock = True if not existing_profile_id else bool(lock)
         conn.execute(
             """UPDATE devices SET platform_profile_id = ?, platform = ?, platform_source = ?,
                       platform_locked = ? WHERE id = ?""",
@@ -808,7 +826,7 @@ def bind_device(device_id: str, platform_profile_id: str, user: dict[str, Any], 
                 platform_profile_id,
                 profile.get("parser_platform") or profile["platform_code"],
                 "MANUAL",
-                1 if lock else 0,
+                1 if effective_lock else 0,
                 device_id,
             ),
         )
@@ -868,17 +886,25 @@ def bind_devices_batch(
         old_and_new: list[dict[str, Any]] = []
         for device_id in normalized_ids:
             device = _load_device(conn, device_id, user, lock=True)
-            if device.get("platform_locked") and not force:
-                if str(device.get("platform_profile_id") or "") != str(platform_profile_id):
-                    raise PlatformRegistryError("PLATFORM_BINDING_LOCKED", f"Device {device_id} platform binding is locked", status_code=409)
+            existing_profile_id = str(device.get("platform_profile_id") or "").strip()
+            if existing_profile_id and existing_profile_id != str(platform_profile_id).strip() and not force:
+                raise PlatformRegistryError(
+                    "PLATFORM_BINDING_LOCKED",
+                    f"Device {device_id} platform binding is immutable after first assignment",
+                    status_code=409,
+                )
             _assert_device_profile_platform(device, profile)
             old_and_new.append({
                 "device": device,
                 "compatibility": _binding_compatibility(device, profile),
             })
 
+        effective_locks: list[bool] = []
         for item in old_and_new:
             device = item["device"]
+            existing_profile_id = str(device.get("platform_profile_id") or "").strip()
+            effective_lock = True if not existing_profile_id else bool(lock)
+            effective_locks.append(effective_lock)
             conn.execute(
                 """UPDATE devices SET platform_profile_id = ?, platform = ?, platform_source = ?,
                           platform_locked = ? WHERE id = ?""",
@@ -886,7 +912,7 @@ def bind_devices_batch(
                     platform_profile_id,
                     profile.get("parser_platform") or profile["platform_code"],
                     "MANUAL",
-                    1 if lock else 0,
+                    1 if effective_lock else 0,
                     device["id"],
                 ),
             )
@@ -910,7 +936,7 @@ def bind_devices_batch(
             "device_count": len(old_and_new),
             "platform_profile_id": platform_profile_id,
             "platform_code": profile.get("platform_code"),
-            "locked": bool(lock),
+            "locked": all(effective_locks),
             "items": [
                 {
                     "device_id": item["device"]["id"],

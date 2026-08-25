@@ -84,6 +84,8 @@ describe('PresetProfilesModal filters', () => {
           metric_count: 5,
           metrics: {
             cpu: { value: 12, status: 'ok', unit: '%' },
+            uptime: { value: 3723, status: 'ok', unit: 's' },
+            fan: { value: true, raw_value: [2, 2, 2], status: 'ok', unit: 'bool' },
           },
         },
       } as never)
@@ -116,6 +118,8 @@ describe('PresetProfilesModal filters', () => {
     await user.click(screen.getByRole('button', { name: 'Test this built-in preset' }));
     await waitFor(() => expect(screen.getByText('Hardware result')).toBeTruthy());
     expect(screen.getByText('Interface IF-MIB result')).toBeTruthy();
+    expect(screen.getByText('1h 2m 3s')).toBeTruthy();
+    expect(screen.getByText(/Raw summary: 2 × 3 items/)).toBeTruthy();
     expect(mockedApiRequest).toHaveBeenCalledWith(
       '/api/platform-registry/snmp-hardware-test',
       expect.objectContaining({ method: 'POST' }),
