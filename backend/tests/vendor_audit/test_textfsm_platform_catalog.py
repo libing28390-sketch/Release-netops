@@ -1,3 +1,4 @@
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -17,6 +18,9 @@ from core.textfsm import (  # noqa: E402
     resolve_textfsm_platform,
     resolve_textfsm_template_namespace,
     save_custom_template,
+)
+from database.migrations.m0102_concrete_system_template_scopes import (  # noqa: E402
+    _scope_templates,
 )
 
 
@@ -136,3 +140,75 @@ def test_create_api_uses_explicit_version_to_build_template_filename(monkeypatch
 
     assert captured['filename'] == 'huawei_vrp8_show_version.textfsm'
     assert result['data']['version'] == 'v8'
+
+
+def test_scope_templates_allocates_around_existing_legacy_identity_conflict():
+    conn = sqlite3.connect(':memory:')
+    conn.execute(
+        '''
+        CREATE TABLE parser_templates (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT,
+            platform_profile_id TEXT,
+            platform_code TEXT,
+            template_code TEXT,
+            source_filename TEXT,
+            command TEXT,
+            name TEXT,
+            source TEXT,
+            status TEXT,
+            created_by TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            lock_version INTEGER
+        )
+        '''
+    )
+    conn.execute(
+        '''
+        CREATE UNIQUE INDEX uq_parser_templates_system_profile_code
+        ON parser_templates(platform_code, COALESCE(platform_profile_id, ''), template_code)
+        WHERE tenant_id IS NULL
+        '''
+    )
+    rows = [
+        (
+            'legacy-source', None, 'profile-hp', 'h3c_comware', 'LEGACY_CODE',
+            'h3c_comware_v5_display_bgp_peer_ipv4_unicast.textfsm',
+            'display bgp peer ipv4 unicast', 'legacy', 'SYSTEM', 'ACTIVE',
+            'system', 'now', 'now', 1,
+        ),
+        (
+            'scoped-existing', None, 'profile-hp', 'h3c_comware',
+            'HP_COMWARE__H3C_COMWARE_V5_DISPLAY_BGP_PEER_IPV4',
+            'hp_comware__h3c_comware_v5_display_bgp_peer_ipv4_unicast.textfsm',
+            'display bgp peer ipv4 unicast', 'existing', 'SYSTEM', 'ACTIVE',
+            'system', 'now', 'now', 1,
+        ),
+    ]
+    conn.executemany(
+        'INSERT INTO parser_templates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        rows,
+    )
+
+    _scope_templates(
+        conn.cursor(),
+        [
+            {
+                'platform_code': 'hp_comware',
+                'parser_platform': 'h3c_comware',
+            }
+        ],
+        {'hp_comware': 'profile-hp'},
+        '2026-08-26T00:00:00+00:00',
+    )
+
+    template_codes = [
+        row[0]
+        for row in conn.execute(
+            "SELECT template_code FROM parser_templates ORDER BY id"
+        ).fetchall()
+    ]
+    assert len(template_codes) == 2
+    assert len(set(template_codes)) == 2
+    assert any(code.startswith('HP_COMWARE__H3C_COMWARE_V5_DISPLAY_BGP_PEER_IPV4_') for code in template_codes)

@@ -104,6 +104,7 @@ def _allocate_scoped_identity(
     profile_code: str,
     parser_platform: str,
     source_filename: str,
+    exclude_template_id: str | None = None,
 ) -> tuple[str, str, str]:
     """Avoid collisions with rows imported by an older migration.
 
@@ -113,31 +114,37 @@ def _allocate_scoped_identity(
     desired code, retain the readable prefix and add a deterministic suffix.
     """
     scoped_filename, scoped_code, scoped_name = _scoped_identity(profile_code, source_filename)
-    conflict_rows = cursor.execute(
-        """SELECT source_filename
+    conflict_sql = """SELECT id, source_filename
            FROM parser_templates
            WHERE tenant_id IS NULL AND source = 'SYSTEM'
              AND platform_profile_id = ? AND platform_code = ?
-             AND template_code = ?""",
-        (profile_id, parser_platform, scoped_code),
-    ).fetchall()
-    if not conflict_rows or any(
-        str(row[0] or "").lower() == scoped_filename.lower() for row in conflict_rows
-    ):
+             AND template_code = ?"""
+    conflict_params: list[object] = [profile_id, parser_platform, scoped_code]
+    if exclude_template_id:
+        conflict_sql += " AND id <> ?"
+        conflict_params.append(exclude_template_id)
+    conflict_rows = cursor.execute(conflict_sql, tuple(conflict_params)).fetchall()
+    if not conflict_rows:
         return scoped_filename, scoped_code, scoped_name
 
     digest = _checksum(f"{profile_code}:{source_filename}")[:8].upper()
     base = scoped_code[:55]
     candidate = f"{base}_{digest}"
     counter = 0
-    while cursor.execute(
-        """SELECT 1
+    candidate_sql = """SELECT 1
            FROM parser_templates
            WHERE tenant_id IS NULL AND source = 'SYSTEM'
              AND platform_profile_id = ? AND platform_code = ?
-             AND template_code = ?""",
-        (profile_id, parser_platform, candidate),
-    ).fetchone():
+             AND template_code = ?"""
+    while True:
+        candidate_params: list[object] = [profile_id, parser_platform, candidate]
+        if exclude_template_id:
+            candidate_sql_with_exclusion = candidate_sql + " AND id <> ?"
+            candidate_params.append(exclude_template_id)
+        else:
+            candidate_sql_with_exclusion = candidate_sql
+        if not cursor.execute(candidate_sql_with_exclusion, tuple(candidate_params)).fetchone():
+            break
         counter += 1
         digest = _checksum(f"{profile_code}:{source_filename}:{counter}")[:8].upper()
         candidate = f"{base}_{digest}"
@@ -321,8 +328,11 @@ def _scope_templates(cursor, profile_defs: list[dict], profile_ids: dict[str, st
         if not targets:
             continue
 
+        target_profile_ids = {
+            str(profile_ids.get(code) or "") for code in target_codes
+        }
         existing_by_profile = {
-            str(row[1]): row for row in group if row[1] and str(row[1]) in target_codes
+            str(row[1]): row for row in group if row[1] and str(row[1]) in target_profile_ids
         }
         unscoped = next((row for row in group if not row[1]), None)
         unscoped_used = False
@@ -332,14 +342,16 @@ def _scope_templates(cursor, profile_defs: list[dict], profile_ids: dict[str, st
             profile_id = profile_ids.get(profile_code)
             if not profile_id:
                 continue
-            scoped_filename, scoped_code, scoped_name = _allocate_scoped_identity(
-                cursor,
-                profile_id,
+            base_scoped_filename, _, _ = _scoped_identity(
                 profile_code,
-                str(source_row[2]),
                 str(source_row[4] or ""),
             )
             existing = existing_by_profile.get(profile_id)
+            if existing and str(existing[4] or "").lower() not in {
+                str(source_row[4] or "").lower(),
+                base_scoped_filename.lower(),
+            }:
+                existing = None
             if not existing:
                 # Older migrations may have registered the same source file
                 # with a different sanitized code.  Reuse that row instead of
@@ -358,10 +370,18 @@ def _scope_templates(cursor, profile_defs: list[dict], profile_ids: dict[str, st
                         str(source_row[2]),
                         profile_id,
                         str(source_row[4] or ""),
-                        scoped_filename,
+                        base_scoped_filename,
                         profile_id,
                     ),
                 ).fetchone()
+            scoped_filename, scoped_code, scoped_name = _allocate_scoped_identity(
+                cursor,
+                profile_id,
+                profile_code,
+                str(source_row[2]),
+                str(source_row[4] or ""),
+                exclude_template_id=str(existing[0]) if existing else None,
+            )
             if existing:
                 cursor.execute(
                     """UPDATE parser_templates
