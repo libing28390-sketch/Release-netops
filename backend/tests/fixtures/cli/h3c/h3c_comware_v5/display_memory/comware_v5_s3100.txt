@@ -1,0 +1,5 @@
+<H3C> display memory
+System Total Memory(bytes): 349028320
+Total Used Memory(bytes): 102341264
+Used Rate: 29%
+

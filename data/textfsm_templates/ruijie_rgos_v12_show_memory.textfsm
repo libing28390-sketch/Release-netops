@@ -1,0 +1,39 @@
+# nexora-action-code: get_memory
+Value Filldown TOTAL_MEMORY (\d+)
+Value Filldown USED_MEMORY (\d+)
+Value Filldown FREE_MEMORY (\d+)
+Value Filldown AVAILABLE_MEMORY (\d+)
+Value Filldown USED_PERCENT (\d+(?:\.\d+)?)
+Value Filldown FREE_PERCENT (\d+(?:\.\d+)?)
+Value Filldown SWAP_TOTAL (\d+)
+Value Filldown SWAP_FREE (\d+)
+Value Filldown ACTIVE_MEMORY (\d+)
+Value Filldown INACTIVE_MEMORY (\d+)
+Value Filldown MAPPED_MEMORY (\d+)
+Value Filldown SLAB_MEMORY (\d+)
+Value Filldown OTHERS_MEMORY (\d+)
+Value List PID (\d+)
+Value List VSD (\d+)
+Value List TEXT (\d+)
+Value List RSS (\d+)
+Value List DATA (\d+)
+Value List STACK (\d+)
+Value List PROC_TOTAL (\d+)
+Value List PROCESS (\S+)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  # 新版单行系统汇总
+  ^\s*System\s+[Mm]emory:\s*${TOTAL_MEMORY}\s*KB\s+total,\s*${USED_MEMORY}\s*KB\s+used,\s*${FREE_MEMORY}\s*KB\s+free,\s*${AVAILABLE_MEMORY}\s*KB\s+available,\s*${USED_PERCENT}%\s+used\s+rate
+  # 旧版汇总格式
+  ^\s*Total\s+memory:\s*${TOTAL_MEMORY}\s*KB,\s*Used\s+memory:\s*${USED_MEMORY}\s*KB\s*\(${USED_PERCENT}%\),\s*Free\s+memory:\s*${FREE_MEMORY}\s*KB\s*\(${FREE_PERCENT}%\)
+  ^Swap:\s*${SWAP_TOTAL}\s*KB\s+total,\s*${SWAP_FREE}\s*KB\s+free
+  ^Used\s+detail:\s*${ACTIVE_MEMORY}\s*KB\s+active,\s*${INACTIVE_MEMORY}\s*KB\s+inactive,\s*${MAPPED_MEMORY}\s*KB\s+mapped,\s*${SLAB_MEMORY}\s*KB\s+slab,\s*${OTHERS_MEMORY}\s*KB\s+others
+  ^PID\s+Vsd\s+Text\s+Rss\s+Data\s+Stack\s+Total\s+Process -> ProcessTable
+  ^\s*$$
+  ^. -> Next
+
+ProcessTable
+  ^\s*${PID}\s+${VSD}\s+${TEXT}\s+${RSS}\s+${DATA}\s+${STACK}\s+${PROC_TOTAL}\s+${PROCESS}\s*$$
+  ^\s*$$
+  ^. -> Next

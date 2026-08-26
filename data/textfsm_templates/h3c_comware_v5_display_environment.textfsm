@@ -1,0 +1,17 @@
+Value STATUS (\S+)
+Value TEMPERATURE (\d+)
+Value WARNING_THRESHOLD (\d+)
+Value SLOT (\S+)
+Value SENSOR (\S+)
+Value SENSOR_ID (\d+)
+Value LOWER_LIMIT (-?\d+)
+Value WARNING_LIMIT (-?\d+)
+Value ALARM_LIMIT (-?\d+)
+
+Start
+  ^\s*Temperature\s+State\s*:\s*${STATUS}\s*$$
+  ^\s*Temperature\s+Value\s*:\s*${TEMPERATURE}\s+Degree\s+Celsius\s*$$
+  ^\s*Warning\s+Threshold\s*:\s*${WARNING_THRESHOLD}\s+Degree\s+Celsius\s*$$ -> Record
+  ^\s*${SLOT}\s+${SENSOR}\s+${SENSOR_ID}\s+${TEMPERATURE}\s+${LOWER_LIMIT}\s+${WARNING_LIMIT}\s+${ALARM_LIMIT}\s*$$ -> Record
+  ^\s*$$
+  ^.*

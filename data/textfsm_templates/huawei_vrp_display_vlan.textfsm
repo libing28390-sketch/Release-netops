@@ -1,0 +1,28 @@
+Value Required VLAN_ID (\d+)
+Value VLAN_TYPE (\S+)
+Value VLAN_NAME (\S+)
+Value VLAN_STATUS (\S+)
+Value PORTS (.+)
+
+Start
+  ^\s*U:\s+Up;\s+D:\s+Down;.*$$
+  ^\s*VID\s+Type\s+Ports\s*$$ -> MEMBERS
+  ^\s*VID\s+Name\s+Status\s+Ports\s*$$ -> NAMED_MEMBERS
+  ^\s*VID\s+Status\s+Property.*$$ -> End
+  ^\s*$$
+  ^[- ]+$$
+  ^.*$$
+
+MEMBERS
+  ^\s*${VLAN_ID}\s+${VLAN_TYPE}\s+${PORTS}\s*$$ -> Record
+  ^\s*VID\s+Status\s+Property.*$$ -> End
+  ^\s*$$
+  ^[- ]+$$
+  ^.*$$
+
+NAMED_MEMBERS
+  ^\s*${VLAN_ID}\s+${VLAN_NAME}\s+${VLAN_STATUS}\s+${PORTS}\s*$$ -> Record
+  ^\s*VID\s+Status\s+Property.*$$ -> End
+  ^\s*$$
+  ^[- ]+$$
+  ^.*$$
