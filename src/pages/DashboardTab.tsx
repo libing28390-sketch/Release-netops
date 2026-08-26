@@ -122,7 +122,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
   const dashAgoSec = Math.round((Date.now() - dashLastRefresh.getTime()) / 1000);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-[#fafafa] dark:bg-[#18181b]">
+    <div className="nx-page-shell flex flex-col h-full overflow-hidden">
       {/* ── 1. Modern Page Hero with Consolidated Actions ── */}
       <PageHero
         icon={LayoutDashboard}
@@ -199,7 +199,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             </div>
             <div className="mt-2.5">
               <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-extrabold text-gray-900 dark:text-white tracking-tight">
+                <span className="nx-kpi-value text-gray-900 dark:text-white">
                   {assetsTotal > 0 ? assetsTotal : devices.length}
                 </span>
                 <span className="text-xs font-medium text-gray-400">台</span>
@@ -226,7 +226,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             </div>
             <div className="mt-2.5">
               <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl font-extrabold text-gray-900 dark:text-white tracking-tight">{onlineCount}</span>
+                <span className="nx-kpi-value text-gray-900 dark:text-white">{onlineCount}</span>
                 <span className="text-xs font-medium text-gray-400">/ {devices.length}</span>
               </div>
               {/* Progress bar */}
@@ -255,7 +255,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             </div>
             <div className="mt-2.5">
               <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-extrabold text-gray-900 dark:text-white tracking-tight">
+                <span className="nx-kpi-value text-gray-900 dark:text-white">
                   {hasDevices && compPct > 0 ? `${compPct}%` : '100%'}
                 </span>
               </div>
@@ -278,7 +278,7 @@ const DashboardTab: React.FC<DashboardTabProps> = ({
             </div>
             <div className="mt-2.5">
               <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl font-extrabold text-gray-900 dark:text-white tracking-tight">
+                <span className="nx-kpi-value text-gray-900 dark:text-white">
                   {jobs.length > 0 ? successJobsCount : 0}
                 </span>
                 <span className="text-xs font-medium text-gray-400">次成功</span>

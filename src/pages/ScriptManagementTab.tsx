@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Plus, X, Trash2, Edit3, Shield, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, CheckCircle2, MessageSquare, AlertCircle, SearchCode, Copy
+  Plus, X, Trash2, Pencil, Shield, Search, User, FileCode, Terminal, Layout, Maximize2, XCircle, Wand2, ChevronDown, CheckCircle2, MessageSquare, AlertCircle, SearchCode, Copy
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 
 interface Script {
   id: string;
@@ -376,9 +377,12 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                           <td className="px-6 py-3.5 text-[12px] text-slate-400 dark:text-slate-500 max-w-xs truncate" title={script.description}>
                             {script.description || '—'}
                           </td>
-                          <td className="px-6 py-3.5 text-right">
-                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
+                          <td className="px-6 py-3.5 text-right whitespace-nowrap">
+                            <ActionIconGroup label={zh ? '脚本操作' : 'Script actions'}>
+                              <ActionIconButton
+                                icon={Copy}
+                                label={zh ? '克隆/复制为自定义脚本' : 'Clone/Copy as custom script'}
+                                variant="accent"
                                 onClick={() => {
                                   setModalMode('create');
                                   setEditForm({
@@ -392,16 +396,16 @@ const ScriptManagementTab: React.FC<{ language: string; showToast: (msg: string,
                                   });
                                   setIsModalOpen(true);
                                 }}
-                                className="p-1.5 text-slate-400 hover:text-[#00a9ce] dark:hover:text-[#00a9ce] transition-colors"
-                                title={zh ? '克隆/复制为自定义脚本' : 'Clone/Copy as custom script'}
-                              >
-                                <Copy size={14} />
-                              </button>
-                              <button onClick={() => { setModalMode('edit'); setEditForm(script); setIsModalOpen(true); }} className="p-1.5 text-slate-400 hover:text-[#00a9ce] dark:hover:text-[#00a9ce] transition-colors"><Edit3 size={14} /></button>
-                              {!isSystem && (
-                                <button onClick={() => { if(window.confirm(zh?'删除？':'Delete?')) fetch(`/api/scripts/${script.id}`, {method:'DELETE', headers:getHeaders()}).then(fetchScripts) }} className="p-1.5 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
-                              )}
-                            </div>
+                              />
+                              <ActionIconButton icon={Pencil} label={zh ? '编辑脚本' : 'Edit script'} variant="accent" onClick={() => { setModalMode('edit'); setEditForm(script); setIsModalOpen(true); }} />
+                              <ActionIconButton
+                                icon={Trash2}
+                                label={isSystem ? (zh ? '系统脚本不可删除' : 'System script cannot be deleted') : (zh ? '删除脚本' : 'Delete script')}
+                                variant="danger"
+                                disabled={isSystem}
+                                onClick={() => { if(window.confirm(zh?'删除？':'Delete?')) fetch(`/api/scripts/${script.id}`, {method:'DELETE', headers:getHeaders()}).then(fetchScripts) }}
+                              />
+                            </ActionIconGroup>
                           </td>
                         </motion.tr>
                       );

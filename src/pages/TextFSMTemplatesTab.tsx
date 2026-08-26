@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  FileCode, Plus, Search, RefreshCw, Edit2, Trash2, X, Save, Eye, Copy,
-  CheckCircle2, AlertCircle, Loader2, PlayCircle, Download, Upload,
+  FileCode, Plus, Search, RefreshCw, Pencil, Trash2, X, Save,
+  CheckCircle2, AlertCircle, Loader2, PlayCircle,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import { alertPanelClass } from '../components/shared';
@@ -98,7 +99,6 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   const [actionOptions, setActionOptions] = useState<ActionOption[]>([]);
   const [actionOptionsLoading, setActionOptionsLoading] = useState(false);
   const [editorContent, setEditorContent] = useState(DEFAULT_TEMPLATE_CONTENT);
-  const [editorReadonly, setEditorReadonly] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [sampleOutput, setSampleOutput] = useState('');
@@ -227,7 +227,6 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
     setEditorCommand('');
     setEditorActionCode('');
     setEditorContent(DEFAULT_TEMPLATE_CONTENT);
-    setEditorReadonly(false);
     setSampleOutput('');
     setDefaultSample('');
     setTestResult(null);
@@ -248,7 +247,6 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       setEditorCommand(tpl.command);
       setEditorActionCode(json?.data?.action_code || tpl.action_code || '');
       setEditorContent(json?.data?.content || '');
-      setEditorReadonly(tpl.source === 'builtin');
       setSampleOutput('');
       setDefaultSample(json?.data?.default_sample || '');
       setTestResult(null);
@@ -366,23 +364,20 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       <PageHero
         icon={FileCode}
         title={isZh ? 'TextFSM 解析模板' : 'TextFSM Parse Templates'}
-        subtitle={isZh ? '管理设备 CLI 输出解析模板，支持自定义覆盖内置模板' : 'Manage CLI output parsing templates; custom templates override built-ins'}
+        subtitle={isZh ? '管理设备 CLI 输出解析模板；内置模板可保存为自定义覆盖' : 'Manage CLI output parsing templates; built-ins can be saved as custom overrides'}
         actions={
           <>
-            <button
+            <ActionIconButton
+              icon={RefreshCw}
+              label={isZh ? '刷新' : 'Refresh'}
+              iconClassName={loading ? 'animate-spin' : undefined}
+              size="md"
+              variant="accent"
               onClick={fetchTemplates}
-              className="p-2 rounded-lg text-black/40 hover:text-[#00bceb] hover:bg-[#00bceb]/5 transition-colors"
-              title={isZh ? '刷新' : 'Refresh'}
-            >
-              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-            </button>
-            <button
-              onClick={openNewEditor}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] shadow-sm shadow-[#00bceb]/20"
-            >
-              <Plus size={13} />
+            />
+            <ActionButton icon={Plus} variant="primary" size="sm" onClick={openNewEditor}>
               {isZh ? '新建模板' : 'New Template'}
-            </button>
+            </ActionButton>
           </>
         }
       />
@@ -472,14 +467,21 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
       <div className={`${alertPanelClass} flex-1 min-h-0 flex flex-col overflow-hidden`}>
         {/* Templates Table */}
         <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-          <table className="nx-data-table text-xs">
-            <thead className="bg-slate-50/80 text-black/40 text-[11px] font-semibold uppercase tracking-wider sticky top-0 z-10 border-b border-black/5">
+          <table className="nx-data-table min-w-[960px] table-fixed">
+            <colgroup>
+              <col className="w-[30%]" />
+              <col className="w-[23%]" />
+              <col className="w-[27%]" />
+              <col className="w-[12%]" />
+              <col className="w-28" />
+            </colgroup>
+            <thead className="sticky top-0 z-10 border-b border-black/5">
               <tr>
                 <th className="text-left px-4 py-2.5">{isZh ? '文件名' : 'Filename'}</th>
                 <th className="text-left px-4 py-2.5">{isZh ? '厂商 / 平台 / 版本' : 'Vendor / Platform / Version'}</th>
                 <th className="text-left px-4 py-2.5">{isZh ? '命令' : 'Command'}</th>
                 <th className="text-left px-4 py-2.5">{isZh ? '来源' : 'Source'}</th>
-                <th className="text-right px-4 py-2.5">{isZh ? '操作' : 'Actions'}</th>
+                <th className="w-28 px-4 py-2.5 text-right" style={{ textAlign: 'right' }}>{isZh ? '操作' : 'Actions'}</th>
               </tr>
             </thead>
             <tbody>
@@ -491,13 +493,13 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
               )}
                 {!loading && templates.map((tpl) => (
                 <tr key={tpl.filename} className="border-t border-black/[0.03] hover:bg-slate-50/50 transition-colors">
-                  <td className="px-4 py-2.5 font-mono text-[11px] text-black/70">{tpl.filename}</td>
+                  <td className="px-4 py-2.5 nx-code-text text-black/70 break-all">{tpl.filename}</td>
                   <td className="px-4 py-2.5">
                     {(() => {
                       const meta = getTemplateDisplayMeta(tpl);
                       return (
                         <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-1 text-[10px] font-semibold">
+                          <div className="flex items-center gap-1 nx-micro-text font-semibold">
                             <span className="rounded bg-cyan-50 px-1.5 py-0.5 text-cyan-700">
                               {isZh ? meta.vendor.label : meta.vendor.labelEn}
                             </span>
@@ -510,41 +512,40 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                               {isZh ? meta.version.label : meta.version.labelEn}
                             </span>
                           </div>
-                          <span className="font-mono text-[10px] text-black/35">{tpl.platform}</span>
+                          <span className="nx-code-text text-black/35">{tpl.platform}</span>
                         </div>
                       );
                     })()}
                   </td>
                   <td className="px-4 py-2.5 text-black/60">
                     <div>{tpl.command || '—'}</div>
-                    {tpl.action_code && <span className="mt-1 inline-flex rounded bg-violet-50 px-1.5 py-0.5 font-mono text-[9px] text-violet-700">{tpl.action_code}</span>}
+                    {tpl.action_code && <span className="mt-1 inline-flex rounded bg-violet-50 px-1.5 py-0.5 nx-code-text text-violet-700">{tpl.action_code}</span>}
                   </td>
                   <td className="px-4 py-2.5">
                     {tpl.source === 'custom' ? (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">{isZh ? '自定义' : 'Custom'}</span>
+                      <span className="nx-micro-text px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">{isZh ? '自定义' : 'Custom'}</span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 text-[10px] font-bold">{isZh ? '内置' : 'Built-in'}</span>
+                      <span className="nx-micro-text px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 font-bold">{isZh ? '内置' : 'Built-in'}</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <div className="inline-flex items-center gap-1">
-                      <button
+                  <td className="w-28 whitespace-nowrap px-4 py-2.5 text-right">
+                    <ActionIconGroup label={isZh ? '模板操作' : 'Template actions'} className="w-full">
+                      <ActionIconButton
+                        icon={Pencil}
+                        label={tpl.source === 'builtin'
+                          ? (isZh ? '编辑并创建自定义覆盖' : 'Edit and create a custom override')
+                          : (isZh ? '编辑' : 'Edit')}
                         onClick={() => openEditor(tpl)}
-                        className="p-1.5 rounded text-black/30 hover:text-cyan-600 hover:bg-cyan-50 transition-colors"
-                        title={tpl.source === 'builtin' ? (isZh ? '查看' : 'View') : (isZh ? '编辑' : 'Edit')}
-                      >
-                        {tpl.source === 'builtin' ? <Eye size={13} /> : <Edit2 size={13} />}
-                      </button>
+                      />
                       {tpl.source === 'custom' && (
-                        <button
+                        <ActionIconButton
+                          icon={Trash2}
+                          label={isZh ? '删除' : 'Delete'}
+                          variant="danger"
                           onClick={() => setConfirmDelete(tpl)}
-                          className="p-1.5 rounded text-black/30 hover:text-red-500 hover:bg-red-50 transition-colors"
-                          title={isZh ? '删除' : 'Delete'}
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        />
                       )}
-                    </div>
+                    </ActionIconGroup>
                   </td>
                 </tr>
               ))}
@@ -577,7 +578,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                 <h3 className="text-sm font-bold flex items-center gap-2">
                   <FileCode size={16} className="text-cyan-500" />
                   {editingTemplate
-                    ? (editorReadonly ? (isZh ? '查看模板' : 'View Template') : (isZh ? '编辑模板' : 'Edit Template'))
+                    ? (isZh ? '编辑模板' : 'Edit Template')
                     : (isZh ? '新建模板' : 'New Template')}
                   {editingTemplate && (
                     <span className="font-mono text-[11px] text-black/40 ml-2">{editingTemplate.filename}</span>
@@ -589,6 +590,13 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
               <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Left: Editor */}
                 <div className="flex flex-col gap-3 min-h-0">
+                  {editingTemplate?.source === 'builtin' && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2.5 text-[11px] leading-relaxed text-amber-800">
+                      {isZh
+                        ? '这是内置模板。保存后会在持久化数据目录创建同名的自定义覆盖，不会修改镜像中的内置版本。'
+                        : 'This is a built-in template. Saving creates a same-name custom override in persistent data and does not modify the image copy.'}
+                    </div>
+                  )}
                   {!editingTemplate && (
                     <div className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200/80 bg-slate-50/40 p-3 sm:grid-cols-2 lg:grid-cols-12">
                       <div className="lg:col-span-4">
@@ -707,13 +715,11 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                   <div className="flex-1 flex flex-col min-h-0">
                     <label className="text-[11px] font-semibold text-black/50 uppercase tracking-wider mb-1">
                       {isZh ? '模板内容' : 'Template Content'}
-                      {editorReadonly && <span className="ml-2 text-amber-600">（{isZh ? '只读' : 'Read-only'}）</span>}
                     </label>
                     <textarea
                       value={editorContent}
                       onChange={(e) => setEditorContent(e.target.value)}
-                      readOnly={editorReadonly}
-                      className={`flex-1 min-h-[280px] font-mono text-[12px] leading-5 p-3 rounded-lg border border-black/10 focus:outline-none focus:border-[#00bceb] ${editorReadonly ? 'bg-slate-50' : 'bg-white'}`}
+                      className="flex-1 min-h-[280px] font-mono text-[12px] leading-5 p-3 rounded-lg border border-black/10 bg-white focus:outline-none focus:border-[#00bceb]"
                       spellCheck={false}
                     />
                   </div>
@@ -800,16 +806,14 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
                 >
                   {isZh ? '取消' : 'Cancel'}
                 </button>
-                {!editorReadonly && (
-                  <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] disabled:opacity-50"
-                  >
-                    {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                    {isZh ? '保存模板' : 'Save Template'}
-                  </button>
-                )}
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] disabled:opacity-50"
+                >
+                  {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                  {isZh ? '保存模板' : 'Save Template'}
+                </button>
               </div>
             </motion.div>
           </div>

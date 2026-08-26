@@ -19,6 +19,7 @@ import {
   Gauge
 } from 'lucide-react';
 import 'xterm/css/xterm.css';
+import { ActionIconButton } from '../ui/ActionIconButton';
 
 interface SessionMeta {
   hostname?: string;
@@ -455,13 +456,13 @@ export default function CastPlayer({
               <Monitor size={18} />
             </button>
 
-            <button
+            <ActionIconButton
+              icon={Download}
+              label={isZh ? '下载录像文件' : 'Download .cast file'}
+              variant="accent"
               onClick={() => void handleDownloadRecording()}
-              className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-cyan-400 transition-colors"
-              title={isZh ? '下载录像文件' : 'Download .cast file'}
-            >
-              <Download size={18} />
-            </button>
+              className="text-slate-400 hover:text-cyan-400 hover:bg-slate-700"
+            />
             <button
               onClick={onClose}
               className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition-colors"

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { CalendarClock, Plus, X, RotateCcw } from 'lucide-react';
 import PageHero from '../../components/PageHero';
+import { ActionButton } from '../../components/ui/ActionIconButton';
 import { useSystem } from '../../hooks/useSystem';
 import type { ExecutionScheduleTabProps, ScheduledJob, FormState, ValidatedDevice, EligibleApprover, UnifiedExecutionLog, InspSubTab, InspDetailTab, PlaybookExecutionApproval } from './types';
 import { INITIAL_FORM } from './constants';
@@ -783,7 +784,7 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
 
   /* ═══ RENDER ═══ */
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="nx-page-shell flex h-full flex-col overflow-hidden">
       <PageHero
         icon={CalendarClock}
         title={inspSubTab === 'history'
@@ -795,33 +796,32 @@ const ExecutionScheduleCoordinator: React.FC<ExecutionScheduleTabProps> = ({
         actions={
           <>
             {inspSubTab === 'schedules' && (
-              <button
+              <ActionButton
                 onClick={() => setShowAddInspSchedule(!showAddInspSchedule)}
-                className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold shadow-sm transition-all active:scale-[0.97] ${
-                  showAddInspSchedule
-                    ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    : 'bg-gradient-to-r from-cyan-500 to-cyan-600 text-white hover:from-cyan-400 hover:to-cyan-500'
-                }`}
+                icon={showAddInspSchedule ? X : Plus}
+                variant={showAddInspSchedule ? 'default' : 'primary'}
+                size="md"
               >
-                {showAddInspSchedule ? <X size={16} /> : <Plus size={16} />}
                 {showAddInspSchedule ? (zh ? '取消新建' : 'Cancel') : (zh ? '新建计划' : 'Add Schedule')}
-              </button>
+              </ActionButton>
             )}
             {inspSubTab === 'history' && (
-              <button
+              <ActionButton
                 onClick={fetchInspRuns}
                 disabled={inspRunsLoading}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-cyan-100 bg-cyan-50/50 text-[#0e7490] text-sm font-bold shadow-sm hover:bg-cyan-50 transition-all active:scale-[0.97]"
+                icon={RotateCcw}
+                iconClassName={inspRunsLoading ? 'animate-spin' : undefined}
+                variant="accent"
+                size="md"
               >
-                <RotateCcw size={16} className={inspRunsLoading ? 'animate-spin' : ''} />
                 {zh ? '刷新记录' : 'Refresh'}
-              </button>
+              </ActionButton>
             )}
           </>
         }
       />
 
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-4">
+      <div className={`flex-1 min-h-0 overflow-auto px-6 py-5 space-y-4 ${inspSubTab === 'history' ? 'flex flex-col' : ''}`}>
         {/* Schedules sub-tab */}
         {inspSubTab === 'schedules' && (
           <div className="space-y-4">

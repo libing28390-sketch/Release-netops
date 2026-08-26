@@ -115,7 +115,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   }, [systemInfo?.system_name, pageTitle]);
 
   return (
-    <div className="app-shell flex h-screen text-[#141414] font-sans overflow-hidden">
+    <div className="app-shell flex h-screen overflow-hidden">
       <div className="flex-1 flex flex-col overflow-hidden">
         <VersionBanner />
         <TopHeader
@@ -160,7 +160,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           <div className="flex-1 overflow-hidden flex flex-col min-h-0">{children}</div>
         </div>
 
-        <footer className="h-10 px-8 border-t flex items-center justify-between text-[11px] border-[var(--header-border)] text-[var(--muted-text)] bg-[var(--sidebar-bg)]">
+        <footer className="h-10 px-8 border-t flex items-center justify-between nx-micro-text border-[var(--header-border)] text-[var(--muted-text)] bg-[var(--sidebar-bg)]">
           <span>Copyright (c) {new Date().getFullYear()} {systemInfo?.system_name || 'Nexora'}. All rights reserved.</span>
           <span className="font-mono">{systemInfo?.version || 'v0.1.0'}</span>
         </footer>

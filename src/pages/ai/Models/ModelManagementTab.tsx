@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Cpu, Plus, RefreshCw, Trash2, GitBranch, Star, Power, Search, AlertTriangle } from 'lucide-react';
 import { getAIModels, createAIModel, updateAIModel, setAIUserDefaultModel, deleteAIModel, getAIModelRoutes, upsertAIModelRoute, getAIProviders, AIModel, AIModelRoute, AIProvider } from '../../../api/ai';
 import Pagination from '../../../components/Pagination';
+import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
 export const ModelManagementTab: React.FC = () => {
   const [models, setModels] = useState<AIModel[]>([]);
@@ -141,11 +142,11 @@ export const ModelManagementTab: React.FC = () => {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+            <h2 className="nx-page-title flex items-center gap-2 text-gray-900 dark:text-white">
               <Cpu className="w-6 h-6 text-indigo-500" />
               AI Model 模型管理
             </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            <p className="nx-page-description mt-1 text-gray-500 dark:text-gray-400">
               定义可供调用的模型标识（如 deepseek-v4-flash, deepseek-v4-pro）。
             </p>
           </div>
@@ -220,11 +221,11 @@ export const ModelManagementTab: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => void handleSetDefault(m)} title="设为当前用户默认" className="rounded p-1 text-gray-400 hover:text-amber-600"><Star className="w-4 h-4" /></button>
-                        <button onClick={() => void handleToggle(m)} title={m.enabled ? '禁用' : '启用'} className="rounded p-1 text-gray-400 hover:text-indigo-600"><Power className="w-4 h-4" /></button>
-                        <button onClick={() => handleDelete(m.id)} className="rounded p-1 text-gray-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
-                      </div>
+                      <ActionIconGroup label="模型操作">
+                        <ActionIconButton icon={Star} label="设为当前用户默认" variant="accent" onClick={() => void handleSetDefault(m)} />
+                        <ActionIconButton icon={Power} label={m.enabled ? '禁用' : '启用'} onClick={() => void handleToggle(m)} />
+                        <ActionIconButton icon={Trash2} label="删除" variant="danger" onClick={() => handleDelete(m.id)} />
+                      </ActionIconGroup>
                     </td>
                   </tr>
                 ))}

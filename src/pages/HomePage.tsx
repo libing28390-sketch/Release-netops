@@ -173,10 +173,10 @@ const HomePage: React.FC<HomePageProps> = ({
         style={{ borderColor: 'var(--card-border)' }}
       >
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight" style={{ color: 'var(--heading-text)' }}>
+          <h1 className="nx-page-title" style={{ color: 'var(--heading-text)' }}>
             {zh ? '你好，欢迎回来' : 'Welcome back'}
           </h1>
-          <p className="text-[13px] mt-1" style={{ color: 'var(--muted-text)' }}>
+          <p className="nx-page-description mt-1" style={{ color: 'var(--muted-text)' }}>
             {zh
               ? `今日网络 · ${stats.total} 台设备 · ${stats.online} 台在线 · ${stats.critical} 条严重告警`
               : `Today · ${stats.total} devices · ${stats.online} online · ${stats.critical} critical alerts`}
@@ -250,8 +250,8 @@ const HomePage: React.FC<HomePageProps> = ({
           return (
             <motion.button
               key={app.id}
-              initial={{ opacity: 0, scale: 0.97 }}
-              animate={{ opacity: 1, scale: 1 }}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: 0.06 + 0.025 * idx }}
               onClick={() => navigate(app.path)}
               className="group flex items-center gap-3 rounded-xl px-3.5 py-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 transition-all duration-150 text-left"

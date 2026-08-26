@@ -4,6 +4,7 @@ import { Check, Copy, Eye, Plus, RefreshCw, Search, Trash2, Wrench, X } from 'lu
 import { useLocation } from 'react-router-dom';
 import DateTimePicker from '../components/DateTimePicker';
 import PageHero from '../components/PageHero';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import type {
   AlertMaintenanceCondition,
   AlertMaintenanceConditionField,
@@ -628,25 +629,29 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                     </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{window.created_by}</td>
                     <td className="px-5 py-4 align-top">
-                      <div className={alertTableActionBarClass}>
-                        <button title={language === 'zh' ? `查看维护窗 ${window.name}` : `View maintenance window ${window.name}`} onClick={() => setSelectedWindowId(window.id)} className={alertTableActionButtonClass}>
-                          <Eye size={14} />
-                          {language === 'zh' ? '查看' : 'View'}
-                        </button>
-                        <button title={language === 'zh' ? `复制维护窗 ${window.name}` : `Copy maintenance window ${window.name}`} onClick={() => void handleCopyWindow(window)} className={alertTableActionAccentButtonClass}>
-                          <Copy size={14} />
-                          {language === 'zh' ? '复制' : 'Copy'}
-                        </button>
-                        <button
-                          title={language === 'zh' ? `删除维护窗 ${window.name}` : `Delete maintenance window ${window.name}`}
+                      <ActionIconGroup className={alertTableActionBarClass} label={language === 'zh' ? '维护窗操作' : 'Maintenance window actions'}>
+                        <ActionIconButton
+                          icon={Eye}
+                          label={language === 'zh' ? `查看维护窗 ${window.name}` : `View maintenance window ${window.name}`}
+                          size="sm"
+                          onClick={() => setSelectedWindowId(window.id)}
+                        />
+                        <ActionIconButton
+                          icon={Copy}
+                          label={language === 'zh' ? `复制维护窗 ${window.name}` : `Copy maintenance window ${window.name}`}
+                          size="sm"
+                          variant="accent"
+                          onClick={() => void handleCopyWindow(window)}
+                        />
+                        <ActionIconButton
+                          icon={Trash2}
+                          label={language === 'zh' ? `删除维护窗 ${window.name}` : `Delete maintenance window ${window.name}`}
+                          size="sm"
+                          variant="danger"
                           onClick={() => void handleDeleteWindow(window.id)}
                           disabled={maintenanceCancelingId === window.id}
-                          className={alertTableActionDangerButtonClass}
-                        >
-                          <Trash2 size={14} />
-                          {language === 'zh' ? '删除' : 'Delete'}
-                        </button>
-                      </div>
+                        />
+                      </ActionIconGroup>
                     </td>
                   </tr>
                 ))
@@ -821,14 +826,13 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
                             )}
                           </label>
                           <div className="flex items-end lg:justify-center">
-                            <button
+                            <ActionIconButton
                               type="button"
+                              icon={Trash2}
+                              label={language === 'zh' ? '删除当前条件' : 'Remove condition'}
+                              variant="danger"
                               onClick={() => removeConditionRow(index)}
-                              className="inline-flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-black/10 text-black/45 transition hover:bg-black/[0.03]"
-                              title={language === 'zh' ? '删除当前条件' : 'Remove condition'}
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            />
                           </div>
                         </div>
                       ))}
@@ -1126,19 +1130,17 @@ const AlertMaintenanceTab: React.FC<AlertPageCommonProps> = ({ language, current
               </div>
 
               <div className="flex flex-wrap items-center justify-end gap-2 border-t border-black/5 px-6 py-4">
-                <button onClick={() => void handleCopyWindow(selectedWindow)} className={alertAccentButtonClass}>
-                  <Copy size={14} />
+                <ActionButton icon={Copy} variant="accent" size="md" onClick={() => void handleCopyWindow(selectedWindow)}>
                   {language === 'zh' ? '复制信息' : 'Copy'}
-                </button>
+                </ActionButton>
                 {selectedWindow.runtime_status !== 'expired' && selectedWindow.runtime_status !== 'cancelled' ? (
                   <button onClick={() => void handleCancelWindow(selectedWindow.id)} disabled={maintenanceCancelingId === selectedWindow.id} className={alertSecondaryButtonClass}>
                     {language === 'zh' ? '取消维护期' : 'Cancel'}
                   </button>
                 ) : null}
-                <button onClick={() => void handleDeleteWindow(selectedWindow.id)} disabled={maintenanceCancelingId === selectedWindow.id} className={alertDangerButtonClass}>
-                  <Trash2 size={14} />
+                <ActionButton icon={Trash2} variant="danger" size="md" onClick={() => void handleDeleteWindow(selectedWindow.id)} disabled={maintenanceCancelingId === selectedWindow.id}>
                   {language === 'zh' ? '删除' : 'Delete'}
-                </button>
+                </ActionButton>
               </div>
             </motion.div>
           </motion.div>

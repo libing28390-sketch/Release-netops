@@ -32,6 +32,7 @@ import {
   PanelRightOpen,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { ActionButton } from '../components/ui/ActionIconButton';
 import type { DiffLine } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
@@ -1134,9 +1135,19 @@ const ConfigDiffViewTab: React.FC<ConfigDiffViewTabProps> = ({
                     ))}
                   </div>
                   {(['markdown', 'html', 'json'] as const).map((format) => (
-                    <button key={format} type="button" disabled={Boolean(exporting)} onClick={() => void exportAnalysis(format)} className="hidden sm:inline-flex items-center gap-0.5 rounded-lg border border-slate-200 px-1.5 py-1 text-[8px] font-bold uppercase text-slate-500 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-40">
-                      {exporting === format ? <Loader2 size={9} className="animate-spin" /> : <Download size={9} />}{format === 'markdown' ? 'MD' : format}
-                    </button>
+                    <ActionButton
+                      key={format}
+                      type="button"
+                      icon={exporting === format ? Loader2 : Download}
+                      iconClassName={exporting === format ? 'animate-spin' : undefined}
+                      variant="default"
+                      size="sm"
+                      disabled={Boolean(exporting)}
+                      onClick={() => void exportAnalysis(format)}
+                      className="hidden !h-7 !px-2 !text-[9px] uppercase sm:inline-flex"
+                    >
+                      {format === 'markdown' ? 'MD' : format}
+                    </ActionButton>
                   ))}
                   <button type="button" disabled={confirming} onClick={() => void confirmAnalysis()} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[9px] font-bold text-emerald-700 disabled:opacity-40">
                     {confirming ? <Loader2 size={10} className="animate-spin" /> : <CheckCircle2 size={10} />}{zh ? '确认' : 'Confirm'}

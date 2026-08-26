@@ -275,8 +275,8 @@ const ResourceSearchTab: React.FC<Props> = ({ language = 'zh' }) => {
           <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
             <Database size={15} /> CMDB / {zh ? '资源检索' : 'Resource search'}
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{zh ? '设备资源检索' : 'Device resource search'}</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="nx-page-title text-slate-900">{zh ? '设备资源检索' : 'Device resource search'}</h1>
+          <p className="nx-page-description mt-1 text-slate-500">
             {zh ? '跨站点查询全部设备，按标签、SN、IP 和技术属性快速定位资源。' : 'Search every device across sites by tags, serial numbers, IPs and technical attributes.'}
           </p>
         </div>

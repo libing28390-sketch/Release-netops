@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Activity, AlertTriangle, ArrowRight, Clock3, Database, Download, EyeOff, GitMerge, Globe, LayoutGrid, MapPin, Network, PanelRightClose, PanelRightOpen, RotateCcw, Search, Tag, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { darkActionBtnClass, secondaryActionBtnClass } from '../components/shared';
+import { ActionButton } from '../components/ui/ActionIconButton';
 import TagConditionPicker, { countTagFilterConditions, EMPTY_TAG_FILTER, hasTagFilterConditions, type TagFilterConfig } from '../components/TagConditionPicker';
 import TopologyGraph from '../components/TopologyGraph';
 import TopologyInspectorPanel from '../components/TopologyInspectorPanel';
@@ -408,14 +409,14 @@ const TopologyPage: React.FC<TopologyPageProps> = ({
                 {language === 'zh' ? '取消任务' : 'Cancel Run'}
               </button>
             )}
-            <button
+            <ActionButton
               type="button"
+              icon={Download}
+              variant="accent"
               onClick={onExportMap}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-gray-200/70 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-700 dark:text-zinc-200 hover:bg-gray-50 transition-all cursor-pointer"
             >
-              <Download size={13} />
               {language === 'zh' ? '导出拓扑图' : 'Export Map'}
-            </button>
+            </ActionButton>
           </div>
         }
       />

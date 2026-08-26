@@ -15,6 +15,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
+import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { formatMacAddress } from '../../utils/resourceFormatters';
 
@@ -928,22 +929,19 @@ const IPAddressTab: React.FC<IPAddressTabProps> = ({ language, t }) => {
                       <td className="px-4 py-4 font-mono text-[10px] text-gray-400">{(node.discovered_last_seen || node.last_seen) ? (node.discovered_last_seen || node.last_seen).replace('T', ' ').slice(0, 19) : '-'}</td>
                       <td className="pr-6 py-4 text-right">
                         {!node.is_discovered ? (
-                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
+                          <ActionIconGroup label={zh ? '地址操作' : 'Address actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+                            <ActionIconButton
+                              icon={Pencil}
+                              label={zh ? '编辑' : 'Edit'}
                               onClick={() => openForm(node)}
-                              title={zh ? '编辑' : 'Edit'}
-                              className="p-1 rounded-md text-gray-400 hover:text-cyan-600 hover:bg-cyan-50 transition-all"
-                            >
-                              <Pencil size={14} />
-                            </button>
-                            <button
+                            />
+                            <ActionIconButton
+                              icon={Trash2}
+                              label={zh ? '删除' : 'Delete'}
+                              variant="danger"
                               onClick={() => setShowDeleteConfirm(node.id)}
-                              title={zh ? '删除' : 'Delete'}
-                              className="p-1 rounded-md text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-all"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
+                            />
+                          </ActionIconGroup>
                         ) : <span className="text-[10px] font-semibold text-cyan-500">{zh ? '只读采集' : 'Read-only'}</span>}
                       </td>
                     </tr>

@@ -8,6 +8,7 @@ import TagConditionPicker, {
   hasTagFilterConditions,
   type TagFilterConfig,
 } from '../../components/TagConditionPicker';
+import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import type { Device } from '../../types';
 
 interface BackupScope {
@@ -423,15 +424,15 @@ const BackupPolicyManager: React.FC<BackupPolicyManagerProps> = ({
                           {policy.enabled ? (zh ? '已启用' : 'Active') : (zh ? '已停用' : 'Disabled')}
                         </span>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <ActionIconGroup label={zh ? '备份策略操作' : 'Backup policy actions'}>
                         <button type="button" onClick={() => void handleRun(policy)} disabled={runningId === policy.id} className="inline-flex items-center gap-1 rounded-md border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-700 hover:bg-cyan-100 disabled:opacity-50 transition-colors">
                           {runningId === policy.id ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}{zh ? '立即执行' : 'Run'}
                         </button>
-                        <button type="button" onClick={() => { setDraft(toDraft(policy)); setPreview(null); }} className="rounded-md border border-slate-200 bg-white p-1 text-slate-500 hover:text-cyan-700" title={zh ? '编辑' : 'Edit'}><Pencil size={11} /></button>
+                        <ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} variant="accent" onClick={() => { setDraft(toDraft(policy)); setPreview(null); }} />
                         {policy.id !== 'backup-policy-default' && (
-                          <button type="button" onClick={() => void handleDelete(policy)} className="rounded-md border border-slate-200 bg-white p-1 text-slate-400 hover:border-rose-200 hover:text-rose-600" title={zh ? '删除' : 'Delete'}><Trash2 size={11} /></button>
+                          <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => void handleDelete(policy)} />
                         )}
-                      </div>
+                      </ActionIconGroup>
                     </div>
 
                     <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">

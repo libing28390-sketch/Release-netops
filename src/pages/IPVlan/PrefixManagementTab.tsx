@@ -21,6 +21,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { useNavigate } from 'react-router-dom';
 import { isValidIPv4, isValidIPv6, toNum } from './helpers';
 
@@ -835,22 +836,19 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
             </div>
           </td>
           <td className="pr-6 py-4 text-right">
-            <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button
+            <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+              <ActionIconButton
+                icon={Pencil}
+                label={zh ? '编辑' : 'Edit'}
                 onClick={() => openForm(node)}
-                title={zh ? '编辑' : 'Edit'}
-                className="p-1 rounded-md text-gray-400 hover:text-cyan-600 hover:bg-cyan-50 transition-all"
-              >
-                <Pencil size={14} />
-              </button>
-              <button
+              />
+              <ActionIconButton
+                icon={Trash2}
+                label={zh ? '删除' : 'Delete'}
+                variant="danger"
                 onClick={() => setShowDeleteConfirm(node.id)}
-                title={zh ? '删除' : 'Delete'}
-                className="p-1 rounded-md text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-all"
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
+              />
+            </ActionIconGroup>
           </td>
         </tr>
         {node.children && node.children.map((child) => renderTreeNode(child, depth + 1))}
@@ -866,28 +864,28 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
         subtitle={zh ? '管理全局IP前缀与网段的层次树结构，并绑定所属的VRF、VLAN与物理站点' : 'Manage global IP prefixes, hierarchical routing network blocks, and CMDB associations.'}
         actions={
           <div className="flex items-center gap-2">
-            <button
+            <ActionButton
+              icon={Plus}
+              variant="primary"
               onClick={() => openForm(null)}
-              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-cyan-500/20 active:scale-95 transition-all"
             >
-              <Plus size={14} />
               {zh ? '新增网段' : 'Add Prefix'}
-            </button>
-            <button
+            </ActionButton>
+            <ActionButton
+              icon={RefreshCw}
+              variant="accent"
               onClick={() => openInterfaceGeneration()}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-cyan-50 text-cyan-700 border border-cyan-200 rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all"
             >
-              <RefreshCw size={14} />
               {zh ? '从接口 IP 生成' : 'Generate from Interfaces'}
-            </button>
+            </ActionButton>
             {selectedIds.size > 0 && (
-              <button
+              <ActionButton
+                icon={Trash2}
+                variant="danger"
                 onClick={() => setShowBatchDeleteConfirm(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-rose-500/20 active:scale-95 transition-all animate-pulse"
               >
-                <Trash2 size={14} />
                 {zh ? '批量删除' : 'Batch Delete'}
-              </button>
+              </ActionButton>
             )}
           </div>
         }
@@ -1195,22 +1193,19 @@ const PrefixManagementTab: React.FC<PrefixManagementTabProps> = ({ language, t }
                           </div>
                         </td>
                         <td className="pr-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
+                          <ActionIconGroup label={zh ? '前缀操作' : 'Prefix actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+                            <ActionIconButton
+                              icon={Pencil}
+                              label={zh ? '编辑' : 'Edit'}
                               onClick={() => openForm(node)}
-                              title={zh ? '编辑' : 'Edit'}
-                              className="p-1 rounded-md text-gray-400 hover:text-cyan-600 hover:bg-cyan-50 transition-all"
-                            >
-                              <Pencil size={14} />
-                            </button>
-                            <button
+                            />
+                            <ActionIconButton
+                              icon={Trash2}
+                              label={zh ? '删除' : 'Delete'}
+                              variant="danger"
                               onClick={() => setShowDeleteConfirm(node.id)}
-                              title={zh ? '删除' : 'Delete'}
-                              className="p-1 rounded-md text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-all"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
+                            />
+                          </ActionIconGroup>
                         </td>
                       </tr>}
                       </React.Fragment>

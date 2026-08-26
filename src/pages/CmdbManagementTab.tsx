@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit2, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff, Copy, ChevronDown, ChevronUp, ChevronRight, FolderTree, Download, Upload, FileSpreadsheet } from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, X, KeyRound, Building2, Network, Layers, Users as UsersIcon, Server, Search, Check, ShieldAlert, Eye, EyeOff, Copy, ChevronDown, ChevronUp, ChevronRight, FolderTree, Download, Upload, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import { DataTable } from '../components/DataTable';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { formatMacAddress } from '../utils/resourceFormatters';
 
 /* ────────────────────────────────────────────────────────────
@@ -3060,23 +3061,22 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
               {zh ? '已配置' : 'Configured'}
             </span>
-            <button
-              type="button"
+            <ActionIconButton
+              icon={credentialSecretLoading === key ? RefreshCw : isRevealed ? EyeOff : Eye}
+              label={isRevealed ? (zh ? '隐藏密码' : 'Hide secret') : (zh ? '查看凭据密码' : 'Reveal credential secret')}
+              variant={isRevealed ? 'accent' : 'default'}
+              size="xs"
+              iconClassName={credentialSecretLoading === key ? 'animate-spin' : undefined}
               onClick={() => { void handleRevealCredentialSecret(row, type); }}
-              className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${isRevealed ? 'border-cyan-500 bg-cyan-500 text-white' : 'border-slate-200 bg-white text-slate-400 hover:border-cyan-300 hover:text-cyan-600'}`}
-              title={isRevealed ? (zh ? '隐藏密码' : 'Hide secret') : (zh ? '查看凭据密码' : 'Reveal credential secret')}
-            >
-              {credentialSecretLoading === key ? <RefreshCw size={11} className="animate-spin" /> : isRevealed ? <EyeOff size={11} /> : <Eye size={11} />}
-            </button>
+            />
             {isRevealed && (
-              <button
-                type="button"
+              <ActionIconButton
+                icon={credentialSecretCopied ? Check : Copy}
+                label={zh ? '复制并记录审计' : 'Copy and audit'}
+                variant={credentialSecretCopied ? 'success' : 'accent'}
+                size="xs"
                 onClick={() => { void handleCopyCredentialSecret(); }}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 hover:border-cyan-300 hover:text-cyan-600"
-                title={zh ? '复制并记录审计' : 'Copy and audit'}
-              >
-                {credentialSecretCopied ? <Check size={11} /> : <Copy size={11} />}
-              </button>
+              />
             )}
             {isRevealed && <span className="max-w-36 truncate rounded bg-slate-900 px-2 py-1 font-mono text-[10px] text-cyan-300" title={revealedCredentialSecret.secret}>{revealedCredentialSecret.secret}</span>}
           </div>
@@ -3293,22 +3293,19 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
       ))}
       {!isReadOnlyTab && (
         <td className="px-6 py-4 text-right whitespace-nowrap align-middle">
-          <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            <button
+          <ActionIconGroup label={zh ? '记录操作' : 'Record actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+            <ActionIconButton
+              icon={Pencil}
+              label={zh ? '编辑' : 'Edit'}
               onClick={() => openEdit(row)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-[#164e63] shadow-sm hover:border-black/10 hover:bg-[#ecfeff] hover:text-[#0891b2] transition-all"
-              title={zh ? '编辑' : 'Edit'}
-            >
-              <Edit2 size={13} />
-            </button>
-            <button
+            />
+            <ActionIconButton
+              icon={Trash2}
+              label={zh ? '删除' : 'Delete'}
+              variant="danger"
               onClick={() => openDeleteConfirm(row)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-rose-400 shadow-sm hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600 transition-all"
-              title={zh ? '删除' : 'Delete'}
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
+            />
+          </ActionIconGroup>
         </td>
       )}
     </tr>
@@ -3351,31 +3348,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   className="hidden"
                   onChange={event => { void handleSiteImportFile(event.target.files?.[0]); }}
                 />
-                <button
-                  onClick={downloadSiteImportTemplate}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-black/8 bg-white text-black/35 transition-colors hover:border-[#00bceb]/25 hover:bg-[#00bceb]/5 hover:text-[#0088b0]"
-                  title={zh ? '下载导入模板' : 'Download template'}
-                  aria-label={zh ? '下载导入模板' : 'Download template'}
-                >
-                  <FileSpreadsheet size={14} />
-                </button>
-                <button
-                  onClick={() => siteImportInputRef.current?.click()}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-black/8 bg-white text-black/35 transition-colors hover:border-[#00bceb]/25 hover:bg-[#00bceb]/5 hover:text-[#0088b0]"
-                  title={zh ? '导入站点' : 'Import sites'}
-                  aria-label={zh ? '导入站点' : 'Import sites'}
-                >
-                  <Upload size={14} />
-                </button>
-                <button
-                  onClick={exportSiteInventory}
-                  disabled={siteExporting}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-black/8 bg-white text-black/35 transition-colors hover:border-[#00bceb]/25 hover:bg-[#00bceb]/5 hover:text-[#0088b0] disabled:cursor-not-allowed disabled:opacity-50"
-                  title={zh ? '导出站点' : 'Export sites'}
-                  aria-label={zh ? '导出站点' : 'Export sites'}
-                >
-                  <Download size={14} className={siteExporting ? 'animate-pulse' : ''} />
-                </button>
+                <ActionIconGroup label={zh ? '站点导入导出' : 'Site import and export'}>
+                  <ActionIconButton icon={FileSpreadsheet} label={zh ? '下载导入模板' : 'Download template'} variant="accent" onClick={downloadSiteImportTemplate} />
+                  <ActionIconButton icon={Upload} label={zh ? '导入站点' : 'Import sites'} variant="accent" onClick={() => siteImportInputRef.current?.click()} />
+                  <ActionIconButton icon={Download} label={zh ? '导出站点' : 'Export sites'} variant="accent" disabled={siteExporting} iconClassName={siteExporting ? 'animate-pulse' : undefined} onClick={exportSiteInventory} />
+                </ActionIconGroup>
               </>
             )}
             {tab === 'credentials' && (
@@ -3387,32 +3364,11 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                   className="hidden"
                   onChange={event => { void handleCredentialImportFile(event.target.files?.[0]); }}
                 />
-                <button
-                  onClick={downloadCredentialImportTemplate}
-                  disabled={credentialTemplateDownloading}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-black/8 bg-white text-black/35 transition-colors hover:border-[#00bceb]/25 hover:bg-[#00bceb]/5 hover:text-[#0088b0] disabled:cursor-not-allowed disabled:opacity-50"
-                  title={zh ? '下载凭据导入模板' : 'Download credential import template'}
-                  aria-label={zh ? '下载凭据导入模板' : 'Download credential import template'}
-                >
-                  <FileSpreadsheet size={14} className={credentialTemplateDownloading ? 'animate-pulse' : ''} />
-                </button>
-                <button
-                  onClick={() => credentialImportInputRef.current?.click()}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#9eeaf7] bg-[#f1fcff] text-[#007d9d] transition-colors hover:border-[#00bceb]/50 hover:bg-[#e5faff]"
-                  title={zh ? '上传凭据' : 'Upload credentials'}
-                  aria-label={zh ? '上传凭据' : 'Upload credentials'}
-                >
-                  <Upload size={14} />
-                </button>
-                <button
-                  onClick={exportCredentialInventory}
-                  disabled={credentialExporting}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-black/8 bg-white text-black/35 transition-colors hover:border-[#00bceb]/25 hover:bg-[#00bceb]/5 hover:text-[#0088b0] disabled:cursor-not-allowed disabled:opacity-50"
-                  title={zh ? '导出凭据（密码为空）' : 'Export credentials (passwords blank)'}
-                  aria-label={zh ? '导出凭据（密码为空）' : 'Export credentials (passwords blank)'}
-                >
-                  <Download size={14} className={credentialExporting ? 'animate-pulse' : ''} />
-                </button>
+                <ActionIconGroup label={zh ? '凭据导入导出' : 'Credential import and export'}>
+                  <ActionIconButton icon={FileSpreadsheet} label={zh ? '下载凭据导入模板' : 'Download credential import template'} variant="accent" disabled={credentialTemplateDownloading} iconClassName={credentialTemplateDownloading ? 'animate-pulse' : undefined} onClick={downloadCredentialImportTemplate} />
+                  <ActionIconButton icon={Upload} label={zh ? '上传凭据' : 'Upload credentials'} variant="accent" onClick={() => credentialImportInputRef.current?.click()} />
+                  <ActionIconButton icon={Download} label={zh ? '导出凭据（密码为空）' : 'Export credentials (passwords blank)'} variant="accent" disabled={credentialExporting} iconClassName={credentialExporting ? 'animate-pulse' : undefined} onClick={exportCredentialInventory} />
+                </ActionIconGroup>
               </>
             )}
             <button
@@ -3700,10 +3656,18 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                 <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500">
                   <span className="rounded-full bg-cyan-50 px-2.5 py-1 font-semibold text-cyan-700">{vlanListMeta.total} 条记录</span>
                   {vlanSiteFilter && <button type="button" onClick={() => { setVlanTreeBranch({}); setVlanSiteFilter(''); setPage(1); }} className="text-cyan-700 hover:text-cyan-900">清除站点筛选</button>}
-                  <button type="button" onClick={() => void exportVlanInventory()} disabled={vlanExporting} className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 py-1.5 font-semibold text-cyan-700 shadow-sm transition-colors hover:border-cyan-300 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50" title={zh ? '导出完整 VLAN 信息' : 'Export complete VLAN inventory'}>
-                    {vlanExporting ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
+                  <ActionButton
+                    type="button"
+                    icon={vlanExporting ? RefreshCw : Download}
+                    iconClassName={vlanExporting ? 'animate-spin' : undefined}
+                    variant="accent"
+                    size="sm"
+                    onClick={() => void exportVlanInventory()}
+                    disabled={vlanExporting}
+                    title={zh ? '导出完整 VLAN 信息' : 'Export complete VLAN inventory'}
+                  >
                     {vlanExporting ? '导出中' : '导出 VLAN'}
-                  </button>
+                  </ActionButton>
                 </div>
               </div>
 
@@ -3760,7 +3724,7 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
                              <td className="px-5 py-4"><div className="text-sm font-semibold text-slate-700">{displayedAccessInterfaces.length ? displayedAccessInterfaces.join('、') : '未发现端口'}{hiddenAccessInterfaceCount > 0 && <span className="ml-1 text-xs font-medium text-cyan-700">+{hiddenAccessInterfaceCount}</span>}</div><div className="mt-1 text-xs text-slate-500">{Number(row.port_count || 0)} 个端口 · {Number(row.device_count || 0)} 台设备</div>{Number(row.undocumented_port_count || 0) > 0 && <div className="mt-1 text-[11px] font-medium text-amber-600">{Number(row.undocumented_port_count)} 个缺少描述</div>}</td>
                               <td className="px-5 py-4">{terminalRecords.length ? <><div className="text-sm font-semibold text-cyan-700">终端 {terminalRecords.length}</div><div className="mt-1 space-y-1.5">{terminalRecords.slice(0, 2).map((item: any, endpointIndex: number) => <div key={`${item.ip_address || item.mac_address}-${endpointIndex}`}><div className="font-mono text-xs font-semibold text-slate-800">{item.ip_address || '未发现 IP'}</div>{item.mac_address && <div className="font-mono text-[11px] text-slate-500">{formatMacAddress(item.mac_address)}</div>}</div>)}{terminalRecords.length > 2 && <div className="text-[11px] text-cyan-700">+{terminalRecords.length - 2} 个终端</div>}</div></> : <div className="text-sm text-slate-400">暂无终端</div>}</td>
                             <td className="px-5 py-4"><div className="flex flex-wrap gap-1.5 text-xs"><span className={`rounded-full border px-2 py-0.5 font-semibold ${businesses.length ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>{businesses.length ? `已关联 ${businesses.length} 个业务` : '待补充业务'}</span></div>{businesses.slice(0, 2).map(value => <div key={value} className="mt-1 max-w-[180px] truncate text-sm font-medium text-slate-700" title={value}>{value}</div>)}{businesses.length > 2 && <div className="text-xs text-cyan-700">+{businesses.length - 2} 个</div>}{(businessDepartment || businessOwner || businessLevel) && <div className="mt-2 space-y-0.5 text-[11px] text-slate-500">{businessDepartment && <div>部门：{businessDepartment}</div>}{businessOwner && <div>负责人：{businessOwner}</div>}{businessLevel && <div>等级：{businessLevel}</div>}</div>}</td>
-                            <td className="px-5 py-4 text-right align-middle"><div className="flex items-center justify-end gap-1.5 opacity-70 transition-opacity group-hover:opacity-100"><button onClick={() => setVlanDetailRow(row)} className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-cyan-100 bg-white px-2 text-xs font-semibold text-cyan-700 shadow-sm hover:border-cyan-200 hover:bg-cyan-50" title="查看明细"><Eye size={13} />明细</button>{!isReadOnlyTab && <><button onClick={() => openEdit(row)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-[#164e63] shadow-sm hover:border-black/10 hover:bg-cyan-50 hover:text-cyan-700" title="编辑"><Edit2 size={13} /></button><button onClick={() => openDeleteConfirm(row)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-white text-rose-400 shadow-sm hover:border-rose-100 hover:bg-rose-50 hover:text-rose-600" title="删除"><Trash2 size={13} /></button></>}</div></td>
+                            <td className="px-5 py-4 text-right align-middle"><div className="flex items-center justify-end gap-1.5 opacity-70 transition-opacity group-hover:opacity-100"><button onClick={() => setVlanDetailRow(row)} className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-[var(--ui-border)] bg-[var(--ui-surface)] px-2 text-xs font-semibold text-[var(--ui-fg)] shadow-sm hover:bg-[var(--ui-surface-muted)]" title="查看明细"><Eye size={16} strokeWidth={1.8} />明细</button>{!isReadOnlyTab && <><ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} onClick={() => openEdit(row)} /><ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => openDeleteConfirm(row)} /></>}</div></td>
                           </tr>
                           {expanded && <tr className="bg-slate-50/70"><td colSpan={8} className="px-12 py-5"><div className="space-y-5"><div><div className="mb-2 flex items-center justify-between"><div className="text-xs font-semibold text-slate-600">终端明细（IP / MAC / 设备 / 接口）</div><span className="text-[11px] text-slate-400">ARP 与 MAC 采集结果</span></div>{endpointDetails.length ? <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200 bg-white"><div className="grid grid-cols-[110px_150px_minmax(120px,1fr)_minmax(120px,1fr)_80px] gap-3 border-b border-slate-100 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-500"><span>来源</span><span>IP 地址</span><span>MAC 地址</span><span>设备 / 接口</span><span>更新时间</span></div>{endpointDetails.map((item: any, endpointIndex: number) => <div key={`${item.source}-${item.ip_address || item.mac_address || endpointIndex}`} className="grid grid-cols-[110px_150px_minmax(120px,1fr)_minmax(120px,1fr)_80px] gap-3 border-b border-slate-100 px-3 py-2 text-xs last:border-b-0"><span className={`w-fit rounded-full border px-2 py-0.5 ${String(item.source).toLowerCase() === 'arp' ? 'border-blue-100 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>{String(item.source).toLowerCase() === 'arp' ? 'ARP' : 'MAC'}</span><span className="font-mono text-slate-700">{item.ip_address || '—'}</span><span className="font-mono text-slate-700">{formatMacAddress(item.mac_address) || '—'}</span><span className="text-slate-600">{item.device_hostname || '—'}{item.interface_name ? ` / ${item.interface_name}` : ''}</span><span className="text-[11px] text-slate-400">{item.last_updated ? new Date(item.last_updated).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false }) : '—'}</span></div>)}</div> : <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-4 text-xs text-slate-400">暂无 ARP/MAC 明细</div>}</div><div className="grid gap-4 md:grid-cols-2"><div><div className="mb-2 text-xs font-semibold text-slate-500">端口描述（最多展示 50 条）</div><div className="max-h-[300px] space-y-1.5 overflow-auto text-xs text-slate-700">{displayedPortDetails.length ? displayedPortDetails.map(value => <div key={value} className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono">{value}</div>) : <div className="text-slate-400">暂无端口描述</div>}{hiddenPortDetailCount > 0 && <div className="rounded-lg border border-dashed border-cyan-200 bg-cyan-50 px-3 py-2 text-cyan-700">还有 {hiddenPortDetailCount} 条端口明细未展开，建议使用“导出 VLAN”查看完整清单。</div>}</div></div><div className="space-y-3"><div><div className="text-xs font-semibold text-slate-500">三层接口</div><div className="mt-1 text-xs text-slate-700">{svi.length ? svi.join('、') : '未发现三层接口'}</div></div><div><div className="text-xs font-semibold text-slate-500">数据统计</div><div className="mt-1 text-xs text-slate-700">设备 {Number(row.device_count || 0)} 台 · 端口 {Number(row.port_count || 0)} 个 · MAC {Number(row.mac_count || 0)} 条 · ARP {Number(row.arp_count || 0)} 条</div></div></div></div></div></td></tr>}
                         </React.Fragment>
@@ -4406,13 +4370,9 @@ const CmdbManagementTab: React.FC<Props> = ({ language, cmdbPage, currentUser })
               >
                 {zh ? '取消' : 'Cancel'}
               </button>
-              <button
-                onClick={doDelete}
-                className="inline-flex h-10 px-5 items-center justify-center gap-1.5 rounded-xl bg-red-500 text-sm font-semibold text-white shadow-md hover:bg-red-600 transition-all"
-              >
-                <Trash2 size={14} />
+              <ActionButton icon={Trash2} variant="danger" size="md" onClick={doDelete}>
                 {zh ? '删除' : 'Delete'}
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>

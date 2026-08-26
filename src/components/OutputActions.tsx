@@ -14,8 +14,8 @@ import { Copy, Check, Download, FileDown } from 'lucide-react';
  * - CSV:      optional, exports `csvRows` as .csv (Excel-ready with BOM).
  *
  * Theme presets:
- *   - `dark`  : GitHub-style dark navy pill with cyan accent (default).
- *   - `light` : slate pill for use on white panels.
+ *   - `dark`  : GitHub-style emphasis surface with the semantic accent color (default).
+ *   - `light` : the same semantic palette on a light surface.
  */
 interface OutputActionsProps {
   text: string;
@@ -99,16 +99,16 @@ const OutputActions: React.FC<OutputActionsProps> = ({
   }, [csvRows, filename]);
 
   // ── Pill styles ─────────────────────────────────────────────
-  // Dark  = project's signature GitHub-style pill (#00172d bg, cyan accent).
-  // Light = slate pill for use on white surfaces.
+  // Both presets use the shared Primer-inspired semantic tokens so output
+  // actions remain consistent with the rest of the application in light/dark mode.
   const isDark = theme === 'dark';
   const pillBase = isDark
-    ? 'bg-[#00172d] hover:bg-[#0a2540] border border-white/5'
-    : 'bg-slate-100 hover:bg-slate-200 border border-slate-200';
-  const textDefault = isDark ? 'text-cyan-400' : 'text-slate-700';
-  const textSuccess = isDark ? 'text-emerald-400' : 'text-emerald-600';
-  const textDisabled = isDark ? 'text-white/20' : 'text-slate-300';
-  const dividerCol = isDark ? 'bg-white/10' : 'bg-slate-300';
+    ? 'bg-[var(--ui-surface-emphasis)] hover:bg-[var(--ui-border)] border border-[var(--ui-border)]'
+    : 'bg-[var(--ui-surface-muted)] hover:bg-[var(--ui-surface-emphasis)] border border-[var(--ui-border)]';
+  const textDefault = 'text-[var(--ui-accent)]';
+  const textSuccess = 'text-[var(--ui-success)]';
+  const textDisabled = 'text-[var(--ui-fg-subtle)]';
+  const dividerCol = 'bg-[var(--ui-border)]';
 
   // Segmented pill: [Copy | Download | CSV?]
   return (
@@ -122,8 +122,8 @@ const OutputActions: React.FC<OutputActionsProps> = ({
         onClick={handleCopy}
         disabled={!text}
         className={`group/copy inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono font-semibold transition-colors ${
-          !text ? `${textDisabled} cursor-not-allowed` : copied ? textSuccess : `${textDefault} hover:text-white`
-        }`}
+          !text ? `${textDisabled} cursor-not-allowed` : copied ? textSuccess : `${textDefault} hover:text-[var(--ui-accent-hover)]`
+          }`}
         title={label('复制到剪贴板', 'Copy to clipboard')}
         aria-label={label('复制', 'Copy')}
       >
@@ -142,8 +142,8 @@ const OutputActions: React.FC<OutputActionsProps> = ({
         onClick={handleDownloadText}
         disabled={!text}
         className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono font-semibold transition-colors ${
-          !text ? `${textDisabled} cursor-not-allowed` : `${textDefault} hover:text-white`
-        }`}
+          !text ? `${textDisabled} cursor-not-allowed` : `${textDefault} hover:text-[var(--ui-accent-hover)]`
+          }`}
         title={label('下载 TXT', 'Download TXT')}
         aria-label={label('下载', 'Download')}
       >
@@ -158,7 +158,7 @@ const OutputActions: React.FC<OutputActionsProps> = ({
           <button
             type="button"
             onClick={handleDownloadCsv}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono font-semibold transition-colors ${textDefault} hover:text-white`}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono font-semibold transition-colors ${textDefault} hover:text-[var(--ui-accent-hover)]`}
             title={label('导出 CSV (Excel 可直接打开)', 'Export CSV (opens in Excel)')}
             aria-label={label('导出 CSV', 'Export CSV')}
           >

@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import PageHero from '../components/PageHero';
+import { ActionButton, ActionIconButton } from '../components/ui/ActionIconButton';
 import { apiRequest, authHeaders } from '../api/http';
 
 type SearchType =
@@ -791,16 +792,19 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                       <WrapText size={13} />
                     </button>
                     {(['csv', 'xlsx', 'json', 'markdown'] as const).map((format) => (
-                      <button
+                      <ActionButton
                         type="button"
                         key={format}
+                        icon={exporting === format ? Loader2 : Download}
+                        iconClassName={exporting === format ? 'animate-spin' : undefined}
+                        variant="default"
+                        size="sm"
                         onClick={() => void exportResults(format)}
                         disabled={Boolean(exporting)}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[9px] font-bold uppercase text-slate-500 hover:border-cyan-200 hover:text-cyan-700 disabled:opacity-40"
+                        className="!h-8 !px-2 !text-[9px] uppercase"
                       >
-                        {exporting === format ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
                         {format === 'markdown' ? 'MD' : format.toUpperCase()}
-                      </button>
+                      </ActionButton>
                     ))}
                   </div>
                 </div>
@@ -983,7 +987,14 @@ const ConfigSearchTab: React.FC<ConfigSearchTabProps> = ({ t, language = 'zh' })
                       <p className="truncate text-xs font-black text-slate-700">{item.name || item.query_text}</p>
                       <p className="mt-0.5 truncate font-mono text-[9px] text-slate-400">{item.query_text} · {item.search_type}</p>
                     </button>
-                    <button type="button" onClick={() => void deleteSavedSearch(item.id)} className="rounded-lg p-1.5 text-slate-300 opacity-0 hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100"><Trash2 size={12} /></button>
+                    <ActionIconButton
+                      icon={Trash2}
+                      label={zh ? '删除已保存搜索' : 'Delete saved search'}
+                      size="xs"
+                      variant="danger"
+                      onClick={() => void deleteSavedSearch(item.id)}
+                      className="opacity-0 group-hover:opacity-100"
+                    />
                   </div>
                 ))}
               </div>

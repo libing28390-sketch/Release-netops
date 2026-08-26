@@ -4,6 +4,7 @@ import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock, In
 import type { ThemeMode } from '../types';
 import { useSystem } from '../hooks/useSystem';
 import QRCode from 'react-qr-code';
+import { ActionLink } from './ui/ActionIconButton';
 
 interface AvatarPreset {
   id: string;
@@ -842,22 +843,26 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     <span className={`text-[11px] ${isDark ? 'text-white/55' : 'text-black/60'}`}>
                       {language === 'zh' ? '按当前工作站系统下载 Terminal Agent：' : 'Download the Terminal Agent for this workstation:'}
                     </span>
-                    <a
+                    <ActionLink
                       href="/api/system/download-terminal-agent?platform=windows"
                       download="NexoraTerminalAgent.exe"
-                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 shadow-sm`}
+                      icon={Download}
+                      variant="success"
+                      size="sm"
+                      className="!text-[11px]"
                     >
-                      <Download size={12} />
                       {language === 'zh' ? 'Windows 一键启动' : 'Windows EXE'}
-                    </a>
-                    <a
+                    </ActionLink>
+                    <ActionLink
                       href="/api/system/download-terminal-agent?platform=ubuntu"
                       download="install-terminal-agent.sh"
-                      className="px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-sky-500/10 text-sky-400 border border-sky-500/20 hover:bg-sky-500/20 shadow-sm"
+                      icon={Download}
+                      variant="accent"
+                      size="sm"
+                      className="!text-[11px]"
                     >
-                      <Download size={12} />
                       Ubuntu Script
-                    </a>
+                    </ActionLink>
                 </div>
                 
                 <p className={`text-[10px] leading-relaxed flex items-center gap-1.5 ${isDark ? 'text-white/30' : 'text-black/40'}`}>

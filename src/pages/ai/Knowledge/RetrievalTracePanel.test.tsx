@@ -46,8 +46,8 @@ describe('RetrievalTracePanel', () => {
   it('shows bounded trace details without query text', async () => {
     const user = userEvent.setup();
     render(<RetrievalTracePanel />);
-    expect(await screen.findByText('Trace 详情')).toBeTruthy();
-    expect(screen.getByText('Query 0123456789ab…')).toBeTruthy();
+    expect(await screen.findByText('检索详情')).toBeTruthy();
+    expect(screen.getByText('问题摘要 0123456789ab…')).toBeTruthy();
     expect(screen.queryByText('show secret command')).toBeNull();
     await user.click(screen.getByRole('button', { name: /rt_123456789/ }));
     expect(getTrace).toHaveBeenCalledWith('rt_1234567890abcdef');
@@ -56,6 +56,6 @@ describe('RetrievalTracePanel', () => {
   it('shows an empty state when no trace exists', async () => {
     listTraces.mockResolvedValue({ items: [], limit: 50, status: 'all', redacted: true });
     render(<RetrievalTracePanel />);
-    expect(await screen.findByText('暂无 Trace；先在 Copilot 或检索测试中执行一次本地检索。')).toBeTruthy();
+    expect(await screen.findByText('暂无检索记录；先在 Copilot 中提问，或执行一次本地检索。')).toBeTruthy();
   });
 });

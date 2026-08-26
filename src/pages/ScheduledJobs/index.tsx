@@ -7,6 +7,7 @@ import {
   Database, Activity, Power, PowerOff,
   Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight, ChevronUp, Filter, ShieldAlert, User
 } from 'lucide-react';
+import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 
 import Pagination from '../../components/Pagination';
 import { DataTable } from '../../components/DataTable';
@@ -1151,28 +1152,23 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                              <button
+                            <ActionIconGroup label={zh ? '计划任务操作' : 'Scheduled job actions'} className="shrink-0" onClick={e => e.stopPropagation()}>
+                              <ActionIconButton
+                                icon={Eye}
+                                label={zh ? '查看运行详情' : 'View Detail'}
                                 onClick={() => setDetailJob(job)}
-                                className="p-2 rounded-xl text-slate-400 hover:bg-cyan-50 hover:text-cyan-600 transition-all opacity-0 group-hover:opacity-100"
-                                title={zh ? '查看运行详情' : 'View Detail'}
-                              >
-                                <Eye size={16} />
-                              </button>
-                              <button
+                              />
+                              <ActionIconButton
+                                icon={Pencil}
+                                label={zh ? '编辑配置' : 'Edit'}
                                 onClick={() => openEditModal(job)}
-                                className="p-2 rounded-xl text-slate-400 hover:bg-cyan-50 hover:text-cyan-600 transition-all"
-                                title={zh ? '编辑配置' : 'Edit'}
-                              >
-                                <Pencil size={16} />
-                              </button>
-                              <button
+                              />
+                              <ActionIconButton
+                                icon={isEnabled ? PowerOff : Power}
+                                label={isEnabled ? (zh ? '暂停执行' : 'Disable') : (zh ? '恢复启动' : 'Enable')}
+                                variant={isEnabled ? 'default' : 'success'}
                                 onClick={() => toggleJobEnabled(job)}
-                                className={`p-2 rounded-xl transition-all ${isEnabled ? 'text-slate-400 hover:bg-amber-50 hover:text-amber-600' : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
-                                title={isEnabled ? (zh ? '暂停执行' : 'Disable') : (zh ? '恢复启动' : 'Enable')}
-                              >
-                                {isEnabled ? <PowerOff size={16} /> : <Power size={16} />}
-                              </button>
+                              />
                               {deleteConfirmId === job.id ? (
                                 <div className="flex items-center gap-1.5 ml-1">
                                   <button
@@ -1201,15 +1197,14 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                   </button>
                                 </div>
                               ) : (
-                                <button
+                                <ActionIconButton
+                                  icon={Trash2}
+                                  label={zh ? '删除作业' : 'Delete'}
+                                  variant="danger"
                                   onClick={() => setDeleteConfirmId(job.id)}
-                                  className="p-2 rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all"
-                                  title={zh ? '删除作业' : 'Delete'}
-                                >
-                                  <Trash2 size={16} />
-                                </button>
+                                />
                               )}
-                            </div>
+                            </ActionIconGroup>
                           </div>
 
                           <div className="px-5 py-2.5 bg-slate-50/80 border-t border-slate-100 flex items-center gap-4 text-[11px] text-slate-500">

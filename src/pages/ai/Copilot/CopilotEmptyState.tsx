@@ -40,10 +40,10 @@ export const CopilotEmptyState: React.FC<CopilotEmptyStateProps> = ({ onSelectPr
         <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-100 dark:border-indigo-900 flex items-center justify-center text-indigo-600 dark:text-indigo-400 mx-auto shadow-sm">
           <Sparkles className="w-6 h-6" />
         </div>
-        <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">
+        <h1 className="nx-page-title text-gray-900 dark:text-white">
           Nexora AI
         </h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">
+        <p className="nx-page-description max-w-md mx-auto text-gray-500 dark:text-gray-400">
           网络运维 Copilot，有问题直接问我。支持查资产、定位端口、生成厂商配置与排查故障。
         </p>
       </div>

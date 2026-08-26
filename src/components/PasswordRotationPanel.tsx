@@ -6,6 +6,7 @@ import {
   RefreshCw, Shield, Loader2, Search, ShieldCheck, ShieldAlert, ShieldX,
   Key, KeyRound, Server, User, Eye, EyeOff, Copy, Check, X,
 } from 'lucide-react';
+import { ActionIconButton } from './ui/ActionIconButton';
 
 interface RotationDevice {
   id: string;
@@ -712,7 +713,7 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
       {/* ═══ High-Density Pro Table ═══ */}
       <div className="bg-white rounded-xl border border-black/[0.06] shadow-md overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse table-fixed">
+          <table className="nx-data-table nx-data-table--compact table-fixed">
             <thead>
               <tr className="bg-slate-50 border-b border-black/[0.05]">
                 <th className="w-[260px] px-4 py-2.5 text-[10px] font-black text-slate-400 uppercase tracking-widest border-r border-black/[0.03]">{zh ? '凭据分组 / 未绑定设备' : 'CREDENTIAL / UNBOUND DEVICE'}</th>
@@ -847,14 +848,13 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                                       </button>
                                       {isRevealed && (
                                         <>
-                                          <button
-                                            type="button"
+                                          <ActionIconButton
+                                            icon={secretCopied ? Check : Copy}
+                                            label={zh ? '复制并记录审计' : 'Copy and audit'}
+                                            size="xs"
+                                            variant={secretCopied ? 'success' : 'accent'}
                                             onClick={() => { void copyRevealedSecret(); }}
-                                            className="inline-flex h-5 w-5 items-center justify-center rounded border border-slate-200 bg-white text-slate-400 hover:border-cyan-300 hover:text-cyan-600"
-                                            title={zh ? '复制并记录审计' : 'Copy and audit'}
-                                          >
-                                            {secretCopied ? <Check size={10} /> : <Copy size={10} />}
-                                          </button>
+                                          />
                                           <span className="max-w-28 truncate rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300" title={revealedSecret.secret}>{revealedSecret.secret}</span>
                                         </>
                                       )}
@@ -891,14 +891,13 @@ export default function PasswordRotationPanel({ language, currentUser }: Passwor
                                                 </button>
                                                 {isLocalRevealed && (
                                                   <>
-                                                    <button
-                                                      type="button"
+                                                    <ActionIconButton
+                                                      icon={localSecretCopied ? Check : Copy}
+                                                      label={zh ? '复制并记录审计' : 'Copy and audit'}
+                                                      size="xs"
+                                                      variant={localSecretCopied ? 'success' : 'accent'}
                                                       onClick={() => { void copyDeviceLocalSecret(); }}
-                                                      className="inline-flex h-5 w-5 items-center justify-center rounded border border-slate-200 bg-white text-slate-400 hover:border-amber-300 hover:text-amber-600"
-                                                      title={zh ? '复制并记录审计' : 'Copy and audit'}
-                                                    >
-                                                      {localSecretCopied ? <Check size={10} /> : <Copy size={10} />}
-                                                    </button>
+                                                    />
                                                     <span className="max-w-28 truncate rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[9px] text-amber-300" title={localRevealedSecret.secret}>{localRevealedSecret.secret}</span>
                                                   </>
                                                 )}

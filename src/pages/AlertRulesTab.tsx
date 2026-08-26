@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, ChevronRight, Copy, Edit3, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, X, Search, Check, Shield } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Pencil, Plus, Power, PowerOff, RefreshCw, Save, SlidersHorizontal, Trash2, X, Search, Check, Shield } from 'lucide-react';
 import type { AlertRuleCollectionBinding, AlertRuleHistoryItem, AlertRuleListResponse, AlertRulePreview, AlertRuleSettings } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { useSystem } from '../hooks/useSystem';
 import { severityBadgeClass } from '../components/shared';
 import {
@@ -912,10 +913,9 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
               <PowerOff size={13} />
               {language === 'zh' ? '批量停用' : 'Disable'}
             </button>
-            <button onClick={() => void handleBatchDelete()} className={alertDangerButtonClass + ' !h-9 !text-xs'}>
-              <Trash2 size={13} />
+            <ActionButton icon={Trash2} variant="danger" size="sm" onClick={() => void handleBatchDelete()}>
               {language === 'zh' ? '批量删除' : 'Delete'}
-            </button>
+            </ActionButton>
             <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-xs text-black/40 hover:text-black/60">
               {language === 'zh' ? '取消选择' : 'Clear'}
             </button>
@@ -980,23 +980,25 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                       <div className="group/copy-name relative">
                         <div className="flex items-center gap-1.5">
                           <p className="text-sm font-semibold text-[#164e63]">{rule.name}</p>
-                          <button
+                          <ActionIconButton
+                            icon={copiedId === `${rule.id}-name` ? Check : Copy}
+                            label={language === 'zh' ? '复制名称' : 'Copy Name'}
+                            size="xs"
+                            variant={copiedId === `${rule.id}-name` ? 'success' : 'accent'}
                             onClick={(e) => { e.stopPropagation(); copyToClipboard(rule.name, `${rule.id}-name`); }}
-                            className={`opacity-0 group-hover/copy-name:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/5 ${copiedId === `${rule.id}-name` ? 'opacity-100' : ''}`}
-                            title={language === 'zh' ? '复制名称' : 'Copy Name'}
-                          >
-                            {copiedId === `${rule.id}-name` ? <Check size={11} className="text-green-500" /> : <Copy size={11} className="text-black/30" />}
-                          </button>
+                            className={`opacity-0 group-hover/copy-name:opacity-100 ${copiedId === `${rule.id}-name` ? 'opacity-100' : ''}`}
+                          />
                         </div>
                         <div className="mt-1 flex items-center gap-1.5 group/copy-id">
                           <p className="text-[10px] font-mono text-black/30">{rule.id}</p>
-                          <button
+                          <ActionIconButton
+                            icon={copiedId === `${rule.id}-id` ? Check : Copy}
+                            label={language === 'zh' ? '复制 ID' : 'Copy ID'}
+                            size="xs"
+                            variant={copiedId === `${rule.id}-id` ? 'success' : 'accent'}
                             onClick={(e) => { e.stopPropagation(); copyToClipboard(rule.id || '', `${rule.id}-id`); }}
-                            className={`opacity-0 group-hover/copy-id:opacity-100 transition-opacity p-0.5 rounded hover:bg-black/5 ${copiedId === `${rule.id}-id` ? 'opacity-100' : ''}`}
-                            title={language === 'zh' ? '复制 ID' : 'Copy ID'}
-                          >
-                            {copiedId === `${rule.id}-id` ? <Check size={9} className="text-green-500" /> : <Copy size={9} className="text-black/20" />}
-                          </button>
+                            className={`opacity-0 group-hover/copy-id:opacity-100 ${copiedId === `${rule.id}-id` ? 'opacity-100' : ''}`}
+                          />
                         </div>
                       </div>
                     </td>
@@ -1057,29 +1059,11 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     </td>
                     <td className="px-5 py-4 align-top text-sm text-black/60">{formatTs(rule.updated_at || rule.created_at)}</td>
                     <td className="px-5 py-4 align-top">
-                      <div className="flex items-center gap-1">
-                        <button
-                          title={language === 'zh' ? '编辑' : 'Edit'}
-                          onClick={() => openEdit(rule)}
-                          className={alertTableActionButtonClass}
-                        >
-                          <Edit3 size={13} />
-                        </button>
-                        <button
-                          title={language === 'zh' ? '复制规则' : 'Clone rule'}
-                          onClick={() => handleCloneRule(rule)}
-                          className={alertTableActionButtonClass}
-                        >
-                          <Copy size={13} />
-                        </button>
-                        <button
-                          title={language === 'zh' ? '删除' : 'Delete'}
-                          onClick={() => void handleInlineDelete(rule)}
-                          className={alertTableActionDangerButtonClass}
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
+                      <ActionIconGroup label={language === 'zh' ? '告警规则操作' : 'Alert rule actions'}>
+                        <ActionIconButton icon={Pencil} label={language === 'zh' ? '编辑' : 'Edit'} size="sm" onClick={() => openEdit(rule)} />
+                        <ActionIconButton icon={Copy} label={language === 'zh' ? '复制规则' : 'Clone rule'} size="sm" variant="accent" onClick={() => handleCloneRule(rule)} />
+                        <ActionIconButton icon={Trash2} label={language === 'zh' ? '删除' : 'Delete'} size="sm" variant="danger" onClick={() => void handleInlineDelete(rule)} />
+                      </ActionIconGroup>
                     </td>
                   </tr>
                 ))
@@ -1478,10 +1462,9 @@ const AlertRulesTab: React.FC<AlertPageCommonProps> = ({ language, currentUserna
                     {language === 'zh' ? '重置' : 'Reset'}
                   </button>
                   {editingRuleId ? (
-                    <button onClick={handleDelete} className={alertDangerButtonClass}>
-                      <Trash2 size={14} />
+                    <ActionButton icon={Trash2} variant="danger" size="md" onClick={handleDelete}>
                       {language === 'zh' ? '删除' : 'Delete'}
-                    </button>
+                    </ActionButton>
                   ) : null}
                   <button
                     disabled={saving || !isDirty || (!skipApproval && approvalStatus !== 'verified')}

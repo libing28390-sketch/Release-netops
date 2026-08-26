@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Cpu, Clock, Database, Layers, ShieldAlert, Code, Copy, Check } from 'lucide-react';
 import type { AssistantRetrievalTrace } from '../../../api/ai';
+import { ActionButton } from '../../../components/ui/ActionIconButton';
 
 interface CopilotInspectorDrawerProps {
   isOpen: boolean;
@@ -178,15 +179,17 @@ export const CopilotInspectorDrawer: React.FC<CopilotInspectorDrawerProps> = ({
             <div className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
               <Code className="w-3.5 h-3.5 text-amber-500" /> 原始 Message Payload
             </div>
-            <button
+            <ActionButton
               type="button"
+              icon={copied ? Check : Copy}
+              variant={copied ? 'success' : 'accent'}
+              size="sm"
               onClick={handleCopyPayload}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-[10px] text-gray-600 dark:text-gray-300 transition"
               title="复制 JSON 载荷"
+              className="!h-7 !px-2 !text-[10px]"
             >
-              {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
               {copied ? '已复制' : '复制 JSON'}
-            </button>
+            </ActionButton>
           </div>
           <pre className="p-3 bg-[#0d1117] text-[#e6edf3] font-mono text-[10px] rounded-xl overflow-auto max-h-80 leading-relaxed border border-gray-800 select-all shadow-inner">
             {JSON.stringify(activeMessage || {}, null, 2)}

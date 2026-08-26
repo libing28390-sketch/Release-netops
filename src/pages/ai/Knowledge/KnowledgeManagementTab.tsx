@@ -43,6 +43,7 @@ import RagEvaluationPanel from './RagEvaluationPanel';
 import RetrievalTracePanel from './RetrievalTracePanel';
 import IngestionJobsPanel from './IngestionJobsPanel';
 import KnowledgeAdminNavigation, { type KnowledgeAdminView } from './KnowledgeAdminNavigation';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
 /* ── Types ── */
 interface FolderCategory {
@@ -324,14 +325,14 @@ const DirectoryTreePicker: React.FC<DirectoryTreePickerProps> = ({
             </button>
           )}
           {!editing && (
-            <div className="flex shrink-0 items-center gap-0.5">
+            <ActionIconGroup className="flex shrink-0 items-center gap-0.5" label="目录操作">
               {onUpload && (
-                <button type="button" onClick={() => onUpload(node)} disabled={disabled || Boolean(busyAction)} className="rounded-lg p-1 text-gray-400 hover:bg-emerald-50 hover:text-emerald-600 disabled:opacity-40 dark:hover:bg-emerald-950/40" title="在此目录导入文件"><UploadCloud className="h-3.5 w-3.5" /></button>
+                <ActionIconButton icon={UploadCloud} label="在此目录导入文件" size="xs" variant="success" onClick={() => onUpload(node)} disabled={disabled || Boolean(busyAction)} />
               )}
-              <button type="button" onClick={() => beginCreate(node.id)} disabled={disabled || Boolean(busyAction)} className="rounded-lg p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-40 dark:hover:bg-indigo-950/40" title="新建子目录"><Plus className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={() => beginRename(node)} disabled={disabled || Boolean(busyAction)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-gray-700 dark:hover:text-gray-200" title="重命名目录"><Pencil className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={() => void handleDelete(node)} disabled={disabled || Boolean(busyAction)} className="rounded-lg p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-950/40" title="删除目录"><Trash2 className="h-3.5 w-3.5" /></button>
-            </div>
+              <ActionIconButton icon={Plus} label="新建子目录" size="xs" variant="accent" onClick={() => beginCreate(node.id)} disabled={disabled || Boolean(busyAction)} />
+              <ActionIconButton icon={Pencil} label="重命名目录" size="xs" onClick={() => beginRename(node)} disabled={disabled || Boolean(busyAction)} />
+              <ActionIconButton icon={Trash2} label="删除目录" size="xs" variant="danger" onClick={() => void handleDelete(node)} disabled={disabled || Boolean(busyAction)} />
+            </ActionIconGroup>
           )}
         </div>
         {editing && node.children.length > 0 && expanded && node.children.map(renderNode)}
@@ -1758,11 +1759,11 @@ export const KnowledgeManagementTab: React.FC = () => {
       {/* Header Title & Primary Action Buttons */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+          <h2 className="nx-page-title flex items-center gap-2 text-gray-900 dark:text-white">
             <BookOpen className="w-6 h-6 text-indigo-500" />
             企业网络知识库中心 (RAG Data Engine)
           </h2>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          <p className="nx-page-description mt-1 text-gray-500 dark:text-gray-400">
             支持目录分类、多文件批量上传 (Markdown / HTML / PDF / DOCX / TXT / ZIP 压缩包) 与统一服务端解析。
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
@@ -1906,14 +1907,9 @@ export const KnowledgeManagementTab: React.FC = () => {
                 {exporting ? '导出中…' : '导出当前筛选'}
               </button>
               {selectedDocIds.size > 0 && (
-                <button
-                  onClick={handleBatchDelete}
-                  disabled={deleting}
-                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-xs transition cursor-pointer disabled:opacity-50"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
+                <ActionButton icon={Trash2} variant="danger" size="sm" onClick={handleBatchDelete} disabled={deleting}>
                   {deleting ? '删除中...' : `批量删除 (${selectedDocIds.size})`}
-                </button>
+                </ActionButton>
               )}
               <div className="text-xs text-gray-500 dark:text-gray-400">
                 共计 <strong className="text-gray-800 dark:text-gray-200 font-semibold">{totalDocuments}</strong> 篇知识文档
@@ -2078,7 +2074,7 @@ export const KnowledgeManagementTab: React.FC = () => {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-xs text-left">
+                <table className="nx-data-table min-w-full text-left">
                 <thead className="sticky top-0 z-10 bg-gray-50 shadow-sm dark:bg-gray-900/95 text-gray-500 dark:text-gray-400 font-semibold">
                   <tr>
                     <th className="px-3 py-3 w-10">
@@ -2197,16 +2193,14 @@ export const KnowledgeManagementTab: React.FC = () => {
                             >
                               <RefreshCw className="h-3.5 w-3.5" />
                             </button>
-                            <button
-                              type="button"
+                            <ActionIconButton
+                              icon={Trash2}
+                              label="删除此文档（独立确认）"
+                              size="sm"
+                              variant="danger"
                               onClick={() => void requestDocumentAction(doc, 'delete')}
                               disabled={Boolean(documentActionBusy)}
-                              className="rounded-lg p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-500 disabled:cursor-wait disabled:opacity-40 dark:hover:bg-red-950/40"
-                              title="删除此文档（独立确认）"
-                              aria-label="删除此文档"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            />
                           </div>
                         </td>
                       </tr>

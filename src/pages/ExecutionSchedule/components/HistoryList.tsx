@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import Pagination from '../../../components/Pagination';
 import type { UnifiedExecutionLog } from '../types';
+import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
 interface HistoryListProps {
   zh: boolean;
@@ -28,18 +29,41 @@ const HistoryList: React.FC<HistoryListProps> = ({
   onSelectLog, onExport,
 }) => {
   return (
-    <div className="rounded-2xl border border-black/5 bg-white shadow-sm overflow-hidden min-h-[500px] flex flex-col">
-      <div className="px-6 py-4 border-b border-black/5 bg-black/[0.01] flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center">
-            <Activity size={16} className="text-indigo-600" />
+    <section className="ops-surface nx-history-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b px-5 py-4 sm:px-6" style={{ borderColor: 'var(--ops-line)' }}>
+        <div className="flex min-w-0 items-center gap-3">
+          <div
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border"
+            style={{
+              background: 'var(--ui-accent-subtle)',
+              borderColor: 'color-mix(in srgb, var(--ui-accent) 18%, var(--ui-border))',
+              color: 'var(--ui-accent)',
+            }}
+          >
+            <Activity size={17} strokeWidth={1.8} />
           </div>
-          <h3 className="text-sm font-bold text-[#164e63]">{zh ? '执行流水历史' : 'Execution Logs'}</h3>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <h3 className="nx-section-title truncate" style={{ color: 'var(--ops-ink)' }}>
+                {zh ? '执行流水历史' : 'Execution Logs'}
+              </h3>
+              <span className="inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 nx-micro-text tabular-nums" style={{ borderColor: 'var(--ops-line)', background: 'var(--ui-surface-muted)', color: 'var(--ops-muted)' }}>
+                {logs.length}
+              </span>
+            </div>
+            <p className="nx-micro-text mt-0.5 truncate" style={{ color: 'var(--ops-muted)' }}>
+              {zh ? '按触发方式筛选并追溯每次自动化执行结果' : 'Filter by trigger and trace each automation result'}
+            </p>
+          </div>
         </div>
-        
-        <div className="flex items-center gap-4">
-          {/* Type Filter Buttons */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+
+        <div className="flex items-center gap-3">
+          <div
+            className="flex items-center gap-0.5 rounded-lg border p-0.5"
+            style={{ borderColor: 'var(--ops-line)', background: 'var(--ui-surface-muted)' }}
+            role="tablist"
+            aria-label={zh ? '执行类型筛选' : 'Execution type filter'}
+          >
             {(['all', 'manual', 'plan', 'job'] as const).map(type => {
               const labels = {
                 all: zh ? '全部' : 'All',
@@ -47,14 +71,18 @@ const HistoryList: React.FC<HistoryListProps> = ({
                 plan: zh ? '执行计划' : 'Plan',
                 job: zh ? '定时作业' : 'Job',
               };
+              const isActive = executionTypeFilter === type;
               return (
                 <button
                   key={type}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
                   onClick={() => onFilterChange(type)}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
-                    executionTypeFilter === type 
-                      ? 'bg-white text-[#164e63] shadow-sm' 
-                      : 'text-black/50 hover:text-black/70'
+                  className={`h-8 rounded-md px-3 text-xs font-semibold transition-colors ${
+                    isActive
+                      ? 'bg-[var(--ui-accent)] text-white shadow-sm'
+                      : 'text-[var(--ui-fg-muted)] hover:bg-[var(--ui-surface)] hover:text-[var(--ui-fg)]'
                   }`}
                 >
                   {labels[type]}
@@ -62,79 +90,93 @@ const HistoryList: React.FC<HistoryListProps> = ({
               );
             })}
           </div>
-
-          <div className="text-[11px] font-bold text-black/25 uppercase tracking-widest tabular-nums">
-            {logs.length} {zh ? '条记录' : 'Logs'}
-          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto max-h-[calc(100vh-380px)] custom-scrollbar">
+      <div className="min-h-0 flex-1 overflow-auto custom-scrollbar">
         {loading ? (
-          <div className="h-full flex flex-col items-center justify-center py-24 text-black/20 gap-3">
-            <RotateCcw size={32} className="animate-spin opacity-20" />
-            <span className="text-sm font-medium">{zh ? '获取流水中...' : 'Loading history...'}</span>
+          <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 px-6 py-20" style={{ color: 'var(--ops-muted)' }}>
+            <RotateCcw size={26} className="animate-spin" style={{ opacity: 0.45, color: 'var(--ui-accent)' }} />
+            <span className="nx-meta-text">{zh ? '获取流水中...' : 'Loading history...'}</span>
           </div>
         ) : paginatedLogs.length > 0 ? (
-          <table className="nx-data-table min-w-[1000px] text-left">
-            <thead className="sticky top-0 bg-slate-50 border-b border-black/5 z-10">
-              <tr className="bg-black/[0.01]">
-                <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '触发时间' : 'Triggered At'}</th>
-                <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '任务名称' : 'Task Name'}</th>
-                <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '执行方式' : 'Type'}</th>
-                <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '状态' : 'Status'}</th>
-                <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '执行概况' : 'Execution Summary'}</th>
-                <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider">{zh ? '执行人' : 'Operator'}</th>
-                <th className="px-6 py-4 text-[11px] font-bold text-black/35 uppercase tracking-wider text-right">{zh ? '操作' : 'Actions'}</th>
+          <table className="nx-data-table min-w-[1180px] table-auto text-left">
+            <colgroup>
+              <col className="w-[180px]" />
+              <col className="w-[250px]" />
+              <col className="w-[150px]" />
+              <col className="w-[145px]" />
+              <col className="w-[190px]" />
+              <col className="w-[120px]" />
+              <col className="w-[220px]" />
+            </colgroup>
+            <thead className="sticky top-0 z-10">
+              <tr>
+                <th>{zh ? '触发时间' : 'Triggered At'}</th>
+                <th>{zh ? '任务名称' : 'Task Name'}</th>
+                <th>{zh ? '执行方式' : 'Type'}</th>
+                <th>{zh ? '状态' : 'Status'}</th>
+                <th>{zh ? '执行概况' : 'Execution Summary'}</th>
+                <th>{zh ? '执行人' : 'Operator'}</th>
+                <th className="text-right">{zh ? '操作' : 'Actions'}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-black/[0.03]">
+            <tbody>
               {paginatedLogs.map(log => {
-                const statusMap: Record<string, { label: string; cls: string; dot: string }> = {
-                  completed: { label: zh ? '已完成' : 'Completed', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
-                  success: { label: zh ? '已完成' : 'Completed', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
-                  running: { label: zh ? '执行中' : 'Running', cls: 'bg-cyan-50 text-cyan-700', dot: 'bg-cyan-500' },
-                  failed: { label: zh ? '已失败' : 'Failed', cls: 'bg-red-50 text-red-700', dot: 'bg-red-500' },
-                  awaiting_approval: { label: zh ? '待审批' : 'Awaiting approval', cls: 'bg-violet-50 text-violet-700', dot: 'bg-violet-500' },
-                  approval_rejected: { label: zh ? '审批拒绝' : 'Approval rejected', cls: 'bg-rose-50 text-rose-700', dot: 'bg-rose-500' },
+                const statusMap: Record<string, { label: string; tone: 'success' | 'info' | 'danger' | 'warning' | 'neutral' }> = {
+                  completed: { label: zh ? '已完成' : 'Completed', tone: 'success' },
+                  success: { label: zh ? '已完成' : 'Completed', tone: 'success' },
+                  running: { label: zh ? '执行中' : 'Running', tone: 'info' },
+                  failed: { label: zh ? '已失败' : 'Failed', tone: 'danger' },
+                  awaiting_approval: { label: zh ? '待审批' : 'Awaiting approval', tone: 'warning' },
+                  approval_rejected: { label: zh ? '审批拒绝' : 'Approval rejected', tone: 'danger' },
                 };
-                const st = statusMap[log.status] || { label: log.status, cls: 'bg-slate-50 text-slate-600', dot: 'bg-slate-400' };
+                const st = statusMap[log.status] || { label: log.status, tone: 'neutral' as const };
                 
-                const typeLabels = {
-                  manual: { label: zh ? '手动执行' : 'Manual', cls: 'bg-violet-50 text-violet-600 border-violet-100' },
-                  plan: { label: zh ? '执行计划' : 'Execution Plan', cls: 'bg-blue-50 text-blue-600 border-blue-100' },
-                  job: { label: zh ? '定时作业' : 'Scheduled Job', cls: 'bg-amber-50 text-amber-600 border-amber-100' },
+                const typeLabels: Record<string, { label: string; tone: 'manual' | 'plan' | 'job' | 'neutral' }> = {
+                  manual: { label: zh ? '手动执行' : 'Manual', tone: 'manual' },
+                  plan: { label: zh ? '执行计划' : 'Execution Plan', tone: 'plan' },
+                  job: { label: zh ? '定时作业' : 'Scheduled Job', tone: 'job' },
                 };
-                const tl = typeLabels[log.trigger_type] || { label: log.trigger_type, cls: 'bg-slate-50 text-slate-600 border-slate-100' };
+                const tl = typeLabels[log.trigger_type] || { label: log.trigger_type, tone: 'neutral' as const };
 
                 return (
-                  <tr key={`${log.source}-${log.id}`} className="hover:bg-indigo-50/20 transition-colors">
-                    <td className="px-6 py-4 text-[13px] text-[#164e63] font-mono whitespace-nowrap">
-                      {new Date(log.started_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false })}
+                  <tr key={`${log.source}-${log.id}`}>
+                    <td className="whitespace-nowrap">
+                      <span className="nx-code-text" style={{ color: 'var(--ui-fg-muted)' }}>
+                        {new Date(log.started_at).toLocaleString(zh ? 'zh-CN' : 'en-US', { hour12: false })}
+                      </span>
                     </td>
-                    <td className="px-6 py-4 text-xs font-bold text-black/80">
-                      {log.name}
+                    <td>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold" style={{ color: 'var(--ops-ink)' }}>{log.name}</div>
+                        <div className="nx-micro-text mt-0.5" style={{ color: 'var(--ui-fg-subtle)' }}>
+                          {log.source === 'inspection' ? (zh ? '巡检执行' : 'Inspection run') : (zh ? '自动化执行' : 'Automation run')}
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border ${tl.cls}`}>
+                    <td>
+                      <span className={`nx-history-type-pill nx-history-type-pill--${tl.tone}`}>
                         {log.trigger_type === 'manual' ? <Play size={10} /> : log.trigger_type === 'plan' ? <CalendarClock size={10} /> : <Clock size={10} />}
                         {tl.label}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold ${st.cls}`}>
-                        <div className={`w-1.5 h-1.5 rounded-full ${log.status === 'running' ? 'animate-pulse' : ''} ${st.dot}`} />
+                    <td>
+                      <span className={`nx-history-status-pill nx-history-status-pill--${st.tone}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${log.status === 'running' ? 'animate-pulse' : ''}`} />
                         {st.label}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col">
-                        <span className="text-xs font-bold text-black/60">{log.total_devices} {zh ? '台设备' : 'Devices'}</span>
-                        <div className="flex items-center gap-1.5 mt-1">
+                    <td>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-sm font-semibold" style={{ color: 'var(--ops-ink)' }}>
+                          {log.total_devices} <span className="text-xs font-normal" style={{ color: 'var(--ops-muted)' }}>{zh ? '台设备' : 'Devices'}</span>
+                        </span>
+                        <div className="flex items-center gap-2 nx-micro-text" style={{ color: 'var(--ops-muted)' }}>
                           {log.source === 'inspection' ? (
                             <>
-                              <span className="text-[10px] text-black/40">{zh ? '平均分' : 'Avg Score'}:</span>
-                              <span className={`text-[11px] font-black tabular-nums ${
+                              <span>{zh ? '平均分' : 'Avg score'}:</span>
+                              <span className={`font-semibold tabular-nums ${
                               (log.avg_health_score || 0) >= 80 ? 'text-emerald-600' : (log.avg_health_score || 0) >= 60 ? 'text-amber-600' : 'text-red-600'
                               }`}>
                                 {log.avg_health_score?.toFixed(1) ?? '—'}
@@ -142,60 +184,51 @@ const HistoryList: React.FC<HistoryListProps> = ({
                             </>
                           ) : (
                             <>
-                              <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                              <span className="text-[10px] text-emerald-600 font-bold">{log.success_count}</span>
-                              <div className="w-1.5 h-1.5 rounded-full bg-red-400 ml-1" />
-                              <span className="text-[10px] text-red-600 font-bold">{log.failed_count}</span>
+                              <span className="inline-flex items-center gap-1 text-emerald-600">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                {log.success_count} {zh ? '成功' : 'ok'}
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-red-600">
+                                <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                                {log.failed_count} {zh ? '失败' : 'failed'}
+                              </span>
                             </>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className="text-xs font-bold text-black/40">{log.created_by}</span>
+                    <td className="whitespace-nowrap">
+                      <span className="text-sm font-medium" style={{ color: 'var(--ops-muted)' }}>{log.created_by}</span>
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
+                    <td className="whitespace-nowrap">
+                      <ActionIconGroup className="nx-action-group--table" label={zh ? '执行记录操作' : 'Execution log actions'}>
+                        <ActionIconButton
+                          icon={Eye}
+                          label={zh ? '查看执行详情' : 'View execution details'}
+                          variant="accent"
                           onClick={() => onSelectLog(log)}
-                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-cyan-600 border border-cyan-100 bg-cyan-50/20 hover:bg-cyan-50 transition-all active:scale-95"
-                        >
-                          <Eye size={12} />
-                          {zh ? '查看' : 'View'}
-                        </button>
-                        
-                        {/* ── R7.1: 标准化导出按钮组 ── */}
-                        <div className="flex items-center gap-1 ml-2 pl-2 border-l border-black/5">
-                          <button
-                            onClick={() => onExport(log.id, 'html', log.source)}
-                            className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-all active:scale-90"
-                            title={zh ? '导出 HTML' : 'Export HTML'}
-                          >
-                            <FileText size={14} />
-                          </button>
-                          <button
-                            onClick={() => onExport(log.id, 'pdf', log.source)}
-                            className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition-all active:scale-90"
-                            title={zh ? '导出 PDF' : 'Export PDF'}
-                          >
-                            <FileText size={14} />
-                          </button>
-                          <button
-                            onClick={() => onExport(log.id, 'xlsx', log.source)}
-                            className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 transition-all active:scale-90"
-                            title={zh ? '导出 Excel' : 'Export Excel'}
-                          >
-                            <FileSpreadsheet size={14} />
-                          </button>
-                          <button
-                            onClick={() => onExport(log.id, 'json', log.source)}
-                            className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-50 transition-all active:scale-90"
-                            title={zh ? '导出 JSON' : 'Export JSON'}
-                          >
-                            <FileJson size={14} />
-                          </button>
-                        </div>
-                      </div>
+                        />
+                        <ActionIconButton
+                          icon={FileText}
+                          label={zh ? '导出 HTML' : 'Export HTML'}
+                          onClick={() => onExport(log.id, 'html', log.source)}
+                        />
+                        <ActionIconButton
+                          icon={FileText}
+                          label={zh ? '导出 PDF' : 'Export PDF'}
+                          onClick={() => onExport(log.id, 'pdf', log.source)}
+                        />
+                        <ActionIconButton
+                          icon={FileSpreadsheet}
+                          label={zh ? '导出 Excel' : 'Export Excel'}
+                          onClick={() => onExport(log.id, 'xlsx', log.source)}
+                        />
+                        <ActionIconButton
+                          icon={FileJson}
+                          label={zh ? '导出 JSON' : 'Export JSON'}
+                          onClick={() => onExport(log.id, 'json', log.source)}
+                        />
+                      </ActionIconGroup>
                     </td>
                   </tr>
                 );
@@ -203,15 +236,20 @@ const HistoryList: React.FC<HistoryListProps> = ({
             </tbody>
           </table>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center py-32 text-black/20 gap-3">
-            <Activity size={48} strokeWidth={1} className="opacity-10" />
-            <p className="text-sm font-bold text-black/30">{zh ? '暂无历史执行记录' : 'No history found'}</p>
+          <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 px-6 py-20 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl border" style={{ borderColor: 'var(--ops-line)', background: 'var(--ui-surface-muted)', color: 'var(--ui-fg-subtle)' }}>
+              <Activity size={24} strokeWidth={1.6} />
+            </div>
+            <div>
+              <p className="nx-section-title" style={{ color: 'var(--ops-ink)' }}>{zh ? '暂无历史执行记录' : 'No history found'}</p>
+              <p className="nx-meta-text mt-1" style={{ color: 'var(--ops-muted)' }}>{zh ? '执行记录将在自动化任务运行后显示在这里' : 'Execution records will appear here after an automation run'}</p>
+            </div>
           </div>
         )}
       </div>
 
       {logs.length > 0 && (
-        <div className="mt-auto">
+        <div className="flex-shrink-0">
           <Pagination
             currentPage={page}
             totalItems={logs.length}
@@ -222,7 +260,7 @@ const HistoryList: React.FC<HistoryListProps> = ({
           />
         </div>
       )}
-    </div>
+    </section>
   );
 };
 

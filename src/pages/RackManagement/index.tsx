@@ -27,6 +27,7 @@ import {
 import * as XLSX from 'xlsx';
 import { AssetReadonlyDetailInner, normalizeAssetApiRow } from '../../components/AssetReadonlyDetail';
 import PageHero from '../../components/PageHero';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import { Rack, RackType, DeviceType, RackDevice, RackLayout, RackStats, Props } from './types';
 import { ROLE_COLORS, U_PX, RACK_W, LABEL_W, API, INSTALL_ASSET_PAGE_SIZE, STATUS_LABEL } from './constants';
 import {
@@ -1164,18 +1165,12 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
             <button onClick={openNewRack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
               <Plus size={14} /> {zh ? '新建机柜' : 'New Rack'}
             </button>
-            <button onClick={handleDownloadTemplate} className="p-1.5 rounded-lg transition-colors hover:bg-black/5 hover:text-cyan-600" style={{ color: 'var(--muted-text)' }} title={zh ? '下载导入模板' : 'Template'}>
-              <FileText size={16} />
-            </button>
-            <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded-lg transition-colors hover:bg-black/5 hover:text-cyan-600" style={{ color: 'var(--muted-text)' }} title={zh ? '导入机柜' : 'Import'}>
-              <Upload size={16} />
-            </button>
-            <button onClick={handleExport} className="p-1.5 rounded-lg transition-colors hover:bg-black/5 hover:text-cyan-600" style={{ color: 'var(--muted-text)' }} title={zh ? '导出机柜' : 'Export'}>
-              <Download size={16} />
-            </button>
-            <button onClick={refresh} className="p-1.5 rounded-lg transition-colors" style={{ color: 'var(--muted-text)' }} title={zh ? '刷新' : 'Refresh'}>
-              <RefreshCw size={16} />
-            </button>
+            <ActionIconGroup label={zh ? '机柜工具' : 'Rack tools'}>
+              <ActionIconButton icon={FileText} label={zh ? '下载导入模板' : 'Download import template'} variant="accent" onClick={handleDownloadTemplate} />
+              <ActionIconButton icon={Upload} label={zh ? '导入机柜' : 'Import racks'} variant="accent" onClick={() => fileInputRef.current?.click()} />
+              <ActionIconButton icon={Download} label={zh ? '导出机柜' : 'Export racks'} variant="accent" onClick={handleExport} />
+              <ActionIconButton icon={RefreshCw} label={zh ? '刷新' : 'Refresh'} onClick={refresh} />
+            </ActionIconGroup>
           </>
         }
       />
@@ -1246,10 +1241,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[13px] font-semibold truncate">{rack.name}</span>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={(e) => { e.stopPropagation(); openEditRack(rack); }} className="p-0.5 rounded hover:bg-black/10"><Pencil size={11} /></button>
-                      <button onClick={(e) => { e.stopPropagation(); handleDeleteRack(rack.id); }} className="p-0.5 rounded hover:bg-red-100 text-red-500"><Trash2 size={11} /></button>
-                    </div>
+                    <ActionIconGroup className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      <ActionIconButton icon={Pencil} label={zh ? `编辑${rack.name}` : `Edit ${rack.name}`} size="xs" onClick={(e) => { e.stopPropagation(); openEditRack(rack); }} />
+                      <ActionIconButton icon={Trash2} label={zh ? `删除${rack.name}` : `Delete ${rack.name}`} size="xs" variant="danger" onClick={(e) => { e.stopPropagation(); handleDeleteRack(rack.id); }} />
+                    </ActionIconGroup>
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {siteLabel(rack) && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: '#06b6d415', color: '#06b6d4' }}>{siteLabel(rack)}</span>}
@@ -1402,9 +1397,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                       )}
                     </span>
                   )}
-                  <button onClick={handleDownloadRack} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }} title={zh ? '下载' : 'Download'}>
-                    <Download size={12} /> PNG
-                  </button>
+                  <ActionButton icon={Download} variant="accent" size="sm" onClick={handleDownloadRack}>{zh ? '下载 PNG' : 'Download PNG'}</ActionButton>
                   <button onClick={openInstallDevice} className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-cyan-600 hover:bg-cyan-700 transition-colors">
                     <Plus size={12} /> {zh ? '安装' : 'Install'}
                   </button>

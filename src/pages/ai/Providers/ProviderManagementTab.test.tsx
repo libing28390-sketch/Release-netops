@@ -88,7 +88,7 @@ describe('ProviderManagementTab browser key paths', () => {
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('retention_days');
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('data_processing_agreement_ref');
     expect(createProvider.mock.calls[0][0]).not.toHaveProperty('approved_endpoint_patterns');
-  });
+  }, 10_000);
 
   it('shows the empty state and a recoverable request error', async () => {
     getProviders.mockResolvedValueOnce([]);

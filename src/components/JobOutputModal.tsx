@@ -2,6 +2,7 @@ import React from 'react';
 import { Copy } from 'lucide-react';
 import { motion } from 'motion/react';
 import type { Job } from '../types';
+import { ActionIconButton } from './ui/ActionIconButton';
 
 interface JobOutputModalProps {
   job: Job | null;
@@ -32,13 +33,13 @@ const JobOutputModal: React.FC<JobOutputModalProps> = ({ job, t, onClose, onCopy
           </div>
         </div>
         <div className="flex-1 overflow-auto p-6 bg-[#1E1E1E] font-mono text-xs text-[#D4D4D4] relative group">
-          <button
+          <ActionIconButton
+            icon={Copy}
+            label="Copy Output"
+            variant="accent"
+            className="absolute top-4 right-4 opacity-0 group-hover:opacity-100"
             onClick={onCopy}
-            className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-            title="Copy Output"
-          >
-            <Copy size={16} />
-          </button>
+          />
           <pre className="whitespace-pre-wrap">{job.output || 'No output recorded.'}</pre>
         </div>
         <div className="p-4 border-t border-black/5 flex justify-end gap-3">

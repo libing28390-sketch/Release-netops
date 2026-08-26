@@ -38,8 +38,8 @@ export const RetrievalTestTab: React.FC = () => {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-indigo-600"><Sparkles className="h-4 w-4" /> RET-021</div>
-            <h1 className="text-2xl font-bold text-slate-900">管理员检索测试</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">查看 Query 实体解析、Metadata 硬过滤、候选产品、最终 Chunk、版本证据和 PostgreSQL 检索阶段。页面不显示 Provider 密钥或原始 SQL。</p>
+            <h1 className="nx-page-title text-slate-900">管理员检索测试</h1>
+            <p className="nx-page-description mt-2 max-w-3xl text-slate-600">查看 Query 实体解析、Metadata 硬过滤、候选产品、最终 Chunk、版本证据和 PostgreSQL 检索阶段。页面不显示 Provider 密钥或原始 SQL。</p>
           </div>
           <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700"><ShieldCheck className="h-4 w-4" /> 权限与租户由服务端绑定</div>
         </div>

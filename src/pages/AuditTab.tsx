@@ -5,6 +5,7 @@ import type { AuditEvent } from '../types';
 import { severityBadgeClass, auditStatusBadgeClass } from '../components/shared';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import { ActionButton } from '../components/ui/ActionIconButton';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 
 interface AuditTabProps {
@@ -146,10 +147,9 @@ const AuditTab: React.FC<AuditTabProps> = ({
         title={t('auditLogsTitle')}
         subtitle={t('fullHistory')}
         actions={
-          <button onClick={handleExportAudit} className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-medium text-black/60 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all" title={language === 'zh' ? '导出审计日志' : 'Export Audit Logs'}>
-            <Download size={14} />
+          <ActionButton icon={Download} variant="accent" size="md" onClick={handleExportAudit} title={language === 'zh' ? '导出审计日志' : 'Export Audit Logs'}>
             {language === 'zh' ? '导出' : 'Export'}
-          </button>
+          </ActionButton>
         }
       />
 

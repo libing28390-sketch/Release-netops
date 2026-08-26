@@ -60,8 +60,8 @@ describe('RagEvaluationPanel', () => {
   it('shows a safe empty state and runs the PostgreSQL regression', async () => {
     const user = userEvent.setup();
     render(<RagEvaluationPanel />);
-    expect(await screen.findByText('尚未运行 PostgreSQL 回归，请点击“运行回归”。')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: '运行回归' }));
+    expect(await screen.findByText('尚未运行基线回归，请点击“运行基线回归”。')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: '运行基线回归' }));
     expect((await screen.findAllByText('PASS')).length).toBeGreaterThan(0);
     expect(screen.getByText('Q01')).toBeTruthy();
     expect(runEvaluation).toHaveBeenCalledWith();

@@ -14,6 +14,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { ActionButton } from '../../../components/ui/ActionIconButton';
 
 export interface ChatSession {
   id: string;
@@ -222,16 +223,16 @@ export const CopilotSidebar: React.FC<CopilotSidebarProps> = ({
 
                     {isMenuOpen && (
                       <div className="absolute z-20 right-1 top-10 w-36 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1.5 shadow-lg">
-                        <button type="button" onClick={() => beginRename(session)} className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">
-                          <Pencil className="w-3.5 h-3.5" /> 重命名
-                        </button>
+                        <ActionButton type="button" icon={Pencil} variant="default" size="sm" onClick={() => beginRename(session)} className="!h-8 !w-full !justify-start !px-2.5 !text-xs dark:!text-gray-200">
+                          重命名
+                        </ActionButton>
                         <button type="button" onClick={() => { setMenuSessionId(null); void onArchiveSession(session.id, session.status !== 'archived'); }} className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">
                           {session.status === 'archived' ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
                           {session.status === 'archived' ? '恢复会话' : '归档会话'}
                         </button>
-                        <button type="button" onClick={() => void handleDelete(session)} className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30">
-                          <Trash2 className="w-3.5 h-3.5" /> 删除
-                        </button>
+                        <ActionButton type="button" icon={Trash2} variant="danger" size="sm" onClick={() => void handleDelete(session)} className="!h-8 !w-full !justify-start !px-2.5 !text-xs">
+                          删除
+                        </ActionButton>
                         <button type="button" onClick={() => setMenuSessionId(null)} className="absolute -right-2 -top-2 w-5 h-5 rounded-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 flex items-center justify-center text-gray-400 hover:text-gray-700" title="关闭菜单">
                           <X className="w-3 h-3" />
                         </button>

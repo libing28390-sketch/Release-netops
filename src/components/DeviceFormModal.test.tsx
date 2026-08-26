@@ -34,7 +34,7 @@ describe('DeviceFormModal platform registry selector', () => {
       <DeviceFormModal
         mode="add"
         language="en"
-        form={{ platform: 'cisco_ios' }}
+        form={{ platform: 'zte_zxros', vendor: 'ZTE' }}
         passwordVisible={false}
         onFormChange={onFormChange}
         onTogglePasswordVisibility={vi.fn()}

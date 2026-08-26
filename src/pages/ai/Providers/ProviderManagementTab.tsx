@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { getAIProviders, createAIProvider, updateAIProvider, deleteAIProvider, getAIProviderDeletePreview, testAIProvider, AIProvider } from '../../../api/ai';
 import { useCoreApp } from '../../../contexts/AppDomainContext';
+import { ActionButton, ActionIconButton, ActionIconGroup, ActionLink } from '../../../components/ui/ActionIconButton';
 
 interface ProviderTestResult {
   id: string;
@@ -313,13 +314,13 @@ export const ProviderManagementTab: React.FC = () => {
               <Activity className="h-3.5 w-3.5" />
               {zh ? 'AI 基础设施 · Provider 管理' : 'AI Infrastructure · Provider Management'}
             </div>
-            <h2 className="flex items-center gap-3 text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-[28px]">
+            <h2 className="nx-page-title flex items-center gap-3 text-slate-950 dark:text-white">
               <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/25">
                 <Bot className="h-6 w-6" />
               </span>
               {zh ? 'AI Provider 供应商管理' : 'AI Provider Management'}
             </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
+            <p className="nx-page-description mt-3 max-w-2xl text-slate-600 dark:text-slate-300">
               {zh
                 ? '集中管理外部模型入口、密钥和默认模型。所有请求都会经过 AI 安全网关。'
                 : 'Manage external model endpoints, keys, and default models in one place. Every request passes through the AI security gateway.'}
@@ -337,24 +338,27 @@ export const ProviderManagementTab: React.FC = () => {
           </div>
 
           <div className="flex shrink-0 items-center gap-2 self-start xl:self-center">
-            <a
+            <ActionLink
               href="/downloads/nexora-ai-provider-debug-manual.md"
               download="Nexora-AI-使用手册.md"
               aria-label={zh ? '下载 AI 使用手册' : 'Download AI user manual'}
               title={zh ? '下载 AI 接入与调试使用手册' : 'Download AI integration and troubleshooting manual'}
-              className="inline-flex items-center gap-2 rounded-xl border border-white/90 bg-white/80 px-3.5 py-2.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-indigo-200 hover:bg-white hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:border-indigo-700 dark:hover:bg-slate-900 dark:hover:text-indigo-300"
+              icon={Download}
+              variant="accent"
+              size="md"
             >
-              <Download className="h-4 w-4" />
               {zh ? '下载 AI 使用手册' : 'Download AI manual'}
-            </a>
-            <button
+            </ActionLink>
+            <ActionButton
               type="button"
+              icon={RefreshCw}
+              iconClassName={loading ? 'animate-spin' : undefined}
+              variant="default"
+              size="md"
               onClick={() => void fetchProviders()}
-              className="inline-flex items-center gap-2 rounded-xl border border-white/90 bg-white/80 px-3.5 py-2.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-indigo-200 hover:bg-white hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:border-indigo-700 dark:hover:bg-slate-900 dark:hover:text-indigo-300"
             >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {zh ? '刷新' : 'Refresh'}
-            </button>
+            </ActionButton>
             <button
               type="button"
               onClick={() => { setEditingId(null); setApiKey(''); setShowApiKey(false); setDataRegion('unknown'); setAllowedDataClassification('PUBLIC'); setShowModal(true); }}
@@ -485,38 +489,29 @@ export const ProviderManagementTab: React.FC = () => {
                         <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-indigo-500 dark:text-indigo-300">{provider.provider_type}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => openEdit(provider)}
-                      disabled={isTesting || isDeleting}
-                      aria-label={zh ? `编辑 ${provider.name}` : `Edit ${provider.name}`}
-                      title={zh ? '编辑 Provider' : 'Edit Provider'}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-300"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleToggle(provider)}
-                      disabled={isTesting || isDeleting}
-                      aria-label={provider.enabled ? (zh ? `停用 ${provider.name}` : `Disable ${provider.name}`) : (zh ? `启用 ${provider.name}` : `Enable ${provider.name}`)}
-                      title={provider.enabled ? (zh ? '停用 Provider' : 'Disable Provider') : (zh ? '启用 Provider' : 'Enable Provider')}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-amber-50 hover:text-amber-600 disabled:opacity-50 dark:hover:bg-amber-950/30 dark:hover:text-amber-300"
-                    >
-                      <Power className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleDelete(provider.id)}
-                      disabled={isDeleting}
-                      aria-label={zh ? `删除 ${provider.name}` : `Delete ${provider.name}`}
-                      title={zh ? '删除 Provider' : 'Delete Provider'}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:cursor-wait disabled:opacity-50 dark:hover:bg-rose-950/30 dark:hover:text-rose-300"
-                    >
-                      <Trash2 className={`h-4 w-4 ${isDeleting ? 'animate-pulse' : ''}`} />
-                    </button>
-                    </div>
+                    <ActionIconGroup label={zh ? 'Provider 操作' : 'Provider actions'}>
+                      <ActionIconButton
+                        icon={Pencil}
+                        label={zh ? `编辑 ${provider.name}` : `Edit ${provider.name}`}
+                        variant="accent"
+                        disabled={isTesting || isDeleting}
+                        onClick={() => openEdit(provider)}
+                      />
+                      <ActionIconButton
+                        icon={Power}
+                        label={provider.enabled ? (zh ? `停用 ${provider.name}` : `Disable ${provider.name}`) : (zh ? `启用 ${provider.name}` : `Enable ${provider.name}`)}
+                        disabled={isTesting || isDeleting}
+                        onClick={() => void handleToggle(provider)}
+                      />
+                      <ActionIconButton
+                        icon={Trash2}
+                        label={zh ? `删除 ${provider.name}` : `Delete ${provider.name}`}
+                        variant="danger"
+                        disabled={isDeleting}
+                        iconClassName={isDeleting ? 'animate-pulse' : undefined}
+                        onClick={() => void handleDelete(provider.id)}
+                      />
+                    </ActionIconGroup>
                   </div>
 
                   <p className="mt-3 truncate font-mono text-[11px] text-slate-400 dark:text-slate-500" title={provider.id}>{provider.id}</p>

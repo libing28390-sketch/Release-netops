@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock,
   Download,
+  Eye,
   History,
   RotateCcw,
   Search,
@@ -30,6 +31,7 @@ import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
 import { DataTable } from '../../components/DataTable';
 import OutputActions from '../../components/OutputActions';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import type { AutomationHistoryTabProps, PlaybookExecution } from './types';
 import {
   splitOutputByCommand,
@@ -695,13 +697,12 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
         title={t('executionHistory')}
         subtitle={t('executionHistoryDesc')}
         actions={
-          <button
+          <ActionIconButton
+            icon={RotateCcw}
+            label={isZh ? '刷新执行历史' : 'Refresh execution history'}
+            variant="accent"
             onClick={() => void onRefreshHistory()}
-            title={isZh ? '刷新执行历史' : 'Refresh execution history'}
-            className="p-2 rounded-xl border border-black/10 hover:bg-black/5 transition-all"
-          >
-            <RotateCcw size={14} />
-          </button>
+          />
         }
       />
 
@@ -835,38 +836,34 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                       <td className="px-6 py-4 text-xs text-black/60 font-medium">
                         {execution.author || 'admin'}
                       </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
+                      <td className="px-6 py-4 text-right whitespace-nowrap">
+                        <ActionIconGroup label={isZh ? '执行操作' : 'Execution actions'}>
+                          <ActionIconButton
+                            icon={RotateCcw}
+                            label={isZh ? '重复执行' : 'Rerun'}
+                            variant="accent"
                             onClick={() => onRerun(execution)}
-                            className="flex items-center gap-1 px-2 py-1.5 text-xs text-amber-600 hover:bg-amber-50 font-bold rounded-lg transition-all"
-                            title={isZh ? '重复执行' : 'Rerun'}
-                          >
-                            <RotateCcw size={14} />
-                            <span className="hidden sm:inline">{isZh ? '重试' : 'Retry'}</span>
-                          </button>
-                          <button
+                          />
+                          <ActionIconButton
+                            icon={Eye}
+                            label={isZh ? '查看执行详情' : 'View execution details'}
+                            variant="accent"
                             onClick={() => {
                               void onSelectExecution(execution);
                               setIsDetailModalOpen(true);
                             }}
-                            className="flex items-center gap-1 px-2 py-1.5 text-xs text-[#0e7490] hover:bg-cyan-50 font-bold rounded-lg transition-all"
-                          >
-                            {isZh ? '详情' : 'Details'}
-                          </button>
-                          {!isRowLive && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void onDeleteExecution(execution);
-                              }}
-                              className="p-2 rounded-lg text-black/25 hover:text-red-500 hover:bg-red-50 transition-all"
-                              title={isZh ? '删除' : 'Delete'}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          )}
-                        </div>
+                          />
+                          <ActionIconButton
+                            icon={Trash2}
+                            label={isRowLive ? (isZh ? '执行中不可删除' : 'Cannot delete while running') : (isZh ? '删除执行记录' : 'Delete execution')}
+                            variant="danger"
+                            disabled={isRowLive}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void onDeleteExecution(execution);
+                            }}
+                          />
+                        </ActionIconGroup>
                       </td>
                     </tr>
                   );
@@ -923,15 +920,17 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                 <div className="flex items-center gap-2">
                   {!isLive && selectedExecutionDetail && (
                     <div className="relative">
-                      <button
+                      <ActionButton
+                        icon={downloadingExcel ? Loader2 : Download}
+                        iconClassName={downloadingExcel ? 'animate-spin' : undefined}
+                        variant="accent"
+                        size="sm"
                         onClick={() => setDownloadMenuOpen(v => !v)}
                         title={isZh ? '下载汇总报告' : 'Download Summary'}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-[#0891b2] border border-cyan-100 bg-cyan-50/30 hover:bg-cyan-50 hover:text-[#0e7490] transition-all text-[11px] font-semibold"
                       >
-                        {downloadingExcel ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                         {isZh ? '下载汇总' : 'Download'}
-                        <ChevronDown size={12} />
-                      </button>
+                        <ChevronDown size={12} aria-hidden="true" />
+                      </ActionButton>
                       <AnimatePresence>
                         {downloadMenuOpen && (
                           <motion.div
@@ -968,20 +967,14 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                     </div>
                   )}
                   {isLive && wsMessages.length > 0 && (
-                    <button
+                    <ActionIconButton
+                      icon={Download}
+                      label={isZh ? '导出实时日志' : 'Export Live Stream'}
+                      variant="accent"
                       onClick={handleDownloadLogStream}
-                      title={isZh ? '导出实时日志' : 'Export Live Stream'}
-                      className="p-2 rounded-xl text-[#0891b2] border border-cyan-100 bg-cyan-50/30 hover:bg-cyan-50 hover:text-[#0e7490] transition-all"
-                    >
-                      <Download size={16} />
-                    </button>
+                    />
                   )}
-                  <button
-                    onClick={() => setIsDetailModalOpen(false)}
-                    className="p-2 rounded-xl text-black/20 hover:bg-black/5 hover:text-black/40 transition-all"
-                  >
-                    <X size={20} />
-                  </button>
+                  <ActionIconButton icon={X} label={isZh ? '关闭' : 'Close'} size="md" onClick={() => setIsDetailModalOpen(false)} />
                 </div>
               </div>
 
@@ -1310,22 +1303,22 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                           {/* Phase-level download of full raw output */}
                                           {rawOutput && (
                                             <div className="flex items-center gap-1.5 border-l border-black/5 pl-2">
-                                              <button
+                                              <ActionButton
+                                                icon={copiedKey === `${phase}-all` ? Check : Copy}
+                                                variant={copiedKey === `${phase}-all` ? 'success' : 'accent'}
                                                 onClick={() => copyText(rawOutput, `${phase}-all`)}
-                                                className={`flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] font-medium transition-all shadow-sm ${copiedKey === `${phase}-all` ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-black/10 text-black/40 hover:text-black/70 hover:border-black/20'}`}
                                                 title={isZh ? '复制全部输出' : 'Copy all output'}
                                               >
-                                                {copiedKey === `${phase}-all` ? <Check size={10} /> : <Copy size={10} />}
                                                 <span>{isZh ? '复制全部' : 'Copy all'}</span>
-                                              </button>
-                                              <button
+                                              </ActionButton>
+                                              <ActionButton
+                                                icon={Download}
+                                                variant="accent"
                                                 onClick={() => downloadText(rawOutput, `${hostname}_${phase}_raw.txt`)}
-                                                className="flex items-center gap-1 px-2 py-1 rounded-md border bg-white border-black/10 text-[10px] font-medium text-black/40 hover:text-black/70 hover:border-black/20 transition-all shadow-sm"
                                                 title={isZh ? '下载全部输出' : 'Download all output'}
                                               >
-                                                <Download size={10} />
                                                 <span>{isZh ? '下载' : 'Download'}</span>
-                                              </button>
+                                              </ActionButton>
                                             </div>
                                           )}
                                         </div>
@@ -1386,57 +1379,50 @@ const AutomationHistoryTab: React.FC<AutomationHistoryTabProps> = ({
                                                         </button>
                                                       </div>
                                                       {/* Copy */}
-                                                      <button
+                                                      <ActionIconButton
+                                                        icon={isCopied ? Check : Copy}
+                                                        label={isZh ? '复制' : 'Copy'}
+                                                        variant={isCopied ? 'success' : 'accent'}
                                                         onClick={() => {
                                                           const txt = viewMode === 'parsed' && parseState?.data
                                                             ? JSON.stringify(parseState.data.records, null, 2)
                                                             : block.output;
                                                           copyText(txt, `${blockKey}-copy`);
                                                         }}
-                                                        className={`p-1 rounded border transition-all ${isCopied ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-black/10 text-black/35 hover:text-[#0550ae] hover:border-[#0550ae]/30'}`}
-                                                        title={isZh ? '复制' : 'Copy'}
-                                                      >
-                                                        {isCopied ? <Check size={11} /> : <Copy size={11} />}
-                                                      </button>
+                                                      />
                                                       {/* Download raw .txt */}
-                                                      <button
+                                                      <ActionIconButton
+                                                        icon={Download}
+                                                        label={isZh ? '下载原始文本' : 'Download raw .txt'}
+                                                        variant="accent"
                                                         onClick={() => {
                                                           const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
                                                           downloadText(block.output, `${hostname}_${safeCmd}_raw.txt`);
                                                         }}
-                                                        className="flex items-center gap-1 p-1 rounded border bg-white border-black/10 text-black/35 hover:text-cyan-600 hover:border-cyan-300 transition-all"
-                                                        title={isZh ? '下载原始文本' : 'Download raw .txt'}
-                                                      >
-                                                        <Download size={11} />
-                                                        <span className="text-[9px] font-mono">txt</span>
-                                                      </button>
+                                                      />
                                                       {/* Download parsed .xlsx — only when parsed data available */}
                                                       {parseState?.data && (
-                                                        <button
+                                                        <ActionIconButton
+                                                          icon={FileSpreadsheet}
+                                                          label={isZh ? '下载解析结果 (Excel)' : 'Download parsed as Excel'}
+                                                          variant="success"
                                                           onClick={() => {
                                                             const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
                                                             downloadExcel(parseState.data.records, parseState.data.fields, `${hostname}_${safeCmd}_parsed`);
                                                           }}
-                                                          className="flex items-center gap-1 p-1 rounded border bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-all"
-                                                          title={isZh ? '下载解析结果 (Excel)' : 'Download parsed as Excel'}
-                                                        >
-                                                          <FileSpreadsheet size={11} />
-                                                          <span className="text-[9px] font-mono">xlsx</span>
-                                                        </button>
+                                                        />
                                                       )}
                                                       {/* Download parsed .json — only when parsed data available */}
                                                       {parseState?.data && (
-                                                        <button
+                                                        <ActionIconButton
+                                                          icon={FileJson}
+                                                          label={isZh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'}
+                                                          variant="accent"
                                                           onClick={() => {
                                                             const safeCmd = displayCmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40);
                                                             downloadJSON(parseState.data.records, `${hostname}_${safeCmd}_parsed`);
                                                           }}
-                                                          className="flex items-center gap-1 p-1 rounded border bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-all"
-                                                          title={isZh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'}
-                                                        >
-                                                          <FileJson size={11} />
-                                                          <span className="text-[9px] font-mono">json</span>
-                                                        </button>
+                                                        />
                                                       )}
                                                     </div>
                                                   )}

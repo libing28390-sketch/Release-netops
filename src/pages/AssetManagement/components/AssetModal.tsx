@@ -19,6 +19,7 @@ import {
   isValidIpAddress,
 } from '../constants';
 import { AssetTagPicker } from './AssetTagPicker';
+import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 import { isReservedSystemSite } from '../../../utils/siteIdentity';
 
 interface AssetModalProps {
@@ -425,12 +426,14 @@ export const AssetModal: React.FC<AssetModalProps> = ({
                         </div>
                         <Field label={zh ? '端口' : 'Port'} value={String(profile.port || '')} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, port: value } : item) }))} placeholder={profile.scheme === 'http' ? '80' : '443'} />
                         <Field label={zh ? '登录路径（可选）' : 'Login path (optional)'} value={profile.path || '/'} onChange={value => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).map((item: any, itemIndex: number) => itemIndex === index ? { ...item, path: value } : item) }))} placeholder="/" />
-                        <button
-                          type="button"
+                        <ActionIconButton
+                          icon={Trash2}
+                          label={zh ? '删除入口' : 'Remove entry'}
+                          size="xs"
+                          variant="danger"
+                          className="mb-0.5"
                           onClick={() => setForm(f => ({ ...f, web_profiles: (f.web_profiles || []).filter((_: any, itemIndex: number) => itemIndex !== index) }))}
-                          className="mb-0.5 flex h-7 w-7 items-center justify-center rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500"
-                          title={zh ? '删除入口' : 'Remove entry'}
-                        ><Trash2 size={12} /></button>
+                        />
                         <div className="col-span-5 truncate px-0.5 text-[9px] text-cyan-700/70">
                           {zh ? '最终地址：' : 'Final URL: '}
                           {`${profile.scheme || 'https'}://${form.management_ip || (zh ? '管理IP' : '<mgmt-ip>')}:${profile.port || (profile.scheme === 'http' ? '80' : '443')}${String(profile.path || '/').startsWith('/') ? (profile.path || '/') : `/${profile.path || ''}`}`}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { ChevronDown, ChevronRight, Edit2, Eye, EyeOff, Plus, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, Search, X } from 'lucide-react';
 import type { Device, TagDefinition } from '../types';
 import { TAG_CATEGORY_LABELS } from '../types';
 import { apiRequest } from '../api/http';
@@ -208,7 +208,7 @@ const DeviceFormModal: React.FC<DeviceFormModalProps> = ({
         <div className="flex items-center justify-between border-b border-black/5 bg-black/[0.02] p-6">
           <div className="flex items-center gap-3">
             <div className={`rounded-lg p-2 ${isAdd ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'}`}>
-              {isAdd ? <Plus size={20} /> : <Edit2 size={20} />}
+              {isAdd ? <Plus size={20} /> : <Pencil size={20} />}
             </div>
             <h2 className="text-lg font-semibold text-black">{title}</h2>
           </div>

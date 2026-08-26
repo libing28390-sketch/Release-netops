@@ -935,7 +935,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                 </div>
 
                 <div className="max-h-[260px] overflow-auto border border-gray-100 dark:border-zinc-800 rounded-xl">
-                  <table className="w-full text-xs">
+                  <table className="nx-data-table nx-data-table--compact">
                     <thead className="bg-gray-50 dark:bg-zinc-800 sticky top-0 backdrop-blur-md">
                       <tr>
                         <th className="px-4 py-2.5 text-left text-[10px] uppercase tracking-wider text-gray-400">{zh ? '接口' : 'Interface'}</th>
@@ -1132,7 +1132,7 @@ const NetworkMonitoring: React.FC<NetworkMonitoringProps> = ({ language, devices
                 </div>
 
                 <div className="overflow-auto max-h-[240px]">
-                  <table className="w-full text-xs">
+                  <table className="nx-data-table nx-data-table--compact">
                     <thead className="bg-gray-50 dark:bg-zinc-800 sticky top-0">
                       <tr>
                         <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-gray-400">{zh ? '发生时间' : 'Time'}</th>

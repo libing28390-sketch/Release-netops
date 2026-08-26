@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import PageHero from '../components/PageHero';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { 
   ShieldCheck, 
   Terminal, 
@@ -309,20 +310,14 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
         subtitle={isZh ? '实时监控、强制断开及录制回放' : 'Real-time monitoring, termination & playback'}
         actions={
           <div className="flex items-center gap-2">
-            <button
+            <ActionButton
+              icon={Download}
+              variant="accent"
               onClick={() => { void handleExport(); }}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
             >
-              <Download className="h-4 w-4" />
               {isZh ? '导出当前结果' : 'Export Results'}
-            </button>
-            <button
-              onClick={fetchSessions}
-              className="p-2 hover:bg-slate-100 rounded-full transition-colors"
-              title={isZh ? '刷新' : 'Refresh'}
-            >
-              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
-            </button>
+            </ActionButton>
+            <ActionIconButton icon={RefreshCw} label={isZh ? '刷新' : 'Refresh'} disabled={loading} iconClassName={loading ? 'animate-spin' : undefined} onClick={fetchSessions} />
           </div>
         }
         extras={
@@ -548,41 +543,31 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
 
                       {/* Actions */}
                       <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
+                        <ActionIconGroup label={isZh ? '会话操作' : 'Session actions'}>
+                          <ActionIconButton
+                            icon={Info}
+                            label={isZh ? '查看详情' : 'View Details'}
                             onClick={() => setDetailsTarget(s)}
-                            className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors"
-                            title={isZh ? '查看详情' : 'View Details'}
-                          >
-                            <Info className="w-4 h-4" />
-                          </button>
+                          />
                           {isActive ? (
-                            <button
+                            <ActionIconButton
+                              icon={StopCircle}
+                              label={isZh ? '强制切断' : 'Kill Session'}
+                              variant="danger"
                               onClick={() => setKillTarget(s)}
-                              className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                              title={isZh ? '强制切断' : 'Kill Session'}
-                            >
-                              <StopCircle className="w-4 h-4" />
-                            </button>
+                            />
                           ) : s.recording_path ? (
                             <>
-                              <button
-                                onClick={() => handleDownload(s.id)}
-                                className="p-2 text-cyan-500 hover:bg-cyan-50 rounded-lg transition-colors"
-                                title={isZh ? '下载录像' : 'Download Cast'}
-                              >
-                                <Download className="w-4 h-4" />
-                              </button>
-                              <button
+                              <ActionIconButton icon={Download} label={isZh ? '下载录像' : 'Download Cast'} variant="accent" onClick={() => handleDownload(s.id)} />
+                              <ActionIconButton
+                                icon={PlayCircle}
+                                label={isZh ? '回溯回放' : 'Playback'}
+                                variant="accent"
                                 onClick={() => {
                                   setSelectedSession(s);
                                   setShowPlayback(true);
                                 }}
-                                className="p-2 text-cyan-500 hover:bg-cyan-50 rounded-lg transition-colors"
-                                title={isZh ? '回溯回放' : 'Playback'}
-                              >
-                                <PlayCircle className="w-4 h-4" />
-                              </button>
+                              />
                             </>
                           ) : (
                             <span className="text-[10px] text-slate-300 px-2">
@@ -591,7 +576,7 @@ const PAMAuditTab: React.FC<{ language: string; showToast: (msg: string, type?: 
                                 : (isZh ? '无录像' : 'No recording')}
                             </span>
                           )}
-                        </div>
+                        </ActionIconGroup>
                       </td>
                     </tr>
                   );

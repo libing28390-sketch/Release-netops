@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
   ChevronRight,
-  Edit2,
+  Pencil,
   FileCode2,
   Filter,
   Layers3,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import PageHero from '../components/PageHero';
+import { ActionButton } from '../components/ui/ActionIconButton';
 import ResultStatusModal from '../components/ResultStatusModal';
 import { apiRequest } from '../api/http';
 import { ALL_VENDOR_NAMES } from './AssetManagement/constants';
@@ -1016,20 +1017,23 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-500">{zh ? '系统内置 · 只读' : 'System built-in · read-only'}</span>
                           {canWrite && <>
-                            <button type="button" disabled title={zh ? '系统内置平台不可编辑' : 'Built-in platforms cannot be edited'} className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[10px] font-semibold text-slate-400"><Edit2 size={12} />{zh ? '编辑平台' : 'Edit platform'}</button>
-                            <button type="button" disabled title={zh ? '系统内置平台不可删除' : 'Built-in platforms cannot be deleted'} className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[10px] font-semibold text-slate-400"><Trash2 size={12} />{zh ? '删除平台' : 'Delete platform'}</button>
+                            <ActionButton type="button" icon={Pencil} variant="default" size="sm" disabled title={zh ? '系统内置平台不可编辑' : 'Built-in platforms cannot be edited'} className="!h-8 !cursor-not-allowed !px-2.5 !text-[10px]">{zh ? '编辑平台' : 'Edit platform'}</ActionButton>
+                            <ActionButton type="button" icon={Trash2} variant="default" size="sm" disabled title={zh ? '系统内置平台不可删除' : 'Built-in platforms cannot be deleted'} className="!h-8 !cursor-not-allowed !px-2.5 !text-[10px]">{zh ? '删除平台' : 'Delete platform'}</ActionButton>
                           </>}
                         </div>
                       ) : canWrite ? (
                         <div className="flex items-center gap-1.5">
-                          <button type="button" onClick={openEditWizard} className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-cyan-700 hover:bg-cyan-50"><Edit2 size={12} />{zh ? '编辑平台' : 'Edit platform'}</button>
-                          <button
+                          <ActionButton type="button" icon={Pencil} variant="default" size="sm" onClick={openEditWizard} className="!h-8 !px-2.5 !text-[10px]">{zh ? '编辑平台' : 'Edit platform'}</ActionButton>
+                          <ActionButton
                             type="button"
+                            icon={Trash2}
+                            variant="danger"
+                            size="sm"
                             onClick={() => void deletePlatformProfile()}
                             disabled={profileDeleting || Number(currentProfile.bound_device_count || 0) > 0}
                             title={Number(currentProfile.bound_device_count || 0) > 0 ? (zh ? '存在绑定设备，不能删除' : 'Cannot delete while devices are bound') : undefined}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-45"
-                          ><Trash2 size={12} />{profileDeleting ? (zh ? '删除中' : 'Deleting') : (zh ? '删除平台' : 'Delete platform')}</button>
+                            className="!h-8 !px-2.5 !text-[10px]"
+                          >{profileDeleting ? (zh ? '删除中' : 'Deleting') : (zh ? '删除平台' : 'Delete platform')}</ActionButton>
                         </div>
                       ) : null}
                     </div>
@@ -1186,7 +1190,7 @@ const PlatformRegistryTab: React.FC<Props> = ({ language, currentUser }) => {
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
                               {canWrite && isCustomProfile && <button type="button" onClick={() => void createDraftRelease()} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-cyan-700"><Plus size={12} />{zh ? '新建草稿' : 'New draft'}</button>}
-                              {canWrite && isCustomProfile && activeRelease?.status === 'DRAFT' && <button type="button" onClick={() => void deleteDraftRelease()} disabled={releaseDeleting} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 size={12} />{releaseDeleting ? (zh ? '删除中' : 'Deleting') : (zh ? '删除草稿' : 'Delete draft')}</button>}
+                              {canWrite && isCustomProfile && activeRelease?.status === 'DRAFT' && <ActionButton type="button" icon={Trash2} variant="danger" size="sm" onClick={() => void deleteDraftRelease()} disabled={releaseDeleting} className="!h-8 !px-2.5 !text-[10px]">{releaseDeleting ? (zh ? '删除中' : 'Deleting') : (zh ? '删除草稿' : 'Delete draft')}</ActionButton>}
                             </div>
                           </div>
                           {activeRelease?.status === 'DRAFT' && <div className="mt-2 flex items-center gap-1.5 text-[10px] text-cyan-700"><Save size={12} />{zh ? '修改实际命令后，点击动作行内的“保存命令”；TextFSM 不需要在这里单独绑定。' : 'Edit the exact command and use the row “Save command” button; TextFSM does not need a separate binding here.'}</div>}

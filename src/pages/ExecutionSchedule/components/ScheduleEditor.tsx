@@ -9,6 +9,7 @@ import TagConditionPicker, { type TagFilterConfig } from '../../../components/Ta
 import type { FormState, ValidatedDevice, EligibleApprover } from '../types';
 import { MAJOR_CATEGORIES, SCOPE_OPTIONS } from '../constants';
 import { Trash2 } from 'lucide-react';
+import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 
 interface ScheduleEditorProps {
   zh: boolean;
@@ -277,13 +278,14 @@ const ScheduleEditor: React.FC<ScheduleEditorProps> = ({
                       ) : (
                         <span className="text-[10px] text-amber-500 italic">{zh ? '手动IP' : 'manual'}</span>
                       )}
-                      <button
+                      <ActionIconButton
+                        icon={Trash2}
+                        label={zh ? '移除设备' : 'Remove device'}
+                        variant="danger"
                         type="button"
                         onClick={() => onRemoveIpDevice(dev.ip)}
-                        className="p-1 rounded-lg text-black/25 hover:text-red-500 hover:bg-red-50 transition-all shrink-0 ml-auto"
-                      >
-                        <Trash2 size={12} />
-                      </button>
+                        className="ml-auto shrink-0"
+                      />
                     </div>
                   ))}
                 </div>

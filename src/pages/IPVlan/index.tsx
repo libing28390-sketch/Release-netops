@@ -22,6 +22,7 @@ import {
 import * as XLSX from 'xlsx';
 import Pagination from '../../components/Pagination';
 import PageHero from '../../components/PageHero';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 
 import { Subnet, IPAddress, Conflict, IPVlanTabProps } from './types';
 import { DEVICE_TYPES } from './constants';
@@ -596,20 +597,19 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
         subtitle={language === 'zh' ? '子网与IP地址分配管理，冲突检测' : 'Subnet & IP address management with conflict detection'}
         actions={
           <>
-            <button
+            <ActionIconButton
+              icon={Download}
+              label={language === 'zh' ? '导出' : 'Export'}
+              variant="accent"
               onClick={handleExport}
-              className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
-              title={language === 'zh' ? '导出' : 'Export'}
-            >
-              <Download size={14} />
-            </button>
-            <button
+            />
+            <ActionButton
+              icon={Plus}
+              variant="primary"
               onClick={() => setShowAddSubnet(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] transition-all"
             >
-              <Plus size={14} />
               {language === 'zh' ? '添加子网' : 'Add Subnet'}
-            </button>
+            </ActionButton>
           </>
         }
       />
@@ -873,7 +873,9 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                           >
                             {language === 'zh' ? '取消选择' : 'Clear'}
                           </button>
-                          <button
+                          <ActionButton
+                            icon={Trash2}
+                            variant="danger"
                             type="button"
                             onClick={() =>
                               setConfirmDelete({
@@ -882,11 +884,9 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                 label: String(selectedSubnetIds.size),
                               })
                             }
-                            className="inline-flex items-center gap-1 rounded-lg bg-red-500 hover:bg-red-600 text-white px-2.5 py-1 text-[11px] font-semibold transition-colors"
                           >
-                            <Trash2 size={12} />
                             {language === 'zh' ? '批量删除' : 'Delete Selected'}
-                          </button>
+                          </ActionButton>
                         </div>
                       </div>
                     )}
@@ -1041,9 +1041,9 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                       role="button"
                                       title={language === 'zh' ? '编辑' : 'Edit'}
                                       onClick={(e) => openEditSubnet(subnet, e)}
-                                      className="opacity-0 group-hover/row:opacity-100 p-0.5 rounded hover:bg-black/10 text-black/30 hover:text-black/60 transition-all"
+                                      className="nx-action-icon nx-action-icon--xs nx-action-icon--default opacity-0 group-hover/row:opacity-100 transition-opacity"
                                     >
-                                      <Pencil size={10} />
+                                      <Pencil size={14} strokeWidth={1.8} />
                                     </span>
                                   </div>
                                 </td>
@@ -1155,9 +1155,9 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                           role="button"
                                           title={language === 'zh' ? '编辑子网' : 'Edit subnet'}
                                           onClick={(e) => openEditSubnet(subnet, e)}
-                                          className="opacity-0 group-hover/subnet:opacity-100 p-0.5 rounded hover:bg-black/10 text-black/30 hover:text-black/60 transition-all"
+                                          className="nx-action-icon nx-action-icon--xs nx-action-icon--default opacity-0 group-hover/subnet:opacity-100 transition-opacity"
                                         >
-                                          <Pencil size={10} />
+                                          <Pencil size={14} strokeWidth={1.8} />
                                         </span>
                                       </div>
                                       {!compactSubnetList && (
@@ -1215,9 +1215,9 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                   role="button"
                                   title={language === 'zh' ? '编辑子网' : 'Edit subnet'}
                                   onClick={(e) => openEditSubnet(subnet, e)}
-                                  className="opacity-0 group-hover/subnet:opacity-100 p-0.5 rounded hover:bg-black/10 text-black/30 hover:text-black/60 transition-all"
+                                  className="nx-action-icon nx-action-icon--xs nx-action-icon--default opacity-0 group-hover/subnet:opacity-100 transition-opacity"
                                 >
-                                  <Pencil size={12} />
+                                  <Pencil size={14} strokeWidth={1.8} />
                                 </span>
                               </div>
                               {!compactSubnetList && (
@@ -1352,15 +1352,18 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                               </button>
                             )}
                           </div>
-                          <div className="flex gap-2 items-center">
-                            <button
+                          <div className="flex items-center gap-2">
+                            <ActionButton
+                              icon={Plus}
+                              variant="primary"
                               onClick={() => setShowAddIP(true)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00bceb] text-white text-xs font-semibold hover:bg-[#00a5d0] transition-all"
                             >
-                              <Plus size={12} />
                               {language === 'zh' ? '添加IP' : 'Add IP'}
-                            </button>
-                            <button
+                            </ActionButton>
+                            <ActionIconButton
+                              icon={Trash2}
+                              label={language === 'zh' ? '删除子网' : 'Delete Subnet'}
+                              variant="danger"
                               onClick={() =>
                                 setConfirmDelete({
                                   type: 'subnet',
@@ -1368,21 +1371,15 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                   label: selectedSubnet.name || `${selectedSubnet.network}/${selectedSubnet.prefix_len}`,
                                 })
                               }
-                              className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-red-500 hover:border-red-300 transition-all"
-                              title={language === 'zh' ? '删除子网' : 'Delete Subnet'}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                            <button
+                            />
+                            <ActionIconButton
+                              icon={ChevronUp}
+                              label={language === 'zh' ? '收起' : 'Collapse'}
                               onClick={() => {
                                 setSelectedSubnet(null);
                                 setAddresses([]);
                               }}
-                              className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
-                              title={language === 'zh' ? '收起' : 'Collapse'}
-                            >
-                              <ChevronUp size={14} />
-                            </button>
+                            />
                           </div>
                         </div>
                         {/* Subnet summary cards */}
@@ -1597,22 +1594,19 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                       </span>
                                     </td>
                                     <td className="px-3 py-2">
-                                      <div className="flex items-center gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity">
-                                        <button
+                                      <ActionIconGroup label={language === 'zh' ? 'IP 操作' : 'IP actions'} className="opacity-0 transition-opacity group-hover/row:opacity-100">
+                                        <ActionIconButton
+                                          icon={Pencil}
+                                          label={language === 'zh' ? '编辑' : 'Edit'}
                                           onClick={() => openEditIP(addr)}
-                                          className="p-1 rounded text-black/25 hover:text-[#00bceb] transition-colors"
-                                          title={language === 'zh' ? '编辑' : 'Edit'}
-                                        >
-                                          <Pencil size={13} />
-                                        </button>
-                                        <button
+                                        />
+                                        <ActionIconButton
+                                          icon={Trash2}
+                                          label={language === 'zh' ? '删除' : 'Delete'}
+                                          variant="danger"
                                           onClick={() => setConfirmDelete({ type: 'ip', id: addr.id, label: addr.address })}
-                                          className="p-1 rounded text-black/25 hover:text-red-500 transition-colors"
-                                          title={language === 'zh' ? '删除' : 'Delete'}
-                                        >
-                                          <Trash2 size={13} />
-                                        </button>
-                                      </div>
+                                        />
+                                      </ActionIconGroup>
                                     </td>
                                   </tr>
                                 );
@@ -1682,20 +1676,19 @@ const IPVlanTab: React.FC<IPVlanTabProps> = ({ language, t }) => {
                                     </div>
                                   </div>
                                   {/* Card hover actions */}
-                                  <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 opacity-0 group-hover/card:opacity-100 transition-opacity">
-                                    <button
+                                  <ActionIconGroup label={language === 'zh' ? 'IP 操作' : 'IP actions'} className="absolute right-1.5 top-1.5 opacity-0 transition-opacity group-hover/card:opacity-100">
+                                    <ActionIconButton
+                                      icon={Pencil}
+                                      label={language === 'zh' ? '编辑' : 'Edit'}
                                       onClick={() => openEditIP(addr)}
-                                      className="p-0.5 rounded text-black/20 hover:text-[#00bceb] transition-colors"
-                                    >
-                                      <Pencil size={11} />
-                                    </button>
-                                    <button
+                                    />
+                                    <ActionIconButton
+                                      icon={Trash2}
+                                      label={language === 'zh' ? '删除' : 'Delete'}
+                                      variant="danger"
                                       onClick={() => setConfirmDelete({ type: 'ip', id: addr.id, label: addr.address })}
-                                      className="p-0.5 rounded text-black/20 hover:text-red-500 transition-colors"
-                                    >
-                                      <Trash2 size={11} />
-                                    </button>
-                                  </div>
+                                    />
+                                  </ActionIconGroup>
                                 </div>
                               );
                             })}

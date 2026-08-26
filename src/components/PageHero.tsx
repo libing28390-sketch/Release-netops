@@ -8,8 +8,8 @@
  *
  * Visual language matches the Operation Workspace (AccessCenterTab):
  *   - Square rounded icon tile, 48px, solid accent background, white glyph
- *   - Title: text-xl semibold, heading color
- *   - Subtitle: text-sm muted text, separated from title with a "·" or newline
+ *   - Title: shared 20px/700 page-title treatment, heading color
+ *   - Subtitle: shared 12px muted treatment, separated from title with a "·" or newline
  *
  * All colors use CSS custom properties from index.css so light/dark themes auto-adapt.
  */
@@ -35,7 +35,7 @@ export interface PageHeroProps {
   className?: string;
 }
 
-const DEFAULT_ACCENT = '#06b6d4';
+const DEFAULT_ACCENT = 'var(--ui-accent)';
 
 const PageHero: React.FC<PageHeroProps> = ({
   icon: Icon,
@@ -63,7 +63,9 @@ const PageHero: React.FC<PageHeroProps> = ({
             style={{
               background: accent,
               color: '#ffffff',
-              boxShadow: `0 6px 16px -6px ${accent}66`,
+              boxShadow: accent === DEFAULT_ACCENT
+                ? '0 6px 16px -6px color-mix(in srgb, var(--ui-accent) 40%, transparent)'
+                : `0 6px 16px -6px ${accent}66`,
             }}
           >
             <Icon className="w-6 h-6" strokeWidth={1.8} />
@@ -71,21 +73,21 @@ const PageHero: React.FC<PageHeroProps> = ({
           <div className="min-w-0">
             {eyebrow && (
               <div
-                className="text-[10px] font-bold uppercase tracking-[0.18em] mb-0.5"
+                className="nx-page-eyebrow mb-0.5"
                 style={{ color: accent }}
               >
                 {eyebrow}
               </div>
             )}
             <h1
-              className="text-xl font-bold tracking-tight leading-tight truncate"
+              className="nx-page-title truncate"
               style={{ color: 'var(--heading-text)' }}
             >
               {title}
             </h1>
             {subtitle && (
               <p
-                className="text-[13px] mt-0.5 truncate"
+                className="nx-page-subtitle mt-0.5 truncate"
                 style={{ color: 'var(--muted-text)' }}
               >
                 {subtitle}

@@ -5,6 +5,7 @@ import {
   Activity, WifiOff, Terminal,
 } from 'lucide-react';
 import type { Device, DeviceConnectionCheckSummary } from '../../types';
+import { ActionIconButton, ActionIconGroup } from '../ui/ActionIconButton';
 import StatusBadge from './StatusBadge';
 import CpuMemBar from './CpuMemBar';
 import DeviceRowExpand from './DeviceRowExpand';
@@ -62,8 +63,8 @@ const SortHeader: React.FC<{
   const active = sortConfig?.key === col;
   return (
     <th
-      className={`px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider cursor-pointer select-none transition-colors
-        ${active ? 'text-[#00bceb]' : 'text-black/35 dark:text-white/30 hover:text-black/55 dark:hover:text-white/55'} ${className}`}
+      className={`px-3 py-3 text-[11px] font-bold uppercase tracking-wider cursor-pointer select-none transition-colors
+        ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400 dark:text-zinc-400 hover:text-gray-600 dark:hover:text-zinc-200'} ${className}`}
       onClick={() => onSort(col)}
     >
       <span className="inline-flex items-center gap-0.5">
@@ -132,10 +133,10 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-left border-collapse min-w-[860px]">
+      <table className="nx-data-table min-w-[860px]">
         <thead>
           <tr className="bg-black/[.02] dark:bg-white/[.02] border-b border-black/5 dark:border-white/6">
-            <th className="px-3 py-2.5 w-9">
+            <th className="px-3 py-3 w-9">
               <input
                 type="checkbox"
                 title={zh ? '选择全部' : 'Select all'}
@@ -145,7 +146,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                 onChange={e => handleSelectAll(e.target.checked)}
               />
             </th>
-            <th className="px-1 py-2.5 w-6" />
+            <th className="px-1 py-3 w-6" />
             {columns.device && (
               <SortHeader col="hostname" sortConfig={sortConfig} onSort={onSort}>
                 {zh ? '设备' : 'Device'}
@@ -162,7 +163,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
               </SortHeader>
             )}
             {columns.tags && (
-              <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">
+              <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">
                 {zh ? '标签' : 'Tags'}
               </th>
             )}
@@ -172,12 +173,12 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
               </SortHeader>
             )}
             {columns.cpuMem && (
-              <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30">
+              <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400">
                 CPU / MEM
               </th>
             )}
             {columns.actions && (
-              <th className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-black/35 dark:text-white/30 text-right pr-4">
+              <th className="px-3 py-3 text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-zinc-400 text-right pr-4">
                 {zh ? '操作' : 'Actions'}
               </th>
             )}
@@ -205,7 +206,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   ${selected ? 'bg-[#00bceb]/[.04] dark:bg-[#00bceb]/[.06]' : ''}
                   ${expanded ? 'bg-black/[.015] dark:bg-white/[.02]' : ''}`}>
                   {/* Checkbox */}
-                  <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                  <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       title={`Select ${device.hostname || device.ip_address}`}
@@ -218,35 +219,35 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                     />
                   </td>
                   {/* Expand */}
-                  <td className="px-1 py-2" onClick={e => e.stopPropagation()}>
+                  <td className="px-1 py-2.5" onClick={e => e.stopPropagation()}>
                     <button onClick={() => toggleExpand(device.id)}
-                      className="p-0.5 rounded text-black/25 dark:text-white/20 hover:text-black/50 dark:hover:text-white/50 transition-colors"
+                      className="p-0.5 rounded text-gray-400 dark:text-zinc-500 hover:text-gray-700 dark:hover:text-zinc-200 transition-colors"
                       title={zh ? '展开详情' : 'Expand details'}>
                       <ChevronRight size={13} className={`transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
                     </button>
                   </td>
                   {/* Device (hostname + ip + role) */}
                   {columns.device && (
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2.5">
                       <div className="text-left">
-                        <span className="text-[12px] font-semibold text-black/80 dark:text-white/85 group-hover:text-[#00bceb] transition-colors">
+                        <span className="text-xs font-bold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                           {device.hostname || 'Unknown'}
                         </span>
-                        <span className="block text-[10px] font-mono text-black/35 dark:text-white/30 mt-0.5">
+                        <span className="block text-[10px] font-mono text-gray-400 dark:text-zinc-400 mt-0.5">
                           {device.ip_address || '0.0.0.0'}
                         </span>
                       </div>
                       {device.role && (
-                        <span className="inline-block mt-0.5 text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded
-                          bg-black/[.04] dark:bg-white/6 text-black/30 dark:text-white/30">
+                        <span className="inline-block mt-0.5 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded
+                          bg-gray-50 dark:bg-zinc-800/60 text-gray-500 dark:text-zinc-400 border border-gray-100 dark:border-zinc-700/80">
                           {device.role}
                         </span>
                       )}
                       {device.connection_method && (
-                        <span className={`inline-block mt-0.5 ml-1 text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded
+                        <span className={`inline-block mt-0.5 ml-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded
                           ${device.connection_method === 'netconf'
-                            ? 'bg-violet-500/8 text-violet-500 dark:text-violet-400'
-                            : 'bg-black/[.04] dark:bg-white/6 text-black/30 dark:text-white/30'
+                            ? 'bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300'
+                            : 'bg-gray-50 dark:bg-zinc-800/60 text-gray-500 dark:text-zinc-400 border border-gray-100 dark:border-zinc-700/80'
                           }`}>
                           {device.connection_method === 'netconf' ? 'NETCONF' : 'SSH'}
                         </span>
@@ -255,11 +256,11 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   )}
                   {/* Platform */}
                   {columns.platform && (
-                    <td className="px-3 py-2">
-                      <span className="text-[11px] font-medium text-black/65 dark:text-white/65">{device.vendor || vendorOf(device.platform)}</span>
-                      <span className="block text-[10px] text-black/35 dark:text-white/30 mt-0.5">{device.platform || 'unknown'}</span>
+                    <td className="px-3 py-2.5">
+                      <span className="text-xs font-semibold text-gray-700 dark:text-zinc-300">{device.vendor || vendorOf(device.platform)}</span>
+                      <span className="block text-[11px] text-gray-500 dark:text-zinc-400 mt-0.5">{device.platform || 'unknown'}</span>
                       {device.version && (
-                        <span className="block text-[10px] font-mono text-black/25 dark:text-white/20 mt-0.5 truncate max-w-[120px]" title={device.version}>
+                        <span className="block text-[10px] font-mono text-gray-400 dark:text-zinc-500 mt-0.5 truncate max-w-[120px]" title={device.version}>
                           {device.version}
                         </span>
                       )}
@@ -267,10 +268,10 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   )}
                   {/* Site */}
                   {columns.site && (
-                    <td className="px-3 py-2">
-                      <span className="text-[11px] text-black/55 dark:text-white/55">{device.datacenter || device.site || '—'}</span>
+                    <td className="px-3 py-2.5">
+                      <span className="text-xs font-medium text-gray-800 dark:text-zinc-200">{device.datacenter || device.site || '—'}</span>
                       {device.rack && (
-                        <span className="block text-[10px] text-black/35 dark:text-white/30 mt-0.5">
+                        <span className="block text-[10px] text-gray-400 dark:text-zinc-400 mt-0.5">
                           Rack {device.rack}{device.rack_unit ? ` / U${device.rack_unit}` : ''}
                         </span>
                       )}
@@ -278,20 +279,21 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   )}
                   {/* Tags */}
                   {columns.tags && (
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2.5">
                       <div className="flex flex-wrap gap-1 max-w-[200px]">
                         {(device.tags || []).slice(0, 3).map(tag => (
                           <span
                             key={tag.id}
-                            className="inline-flex items-center gap-0.5 rounded-full border border-black/5 dark:border-white/8 bg-black/[0.03] dark:bg-white/[0.06] px-1.5 py-0.5 text-[9px]"
+                            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-semibold whitespace-nowrap"
+                            style={{ color: tag.color || '#2563eb', backgroundColor: `${tag.color || '#2563eb'}15` }}
                             title={tag.description || tag.code}
                           >
-                            <span className="h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color || '#06b6d4' }} />
-                            <span className="text-black/60 dark:text-white/60 truncate max-w-[60px]">{zh ? (tag.label_zh || tag.label) : tag.label}</span>
+                            <span className="h-1 w-1 rounded-full flex-shrink-0" style={{ backgroundColor: tag.color || '#2563eb' }} />
+                            <span className="truncate max-w-[60px]">{zh ? (tag.label_zh || tag.label) : tag.label}</span>
                           </span>
                         ))}
                         {(device.tags || []).length > 3 && (
-                          <span className="text-[9px] text-black/30 dark:text-white/25 px-1">
+                          <span className="text-[9px] font-mono text-gray-400 px-1">
                             +{(device.tags || []).length - 3}
                           </span>
                         )}
@@ -300,7 +302,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   )}
                   {/* Status */}
                   {columns.status && (
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2.5">
                       <StatusBadge
                         status={device.status}
                         healthStatus={device.health_status}
@@ -313,49 +315,43 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
                   )}
                   {/* CPU / MEM */}
                   {columns.cpuMem && (
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2.5">
                       <CpuMemBar cpu={cpu} mem={mem} language={language} empty={!metricsAvailable} />
                     </td>
                   )}
                   {/* Actions */}
                   {columns.actions && (
-                    <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-1">
-                        <button
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                      <ActionIconGroup label={zh ? '设备操作' : 'Device actions'}>
+                        <ActionIconButton
+                          icon={Terminal}
+                          label={zh ? '管理 / 配置' : 'Manage / Config'}
+                          variant="accent"
                           onClick={() => onManage(device)}
-                          title={zh ? '管理 / 配置' : 'Manage / Config'}
-                          className="inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-semibold
-                            bg-[#00bceb]/10 text-[#0096bd] dark:text-[#5dd8f0] hover:bg-[#00bceb]/20 transition-all">
-                          <Terminal size={13} />
-                        </button>
-                        <button
+                        />
+                        <ActionIconButton
+                          icon={Activity}
+                          label={zh ? '连通性检测' : 'Check connectivity'}
+                          variant="accent"
                           onClick={() => onTestConnection(device, 'quick')}
-                          title={zh ? '连通性检测' : 'Check connectivity'}
-                          className={`inline-flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-semibold transition-all
-                            ${testing ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-violet-500/10 text-violet-600 dark:text-violet-400 hover:bg-violet-500/20'}`}>
-                          <Activity size={13} className={testing ? 'animate-pulse' : ''} />
-                        </button>
+                          iconClassName={testing ? 'animate-pulse' : undefined}
+                        />
                         {onEdit && (
-                        <button
+                        <ActionIconButton
+                          icon={Pencil}
+                          label={zh ? '编辑' : 'Edit'}
                           onClick={() => onEdit(device)}
-                          title={zh ? '编辑' : 'Edit'}
-                          className="inline-flex items-center justify-center w-7 h-7 rounded-md
-                            text-black/30 dark:text-white/25 hover:bg-black/5 dark:hover:bg-white/8
-                            hover:text-black/60 dark:hover:text-white/60 transition-all">
-                          <Pencil size={13} />
-                        </button>
+                        />
                         )}
                         {onDelete && (
-                        <button
+                        <ActionIconButton
+                          icon={Trash2}
+                          label={zh ? '删除' : 'Delete'}
+                          variant="danger"
                           onClick={() => onDelete(device.id)}
-                          title={zh ? '删除' : 'Delete'}
-                          className="inline-flex items-center justify-center w-7 h-7 rounded-md
-                            text-black/30 dark:text-white/25 hover:bg-red-500/10
-                            hover:text-red-500 dark:hover:text-red-400 transition-all">
-                          <Trash2 size={13} />
-                        </button>
+                        />
                         )}
-                      </div>
+                      </ActionIconGroup>
                     </td>
                   )}
                 </tr>
@@ -374,8 +370,8 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
           {!loading && rows.length === 0 && (
             <tr>
               <td colSpan={visibleCount} className="px-6 py-12 text-center">
-                <WifiOff size={28} className="mx-auto mb-2 text-black/15 dark:text-white/15" />
-                <p className="text-sm text-black/35 dark:text-white/30">
+                <WifiOff size={28} className="mx-auto mb-2 text-gray-300 dark:text-zinc-600" />
+                <p className="text-sm text-gray-400 dark:text-zinc-500">
                   {zh ? '没有匹配的设备' : 'No devices found for current filters.'}
                 </p>
               </td>
@@ -387,7 +383,7 @@ const DeviceTable: React.FC<DeviceTableProps> = ({
             <tr>
               <td colSpan={visibleCount} className="px-6 py-12 text-center">
                 <div className="inline-block w-5 h-5 border-2 border-[#00bceb]/30 border-t-[#00bceb] rounded-full animate-spin mb-2" />
-                <p className="text-sm text-black/35 dark:text-white/30">
+                <p className="text-sm text-gray-400 dark:text-zinc-500">
                   {zh ? '加载中…' : 'Loading devices...'}
                 </p>
               </td>

@@ -6,6 +6,7 @@ import type { AlertDetailResponse, AlertListResponse, AlertRecord } from '../typ
 import Pagination from '../components/Pagination';
 import { DataTable } from '../components/DataTable';
 import PageHero from '../components/PageHero';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { alertWorkflowBadgeClass, severityBadgeClass } from '../components/shared';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import {
@@ -352,10 +353,9 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
         subtitle={language === 'zh' ? '实时监控全网设备与业务异常，快速进行故障确认、分派和处置。' : 'Real-time monitoring of network anomalies, facilitating quick triage and response.'}
         actions={
           <>
-            <button onClick={handleExportAlerts} className={alertSecondaryButtonClass} title={language === 'zh' ? '导出告警' : 'Export Alerts'}>
-              <Download size={14} />
+            <ActionButton icon={Download} variant="accent" size="md" onClick={handleExportAlerts} title={language === 'zh' ? '导出告警' : 'Export Alerts'}>
               {language === 'zh' ? '导出' : 'Export'}
-            </button>
+            </ActionButton>
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
               className={`${alertSecondaryButtonClass} ${autoRefresh ? '!border-green-400 !bg-green-50 !text-green-700' : ''}`}
@@ -364,10 +364,9 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
               <RefreshCw size={14} className={autoRefresh ? 'animate-spin' : ''} style={autoRefresh ? { animationDuration: '3s' } : undefined} />
               {language === 'zh' ? (autoRefresh ? '自动刷新中' : '自动刷新') : (autoRefresh ? 'Auto On' : 'Auto')}
             </button>
-            <button onClick={() => void loadAlerts()} className={alertSecondaryButtonClass}>
-              <RefreshCw size={14} />
+            <ActionButton icon={RefreshCw} variant="default" size="md" onClick={() => void loadAlerts()}>
               {language === 'zh' ? '刷新列表' : 'Refresh'}
-            </button>
+            </ActionButton>
           </>
         }
       />
@@ -570,34 +569,29 @@ const AlertDeskTab: React.FC<AlertDeskTabProps> = ({ language, currentUsername, 
                       </div>
                     </td>
                     <td className="px-5 py-4 align-top">
-                      <div className="flex items-center gap-1">
-                        <button
+                      <ActionIconGroup label={language === 'zh' ? '告警操作' : 'Alert actions'}>
+                        <ActionIconButton
+                          icon={Eye}
+                          label={language === 'zh' ? `查看告警 ${row.title}` : `View alert ${row.title}`}
                           onClick={() => setSelectedAlertId(row.id)}
-                          className={alertTableActionButtonClass}
-                          title={language === 'zh' ? `查看告警 ${row.title}` : `View alert ${row.title}`}
-                        >
-                          <Eye size={14} />
-                          {language === 'zh' ? '查看' : 'View'}
-                        </button>
+                        />
                         {!row.resolved_at && row.workflow_status !== 'acknowledged' && row.workflow_status !== 'investigating' && row.workflow_status !== 'suppressed' && (
-                          <button
+                          <ActionIconButton
+                            icon={CheckCircle2}
+                            label={language === 'zh' ? '快速确认' : 'Quick Ack'}
+                            variant="success"
                             onClick={() => void handleInlineAck(row.id)}
-                            className={alertTableActionButtonClass}
-                            title={language === 'zh' ? '快速确认' : 'Quick Ack'}
-                          >
-                            <CheckCircle2 size={14} />
-                          </button>
+                          />
                         )}
                         {!row.resolved_at && row.assignee !== currentUsername && (
-                          <button
+                          <ActionIconButton
+                            icon={UserCheck}
+                            label={language === 'zh' ? '分派给我' : 'Assign to me'}
+                            variant="accent"
                             onClick={() => void handleInlineAssignToMe(row.id)}
-                            className={alertTableActionButtonClass}
-                            title={language === 'zh' ? '分派给我' : 'Assign to me'}
-                          >
-                            <UserCheck size={14} />
-                          </button>
+                          />
                         )}
-                      </div>
+                      </ActionIconGroup>
                     </td>
                   </tr>
                 ))

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, Search, Settings2, Trash2 } from 'lucide-react';
+import { ActionIconButton } from '../../ui/ActionIconButton';
 
 export type MetricMode =
   | 'direct_percent'
@@ -366,14 +367,13 @@ export const MetricRowItem: React.FC<MetricRowItemProps> = React.memo(
             >
               <Settings2 size={14} />
             </button>
-            <button
-              type="button"
+            <ActionIconButton
+              icon={Trash2}
+              label={zh ? '移除此指标' : 'Remove Metric'}
+              size="sm"
+              variant="danger"
               onClick={onRemove}
-              className="rounded-md p-1.5 text-black/35 hover:bg-red-500/10 hover:text-red-600 dark:text-white/35 dark:hover:bg-red-500/10 dark:hover:text-red-400"
-              title={zh ? '移除此指标' : 'Remove Metric'}
-            >
-              <Trash2 size={14} />
-            </button>
+            />
           </div>
         </td>
       </tr>

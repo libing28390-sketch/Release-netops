@@ -276,7 +276,7 @@ export const QuickQueryResultOverlay: React.FC<QuickQueryResultOverlayProps> = (
                       : 'min-h-[12rem] max-h-[calc(100vh-18rem)] overflow-auto rounded-2xl border border-white/[0.06] bg-black/20 sm:min-h-[20rem]'
                   }
                 >
-                  <table className="min-w-full text-left text-[12px] text-[#d8e2eb]">
+                  <table className="nx-terminal-table min-w-full text-left text-[12px] text-[#d8e2eb]">
                     <thead className="sticky top-0 bg-[#101722]">
                       <tr className="border-b border-white/[0.06]">
                         {quickQueryTable.columns.map((col) => (

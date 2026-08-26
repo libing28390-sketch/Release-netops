@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Tags, Plus, Search, X, Edit3, Trash2, RefreshCw, Hash, ChevronDown, ChevronRight,
+  Tags, Plus, Search, X, Pencil, Trash2, RefreshCw, Hash, ChevronDown, ChevronRight,
   Server, Shield, Cpu, Globe, Layers, Settings2, BarChart3, Check, AlertCircle
 } from 'lucide-react';
 import type { TagDefinition, TagCategory, TagStatistics } from '../types';
@@ -8,6 +8,7 @@ import { TAG_CATEGORY_LABELS } from '../types';
 import PageHero from '../components/PageHero';
 import Pagination from '../components/Pagination';
 import { DataTable } from '../components/DataTable';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 
 /* ─── Props ─── */
 interface TagManagementTabProps {
@@ -587,14 +588,15 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
               >
                 {zh ? '取消' : 'Cancel'}
               </button>
-              <button
+              <ActionButton
+                icon={saving ? RefreshCw : Check}
+                iconClassName={saving ? 'animate-spin' : undefined}
+                variant="primary"
                 onClick={() => void handleSave()}
                 disabled={saving}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#06b6d4] px-5 text-sm font-semibold text-white transition-all hover:bg-[#0891b2] disabled:opacity-50"
               >
-                {saving ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
                 {editingTag ? (zh ? '保存' : 'Save') : (zh ? '创建' : 'Create')}
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -630,14 +632,16 @@ export default function TagManagementTab({ language, currentUser }: TagManagemen
               >
                 {zh ? '取消' : 'Cancel'}
               </button>
-              <button
+              <ActionButton
+                icon={deleting ? RefreshCw : Trash2}
+                iconClassName={deleting ? 'animate-spin' : undefined}
+                variant="danger"
+                size="md"
                 onClick={() => void handleDelete()}
                 disabled={deleting || deleteTarget.built_in === 1}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-red-500 px-6 text-sm font-semibold text-white transition-all hover:bg-red-600 disabled:opacity-40"
               >
-                {deleting ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
                 {zh ? '删除' : 'Delete'}
-              </button>
+              </ActionButton>
             </div>
           </div>
         </div>
@@ -697,27 +701,25 @@ function TagTableRow({ tag, zh, canManage, onEdit, onDelete }: TagTableRowProps)
         </span>
       </td>
       <td className="px-4 py-3">
-        <div className="flex items-center justify-end gap-1">
+        <ActionIconGroup label={zh ? '标签操作' : 'Tag actions'}>
           {canManage && tag.is_system !== 1 && (
-            <button
+            <ActionIconButton
+              icon={Pencil}
+              label={zh ? '编辑' : 'Edit'}
+              variant="accent"
               onClick={onEdit}
-              className="rounded-lg p-1.5 text-black/35 transition-all hover:bg-cyan-50 hover:text-[#0891b2]"
-              title={zh ? '编辑' : 'Edit'}
-            >
-              <Edit3 size={13} />
-            </button>
+            />
           )}
           {canManage && tag.built_in !== 1 && (
-            <button
+            <ActionIconButton
+              icon={Trash2}
+              label={zh ? '删除' : 'Delete'}
+              variant="danger"
               onClick={onDelete}
-              className="rounded-lg p-1.5 text-black/35 transition-all hover:bg-red-50 hover:text-red-500"
-              title={zh ? '删除' : 'Delete'}
-            >
-              <Trash2 size={13} />
-            </button>
+            />
           )}
           {!canManage && <span className="text-black/25">—</span>}
-        </div>
+        </ActionIconGroup>
       </td>
     </tr>
   );

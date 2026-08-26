@@ -18,6 +18,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
+import { ActionIconButton } from '../../components/ui/ActionIconButton';
 
 interface UndocumentedEndpoint {
   ip: string;
@@ -527,13 +528,12 @@ const IPReconciliationTab: React.FC<IPReconciliationTabProps> = ({ language, t }
                             </span>
                           </td>
                           <td className="pr-6 py-4 text-right">
-                            <button
+                            <ActionIconButton
+                              icon={Trash2}
+                              label={zh ? '释放此 IP' : 'Release IP'}
+                              variant="danger"
                               onClick={() => setReleasingItem(node)}
-                              className="p-1 rounded-md text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-all cursor-pointer"
-                              title={zh ? '释放此 IP' : 'Release IP'}
-                            >
-                              <Trash2 size={15} />
-                            </button>
+                            />
                           </td>
                         </tr>
                       ))

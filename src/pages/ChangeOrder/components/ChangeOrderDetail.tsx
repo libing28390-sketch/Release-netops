@@ -14,6 +14,7 @@ import {
   buildWorkflowPresentation
 } from '../helpers';
 import { ControlSheetPanel } from './ControlSheetPanel';
+import { ActionButton } from '../../../components/ui/ActionIconButton';
 
 
 interface Props {
@@ -100,14 +101,9 @@ export const ChangeOrderDetail: React.FC<Props> = ({
         </button>
         <div className="flex items-center gap-2">
           {/* ── Utility buttons: Copy / Bookmark / Save as Template / Export ── */}
-          <button
-            onClick={() => handleCopyOrder(selectedOrder)}
-            title={zh ? '复制工单' : 'Copy as new order'}
-            className="px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 bg-white text-black/50 border border-black/10 hover:bg-black/5 hover:text-[#00bceb] transition-all"
-          >
-            <Copy size={13} />
+          <ActionButton icon={Copy} variant="accent" size="sm" onClick={() => handleCopyOrder(selectedOrder)} title={zh ? '复制工单' : 'Copy as new order'}>
             {zh ? '复制' : 'Copy'}
-          </button>
+          </ActionButton>
           <button
             onClick={() => handleToggleBookmark(selectedOrder.id)}
             title={zh ? (bookmarkedIds.has(selectedOrder.id) ? '取消收藏' : '收藏') : (bookmarkedIds.has(selectedOrder.id) ? 'Remove bookmark' : 'Bookmark')}
@@ -130,14 +126,9 @@ export const ChangeOrderDetail: React.FC<Props> = ({
               {zh ? '存为模板' : 'Template'}
             </button>
           )}
-          <button
-            onClick={() => handleExportOrder(selectedOrder)}
-            title={zh ? '导出工单（CSV）' : 'Export order (CSV)'}
-            className="px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 bg-white text-black/50 border border-black/10 hover:bg-sky-50 hover:text-sky-600 hover:border-sky-200 transition-all"
-          >
-            <Download size={13} />
+          <ActionButton icon={Download} variant="accent" size="sm" onClick={() => handleExportOrder(selectedOrder)} title={zh ? '导出工单（CSV）' : 'Export order (CSV)'}>
             {zh ? '导出' : 'Export'}
-          </button>
+          </ActionButton>
           <div className="w-px h-5 bg-black/8 mx-0.5" />
           {/* ── Workflow buttons ── */}
           {['draft', 'rejected'].includes(selectedOrder.status) && selectedOrder.requester_username === currentUser.username && (

@@ -5,6 +5,7 @@ import {
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
+import { ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import * as XLSX from 'xlsx';
 import { motion } from 'motion/react';
 import type { Device, Job, ComplianceOverview } from '../types';
@@ -306,21 +307,10 @@ const ReportsTab: React.FC<ReportsTabProps> = ({
                 ? (zh ? '刚刚' : 'now')
                 : `${Math.round((Date.now() - lastRefresh.getTime()) / 1000)}s`}
             </span>
-            <button
-              onClick={handleExportReport}
-              title={zh ? '导出' : 'Export'}
-              className="p-2 rounded-lg text-black/30 hover:text-[#00bceb] transition-colors"
-            >
-              <Download size={14} />
-            </button>
-            <button
-              onClick={handleManualRefresh}
-              disabled={refreshing}
-              title={zh ? '刷新' : 'Refresh'}
-              className="p-2 rounded-lg text-black/30 hover:text-[#00bceb] transition-colors"
-            >
-              <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-            </button>
+            <ActionIconGroup label={zh ? '报告操作' : 'Report actions'}>
+              <ActionIconButton icon={Download} label={zh ? '导出' : 'Export'} variant="accent" onClick={handleExportReport} />
+              <ActionIconButton icon={RefreshCw} label={zh ? '刷新' : 'Refresh'} disabled={refreshing} iconClassName={refreshing ? 'animate-spin' : undefined} onClick={handleManualRefresh} />
+            </ActionIconGroup>
           </>
         }
       />

@@ -34,6 +34,7 @@ import { CopilotEmptyState } from './CopilotEmptyState';
 import { CopilotComposer, CopilotModelOption } from './CopilotComposer';
 import { CopilotInspectorDrawer } from './CopilotInspectorDrawer';
 import { formatCopilotDuration, upsertCopilotProcessStep } from './progress';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
 interface CopilotSelectionSnapshot {
   range: Range;
@@ -1141,37 +1142,34 @@ export const AssistantTab: React.FC = () => {
                       >
                         <p className="whitespace-pre-wrap">{m.content}</p>
                       </div>
-                      <div className="flex items-center gap-1 text-gray-400 select-none">
-                        <button
-                          type="button"
+                      <ActionIconGroup className="text-gray-400 select-none" label="用户消息操作">
+                        <ActionIconButton
+                          icon={copiedId === m.id ? Check : Copy}
+                          label="复制问题"
+                          size="xs"
+                          variant={copiedId === m.id ? 'success' : 'accent'}
                           onClick={() => void handleCopyMessage(m.id, m.content)}
-                          className="inline-flex items-center gap-1 rounded-md p-1 text-[11px] transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-                          title="复制问题"
-                          aria-label="复制问题"
-                        >
-                          {copiedId === m.id ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                        </button>
-                        <button
-                          type="button"
+                          className="dark:text-gray-400 dark:hover:text-white"
+                        />
+                        <ActionIconButton
+                          icon={Pencil}
+                          label="编辑并发送问题"
+                          size="xs"
+                          variant="default"
                           onClick={() => handleEditMessage(m)}
                           disabled={loading}
-                          className="inline-flex items-center gap-1 rounded-md p-1 text-[11px] transition hover:bg-gray-100 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-gray-800 dark:hover:text-indigo-300"
-                          title="编辑并发送问题"
-                          aria-label="编辑并发送问题"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
+                          className="dark:text-gray-400 dark:hover:text-white"
+                        />
+                        <ActionIconButton
+                          icon={RotateCcw}
+                          label="重新发送问题"
+                          size="xs"
+                          variant="default"
                           onClick={() => handleResendMessage(m)}
                           disabled={loading}
-                          className="inline-flex items-center gap-1 rounded-md p-1 text-[11px] transition hover:bg-gray-100 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-gray-800 dark:hover:text-indigo-300"
-                          title="重新发送问题"
-                          aria-label="重新发送问题"
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
+                          className="dark:text-gray-400 dark:hover:text-white"
+                        />
+                      </ActionIconGroup>
                     </div>
                   );
                 }
@@ -1369,8 +1367,11 @@ export const AssistantTab: React.FC = () => {
                     {/* Assistant Action Bar (Copy, Like, Regenerate, Inspector Toggle) */}
                     <div className="flex items-center gap-3 pt-1 text-gray-400 select-none text-xs">
                       {selectedText?.messageId === m.id && (
-                        <button
+                        <ActionButton
                           type="button"
+                          icon={copiedId === `${m.id}:selection` ? Check : Copy}
+                          variant={copiedId === `${m.id}:selection` ? 'success' : copyFailedId === `${m.id}:selection` ? 'danger' : 'default'}
+                          size="sm"
                           onPointerDown={(event) => event.preventDefault()}
                           onClick={() => {
                             const liveSelection = window.getSelection()?.toString() || '';
@@ -1379,42 +1380,29 @@ export const AssistantTab: React.FC = () => {
                             const textToCopy = liveSelection.trim() ? liveSelection : cachedSelection.trim() ? cachedSelection : savedSelection.trim() ? savedSelection : selectedText.text;
                             void handleCopyMessage(`${m.id}:selection`, textToCopy);
                           }}
-                          className="inline-flex items-center gap-1 rounded-md p-1 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-                          title="复制选中内容"
-                          aria-label="复制选中内容"
+                          className="!h-7 !px-2 !text-[11px]"
                         >
-                          {copiedId === `${m.id}:selection` ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className={`h-3.5 w-3.5 ${copyFailedId === `${m.id}:selection` ? 'text-rose-500' : ''}`} />}
-                          <span className={copyFailedId === `${m.id}:selection` ? 'text-rose-500' : ''}>{copyFailedId === `${m.id}:selection` ? '复制失败' : copiedId === `${m.id}:selection` ? '已复制' : '复制选中'}</span>
-                        </button>
+                          {copyFailedId === `${m.id}:selection` ? '复制失败' : copiedId === `${m.id}:selection` ? '已复制' : '复制选中'}
+                        </ActionButton>
                       )}
-                      <button
+                      <ActionButton
                         type="button"
+                        icon={copiedId === m.id ? Check : Copy}
+                        variant={copiedId === m.id ? 'success' : copyFailedId === m.id ? 'danger' : 'default'}
+                        size="sm"
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={() => handleCopyMessage(m.id, m.content)}
-                        className="inline-flex items-center gap-1 rounded-md p-1 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-                        title="复制全文"
-                        aria-label="复制全文"
+                        className="!h-7 !px-2 !text-[11px]"
                       >
-                        {copiedId === m.id ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-500" />
-                        ) : (
-                          <Copy className={`w-3.5 h-3.5 ${copyFailedId === m.id ? 'text-rose-500' : ''}`} />
-                        )}
-                        <span className={copyFailedId === m.id ? 'text-rose-500' : ''}>{copyFailedId === m.id ? '复制失败' : copiedId === m.id ? '已复制' : '复制全文'}</span>
-                      </button>
+                        {copyFailedId === m.id ? '复制失败' : copiedId === m.id ? '已复制' : '复制全文'}
+                      </ActionButton>
 
-                      <button type="button" onClick={() => handleRetryMessage(m)} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="重试本次问题">
-                        <RotateCcw className="w-3.5 h-3.5" />
-                      </button>
-                      <button type="button" onClick={() => {
+                      <ActionIconButton icon={RotateCcw} label="重试本次问题" onClick={() => handleRetryMessage(m)} disabled={loading} />
+                      <ActionIconButton icon={Pencil} label="编辑并发送上一条问题" onClick={() => {
                         const previousUser = messages.slice(0, messages.findIndex((item) => item.id === m.id)).reverse().find((item) => item.role === 'user');
                         if (previousUser) handleEditMessage(previousUser);
-                      }} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="编辑并发送上一条问题">
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button type="button" onClick={() => handleContinueMessage(m)} disabled={loading} className="hover:text-indigo-600 p-1 transition" title="继续排查">
-                        <Play className="w-3.5 h-3.5" />
-                      </button>
+                      }} disabled={loading} />
+                      <ActionIconButton icon={Play} label="继续排查" onClick={() => handleContinueMessage(m)} disabled={loading} />
 
                       <button
                         onClick={() => void handleFeedback(m, 'positive')}

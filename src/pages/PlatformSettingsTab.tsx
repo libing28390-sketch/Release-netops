@@ -43,6 +43,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import type { ConfigTemplate, Device } from '../types';
 import PageHero from '../components/PageHero';
+import { ActionButton, ActionIconButton } from '../components/ui/ActionIconButton';
 import { apiRequest, authHeaders } from '../api/http';
 import { VENDOR_PLATFORMS } from './AssetManagement/constants';
 
@@ -445,17 +446,28 @@ const TemplateLibraryCard = React.memo<TemplateLibraryCardProps>(({
       </button>
       {!official && (
         <>
-          <button type="button" onClick={() => onEdit(template)} className="absolute right-9 top-2 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-cyan-50 hover:text-cyan-700 group-hover:opacity-100" title={zh ? '编辑自定义模板' : 'Edit custom template'}>
-            <Pencil size={12} />
-          </button>
-          <button type="button" onClick={() => void onArchive(template)} className="absolute bottom-2 right-2 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100" title={zh ? '归档模板' : 'Archive template'}>
-            <Trash2 size={12} />
-          </button>
+          <ActionIconButton
+            icon={Pencil}
+            label={zh ? '编辑自定义模板' : 'Edit custom template'}
+            onClick={() => onEdit(template)}
+            className="absolute right-9 top-2 opacity-0 group-hover:opacity-100"
+          />
+          <ActionIconButton
+            icon={Trash2}
+            label={zh ? '归档模板' : 'Archive template'}
+            variant="danger"
+            onClick={() => void onArchive(template)}
+            className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100"
+          />
         </>
       )}
-      <button type="button" onClick={() => void onCopy(template)} className="absolute bottom-2 right-9 rounded-lg p-1.5 text-slate-300 opacity-0 transition hover:bg-cyan-50 hover:text-cyan-700 group-hover:opacity-100" title={zh ? '复制为自定义模板' : 'Copy as custom template'}>
-        <Copy size={12} />
-      </button>
+      <ActionIconButton
+        icon={Copy}
+        label={zh ? '复制为自定义模板' : 'Copy as custom template'}
+        variant="accent"
+        onClick={() => void onCopy(template)}
+        className="absolute bottom-2 right-9 opacity-0 group-hover:opacity-100"
+      />
     </div>
   );
 });
@@ -1561,8 +1573,8 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
             </div>
             {detail && (
               <div className="mt-3 flex flex-wrap gap-1.5">
-                <button type="button" onClick={() => void copyTemplate(detail)} className="rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] font-bold text-violet-700 hover:bg-violet-100"><Copy size={11} className="mr-1 inline" />{zh ? '复制为自定义' : 'Copy as custom'}</button>
-                {!detail.is_official && detail.source_type !== 'official' && <button type="button" onClick={() => openTemplateEditor(detail)} className="rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1 text-[10px] font-bold text-cyan-700 hover:bg-cyan-100"><Pencil size={11} className="mr-1 inline" />{zh ? '编辑模板' : 'Edit template'}</button>}
+                <ActionButton type="button" icon={Copy} variant="accent" onClick={() => void copyTemplate(detail)}>{zh ? '复制为自定义' : 'Copy as custom'}</ActionButton>
+                {!detail.is_official && detail.source_type !== 'official' && <ActionButton type="button" icon={Pencil} variant="accent" onClick={() => openTemplateEditor(detail)}>{zh ? '编辑模板' : 'Edit template'}</ActionButton>}
                 <button type="button" onClick={loadExamples} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><Sparkles size={11} className="mr-1 inline" />{zh ? '加载示例' : 'Example'}</button>
                 {availableDefaultCount > 0 && <button type="button" onClick={applyTemplateDefaults} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 hover:bg-emerald-100"><Check size={11} className="mr-1 inline" />{zh ? `应用默认值 (${availableDefaultCount})` : `Apply defaults (${availableDefaultCount})`}</button>}
                 <button type="button" onClick={resetParameters} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-slate-600 hover:border-cyan-200 hover:text-cyan-700"><RefreshCw size={11} className="mr-1 inline" />{zh ? '重置参数' : 'Reset'}</button>
@@ -1588,7 +1600,13 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                         <option value="">{zh ? '未使用参数方案' : 'No profile'}</option>
                         {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · v{profile.template_version}</option>)}
                       </select>
-                      <button type="button" disabled={!selectedProfileId} onClick={() => void deleteProfile()} className="rounded-xl border border-slate-200 p-2 text-slate-400 hover:border-rose-200 hover:text-rose-600 disabled:opacity-30" title={zh ? '删除参数方案' : 'Delete profile'}><Trash2 size={13} /></button>
+                      <ActionIconButton
+                        icon={Trash2}
+                        label={zh ? '删除参数方案' : 'Delete profile'}
+                        variant="danger"
+                        disabled={!selectedProfileId}
+                        onClick={() => void deleteProfile()}
+                      />
                     </div>
                     <div className="mt-1.5 flex gap-1.5">
                       <input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder={zh ? '输入方案名称后保存当前参数' : 'Profile name'} className={`${fieldClass} min-w-0 flex-1`} />
@@ -1715,22 +1733,36 @@ const PlatformSettingsTab: React.FC<PlatformSettingsTabProps> = ({
                     <input value={previewSearch} onChange={(event) => setPreviewSearch(event.target.value)} placeholder={zh ? '搜索命令' : 'Search output'} className="w-32 rounded-lg border border-slate-200 py-1.5 pl-7 pr-2 text-[9px] outline-none focus:border-cyan-300" />
                   </div>
                   <button type="button" onClick={() => setWrapPreview((value) => !value)} className={`rounded-lg border p-1.5 ${wrapPreview ? 'border-cyan-200 bg-cyan-50 text-cyan-700' : 'border-slate-200 text-slate-500'}`} title={zh ? '自动换行' : 'Wrap'}><WrapText size={12} /></button>
-                  <button type="button" disabled={!safePreviewOutput} onClick={() => {
+                  <ActionIconButton
+                    icon={Copy}
+                    label={zh ? '复制全部' : 'Copy all'}
+                    disabled={!safePreviewOutput}
+                    onClick={() => {
                     void copyText(safePreviewOutput)
                       .then(() => showToast(t('copied'), 'success'))
                       .catch(() => showToast(zh ? '复制失败，请手动选择文本复制' : 'Copy failed; select the text manually', 'error'));
-                  }} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30" title={zh ? '复制全部' : 'Copy all'}><Copy size={12} /></button>
-                  <button type="button" disabled={!safePreviewOutput} onClick={() => {
+                    }}
+                  />
+                  <ActionIconButton
+                    icon={Download}
+                    label={zh ? '下载 TXT 配置' : 'Download TXT'}
+                    disabled={!safePreviewOutput}
+                    onClick={() => {
                     downloadText(safePreviewOutput, `${safeFileName(detail?.name || 'config')}.txt`);
                     showToast(zh ? '已下载 TXT 配置' : 'TXT configuration downloaded', 'success');
-                  }} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 disabled:opacity-30" title="TXT" aria-label={zh ? '下载 TXT 配置' : 'Download TXT'}><Download size={12} /></button>
+                    }}
+                  />
                   <button type="button" disabled={!safePreviewOutput} onClick={() => {
                     downloadText(safePreviewOutput, `${safeFileName(detail?.name || 'config')}.cfg`);
                     showToast(zh ? '已下载 CFG 配置' : 'CFG configuration downloaded', 'success');
                   }} className="rounded-lg border border-slate-200 px-2 py-1 text-[8px] font-bold text-slate-500 disabled:opacity-30" aria-label={zh ? '下载 CFG 配置' : 'Download CFG'}>CFG</button>
                 </>
               )}
-              <button type="button" onClick={() => setFullscreen((value) => !value)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500">{fullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}</button>
+              <ActionIconButton
+                icon={fullscreen ? Minimize2 : Maximize2}
+                label={fullscreen ? (zh ? '退出全屏' : 'Exit fullscreen') : (zh ? '全屏预览' : 'Fullscreen preview')}
+                onClick={() => setFullscreen((value) => !value)}
+              />
             </div>
           </div>
 

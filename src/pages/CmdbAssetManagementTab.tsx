@@ -23,6 +23,7 @@ import {
 import TagFilterDropdown from "../components/TagFilterDropdown";
 import Pagination from "../components/Pagination";
 import { DataTable } from "../components/DataTable";
+import { ActionButton } from "../components/ui/ActionIconButton";
 import { BatchTagModal } from "./AssetManagement/components/BatchTagModal";
 import type { SessionUser, TagDefinition } from "../types";
 
@@ -660,10 +661,10 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
           <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700">
             <FolderTree size={15} /> CMDB / {zh ? "资产目录" : "Asset catalog"}
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+          <h1 className="nx-page-title text-slate-900">
             {zh ? "分层资产目录" : "Hierarchical asset catalog"}
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="nx-page-description mt-1 text-slate-500">
             {zh
               ? "按站点、资产类型、产品分类和设备角色逐级定位资产。"
               : "Browse assets by site, type, product category and physical asset role."}
@@ -835,13 +836,9 @@ const CmdbAssetManagementTab: React.FC<Props> = ({
                 </div>
               )}
             </div>
-            <button
-              onClick={() => void exportExcel()}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-            >
-              <Download size={13} />
+            <ActionButton icon={Download} variant="accent" size="sm" onClick={() => void exportExcel()}>
               {zh ? "导出 Excel" : "Export Excel"}
-            </button>
+            </ActionButton>
             {canManageTags && (
               <button
                 disabled={!selectedIds.length}

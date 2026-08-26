@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import Pagination from '../../Pagination';
+import { ActionButton } from '../../ui/ActionIconButton';
 import { metricLabel } from './MetricRowItem';
 import { ModelPresetItem } from '../PresetProfilesModal';
 import type { CandidateDevice } from './LiveWalkInspector';
@@ -458,7 +459,7 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
             {zh ? '未找到符合条件的型号指标模板。' : 'No matching profiles found.'}
           </div>
         ) : (
-          <table className="w-full text-left text-[11px]">
+          <table className="nx-data-table nx-data-table--compact">
             <thead className="sticky top-0 z-10 bg-[var(--card-bg)] shadow-sm text-black/40 dark:text-white/40">
               <tr>
                 <th className="w-[34%] px-3.5 py-2.5 font-medium">{zh ? '厂商 / 适配型号' : 'Vendor / Supported Models'}</th>
@@ -727,25 +728,27 @@ export const MetricProfileList: React.FC<MetricProfileListProps> = ({
                               {zh ? '绑定设备' : 'Bind devices'}
                             </button>
                           )}
-                          <button
+                          <ActionButton
                             type="button"
+                            icon={Pencil}
+                            variant="accent"
+                            size="sm"
                             onClick={() => onEdit(profile)}
-                            className="inline-flex items-center gap-1 rounded-md bg-[#00a9ce] px-2.5 py-1 text-[10px] font-semibold text-white shadow-sm hover:bg-[#008fb1]"
                             title={zh ? '管理模板' : 'Manage profile'}
                           >
-                            <Pencil size={11} />
                             {zh ? '管理' : 'Manage'}
-                          </button>
+                          </ActionButton>
                           {profile.profile_id && (
-                            <button
+                            <ActionButton
                               type="button"
+                              icon={Trash2}
+                              variant="danger"
+                              size="sm"
                               onClick={() => onDeleteProfile?.(profile)}
-                              className="inline-flex items-center gap-1 rounded-md border border-red-500/20 px-2 py-1 text-[10px] font-semibold text-red-600 hover:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
                               title={zh ? '删除已保存模板记录（需先解绑设备）' : 'Delete saved template record (unbind devices first)'}
                             >
-                              <Trash2 size={11} />
                               {zh ? '删除' : 'Delete'}
-                            </button>
+                            </ActionButton>
                           )}
                         </div>
                       </td>

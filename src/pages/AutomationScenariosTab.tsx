@@ -4,6 +4,7 @@ import {
   Plus, Eye, ArrowUpDown, Layers, Shield, X, FolderOpen,
 } from 'lucide-react';
 import PageHero from '../components/PageHero';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 
 /* ─── Types ─── */
 interface PlatformMeta { icon?: string; vendor?: string }
@@ -397,36 +398,29 @@ const AutomationScenariosTab: React.FC<AutomationScenariosTabProps> = ({
                 )}
 
                 {/* actions */}
-                <div className="flex items-center gap-1.5 mt-1">
-                  <button
+                <ActionIconGroup label={language === 'zh' ? '场景操作' : 'Scenario actions'} className="w-full mt-1">
+                  <ActionButton
+                    icon={Play}
+                    variant="primary"
                     onClick={() => onUseScenario(scenario)}
-                    className="flex-1 inline-flex items-center justify-center gap-1 px-3 py-[5px] rounded-lg
-                      bg-[#00bceb] text-white text-[11px] font-medium
-                      hover:bg-[#0096bd] active:scale-[.97] transition-all shadow-sm shadow-[#00bceb]/15"
+                    className="flex-1"
                   >
-                    <Play size={11} /> {t('useScenario')}
-                  </button>
-                  <button
+                    {t('useScenario')}
+                  </ActionButton>
+                  <ActionIconButton
+                    icon={Eye}
+                    label={t('previewCommands')}
+                    variant="accent"
                     onClick={() => onUseScenario(scenario)}
-                    className="p-[5px] rounded-lg border border-black/8 dark:border-white/10
-                      text-black/40 dark:text-white/40 hover:text-black/65 dark:hover:text-white/65
-                      hover:border-black/15 dark:hover:border-white/20 transition-all"
-                    title={t('previewCommands')}
-                  >
-                    <Eye size={13} />
-                  </button>
-                  <button
+                  />
+                  <ActionIconButton
+                    icon={Star}
+                    label={language === 'zh' ? '收藏' : 'Favorite'}
+                    variant={isFav ? 'accent' : 'default'}
                     onClick={() => toggleFavorite(scenario.id)}
-                    className={`p-[5px] rounded-lg border transition-all ${
-                      isFav
-                        ? 'border-amber-300/50 text-amber-500 bg-amber-500/5 dark:border-amber-500/30 dark:text-amber-400'
-                        : 'border-transparent text-black/20 dark:text-white/15 hover:text-amber-400 opacity-0 group-hover:opacity-100'
-                    }`}
-                    title={language === 'zh' ? '收藏' : 'Favorite'}
-                  >
-                    <Star size={13} fill={isFav ? 'currentColor' : 'none'} />
-                  </button>
-                </div>
+                    iconClassName={isFav ? 'fill-current' : undefined}
+                  />
+                </ActionIconGroup>
               </div>
             </div>
           );

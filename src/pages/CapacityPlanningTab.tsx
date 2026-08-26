@@ -10,6 +10,7 @@ import {
 import * as XLSX from 'xlsx';
 import { useChartTheme } from '../hooks/useChartTheme';
 import PageHero from '../components/PageHero';
+import { ActionButton } from '../components/ui/ActionIconButton';
 
 /* ───────── Types ───────── */
 
@@ -344,20 +345,12 @@ const CapacityPlanningTab: React.FC<CapacityPlanningTabProps> = ({ language, t }
         subtitle={zh ? '基于历史趋势的资源耗尽预测，提前规划扩容' : 'Resource exhaustion prediction based on historical trends'}
         actions={
           <>
-            <button onClick={handleExport} className="p-2 rounded-lg border transition-all" style={{ borderColor: 'var(--card-border)', color: 'var(--muted-text)' }}
-              onMouseEnter={e => { e.currentTarget.style.color = '#06b6d4'; e.currentTarget.style.borderColor = 'rgba(6,182,212,0.3)'; }}
-              onMouseLeave={e => { e.currentTarget.style.color = 'var(--muted-text)'; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
-              title={zh ? '导出' : 'Export'}>
-              <Download size={15} />
-            </button>
-            <button onClick={loadData} disabled={loading}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-50"
-              style={{ background: '#06b6d4' }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#0891b2'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = '#06b6d4'; }}>
-              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            <ActionButton icon={Download} variant="accent" size="md" onClick={handleExport} title={zh ? '导出' : 'Export'}>
+              {zh ? '导出' : 'Export'}
+            </ActionButton>
+            <ActionButton icon={RefreshCw} variant="primary" size="md" onClick={loadData} disabled={loading} iconClassName={loading ? 'animate-spin' : undefined}>
               {zh ? '刷新' : 'Refresh'}
-            </button>
+            </ActionButton>
           </>
         }
       />

@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { Search, MapPin, ArrowRight, Loader2, Server, Monitor, Network, AlertCircle, ChevronDown, ChevronUp, Cable, Clock, RotateCcw, Activity, Wifi, Globe, Zap, CheckCircle2, XCircle, Minus, Database, RefreshCw, Filter, Download, X, ShieldAlert, Check, Play, FileText, Copy, Router, ExternalLink, Cpu, MemoryStick, Eye, Users } from 'lucide-react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import { ActionButton } from '../components/ui/ActionIconButton';
 import * as XLSX from 'xlsx';
 import { formatMacAddress } from '../utils/resourceFormatters';
 import { useSearchParams } from 'react-router-dom';
@@ -1867,7 +1868,9 @@ ${rep.repair_commands}
             {arpSweeping ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
             {zh ? '立即采集' : 'Sweep Now'}
           </button>
-          <button
+          <ActionButton
+            icon={Download}
+            variant="accent"
             onClick={() => {
               if (!arpTable || arpTable.entries.length === 0) return;
               const q = arpFilter.trim().toLowerCase();
@@ -1890,11 +1893,9 @@ ${rep.repair_commands}
               XLSX.writeFile(wb, `arp_table_${new Date().toISOString().slice(0, 10)}.xlsx`);
             }}
             disabled={!arpTable || arpTable.total === 0}
-            className="px-4 py-2.5 rounded-xl border border-black/10 text-sm text-black/50 hover:bg-black/[0.03] disabled:opacity-40 transition-all flex items-center gap-1.5"
           >
-            <Download size={13} />
             {zh ? '导出' : 'Export'}
-          </button>
+          </ActionButton>
         </div>
 
         {/* Stats bar */}
@@ -3931,22 +3932,22 @@ ${rep.repair_commands}
             <div className="flex items-center gap-4 flex-wrap">
               {/* Export Buttons */}
               <div className="flex gap-2">
-                <button
+                <ActionButton
+                  icon={Download}
+                  variant="accent"
                   onClick={() => exportToMarkdown(diagResult)}
-                  className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-[#0891b2] dark:text-neutral-400 dark:hover:text-[#06b6d4] bg-neutral-100 dark:bg-white/[0.05] hover:bg-neutral-200/60 dark:hover:bg-white/[0.08] transition-colors px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-white/5 font-semibold"
                   title={zh ? '导出 Markdown 格式报告' : 'Export report as Markdown'}
                 >
-                  <Download size={13} />
                   {zh ? '导出 Markdown' : 'Export MD'}
-                </button>
-                <button
+                </ActionButton>
+                <ActionButton
+                  icon={FileText}
+                  variant="default"
                   onClick={() => window.print()}
-                  className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-[#0891b2] dark:text-neutral-400 dark:hover:text-[#06b6d4] bg-neutral-100 dark:bg-white/[0.05] hover:bg-neutral-200/60 dark:hover:bg-white/[0.08] transition-colors px-3 py-1.5 rounded-lg border border-neutral-200 dark:border-white/5 font-semibold"
                   title={zh ? '使用系统打印机保存为 PDF' : 'Save as PDF using system print dialogue'}
                 >
-                  <FileText size={13} />
                   {zh ? '打印 / 导出 PDF' : 'Print / PDF'}
-                </button>
+                </ActionButton>
               </div>
 
               {/* AI Confidence Badge */}
@@ -4143,17 +4144,17 @@ ${rep.repair_commands}
                       {zh ? '建议配置修复指令 (设备: ' + diagResult.report.interrupted_at + ')' : 'Recommended CLI Fixes (' + diagResult.report.interrupted_at + ')'}
                     </span>
                   </div>
-                  <button 
+                  <ActionButton
+                    icon={copiedCmd ? Check : Copy}
+                    variant={copiedCmd ? 'success' : 'accent'}
                     onClick={() => {
                       navigator.clipboard.writeText(diagResult.report.repair_commands);
                       setCopiedCmd(true);
                       setTimeout(() => setCopiedCmd(false), 2000);
                     }}
-                    className="flex items-center gap-1 text-[10px] text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700 transition-colors px-2.5 py-1 rounded border border-neutral-700/50"
                   >
-                    {copiedCmd ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
                     {copiedCmd ? (zh ? '已复制' : 'Copied!') : (zh ? '复制代码' : 'Copy Code')}
-                  </button>
+                  </ActionButton>
                 </div>
                 <pre className="text-xs text-neutral-300 font-mono overflow-x-auto whitespace-pre leading-relaxed max-h-60 pt-2 custom-scrollbar">
                   {diagResult.report.repair_commands}

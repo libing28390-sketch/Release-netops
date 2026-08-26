@@ -1,6 +1,7 @@
 import React from 'react';
 import { Download, FileText, Upload, XCircle } from 'lucide-react';
 import { motion } from 'motion/react';
+import { ActionButton } from './ui/ActionIconButton';
 
 interface ImportInventoryModalProps {
   open: boolean;
@@ -83,15 +84,16 @@ const ImportInventoryModal: React.FC<ImportInventoryModalProps> = ({
                 <p className="text-xs font-medium text-blue-900">{t('downloadTemplate')}</p>
                 <p className="text-[10px] text-blue-700">{t('getStandardCsv')}</p>
               </div>
-              <button
+              <ActionButton
                 type="button"
+                icon={Download}
+                variant="accent"
+                size="sm"
                 onClick={handleDownloadTemplate}
-                className="inline-flex items-center gap-1 text-[10px] font-bold uppercase text-blue-600 hover:underline"
                 title={language === 'zh' ? '下载包含 SSH 凭据、功能和区域字段的 CSV 模板' : 'Download CSV template with SSH credentials, Function and Zone fields'}
               >
-                <Download size={13} />
                 {t('export')}
-              </button>
+              </ActionButton>
             </div>
           </div>
 

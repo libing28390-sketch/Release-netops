@@ -16,6 +16,7 @@ import { LiveWalkInspector, CandidateDevice } from './LiveWalkInspector';
 import type { InspectorTab } from './LiveWalkInspector';
 import type { SnmpHardwareTestResult } from './LiveWalkInspector';
 import { ModelPresetItem } from '../PresetProfilesModal';
+import { ActionButton } from '../../ui/ActionIconButton';
 
 export interface ProfileForm {
   vendor: string;
@@ -314,7 +315,7 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
 
           {/* Clean Metrics Table */}
           <div className="overflow-x-auto rounded-xl border border-black/7 bg-white/35 shadow-sm dark:border-white/8 dark:bg-white/[.03]">
-            <table className="w-full text-left text-xs">
+            <table className="nx-data-table nx-data-table--compact">
               <thead className="sticky top-0 z-10 bg-[var(--card-bg)] text-[10px] font-medium text-black/45 dark:text-white/45">
                 <tr>
                   <th className="px-3.5 py-2">{zh ? '监控项' : 'Item'}</th>
@@ -361,14 +362,9 @@ export const MetricProfileEditor: React.FC<MetricProfileEditorProps> = ({
         {/* Editor Bottom Bar */}
         <div className="flex items-center justify-between border-t border-black/6 bg-black/[.01] px-5 py-3 dark:border-white/8 dark:bg-white/[.01]">
           {editingId ? (
-            <button
-              type="button"
-              onClick={onDelete}
-              className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-500/10 dark:text-red-400"
-            >
-              <Trash2 size={13} />
+            <ActionButton type="button" icon={Trash2} variant="danger" size="sm" onClick={onDelete}>
               {isOfficialProfile ? (zh ? '解绑官方模板' : 'Unbind official template') : (zh ? '删除自定义模板' : 'Delete custom template')}
-            </button>
+            </ActionButton>
           ) : (
             <div />
           )}

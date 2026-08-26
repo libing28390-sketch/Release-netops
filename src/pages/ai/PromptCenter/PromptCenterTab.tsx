@@ -167,11 +167,11 @@ export const PromptCenterTab: React.FC = () => {
               <Sparkles className="h-3.5 w-3.5" />
               {zh ? 'AI 治理 · Prompt 资产' : 'AI Governance · Prompt Assets'}
             </div>
-            <h2 className="flex items-center gap-3 text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-[28px]">
+            <h2 className="nx-page-title flex items-center gap-3 text-slate-950 dark:text-white">
               <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-600 text-white shadow-lg shadow-violet-600/25"><FileCode2 className="h-6 w-6" /></span>
               {zh ? 'Prompt Center 提示词中心' : 'Prompt Center'}
             </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
+            <p className="nx-page-description mt-3 max-w-2xl text-slate-600 dark:text-slate-300">
               {zh ? '把运维场景中的提示词集中管理，明确每个模板的用途、版本和输入变量，避免 Prompt 散落在业务代码里。' : 'Manage operational prompts centrally with clear purpose, versions, and input variables instead of hard-coding them in business code.'}
             </p>
           </div>

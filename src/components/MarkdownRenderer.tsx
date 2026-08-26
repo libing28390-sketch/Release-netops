@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Copy, Check, Terminal } from 'lucide-react';
 import { copyTextWithFallback } from '../utils/clipboard';
+import { ActionButton } from './ui/ActionIconButton';
 
 interface MarkdownRendererProps {
   content: string;
@@ -82,24 +83,18 @@ const CodeBlockHeader: React.FC<{ language: string; code: string }> = ({ languag
         </span>
       </div>
 
-      <button
-        type="button"
+      <ActionButton
+        icon={copied ? Check : Copy}
+        variant={copied ? 'success' : copyFailed ? 'danger' : 'default'}
+        size="sm"
+        aria-label={copied ? '已复制代码' : '复制代码'}
         onPointerUp={handlePointerUp}
         onClick={handleButtonClick}
-        aria-label={copied ? '已复制代码' : '复制代码'}
         title={copyFailed ? '复制失败，请检查浏览器权限' : copied ? '已复制代码' : '复制代码'}
-        className={`p-1.5 rounded-md transition ${
-          copied
-            ? 'text-emerald-400 hover:bg-emerald-400/10'
-            : copyFailed
-              ? 'text-rose-400 hover:bg-rose-400/10'
-              : 'text-gray-400 hover:text-white hover:bg-gray-800'
-        }`}
+        className="!h-7 !border-transparent !bg-transparent !px-2 !text-[11px] !text-gray-400 hover:!bg-gray-800 hover:!text-white"
       >
-        {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-        <span>{copied ? '已复制' : copyFailed ? '复制失败' : '复制'}</span>
-        <span className="sr-only">{copied ? '已复制代码' : '复制代码'}</span>
-      </button>
+        {copied ? '已复制' : copyFailed ? '复制失败' : '复制'}
+      </ActionButton>
     </div>
   );
 };
@@ -139,7 +134,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
           ),
           table: ({ children }) => (
             <div className="overflow-x-auto my-3 rounded-lg border border-gray-200 dark:border-gray-700">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-xs text-left">
+              <table className="nx-data-table min-w-full text-left">
                 {children}
               </table>
             </div>

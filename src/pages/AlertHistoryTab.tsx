@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import type { AlertListResponse, AlertRecord, AlertDetailResponse } from '../types';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import { ActionButton } from '../components/ui/ActionIconButton';
 import { severityBadgeClass, alertWorkflowBadgeClass } from '../components/shared';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 import DateTimePicker from '../components/DateTimePicker';
@@ -168,10 +169,9 @@ const AlertHistoryTab: React.FC<AlertHistoryTabProps> = ({ language, showToast, 
         subtitle={zh ? '查询并溯源历史告警，复盘故障处理生命周期与时长记录。' : 'Trace historical alerts and review incident lifecycles and resolution metrics.'}
         actions={
           <>
-            <button onClick={handleExport} className={alertSecondaryButtonClass} title={zh ? '导出' : 'Export'}>
-              <Download size={14} />
+            <ActionButton icon={Download} variant="accent" size="md" onClick={handleExport} title={zh ? '导出' : 'Export'}>
               {zh ? '导出' : 'Export'}
-            </button>
+            </ActionButton>
             <button onClick={() => void loadAlerts()} className={alertSecondaryButtonClass}>
               <RefreshCw size={14} />
               {zh ? '刷新' : 'Refresh'}

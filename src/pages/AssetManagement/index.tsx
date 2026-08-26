@@ -9,6 +9,7 @@ import {
   AlertCircle, CheckCircle2, Info,
   Flame, LayoutList, Lock, Terminal, Eye, EyeOff, Loader2, Shield, User, MonitorSpeaker, Settings2, Check
 } from 'lucide-react';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 import * as XLSX from 'xlsx';
 import { AnimatePresence, motion } from 'motion/react';
 
@@ -1774,14 +1775,9 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                       <Shield size={12} />
                       {zh ? '批量上收' : 'Takeover'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleBatchDelete}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 text-xs font-semibold transition-all cursor-pointer"
-                    >
-                      <Trash2 size={12} />
+                    <ActionButton icon={Trash2} variant="danger" size="sm" onClick={handleBatchDelete}>
                       {zh ? '批量删除' : 'Delete'}
-                    </button>
+                    </ActionButton>
                     <button
                       type="button"
                       onClick={clearSel}
@@ -1880,14 +1876,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                 >
                   <FileText size={13} />
                 </button>
-                <button
-                  type="button"
+                <ActionIconButton
+                  icon={Download}
+                  label={zh ? '导出资产' : 'Export assets'}
+                  variant="accent"
                   onClick={handleExport}
-                  className="p-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 hover:text-blue-600 transition-all cursor-pointer"
-                  title={zh ? '导出' : 'Export'}
-                >
-                  <Download size={13} />
-                </button>
+                />
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -2035,7 +2029,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         {zh ? column.zh : column.en}
                       </th>
                     ))}
-                    <th className="w-24 px-3 py-3 text-center text-[11px] font-bold uppercase tracking-wider text-gray-400">{zh ? '操作' : 'Actions'}</th>
+                    <th className="w-24 px-3 py-3 text-right text-[11px] font-bold uppercase tracking-wider text-gray-400 pr-4">{zh ? '操作' : 'Actions'}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2087,7 +2081,7 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                         onClick={() => setDrawerAsset(a)}
                         className={`border-b border-gray-100 dark:border-zinc-800 cursor-pointer transition-colors ${sel ? 'bg-blue-50/50 dark:bg-blue-950/20' : isDrawerTarget ? 'bg-gray-50 dark:bg-zinc-800/40' : 'hover:bg-gray-50/70 dark:hover:bg-zinc-800/30'}`}
                       >
-                        <td className="px-3 py-2.5 text-center" onClick={e => e.stopPropagation()}>
+                        <td className="px-3 py-2.5 text-right" onClick={e => e.stopPropagation()}>
                           <input type="checkbox" checked={sel} onChange={() => toggle(a.id)} className="h-3.5 w-3.5 rounded border-gray-300 accent-blue-600 cursor-pointer" />
                         </td>
                         {activeAssetColumns.map(column => (
@@ -2095,12 +2089,12 @@ const AssetManagementTab: React.FC<AssetManagementTabProps> = ({ language, setAc
                             {renderAssetCell(column.key, a)}
                           </td>
                         ))}
-                        <td className="px-3 py-2.5 text-center" onClick={e => e.stopPropagation()}>
-                          <div className="flex items-center justify-center gap-1">
-                            <button onClick={() => openCopy(a)} className="p-1.5 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors cursor-pointer" title={zh ? '复制' : 'Copy'}><Copy size={13} /></button>
-                            <button onClick={() => openEdit(a)} className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer" title={zh ? '编辑' : 'Edit'}><Pencil size={13} /></button>
-                            <button onClick={() => setDeleteTarget(a)} className="p-1.5 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer" title={zh ? '删除' : 'Delete'}><Trash2 size={13} /></button>
-                          </div>
+                        <td className="px-3 py-2.5 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                          <ActionIconGroup label={zh ? '资产操作' : 'Asset actions'}>
+                            <ActionIconButton icon={Copy} label={zh ? '复制' : 'Copy'} variant="accent" onClick={() => openCopy(a)} />
+                            <ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} onClick={() => openEdit(a)} />
+                            <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={() => setDeleteTarget(a)} />
+                          </ActionIconGroup>
                         </td>
                       </tr>
                     );

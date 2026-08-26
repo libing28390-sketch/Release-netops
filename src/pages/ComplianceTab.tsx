@@ -5,6 +5,7 @@ import type { ComplianceFinding, ComplianceOverview } from '../types';
 import { sectionToolbarClass, primaryActionBtnClass, severityBadgeClass, complianceStatusBadgeClass } from '../components/shared';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import { ActionButton } from '../components/ui/ActionIconButton';
 import { fetchAllPaginatedItems } from '../utils/pagination';
 
 interface ComplianceTabProps {
@@ -88,14 +89,14 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({
                 {language === 'zh' ? '最近审计' : 'Last audit'}: {new Date((complianceOverview as any).recent_runs[0].started_at).toLocaleString()}
               </span>
             )}
-            <button
+            <ActionButton
+              icon={Download}
+              variant="accent"
               onClick={handleExportCompliance}
-              className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-2.5 text-sm font-medium text-black/60 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all"
               title={language === 'zh' ? '导出合规报告' : 'Export Compliance'}
             >
-              <Download size={14} />
               {language === 'zh' ? '导出' : 'Export'}
-            </button>
+            </ActionButton>
             <button
               onClick={runComplianceAudit}
               disabled={complianceRunLoading}

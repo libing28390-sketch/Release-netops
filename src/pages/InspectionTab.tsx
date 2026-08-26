@@ -3,6 +3,7 @@ import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, Clipbo
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { Device, DeviceHealthHistoryResponse, DeviceHealthOverview } from '../types';
 import { useChartTheme } from '../hooks/useChartTheme';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import { useSystem } from '../hooks/useSystem';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
@@ -651,15 +652,15 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                   <input type="text" placeholder={isZh ? '搜索巡检记录…' : 'Search runs...'} value={recordSearch} onChange={(e) => setRecordSearch(e.target.value)} className="w-full pl-10 pr-3 py-2 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20" />
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
+                  <ActionButton
+                    icon={Download}
+                    variant="accent"
                     onClick={handleExportRecords}
                     title={isZh ? '导出所有巡检记录' : 'Export all records'}
-                    className={alertSecondaryButtonClass}
                   >
-                    <Download className="w-4 h-4" />
                     <span className="ml-1 hidden sm:inline">{isZh ? '导出' : 'Export'}</span>
-                  </button>
-                  <button onClick={fetchRuns} className={alertSecondaryButtonClass}><RefreshCw className={`w-4 h-4 ${runsLoading ? 'animate-spin' : ''}`} /></button>
+                  </ActionButton>
+                  <ActionIconButton icon={RefreshCw} label={isZh ? '刷新巡检记录' : 'Refresh inspection records'} disabled={runsLoading} iconClassName={runsLoading ? 'animate-spin' : undefined} onClick={fetchRuns} />
                 </div>
               </div>
 
@@ -708,40 +709,40 @@ const InspectionTab: React.FC<InspectionTabProps> = ({ language, devices, overvi
                     <h3 className="text-base font-bold text-[#0b2340]">{isZh ? '巡检详情' : 'Inspection Detail'}</h3>
                     <p className="text-[11px] text-black/35 mt-0.5">{new Date(selectedRunDetail.started_at).toLocaleString(isZh ? 'zh-CN' : 'en-US', { hour12: false })}</p>
                   </div>
-                    <div className="flex items-center gap-2">
-                      <button
+                    <ActionIconGroup label={isZh ? '报表下载' : 'Report downloads'}>
+                      <ActionButton
+                        icon={Download}
+                        variant="default"
                         onClick={() => handleDownloadReport(selectedRunDetail.id, 'xlsx')}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-500 shadow-md active:scale-95 transition-all"
                         title={isZh ? '下载 Excel 报表（含 7 个 Sheet）' : 'Download Excel report (7 sheets)'}
                       >
-                        <Download className="w-4 h-4" />
                         Excel
-                      </button>
-                      <button
+                      </ActionButton>
+                      <ActionButton
+                        icon={Download}
+                        variant="default"
                         onClick={() => handleDownloadReport(selectedRunDetail.id, 'html')}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-500 shadow-md active:scale-95 transition-all"
                         title={isZh ? '下载 HTML 报表（含 ECharts 图表）' : 'Download HTML report (ECharts inline)'}
                       >
-                        <Download className="w-4 h-4" />
                         HTML
-                      </button>
-                      <button
+                      </ActionButton>
+                      <ActionButton
+                        icon={Download}
+                        variant="default"
                         onClick={() => handleDownloadReport(selectedRunDetail.id, 'pdf')}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-rose-600 text-white hover:bg-rose-500 shadow-md active:scale-95 transition-all"
                         title={isZh ? '下载 PDF 报表（适合打印和归档）' : 'Download PDF report (Archive-ready)'}
                       >
-                        <Download className="w-4 h-4" />
                         PDF
-                      </button>
-                      <button
+                      </ActionButton>
+                      <ActionButton
+                        icon={Download}
+                        variant="default"
                         onClick={() => handleDownloadReport(selectedRunDetail.id, 'json')}
-                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-slate-700 text-white hover:bg-slate-600 shadow-md active:scale-95 transition-all"
                         title={isZh ? '下载 JSON 原始数据（机器可读）' : 'Download raw JSON data'}
                       >
-                        <Download className="w-4 h-4" />
                         JSON
-                      </button>
-                    </div>
+                      </ActionButton>
+                    </ActionIconGroup>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import {
   ClipboardList, Search, X, Filter, RefreshCw, SlidersHorizontal,
-  BookmarkCheck, Bookmark, Star, Eye, FileText, Trash2,
+  BookmarkCheck, Bookmark, Star, Eye, Pencil, Trash2,
   Clock, Zap, CheckCircle2, AlertTriangle, ChevronDown
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -10,6 +10,7 @@ import type { ChangeOrder, Summary } from '../types';
 import type { User as UserOption, SessionUser } from '../../../types';
 import { STATUS_META, PRIORITY_META, ORDER_TYPE_META } from '../constants';
 import { fmtTime, typeLabel, priorityLabel, statusLabel } from '../helpers';
+import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 
 interface Props {
   language: string;
@@ -502,33 +503,28 @@ export const ChangeOrderList: React.FC<Props> = ({
                           <span className="text-xs text-black/40 tabular-nums">{fmtTime(order.created_at)}</span>
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <button
+                          <ActionIconGroup label={zh ? '工单操作' : 'Change order actions'}>
+                            <ActionIconButton
+                              icon={Eye}
+                              label={zh ? '查看' : 'View'}
                               onClick={(e) => { e.stopPropagation(); openDetail(order); }}
-                              className="p-1.5 rounded-lg text-black/30 hover:text-[#00bceb] hover:bg-[#00bceb]/8 transition-all"
-                              title={zh ? '查看' : 'View'}
-                            >
-                              <Eye size={14} />
-                            </button>
+                            />
                             {['draft', 'rejected'].includes(order.status) && order.requester_username === currentUser.username && (
-                              <button
+                              <ActionIconButton
+                                icon={Pencil}
+                                label={zh ? '编辑' : 'Edit'}
                                 onClick={(e) => { e.stopPropagation(); openEdit(order); }}
-                                className="p-1.5 rounded-lg text-black/30 hover:text-amber-600 hover:bg-amber-50 transition-all"
-                                title={zh ? '编辑' : 'Edit'}
-                              >
-                                <FileText size={14} />
-                              </button>
+                              />
                             )}
                             {['draft', 'cancelled'].includes(order.status) && order.requester_username === currentUser.username && (
-                              <button
+                              <ActionIconButton
+                                icon={Trash2}
+                                label={zh ? '删除' : 'Delete'}
+                                variant="danger"
                                 onClick={(e) => { e.stopPropagation(); handleDelete(order.id); }}
-                                className="p-1.5 rounded-lg text-black/30 hover:text-rose-600 hover:bg-rose-50 transition-all"
-                                title={zh ? '删除' : 'Delete'}
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              />
                             )}
-                          </div>
+                          </ActionIconGroup>
                         </td>
                       </tr>
                     );

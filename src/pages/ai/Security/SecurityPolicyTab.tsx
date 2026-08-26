@@ -360,8 +360,8 @@ export const SecurityPolicyTab: React.FC = () => {
             <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-cyan-700 dark:text-cyan-300">
               <ShieldCheck className="h-4 w-4" /> AI governance / security gateway
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-3xl">AI 安全网关</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500 dark:text-slate-400">统一控制外部 AI 出口。默认拒绝、可审计、可演练；Provider 连接测试和所有 AI 调用都必须经过这里。</p>
+            <h1 className="nx-page-title text-slate-950 dark:text-white">AI 安全网关</h1>
+            <p className="nx-page-description mt-2 max-w-3xl text-slate-500 dark:text-slate-400">统一控制外部 AI 出口。默认拒绝、可审计、可演练；Provider 连接测试和所有 AI 调用都必须经过这里。</p>
           </div>
           <button
             type="button"

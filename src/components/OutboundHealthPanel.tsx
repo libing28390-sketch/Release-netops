@@ -12,6 +12,7 @@ import type {
   OutboundStatus,
   OutboundTarget,
 } from '../types/outbound';
+import { ActionIconButton, ActionIconGroup } from './ui/ActionIconButton';
 
 const CustomTooltip = ({ active, payload, label, zh }: any) => {
   if (active && payload && payload.length) {
@@ -534,8 +535,10 @@ const OutboundHealthPanel: React.FC<OutboundHealthPanelProps> = ({
                       <span className="w-16 text-right text-[11px] font-bold text-[var(--muted-text)]">
                         {result?.latency_ms != null ? `${Math.round(result.latency_ms)} ms` : '--'}
                       </span>
-                      <button type="button" onClick={() => openEdit(target)} className="rounded-lg p-1.5 text-[var(--muted-text)] hover:bg-sky-50 hover:text-sky-700" aria-label={zh ? '编辑' : 'Edit'}><Pencil size={13} /></button>
-                      <button type="button" onClick={async () => { if (!window.confirm(zh ? `确认删除 ${target.target_name}？` : `Delete ${target.target_name}?`)) return; try { await onDeleteTarget(target.id); showToast(zh ? '目标已删除' : 'Target deleted', 'success'); } catch (error) { showToast(error instanceof Error ? error.message : (zh ? '删除失败' : 'Delete failed'), 'error'); } }} className="rounded-lg p-1.5 text-[var(--muted-text)] hover:bg-red-50 hover:text-red-700" aria-label={zh ? '删除' : 'Delete'}><Trash2 size={13} /></button>
+                      <ActionIconGroup label={zh ? '探测目标操作' : 'Probe target actions'}>
+                        <ActionIconButton icon={Pencil} label={zh ? '编辑' : 'Edit'} variant="accent" onClick={() => openEdit(target)} />
+                        <ActionIconButton icon={Trash2} label={zh ? '删除' : 'Delete'} variant="danger" onClick={async () => { if (!window.confirm(zh ? `确认删除 ${target.target_name}？` : `Delete ${target.target_name}?`)) return; try { await onDeleteTarget(target.id); showToast(zh ? '目标已删除' : 'Target deleted', 'success'); } catch (error) { showToast(error instanceof Error ? error.message : (zh ? '删除失败' : 'Delete failed'), 'error'); } }} />
+                      </ActionIconGroup>
                     </div>
                   );
                 })}

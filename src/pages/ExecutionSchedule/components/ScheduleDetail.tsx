@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { CalendarClock, X, Trash2, Activity, CheckCircle2, RotateCcw } from 'lucide-react';
 import type { ScheduledJob } from '../types';
 import { fmtDateTime } from '../helpers';
+import { ActionButton } from '../../../components/ui/ActionIconButton';
 
 interface ScheduleDetailProps {
   zh: boolean;
@@ -163,18 +164,18 @@ const ScheduleDetail: React.FC<ScheduleDetailProps> = ({
 
             {/* Modal Footer */}
             <div className="px-8 py-6 border-t border-black/5 bg-slate-50/30 flex items-center justify-between">
-              <button
+              <ActionButton
+                icon={Trash2}
+                variant="danger"
                 onClick={() => {
                   if (confirm(zh ? '确定删除该执行计划？' : 'Are you sure you want to delete this schedule?')) {
                     onDelete(schedule.id);
                     onClose();
                   }
                 }}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-2xl text-red-500 hover:bg-red-50 text-xs font-black transition-all"
               >
-                <Trash2 size={16} />
                 {zh ? '删除计划' : 'Delete Plan'}
-              </button>
+              </ActionButton>
               <button
                 onClick={onClose}
                 className="px-8 py-2.5 rounded-2xl bg-[#164e63] text-white text-xs font-black hover:bg-[#155e75] transition-all shadow-lg shadow-cyan-900/20 active:scale-95"

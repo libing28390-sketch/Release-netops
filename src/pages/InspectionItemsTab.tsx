@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Activity, Plus, X, Trash2, Edit3, Save, RotateCcw,
+  Activity, Plus, X, Trash2, Pencil, Save, RotateCcw,
   Shield, CheckCircle2, Search, Filter, Info, ListFilter, Copy, Check, Download, Database, FileCode,
   Terminal, Cpu
 } from 'lucide-react';
 import Pagination from '../components/Pagination';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 import PageHero from '../components/PageHero';
 import {
   alertPanelClass,
@@ -422,7 +423,7 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
   }, [searchQuery, categoryFilter, methodFilter, vendorFilter]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+    <div className="nx-page-shell flex-1 flex flex-col overflow-hidden min-h-0">
       <PageHero
         icon={ListFilter}
         title={zh ? '巡检指标项管理' : 'Inspection Items Management'}
@@ -439,14 +440,14 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                 className="pl-9 pr-4 py-2 rounded-xl border border-black/[0.08] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all w-48 lg:w-64 shadow-sm"
               />
             </div>
-            <button
+            <ActionButton
+              icon={Download}
+              variant="accent"
               onClick={handleExport}
               title={zh ? '导出所有指标' : 'Export all items'}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-black/10 text-black/60 text-sm font-bold shadow-sm hover:bg-black/5 transition-all active:scale-[0.97]"
             >
-              <Download className="w-4 h-4" />
               {zh ? '导出' : 'Export'}
-            </button>
+            </ActionButton>
             <button
               onClick={() => setShowAdd(!showAdd)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#164e63] text-white text-sm font-bold shadow-sm hover:bg-[#0e3f52] transition-all active:scale-[0.97]"
@@ -932,44 +933,38 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                             </div>
                           )}
                         </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex justify-end gap-2">
+                        <td className="px-6 py-4 text-right whitespace-nowrap">
+                          <ActionIconGroup label={zh ? '指标操作' : 'Metric actions'}>
                             {isEditing ? (
                               <>
-                                <button
+                                <ActionIconButton
+                                  icon={Save}
+                                  label={zh ? '保存' : 'Save'}
+                                  variant="success"
                                   onClick={(e) => { e.stopPropagation(); handleUpdate(item.id, form); }}
-                                  className="p-1.5 rounded-lg hover:bg-cyan-50 text-cyan-600 transition-colors shadow-sm border border-cyan-100"
-                                  title={zh ? '保存' : 'Save'}
-                                >
-                                  <Save className="w-4 h-4" />
-                                </button>
-                                <button
+                                />
+                                <ActionIconButton
+                                  icon={X}
+                                  label={zh ? '取消' : 'Cancel'}
                                   onClick={(e) => { e.stopPropagation(); setEditingId(null); }}
-                                  className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 transition-colors shadow-sm border border-red-100"
-                                  title={zh ? '取消' : 'Cancel'}
-                                >
-                                  <X className="w-4 h-4" />
-                                </button>
+                                />
                               </>
                             ) : (
                               <>
-                                <button
+                                <ActionIconButton
+                                  icon={Pencil}
+                                  label={zh ? '编辑指标' : 'Edit Metric'}
                                   onClick={(e) => { e.stopPropagation(); setEditingId(item.id); setForm(item); }}
-                                  className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 border border-slate-100 transition-all shadow-sm"
-                                  title={zh ? '编辑指标' : 'Edit Metric'}
-                                >
-                                  <Edit3 size={14} />
-                                </button>
-                                <button
+                                />
+                                <ActionIconButton
+                                  icon={Trash2}
+                                  label={zh ? '删除指标' : 'Delete Metric'}
+                                  variant="danger"
                                   onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
-                                  className="p-1.5 rounded-lg bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 border border-slate-100 transition-all shadow-sm"
-                                  title={zh ? '删除指标' : 'Delete Metric'}
-                                >
-                                  <Trash2 size={14} />
-                                </button>
+                                />
                               </>
                             )}
-                          </div>
+                          </ActionIconGroup>
                         </td>
                       </tr>
                       <AnimatePresence>
@@ -1002,28 +997,19 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                       </h4>
                                       <div className="flex gap-2">
                                         {item.oid && (
-                                          <button
+                                          <ActionButton
+                                            icon={copiedId === `${item.id}-oid` ? Check : Copy}
+                                            variant={copiedId === `${item.id}-oid` ? 'success' : 'accent'}
                                             type="button"
                                             onClick={(e) => { e.stopPropagation(); copyToClipboard(item.oid, `${item.id}-oid`); }}
                                             title={zh ? '点击复制 OID' : 'Click to copy OID'}
-                                            className={`group/oid inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black shadow-lg transition-all active:scale-95 ${
-                                              copiedId === `${item.id}-oid`
-                                                ? 'bg-emerald-500 text-white shadow-emerald-500/20'
-                                                : 'bg-indigo-500 text-white shadow-indigo-500/20 hover:bg-indigo-600'
-                                            }`}
                                           >
                                             {copiedId === `${item.id}-oid` ? (
-                                              <>
-                                                <Check className="w-3 h-3" />
-                                                <span>{zh ? '已复制' : 'Copied'}</span>
-                                              </>
+                                              <span>{zh ? '已复制' : 'Copied'}</span>
                                             ) : (
-                                              <>
-                                                <span className="font-mono tracking-tight">OID: {item.oid}</span>
-                                                <Copy className="w-3 h-3 opacity-60 group-hover/oid:opacity-100 transition-opacity" />
-                                              </>
+                                              <span className="font-mono tracking-tight">OID: {item.oid}</span>
                                             )}
-                                          </button>
+                                          </ActionButton>
                                         )}
                                         <span className="px-2.5 py-1 rounded-lg bg-cyan-500 text-white text-[10px] font-black shadow-lg shadow-cyan-500/20">{item.method}</span>
                                       </div>
@@ -1041,28 +1027,20 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
                                             <code className="text-[11px] text-cyan-300 font-mono whitespace-pre-wrap break-all relative z-10 block pr-24 leading-relaxed">
                                               {codeText}
                                             </code>
-                                            <button
+                                            <ActionButton
+                                              icon={isCopied ? Check : Copy}
+                                              variant={isCopied ? 'success' : 'accent'}
                                               type="button"
                                               onClick={(e) => { e.stopPropagation(); copyToClipboard(codeText, copyKey); }}
                                               title={zh ? '复制代码' : 'Copy code'}
-                                              className={`absolute top-0 right-0 z-20 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold border transition-all active:scale-95 ${
-                                                isCopied
-                                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                                                  : 'bg-white/5 text-cyan-200/80 border-white/10 hover:bg-white/10 hover:text-cyan-100'
-                                              }`}
+                                              className="absolute right-0 top-0 z-20"
                                             >
                                               {isCopied ? (
-                                                <>
-                                                  <Check className="w-3 h-3" />
-                                                  <span>{zh ? '已复制' : 'Copied'}</span>
-                                                </>
+                                                <span>{zh ? '已复制' : 'Copied'}</span>
                                               ) : (
-                                                <>
-                                                  <Copy className="w-3 h-3" />
-                                                  <span>{zh ? '复制' : 'Copy'}</span>
-                                                </>
+                                                <span>{zh ? '复制' : 'Copy'}</span>
                                               )}
-                                            </button>
+                                            </ActionButton>
                                           </div>
                                         );
                                       })()}
@@ -1083,17 +1061,15 @@ const InspectionItemsTab: React.FC<InspectionItemsTabProps> = ({ language, showT
         </div>
 
         {/* Pagination */}
-        <div className="flex-shrink-0 bg-white border-t border-black/5 px-6 py-4">
-          <Pagination
-            currentPage={currentPage}
-            totalItems={totalItems}
-            itemsPerPage={pageSize}
-            onPageChange={setCurrentPage}
-            onItemsPerPageChange={(size) => { setPageSize(size); setCurrentPage(1); }}
-            language={language}
-            alwaysVisible
-          />
-        </div>
+        <Pagination
+          currentPage={currentPage}
+          totalItems={totalItems}
+          itemsPerPage={pageSize}
+          onPageChange={setCurrentPage}
+          onItemsPerPageChange={(size) => { setPageSize(size); setCurrentPage(1); }}
+          language={language}
+          alwaysVisible
+        />
       </div>
       </div>
     </div>

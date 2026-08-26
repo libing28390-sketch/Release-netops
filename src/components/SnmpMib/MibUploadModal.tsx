@@ -3,6 +3,7 @@ import { X, Trash2, Database, FileText, Search, RefreshCw, Upload, Layers, Check
 import { apiRequest } from '../../api/http';
 import { ALL_VENDOR_NAMES, NETWORK_VENDOR_GROUPS } from '../../pages/AssetManagement/constants';
 import type { MibNodeItem } from './OidPickerModal';
+import { ActionIconButton } from '../ui/ActionIconButton';
 
 const MIB_PAGE_SIZE = 40;
 type MibStatusFilter = '' | 'parsed' | 'zero_node' | 'unresolved_oid' | 'failed';
@@ -782,17 +783,16 @@ const MibUploadModal: React.FC<MibUploadModalProps> = ({
                               {mib.source_type === 'librenms' ? 'LibreNMS' : (zh ? '系统内置' : 'Built-in')}
                             </span>
                           ) : (
-                            <button
-                              type="button"
+                            <ActionIconButton
+                              icon={Trash2}
+                              label={zh ? '删除 MIB' : 'Delete MIB'}
+                              size="xs"
+                              variant="danger"
                               onClick={e => {
                                 e.stopPropagation();
                                 void handleDeleteMib(mib);
                               }}
-                              className="rounded p-1 text-black/30 hover:bg-red-500/10 hover:text-red-600 dark:text-white/30 dark:hover:text-red-400"
-                              title={zh ? '删除 MIB' : 'Delete MIB'}
-                            >
-                              <Trash2 size={12} />
-                            </button>
+                            />
                           )}
                         </div>
                       </div>

@@ -7,6 +7,7 @@ import {
 import { AnimatePresence, motion } from 'motion/react';
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
+import { ActionButton } from '../components/ui/ActionIconButton';
 
 /* ═══════════════════════════════════════════════════════
    Types
@@ -339,13 +340,9 @@ const InventoryServersTab: React.FC<Props> = ({ language, t, setActiveTab, setSe
         title={zh ? '服务器管理' : 'Server Management'}
         subtitle={zh ? '管理和查看数据中心服务器资产。' : 'Manage and view datacenter server assets.'}
         actions={
-          <button onClick={fetchServers}
-            title={zh ? '刷新' : 'Refresh'}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-black/8 dark:border-white/10
-              rounded-lg text-xs font-medium text-black/55 dark:text-white/55 hover:bg-black/[.03] dark:hover:bg-white/[.05] transition-all">
-            <Download size={14} />
+          <ActionButton icon={Download} variant="accent" onClick={fetchServers} title={zh ? '刷新' : 'Refresh'}>
             {t('export')}
-          </button>
+          </ActionButton>
         }
       />
 

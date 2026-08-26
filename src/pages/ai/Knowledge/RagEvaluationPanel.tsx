@@ -71,8 +71,8 @@ export const RagEvaluationPanel: React.FC = () => {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-indigo-600"><Activity className="h-4 w-4" /> RAG Evaluation · KUI-016</div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">固定基线自检</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 dark:text-slate-300">用固定夹具问题集回归实体解析、厂商与版本过滤、结果排序和引用规则，适合检索代码变更后的开发测试。</p>
+            <h1 className="nx-page-title text-slate-900 dark:text-white">固定基线自检</h1>
+            <p className="nx-page-description mt-2 max-w-3xl text-slate-600 dark:text-slate-300">用固定夹具问题集回归实体解析、厂商与版本过滤、结果排序和引用规则，适合检索代码变更后的开发测试。</p>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500 dark:text-slate-400">它不读取当前租户的生产文档，也不测试真实向量模型或线上延迟；执行时使用 PostgreSQL 临时事务，不写入生产数据、不访问外网。</p>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-amber-700 dark:text-amber-300">当前实现仅建议在开发测试环境、没有并发 Copilot 检索时运行。</p>
           </div>

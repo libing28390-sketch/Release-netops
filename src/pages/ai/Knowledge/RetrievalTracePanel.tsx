@@ -56,8 +56,8 @@ export const RetrievalTracePanel: React.FC = () => {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-indigo-600"><Activity className="h-4 w-4" />Retrieval Trace · KUI-017</div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">检索过程追踪</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600 dark:text-slate-300">查看一次本地知识检索经过了哪些筛选、产生多少候选文档，以及最终为何命中或未命中。适合排查 Copilot 无引用、答非所问或找不到知识的问题。</p>
+            <h1 className="nx-page-title text-slate-900 dark:text-white">检索过程追踪</h1>
+            <p className="nx-page-description mt-2 max-w-3xl text-slate-600 dark:text-slate-300">查看一次本地知识检索经过了哪些筛选、产生多少候选文档，以及最终为何命中或未命中。适合排查 Copilot 无引用、答非所问或找不到知识的问题。</p>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500 dark:text-slate-400">默认脱敏，不展示问题正文、知识片段、SQL、URL、文档 ID 或凭据。</p>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-amber-700 dark:text-amber-300">这是当前服务实例的临时诊断记录，最多保留 200 条，服务重启后清空，不等同于持久审计日志。</p>
           </div>

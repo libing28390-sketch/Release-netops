@@ -20,6 +20,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { apiRequest } from '../../../api/http';
+import { ActionButton, ActionIconButton } from '../../ui/ActionIconButton';
 import { MetricRow, metricLabel, toPayload } from './MetricRowItem';
 import type { InterfaceOidConfig } from './InterfaceConfigSection';
 import { formatMetricValue, formatRawValue, summarizeRawValue } from './metricResultFormatters';
@@ -811,17 +812,18 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
                       className="rounded-md border border-black/8 bg-transparent py-1 pl-6 pr-2 text-xs outline-none focus:border-[#00bceb]/55 dark:border-white/10"
                     />
                   </div>
-                  <button
+                  <ActionButton
                     type="button"
+                    icon={Copy}
+                    variant="accent"
+                    size="sm"
                     onClick={() => {
                       const text = walkResults.map(r => `${r.oid} = ${r.value}`).join('\n');
                       copyToClipboard(text, 'All WALK results');
                     }}
-                    className="inline-flex items-center gap-1 rounded-md border border-black/8 px-2 py-1 text-[10px] text-black/60 hover:bg-black/5 dark:border-white/10 dark:text-white/60 dark:hover:bg-white/5"
                   >
-                    <Copy size={11} />
                     {zh ? '复制全部结果' : 'Copy All'}
-                  </button>
+                  </ActionButton>
                 </div>
               </div>
 
@@ -848,7 +850,7 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
 
               {/* Table */}
               <div className="mt-2 max-h-[360px] overflow-y-auto rounded-lg border border-black/6 bg-white/40 dark:border-white/8 dark:bg-white/[.02]">
-                <table className="w-full text-left text-xs">
+                <table className="nx-data-table nx-data-table--compact">
                   <thead className="sticky top-0 z-10 bg-[var(--card-bg)] text-[10px] font-medium text-black/45 dark:text-white/45">
                     <tr>
                       <th className="px-3 py-2">OID 路径 / 实例索引 / 推断含义</th>
@@ -865,14 +867,13 @@ export const LiveWalkInspector: React.FC<LiveWalkInspectorProps> = ({
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-1.5">
                               <span className="font-semibold text-[#007391] dark:text-[#00c2e8]">{row.oid}</span>
-                              <button
-                                type="button"
+                              <ActionIconButton
+                                icon={Copy}
+                                label={zh ? '复制 OID' : 'Copy OID'}
+                                size="xs"
+                                variant="accent"
                                 onClick={() => copyToClipboard(row.oid, 'OID')}
-                                className="text-black/30 hover:text-black/70 dark:text-white/30 dark:hover:text-white/70"
-                                title={zh ? '复制 OID' : 'Copy OID'}
-                              >
-                                <Copy size={11} />
-                              </button>
+                              />
                             </div>
                             {inferred && (
                               <div className="mt-0.5 font-sans text-[10px] text-[#008aad] dark:text-[#00bceb]">

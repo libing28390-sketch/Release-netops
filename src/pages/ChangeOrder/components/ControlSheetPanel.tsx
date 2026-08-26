@@ -2,6 +2,7 @@ import React from 'react';
 import { ClipboardCheck, User, UserCheck, Paperclip, FileText, Download } from 'lucide-react';
 import type { ChangeOrder } from '../types';
 import { fmtDate, fmtFileSize } from '../helpers';
+import { ActionLink } from '../../../components/ui/ActionIconButton';
 
 interface Props {
   language: string;
@@ -169,15 +170,15 @@ export const ControlSheetPanel: React.FC<Props> = ({ language, selectedOrder }) 
                   </p>
                 </div>
                 {att.download_url && (
-                  <a
+                  <ActionLink
                     href={att.download_url}
                     download={att.filename}
                     title={zh ? '下载附件' : 'Download attachment'}
-                    className="flex-shrink-0 p-1.5 rounded-lg text-teal-500 hover:text-teal-700 hover:bg-teal-100 transition-all"
+                    icon={Download}
+                    variant="accent"
+                    size="sm"
                     onClick={e => e.stopPropagation()}
-                  >
-                    <Download size={14} />
-                  </a>
+                  />
                 )}
               </div>
             ))}

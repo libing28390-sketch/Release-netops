@@ -5,6 +5,7 @@ import { Database, Download, Eye, RefreshCw, Search, X, FileText, Copy, ArrowLef
 import Pagination from '../components/Pagination';
 import PageHero from '../components/PageHero';
 import { DataTable } from '../components/DataTable';
+import { ActionButton, ActionIconButton, ActionIconGroup } from '../components/ui/ActionIconButton';
 
 interface LatestBackup {
   id: string;
@@ -1394,59 +1395,51 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                     </td>
                     <td className="px-5 py-4 align-top text-sm text-black/50 font-mono">{formatSize(row.size)}</td>
                     <td className="px-5 py-4 align-top text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
+                      <ActionIconGroup label={zh ? '备份操作' : 'Backup actions'}>
+                        <ActionIconButton
+                          icon={tftpSyncingSnapshotId === row.id ? RefreshCw : UploadCloud}
+                          label={zh ? '上传此配置快照至文件归档服务器' : 'Upload this snapshot to archive server'}
+                          variant="accent"
+                          iconClassName={tftpSyncingSnapshotId === row.id ? 'animate-spin' : undefined}
                           onClick={() => void handleSyncSingleSnapshotToTftp(row.id)}
                           disabled={tftpSyncingSnapshotId === row.id || !row.id}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-white text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2] disabled:opacity-40 disabled:hover:translate-y-0"
-                          title={zh ? '上传此配置快照至文件归档服务器' : 'Upload this snapshot to archive server'}
-                        >
-                          {tftpSyncingSnapshotId === row.id ? <RefreshCw size={14} className="animate-spin" /> : <UploadCloud size={14} />}
-                        </button>
-                        <button
+                        />
+                        <ActionIconButton
+                          icon={backupingDeviceId === row.device_id ? RefreshCw : Database}
+                          label={zh ? '备份此设备' : 'Backup this device'}
+                          variant="accent"
+                          iconClassName={backupingDeviceId === row.device_id ? 'animate-spin' : undefined}
                           onClick={() => void handleBackupDeviceClick(row.device_id)}
                           disabled={backupingDeviceId === row.device_id || isTakingSnapshot}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-white text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2] disabled:opacity-40 disabled:hover:translate-y-0"
-                          title={zh ? '备份此设备' : 'Backup this device'}
-                        >
-                          {backupingDeviceId === row.device_id
-                            ? <RefreshCw size={14} className="animate-spin" />
-                            : <Database size={14} />}
-                        </button>
-                        <button
+                        />
+                        <ActionIconButton
+                          icon={ArrowLeftRight}
+                          label={zh ? '对比配置变更' : 'Compare config changes'}
+                          variant="accent"
                           onClick={() => onNavigateToDiff(row.device_id)}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-white text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2]"
-                          title={zh ? '对比配置变更' : 'Compare config changes'}
-                        >
-                          <ArrowLeftRight size={14} />
-                        </button>
-                        <button
+                        />
+                        <ActionIconButton
+                          icon={Eye}
+                          label={zh ? '查看配置' : 'View config'}
+                          variant="accent"
                           onClick={() => void handleView(row)}
                           disabled={!row.id}
-                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2] disabled:opacity-40 disabled:hover:translate-y-0"
-                          title={zh ? '查看配置' : 'View config'}
-                        >
-                          <Eye size={14} />
-                          {zh ? '查看' : 'View'}
-                        </button>
-                        <button
+                        />
+                        <ActionIconButton
+                          icon={Download}
+                          label={zh ? '下载配置' : 'Download'}
+                          variant="accent"
                           onClick={() => handleDownload(row)}
                           disabled={!row.id}
-                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border border-transparent bg-white px-3 text-xs font-semibold text-[#0e7490] shadow-[0_1px_2px_rgba(6,182,212,0.08)] transition-all hover:-translate-y-0.5 hover:bg-[#ecfeff] hover:text-[#0891b2] disabled:opacity-40 disabled:hover:translate-y-0"
-                          title={zh ? '下载配置' : 'Download'}
-                        >
-                          <Download size={14} />
-                          {zh ? '下载' : 'Download'}
-                        </button>
-                        <button
+                        />
+                        <ActionIconButton
+                          icon={Trash2}
+                          label={zh ? '删除备份' : 'Delete backup'}
+                          variant="danger"
                           onClick={() => setDeleteTarget(row)}
                           disabled={!row.id}
-                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-white text-red-400 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-all hover:-translate-y-0.5 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 disabled:hover:translate-y-0"
-                          title={zh ? '删除备份' : 'Delete backup'}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
+                        />
+                      </ActionIconGroup>
                     </td>
                   </tr>
                 ))
@@ -1536,13 +1529,9 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                 {zh ? '清除日期' : 'Clear date'}
               </button>
             )}
-            <button
-              onClick={() => void exportBackupRuns()}
-              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold text-[#0e7490] hover:bg-[#ecfeff]"
-            >
-              <Download size={13} />
+            <ActionButton icon={Download} variant="accent" size="sm" onClick={() => void exportBackupRuns()}>
               {zh ? '导出' : 'Export'}
-            </button>
+            </ActionButton>
             <button
               type="button"
               onClick={() => setShowHistory((visible) => !visible)}
@@ -1882,24 +1871,9 @@ const ConfigBackupTab: React.FC<ConfigBackupTabProps> = ({
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => void handleCopy()}
-                    disabled={!viewContent}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold text-black/55 hover:bg-black/[0.03] disabled:opacity-40"
-                  >
-                    <Copy size={13} />
-                    {zh ? '复制' : 'Copy'}
-                  </button>
-                  <button
-                    onClick={() => handleDownload(viewSnapshot)}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-black/10 bg-white px-3 text-xs font-semibold text-black/55 hover:bg-black/[0.03]"
-                  >
-                    <Download size={13} />
-                    {zh ? '下载' : 'Download'}
-                  </button>
-                  <button title={zh ? '关闭' : 'Close'} onClick={closeView} className="rounded-xl border border-black/10 p-2 text-black/55 hover:bg-black/[0.03]">
-                    <X size={16} />
-                  </button>
+                  <ActionIconButton icon={Copy} label={zh ? '复制' : 'Copy'} variant="accent" disabled={!viewContent} onClick={() => void handleCopy()} />
+                  <ActionIconButton icon={Download} label={zh ? '下载' : 'Download'} variant="accent" onClick={() => handleDownload(viewSnapshot)} />
+                  <ActionIconButton icon={X} label={zh ? '关闭' : 'Close'} onClick={closeView} />
                 </div>
               </div>
 

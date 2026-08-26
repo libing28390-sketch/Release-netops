@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import type { Device, DeviceConnectionCheckSummary, TagDefinition } from '../types';
 import Pagination from '../components/Pagination';
+import { ActionButton } from '../components/ui/ActionIconButton';
 import DeviceTable, { DEFAULT_COLUMNS, type ColumnVisibility, type ColumnKey } from '../components/DeviceList/DeviceTable';
 import TagFilterDropdown from '../components/TagFilterDropdown';
 import PageHero from '../components/PageHero';
@@ -259,7 +260,7 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="nx-page-shell flex flex-col h-full overflow-hidden">
       <PageHero
         icon={Router}
         title={zh ? '网络设备' : t('deviceInventory')}
@@ -284,16 +285,14 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
               <span>{zh ? '刷新' : 'Refresh'}</span>
             </button>
             <ColumnToggle columns={columns} onChange={handleColumnToggle} language={language} />
-            <button
+            <ActionButton
+              icon={Download}
+              variant="accent"
               onClick={handleExport}
               title={zh ? '导出设备清单' : 'Export device inventory'}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200/80 dark:border-zinc-700/80
-                bg-white dark:bg-zinc-800 text-xs font-semibold text-gray-700 dark:text-zinc-300
-                hover:bg-gray-50 dark:hover:bg-zinc-700/60 transition-all cursor-pointer shadow-2xs"
             >
-              <Download size={13} className="text-gray-500" />
               <span>{zh ? '导出' : t('export')}</span>
-            </button>
+            </ActionButton>
           </div>
         }
       />
@@ -386,10 +385,10 @@ const InventoryDevicesTab: React.FC<InventoryDevicesTabProps> = ({
                     </div>
                   </div>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-black font-mono tracking-tight text-gray-900 dark:text-white tabular-nums">
+                    <span className="nx-kpi-value text-gray-900 dark:text-white">
                       {c.value}
                     </span>
-                    <span className="text-xs font-medium text-gray-400 font-mono">({pct}%)</span>
+                    <span className="nx-meta-text font-medium text-gray-400 tabular-nums">({pct}%)</span>
                   </div>
                 </div>
                 <div className="mt-3.5 pt-2.5 border-t border-gray-50 dark:border-zinc-800/60">

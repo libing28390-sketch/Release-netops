@@ -755,7 +755,7 @@ const DeviceDetailModal: React.FC<DeviceDetailModalProps> = ({
             <div className="px-5 pb-5 sm:px-6 sm:pb-6 xl:px-8 xl:pb-6">
               <h4 className="mb-3 text-[10px] font-bold uppercase tracking-widest text-black/30">{language === 'zh' ? '接口监控' : 'Interface Monitoring'} ({viewingDevice.interface_data.length})</h4>
               <div className="max-h-60 overflow-auto rounded-xl border border-black/5">
-                <table className="w-full text-xs">
+                <table className="nx-data-table nx-data-table--compact">
                   <thead className="sticky top-0 bg-black/[0.02]">
                     <tr>
                       <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-black/40">{language === 'zh' ? '接口' : 'Interface'}</th>

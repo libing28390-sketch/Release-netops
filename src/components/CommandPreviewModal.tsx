@@ -1,5 +1,6 @@
 import React from 'react';
 import { Copy, X } from 'lucide-react';
+import { ActionButton, ActionIconButton } from './ui/ActionIconButton';
 
 type CommandPhase = 'pre_check' | 'execute' | 'post_check' | 'rollback';
 
@@ -52,15 +53,10 @@ const CommandPreviewModal: React.FC<CommandPreviewModalProps> = ({
             <span className="text-[10px] font-mono text-white/35">{platform}</span>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={onCopyAll}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/8 text-white/60 hover:bg-white/15 text-xs font-semibold transition-all"
-            >
-              <Copy size={12} /> {language === 'zh' ? '复制全部' : 'Copy All'}
-            </button>
-            <button onClick={onClose} title={language === 'zh' ? '关闭' : 'Close'} className="text-white/40 hover:text-white/80 transition-colors">
-              <X size={18} />
-            </button>
+            <ActionButton icon={Copy} variant="accent" size="sm" onClick={onCopyAll}>
+              {language === 'zh' ? '复制全部' : 'Copy All'}
+            </ActionButton>
+            <ActionIconButton icon={X} label={language === 'zh' ? '关闭' : 'Close'} onClick={onClose} className="text-white/60 hover:text-white" />
           </div>
         </div>
 

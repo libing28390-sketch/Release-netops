@@ -11,6 +11,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import PageHero from '../../components/PageHero';
 import Pagination from '../../components/Pagination';
+import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
 
 interface DHCPLease {
   id: string;
@@ -251,20 +252,19 @@ const DHCPLeaseTab: React.FC<DHCPLeaseTabProps> = ({ language, t }) => {
                       <td className="px-4 py-4 font-mono text-[10px] text-gray-500">{node.lease_start || '-'}</td>
                       <td className="px-4 py-4 font-mono text-[10px] text-gray-500">{node.lease_end || '-'}</td>
                       <td className="pr-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
+                        <ActionIconGroup label={zh ? '租约操作' : 'Lease actions'} className="opacity-0 transition-opacity group-hover:opacity-100">
+                          <ActionIconButton
+                            icon={Pencil}
+                            label={zh ? '编辑' : 'Edit'}
                             onClick={() => openForm(node)}
-                            className="p-1 rounded-md text-gray-400 hover:text-cyan-600 hover:bg-cyan-50 transition-all"
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          <button
+                          />
+                          <ActionIconButton
+                            icon={Trash2}
+                            label={zh ? '删除' : 'Delete'}
+                            variant="danger"
                             onClick={() => setShowDeleteConfirm(node.id)}
-                            className="p-1 rounded-md text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-all"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                          />
+                        </ActionIconGroup>
                       </td>
                     </tr>
                   ))

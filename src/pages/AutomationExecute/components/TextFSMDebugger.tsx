@@ -269,7 +269,7 @@ export const TextFSMDebugger: React.FC<TextFSMDebuggerProps> = ({
 
                 {/* Table preview */}
                 <div className="flex-1 overflow-auto border border-white/10 rounded-xl bg-black/20">
-                  <table className="min-w-full text-left text-xs text-white/80 border-collapse">
+                  <table className="nx-terminal-table min-w-full text-left text-xs text-white/80 border-collapse">
                     <thead>
                       <tr className="bg-white/5 border-b border-white/10">
                         {selectedFields.map((f) => (

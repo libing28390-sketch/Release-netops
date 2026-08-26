@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer } from 'recharts';
 import OutputActions from '../../../components/OutputActions';
+import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 import type { UnifiedExecutionLog, InspDetailTab, PlaybookExecutionApproval } from '../types';
 import type { Device } from '../../../types';
 import { splitOutputByCommand, downloadInspExcel, downloadInspJSON } from '../helpers';
@@ -471,11 +472,16 @@ const AnalysisTab: React.FC<{
                 </td>
                 <td className="py-2 px-2 text-white/50">{a.conclusion}</td>
                 <td className="py-2 px-2 text-white/50">{a.suggestion}</td>
-                <td className="py-2 px-2 text-right">
+                <td className="py-2 px-2 text-right whitespace-nowrap">
                   {isNumeric && a.key && (
-                    <button onClick={() => onFetchTrend(deviceId, a.key)} className="text-[9px] font-bold text-cyan-400 hover:text-cyan-300 px-2 py-1 rounded border border-cyan-500/30 hover:bg-cyan-500/10">
-                      {zh ? '趋势' : 'Trend'}
-                    </button>
+                    <ActionIconGroup label={zh ? '指标操作' : 'Metric actions'}>
+                      <ActionIconButton
+                        icon={Activity}
+                        label={zh ? '查看趋势' : 'View trend'}
+                        variant="accent"
+                        onClick={() => onFetchTrend(deviceId, a.key)}
+                      />
+                    </ActionIconGroup>
                   )}
                 </td>
               </tr>
@@ -666,25 +672,17 @@ const RawOutputTab: React.FC<{
                           {parseState?.loading ? <Loader2 size={9} className="animate-spin" /> : 'Parsed'}
                         </button>
                       </div>
-                      <button onClick={() => onCopyText(outputStr, blockKey)} className={`flex items-center gap-1 p-1 rounded border transition-all text-[9px] font-mono ${isCopied ? 'bg-emerald-900/40 border-emerald-500/40 text-emerald-400' : 'bg-white/5 border-white/10 text-white/30 hover:text-white/60 hover:border-white/20'}`} title={zh ? '复制' : 'Copy'}>
-                        {isCopied ? <Check size={11} /> : <Copy size={11} />}
-                      </button>
-                      <button onClick={() => { const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40); const blob = new Blob([outputStr], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${res.hostname}_${safeCmd}.txt`; a.click(); URL.revokeObjectURL(url); }} className="flex items-center gap-1 p-1 rounded border bg-white/5 border-white/10 text-white/30 hover:text-cyan-400 hover:border-cyan-500/40 transition-all" title={zh ? '下载原始文本 (.txt)' : 'Download raw .txt'}>
-                        <Download size={11} /> <span className="text-[9px] font-mono">txt</span>
-                      </button>
+                      <ActionIconButton icon={isCopied ? Check : Copy} label={zh ? '复制' : 'Copy'} variant={isCopied ? 'success' : 'accent'} onClick={() => onCopyText(outputStr, blockKey)} />
+                      <ActionIconButton icon={Download} label={zh ? '下载原始文本 (.txt)' : 'Download raw .txt'} variant="accent" onClick={() => { const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40); const blob = new Blob([outputStr], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${res.hostname}_${safeCmd}.txt`; a.click(); URL.revokeObjectURL(url); }} />
                       <button onClick={() => { if (!parseState || (!parseState.data && !parseState.loading)) { onParseCmd(blockKey, res.platform || 'cisco_ios', cmd, outputStr); } }} disabled={parseState?.loading} className={`flex items-center gap-1 px-2 py-1 rounded border text-[9px] font-mono transition-all ${parseState?.data ? 'bg-cyan-900/40 border-cyan-500/40 text-cyan-300' : parseState?.error ? 'bg-amber-900/20 border-amber-500/30 text-amber-400/60' : 'bg-white/5 border-white/10 text-white/30 hover:text-cyan-400 hover:border-cyan-500/40'}`} title={parseState?.error || (zh ? '用 TextFSM 解析' : 'Parse with TextFSM')}>
                         {parseState?.loading ? <Loader2 size={11} className="animate-spin" /> : <Table2 size={11} />}
                         <span>{parseState?.data ? (zh ? '已解析' : 'Parsed') : (zh ? '解析' : 'Parse')}</span>
                       </button>
                       {parseState?.data?.count > 0 && (
-                        <button onClick={() => { const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40); downloadInspExcel(parseState.data.records, parseState.data.fields, `${res.hostname}_${safeCmd}_parsed`); }} className="flex items-center gap-1 p-1 rounded border bg-emerald-900/30 border-emerald-500/40 text-emerald-400 hover:bg-emerald-900/50 transition-all" title={zh ? '下载解析结果 (Excel)' : 'Download parsed as Excel'}>
-                          <FileSpreadsheet size={11} /> <span className="text-[9px] font-mono">xlsx</span>
-                        </button>
+                        <ActionIconButton icon={FileSpreadsheet} label={zh ? '下载解析结果 (Excel)' : 'Download parsed as Excel'} variant="success" onClick={() => { const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40); downloadInspExcel(parseState.data.records, parseState.data.fields, `${res.hostname}_${safeCmd}_parsed`); }} />
                       )}
                       {parseState?.data?.count > 0 && (
-                        <button onClick={() => { const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40); downloadInspJSON(parseState.data.records, `${res.hostname}_${safeCmd}_parsed`); }} className="flex items-center gap-1 p-1 rounded border bg-indigo-900/30 border-indigo-500/40 text-indigo-400 hover:bg-indigo-900/50 transition-all" title={zh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'}>
-                          <FileJson size={11} /> <span className="text-[9px] font-mono">json</span>
-                        </button>
+                        <ActionIconButton icon={FileJson} label={zh ? '下载解析结果 (JSON)' : 'Download parsed as JSON'} variant="accent" onClick={() => { const safeCmd = cmd.replace(/[^a-z0-9_]/gi, '_').slice(0, 40); downloadInspJSON(parseState.data.records, `${res.hostname}_${safeCmd}_parsed`); }} />
                       )}
                     </div>
                   )}
@@ -704,7 +702,7 @@ const RawOutputTab: React.FC<{
                           <div className="py-4 text-amber-500/80 italic">⚠ {parseState.error}</div>
                         ) : parseState?.data?.records ? (
                           <div className="overflow-x-auto custom-scrollbar-dark pb-2">
-                            <table className="w-full text-left border-collapse border border-white/10">
+                            <table className="nx-terminal-table w-full text-left border-collapse border border-white/10">
                               <thead>
                                 <tr className="bg-white/5 border-b border-white/10">
                                   {parseState.data.fields.map((f: string) => (

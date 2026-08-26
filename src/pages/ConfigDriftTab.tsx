@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, ShieldAlert, ShieldCheck, GitCompare, RotateCcw, Download, ChevronDown, ChevronRight, AlertTriangle, TrendingUp } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import PageHero from '../components/PageHero';
+import { ActionButton } from '../components/ui/ActionIconButton';
 
 interface DriftItem {
   device_id: string;
@@ -163,13 +164,12 @@ const ConfigDriftTab: React.FC<ConfigDriftTabProps> = ({ language, t }) => {
         subtitle={language === 'zh' ? '对比设备当前配置与基线快照，发现未授权变更' : 'Compare current configs against baselines to detect unauthorized changes'}
         actions={
           <>
-            <button onClick={handleExport} className="p-1.5 rounded-lg border border-black/10 text-black/40 hover:text-[#00bceb] hover:border-[#00bceb]/30 transition-all" title={language === 'zh' ? '导出报告' : 'Export'}>
-              <Download size={14} />
-            </button>
-            <button onClick={runScan} disabled={scanning} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#00bceb] text-white text-sm font-semibold hover:bg-[#00a5d0] transition-all disabled:opacity-50">
-              <RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />
+            <ActionButton icon={Download} variant="accent" size="md" onClick={handleExport} title={language === 'zh' ? '导出报告' : 'Export'}>
+              {language === 'zh' ? '导出' : 'Export'}
+            </ActionButton>
+            <ActionButton icon={RefreshCw} variant="primary" size="md" onClick={runScan} disabled={scanning} iconClassName={scanning ? 'animate-spin' : undefined}>
               {language === 'zh' ? '扫描全部设备' : 'Scan All Devices'}
-            </button>
+            </ActionButton>
           </>
         }
       />

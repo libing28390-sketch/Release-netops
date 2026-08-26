@@ -5,6 +5,7 @@ import {
   Trash2, RotateCcw, User, ShieldAlert, Shield, AlertTriangle, Database, Activity
 } from 'lucide-react';
 import TagConditionPicker, { hasTagFilterConditions, type TagFilterConfig } from '../../../components/TagConditionPicker';
+import { ActionIconButton } from '../../../components/ui/ActionIconButton';
 import { ScheduledJob, EligibleApprover, FormState, ValidatedDevice } from '../types';
 import {
   CRON_PRESETS, CRON_FIELD_LABELS_ZH, CRON_FIELD_LABELS_EN,
@@ -558,14 +559,14 @@ export const JobModal: React.FC<JobModalProps> = ({
                               )}
                             </div>
                           )}
-                          <button
+                          <ActionIconButton
+                            icon={Trash2}
+                            label={zh ? '移除' : 'Remove'}
+                            variant="danger"
                             type="button"
                             onClick={() => removeIpDevice(dev.ip)}
-                            className="p-1 rounded-lg text-black/25 hover:text-red-500 hover:bg-red-50 transition-all shrink-0 ml-auto"
-                            title={zh ? '移除' : 'Remove'}
-                          >
-                            <Trash2 size={12} />
-                          </button>
+                            className="ml-auto shrink-0"
+                          />
                         </div>
                       ))}
                     </div>

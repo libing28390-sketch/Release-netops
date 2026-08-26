@@ -7,6 +7,7 @@ import {
 import Pagination from '../../../components/Pagination';
 import type { ScheduledJob } from '../types';
 import { ACTION_TYPES } from '../constants';
+import { ActionIconButton, ActionIconGroup } from '../../../components/ui/ActionIconButton';
 import { fmtDateTime, getScheduleStatus, describeScope } from '../helpers';
 
 interface ScheduleListProps {
@@ -158,22 +159,24 @@ const ScheduleList: React.FC<ScheduleListProps> = ({
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                      <button
+                    <ActionIconGroup
+                      label={isEnabled ? (zh ? '计划任务操作，当前已启用' : 'Scheduled job actions, enabled') : (zh ? '计划任务操作，当前已停用' : 'Scheduled job actions, disabled')}
+                      className="shrink-0"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <ActionIconButton
+                        icon={Activity}
+                        label={isEnabled ? (zh ? '停用计划' : 'Disable schedule') : (zh ? '启用计划' : 'Enable schedule')}
+                        variant={isEnabled ? 'default' : 'success'}
                         onClick={() => onToggleEnabled(sch)}
-                        className={`p-2 rounded-xl transition-all ${isEnabled ? 'text-slate-400 hover:bg-amber-50 hover:text-amber-600' : 'text-slate-400 hover:bg-emerald-50 hover:text-emerald-600'}`}
-                        title={isEnabled ? (zh ? '停用' : 'Disable') : (zh ? '启用' : 'Enable')}
-                      >
-                        <Activity size={16} />
-                      </button>
-                      <button
+                      />
+                      <ActionIconButton
+                        icon={Trash2}
+                        label={zh ? '删除' : 'Delete'}
+                        variant="danger"
                         onClick={() => onDelete(sch.job_id || sch.id)}
-                        className="p-2 rounded-xl text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all"
-                        title={zh ? '删除' : 'Delete'}
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
+                      />
+                    </ActionIconGroup>
                   </div>
 
                   {/* Bottom meta */}
