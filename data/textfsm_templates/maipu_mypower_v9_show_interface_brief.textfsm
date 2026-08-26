@@ -1,0 +1,35 @@
+# nexora-action-code: get_interface_brief
+Value Required INTERFACE (\S+)
+Value STATUS (Enabled|Disabled|admin down|down|up|\S+)
+Value LINK (Up|Down|\S+)
+Value SPEED (Unknown|\d+\w*|\S+)
+Value DUPLEX (Unknown|Full|Half|Auto|\S+)
+Value VSL (\S+)
+Value TYPE (Nni|Uni|Access|Trunk|Hybrid|\S+)
+Value PVID (\d+)
+Value DESCRIPTION (.*)
+
+Start
+  ^.*#\s*show\s+ -> Next
+  ^\s*Interface\s+Status\s+Link\s+ActSpeed\s+ActDuplex\s+VSL\s+Type\s+Pvid\s+Desc -> Header
+  ^\s*Interface\s+Status\s+Link\s+ActSpeed\s+ActDuplex -> Header
+  # 无表头时直接匹配数据行
+  ^\s*${INTERFACE}\s+${STATUS}\s+${LINK}\s+${SPEED}\s+${DUPLEX}(?:\s+${VSL})?\s+${TYPE}\s+${PVID}\s+${DESCRIPTION}\s*$$ -> Record
+  ^\s*${INTERFACE}\s+${STATUS}\s+${LINK}\s+${SPEED}\s+${DUPLEX}(?:\s+${VSL})?\s+${TYPE}\s+${PVID}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next
+
+Header
+  ^\s*[-=]+ -> Table
+  ^\s*${INTERFACE}\s+${STATUS}\s+${LINK}\s+${SPEED}\s+${DUPLEX}(?:\s+${VSL})?\s+${TYPE}\s+${PVID}\s+${DESCRIPTION}\s*$$ -> Record Table
+  ^\s*${INTERFACE}\s+${STATUS}\s+${LINK}\s+${SPEED}\s+${DUPLEX}(?:\s+${VSL})?\s+${TYPE}\s+${PVID}\s*$$ -> Record Table
+  ^\s*$$
+  ^. -> Next
+
+Table
+  # 带 Description（VSL 为可选列）
+  ^\s*${INTERFACE}\s+${STATUS}\s+${LINK}\s+${SPEED}\s+${DUPLEX}(?:\s+${VSL})?\s+${TYPE}\s+${PVID}\s+${DESCRIPTION}\s*$$ -> Record
+  # 不带 Description
+  ^\s*${INTERFACE}\s+${STATUS}\s+${LINK}\s+${SPEED}\s+${DUPLEX}(?:\s+${VSL})?\s+${TYPE}\s+${PVID}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Next

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock, Info } from 'lucide-react';
+import { Bell, Eye, EyeOff, Terminal, MonitorSpeaker, Shield, Download, Lock, Info, UserRound, KeyRound, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react';
 import type { ThemeMode } from '../types';
 import { useSystem } from '../hooks/useSystem';
 import QRCode from 'react-qr-code';
@@ -202,9 +202,45 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
     }
   };
   const [localTerminalPath, setLocalTerminalPath] = React.useState(() => localStorage.getItem('local_terminal_path') || '');
-  const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'xshell');
+  const [terminalApp, setTerminalApp] = React.useState(() => localStorage.getItem('terminal_app') || 'standard');
   const [showFixedPin, setShowFixedPin] = React.useState(false);
   const [showPathSuggestions, setShowPathSuggestions] = React.useState(false);
+  const [wizardStep, setWizardStep] = React.useState(0);
+  const isZh = language === 'zh';
+
+  const wizardSteps = [
+    { key: 'profile', label: isZh ? '基本资料' : 'Profile', description: isZh ? '头像与联系方式' : 'Avatar and contact details', icon: UserRound },
+    { key: 'security', label: isZh ? '登录安全' : 'Login security', description: isZh ? '密码与 MFA 保护' : 'Password and MFA protection', icon: KeyRound },
+    { key: 'notifications', label: isZh ? '告警通知' : 'Notifications', description: isZh ? '可选的消息推送' : 'Optional message delivery', icon: Bell },
+    { key: 'terminal', label: isZh ? '终端工具' : 'Terminal tools', description: isZh ? '本机启动配置' : 'Local launch settings', icon: MonitorSpeaker },
+  ] as const;
+
+  // Validate the confirmation field as soon as the second password input is
+  // used. The save handler keeps the same check as a final safety net.
+  const passwordConfirmationError = profileForm.confirmPassword
+    ? !profileForm.password
+      ? (isZh ? '请先输入新密码' : 'Enter the new password first')
+      : profileForm.password !== profileForm.confirmPassword
+        ? (isZh ? '两次输入的密码不一致' : 'Passwords do not match')
+        : ''
+    : '';
+
+  React.useEffect(() => {
+    if (open) {
+      setWizardStep(0);
+      setShowPathSuggestions(false);
+      setSetupMode(false);
+      setMfaCodeInput('');
+      setMfaErrorMsg('');
+      setDisableMode(false);
+      setDisablePasswordInput('');
+    }
+  }, [open]);
+
+  const activeWizardStep = wizardSteps[wizardStep];
+  const goToWizardStep = (step: number) => {
+    setWizardStep(Math.min(Math.max(step, 0), wizardSteps.length - 1));
+  };
 
   // 各终端工具的常见安装路径（Windows）
   const PATH_PRESETS: Record<string, string[]> = {
@@ -273,21 +309,79 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   ] as const;
 
   const isDark = resolvedTheme === 'dark';
+  const ActiveStepIcon = activeWizardStep.icon;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
       <motion.div
         initial={{ opacity: 0, y: 12, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        className={`w-full max-w-3xl overflow-hidden rounded-[1.75rem] border shadow-[0_24px_80px_rgba(15,23,42,0.28)] ${isDark ? 'bg-[#121c2d] border-white/10' : 'bg-slate-50 border-white/80'}`}
+        className={`w-full max-w-4xl overflow-hidden rounded-[1.75rem] border shadow-[0_24px_80px_rgba(15,23,42,0.28)] ${isDark ? 'bg-[#121c2d] border-white/10' : 'bg-slate-50 border-white/80'}`}
       >
-        <div className={`px-6 py-4 border-b ${isDark ? 'border-white/10' : 'border-black/10'}`}>
-          <h3 className={`text-lg font-bold ${isDark ? 'text-white/90' : 'text-[#0b2a3c]'}`}>个人信息</h3>
-          <p className={`text-xs mt-1 ${isDark ? 'text-white/45' : 'text-black/45'}`}>管理您的账户个人信息</p>
+        <div className={`border-b px-6 py-5 ${isDark ? 'border-white/10' : 'border-black/10'}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${isDark ? 'bg-cyan-400/15 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}>
+                  <Shield size={18} />
+                </span>
+                <h3 className={`text-lg font-bold ${isDark ? 'text-white/90' : 'text-[#0b2a3c]'}`}>{isZh ? '个人设置向导' : 'Personal setup guide'}</h3>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${isDark ? 'bg-white/10 text-white/50' : 'bg-slate-100 text-slate-500'}`}>
+                  {wizardStep + 1} / {wizardSteps.length}
+                </span>
+              </div>
+              <p className={`mt-1.5 text-xs ${isDark ? 'text-white/45' : 'text-black/45'}`}>{isZh ? '按步骤完成账户安全、告警通知和本机终端配置' : 'Complete account security, notifications, and local terminal settings step by step'}</p>
+            </div>
+            <div className={`hidden shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-right sm:flex ${isDark ? 'bg-white/5' : 'bg-white/75'}`}>
+              <ActiveStepIcon size={15} className={isDark ? 'text-cyan-300' : 'text-cyan-600'} />
+              <div>
+                <div className={`text-[10px] font-bold ${isDark ? 'text-white/75' : 'text-slate-700'}`}>{activeWizardStep.label}</div>
+                <div className={`text-[9px] ${isDark ? 'text-white/35' : 'text-slate-400'}`}>{activeWizardStep.description}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
+            {wizardSteps.map((step, index) => {
+              const StepIcon = step.icon;
+              const completed = index < wizardStep;
+              const active = index === wizardStep;
+              return (
+                <React.Fragment key={step.key}>
+                  <button
+                    type="button"
+                    onClick={() => goToWizardStep(index)}
+                    className={`flex min-w-max items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-all ${active ? (isDark ? 'bg-cyan-400/15 text-cyan-200 ring-1 ring-cyan-300/20' : 'bg-cyan-50 text-cyan-800 ring-1 ring-cyan-200') : (isDark ? 'text-white/40 hover:bg-white/5 hover:text-white/70' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700')}`}
+                  >
+                    <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ${active ? (isDark ? 'bg-cyan-300 text-slate-950' : 'bg-cyan-600 text-white') : completed ? 'bg-emerald-500 text-white' : (isDark ? 'bg-white/10 text-white/45' : 'bg-slate-100 text-slate-400')}`}>
+                      {completed ? <CheckCircle2 size={13} /> : <StepIcon size={13} />}
+                    </span>
+                    <span className="text-[11px] font-bold">{step.label}</span>
+                  </button>
+                  {index < wizardSteps.length - 1 && <span className={`h-px min-w-3 flex-1 ${index < wizardStep ? (isDark ? 'bg-emerald-400/50' : 'bg-emerald-300') : (isDark ? 'bg-white/10' : 'bg-slate-200')}`} />}
+                </React.Fragment>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="max-h-[78vh] space-y-5 overflow-y-auto bg-slate-50/70 px-6 py-5">
-          <div>
+        <div className={`max-h-[78vh] overflow-y-auto px-6 py-5 ${isDark ? 'bg-[#0f172a]' : 'bg-slate-50/70'}`}>
+          <div className={`mb-5 flex items-start gap-3 rounded-2xl border px-4 py-3 ${isDark ? 'border-cyan-400/15 bg-cyan-400/5' : 'border-cyan-100 bg-cyan-50/70'}`} aria-live="polite">
+            <ActiveStepIcon size={16} className={`mt-0.5 shrink-0 ${isDark ? 'text-cyan-300' : 'text-cyan-700'}`} />
+            <div>
+              <div className={`text-xs font-bold ${isDark ? 'text-cyan-100' : 'text-cyan-900'}`}>{isZh ? `第 ${wizardStep + 1} 步：${activeWizardStep.label}` : `Step ${wizardStep + 1}: ${activeWizardStep.label}`}</div>
+              <p className={`mt-0.5 text-[11px] leading-relaxed ${isDark ? 'text-white/45' : 'text-cyan-800/70'}`}>{activeWizardStep.description}{wizardStep === 1 && (isZh ? '；密码只在本次提交时处理，不会显示在页面上。' : '; passwords are processed on submit and are not displayed.')}</p>
+            </div>
+          </div>
+          <div className={wizardStep === 0 ? 'space-y-5' : 'hidden'}>
+            <div className={`flex items-start gap-3 rounded-2xl border p-4 ${isDark ? 'border-white/10 bg-white/[0.03]' : 'border-slate-200 bg-white/80'}`}>
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isDark ? 'bg-cyan-400/15 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}><UserRound size={17} /></span>
+              <div>
+                <div className={`text-xs font-bold ${isDark ? 'text-white/85' : 'text-slate-800'}`}>{isZh ? '先完善你的账户资料' : 'Start with your account profile'}</div>
+                <p className={`mt-1 text-[11px] leading-relaxed ${isDark ? 'text-white/45' : 'text-slate-500'}`}>{isZh ? '头像、显示名称和联系方式用于识别与通知展示，不会改变你的登录权限。' : 'Avatar, display name, and contact details help identify you in the workspace and notifications; they do not change your access role.'}</p>
+              </div>
+            </div>
+            <div>
             <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>个人头像</label>
             <div className="flex items-center gap-3">
               <div className={`w-14 h-14 rounded-full border overflow-hidden flex items-center justify-center ${isDark ? 'bg-white/10 border-white/10 text-white/75' : 'bg-black/10 border-black/10 text-black/60'}`}>
@@ -336,7 +430,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>真实姓名</label>
               <input
@@ -383,7 +477,17 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
             />
           </div>
 
-          <div>
+          </div>
+
+          <div className={wizardStep === 1 ? 'space-y-5' : 'hidden'}>
+            <div className={`flex items-start gap-3 rounded-2xl border p-4 ${isDark ? 'border-amber-400/15 bg-amber-400/5' : 'border-amber-100 bg-amber-50/70'}`}>
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isDark ? 'bg-amber-400/15 text-amber-300' : 'bg-amber-50 text-amber-700'}`}><KeyRound size={17} /></span>
+              <div>
+                <div className={`text-xs font-bold ${isDark ? 'text-white/85' : 'text-slate-800'}`}>{isZh ? '保护你的登录入口' : 'Protect your login'}</div>
+                <p className={`mt-1 text-[11px] leading-relaxed ${isDark ? 'text-white/45' : 'text-slate-500'}`}>{isZh ? '不修改密码时全部密码框留空；建议为管理员开启 MFA，降低凭据泄露后的风险。' : 'Leave all password fields empty when you do not want to change the password. MFA is recommended for administrators.'}</p>
+              </div>
+            </div>
+            <div>
             <label className={`block text-[10px] font-bold uppercase tracking-widest mb-1.5 ${isDark ? 'text-white/55' : 'text-black/45'}`}>
               {language === 'zh' ? '当前密码' : 'Current Password'}
             </label>
@@ -431,8 +535,16 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
               onChange={(event) => onProfileFormChange((prev) => ({ ...prev, confirmPassword: event.target.value }))}
               title="Confirm password"
               placeholder={language === 'zh' ? '请再次输入新密码' : 'Confirm new password'}
-              className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
+              aria-invalid={Boolean(passwordConfirmationError)}
+              aria-describedby={passwordConfirmationError ? 'profile-confirm-password-error' : undefined}
+              className={`w-full rounded-xl px-3 py-2.5 text-sm outline-none border transition-all ${passwordConfirmationError ? (isDark ? 'bg-rose-500/5 border-rose-400/70 text-white placeholder-white/30 focus:border-rose-400' : 'bg-rose-50/60 border-rose-300 text-[#0b2a3c] placeholder-black/30 focus:border-rose-500') : isDark ? 'bg-white/5 border-white/15 text-white placeholder-white/30 focus:border-[#00bceb]/60' : 'bg-black/[0.02] border-black/10 text-[#0b2a3c] placeholder-black/30 focus:border-[#00bceb]/50'}`}
             />
+            {passwordConfirmationError && (
+              <p id="profile-confirm-password-error" role="alert" className={`mt-1.5 flex items-center gap-1 text-[11px] font-semibold ${isDark ? 'text-rose-300' : 'text-rose-600'}`}>
+                <Info size={12} />
+                {passwordConfirmationError}
+              </p>
+            )}
           </div>
 
           {(currentRole === 'Administrator' || currentRole === 'admin') && (
@@ -618,7 +730,17 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
             )}
           </div>
 
-          <div className={`pt-3 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
+          </div>
+
+          <div className={wizardStep === 2 ? 'space-y-4' : 'hidden'}>
+            <div className={`flex items-start gap-3 rounded-2xl border p-4 ${isDark ? 'border-blue-400/15 bg-blue-400/5' : 'border-blue-100 bg-blue-50/70'}`}>
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isDark ? 'bg-blue-400/15 text-blue-300' : 'bg-blue-50 text-blue-700'}`}><Bell size={17} /></span>
+              <div>
+                <div className={`text-xs font-bold ${isDark ? 'text-white/85' : 'text-slate-800'}`}>{isZh ? '把重要告警送到你常用的群' : 'Send important alerts to your team'}</div>
+                <p className={`mt-1 text-[11px] leading-relaxed ${isDark ? 'text-white/45' : 'text-slate-500'}`}>{isZh ? '告警通知是可选项，不配置也不影响登录和设备访问。填入地址后先发送测试消息，确认成功再保存。' : 'Alert delivery is optional and does not affect login or device access. Send a test message after entering a URL before saving.'}</p>
+              </div>
+            </div>
+            <div className={`pt-3 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
             <div className="flex items-center gap-2 mb-1">
               <Bell size={13} className={isDark ? 'text-[#00bceb]' : 'text-[#008bb0]'} />
               <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-white/55' : 'text-black/45'}`}>
@@ -745,22 +867,50 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
             })}
           </div>
 
-          <div className={`pt-3 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <MonitorSpeaker size={13} className={isDark ? 'text-cyan-400' : 'text-cyan-600'} />
-              <span className={`text-[10px] font-bold uppercase tracking-widest ${isDark ? 'text-white/55' : 'text-black/45'}`}>
-                终端实验室 (Terminal Lab)
-              </span>
+          </div>
+
+          <div className={wizardStep === 3 ? 'space-y-4' : 'hidden'}>
+            <div className={`pt-3 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
+              <div className="flex items-start gap-3">
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${isDark ? 'bg-cyan-400/15 text-cyan-300' : 'bg-cyan-50 text-cyan-700'}`}><MonitorSpeaker size={17} /></span>
+                <div>
+                  <div className={`text-xs font-bold ${isDark ? 'text-white/85' : 'text-slate-800'}`}>{isZh ? '配置本机如何打开设备终端' : 'Choose how this workstation opens terminals'}</div>
+                  <p className={`mt-1 text-[11px] leading-relaxed ${isDark ? 'text-white/45' : 'text-slate-500'}`}>{isZh ? '这里的路径指当前电脑上的程序，不是远程设备路径。没有桌面客户端时，直接使用推荐的系统 SSH。' : 'The path below belongs to this workstation, not the remote device. If you do not have a desktop client, use the recommended System SSH option.'}</p>
+                </div>
+              </div>
             </div>
-            <p className={`text-[11px] mb-3 leading-relaxed ${isDark ? 'text-white/30' : 'text-black/35'}`}>
-              配置本地终端工具路径，并运行 Terminal Agent，实现从 Docker/Ubuntu 部署的一键启动。
-            </p>
+
+            <div className={`rounded-2xl border p-4 ${isDark ? 'border-cyan-400/15 bg-cyan-400/5' : 'border-cyan-100 bg-cyan-50/45'}`}>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="flex gap-2">
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${isDark ? 'bg-cyan-300 text-slate-950' : 'bg-cyan-600 text-white'}`}>1</span>
+                  <div>
+                    <div className={`text-[11px] font-bold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>{isZh ? '选启动方式' : 'Choose a launcher'}</div>
+                    <p className={`mt-0.5 text-[10px] leading-relaxed ${isDark ? 'text-white/40' : 'text-slate-500'}`}>{isZh ? '推荐系统 SSH，免填路径。' : 'System SSH is recommended; no path needed.'}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${isDark ? 'bg-cyan-300 text-slate-950' : 'bg-cyan-600 text-white'}`}>2</span>
+                  <div>
+                    <div className={`text-[11px] font-bold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>{isZh ? '只选客户端时填路径' : 'Add a path for desktop clients'}</div>
+                    <p className={`mt-0.5 text-[10px] leading-relaxed ${isDark ? 'text-white/40' : 'text-slate-500'}`}>{isZh ? '路径必须是本机 exe 文件。' : 'Use the local client executable path.'}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${isDark ? 'bg-cyan-300 text-slate-950' : 'bg-cyan-600 text-white'}`}>3</span>
+                  <div>
+                    <div className={`text-[11px] font-bold ${isDark ? 'text-white/80' : 'text-slate-700'}`}>{isZh ? '下载并运行 Agent' : 'Run the local Agent'}</div>
+                    <p className={`mt-0.5 text-[10px] leading-relaxed ${isDark ? 'text-white/40' : 'text-slate-500'}`}>{isZh ? 'Agent 负责把浏览器请求交给本机程序。' : 'The Agent hands browser requests to local apps.'}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <div className={`p-4 rounded-xl border ${isDark ? 'bg-white/[0.02] border-white/10' : 'bg-black/[0.01] border-black/5'}`}>
               <div className="flex flex-col gap-4">
-                <div className="flex gap-4">
-                  <div className="w-1/3">
-                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>终端工具</label>
+                <div className="flex flex-col gap-4 sm:flex-row">
+                  <div className="w-full sm:w-1/3">
+                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>{isZh ? '启动方式' : 'Launch method'}</label>
                     <select 
                       value={terminalApp}
                       onChange={e => {
@@ -770,7 +920,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                       }}
                       className={`w-full px-3 py-2 rounded-lg text-xs outline-none border transition-all ${isDark ? 'bg-black/20 border-white/10 text-white focus:border-cyan-500/50' : 'bg-white border-black/10 text-black focus:border-cyan-500/40'}`}
                     >
-                      <option value="standard">{language === 'zh' ? '系统 SSH（Terminal Agent）' : 'System SSH (Terminal Agent)'}</option>
+                      <option value="standard">{isZh ? '系统 SSH（推荐，无需路径）' : 'System SSH (recommended)'}</option>
                       <option value="xshell">Xshell</option>
                       <option value="putty">PuTTY</option>
                       <option value="securecrt">SecureCRT</option>
@@ -778,7 +928,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                     </select>
                   </div>
                   <div className="flex-1">
-                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>可执行程序绝对路径</label>
+                    <label className={`block text-[10px] font-bold uppercase tracking-widest mb-2 ${isDark ? 'text-white/40' : 'text-black/40'}`}>{isZh ? '客户端程序路径（仅本机）' : 'Client path (this workstation)'}</label>
                     <div className="flex gap-2">
                       <div className="relative flex-1">
                         <Terminal size={14} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDark ? 'text-white/20' : 'text-black/20'}`} />
@@ -791,7 +941,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                             setLocalTerminalPath(val);
                             localStorage.setItem('local_terminal_path', val);
                           }}
-                          placeholder={terminalApp === 'standard' ? (language === 'zh' ? '标准模式无需路径' : 'No path needed') : (language === 'zh' ? '直接粘贴路径，或点击右侧「常用路径」' : 'Paste path here, or click Presets →')}
+                          placeholder={terminalApp === 'standard' ? (isZh ? '系统 SSH 不需要填写' : 'Not needed for System SSH') : (isZh ? '例如 C:\\Program Files\\...\\Xshell.exe' : 'e.g. C:\\Program Files\\...\\Xshell.exe')}
                           className={`w-full pl-9 pr-3 py-2 rounded-lg text-xs outline-none border transition-all ${terminalApp === 'standard' ? 'opacity-40 cursor-not-allowed bg-black/5' : (isDark ? 'bg-black/20 border-white/10 text-white placeholder-white/30 focus:border-cyan-500/50' : 'bg-white border-black/10 text-black placeholder-black/20 focus:border-cyan-500/40')}`}
                         />
                       </div>
@@ -803,12 +953,12 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                             className={`px-3 py-2 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 hover:bg-cyan-500/20 shadow-sm`}
                           >
                             <MonitorSpeaker size={14} />
-                            {language === 'zh' ? '常用路径' : 'Presets'}
+                            {isZh ? '选择常见路径' : 'Choose a common path'}
                           </button>
                           {showPathSuggestions && (
                             <div className={`absolute right-0 top-full mt-1 z-50 w-96 rounded-xl border shadow-xl overflow-hidden ${isDark ? 'bg-[#0d1a2a] border-white/15' : 'bg-white border-black/10'}`}>
                               <div className={`px-3 py-2 border-b text-[10px] font-bold uppercase tracking-widest ${isDark ? 'border-white/10 text-white/40' : 'border-black/8 text-black/40'}`}>
-                                {language === 'zh' ? '点击填入路径，再手动确认是否正确' : 'Click to fill — verify the path is correct'}
+                                {isZh ? '选择后请确认这是当前电脑上的路径' : 'Confirm the selected path belongs to this workstation'}
                               </div>
                               {(PATH_PRESETS[terminalApp] || []).map((p) => (
                                 <button
@@ -827,7 +977,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                               <div className={`px-3 py-2 border-t ${isDark ? 'border-white/10' : 'border-black/8'}`}>
                                 <p className={`text-[10px] ${isDark ? 'text-white/30' : 'text-black/35'}`}>
                                   {language === 'zh'
-                                    ? '也可直接在输入框中粘贴完整路径'
+                                    ? '也可以直接粘贴完整路径；服务器上的路径不能使用。'
                                     : 'Or paste the full path directly into the input box'}
                                 </p>
                               </div>
@@ -839,10 +989,17 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                   </div>
                 </div>
                 
-                <div className={`flex flex-wrap justify-between items-center gap-2 rounded-xl p-3 border ${isDark ? 'bg-cyan-500/5 border-cyan-500/15' : 'bg-cyan-50/50 border-cyan-500/10'}`}>
-                    <span className={`text-[11px] ${isDark ? 'text-white/55' : 'text-black/60'}`}>
-                      {language === 'zh' ? '按当前工作站系统下载 Terminal Agent：' : 'Download the Terminal Agent for this workstation:'}
-                    </span>
+                <div className={`flex flex-col gap-3 rounded-xl border p-3 ${isDark ? 'border-cyan-500/15 bg-cyan-500/5' : 'border-cyan-500/10 bg-cyan-50/50'}`}>
+                  <div>
+                    <div className={`flex items-center gap-1.5 text-[11px] font-bold ${isDark ? 'text-white/75' : 'text-slate-700'}`}>
+                      <Download size={13} className={isDark ? 'text-cyan-300' : 'text-cyan-600'} />
+                      {isZh ? '还没有 Terminal Agent？先下载到当前工作站' : 'Need the Terminal Agent? Download it to this workstation'}
+                    </div>
+                    <p className={`mt-1 text-[10px] leading-relaxed ${isDark ? 'text-white/35' : 'text-slate-500'}`}>
+                      {isZh ? '下载后运行 Agent，它只负责接收本机浏览器请求，不会把设备密码保存在本地。' : 'Run the Agent after downloading. It only receives browser requests on this workstation and does not store device passwords locally.'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
                     <ActionLink
                       href="/api/system/download-terminal-agent?platform=windows"
                       download="NexoraTerminalAgent.exe"
@@ -851,7 +1008,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                       size="sm"
                       className="!text-[11px]"
                     >
-                      {language === 'zh' ? 'Windows 一键启动' : 'Windows EXE'}
+                      {isZh ? '下载 Windows Agent' : 'Download Windows Agent'}
                     </ActionLink>
                     <ActionLink
                       href="/api/system/download-terminal-agent?platform=ubuntu"
@@ -861,29 +1018,40 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                       size="sm"
                       className="!text-[11px]"
                     >
-                      Ubuntu Script
+                      {isZh ? '下载 Ubuntu 安装脚本' : 'Download Ubuntu script'}
                     </ActionLink>
+                  </div>
                 </div>
                 
                 <p className={`text-[10px] leading-relaxed flex items-center gap-1.5 ${isDark ? 'text-white/30' : 'text-black/40'}`}>
                   <Info size={12} className="text-cyan-500" />
                   {terminalApp === 'standard' 
-                    ? (language === 'zh' ? '标准模式：通过 127.0.0.1 Terminal Agent 启动系统 SSH。' : 'Standard Mode: Launches system SSH through the loopback Terminal Agent.')
-                    : (language === 'zh' ? '本地模式：通过 127.0.0.1 Terminal Agent 启动程序，不使用 nexora:// 协议。' : 'Local Mode: Launches through the loopback Terminal Agent without the nexora:// protocol.')}
+                    ? (isZh ? '当前选择系统 SSH：只需让 127.0.0.1:17890 的 Terminal Agent 运行，程序路径留空即可。' : 'System SSH selected: keep the Terminal Agent running at 127.0.0.1:17890; no program path is required.')
+                    : (isZh ? '当前选择桌面客户端：Agent 会在本机启动上面填写的程序；路径必须指向当前电脑的 exe 文件。' : 'Desktop client selected: the Agent launches the program above; the path must point to an exe on this workstation.')}
                 </p>
               </div>
             </div>
           </div>
 
           <p className={`text-[11px] ${isDark ? 'text-white/40' : 'text-black/40'}`}>上次登录时间：{currentUserLastLogin}</p>
-        </div>
+
+          </div>
 
         <div className={`sticky bottom-0 flex gap-3 border-t bg-white/95 px-6 py-4 backdrop-blur ${isDark ? 'border-white/10 bg-[#121c2d]/95' : 'border-slate-200/80'}`}>
-          <button onClick={onClose} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.04] text-black/70 hover:bg-black/[0.08]'}`}>
-            取消
+          <button type="button" onClick={wizardStep === 0 ? onClose : () => goToWizardStep(wizardStep - 1)} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${isDark ? 'bg-white/10 text-white/80 hover:bg-white/15' : 'bg-black/[0.04] text-black/70 hover:bg-black/[0.08]'}`}>
+            {wizardStep === 0 ? (isZh ? '取消' : 'Cancel') : <><ChevronLeft size={15} className="mr-1 inline" />{isZh ? '上一步' : 'Back'}</>}
           </button>
-          <button onClick={onSave} className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-[#008bb0] hover:bg-[#00769a] transition-all shadow-lg shadow-[#00bceb]/20">
-            保存个人资料
+          {wizardStep < wizardSteps.length - 1 ? (
+            <button type="button" onClick={() => goToWizardStep(wizardStep + 1)} className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-[#008bb0] hover:bg-[#00769a] transition-all shadow-lg shadow-[#00bceb]/20">
+              {isZh ? '下一步' : 'Next'} <ChevronRight size={15} className="ml-1 inline" />
+            </button>
+          ) : (
+            <button type="button" disabled={Boolean(passwordConfirmationError)} onClick={onSave} className={`flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all shadow-lg shadow-[#00bceb]/20 ${passwordConfirmationError ? 'cursor-not-allowed bg-slate-300 shadow-none' : 'bg-[#008bb0] hover:bg-[#00769a]'}`}>
+              {isZh ? '保存个人设置' : 'Save settings'}
+            </button>
+          )}
+          <button type="button" onClick={onClose} className={`hidden px-4 py-2.5 text-sm font-medium transition-all sm:block ${isDark ? 'text-white/50 hover:text-white/80' : 'text-slate-400 hover:text-slate-700'}`}>
+            {isZh ? '退出' : 'Close'}
           </button>
         </div>
       </motion.div>

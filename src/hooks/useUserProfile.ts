@@ -141,6 +141,10 @@ export const useUserProfile = ({
       showToast(language === 'zh' ? '修改密码请先输入当前密码' : 'Please enter current password', 'error');
       return;
     }
+    if (profileForm.confirmPassword && !profileForm.password) {
+      showToast(language === 'zh' ? '请先输入新密码' : 'Please enter the new password first', 'error');
+      return;
+    }
     if (profileForm.password && profileForm.password !== profileForm.confirmPassword) {
       showToast(language === 'zh' ? '两次输入的密码不一致' : 'Passwords do not match', 'error');
       return;

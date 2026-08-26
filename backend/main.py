@@ -216,8 +216,6 @@ async def lifespan(app: FastAPI):
 
 
     
-    arp_worker_tasks = []
-
     # Start core components immediately
     schedule_cfg = _get_schedule_from_db()
     scheduler.start()
@@ -324,43 +322,13 @@ async def lifespan(app: FastAPI):
     
     reschedule_backup(schedule_cfg)
     
-    from services.ip_locator_service import (
-        dispatch_arp_sweep,
-        run_endpoint_fact_collector,
-        run_route_collector,
-        ARP_SWEEP_INTERVAL_SECONDS,
-        ENDPOINT_FACT_INTERVAL_SECONDS,
-        ROUTE_SWEEP_INTERVAL_SECONDS,
-    )
-    from services.collector_worker_service import start_arp_worker_tasks, stop_worker_tasks
-    arp_worker_tasks = await start_arp_worker_tasks()
-    scheduler.add_job(
-        synchronized_scheduler_job('arp_cache_sweep', expire_seconds=int(ARP_SWEEP_INTERVAL_SECONDS - 1))(dispatch_arp_sweep),
-        'interval', seconds=ARP_SWEEP_INTERVAL_SECONDS, id='arp_cache_sweep', replace_existing=True,
-        max_instances=1, coalesce=True,
-    )
-    scheduler.add_job(
-        synchronized_scheduler_job('endpoint_fact_sync', expire_seconds=int(ENDPOINT_FACT_INTERVAL_SECONDS - 1))(run_endpoint_fact_collector),
-        'interval', seconds=ENDPOINT_FACT_INTERVAL_SECONDS, id='endpoint_fact_sync', replace_existing=True,
-        max_instances=1, coalesce=True,
-    )
-    scheduler.add_job(
-        synchronized_scheduler_job('route_cache_sweep', expire_seconds=int(ROUTE_SWEEP_INTERVAL_SECONDS - 1))(run_route_collector),
-        'interval', seconds=ROUTE_SWEEP_INTERVAL_SECONDS, id='route_cache_sweep', replace_existing=True,
-        max_instances=1, coalesce=True,
-    )
-    
-    from services.scheduler_service import sync_topology_and_interfaces_job, poll_endpoints_job, sync_routing_neighbors_job, sync_bgp_routes_job
+    # NSOT collection is intentionally not registered as several independent
+    # high-frequency system jobs.  The dynamic ``nsot`` scheduled action runs
+    # the same ordered workflow as the manual NSOT trigger once per day.  This
+    # avoids overlapping ARP, endpoint, route, topology, neighbor, and BGP
+    # collectors while keeping the manual trigger available.
     from services.topology_service import TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS
     from services.prefix_discovery_service import run_prefix_discovery_job
-    scheduler.add_job(
-        synchronized_scheduler_job(
-            'topology_interface_sync',
-            expire_seconds=max(30, TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS - 10),
-        )(sync_topology_and_interfaces_job),
-        'interval', seconds=TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS,
-        id='topology_interface_sync', replace_existing=True
-    )
     scheduler.add_job(
         synchronized_scheduler_job(
             'prefix_discovery_sync',
@@ -369,18 +337,6 @@ async def lifespan(app: FastAPI):
         'interval', seconds=TOPOLOGY_AUTOMATIC_INTERVAL_SECONDS,
         id='prefix_discovery_sync', replace_existing=True,
         max_instances=1, coalesce=True,
-    )
-    scheduler.add_job(
-        synchronized_scheduler_job('poll_endpoints', expire_seconds=290)(poll_endpoints_job),
-        'interval', minutes=5, id='poll_endpoints', replace_existing=True
-    )
-    scheduler.add_job(
-        synchronized_scheduler_job('routing_neighbors_sync', expire_seconds=290)(sync_routing_neighbors_job),
-        'interval', minutes=5, id='routing_neighbors_sync', replace_existing=True
-    )
-    scheduler.add_job(
-        synchronized_scheduler_job('bgp_routes_sync', expire_seconds=290)(sync_bgp_routes_job),
-        'interval', minutes=5, id='bgp_routes_sync', replace_existing=True
     )
     
     from services.inspection_service import run_scheduled_inspections
@@ -415,11 +371,6 @@ async def lifespan(app: FastAPI):
 
     yield
     # ── shutdown ──
-    try:
-        await stop_worker_tasks(arp_worker_tasks)
-        logger.info("[ARP Workers] Worker tasks stopped")
-    except Exception as e:
-        logger.warning(f"[ARP Workers] Failed to stop worker tasks: {e}")
     try:
         from engine.orchestrator import get_telemetry_orchestrator
         telemetry_orch = get_telemetry_orchestrator()

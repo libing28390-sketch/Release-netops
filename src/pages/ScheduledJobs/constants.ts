@@ -1,4 +1,4 @@
-import { Database, Activity, Zap } from 'lucide-react';
+import { Database, Activity, Zap, RefreshCw } from 'lucide-react';
 import { FormState } from './types';
 
 export const CRON_PRESETS = [
@@ -20,6 +20,7 @@ export const CRON_FIELD_HINTS_EN = ['0-59, */5, 0,30', '0-23, */2, 0-6', '1-31, 
 
 export const ACTION_TYPES = [
   { value: 'backup', labelZh: '核心配置备份', labelEn: 'Config Backup', icon: Database, category: 'collection' },
+  { value: 'nsot', labelZh: 'NSOT 事实库采集', labelEn: 'NSOT Facts Collection', icon: RefreshCw, category: 'collection' },
   { value: 'inspection', labelZh: '智能巡检', labelEn: 'Smart Inspection', icon: Activity, category: 'collection' },
   { value: 'script_run', labelZh: '自动化脚本', labelEn: 'Automated Script', icon: Zap, category: 'change' },
 ];

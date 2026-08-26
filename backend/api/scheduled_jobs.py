@@ -19,6 +19,15 @@ from services.audit_service import log_audit_event
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+_CRON_ACTION_TYPES = frozenset({
+    "backup",
+    "inspection",
+    "script_run",
+    "server_check",
+    "health_check",
+    "nsot",
+})
+
 # Import refresh logic from scheduler_manager
 from core.scheduler_manager import refresh_dynamic_scheduler
 
@@ -336,7 +345,7 @@ def create_scheduled_job(
 
     name = (payload.get("name") or "").strip()
     job_type = payload.get("job_type", "cron")  # 'cron' | 'once'
-    action_type = payload.get("action_type", "backup")  # 'backup' | 'inspection' | 'server_check' | 'health_check' (cron); 'command' | 'backup' | 'inspection' (once)
+    action_type = payload.get("action_type", "backup")  # 'backup' | 'inspection' | 'script_run' | 'nsot' (cron); 'command' | 'backup' | 'inspection' (once)
     cron_expr = (payload.get("cron_expr") or "").strip()
     scheduled_at = (payload.get("scheduled_at") or "").strip()
     device_scope = payload.get("device_scope", "all")
@@ -349,11 +358,22 @@ def create_scheduled_job(
     config_reason = (payload.get("config_reason") or "").strip()
     use_admin_creds = 1 if payload.get("use_admin_creds") else 0
 
+    # NSOT is a composed, read-only workflow.  It always targets the platform's
+    # eligible online devices and does not accept arbitrary commands, scripts,
+    # config mode, or borrowed privileged credentials.
+    if action_type == "nsot":
+        device_scope = "all"
+        device_filter = ""
+        commands = ""
+        script_id = ""
+        is_config = 0
+        use_admin_creds = 0
+
     if not name:
         raise HTTPException(status_code=400, detail="作业名称不能为空")
     # 定时作业（cron）仅支持备份和巡检
-    if job_type == "cron" and action_type not in ("backup", "inspection", "script_run", "server_check", "health_check"):
-        raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查及脚本执行")
+    if job_type == "cron" and action_type not in _CRON_ACTION_TYPES:
+        raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查、脚本执行及 NSOT 事实库采集")
     if job_type == "cron" and not cron_expr:
         raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
     if job_type == "once" and not scheduled_at:
@@ -589,10 +609,17 @@ def update_scheduled_job(
             new_commands = ",".join(payload.get("check_items") or [])
         new_use_admin_creds = (1 if payload.get("use_admin_creds") else 0) if "use_admin_creds" in payload else None
 
+        if action_type == "nsot":
+            device_scope = "all"
+            device_filter = ""
+            new_script_id = ""
+            new_commands = ""
+            new_use_admin_creds = 0
+
         if not name:
             raise HTTPException(status_code=400, detail="作业名称不能为空")
-        if row["job_type"] == "cron" and action_type not in ("backup", "inspection", "script_run", "server_check", "health_check"):
-            raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查及脚本执行")
+        if row["job_type"] == "cron" and action_type not in _CRON_ACTION_TYPES:
+            raise HTTPException(status_code=400, detail="定时作业支持：配置备份、网络巡检、服务器巡检、健康检查、脚本执行及 NSOT 事实库采集")
         if row["job_type"] == "cron" and not cron_expr:
             raise HTTPException(status_code=400, detail="定时作业需要 cron 表达式")
 
@@ -636,6 +663,8 @@ def update_scheduled_job(
             updates['commands'] = new_commands
         if new_use_admin_creds is not None:
             updates['use_admin_creds'] = new_use_admin_creds
+        if action_type == "nsot":
+            updates['is_config'] = 0
         if "enabled" in payload:
             updates['enabled'] = 1 if payload.get("enabled") else 0
             if payload.get("enabled"):

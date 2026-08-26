@@ -131,6 +131,7 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                     <FileText size={12} className="text-cyan-400" />
                     <span className="text-[11px] font-bold text-white/70">
                       {detailJob.action_type === 'backup' ? (zh ? '采集与巡检：核心配置备份' : 'Collection & Inspection: Config Backup') :
+                       detailJob.action_type === 'nsot' ? (zh ? '网络事实库：完整 NSOT 采集' : 'Network Facts: Full NSOT Collection') :
                        detailJob.action_type === 'inspection' && !detailJob.script_id ? (zh ? '智能巡检（全部内置指标）' : 'Smart Inspection (All Built-in)') :
                        (availableScripts.find(s => s.id === detailJob.script_id)?.name || detailJob.script_id || (zh ? '操作内容' : 'Operation Content'))}
                     </span>
@@ -144,7 +145,7 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                     )}
                   </div>
                   <div className="text-[9px] font-bold text-cyan-400/60 uppercase tracking-widest">
-                    {(detailJob.action_type === 'backup' || detailJob.action_type === 'inspection') ? (zh ? '采集' : 'COLLECTION') : 
+                    {(detailJob.action_type === 'backup' || detailJob.action_type === 'nsot' || detailJob.action_type === 'inspection') ? (zh ? '采集' : 'COLLECTION') :
                      (detailJob.action_type === 'script_run' && availableScripts.find(s => s.id === detailJob.script_id)?.category === 'inspection') ? (zh ? '采集' : 'COLLECTION') :
                      (zh ? '变更' : 'CHANGE')}
                   </div>
@@ -153,6 +154,8 @@ export const JobDetailModal: React.FC<JobDetailModalProps> = ({
                   <pre className="font-mono text-[11px] leading-relaxed text-cyan-50/90 whitespace-pre-wrap">
                     {detailJob.action_type === 'backup'
                       ? (zh ? '# 该作业为内置配置备份任务\n# 将自动采集设备 running-config 并进行版本比对' : '# This is a built-in config backup job.\n# It will collect running-config and track drifts.')
+                      : detailJob.action_type === 'nsot'
+                        ? (zh ? '# 该作业为 NSOT 网络事实库每日采集\n# 将按平台采集策略执行 ARP、终端、路由、邻居、BGP、拓扑和接口状态同步\n# 不执行用户命令，固定采集全部在线设备' : '# Full NSOT facts collection job.\n# Runs ARP, endpoint, route, neighbor, BGP, topology, and interface-state synchronization\n# using platform collection policies across all online devices.')
                       : detailJob.action_type === 'inspection'
                         ? (detailJob.script_id && viewingScript?.id === detailJob.script_id && viewingScript?.content
                            ? viewingScript.content

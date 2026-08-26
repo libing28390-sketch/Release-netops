@@ -1016,27 +1016,93 @@ def upsert_wan_link(payload: dict[str, Any], link_id: str | None = None) -> dict
         conn.close()
 
 
+def _delete_wan_link_records(conn, link_id: str) -> None:
+    """Delete a WAN link and every record owned by that link.
+
+    The WAN tables intentionally do not rely on foreign keys because older
+    PostgreSQL installations were created without the constraints.  Keep the
+    cleanup explicit and, importantly, delete indirect children before their
+    parent records.  Correlation events do not have a ``link_id`` column: a
+    link-scoped event is identified by ``correlation_group = 'link:<id>'`` and
+    its evidence points to the event through ``event_id``.
+    """
+    correlation_event_ids = [
+        str(row[0])
+        for row in conn.execute(
+            "SELECT id FROM wan_correlation_events WHERE correlation_group = ?",
+            (f"link:{link_id}",),
+        ).fetchall()
+    ]
+    if correlation_event_ids:
+        placeholders = ", ".join("?" for _ in correlation_event_ids)
+        conn.execute(
+            f"DELETE FROM wan_correlation_evidence WHERE event_id IN ({placeholders})",
+            correlation_event_ids,
+        )
+        conn.execute(
+            f"DELETE FROM wan_correlation_events WHERE id IN ({placeholders})",
+            correlation_event_ids,
+        )
+
+    alert_event_ids = [
+        str(row[0])
+        for row in conn.execute(
+            "SELECT id FROM wan_alert_events WHERE link_id = ?",
+            (link_id,),
+        ).fetchall()
+    ]
+    if alert_event_ids:
+        placeholders = ", ".join("?" for _ in alert_event_ids)
+        conn.execute(
+            f"DELETE FROM wan_alert_event_audit WHERE event_id IN ({placeholders})",
+            alert_event_ids,
+        )
+
+    conn.execute("DELETE FROM wan_alert_events WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_alert_rules WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_probe_bindings WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_link_group_members WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_maintenance_windows WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_baselines WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_capacity_recommendations WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_link_current_status WHERE link_id = ?", (link_id,))
+    conn.execute(f"DELETE FROM {_sample_table()} WHERE link_id = ?", (link_id,))
+    if _USE_PG:
+        # The unpartitioned table may still contain rows from a pre-partition
+        # deployment, so clean it in addition to the active partitioned table.
+        conn.execute("DELETE FROM wan_link_samples_1m WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_link_samples_5m WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_link_samples_1h WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_link_samples_daily WHERE link_id = ?", (link_id,))
+    conn.execute("DELETE FROM wan_links WHERE id = ?", (link_id,))
+
+
+def delete_wan_links_for_device(conn, device_id: str) -> int:
+    """Cascade-delete WAN links before a device row is removed.
+
+    Device deletion is supported from both the device API and the asset API,
+    and neither path can depend on a database-level WAN foreign key because
+    existing installations do not have one.  The caller owns the transaction.
+    """
+    link_ids = [
+        str(row[0])
+        for row in conn.execute(
+            "SELECT id FROM wan_links WHERE device_id = ?",
+            (device_id,),
+        ).fetchall()
+    ]
+    for link_id in link_ids:
+        _delete_wan_link_records(conn, link_id)
+    return len(link_ids)
+
+
 def delete_wan_link(link_id: str) -> bool:
     conn = get_db_connection()
     try:
         exists = conn.execute("SELECT 1 FROM wan_links WHERE id = ?", (link_id,)).fetchone()
         if not exists:
             return False
-        conn.execute("DELETE FROM wan_alert_events WHERE link_id = ?", (link_id,))
-        conn.execute("DELETE FROM wan_alert_rules WHERE link_id = ?", (link_id,))
-        for table in ("wan_probe_bindings", "wan_link_group_members", "wan_maintenance_windows", "wan_correlation_events", "wan_capacity_recommendations"):
-            column = "group_id" if table == "wan_link_group_members" else "id" if table == "wan_maintenance_windows" else "link_id"
-            if table == "wan_maintenance_windows":
-                conn.execute("DELETE FROM wan_maintenance_windows WHERE link_id = ?", (link_id,))
-            elif table == "wan_link_group_members":
-                conn.execute("DELETE FROM wan_link_group_members WHERE link_id = ?", (link_id,))
-            else:
-                conn.execute(f"DELETE FROM {table} WHERE link_id = ?", (link_id,))
-        conn.execute("DELETE FROM wan_link_current_status WHERE link_id = ?", (link_id,))
-        conn.execute(f"DELETE FROM {_sample_table()} WHERE link_id = ?", (link_id,))
-        if _USE_PG:
-            conn.execute("DELETE FROM wan_link_samples_1m WHERE link_id = ?", (link_id,))
-        conn.execute("DELETE FROM wan_links WHERE id = ?", (link_id,))
+        _delete_wan_link_records(conn, link_id)
         conn.commit()
         return True
     finally:

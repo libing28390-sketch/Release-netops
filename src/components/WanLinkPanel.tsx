@@ -266,8 +266,15 @@ const WanLinkPanel: React.FC = () => {
   };
   const remove = async (id: string) => {
     if (!window.confirm(zh ? '确定删除这条出口链路及其采样吗？' : 'Delete this WAN link and its samples?')) return;
-    const response = await fetch(`/api/monitoring/wan-links/${encodeURIComponent(id)}`, { method: 'DELETE', headers: tokenHeaders() });
-    if (response.ok) { showToast(zh ? '出口链路已删除' : 'WAN link deleted', 'success'); await load(); }
+    try {
+      const response = await fetch(`/api/monitoring/wan-links/${encodeURIComponent(id)}`, { method: 'DELETE', headers: tokenHeaders() });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.detail?.message || body?.detail || (zh ? '出口链路删除失败' : 'Unable to delete WAN link'));
+      showToast(zh ? '出口链路已删除' : 'WAN link deleted', 'success');
+      await load();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), 'error');
+    }
   };
   const test = async (id: string) => {
     const response = await fetch(`/api/monitoring/wan-links/${encodeURIComponent(id)}/test`, { method: 'POST', headers: tokenHeaders() });

@@ -103,6 +103,14 @@ def _pam_session_columns(conn) -> set[str]:
         rows = conn.execute("PRAGMA table_info(pam_sessions)").fetchall()
         return {str(row[1] if not hasattr(row, 'keys') else row['name']) for row in rows}
     except Exception:
+        # PostgreSQL rejects SQLite's PRAGMA syntax and marks the current
+        # transaction as failed. Roll it back before issuing the PostgreSQL
+        # information_schema fallback; otherwise the caller's next SELECT
+        # raises InFailedSqlTransaction and the audit page cannot open.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         try:
             rows = conn.execute(
                 "SELECT column_name FROM information_schema.columns "
@@ -114,6 +122,10 @@ def _pam_session_columns(conn) -> set[str]:
                 for row in rows
             }
         except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             # The caller will still issue a useful query for the canonical
             # schema; an empty set only occurs for an unusable connection.
             return set()

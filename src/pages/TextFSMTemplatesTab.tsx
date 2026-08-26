@@ -55,6 +55,8 @@ interface TestResult {
   fields: string[];
 }
 
+const TEXTFSM_EXCLUDED_ACTION_CODES = new Set(['get_running_config', 'get_startup_config']);
+
 const getTemplateDisplayMeta = (template: Template) => {
   const platform = String(template.platform || '').toLowerCase();
   const selection = getEditorSelection(platform, template.version || template.template_variant);
@@ -183,6 +185,7 @@ const TextFSMTemplatesTab: React.FC<Props> = ({ language }) => {
   const actionOptionGroups = useMemo(() => {
     const groups = new Map<string, ActionOption[]>();
     actionOptions
+      .filter((option) => !TEXTFSM_EXCLUDED_ACTION_CODES.has(option.action_code))
       .filter((option) => option.available || option.action_code === editorActionCode)
       .forEach((option) => {
         const group = isZh ? (option.group_zh || '其他查询') : (option.group_en || 'Other queries');

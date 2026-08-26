@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, Plus, X, Trash2, RotateCcw, Zap, Pencil,
   ChevronDown, Info, Shield, CheckCircle2, AlertTriangle,
-  Database, Activity, Power, PowerOff,
+  Database, Activity, Power, PowerOff, RefreshCw,
   Search, FileCode, Eye, Target, FileText, Lock, ArrowUpRight, ChevronUp, Filter, ShieldAlert, User
 } from 'lucide-react';
 import { ActionIconButton, ActionIconGroup } from '../../components/ui/ActionIconButton';
@@ -89,7 +89,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
   const isEditMode = editingJob !== null;
 
   // Category & Filter state
-  const [activeCategory, setActiveCategory] = useState<'all' | 'system' | 'backup' | 'inspection' | 'script_run'>('all');
+  const [activeCategory, setActiveCategory] = useState<'all' | 'system' | 'backup' | 'nsot' | 'inspection' | 'script_run'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   // Keep platform schedules out of the way of user-created jobs by default.
   // Selecting the dedicated system category expands the small curated list.
@@ -117,10 +117,11 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
 
   const stats = useMemo(() => {
     const backupCnt = jobs.filter(j => j.action_type === 'backup').length;
+    const nsotCnt = jobs.filter(j => j.action_type === 'nsot').length;
     const inspCnt = jobs.filter(j => j.action_type === 'inspection').length;
     const scriptCnt = jobs.filter(j => j.action_type === 'script_run').length;
     const activeCnt = jobs.filter(j => j.enabled === 1).length;
-    return { backupCnt, inspCnt, scriptCnt, activeCnt };
+    return { backupCnt, nsotCnt, inspCnt, scriptCnt, activeCnt };
   }, [jobs]);
 
   const authHeaders = useMemo(() => {
@@ -249,7 +250,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
       is_config: !!job.is_config,
       config_reason: job.config_reason || '',
       use_admin_creds: !!job.use_admin_creds,
-      major_type: (job.action_type === 'backup' || job.action_type === 'inspection') ? 'collection' : 'change',
+      major_type: (job.action_type === 'backup' || job.action_type === 'nsot' || job.action_type === 'inspection') ? 'collection' : 'change',
     });
     if (job.device_scope === 'tag') {
       setTagFilter(parseTagFilter(job.device_filter));
@@ -854,6 +855,19 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                   </button>
 
                   <button
+                    onClick={() => setActiveCategory('nsot')}
+                    className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+                      activeCategory === 'nsot'
+                        ? 'bg-white text-cyan-700 border border-cyan-100 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                    }`}
+                  >
+                    <RefreshCw size={13} className={activeCategory === 'nsot' ? 'text-cyan-600' : 'text-slate-400'} />
+                    <span>NSOT</span>
+                    <span className="text-[10px] opacity-60 font-mono">{stats.nsotCnt}</span>
+                  </button>
+
+                  <button
                     onClick={() => setActiveCategory('inspection')}
                     className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
                       activeCategory === 'inspection'
@@ -1024,6 +1038,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                     <span>
                       {activeCategory === 'all' && (zh ? '用户自定义作业' : 'User-defined Jobs')}
                       {activeCategory === 'backup' && (zh ? '配置自动备份作业' : 'Config Backup Jobs')}
+                      {activeCategory === 'nsot' && (zh ? 'NSOT 网络事实库采集作业' : 'NSOT Facts Collection Jobs')}
                       {activeCategory === 'inspection' && (zh ? '智能巡检作业' : 'Smart Inspection Jobs')}
                       {activeCategory === 'script_run' && (zh ? '自动化脚本作业' : 'Automated Script Jobs')}
                     </span>
@@ -1056,6 +1071,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                       const scopeDesc = describeScope(job.device_scope, job.device_filter, zh);
                       const isInsp = job.action_type === 'inspection';
                       const isBackup = job.action_type === 'backup';
+                      const isNsot = job.action_type === 'nsot';
                       const isScript = job.action_type === 'script_run';
                       return (
                         <motion.div
@@ -1071,7 +1087,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                           <div className="flex items-center gap-4 px-5 py-4">
                             <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${
                               isEnabled
-                                ? isInsp ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                                ? isNsot ? 'bg-cyan-50 text-cyan-600 border-cyan-100'
+                                  : isInsp ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
                                   : isBackup ? 'bg-indigo-50 text-indigo-600 border-indigo-100'
                                   : isScript ? 'bg-amber-50 text-amber-600 border-amber-100'
                                   : 'bg-cyan-50 text-cyan-600 border-cyan-100'
@@ -1107,8 +1124,8 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                   </span>
                                 ) : (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200 shadow-sm">
-                                    <User size={12} className="text-slate-500" />
-                                    {zh ? '普通执行 (User)' : 'Normal'}
+                                    {isNsot ? <RefreshCw size={12} className="text-cyan-600" /> : <User size={12} className="text-slate-500" />}
+                                    {isNsot ? (zh ? '平台采集' : 'Platform collection') : (zh ? '普通执行 (User)' : 'Normal')}
                                   </span>
                                 )}
                               </div>
@@ -1119,7 +1136,7 @@ const ScheduledJobsTab: React.FC<ScheduledJobsTabProps> = ({ language, showToast
                                   {describeCron(job.cron_expr, zh)}
                                 </span>
                                 <span className="text-slate-300">·</span>
-                                <span className={`font-semibold ${isInsp ? 'text-emerald-700' : isBackup ? 'select-none text-indigo-700' : isScript ? 'text-amber-700' : 'text-slate-700'}`}>
+                                <span className={`font-semibold ${isNsot ? 'text-cyan-700' : isInsp ? 'text-emerald-700' : isBackup ? 'select-none text-indigo-700' : isScript ? 'text-amber-700' : 'text-slate-700'}`}>
                                   {zh ? (atInfo?.labelZh || job.action_type) : (atInfo?.labelEn || job.action_type)}
                                 </span>
                                 <span className="text-slate-300">·</span>

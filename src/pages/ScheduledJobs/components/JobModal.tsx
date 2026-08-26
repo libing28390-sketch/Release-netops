@@ -2,7 +2,7 @@ import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarClock, X, Zap, ChevronDown, Info, Search, FileCode, CheckCircle2,
-  Trash2, RotateCcw, User, ShieldAlert, Shield, AlertTriangle, Database, Activity
+  Trash2, RotateCcw, User, ShieldAlert, Shield, AlertTriangle, Database, Activity, RefreshCw
 } from 'lucide-react';
 import TagConditionPicker, { hasTagFilterConditions, type TagFilterConfig } from '../../../components/TagConditionPicker';
 import { ActionIconButton } from '../../../components/ui/ActionIconButton';
@@ -182,7 +182,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all"
-                  placeholder={zh ? '每日配置备份' : 'Daily config backup'}
+                  placeholder={zh ? '每日 NSOT 网络事实库采集' : 'Daily NSOT facts collection'}
                 />
               </div>
 
@@ -190,7 +190,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                 <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
                   {zh ? '作业类型' : 'Job Type'} <span className="text-red-500 normal-case">*</span>
                 </label>
-                <div className="p-1 bg-slate-100 rounded-xl border border-black/[0.06] flex gap-1">
+                <div className="p-1 bg-slate-100 rounded-xl border border-black/[0.06] grid grid-cols-2 gap-1">
                   <button
                     type="button"
                     onClick={() => {
@@ -204,6 +204,30 @@ export const JobModal: React.FC<JobModalProps> = ({
                   >
                     <Database className="w-3.5 h-3.5 text-cyan-600" />
                     {zh ? '核心配置备份' : 'Config Backup'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(f => ({
+                        ...f,
+                        action_type: 'nsot',
+                        major_type: 'collection',
+                        device_scope: 'all',
+                        device_filter: '',
+                        commands: '',
+                        script_id: '',
+                        is_config: false,
+                        use_admin_creds: false,
+                      }));
+                    }}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      form.action_type === 'nsot'
+                        ? 'bg-white shadow-sm text-cyan-700 border border-cyan-100/30'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-cyan-600" />
+                    {zh ? 'NSOT 事实库' : 'NSOT Facts'}
                   </button>
                   <button
                     type="button"
@@ -235,6 +259,12 @@ export const JobModal: React.FC<JobModalProps> = ({
                     {zh ? '脚本巡检' : 'Script Inspection'}
                   </button>
                 </div>
+                {form.action_type === 'nsot' && (
+                  <div className="mt-2 flex items-start gap-2 rounded-xl border border-cyan-100 bg-cyan-50/60 px-3 py-2.5 text-[11px] leading-relaxed text-cyan-800">
+                    <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-600" />
+                    <span>{zh ? '按平台采集策略执行一次完整 NSOT 刷新：ARP、终端、路由、邻居、BGP、拓扑和接口状态。该动作不执行用户命令，固定面向全部在线设备。' : 'Runs one complete NSOT refresh using platform collection policies: ARP, endpoints, routes, neighbors, BGP, topology, and interface status. No user command is executed; all online devices are targeted.'}</span>
+                  </div>
+                )}
               </div>
 
               {form.action_type === 'inspection' && (
@@ -487,6 +517,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                     setForm(f => ({ ...f, device_scope: e.target.value, device_filter: '' }));
                     setIpInput('');
                   }}
+                  disabled={form.action_type === 'nsot'}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-black/[0.08] text-sm bg-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400 transition-all"
                 >
                   {SCOPE_OPTIONS.map(o => (
@@ -683,7 +714,7 @@ export const JobModal: React.FC<JobModalProps> = ({
               {/* Removed command textarea here as it is moved above Device Scope inside script_run / inspection specific conditional panels */}
 
               {/* Execution User / Role Level */}
-              <div className="space-y-2 pt-1">
+              {form.action_type !== 'nsot' && <div className="space-y-2 pt-1">
                 <label className="text-[10px] font-bold uppercase tracking-widest text-black/35 block mb-1.5">
                   {zh ? '执行凭证与特权借用等级' : 'Execution Credentials & Privilege Level'}
                 </label>
@@ -729,7 +760,7 @@ export const JobModal: React.FC<JobModalProps> = ({
                     </div>
                   </button>
                 </div>
-              </div>
+              </div>}
 
               {/* Approval (create & edit) */}
               <div className="rounded-xl border border-black/8 overflow-hidden shadow-sm">

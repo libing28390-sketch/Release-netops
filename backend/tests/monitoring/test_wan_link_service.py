@@ -65,6 +65,138 @@ def test_error_discard_rate_migration_is_idempotent() -> None:
     assert {"in_error_rate", "out_error_rate", "in_discard_rate", "out_discard_rate"}.issubset(columns)
 
 
+def test_delete_wan_link_cleans_orphaned_link_and_indirect_dependents(isolated_db) -> None:
+    from database import get_db_connection
+    from services.wan_link_service import delete_wan_link
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    link_id = "orphaned-wan-link"
+    alert_event_id = "wan-alert-event"
+    correlation_event_id = "wan-correlation-event"
+
+    conn = get_db_connection()
+    try:
+        # Deliberately do not create the device/interface rows: this mirrors a
+        # link left behind after its bound device was deleted.
+        conn.execute(
+            """
+            INSERT INTO wan_links (
+                id, link_name, device_id, interface_id, interface_name, if_index,
+                contracted_download_bps, contracted_upload_bps, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (link_id, "Orphaned link", "deleted-device", "deleted-interface", "Et0/0", 1, 10_000_000, 10_000_000, now, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_alert_rules (id, link_id, metric, severity, duration_sec, recovery_duration_sec, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("wan-rule", link_id, "interface_down", "critical", 60, 60, now, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_alert_events (id, event_key, link_id, metric, severity, title, started_at, last_seen_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (alert_event_id, "wan-alert-key", link_id, "interface_down", "critical", "Interface down", now, now, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_alert_event_audit (id, event_id, action, created_at) VALUES (?, ?, ?, ?)",
+            ("wan-alert-audit", alert_event_id, "acknowledge", now),
+        )
+        conn.execute(
+            "INSERT INTO wan_correlation_events (id, correlation_group, root_cause_code, title, starts_at, last_seen_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (correlation_event_id, f"link:{link_id}", "egress_device_fault", "Egress device fault", now, now, now, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_correlation_evidence (id, event_id, source_type, observed_at, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("wan-evidence", correlation_event_id, "wan_current_status", now, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_probe_bindings (id, link_id, target_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            ("wan-binding", link_id, "target-1", now, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_link_group_members (group_id, link_id, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("wan-group", link_id, now, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_maintenance_windows (id, link_id, name, starts_at, ends_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("wan-maintenance", link_id, "Maintenance", now, now, now, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_baselines (id, link_id, weekday, hour, calculated_at) VALUES (?, ?, ?, ?, ?)",
+            ("wan-baseline", link_id, 1, 1, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_capacity_recommendations (id, link_id, recommendation, period_start, period_end, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("wan-capacity", link_id, "Keep current bandwidth", now, now, now, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_link_current_status (link_id, updated_at) VALUES (?, ?)",
+            (link_id, now),
+        )
+        conn.execute(
+            "INSERT INTO wan_link_samples_1m (id, link_id, sampled_at, collection_status, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("wan-sample", link_id, now, "success", now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert delete_wan_link(link_id) is True
+
+    conn = get_db_connection()
+    try:
+        assert conn.execute("SELECT 1 FROM wan_links WHERE id = ?", (link_id,)).fetchone() is None
+        for table, column, value in (
+            ("wan_alert_events", "link_id", link_id),
+            ("wan_alert_rules", "link_id", link_id),
+            ("wan_alert_event_audit", "event_id", alert_event_id),
+            ("wan_correlation_events", "id", correlation_event_id),
+            ("wan_correlation_evidence", "event_id", correlation_event_id),
+            ("wan_probe_bindings", "link_id", link_id),
+            ("wan_link_group_members", "link_id", link_id),
+            ("wan_maintenance_windows", "link_id", link_id),
+            ("wan_baselines", "link_id", link_id),
+            ("wan_capacity_recommendations", "link_id", link_id),
+            ("wan_link_current_status", "link_id", link_id),
+            ("wan_link_samples_1m", "link_id", link_id),
+        ):
+            assert conn.execute(f"SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1", (value,)).fetchone() is None
+    finally:
+        conn.close()
+
+
+def test_device_wan_links_are_removed_before_device_deletion(isolated_db) -> None:
+    from database import get_db_connection
+    from services.wan_link_service import delete_wan_links_for_device
+
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO wan_links (
+                id, link_name, device_id, interface_id, interface_name, if_index,
+                contracted_download_bps, contracted_upload_bps, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("device-wan-link", "Device link", "device-to-delete", "interface-1", "Et0/0", 1, 1_000_000, 1_000_000, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO wan_links (
+                id, link_name, device_id, interface_id, interface_name, if_index,
+                contracted_download_bps, contracted_upload_bps, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("other-device-wan-link", "Other device link", "device-to-keep", "interface-2", "Et0/1", 2, 1_000_000, 1_000_000, now, now),
+        )
+        conn.commit()
+        assert delete_wan_links_for_device(conn, "device-to-delete") == 1
+        assert conn.execute("SELECT 1 FROM wan_links WHERE id = ?", ("device-wan-link",)).fetchone() is None
+        assert conn.execute("SELECT 1 FROM wan_links WHERE id = ?", ("other-device-wan-link",)).fetchone() is not None
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_interface_down_and_rollup_reject_unknown_or_directional_invalid_samples() -> None:
     assert _sample_value({"oper_status": "unknown", "collection_status": "success"}, "interface_down") is False
     assert _sample_value({"oper_status": "down", "collection_status": "partial"}, "interface_down") is False

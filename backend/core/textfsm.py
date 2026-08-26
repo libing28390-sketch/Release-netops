@@ -193,8 +193,17 @@ def resolve_textfsm_parser_platform(platform: str | None, version: str | None = 
     return 'h3c_comware'
 
 
+_HUAWEI_VRP5_FILENAME_PREFIX = 'huawei_vrp5_'
+_LEGACY_HUAWEI_VRP_FILENAME_PREFIX = 'huawei_vrp_'
+
+
 def _canonical_template_filename(filename: str) -> str:
-    """Validate the canonical on-disk TextFSM namespace.
+    """Return the user-facing filename for a supported TextFSM template.
+
+    Huawei VRP's unversioned NTC namespace is the V5 grammar in this catalog.
+    Expose that namespace as ``huawei_vrp5_`` so the version is visible in the
+    template browser, while keeping the old filename as a read-only lookup
+    alias for installed NTC files and existing custom files.
 
     H3C templates must be named with ``h3c_comware`` (or an explicit
     ``h3c_comware_vN`` variant).  Old HP/H3C9 prefixes are not silently
@@ -205,17 +214,51 @@ def _canonical_template_filename(filename: str) -> str:
         raise ValueError(
             'H3C TextFSM 模板必须使用 h3c_comware[_v5|_v7|_v9] 文件名前缀'
         )
+    if (
+        lowered.startswith(_LEGACY_HUAWEI_VRP_FILENAME_PREFIX)
+        and not lowered.startswith('huawei_vrp_unknown_')
+    ):
+        suffix = str(filename)[len(_LEGACY_HUAWEI_VRP_FILENAME_PREFIX):]
+        return f'{_HUAWEI_VRP5_FILENAME_PREFIX}{suffix}'
     return filename
+
+
+def canonical_template_filename(filename: str) -> str:
+    """Expose the stable template filename used by API responses and UI."""
+    return _canonical_template_filename(filename)
+
+
+def _template_filename_aliases(filename: str) -> list[str]:
+    """Return the catalog filename followed by compatible on-disk aliases."""
+    canonical = _canonical_template_filename(filename)
+    aliases = [canonical]
+    if canonical.lower().startswith(_HUAWEI_VRP5_FILENAME_PREFIX):
+        suffix = canonical[len(_HUAWEI_VRP5_FILENAME_PREFIX):]
+        legacy = f'{_LEGACY_HUAWEI_VRP_FILENAME_PREFIX}{suffix}'
+        if legacy not in aliases:
+            aliases.append(legacy)
+    return aliases
+
+
+def _template_catalog_file_sort_key(path: Path) -> tuple[int, str]:
+    """Prefer an explicit V5 filename when both namespaces are present."""
+    lowered = path.name.lower()
+    is_legacy_huawei_vrp = (
+        lowered.startswith(_LEGACY_HUAWEI_VRP_FILENAME_PREFIX)
+        and not lowered.startswith('huawei_vrp_unknown_')
+    )
+    return (1 if is_legacy_huawei_vrp else 0, lowered)
+
 
 # ── 默认命令采集样本映射 ───────────────────────────────────────────
 TEMPLATE_DEFAULT_SAMPLES = {
-    'huawei_vrp_display_memory_usage.textfsm': (
+    'huawei_vrp5_display_memory_usage.textfsm': (
         "Memory utilization statistics at 2026-07-14 10:06:07-08:00\n"
         "System Total Memory Is: 171493452 bytes\n"
         "Total Memory Used Is: 123510940 bytes\n"
         "Memory Using Percentage Is: 72%"
     ),
-    'huawei_vrp_display_cpu_usage.textfsm': (
+    'huawei_vrp5_display_cpu_usage.textfsm': (
         "CPU Usage Stat. Cycle: 10 (Second)\n"
         "CPU utilization for ten seconds: 11.9%\n"
         "one minute: 12.0%\n"
@@ -239,7 +282,7 @@ TEMPLATE_DEFAULT_SAMPLES = {
         "Fan 1 State: Normal\n"
         "Fan 2 State: Absent"
     ),
-    'huawei_vrp_display_fan.textfsm': (
+    'huawei_vrp5_display_fan.textfsm': (
         "Slot  FanID  Status  Speed\n"
         "1     1      Normal  60%\n"
         "1     2      Absent  -"
@@ -342,7 +385,7 @@ def _legacy_file_fallback_enabled() -> bool:
 
 
 def _template_filename_variants(platform: str, command: str) -> list[str]:
-    """Return current custom naming first, then legacy NTC naming."""
+    """Return current names first, then compatible legacy NTC names."""
     commands = [command]
     # Comware V7 has a dedicated description grammar, while V5/V9 can safely
     # reuse their ordinary brief grammar when no version-specific description
@@ -351,14 +394,21 @@ def _template_filename_variants(platform: str, command: str) -> list[str]:
     if str(command or '').strip().lower() == 'display interface brief description':
         commands.append('display interface brief')
 
+    namespaces = [str(platform or '').strip().lower()]
+    if namespaces[0] in {'huawei_vrp', 'huawei_vrp5'}:
+        # ntc-templates and older custom files use the unversioned Huawei
+        # namespace. Keep it as a lookup alias after the explicit V5 name.
+        namespaces = ['huawei_vrp5', 'huawei_vrp']
+
     names: list[str] = []
-    for candidate_command in commands:
-        current = _template_filename(platform, candidate_command)
-        if current not in names:
-            names.append(current)
-        legacy = _legacy_template_filename(platform, candidate_command)
-        if _legacy_file_fallback_enabled() and legacy not in names:
-            names.append(legacy)
+    for namespace in namespaces:
+        for candidate_command in commands:
+            current = _template_filename(namespace, candidate_command)
+            if current not in names:
+                names.append(current)
+            legacy = _legacy_template_filename(namespace, candidate_command)
+            if _legacy_file_fallback_enabled() and legacy not in names:
+                names.append(legacy)
     return names
 
 
@@ -1033,40 +1083,43 @@ def list_templates(
     # 1. 先加载内置模板
     builtin = _get_builtin_templates_dir()
     if builtin:
-        for f in sorted(builtin.glob('*.textfsm')):
+        for f in sorted(builtin.glob('*.textfsm'), key=_template_catalog_file_sort_key):
             info = _parse_template_filename(f.name)
             if info:
-                templates[f.name] = {
+                catalog_filename = _canonical_template_filename(f.name)
+                templates[catalog_filename] = {
                     **_template_catalog_metadata(info),
                     'source': 'builtin',
-                    'filename': f.name,
+                    'filename': catalog_filename,
                     'action_code': template_action_code(f.read_text(encoding='utf-8')),
                 }
 
     # 2. 加载随应用打包的只读默认模板
     packaged = _get_packaged_templates_dir()
     if packaged:
-        for f in sorted(packaged.glob('*.textfsm')):
+        for f in sorted(packaged.glob('*.textfsm'), key=_template_catalog_file_sort_key):
             info = _parse_template_filename(f.name)
             if info:
-                templates[f.name] = {
+                catalog_filename = _canonical_template_filename(f.name)
+                templates[catalog_filename] = {
                     **_template_catalog_metadata(info),
                     'source': 'builtin',
-                    'filename': f.name,
+                    'filename': catalog_filename,
                     'action_code': template_action_code(f.read_text(encoding='utf-8')),
                 }
 
     # 3. 自定义模板覆盖（或新增）
     _CUSTOM_TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-    for f in sorted(_CUSTOM_TEMPLATES_DIR.glob('*.textfsm')):
-            info = _parse_template_filename(f.name)
-            if info:
-                templates[f.name] = {
-                    **_template_catalog_metadata(info),
-                    'source': 'custom',
-                    'filename': f.name,
-                    'action_code': template_action_code(f.read_text(encoding='utf-8')),
-                }
+    for f in sorted(_CUSTOM_TEMPLATES_DIR.glob('*.textfsm'), key=_template_catalog_file_sort_key):
+        info = _parse_template_filename(f.name)
+        if info:
+            catalog_filename = _canonical_template_filename(f.name)
+            templates[catalog_filename] = {
+                **_template_catalog_metadata(info),
+                'source': 'custom',
+                'filename': catalog_filename,
+                'action_code': template_action_code(f.read_text(encoding='utf-8')),
+            }
 
     result = list(templates.values())
 
@@ -1320,6 +1373,12 @@ def _template_platform_candidates(platform: str) -> list[str]:
     }
     normalized = resolve_textfsm_platform(aliases.get(raw, raw)) or ''
     selected = aliases.get(raw, normalized)
+    if selected == 'huawei_vrp5':
+        return ['huawei_vrp5', 'huawei_vrp']
+    if selected == 'huawei_vrp':
+        # The family identity is historically VRP V5. Prefer its explicit
+        # namespace, then retain the existing VRP8 compatibility fallback.
+        return ['huawei_vrp5', 'huawei_vrp', 'huawei_vrpv8']
     if selected.startswith('h3c_comware_v5'):
         # V5 has its own command grammars.  Do not downgrade it to the V7
         # grammar when a V5 template is missing.  A versionless template is
@@ -1544,21 +1603,27 @@ def get_template_content(filename: str) -> tuple[str, str]:
     if not filename.endswith('.textfsm') or '/' in filename or '\\' in filename or '..' in filename:
         raise ValueError(f"非法文件名: {filename}")
 
-    custom_path = _CUSTOM_TEMPLATES_DIR / filename
-    if custom_path.exists():
-        return custom_path.read_text(encoding='utf-8'), 'custom'
+    filename = _canonical_template_filename(filename)
+    aliases = _template_filename_aliases(filename)
+
+    for candidate in aliases:
+        custom_path = _CUSTOM_TEMPLATES_DIR / candidate
+        if custom_path.exists():
+            return custom_path.read_text(encoding='utf-8'), 'custom'
 
     packaged = _get_packaged_templates_dir()
     if packaged:
-        packaged_path = packaged / filename
-        if packaged_path.exists():
-            return packaged_path.read_text(encoding='utf-8'), 'builtin'
+        for candidate in aliases:
+            packaged_path = packaged / candidate
+            if packaged_path.exists():
+                return packaged_path.read_text(encoding='utf-8'), 'builtin'
 
     builtin = _get_builtin_templates_dir()
     if builtin:
-        builtin_path = builtin / filename
-        if builtin_path.exists():
-            return builtin_path.read_text(encoding='utf-8'), 'builtin'
+        for candidate in aliases:
+            builtin_path = builtin / candidate
+            if builtin_path.exists():
+                return builtin_path.read_text(encoding='utf-8'), 'builtin'
 
     raise FileNotFoundError(f"模板不存在: {filename}")
 
@@ -1615,10 +1680,11 @@ def delete_custom_template(filename: str) -> bool:
     if not filename.endswith('.textfsm') or '/' in filename or '\\' in filename or '..' in filename:
         raise ValueError(f"非法文件名: {filename}")
 
-    path = _CUSTOM_TEMPLATES_DIR / filename
-    if path.exists():
-        path.unlink()
-        return True
+    for candidate in _template_filename_aliases(filename):
+        path = _CUSTOM_TEMPLATES_DIR / candidate
+        if path.exists():
+            path.unlink()
+            return True
     return False
 
 

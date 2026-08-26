@@ -22,6 +22,7 @@ from core.textfsm import (
     get_supported_platforms,
     smart_parse_cli,
     template_action_code,
+    canonical_template_filename,
     resolve_textfsm_platform,
     resolve_textfsm_template_namespace,
 )
@@ -121,6 +122,12 @@ _TEXTFSM_ACTION_GROUPS = {
     'get_cpu': ('系统状态监控', 'System status monitoring'),
     'get_memory': ('系统状态监控', 'System status monitoring'),
 }
+# These actions return opaque configuration text rather than structured
+# command output, so they cannot be associated with a TextFSM parser.
+_TEXTFSM_EXCLUDED_ACTION_CODES = frozenset({
+    'get_running_config',
+    'get_startup_config',
+})
 
 
 @router.get('/textfsm/action-options')
@@ -147,6 +154,8 @@ def api_textfsm_action_options(
     items = []
     for definition in iter_action_definitions():
         action_code = str(definition.get('action_code') or '')
+        if action_code in _TEXTFSM_EXCLUDED_ACTION_CODES:
+            continue
         group_zh, group_en = _TEXTFSM_ACTION_GROUPS.get(
             action_code,
             ('其他查询', 'Other queries'),
@@ -186,11 +195,12 @@ def api_get_template(filename: str, _user=require_permission('textfsm', 'view'))
     try:
         content, source = get_template_content(filename)
         from core.textfsm import TEMPLATE_DEFAULT_SAMPLES
-        default_sample = TEMPLATE_DEFAULT_SAMPLES.get(filename, '')
+        display_filename = canonical_template_filename(filename)
+        default_sample = TEMPLATE_DEFAULT_SAMPLES.get(display_filename, '')
         return {
             'success': True,
             'data': {
-                'filename': filename,
+                'filename': display_filename,
                 'content': content,
                 'source': source,
                 'editable': source == 'custom',

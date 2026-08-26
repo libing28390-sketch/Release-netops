@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Search, Terminal, Monitor, Lock, Info, 
   Copy, ShieldCheck, RefreshCw, ChevronLeft, ChevronRight, Send, ChevronDown, UserCheck,
-  Database, Server, Cpu, Key, FolderTree, Globe, X, Eye, EyeOff
+  Database, Server, Cpu, Key, FolderTree, Globe, X, Eye, EyeOff, MapPin, Activity, Wifi
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import TerminalWindow from '../components/access/TerminalWindow';
@@ -213,7 +213,12 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     const methods: AllAccessMethod[] = [];
     const terminalProtocol = getTerminalProtocol(dev);
     if (terminalProtocol === 'SSH') {
-      methods.push('ssh-terminal', 'ssh-web');
+      // A device with only SSH configured should not suggest a second login
+      // surface that has not been configured for the asset. Keep Web SSH for
+      // the combined SSH + HTTP(S) case, where the operator has an explicit
+      // browser-access entry to choose from as well.
+      methods.push('ssh-terminal');
+      if (hasHttpWebAccess(dev)) methods.push('ssh-web');
     } else if (terminalProtocol === 'RDP') {
       methods.push('rdp');
     }
@@ -283,6 +288,13 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     return filteredDevices.slice(start, start + pageSize);
   }, [filteredDevices, currentPage, pageSize]);
 
+  const nodeStats = {
+    total: filteredDevices.length,
+    online: filteredDevices.filter((device) => device.status === 'online').length,
+    terminal: filteredDevices.filter((device) => Boolean(getTerminalProtocol(device))).length,
+    web: filteredDevices.filter((device) => hasHttpWebAccess(device)).length,
+  };
+
   useEffect(() => {
     if (selectedTreeKey !== 'root' && !accessTreeIndex.has(selectedTreeKey)) {
       setSelectedTreeKey('root');
@@ -304,13 +316,20 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     const expanded = expandedTreeKeys.has(node.id);
     const selected = selectedTreeKey === node.id;
     const Icon = node.kind === 'root' ? Database : node.kind === 'site' ? Server : node.kind === 'type' ? Cpu : Key;
+    const iconTone = node.kind === 'root'
+      ? 'bg-cyan-50 text-cyan-600'
+      : node.kind === 'site'
+        ? 'bg-violet-50 text-violet-600'
+        : node.kind === 'type'
+          ? 'bg-amber-50 text-amber-600'
+          : 'bg-emerald-50 text-emerald-600';
     return (
       <div key={node.id}>
-        <div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 16}px` }}>
+        <div className="group relative flex items-center gap-1.5" style={{ paddingLeft: `${depth * 14}px` }}>
           <button
             type="button"
             onClick={() => toggleTreeNode(node)}
-            className="flex h-7 w-6 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-cyan-50 hover:text-cyan-700"
+            className={`flex h-8 w-6 shrink-0 items-center justify-center rounded-lg transition-colors ${node.children.length ? 'text-slate-400 hover:bg-cyan-50 hover:text-cyan-700' : 'pointer-events-none text-transparent'}`}
             aria-label={expanded ? 'Collapse' : 'Expand'}
           >
             {node.children.length ? (expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : <span className="w-3" />}
@@ -318,11 +337,14 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
           <button
             type="button"
             onClick={() => { setSelectedTreeKey(node.id); setCurrentPage(1); }}
-            className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${selected ? 'bg-cyan-50 font-semibold text-cyan-800' : 'text-slate-600 hover:bg-slate-50'}`}
+            aria-current={selected ? 'page' : undefined}
+            className={`flex min-w-0 flex-1 items-center gap-2 rounded-xl border px-2.5 py-2 text-left text-xs transition-all ${selected ? 'border-cyan-200 bg-gradient-to-r from-cyan-50 to-white font-semibold text-cyan-800 shadow-sm' : 'border-transparent text-slate-600 hover:border-slate-100 hover:bg-slate-50'}`}
           >
-            <Icon size={14} className={selected ? 'text-cyan-600' : 'text-slate-400'} />
-            <span className="min-w-0 flex-1 truncate">{node.label}</span>
-            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500">{node.count}</span>
+            <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${selected ? 'bg-cyan-100 text-cyan-700' : iconTone}`}>
+              <Icon size={14} />
+            </span>
+            <span className="min-w-0 flex-1 truncate font-medium">{node.label}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold tabular-nums ${selected ? 'bg-white text-cyan-700 ring-1 ring-cyan-100' : 'bg-slate-100 text-slate-500'}`}>{node.count}</span>
           </button>
         </div>
         {expanded && node.children.length > 0 && (
@@ -427,9 +449,9 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
     if (appType === 'xshell') {
       // 1. Get saved path from Profile Settings (localStorage keys: local_terminal_path, terminal_app)
       let terminalPath = localStorage.getItem('local_terminal_path');
-      let terminalType = localStorage.getItem('terminal_app') || 'xshell';
+      let terminalType = localStorage.getItem('terminal_app') || 'standard';
 
-      if (!terminalPath || terminalPath === '') {
+      if (terminalType !== 'standard' && !terminalPath) {
         showToast(isZh ? '请先在个人信息中配置终端路径' : 'Please configure terminal path in Profile first', 'info');
         return;
       }
@@ -638,8 +660,8 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
     if (target.appType === 'xshell') {
       const terminalPath = localStorage.getItem('local_terminal_path') || '';
-      const terminalType = localStorage.getItem('terminal_app') || 'xshell';
-      if (!terminalPath) {
+      const terminalType = localStorage.getItem('terminal_app') || 'standard';
+      if (terminalType !== 'standard' && !terminalPath) {
         showToast(isZh ? '请先在个人信息中配置终端路径' : 'Please configure terminal path in Profile first', 'info');
         return;
       }
@@ -757,12 +779,21 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
   const renderAssetCell = (dev: Device) => (
     <td className="px-8 py-5">
       <div className="flex items-center gap-4">
-        <div className="rounded-xl bg-slate-50 p-2.5 transition-colors group-hover:bg-cyan-100">
-          <Server className="h-4 w-4 text-slate-400 group-hover:text-[#00bceb]" />
+        <div className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border transition-all ${dev.status === 'online' ? 'border-cyan-100 bg-gradient-to-br from-cyan-50 to-sky-50 text-cyan-600 group-hover:shadow-md group-hover:shadow-cyan-100' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
+          <Server className="h-5 w-5" />
+          <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white ${dev.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
         </div>
-        <div>
-          <div className="text-sm font-bold text-slate-800">{dev.hostname}</div>
-          <div className="mt-0.5 text-[10px] font-bold uppercase tracking-tighter text-slate-400">{dev.platform || 'General Linux'}</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="truncate text-sm font-bold text-slate-800">{dev.hostname}</div>
+            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${dev.status === 'online' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+              {dev.status === 'online' ? (isZh ? '在线' : 'Online') : (isZh ? '离线' : 'Offline')}
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-slate-400">
+            <span className="rounded-md bg-slate-100 px-1.5 py-0.5 uppercase tracking-tight">{dev.platform || 'General Linux'}</span>
+            {dev.vendor && <span className="truncate">{dev.vendor}</span>}
+          </div>
         </div>
       </div>
     </td>
@@ -770,20 +801,31 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
   const renderAddressCell = (dev: Device) => (
     <td className="px-8 py-5">
-      <span className="rounded-md bg-slate-50 px-2 py-1 font-mono text-xs font-bold text-slate-500">{dev.ip_address}</span>
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="rounded-lg bg-slate-50 px-2 py-1 font-mono text-xs font-bold text-slate-600">{dev.ip_address}</span>
+          <span className="font-mono text-[10px] font-semibold text-slate-400">:{dev.management_port || 22}</span>
+        </div>
+        <div className="flex items-center gap-1 text-[10px] font-medium text-slate-400">
+          <MapPin className="h-3 w-3 text-violet-400" />
+          <span className="max-w-[150px] truncate">{dev.site_name || dev.site || (isZh ? '未分配站点' : 'Unassigned site')}</span>
+        </div>
+      </div>
     </td>
   );
 
   const renderCapabilityBadges = (dev: Device) => (
     <div className="flex flex-wrap items-center justify-center gap-1.5">
-      {getSupportedProtocols(dev).map((protocol) => (
-        <span
-          key={protocol}
-          className={`rounded-lg px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${protocol === 'SSH' ? 'bg-emerald-50 text-emerald-700' : protocol === 'RDP' ? 'bg-violet-50 text-violet-700' : 'bg-cyan-50 text-cyan-700'}`}
-        >
-          {protocol}
-        </span>
-      ))}
+      {getSupportedProtocols(dev).length > 0
+        ? getSupportedProtocols(dev).map((protocol) => (
+            <span
+              key={protocol}
+              className={`rounded-lg px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${protocol === 'SSH' ? 'bg-emerald-50 text-emerald-700' : protocol === 'RDP' ? 'bg-violet-50 text-violet-700' : 'bg-cyan-50 text-cyan-700'}`}
+            >
+              {protocol}
+            </span>
+          ))
+        : <span className="text-[10px] font-semibold text-slate-300">—</span>}
     </div>
   );
 
@@ -869,7 +911,9 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
   // ALL is an aggregate view, so the selected access method is kept per row.
   // This prevents an HTTP/HTTPS-capable SSH asset from losing either its Web
-  // SSH or management-page entry just because the user is viewing ALL.
+  // SSH or management-page entry just because the user is viewing ALL. When
+  // there is only one supported method, render its label directly instead of
+  // making the operator open a one-item dropdown.
   const renderAllAccessActions = (dev: Device) => {
     const methods = getAllAccessMethods(dev);
     const selectedMethod = methods.includes(allAccessMethods[dev.id])
@@ -895,21 +939,51 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
       }
     };
 
+    // Keep a dedicated, non-growing slot for the access-method indicator.
+    // A native select has browser-owned internal sizing, so fixing only its
+    // width is not enough to keep the neighbouring actions aligned with the
+    // single-method rows. The outer slot gives both variants the same flex
+    // basis while the static variant remains visibly non-interactive.
+    const methodSlotStyle: React.CSSProperties = {
+      flex: '0 0 92px',
+      width: '92px',
+      minWidth: '92px',
+      maxWidth: '92px',
+    };
+    const methodControl = (
+      <div className="box-border h-[30px] shrink-0" style={methodSlotStyle}>
+        {methods.length > 1 ? (
+          <select
+            aria-label={isZh ? `${dev.hostname} 登录方式` : `${dev.hostname} access method`}
+            value={selectedMethod}
+            onChange={(event) => {
+              const nextMethod = event.target.value as AllAccessMethod;
+              setAllAccessMethods((current) => ({ ...current, [dev.id]: nextMethod }));
+            }}
+            className="box-border h-full w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-600 outline-none transition-colors focus:border-[#00bceb] focus:ring-2 focus:ring-[#00bceb]/10"
+          >
+            {methods.map((method) => (
+              <option key={method} value={method}>{getAllAccessMethodLabel(method)}</option>
+            ))}
+          </select>
+        ) : (
+          <span
+            aria-label={isZh ? `${dev.hostname} 登录方式：${getAllAccessMethodLabel(selectedMethod)}` : `${dev.hostname} access method: ${getAllAccessMethodLabel(selectedMethod)}`}
+            className="box-border inline-flex h-full w-full items-center justify-start gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-600"
+          >
+            {selectedMethod === 'rdp' ? <Monitor className="h-3.5 w-3.5 shrink-0" /> : selectedMethod === 'http' || selectedMethod === 'https' || selectedMethod === 'ssh-web' ? <Globe className="h-3.5 w-3.5 shrink-0" /> : <Terminal className="h-3.5 w-3.5 shrink-0" />}
+            <span className="truncate">{getAllAccessMethodLabel(selectedMethod)}</span>
+          </span>
+        )}
+      </div>
+    );
+
     return (
-      <div className="flex min-w-[420px] flex-nowrap items-center justify-center gap-2 whitespace-nowrap">
-        <select
-          aria-label={isZh ? `${dev.hostname} 登录方式` : `${dev.hostname} access method`}
-          value={selectedMethod}
-          onChange={(event) => {
-            const nextMethod = event.target.value as AllAccessMethod;
-            setAllAccessMethods((current) => ({ ...current, [dev.id]: nextMethod }));
-          }}
-          className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold text-slate-600 outline-none transition-colors focus:border-[#00bceb] focus:ring-2 focus:ring-[#00bceb]/10"
-        >
-          {methods.map((method) => (
-            <option key={method} value={method}>{getAllAccessMethodLabel(method)}</option>
-          ))}
-        </select>
+      <div
+        className="flex min-w-[420px] flex-nowrap items-center justify-center gap-2 whitespace-nowrap"
+        style={{ flex: '0 0 420px', width: '420px' }}
+      >
+        {methodControl}
         {renderSelectedActions()}
       </div>
     );
@@ -1083,11 +1157,53 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
 
       {/* Table Section */}
       <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+        <div className="mb-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          {[
+            { label: isZh ? '当前节点' : 'Current nodes', value: nodeStats.total, note: selectedTreeLabel, icon: Database, tone: 'cyan' },
+            { label: isZh ? '在线节点' : 'Online nodes', value: nodeStats.online, note: isZh ? '可直接发起访问' : 'Ready to access', icon: Activity, tone: 'emerald' },
+            { label: isZh ? '终端接入' : 'Terminal access', value: nodeStats.terminal, note: 'SSH / RDP', icon: Terminal, tone: 'violet' },
+            { label: isZh ? 'Web 入口' : 'Web entries', value: nodeStats.web, note: 'HTTP / HTTPS', icon: Wifi, tone: 'amber' },
+          ].map((item) => {
+            const StatIcon = item.icon;
+            const tone = item.tone === 'emerald'
+              ? 'border-emerald-100 bg-emerald-50 text-emerald-600'
+              : item.tone === 'violet'
+                ? 'border-violet-100 bg-violet-50 text-violet-600'
+                : item.tone === 'amber'
+                  ? 'border-amber-100 bg-amber-50 text-amber-600'
+                  : 'border-cyan-100 bg-cyan-50 text-cyan-600';
+            return (
+              <div key={item.label} className="flex min-w-0 items-center gap-3 rounded-2xl border border-slate-200/80 bg-white px-4 py-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${tone}`}>
+                  <StatIcon size={18} />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{item.label}</div>
+                  <div className="mt-0.5 flex items-baseline gap-2">
+                    <span className="text-xl font-black tabular-nums text-slate-800">{item.value}</span>
+                    <span className="truncate text-[10px] font-medium text-slate-400">{item.note}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
         <div className={`grid min-h-[calc(100vh-250px)] grid-cols-1 gap-4 ${accessTreeCollapsed ? 'xl:grid-cols-[56px_minmax(0,1fr)]' : 'xl:grid-cols-[290px_minmax(0,1fr)]'}`}>
           <aside className={`relative rounded-2xl border border-slate-200 bg-white shadow-sm ${accessTreeCollapsed ? 'p-2' : 'p-3'}`}>
             <div className={`mb-3 border-b border-slate-100 px-2 pb-3 ${accessTreeCollapsed ? 'hidden' : ''}`}>
-              <div className="text-sm font-bold text-slate-800">{isZh ? '资产分类树' : 'Asset tree'}</div>
-              <div className="mt-0.5 text-[11px] text-slate-400">{isZh ? '站点 → 类型 → 角色' : 'Site → type → role'}</div>
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-50 to-violet-50 text-cyan-600">
+                  <FolderTree size={16} />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-slate-800">{isZh ? '节点分类' : 'Node groups'}</div>
+                  <div className="mt-0.5 truncate text-[11px] text-slate-400">{isZh ? '按站点、类型和角色定位' : 'Find by site, type, or role'}</div>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50 px-2.5 py-2 text-[10px] font-semibold text-slate-500">
+                <span>{isZh ? '已筛选节点' : 'Filtered nodes'}</span>
+                <span className="font-mono font-bold text-cyan-700">{baseFilteredDevices.length}</span>
+              </div>
             </div>
             <button
               type="button"
@@ -1103,10 +1219,15 @@ export default function AccessCenterTab({ devices, language, showToast }: Access
             </div>
           </aside>
           <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3 text-xs text-slate-500">
-              <Database size={14} className="text-cyan-600" />
-              <span>{isZh ? '当前分类' : 'Current branch'}:</span>
-              <span className="rounded-full bg-cyan-50 px-2.5 py-1 font-semibold text-cyan-700">{selectedTreeLabel}</span>
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-gradient-to-r from-white to-cyan-50/30 px-5 py-3.5 text-xs text-slate-500">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-50 text-cyan-600"><Database size={14} /></span>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{isZh ? '节点清单' : 'Node inventory'}</div>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <span>{isZh ? '当前分类' : 'Current branch'}:</span>
+                  <span className="font-semibold text-cyan-700">{selectedTreeLabel}</span>
+                </div>
+              </div>
               <span className="ml-auto tabular-nums">{totalCount} {isZh ? '台设备' : 'devices'}</span>
             </div>
             <div className="min-h-0 overflow-auto">

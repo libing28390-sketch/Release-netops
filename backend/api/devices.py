@@ -2452,6 +2452,12 @@ def delete_device(device_id: str):
         # ``ip_inventory`` is a legacy derived projection and is not covered
         # by the foreign-key cascade on all supported PostgreSQL installations.
         conn.execute('DELETE FROM ip_inventory WHERE device_id = ?', (device_id,))
+        # WAN links are device-owned records, but the original WAN migrations
+        # intentionally omitted foreign keys for compatibility.  Remove the
+        # link and its telemetry before deleting the device so the outbound
+        # monitoring page cannot retain an undeletable orphan.
+        from services.wan_link_service import delete_wan_links_for_device
+        delete_wan_links_for_device(conn, device_id)
         conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
         # Credentials are managed resources and must survive asset/device
         # deletion. They can only be removed explicitly from the credential

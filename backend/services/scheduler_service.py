@@ -39,6 +39,42 @@ async def run_scheduled_automation_job(job_id: str):
             return
         job = dict(row)
 
+        # NSOT is a composed read-only collection workflow rather than a
+        # user-supplied command.  Run it before resolving the generic device
+        # scope so the scheduled action always follows the same all-device
+        # rules as the manual NSOT trigger.
+        if job.get('action_type') == 'nsot':
+            logger.info("[Scheduler] Starting NSOT scheduled collection: %s (%s)", job['name'], job_id)
+            try:
+                from services.ip_locator_service import run_unified_nsot_sync
+
+                result = await asyncio.to_thread(run_unified_nsot_sync)
+                now = datetime.now().isoformat()
+                conn.execute(
+                    "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                    (now, 'success', job_id),
+                )
+                conn.commit()
+                logger.info(
+                    "[Scheduler] NSOT scheduled collection completed: %s (%s), phases=%s",
+                    job['name'],
+                    job_id,
+                    ','.join(sorted(result)) if isinstance(result, dict) else 'completed',
+                )
+            except Exception as exc:
+                now = datetime.now().isoformat()
+                conn.execute(
+                    "UPDATE scheduled_jobs SET last_run_at = ?, last_run_status = ?, run_count = run_count + 1 WHERE id = ?",
+                    (now, 'failed', job_id),
+                )
+                conn.commit()
+                logger.exception("[Scheduler] NSOT scheduled collection failed: %s (%s)", job['name'], job_id)
+                try:
+                    await notify_job_failure(job, [f"NSOT 事实库采集失败: {exc}"])
+                except Exception:
+                    logger.exception("[Scheduler] Failed to notify NSOT scheduled collection failure")
+            return
+
         # 1. 确定设备范围
         device_ids = []
         if job['device_scope'] == 'all':

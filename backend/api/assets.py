@@ -879,6 +879,12 @@ def _delete_linked_device(conn, asset_id: str) -> None:
     # explicit for compatibility with existing PostgreSQL installations.
     conn.execute("DELETE FROM tag_assignments WHERE resource_type='device' AND resource_id = ?", (device_id,))
 
+    # WAN links are device-owned records without a database FK on older
+    # installations.  Clean them in the same asset-delete transaction before
+    # removing the linked device row.
+    from services.wan_link_service import delete_wan_links_for_device
+    delete_wan_links_for_device(conn, device_id)
+
     conn.execute('DELETE FROM devices WHERE id = ?', (device_id,))
     # Credentials are managed resources, not children of an asset. Deleting
     # an asset only removes the device binding; credential cleanup is an
