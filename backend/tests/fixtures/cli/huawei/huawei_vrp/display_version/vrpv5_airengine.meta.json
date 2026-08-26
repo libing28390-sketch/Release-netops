@@ -1,0 +1,13 @@
+{
+  "vendor": "Huawei",
+  "platform": "huawei_vrp",
+  "software_family": "VRP5",
+  "model": "AirEngine8760-X1-PRO",
+  "command": "display version",
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100457376/b2944170/display-version",
+  "source_title": "display version - Huawei Command Reference",
+  "source_section": "Example",
+  "expected_record_count": 1,
+  "expected_fields": ["VRP_VERSION", "PRODUCT_VERSION", "MODEL", "UPTIME"]
+}

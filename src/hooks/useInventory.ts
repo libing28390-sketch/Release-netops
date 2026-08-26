@@ -1,0 +1,141 @@
+import React, { useState, useCallback, useRef } from 'react';
+import type { Device } from '../types';
+import { displaySiteLabel } from '../utils/deviceUtils';
+
+export type DeviceFetchMode = 'light' | 'full' | 'paged-light';
+
+export const useInventory = (deviceFetchMode: DeviceFetchMode = 'full') => {
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
+  const [devicesLastUpdatedAt, setDevicesLastUpdatedAt] = useState<number>(0);
+
+  const safeJsonArray = (value: any) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
+  const normalizeDeviceRecord = useCallback((raw: any): Device => {
+    const hostname = typeof raw?.hostname === 'string' && raw.hostname.trim()
+      ? raw.hostname
+      : (typeof raw?.id === 'string' ? raw.id : 'Unknown');
+
+    return {
+      ...raw,
+      id: String(raw?.id || ''),
+      hostname,
+      ip_address: typeof raw?.ip_address === 'string' ? raw.ip_address : '',
+      platform: typeof raw?.platform === 'string' ? raw.platform : 'unknown',
+      status: (raw?.status === 'online' || raw?.status === 'offline' || raw?.status === 'pending') ? raw.status : 'offline',
+      compliance: (raw?.compliance === 'compliant' || raw?.compliance === 'non-compliant' || raw?.compliance === 'unknown') ? raw.compliance : 'unknown',
+      role: typeof raw?.role === 'string' ? raw.role : '',
+      site: displaySiteLabel(raw),
+      model: typeof raw?.model === 'string' ? raw.model : '',
+      version: typeof raw?.version === 'string' ? raw.version : '',
+      sn: typeof raw?.sn === 'string' ? raw.sn : '',
+      uptime: typeof raw?.uptime === 'string' ? raw.uptime : '',
+      connection_method: raw?.connection_method === 'netconf' ? 'netconf' : 'ssh',
+      fan_status: raw?.fan_status === true || raw?.fan_status === 1 || ['true', '1', 'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready'].includes(String(raw?.fan_status || '').trim().toLowerCase())
+        ? true
+        : raw?.fan_status === false || raw?.fan_status === 0 || ['false', '0', 'fail', 'failed', 'warning', 'error', 'down', 'offline', 'alarm'].includes(String(raw?.fan_status || '').trim().toLowerCase())
+          ? false
+          : null,
+      psu_status: raw?.psu_status === true || raw?.psu_status === 1 || ['true', '1', 'ok', 'normal', 'redundant', 'single', 'up', 'running', 'ready'].includes(String(raw?.psu_status || '').trim().toLowerCase())
+        ? true
+        : raw?.psu_status === false || raw?.psu_status === 0 || ['false', '0', 'fail', 'failed', 'warning', 'error', 'down', 'offline', 'alarm'].includes(String(raw?.psu_status || '').trim().toLowerCase())
+          ? false
+          : null,
+      web_access_enabled: raw?.web_access_enabled === true || raw?.web_access_enabled === 1,
+      web_http_enabled: raw?.web_http_enabled === true || raw?.web_http_enabled === 1,
+      web_https_enabled: raw?.web_https_enabled === true || raw?.web_https_enabled === 1,
+      config_history: safeJsonArray(raw?.config_history),
+      interface_data: safeJsonArray(raw?.interface_data),
+      cpu_history: safeJsonArray(raw?.cpu_history),
+      memory_history: safeJsonArray(raw?.memory_history),
+      snmp_metric_profile:
+        raw?.snmp_metric_profile && typeof raw.snmp_metric_profile === 'object'
+          ? {
+              ...raw.snmp_metric_profile,
+              metric_keys: Array.isArray(raw.snmp_metric_profile.metric_keys)
+                ? raw.snmp_metric_profile.metric_keys
+                : [],
+              metric_sources:
+                raw.snmp_metric_profile.metric_sources && typeof raw.snmp_metric_profile.metric_sources === 'object'
+                  ? raw.snmp_metric_profile.metric_sources
+                  : {},
+            }
+          : undefined,
+      health_status: ['healthy', 'warning', 'critical', 'unknown'].includes(String(raw?.health_status)) ? raw.health_status : 'unknown',
+      health_score: typeof raw?.health_score === 'number' ? raw.health_score : Number(raw?.health_score || 0),
+      health_summary: typeof raw?.health_summary === 'string' ? raw.health_summary : '',
+      health_reasons: Array.isArray(raw?.health_reasons) ? raw.health_reasons : [],
+      open_alert_count: typeof raw?.open_alert_count === 'number' ? raw.open_alert_count : Number(raw?.open_alert_count || 0),
+      critical_open_alerts: typeof raw?.critical_open_alerts === 'number' ? raw.critical_open_alerts : Number(raw?.critical_open_alerts || 0),
+      major_open_alerts: typeof raw?.major_open_alerts === 'number' ? raw.major_open_alerts : Number(raw?.major_open_alerts || 0),
+      warning_open_alerts: typeof raw?.warning_open_alerts === 'number' ? raw.warning_open_alerts : Number(raw?.warning_open_alerts || 0),
+      interface_down_count: typeof raw?.interface_down_count === 'number' ? raw.interface_down_count : Number(raw?.interface_down_count || 0),
+      interface_flap_count: typeof raw?.interface_flap_count === 'number' ? raw.interface_flap_count : Number(raw?.interface_flap_count || 0),
+      high_util_interface_count: typeof raw?.high_util_interface_count === 'number' ? raw.high_util_interface_count : Number(raw?.high_util_interface_count || 0),
+      interface_error_count: typeof raw?.interface_error_count === 'number' ? raw.interface_error_count : Number(raw?.interface_error_count || 0),
+    } as Device;
+  }, []);
+
+  const lastFetchId = useRef(0);
+
+  const fetchDevicesData = useCallback(async (assetType: string = 'all') => {
+    const fetchId = ++lastFetchId.current;
+    try {
+      const requestMode = deviceFetchMode === 'paged-light' ? 'light' : deviceFetchMode;
+      const params = new URLSearchParams({ mode: requestMode });
+      if (deviceFetchMode === 'paged-light') {
+        params.set('page', '1');
+        params.set('page_size', '30');
+      }
+      if (assetType !== 'all') {
+        params.set('asset_type', assetType);
+      } else if (deviceFetchMode === 'paged-light') {
+        params.set('asset_type', 'network_device');
+      }
+      
+      const devicesRes = await fetch(`/api/devices?${params.toString()}`);
+      if (!devicesRes.ok) return;
+      const devs = await devicesRes.json();
+      
+      // Safety Check: Prevent older or mismatched mode requests from overwriting state
+      if (fetchId !== lastFetchId.current) return;
+
+      setDevices((Array.isArray(devs) ? devs : []).map((d: any) => {
+        const normalized = normalizeDeviceRecord(d);
+        if (deviceFetchMode !== 'full') {
+          return {
+            ...normalized,
+            config_history: [],
+          };
+        }
+        return normalized;
+      }));
+      setDevicesLastUpdatedAt(Date.now());
+    } catch (error) {
+      if (fetchId === lastFetchId.current) {
+        console.error('Failed to fetch devices data:', error);
+      }
+    }
+  }, [deviceFetchMode, normalizeDeviceRecord]);
+
+  return {
+    devices,
+    setDevices,
+    selectedDevice,
+    setSelectedDevice,
+    devicesLastUpdatedAt,
+    fetchDevicesData,
+    normalizeDeviceRecord
+  };
+};

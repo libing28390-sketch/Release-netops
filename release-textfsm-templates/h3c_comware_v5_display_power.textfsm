@@ -1,0 +1,22 @@
+Value Filldown SLOT (\d+)
+Value Required POWER_ID (\d+)
+Value Required STATUS (\S+)
+Value TYPE (\S+)
+
+Start
+  ^\s*Device\s+Info\s+on\s+Slot\s+${SLOT}:\s*$$ -> DeviceTable
+  ^\s*Power\s+${POWER_ID}\s*$$ -> Power
+  ^\s*$$
+  ^.*
+
+DeviceTable
+  ^\s*Device\s+ID\.\s+Status\s*$$
+  ^\s*${POWER_ID}\s+${STATUS}\s*$$ -> Record DeviceTable
+  ^\s*$$
+  ^.*
+
+Power
+  ^\s*State\s*:\s*${STATUS}\s*$$
+  ^\s*Type\s*:\s*${TYPE}\s*$$ -> Record Start
+  ^\s*$$
+  ^.*

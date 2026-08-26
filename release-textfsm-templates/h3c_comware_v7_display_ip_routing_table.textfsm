@@ -1,0 +1,19 @@
+Value Filldown DESTINATIONS (\d+)
+Value Filldown ROUTES (\d+)
+Value Filldown DESTINATION (\d+\.\d+\.\d+\.\d+/\d+)
+Value Filldown PROTOCOL (\S+)
+Value Filldown PREFERENCE (\d+)
+Value Filldown COST (\d+)
+Value Required NEXTHOP (\d+\.\d+\.\d+\.\d+)
+Value Required INTERFACE (\S+)
+
+Start
+  ^\s*Destinations\s*:\s*${DESTINATIONS}\s+Routes\s*:\s*${ROUTES}
+  ^\s*Destination/Mask\s+Proto\s+Pre\s+Cost\s+NextHop\s+Interface -> Routes
+  ^.*
+
+Routes
+  ^\s*${DESTINATION}\s+${PROTOCOL}\s+${PREFERENCE}\s+${COST}\s+${NEXTHOP}\s+${INTERFACE}\s*$$ -> Record
+  ^\s+${NEXTHOP}\s+${INTERFACE}\s*$$ -> Record
+  ^\s*$$
+  ^.*

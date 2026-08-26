@@ -1,0 +1,12 @@
+<Sysname>display fan verbose
+Fan-tray verbose state on chassis 2:
+
+Fan-tray 1:
+
+Software version: 105
+Hardware version: Ver.A
+CPLD version: 002
+Fan number: 12
+Temperature: 37 °C
+High temperature alarm threshold: 60 °C
+Low speed alarm threshold: 750 rpm

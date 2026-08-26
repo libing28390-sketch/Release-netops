@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://support.huawei.com/enterprise/en/doc/EDOC1100365019/faf329d5/displaying-the-fan-status",
+  "vendor": "Huawei",
+  "platform": "VRP8",
+  "model_family": "S300/S500/S2700/S5700/S6700",
+  "command": "display temperature all",
+  "source_note": "Official temperature threshold example included in the fan status guide."
+}

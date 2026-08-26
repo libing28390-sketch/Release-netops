@@ -1,0 +1,11 @@
+Value Required MAC_ADDRESS ([0-9A-Fa-f]{4}(?:-[0-9A-Fa-f]{4}){2})
+Value Required VLAN_ID (\d+)
+Value Required STATE (\S+)
+Value Required INTERFACE (\S+)
+Value AGING (\S+)
+
+Start
+  ^MAC\s+Address\s+VLAN\s+ID\s+State\s+Port/Nickname\s+Aging\s*$$
+  ^${MAC_ADDRESS}\s+${VLAN_ID}\s+${STATE}\s+${INTERFACE}\s+${AGING}\s*$$ -> Record
+  ^\s*$$
+  ^. -> Error

@@ -1,0 +1,20 @@
+Value Required INTERFACE (\S+)
+Value TRANSCEIVER_TYPE (.+)
+Value CONNECTOR_TYPE (.+)
+Value WAVELENGTH (\S+)
+Value TRANSFER_DISTANCE (.+)
+Value DIGITAL_DIAGNOSTIC_MONITORING (\S+)
+Value VENDOR_NAME (\S+)
+Value ORDERING_NAME (\S+)
+
+Start
+  ^${INTERFACE}\s+transceiver\s+information:
+  ^\s*Transceiver\s+Type\s*:\s*${TRANSCEIVER_TYPE}
+  ^\s*Connector\s+Type\s*:\s*${CONNECTOR_TYPE}
+  ^\s*Wavelength\(nm\)\s*:\s*${WAVELENGTH}
+  ^\s*Transfer\s+Distance(?:\(m\)|\(km\))?\s*:\s*${TRANSFER_DISTANCE}
+  ^\s*Digital\s+Diagnostic\s+Monitoring\s*:\s*${DIGITAL_DIAGNOSTIC_MONITORING}
+  ^\s*Vendor\s+Name\s*:\s*${VENDOR_NAME} -> Record
+  ^\s*Ordering\s+Name\s*:\s*${ORDERING_NAME}
+  ^\s*$$
+  ^.*

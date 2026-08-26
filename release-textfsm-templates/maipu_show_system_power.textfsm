@@ -1,0 +1,11 @@
+Value Required POWER_ID (\d+)
+Value ONLINE (\S+)
+Value STATUS (\S+)
+Value LAST_ALARM (\S+)
+Value DESCRIPTION (.*)
+
+Start
+  ^\s*System Power Information\(Power\s+${POWER_ID}\s+-\s+${ONLINE}\)
+  ^\s*Status:\s+${STATUS}
+  ^\s*Last-Alarm:\s+${LAST_ALARM}
+  ^\s*Description:\s+${DESCRIPTION} -> Record

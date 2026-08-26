@@ -1,0 +1,9 @@
+{
+  "source_type": "official_vendor_documentation",
+  "source_url": "https://www.cisco.com/c/en/us/td/docs/routers/ios/config/17-x/syst-mgmt/b-system-management/m_bsm-time-calendar-set.html",
+  "vendor": "Cisco",
+  "platform": "IOS-XE",
+  "model_family": "IOS-XE routers",
+  "command": "show ntp status",
+  "source_note": "Official Cisco IOS XE 17.x system management guide example."
+}

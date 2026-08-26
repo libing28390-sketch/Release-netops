@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 100 100" role="img" aria-labelledby="title desc">
+  <title id="title">Cisco style Layer 3 switch icon</title>
+  <desc id="desc">Tall, symmetrical Cisco-blue switch icon with alternating forwarding arrows and a compact eight-direction Layer 3 symbol.</desc>
+
+  <!-- Tall rectangular chassis, centered inside a square canvas -->
+  <rect x="18" y="5" width="64" height="90" fill="#0A9AD9" stroke="#0076A8" stroke-width="1.8"/>
+  <line x1="18" y1="34" x2="82" y2="34" stroke="#0076A8" stroke-width="1.8"/>
+
+  <!-- Alternating forwarding arrows in the upper panel -->
+  <g fill="#FFFFFF">
+    <!-- right -->
+    <path d="M52 8.8H68V6L77 11.3L68 16.6V13.8H52Z"/>
+    <!-- left -->
+    <path d="M48 14.7H32V11.9L23 17.2L32 22.5V19.7H48Z"/>
+    <!-- right -->
+    <path d="M52 20.6H68V17.8L77 23.1L68 28.4V25.6H52Z"/>
+    <!-- left -->
+    <path d="M48 26.5H32V23.7L23 29L32 34.3V31.5H48Z"/>
+  </g>
+
+  <!-- Radial arrow shafts -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="3.1" stroke-linecap="square">
+    <line x1="50" y1="55.5" x2="50" y2="40.5"/>
+    <line x1="50" y1="78.5" x2="50" y2="88.2"/>
+    <line x1="38.5" y1="67" x2="26.8" y2="67"/>
+    <line x1="61.5" y1="67" x2="73.2" y2="67"/>
+    <line x1="41.9" y1="58.9" x2="32.4" y2="49.4"/>
+    <line x1="58.1" y1="58.9" x2="67.6" y2="49.4"/>
+    <line x1="41.9" y1="75.1" x2="32.4" y2="84.6"/>
+    <line x1="58.1" y1="75.1" x2="67.6" y2="84.6"/>
+  </g>
+
+  <!-- Radial arrowheads -->
+  <g fill="#FFFFFF">
+    <polygon points="50,35.2 45.8,42 54.2,42"/>
+    <polygon points="50,93.5 45.8,86.7 54.2,86.7"/>
+    <polygon points="21.5,67 28.3,62.8 28.3,71.2"/>
+    <polygon points="78.5,67 71.7,62.8 71.7,71.2"/>
+    <polygon points="28.4,45.4 35.7,47.2 30.2,52.7"/>
+    <polygon points="71.6,45.4 69.8,52.7 64.3,47.2"/>
+    <polygon points="28.4,88.6 30.2,81.3 35.7,86.8"/>
+    <polygon points="71.6,88.6 64.3,86.8 69.8,81.3"/>
+  </g>
+
+  <!-- Compact center hub -->
+  <circle cx="50" cy="67" r="11.5" fill="#E84362" stroke="#FFFFFF" stroke-width="1.8"/>
+</svg>
