@@ -44,8 +44,11 @@ import {
 } from './helpers';
 import { normalizeRackToVM, HealthMap, HealthInfo } from './adapters/rackViewModel';
 const Rack3DContainer = React.lazy(() => import('./Rack3D').then(m => ({ default: m.Rack3DContainer })));
+const RackFleetOverview = React.lazy(() => import('./Rack3D/RackFleetOverview').then(m => ({ default: m.RackFleetOverview })));
 import { DevicePortMatrix } from './components/DevicePortMatrix';
+import { RackReadonlyInspector } from './components/RackReadonlyInspector';
 import RackElevation from './components/RackElevation';
+import { useRackReadModel } from './hooks/useRackReadModel';
 
 import DeviceIcon from './components/DeviceIcon';
 import PowerLed from './components/PowerLed';
@@ -72,22 +75,46 @@ interface SiteOption {
 export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const zh = language === 'zh';
 
-  const [racks, setRacks] = useState<Rack[]>([]);
   const [rackTypes, setRackTypes] = useState<RackType[]>([]);
   const [sites, setSites] = useState<SiteOption[]>([]);
   const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([]);
   const [stats, setStats] = useState<RackStats | null>(null);
   const [selectedRackId, setSelectedRackId] = useState('');
-  const [layout, setLayout] = useState<RackLayout | null>(null);
   const [viewSide, setViewSide] = useState<'front' | 'rear'>('front');
-  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
+  const [viewMode, setViewMode] = useState<'2d' | '3d' | 'overview'>('2d');
   const [healthMap, setHealthMap] = useState<HealthMap>({});
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const [dcFilter, setDcFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [allLayouts, setAllLayouts] = useState<RackLayout[]>([]);
+  const [submittedSearch, setSubmittedSearch] = useState('');
+  const [rackPage, setRackPage] = useState(1);
+  const [overviewFilterDraft, setOverviewFilterDraft] = useState({ floor: '', room: '', row: '', health: '' });
+  const [overviewFilters, setOverviewFilters] = useState({ floor: '', room: '', row: '', health: '' });
+  const rackPageSize = viewMode === 'overview' ? 500 : 50;
+
+  const {
+    racks,
+    total: rackTotal,
+    summaryLoading,
+    summaryError,
+    reloadSummaries,
+    layout,
+    layoutLoading,
+    layoutError,
+    loadLayout,
+    invalidateLayout,
+  } = useRackReadModel({
+    page: rackPage,
+    pageSize: rackPageSize,
+    keyword: submittedSearch,
+    siteId: dcFilter,
+    floor: overviewFilters.floor,
+    room: overviewFilters.room,
+    row: overviewFilters.row,
+    health: overviewFilters.health,
+  });
+  const loading = summaryLoading || layoutLoading;
 
   /* -- Zoom / Collapse / Sidebar states -- */
   const [rackScale, setRackScale] = useState(1);
@@ -99,7 +126,6 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [drawerAssetLoading, setDrawerAssetLoading] = useState(false);
   const rackScrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const layoutCacheRef = useRef<Map<string, RackLayout>>(new Map());
   const rackWorkspaceRef = useRef<HTMLDivElement>(null);
   const [isRackFullscreen, setIsRackFullscreen] = useState(false);
 
@@ -141,22 +167,24 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
   const [assetSearch, setAssetSearch] = useState('');
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
 
-  // Set of installed assets/devices to prevent duplicate installation
+  // Fast local hint for the selected rack. Cross-rack duplicate installation
+  // is enforced transactionally by the backend and no longer requires loading
+  // every rack layout into the browser.
   const installedAssetSet = useMemo(() => {
     const ids = new Set<string>();
     const snSet = new Set<string>();
     const nameSet = new Set<string>();
 
-    allLayouts.forEach(ly => {
-      ly.devices.forEach(d => {
+    if (layout) {
+      layout.devices.forEach(d => {
         if (d.asset_id) ids.add(d.asset_id);
         if (d.serial_number) snSet.add(d.serial_number.trim().toLowerCase());
         if (d.name) nameSet.add(d.name.trim().toLowerCase());
       });
-    });
+    }
 
     return { ids, snSet, nameSet };
-  }, [allLayouts]);
+  }, [layout]);
 
   // Filter available assets
   const availableAssets = useMemo(() => {
@@ -192,59 +220,9 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     return rackTypeById.get(rackTypeId)?.name || '';
   }, [rackTypeById]);
 
-  const filteredRacks = useMemo(() => {
-    let list = racks;
-    if (dcFilter) list = list.filter(r => r.site_id === dcFilter);
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const rackIdsWithMatchingDevices = new Set<string>();
-      for (const ly of allLayouts) {
-        for (const d of ly.devices) {
-          if (
-            d.name.toLowerCase().includes(q) ||
-            d.model.toLowerCase().includes(q) ||
-            d.vendor.toLowerCase().includes(q) ||
-            d.device_role.toLowerCase().includes(q) ||
-            (d.serial_number && d.serial_number.toLowerCase().includes(q)) ||
-            (d.asset_id && d.asset_id.toLowerCase().includes(q))
-          ) {
-            rackIdsWithMatchingDevices.add(ly.id);
-          }
-        }
-      }
-      list = list.filter(r =>
-        r.name.toLowerCase().includes(q) ||
-        siteLabel(r).toLowerCase().includes(q) ||
-        r.datacenter.toLowerCase().includes(q) ||
-        (r.floor || '').toLowerCase().includes(q) ||
-        (r.rack_code || '').toLowerCase().includes(q) ||
-        r.room.toLowerCase().includes(q) ||
-        r.row.toLowerCase().includes(q) ||
-        r.description.toLowerCase().includes(q) ||
-        rackIdsWithMatchingDevices.has(r.id)
-      );
-    }
-    return list;
-  }, [racks, dcFilter, searchQuery, allLayouts, siteLabel]);
+  const filteredRacks = racks;
 
   /* -- Data Fetchers -- */
-
-  const loadRacks = useCallback(async () => {
-    try {
-      layoutCacheRef.current.clear();
-      const data = await fetchJson<Rack[]>(`${API}/racks`);
-      setRacks(data);
-      if (!selectedRackId && data.length > 0) setSelectedRackId(data[0].id);
-      const layouts = await Promise.all(
-        data.map(r => fetchJson<RackLayout>(`${API}/racks/${r.id}/layout`).catch(() => null))
-      );
-      const validLayouts = layouts.filter((l): l is RackLayout => l !== null);
-      validLayouts.forEach(loadedLayout => layoutCacheRef.current.set(loadedLayout.id, loadedLayout));
-      setAllLayouts(validLayouts);
-      const initialRackId = selectedRackId || data[0]?.id || '';
-      if (initialRackId) setLayout(layoutCacheRef.current.get(initialRackId) || null);
-    } catch (e: any) { setError(e.message); }
-  }, [selectedRackId]);
 
   const loadSites = useCallback(async () => {
     try {
@@ -265,9 +243,14 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     try { setStats(await fetchJson<RackStats>(`${API}/racks/stats`)); } catch {}
   }, []);
 
-  const loadHealthOverview = useCallback(async () => {
+  const loadHealthOverview = useCallback(async (rackId: string) => {
+    if (!rackId) {
+      setHealthMap({});
+      return;
+    }
     try {
-      const res = await fetchJson<any>(`${API}/device-health/overview`);
+      const params = new URLSearchParams({ rack_id: rackId });
+      const res = await fetchJson<any>(`${API}/device-health/overview?${params.toString()}`);
       const list = Array.isArray(res) ? res : (res?.items || res?.overview || []);
       const map: HealthMap = {};
       list.forEach((item: any) => {
@@ -330,45 +313,38 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     }
   }, []);
 
-  const loadLayout = useCallback(async (rackId: string) => {
-    if (!rackId) return;
-    const cachedLayout = layoutCacheRef.current.get(rackId);
-    if (cachedLayout) {
-      setLayout(cachedLayout);
-      setError('');
-      return;
+  useEffect(() => { loadDeviceTypes(); loadRackTypes(); loadStats(); loadSites(); }, []);
+  useEffect(() => {
+    if (viewMode !== 'overview' && selectedRackId) {
+      loadLayout(selectedRackId);
+      loadHealthOverview(selectedRackId);
     }
-    setLoading(true);
-    try {
-      const data = await fetchJson<RackLayout>(`${API}/racks/${rackId}/layout`);
-      layoutCacheRef.current.set(rackId, data);
-      setLayout(data);
-      setAllLayouts(prev => {
-        const exists = prev.some(l => l.id === rackId);
-        if (exists) return prev.map(l => l.id === rackId ? data : l);
-        return [...prev, data];
-      });
-      setError('');
-    } catch (e: any) { setError(e.message); setLayout(null); }
-    finally { setLoading(false); }
-
-  }, []);
-
-  useEffect(() => { loadRacks(); loadDeviceTypes(); loadRackTypes(); loadStats(); loadSites(); loadHealthOverview(); }, []);
-  useEffect(() => { if (selectedRackId) loadLayout(selectedRackId); }, [selectedRackId, loadLayout]);
+  }, [selectedRackId, loadHealthOverview, loadLayout, viewMode]);
 
   useEffect(() => {
+    const nextError = summaryError || layoutError;
+    if (nextError) setError(nextError);
+  }, [summaryError, layoutError]);
+
+  useEffect(() => {
+    if (summaryLoading) return;
     if (racks.length === 0) {
       if (selectedRackId) {
         setSelectedRackId('');
-        setLayout(null);
+        void loadLayout('');
       }
       return;
     }
-    if (selectedRackId && !racks.some(r => r.id === selectedRackId)) {
+    if (!selectedRackId || !racks.some(r => r.id === selectedRackId)) {
       setSelectedRackId(racks[0].id);
     }
-  }, [racks, selectedRackId]);
+  }, [loadLayout, racks, selectedRackId, summaryLoading]);
+
+  useEffect(() => {
+    setSelectedDeviceId(null);
+    setDrawerVisible(false);
+    setDrawerAssetDetail(null);
+  }, [selectedRackId]);
 
   useEffect(() => {
     if (!showDeviceModal) return;
@@ -379,7 +355,14 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const installAssetsCanLoadMore = assetTotal > 0 && assets.length < assetTotal;
 
-  const refresh = () => { loadRacks(); loadRackTypes(); loadStats(); loadHealthOverview(); };
+  const refresh = () => {
+    invalidateLayout();
+    reloadSummaries();
+    if (selectedRackId) void loadLayout(selectedRackId, true);
+    loadRackTypes();
+    loadStats();
+    if (selectedRackId) loadHealthOverview(selectedRackId);
+  };
 
   const applyRackTypeToForm = (rackTypeId: string) => {
     const rt = rackTypeById.get(rackTypeId);
@@ -541,9 +524,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
 
   const handleExport = () => {
     try {
-      const rows = filteredRacks.map(r => {
-        const ly = allLayouts.find(l => l.id === r.id);
-        return {
+      const rows = filteredRacks.map(r => ({
           [zh ? '机柜类型' : 'Rack Type']: getRackTypeName(r.rack_type_id),
           [zh ? '宽度(mm)' : 'Width(mm)']: r.width_mm || 0,
           [zh ? '深度(mm)' : 'Depth(mm)']: r.depth_mm || 0,
@@ -556,13 +537,12 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
           [zh ? '列' : 'Row']: r.row || '',
           [zh ? '总U位' : 'Total U']: r.total_u,
           [zh ? '最大功率(W)' : 'Max Power(W)']: r.power_capacity_watts || (r as any).power_capacity_w || 0,
-          [zh ? '已用U位' : 'Used U']: ly?.total_used ?? 0,
-          [zh ? '可用U位' : 'Available U']: ly?.available_u ?? r.total_u,
+          [zh ? '已用U位' : 'Used U']: r.used_u,
+          [zh ? '可用U位' : 'Available U']: r.available_u,
           [zh ? '散热区域' : 'Cooling Zone']: (r as any).cooling_zone || '',
           [zh ? '状态' : 'Status']: r.status || 'active',
           [zh ? '备注' : 'Remarks']: r.remarks || r.description || ''
-        };
-      });
+        }));
       const ws = XLSX.utils.json_to_sheet(rows);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Racks');
@@ -747,9 +727,10 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
       await deleteJson(`${API}/racks/${rackId}`);
       if (selectedRackId === rackId) {
         setSelectedRackId('');
-        setLayout(null);
+        await loadLayout('');
       }
-      await loadRacks();
+      invalidateLayout(rackId);
+      reloadSummaries();
       loadStats();
     } catch (e: any) {
       setError(e.message);
@@ -860,7 +841,11 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         serial_number: deviceForm.serial_number || '',
         asset_id: deviceForm.asset_id || '',
       });
-      closeInstallModal(); loadLayout(selectedRackId); loadStats();
+      closeInstallModal();
+      invalidateLayout(selectedRackId);
+      await loadLayout(selectedRackId, true);
+      reloadSummaries();
+      loadStats();
     } catch (e: any) { setFormError(e.message); }
   };
 
@@ -881,7 +866,9 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         setDrawerAssetDetail(null);
         setDrawerAssetLoading(false);
       }
-      loadLayout(selectedRackId);
+      invalidateLayout(selectedRackId);
+      await loadLayout(selectedRackId, true);
+      reloadSummaries();
       loadStats();
     } catch (e: any) {
       setError(e.message);
@@ -922,10 +909,13 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
     const { deviceId, newU } = confirmMoveDevice;
     try {
       await putJson(`${API}/rack-devices/${deviceId}`, { start_u: newU });
-      loadLayout(selectedRackId);
+      invalidateLayout(selectedRackId);
+      await loadLayout(selectedRackId, true);
+      reloadSummaries();
     } catch (e: any) {
       setError(e.message);
-      loadLayout(selectedRackId);
+      invalidateLayout(selectedRackId);
+      await loadLayout(selectedRackId, true);
     }
     setConfirmMoveDevice(null);
   }, [confirmMoveDevice, selectedRackId, loadLayout]);
@@ -1250,24 +1240,72 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
           <div className="p-3 space-y-2 border-b" style={{ borderColor: 'var(--card-border)' }}>
             <div className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5" style={{ background: 'var(--app-hover-bg)' }}>
               <Search size={14} style={{ color: 'var(--muted-text)' }} />
-              <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder={zh ? '搜索机柜/设备...' : 'Search rack/device...'} className="flex-1 bg-transparent text-xs outline-none" style={{ color: 'var(--body-text)' }} />
-              {searchQuery && <button onClick={() => setSearchQuery('')}><X size={12} style={{ color: 'var(--muted-text)' }} /></button>}
+              <input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    setRackPage(1);
+                    setSubmittedSearch(searchQuery.trim());
+                  }
+                }}
+                placeholder={zh ? '机柜、设备、型号或序列号' : 'Rack, device, model or serial'}
+                className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+                style={{ color: 'var(--body-text)' }}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSubmittedSearch('');
+                    setRackPage(1);
+                  }}
+                  title={zh ? '清除搜索' : 'Clear search'}
+                >
+                  <X size={12} style={{ color: 'var(--muted-text)' }} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setRackPage(1);
+                  setSubmittedSearch(searchQuery.trim());
+                }}
+                title={zh ? '搜索' : 'Search'}
+                className="rounded p-0.5 hover:bg-cyan-500/10"
+              >
+                <Search size={12} className="text-cyan-500" />
+              </button>
             </div>
             {siteOptions.length > 1 && (
-              <select value={dcFilter} onChange={e => setDcFilter(e.target.value)} className="w-full text-[11px] rounded-lg px-2 py-1.5 outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
+              <select value={dcFilter} onChange={e => { setDcFilter(e.target.value); setRackPage(1); }} className="w-full text-[11px] rounded-lg px-2 py-1.5 outline-none" style={{ background: 'var(--app-hover-bg)', color: 'var(--body-text)', border: '1px solid var(--card-border)' }}>
                 <option value="">{zh ? '全部站点' : 'All Sites'}</option>
                 {siteOptions.map(site => <option key={site.id} value={site.id}>{site.site_code} · {site.site_name}</option>)}
               </select>
             )}
           </div>
           <div className="flex-1 overflow-auto p-1.5 space-y-0.5">
-            {filteredRacks.length === 0 ? (
-              <p className="text-center text-xs py-8" style={{ color: 'var(--muted-text)' }}>{zh ? '暂无机柜' : 'No racks'}</p>
+            {summaryLoading ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-xs" style={{ color: 'var(--muted-text)' }}>
+                <RefreshCw size={13} className="animate-spin" /> {zh ? '正在加载机柜摘要…' : 'Loading rack summaries…'}
+              </div>
+            ) : summaryError ? (
+              <div className="px-3 py-8 text-center text-xs text-amber-600">
+                <p>{zh ? '机柜摘要加载失败' : 'Rack summaries failed to load'}</p>
+                <button type="button" onClick={reloadSummaries} className="mt-2 rounded border border-amber-500/40 px-2 py-1 text-[10px]">
+                  {zh ? '重试' : 'Retry'}
+                </button>
+              </div>
+            ) : filteredRacks.length === 0 ? (
+              <p className="text-center text-xs py-8" style={{ color: 'var(--muted-text)' }}>
+                {submittedSearch || dcFilter ? (zh ? '当前筛选没有匹配机柜' : 'No racks match the current filters') : (zh ? '暂无机柜' : 'No racks')}
+              </p>
             ) : filteredRacks.map(rack => {
-              const ly = allLayouts.find(l => l.id === rack.id);
-              const pUsed = (ly as any)?.power_used_watts ?? 0;
-              const pCap = (ly as any)?.power_capacity_watts ?? 0;
-              const pPct = (ly as any)?.power_utilization_pct ?? 0;
+              const ly = rack;
+              const pUsed = rack.power_used_watts;
+              const pCap = rack.power_capacity_watts || rack.power_capacity_w || 0;
+              const pPct = rack.power_utilization_pct ?? 0;
               return (
                 <div
                   key={rack.id}
@@ -1290,26 +1328,12 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                     <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.total_u}U</span>
                     {(rack.width_mm || rack.depth_mm) && <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rack.width_mm || '-'}×{rack.depth_mm || '-'}mm</span>}
                   </div>
-                  {searchQuery && (() => {
-                    const q = searchQuery.toLowerCase();
-                    const matches = ly?.devices.filter(d =>
-                      d.name.toLowerCase().includes(q) ||
-                      d.model.toLowerCase().includes(q) ||
-                      d.vendor.toLowerCase().includes(q) ||
-                      (d.serial_number && d.serial_number.toLowerCase().includes(q))
-                    ) || [];
-                    return matches.length > 0 ? (
-                      <div className="mt-1 space-y-0.5">
-                        {matches.slice(0, 3).map(m => (
-                          <div key={m.id} className="text-[9px] truncate flex items-center gap-1" style={{ color: '#06b6d4' }}>
-                            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: getNormalizedRoleColor(m.device_role, m.name, m.model).bg }} />
-                            {m.name} <span style={{ color: 'var(--muted-text)' }}>U{m.start_u}</span>
-                          </div>
-                        ))}
-                        {matches.length > 3 && <span className="text-[9px]" style={{ color: 'var(--muted-text)' }}>+{matches.length - 3} {zh ? '更多' : 'more'}</span>}
-                      </div>
-                    ) : null;
-                  })()}
+                  <div className="mt-1 flex items-center justify-between text-[9px]" style={{ color: 'var(--muted-text)' }}>
+                    <span>{rack.device_count} {zh ? '台设备' : 'devices'} · {rack.used_u}/{rack.total_u}U</span>
+                    <span className={rack.data_quality_status === 'complete' ? 'text-emerald-500' : rack.data_quality_status === 'invalid' ? 'text-red-500' : 'text-amber-500'}>
+                      {rack.data_quality_status === 'complete' ? (zh ? '数据完整' : 'Complete') : rack.data_quality_status === 'invalid' ? (zh ? '数据异常' : 'Invalid') : rack.data_quality_status === 'empty' ? (zh ? '空机柜' : 'Empty') : (zh ? '数据部分缺失' : 'Partial')}
+                    </span>
+                  </div>
                   {ly && (
                     <div className="mt-1.5 pt-1.5 border-t border-black/5 dark:border-white/5 space-y-1">
                       <div className="flex items-center justify-between text-[10px]">
@@ -1345,11 +1369,138 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
               );
             })}
           </div>
+          <div className="flex items-center justify-between border-t px-2.5 py-2 text-[10px]" style={{ borderColor: 'var(--card-border)', color: 'var(--muted-text)' }}>
+            <span>{zh ? `共 ${rackTotal} 个` : `${rackTotal} total`}</span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={rackPage <= 1 || summaryLoading}
+                onClick={() => setRackPage(page => Math.max(1, page - 1))}
+                className="rounded border px-1.5 py-0.5 disabled:opacity-35"
+                style={{ borderColor: 'var(--card-border)' }}
+              >
+                ‹
+              </button>
+              <span>{rackPage}/{Math.max(1, Math.ceil(rackTotal / rackPageSize))}</span>
+              <button
+                type="button"
+                disabled={rackPage * rackPageSize >= rackTotal || summaryLoading}
+                onClick={() => setRackPage(page => page + 1)}
+                className="rounded border px-1.5 py-0.5 disabled:opacity-35"
+                style={{ borderColor: 'var(--card-border)' }}
+              >
+                ›
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Center: rack elevation */}
         <div className="flex-1 rounded-xl overflow-hidden flex flex-col relative" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
-          {selectedRack && layout ? (
+          {viewMode === 'overview' ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5" style={{ borderColor: 'var(--card-border)' }}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-bold" style={{ color: 'var(--heading-text)' }}>
+                    {zh ? '多机柜逻辑总览' : 'Multi-rack Logical Overview'}
+                  </h3>
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-600">
+                    {zh ? '推断位置 · 只读摘要' : 'Inferred positions · read-only summaries'}
+                  </span>
+                  <div className="flex items-center rounded-lg p-0.5" style={{ background: 'var(--app-hover-bg)', border: '1px solid var(--card-border)' }}>
+                    <button type="button" onClick={() => setViewMode('2d')} className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>
+                      <Columns3 size={11} /> 2D
+                    </button>
+                    <button type="button" onClick={() => setViewMode('3d')} className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold" style={{ color: 'var(--muted-text)' }}>
+                      <Box size={11} /> {zh ? '单机柜 3D' : 'Single 3D'}
+                    </button>
+                    <button type="button" className="flex items-center gap-1 rounded-md bg-cyan-600 px-2 py-1 text-[10px] font-semibold text-white shadow-sm">
+                      <LayoutGrid size={11} /> {zh ? '逻辑总览' : 'Overview'}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  {(['floor', 'room', 'row'] as const).map(field => (
+                    <input
+                      key={field}
+                      value={overviewFilterDraft[field]}
+                      onChange={event => setOverviewFilterDraft(current => ({ ...current, [field]: event.target.value }))}
+                      placeholder={field === 'floor' ? (zh ? '楼层' : 'Floor') : field === 'room' ? (zh ? '机房' : 'Room') : (zh ? '行/列' : 'Row')}
+                      className="w-20 rounded-lg border px-2 py-1 text-[10px] outline-none"
+                      style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}
+                    />
+                  ))}
+                  <select
+                    value={overviewFilterDraft.health}
+                    onChange={event => setOverviewFilterDraft(current => ({ ...current, health: event.target.value }))}
+                    className="rounded-lg border px-2 py-1 text-[10px] outline-none"
+                    style={{ background: 'var(--app-hover-bg)', borderColor: 'var(--card-border)', color: 'var(--body-text)' }}
+                  >
+                    <option value="">{zh ? '全部健康状态' : 'All health'}</option>
+                    <option value="healthy">{zh ? '健康' : 'Healthy'}</option>
+                    <option value="offline">{zh ? '离线' : 'Offline'}</option>
+                    <option value="partial">{zh ? '部分监控' : 'Partial'}</option>
+                    <option value="unknown">{zh ? '未知' : 'Unknown'}</option>
+                    <option value="empty">{zh ? '空机柜' : 'Empty'}</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOverviewFilters({ ...overviewFilterDraft });
+                      setRackPage(1);
+                    }}
+                    className="rounded-lg bg-cyan-600 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-cyan-700"
+                  >
+                    {zh ? '应用' : 'Apply'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const emptyFilters = { floor: '', room: '', row: '', health: '' };
+                      setOverviewFilterDraft(emptyFilters);
+                      setOverviewFilters(emptyFilters);
+                      setRackPage(1);
+                    }}
+                    className="rounded-lg border px-2.5 py-1 text-[10px]"
+                    style={{ borderColor: 'var(--card-border)', color: 'var(--muted-text)' }}
+                  >
+                    {zh ? '重置' : 'Reset'}
+                  </button>
+                  <span className="text-[10px]" style={{ color: 'var(--muted-text)' }}>{rackTotal} {zh ? '个结果' : 'results'}</span>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1">
+                {summaryLoading ? (
+                  <div className="flex h-full items-center justify-center gap-2 text-xs" style={{ color: 'var(--muted-text)' }}>
+                    <RefreshCw size={14} className="animate-spin" /> {zh ? '正在加载逻辑总览…' : 'Loading logical overview…'}
+                  </div>
+                ) : summaryError ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-amber-600">
+                    <AlertTriangle size={18} />
+                    <span>{zh ? '逻辑总览摘要加载失败' : 'Logical overview summaries failed to load'}</span>
+                    <button type="button" onClick={reloadSummaries} className="rounded border border-amber-500/40 px-2 py-1">{zh ? '重试' : 'Retry'}</button>
+                  </div>
+                ) : (
+                  <React.Suspense fallback={
+                    <div className="flex h-full items-center justify-center gap-2 text-xs" style={{ color: 'var(--muted-text)' }}>
+                      <RefreshCw size={14} className="animate-spin" /> {zh ? '正在加载 3D 引擎…' : 'Loading 3D engine…'}
+                    </div>
+                  }>
+                    <RackFleetOverview
+                      racks={filteredRacks}
+                      selectedRackId={selectedRackId}
+                      onSelectRack={setSelectedRackId}
+                      onOpenRack={rackId => {
+                        setSelectedRackId(rackId);
+                        setViewMode('3d');
+                      }}
+                      zh={zh}
+                    />
+                  </React.Suspense>
+                )}
+              </div>
+            </>
+          ) : selectedRack && layout ? (
             <>
               <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: 'var(--card-border)' }}>
                 <div className="flex items-center gap-3">
@@ -1380,6 +1531,14 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                     >
                       <Box size={12} />
                       {zh ? '3D 孪生' : '3D'}
+                    </button>
+                    <button
+                      onClick={() => { setRackPage(1); setViewMode('overview'); }}
+                      className="flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-all"
+                      style={{ color: 'var(--muted-text)' }}
+                    >
+                      <LayoutGrid size={12} />
+                      {zh ? '多机柜总览' : 'Overview'}
                     </button>
                   </div>
 
@@ -1506,6 +1665,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
               {drawerVisible && selectedDeviceId && (() => {
                 const device = layout.devices.find(d => d.id === selectedDeviceId);
                 if (!device) return null;
+                const rackDeviceVM = rackVM?.devices.find(item => item.id === selectedDeviceId);
                 const rc = getNormalizedRoleColor(device.device_role, device.name, device.model);
                 const statusInfo = STATUS_LABEL[device.status] || { zh: device.status, en: device.status };
                 const endU = device.start_u + device.u_height - 1;
@@ -1541,7 +1701,19 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                             {zh ? '正在加载资产详情…' : 'Loading asset details...'}
                           </div>
                         )}
-                        {drawerAssetDetail ? (
+                        {viewMode === '3d' ? (
+                          rackDeviceVM ? (
+                            <RackReadonlyInspector
+                              device={rackDeviceVM}
+                              rackUpdatedAt={selectedRack?.updated_at}
+                              zh={zh}
+                            />
+                          ) : (
+                            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600">
+                              {zh ? '当前设备无法生成只读视图模型，请返回 2D 检查布局数据。' : 'A read-only view model could not be built for this device. Check the layout in 2D.'}
+                            </div>
+                          )
+                        ) : drawerAssetDetail ? (
                           <div className="rounded-xl border border-black/10 bg-white p-3">
                             <AssetReadonlyDetailInner asset={drawerAssetDetail} zh={zh} />
                           </div>
@@ -1656,9 +1828,13 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
                         {viewMode === '2d' ? (
                           <button onClick={() => handleRemoveDevice(device.id, device.name)} className="w-full px-3 py-2 rounded-lg text-[12px] font-medium text-red-500 hover:bg-red-50/80">{zh ? '移除设备' : 'Remove'}</button>
                         ) : (
-                          <div className="flex items-center justify-center gap-1.5 rounded-lg bg-cyan-500/10 px-3 py-2 text-[11px] font-semibold text-cyan-600">
-                            <Eye size={12} /> {zh ? '3D 详情为只读，修改请切换到 2D' : '3D details are read-only. Switch to 2D to edit.'}
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setViewMode('2d')}
+                            className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-2 text-[11px] font-semibold text-white hover:bg-cyan-700"
+                          >
+                            <Columns3 size={12} /> {zh ? '在 2D 中查看当前设备' : 'View current device in 2D'}
+                          </button>
                         )}
                       </div>
                     </motion.div>
@@ -1674,7 +1850,7 @@ export const RackManagementTab: React.FC<Props> = ({ language }) => {
         </div>
 
         {/* Right: installed device list */}
-        {showDeviceList && (
+        {showDeviceList && viewMode !== 'overview' && (
           <div className="w-64 flex-shrink-0 rounded-xl overflow-hidden flex flex-col" style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)' }}>
             {!layout ? (
               <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--muted-text)' }}>

@@ -35,6 +35,36 @@ export interface Rack {
   allow_front_rear_mount?: number | boolean;
 }
 
+export type RackSummaryHealth = 'healthy' | 'offline' | 'partial' | 'unknown' | 'empty';
+export type RackSummaryDataQuality = 'complete' | 'partial' | 'invalid' | 'empty';
+
+export interface RackSummary extends Rack {
+  site_label: string;
+  device_count: number;
+  front_used: number;
+  rear_used: number;
+  used_u: number;
+  available_u: number;
+  u_utilization_pct: number | null;
+  power_used_watts: number;
+  power_utilization_pct: number | null;
+  monitored_device_count: number;
+  healthy_device_count: number;
+  offline_device_count: number;
+  unlinked_asset_count: number;
+  unmonitored_device_count: number;
+  invalid_device_count: number;
+  health_status: RackSummaryHealth;
+  data_quality_status: RackSummaryDataQuality;
+}
+
+export interface RackSummaryPage {
+  items: RackSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface RackType {
   id: string;
   name: string;
@@ -197,4 +227,3 @@ export interface RackVM {
 }
 
 export type RackDisplayMode = 'physical' | 'health' | 'role' | 'power';
-

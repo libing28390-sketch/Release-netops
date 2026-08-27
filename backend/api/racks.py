@@ -46,6 +46,48 @@ def api_list_racks(site_id: str = Query('', description="Filter by site"),
         conn.close()
 
 
+@router.get("/racks/summary")
+def api_list_rack_summaries(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    keyword: str = Query('', max_length=200),
+    site_id: str = Query(''),
+    floor: str = Query('', max_length=100),
+    room: str = Query('', max_length=100),
+    row: str = Query('', max_length=50),
+    status: str = Query('', max_length=20),
+    health: str = Query('', pattern='^(|healthy|offline|partial|unknown|empty)$'),
+    _user=require_role("Viewer"),
+):
+    """Paged rack summaries for read-only workbenches and large inventories."""
+    cache_key = ':'.join((
+        'summary', str(page), str(page_size), keyword, site_id,
+        floor, room, row, status, health,
+    ))
+    cache_hit, cached = read_cache.get('rack_page', cache_key)
+    if cache_hit:
+        return cached
+    conn = get_db_connection()
+    try:
+        result = rack_service.list_rack_summaries(
+            conn,
+            page=page,
+            page_size=page_size,
+            keyword=keyword,
+            site_id=site_id,
+            floor=floor,
+            room=room,
+            row=row,
+            status=status,
+            health=health,
+        )
+        response = {"success": True, "data": result, "message": ""}
+        read_cache.set('rack_page', cache_key, response, RACK_CACHE_TTL_SECONDS)
+        return response
+    finally:
+        conn.close()
+
+
 @router.get("/racks/stats")
 def api_rack_stats(_user=require_role("Viewer")):
     cache_hit, cached = read_cache.get('rack_page', 'stats')

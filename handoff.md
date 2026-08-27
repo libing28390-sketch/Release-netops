@@ -502,3 +502,46 @@ git diff --check -- <rack files>
 - `docs/rack-3d-readonly-recommendation.md` 受 `.gitignore` 的 `**/*.md` 规则影响，提交时需要显式 `git add -f`。
 - 生产构建已更新 `dist/index.html`；因用户要求全部改动一起推送，本次统一提交包含当前构建产物。
 - 本轮未改后端和数据库；多机柜摘要接口尚未实现，后续开始该部分时应使用 `netops-backend`，涉及持久模型/索引时同时使用 `netops-data-migrations`。
+
+---
+
+# 2026-08-28 机柜只读工作台实施进度
+
+本轮已完成并准备按用户要求先行推送：
+
+- 单机柜 3D 使用统一只读 Inspector，展示来源、更新时间/过期、U 位、朝向、资产关联、健康、功耗和数据质量。
+- topology 与 IF-MIB 遥测均区分 loading/error/empty/ready，并提供错误重试；不再生成模拟端口或链路。
+- 3D 工具栏保留常用视角，门体、U 标尺、线缆和着色模式归入“更多图层”；“在 2D 中查看”保留当前机柜和设备选择。
+- 新增分页机柜摘要接口，支持 Site/楼层/房间/行/状态/健康/关键词筛选，返回设备数、U/功率、健康和数据质量摘要；完整布局仅在选择机柜后加载。
+- 前端 `useRackReadModel` 使用 AbortController、5 分钟 TTL 和最多 12 个详情缓存；后端事务校验资产不能重复上架。
+- 拓扑和健康读取已限定到当前机柜；不再先下发全局 500 条后由前端过滤。
+- 新增 Site → 楼层 → 房间 → 行 → 机柜的轻量逻辑总览，明确标记 inferred；L0 仅使用 InstancedMesh 渲染摘要，单击定位、双击下钻。
+- 新增迁移 `185 rack_summary_indexes` 及幂等/回滚测试。
+- 修复既有 `get_startup_config` 中文动作契约回归，恢复为“获取启动配置”。
+
+验证结果：
+
+```text
+机柜前端聚焦回归                         8 files / 32 tests passed
+前端全量回归                             46 files / 175 tests passed
+迁移、机柜摘要、拓扑聚焦后端回归           18 passed
+启动配置契约回归                           3 passed
+npm run lint                              passed
+npm run build                             passed（4258 modules）
+git diff --check                          exit 0（仅 LF/CRLF 提示）
+```
+
+50/100/500 摘要基准（`npm run benchmark:rack-fleet`）：
+
+```text
+50：  layout p95 3.648 ms，选择 p95 0.061 ms，实例缓冲 3,800 bytes
+100： layout p95 6.096 ms，选择 p95 0.005 ms，实例缓冲 7,600 bytes
+500： layout p95 21.209 ms，选择 p95 0.010 ms，实例缓冲 38,000 bytes
+请求契约：总览首屏 1 个摘要请求、0 个布局请求；打开单机柜后 1 个布局请求
+```
+
+尚待继续验收：
+
+- 本地前后端健康检查均为 HTTP 200，浏览器已打开登录页；需要登录后完成全屏、搜索/列表/3D 同步选择、图层保持和控制台检查。
+- 24U/42U/48U 的 FOV 数学回归已通过，仍需在真实页面数据具备对应机柜时做视觉复验。
+- 非 platform_registry 全后端回归按正确夹具运行到 11% 时，因用户要求先 push 而主动停止；停止前无失败。platform_registry 仍需按独立 PostgreSQL fixture 单独执行。

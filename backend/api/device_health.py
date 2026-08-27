@@ -10,12 +10,18 @@ router = APIRouter()
 
 
 @router.get('/device-health/overview')
-def device_health_overview():
+def device_health_overview(rack_id: str = Query(default='', max_length=128)):
     conn = get_db_connection()
     try:
-        devices = annotate_devices_with_snmp_profile(load_devices_for_health(conn))
+        normalized_rack_id = rack_id.strip()
+        devices = annotate_devices_with_snmp_profile(
+            load_devices_for_health(conn, rack_id=normalized_rack_id or None)
+        )
         devices = annotate_devices_with_health(conn, devices)
-        return build_health_overview(devices)
+        overview = build_health_overview(devices)
+        if normalized_rack_id:
+            overview['items'] = devices
+        return overview
     finally:
         conn.close()
 

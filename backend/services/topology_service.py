@@ -2571,6 +2571,7 @@ def get_current_links(
     limit: int | None = 5000,
     *,
     site_id: str | None = None,
+    device_ids: list[str] | None = None,
     include_stale: bool = True,
 ) -> list[dict[str, Any]]:
     clauses: list[str] = []
@@ -2578,6 +2579,18 @@ def get_current_links(
     if site_id:
         clauses.append("(COALESCE(NULLIF(sd.site_id, ''), NULLIF(l.source_site_id, ''), '') = ? OR COALESCE(NULLIF(td.site_id, ''), NULLIF(l.target_site_id, ''), '') = ?)")
         params.extend([site_id, site_id])
+    if device_ids is not None:
+        normalized_device_ids = sorted({
+            str(device_id).strip()
+            for device_id in device_ids
+            if device_id is not None and str(device_id).strip()
+        })
+        if not normalized_device_ids:
+            return []
+        placeholders = ','.join('?' for _ in normalized_device_ids)
+        clauses.append(f"sd.id IN ({placeholders}) AND td.id IN ({placeholders})")
+        params.extend(normalized_device_ids)
+        params.extend(normalized_device_ids)
     if not include_stale:
         clauses.append("COALESCE(l.status, 'unknown') <> 'stale'")
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(seconds=TOPOLOGY_LINK_TTL_SECONDS)).replace(microsecond=0).isoformat()

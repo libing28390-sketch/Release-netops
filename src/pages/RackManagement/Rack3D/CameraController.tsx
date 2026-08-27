@@ -21,6 +21,22 @@ interface CameraControllerProps {
   onPresetApplied?: () => void;
 }
 
+export function calculateRackFitDistance(
+  height: number,
+  width: number,
+  verticalFovDegrees: number,
+  aspect: number,
+  padding = 1.18,
+): number {
+  const verticalFov = THREE.MathUtils.degToRad(verticalFovDegrees);
+  const safeAspect = Math.max(0.1, aspect);
+  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * safeAspect);
+  return Math.max(
+    height / (2 * Math.tan(verticalFov / 2)),
+    width / (2 * Math.tan(horizontalFov / 2)),
+  ) * padding;
+}
+
 export const CameraController: React.FC<CameraControllerProps> = ({
   preset,
   rackHeight,
@@ -81,15 +97,9 @@ export const CameraController: React.FC<CameraControllerProps> = ({
   useEffect(() => {
     const centerY = rackHeight / 2;
     const perspectiveFov = camera instanceof THREE.PerspectiveCamera ? camera.fov : 45;
-    const verticalFov = THREE.MathUtils.degToRad(perspectiveFov);
     const aspect = Math.max(0.1, size.width / Math.max(1, size.height));
-    const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
-    const fitDistance = (height: number, width: number, padding = 1.18) => Math.max(
-      height / (2 * Math.tan(verticalFov / 2)),
-      width / (2 * Math.tan(horizontalFov / 2)),
-    ) * padding;
-    const distanceZ = Math.max(12, fitDistance(rackHeight + 1.2, rackWidth + 1.5));
-    const topDistance = Math.max(10, fitDistance(rackDepth + 2, rackWidth + 2, 1.1));
+    const distanceZ = Math.max(12, calculateRackFitDistance(rackHeight + 1.2, rackWidth + 1.5, perspectiveFov, aspect));
+    const topDistance = Math.max(10, calculateRackFitDistance(rackDepth + 2, rackWidth + 2, perspectiveFov, aspect, 1.1));
 
     switch (preset) {
       case 'front':

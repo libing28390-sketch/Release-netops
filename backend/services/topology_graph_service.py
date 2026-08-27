@@ -1333,7 +1333,15 @@ def persist_graph(graph: dict[str, Any]) -> dict[str, int]:
     return {"nodes": len(nodes), "edges": len(stored_edges) if "stored_edges" in locals() else len(edges)}
 
 
-def _graph_rows(conn: Any, tenant_id: str, view: str, site_id: str | None, limit: int, include_stale: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _graph_rows(
+    conn: Any,
+    tenant_id: str,
+    view: str,
+    site_id: str | None,
+    limit: int,
+    include_stale: bool,
+    device_ids: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     view_relation_types = {
         "physical": {"PHYSICAL", "STACK", "IRF", "CSS", "VC"},
         "l2": {"PHYSICAL", "L2_NEIGHBOR", "ENDPOINT", "RING", "STACK", "IRF", "CSS", "VC", "MLAG_PEER", "VPC_PEER"},
@@ -1352,6 +1360,17 @@ def _graph_rows(conn: Any, tenant_id: str, view: str, site_id: str | None, limit
     if site_id:
         node_where.append("(site_id = ? OR id = ? OR node_type = 'SITE')")
         node_params.extend([site_id, f"site:{site_id}"])
+    if device_ids is not None:
+        normalized_device_ids = sorted({
+            str(device_id).strip()
+            for device_id in device_ids
+            if device_id is not None and str(device_id).strip()
+        })
+        if not normalized_device_ids:
+            return [], []
+        device_placeholders = ",".join("?" for _ in normalized_device_ids)
+        node_where.append(f"device_id IN ({device_placeholders})")
+        node_params.extend(normalized_device_ids)
     rows = conn.execute(
         "SELECT id, tenant_id, node_type, canonical_key, display_name, device_id, site_id, role_identity, function, zone, status, metadata_json, layout_override_json, rank, first_seen, last_seen FROM topology_nodes WHERE "
         + " AND ".join(node_where) + " ORDER BY display_name LIMIT ?",
@@ -1417,10 +1436,11 @@ def get_graph(
     site_id: str | None = None,
     limit: int = 5000,
     include_stale: bool = False,
+    device_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     safe_limit = max(1, min(int(limit), 20_000))
     with get_db_connection() as conn:
-        nodes, edges = _graph_rows(conn, tenant_id, view, site_id, safe_limit, include_stale)
+        nodes, edges = _graph_rows(conn, tenant_id, view, site_id, safe_limit, include_stale, device_ids)
         graph = {"nodes": nodes, "edges": edges}
         groups: list[dict[str, Any]] = []
         group_members: list[dict[str, Any]] = []
@@ -1560,10 +1580,11 @@ def get_physical_links(
     site_id: str | None = None,
     limit: int = 5000,
     include_stale: bool = False,
+    device_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     graph = get_graph(
         tenant_id=tenant_id, view="physical", site_id=site_id,
-        limit=limit, include_stale=include_stale,
+        limit=limit, include_stale=include_stale, device_ids=device_ids,
     )
     node_map = {str(node["id"]): node for node in graph.get("nodes") or []}
     links = []

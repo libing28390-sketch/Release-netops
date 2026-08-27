@@ -1,7 +1,7 @@
 import React, { useState, useEffect, memo } from 'react';
-import { Network, ExternalLink } from 'lucide-react';
+import { AlertTriangle, Network, ExternalLink, RefreshCw } from 'lucide-react';
 import { RackDeviceVM } from '../types';
-import { fetchDeviceTelemetry, DeviceTelemetryResult, PhysicalInterfaceItem } from '../adapters/snmpTelemetry';
+import { loadDeviceTelemetry, DeviceTelemetryResult, PhysicalInterfaceItem } from '../adapters/snmpTelemetry';
 
 interface RackDeviceTooltipProps {
   device: RackDeviceVM;
@@ -15,27 +15,28 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
   zh
 }) => {
   const [telemetry, setTelemetry] = useState<DeviceTelemetryResult | null>(null);
-  const [telemetryLoading, setTelemetryLoading] = useState(true);
+  const [telemetryStatus, setTelemetryStatus] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [telemetryReloadKey, setTelemetryReloadKey] = useState(0);
   const [selectedPortName, setSelectedPortName] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setTelemetryLoading(true);
+    setTelemetryStatus('loading');
     setTelemetry(null);
     setSelectedPortName(null);
-    fetchDeviceTelemetry(device.name, device.networkDeviceId || device.assetId || device.id).then(res => {
+    loadDeviceTelemetry(device.name, device.networkDeviceId || device.assetId || device.id).then(result => {
       if (cancelled) return;
-      setTelemetry(res);
-      setTelemetryLoading(false);
-      if (res && res.interfaces && res.interfaces.length > 0) {
-        const firstUp = res.interfaces.find(i => i.status === 'up');
-        setSelectedPortName((firstUp || res.interfaces[0]).name);
+      setTelemetryStatus(result.status);
+      setTelemetry(result.status === 'ready' ? result.data : null);
+      if (result.status === 'ready' && result.data.interfaces.length > 0) {
+        const firstUp = result.data.interfaces.find(i => i.status === 'up');
+        setSelectedPortName((firstUp || result.data.interfaces[0]).name);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [device.assetId, device.id, device.name, device.networkDeviceId]);
+  }, [device.assetId, device.id, device.name, device.networkDeviceId, telemetryReloadKey]);
 
   // Interfaces list
   const interfaces: PhysicalInterfaceItem[] = React.useMemo(() => {
@@ -122,8 +123,10 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
           <div className="flex items-center gap-1 font-semibold text-slate-200">
             <Network size={12} className="text-cyan-400" />
             <span>
-              {telemetryLoading
+              {telemetryStatus === 'loading'
                 ? (zh ? '正在读取接口遥测' : 'Loading interface telemetry')
+                : telemetryStatus === 'error'
+                  ? (zh ? '接口遥测不可用' : 'Interface telemetry unavailable')
                 : interfaces.length > 0
                   ? `${interfaces.length}× ${zh ? '真实接口（IF-MIB）' : 'verified interfaces (IF-MIB)'}`
                   : (zh ? '无接口遥测数据' : 'No interface telemetry')}
@@ -137,9 +140,24 @@ export const RackDeviceTooltip: React.FC<RackDeviceTooltipProps> = memo(({
           )}
         </div>
 
-        {telemetryLoading ? (
+        {telemetryStatus === 'loading' ? (
           <div className="flex h-24 items-center justify-center rounded border border-slate-800 bg-slate-950/70 text-xs text-slate-500">
             {zh ? '正在从监控接口读取真实数据…' : 'Loading verified monitoring data…'}
+          </div>
+        ) : telemetryStatus === 'error' ? (
+          <div className="flex h-24 flex-col items-center justify-center rounded border border-amber-500/30 bg-amber-950/20 px-4 text-center text-xs text-amber-300">
+            <AlertTriangle size={15} className="mb-1" />
+            <span>{zh ? '遥测请求失败，当前接口状态未知' : 'Telemetry request failed; interface state is unknown.'}</span>
+            <button
+              type="button"
+              onClick={event => {
+                event.stopPropagation();
+                setTelemetryReloadKey(value => value + 1);
+              }}
+              className="mt-1.5 flex items-center gap-1 rounded border border-amber-500/40 px-2 py-0.5 text-[10px]"
+            >
+              <RefreshCw size={10} /> {zh ? '重试' : 'Retry'}
+            </button>
           </div>
         ) : interfaces.length === 0 ? (
           <div className="flex h-24 flex-col items-center justify-center rounded border border-dashed border-slate-700 bg-slate-950/70 px-4 text-center text-xs text-slate-500">

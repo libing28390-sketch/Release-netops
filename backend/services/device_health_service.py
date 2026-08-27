@@ -545,11 +545,26 @@ def build_health_overview(devices: list[dict[str, Any]], top_n: int = 8) -> dict
     }
 
 
-def load_devices_for_health(conn, device_id: str | None = None) -> list[dict[str, Any]]:
+def load_devices_for_health(
+    conn,
+    device_id: str | None = None,
+    *,
+    rack_id: str | None = None,
+) -> list[dict[str, Any]]:
     if device_id:
         rows = conn.execute(
             f'SELECT {DEVICE_HEALTH_SELECT} FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = ? ORDER BY d.hostname ASC',
             (device_id,),
+        ).fetchall()
+    elif rack_id:
+        rows = conn.execute(
+            f'''SELECT {DEVICE_HEALTH_SELECT}
+                FROM devices d
+                JOIN rack_devices rd ON rd.asset_id = d.asset_id
+                LEFT JOIN sites s ON s.id = d.site_id
+                WHERE rd.rack_id = ?
+                ORDER BY d.hostname ASC''',
+            (rack_id,),
         ).fetchall()
     else:
         rows = conn.execute(

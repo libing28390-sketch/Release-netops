@@ -15,7 +15,10 @@ import {
   Cable,
   Eye,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  Columns3,
+  RefreshCw,
+  ChevronDown
 } from 'lucide-react';
 import { RackVM, RackDisplayMode, RackDeviceVM } from '../types';
 import { isWebGLAvailable } from './utils/webgl';
@@ -96,10 +99,12 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
   const [rawTopologyLinks, setRawTopologyLinks] = useState<RawTopologyLinkItem[]>([]);
   const [topologyStatus, setTopologyStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [topologyTruncated, setTopologyTruncated] = useState(false);
+  const [topologyReloadKey, setTopologyReloadKey] = useState(0);
   const [hoveredDevice, setHoveredDevice] = useState<RackDeviceVM | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [showDataIssues, setShowDataIssues] = useState(false);
+  const [showLayerMenu, setShowLayerMenu] = useState(false);
 
   const handlePresetChange = (preset: CameraPreset) => {
     setFocusTarget(null);
@@ -135,7 +140,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
     async function loadTopology() {
       setTopologyStatus('loading');
       try {
-        const params = new URLSearchParams({ limit: '500' });
+        const params = new URLSearchParams({ limit: '500', rack_id: rackVM.id });
         if (rackVM.siteId) params.set('site_id', rackVM.siteId);
         const res = await fetch(`${API}/topology/links?${params.toString()}`, {
           headers: authHeaders()
@@ -158,7 +163,7 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [rackVM.siteId]);
+  }, [rackVM.id, rackVM.siteId, topologyReloadKey]);
 
   const topologyLinks: TopologyLinkItem[] = React.useMemo(
     () => normalizeRackTopologyLinks(rawTopologyLinks, rackVM),
@@ -229,6 +234,15 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             <Eye size={11} />
             {zh ? '只读' : 'Read-only'}
           </span>
+          <button
+            type="button"
+            onClick={onFallbackTo2D}
+            className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-slate-300 hover:bg-slate-800 hover:text-white"
+            title={zh ? '切换到 2D，并保留当前机柜和设备选择' : 'Switch to 2D and keep the current rack and device selection'}
+          >
+            <Columns3 size={11} />
+            {zh ? '在 2D 中查看' : 'View in 2D'}
+          </button>
           <div className="w-[1px] h-3.5 bg-slate-700/80" />
           {/* Camera View Presets */}
           <div className="flex items-center gap-1">
@@ -314,33 +328,57 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
 
           <div className="w-[1px] h-3.5 bg-slate-700/80" />
 
-          {/* Door Toggle */}
-          <button
-            onClick={() => setIsDoorOpen(!isDoorOpen)}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-all ${
-              isDoorOpen ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30' : 'hover:bg-slate-800 text-slate-300'
-            }`}
-            title={zh ? '开门 / 关门' : 'Toggle Door'}
-          >
-            {isDoorOpen ? <DoorOpen size={12} /> : <DoorClosed size={12} />}
-            <span>{isDoorOpen ? (zh ? '开门' : 'Open') : (zh ? '关门' : 'Closed')}</span>
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              aria-expanded={showLayerMenu}
+              onClick={() => setShowLayerMenu(value => !value)}
+              className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold transition-colors ${
+                showLayerMenu ? 'bg-cyan-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <Layers size={12} />
+              {zh ? '更多图层' : 'More layers'}
+              <ChevronDown size={11} className={showLayerMenu ? 'rotate-180 transition-transform' : 'transition-transform'} />
+            </button>
 
-          {/* U-labels Toggle */}
-          <button
-            onClick={() => setShowULabels(!showULabels)}
-            className={`flex items-center gap-1 px-1.5 py-1 rounded-lg text-xs font-medium transition-all ${
-              showULabels ? 'bg-cyan-600/20 text-cyan-400 border border-cyan-500/30' : 'hover:bg-slate-800 text-slate-300'
-            }`}
-            title={zh ? 'U 位刻度标尺' : 'U Labels'}
-          >
-            <Layers size={12} />
-          </button>
+            {showLayerMenu && (
+              <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 w-64 space-y-2 rounded-xl border border-slate-700 bg-slate-950/95 p-2.5 shadow-2xl backdrop-blur-xl">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '机柜辅助' : 'Rack helpers'}</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowDoor(value => !value)}
+                      className={`rounded-md px-2 py-1 text-[10px] font-medium ${showDoor ? 'bg-cyan-600/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}
+                    >
+                      {showDoor ? (zh ? '门体显示' : 'Door shown') : (zh ? '门体隐藏' : 'Door hidden')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsDoorOpen(value => !value)}
+                      disabled={!showDoor}
+                      className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium disabled:cursor-not-allowed disabled:opacity-40 ${
+                        isDoorOpen ? 'bg-emerald-600/20 text-emerald-300' : 'bg-slate-800 text-slate-300'
+                      }`}
+                    >
+                      {isDoorOpen ? <DoorOpen size={11} /> : <DoorClosed size={11} />}
+                      {isDoorOpen ? (zh ? '开门' : 'Open') : (zh ? '关门' : 'Closed')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowULabels(value => !value)}
+                      className={`rounded-md px-2 py-1 text-[10px] font-medium ${showULabels ? 'bg-cyan-600/20 text-cyan-300' : 'bg-slate-800 text-slate-400'}`}
+                    >
+                      {zh ? 'U 标尺' : 'U labels'}
+                    </button>
+                  </div>
+                </div>
 
-          <div className="w-[1px] h-3.5 bg-slate-700/80" />
-
-          {/* Cable Mode Selector */}
-          <div className="flex items-center rounded-lg p-0.5 bg-slate-900 border border-slate-800 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '线缆' : 'Cables'}</span>
+                  {/* Cable Mode Selector */}
+                  <div className="flex items-center rounded-lg p-0.5 bg-slate-900 border border-slate-800 text-xs">
             <button
               onClick={() => setCableMode('select')}
               className={`flex items-center gap-1 px-2 py-0.5 rounded-md font-medium transition-all ${
@@ -369,12 +407,13 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             >
               {zh ? '关' : 'Off'}
             </button>
-          </div>
+                  </div>
+                </div>
 
-          <div className="w-[1px] h-3.5 bg-slate-700/80" />
-
-          {/* Display Mode Switcher */}
-          <div className="flex items-center rounded-lg p-0.5 bg-slate-900 border border-slate-800 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{zh ? '着色' : 'Coloring'}</span>
+                  {/* Display Mode Switcher */}
+                  <div className="flex items-center rounded-lg p-0.5 bg-slate-900 border border-slate-800 text-xs">
             <button
               onClick={() => setDisplayMode('physical')}
               className={`px-2 py-0.5 rounded-md font-medium transition-all ${
@@ -412,6 +451,10 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             >
               <Zap size={11} />
             </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="w-[1px] h-3.5 bg-slate-700/80" />
@@ -616,7 +659,12 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
             </div>
           )}
           <div className="w-[1px] h-3 bg-slate-700" />
-          <div className={`flex items-center gap-1 ${topologyStatus === 'error' || topologyTruncated ? 'text-amber-400' : 'text-cyan-300'}`}>
+          <div
+            className={`flex items-center gap-1 ${topologyStatus === 'error' || topologyTruncated ? 'text-amber-400' : 'text-cyan-300'}`}
+            title={topologyTruncated
+              ? (zh ? '拓扑接口仅返回前 500 条；当前机柜可能仍有未展示链路' : 'The topology API returned only the first 500 rows; this rack may have undisplayed links.')
+              : undefined}
+          >
             <Cable size={11} />
             <span>
               {topologyStatus === 'loading'
@@ -628,6 +676,16 @@ export const Rack3DContainer: React.FC<Rack3DContainerProps> = ({
                     : `${zh ? '已验证链路' : 'Verified links'} ${topologyLinks.length}`}
               {topologyTruncated ? (zh ? '（结果已截断）' : ' (truncated)') : ''}
             </span>
+            {topologyStatus === 'error' && (
+              <button
+                type="button"
+                onClick={() => setTopologyReloadKey(value => value + 1)}
+                className="ml-1 flex items-center gap-1 rounded border border-amber-500/40 px-1.5 py-0.5 text-[10px] hover:bg-amber-500/10"
+                title={zh ? '重新请求拓扑数据' : 'Retry topology request'}
+              >
+                <RefreshCw size={10} /> {zh ? '重试' : 'Retry'}
+              </button>
+            )}
           </div>
         </div>
 

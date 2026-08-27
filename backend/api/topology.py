@@ -149,6 +149,7 @@ async def trigger_discovery(
 def get_links(
     limit: int = Query(default=5000, ge=1, le=20000),
     site_id: str | None = Query(default=None),
+    rack_id: str | None = Query(default=None, max_length=128),
     include_stale: bool = Query(default=False),
 ):
     """Return current topology links, optionally including stale evidence.
@@ -159,7 +160,26 @@ def get_links(
     """
     # v3 invalidates responses generated before the physical-link read model
     # started carrying aggregation parent/member fields.
-    cache_key = f'links:v3:{limit}:{site_id or ""}:{int(include_stale)}'
+    normalized_rack_id = str(rack_id or '').strip()
+    device_ids: list[str] | None = None
+    if normalized_rack_id:
+        conn = get_db_connection()
+        try:
+            device_ids = [
+                str(row['id'])
+                for row in conn.execute(
+                    '''SELECT DISTINCT d.id
+                       FROM rack_devices rd
+                       JOIN devices d ON d.asset_id = rd.asset_id
+                       WHERE rd.rack_id = ?
+                       ORDER BY d.id''',
+                    (normalized_rack_id,),
+                ).fetchall()
+            ]
+        finally:
+            conn.close()
+
+    cache_key = f'links:v4:{limit}:{site_id or ""}:{normalized_rack_id}:{int(include_stale)}'
     cache_hit, cached = read_cache.get('topology', cache_key)
     if cache_hit:
         return cached
@@ -170,7 +190,12 @@ def get_links(
     # edge projection intentionally contains only relation facts and would
     # otherwise expand a four-member bundle back into four raw lines.
     try:
-        managed_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
+        managed_links = get_current_links(
+            limit=limit,
+            site_id=site_id,
+            device_ids=device_ids,
+            include_stale=include_stale,
+        )
         graph_read_model = 'legacy_topology_links_aggregation'
     except Exception:
         managed_links = get_physical_links(
@@ -178,17 +203,27 @@ def get_links(
             site_id=site_id,
             limit=limit,
             include_stale=include_stale,
+            device_ids=device_ids,
         )
         graph_read_model = 'evidence_graph_fallback'
     if not managed_links:
-        legacy_links = get_current_links(limit=limit, site_id=site_id, include_stale=include_stale)
+        legacy_links = get_current_links(
+            limit=limit,
+            site_id=site_id,
+            device_ids=device_ids,
+            include_stale=include_stale,
+        )
         if legacy_links:
             managed_links = legacy_links
             graph_read_model = 'legacy_topology_links_fallback'
-    unmanaged = get_unmanaged_neighbors(site_id=site_id)
+    unmanaged = {'unmanaged_nodes': [], 'unmanaged_links': []} if device_ids is not None else get_unmanaged_neighbors(site_id=site_id)
+    node_metadata = get_topology_node_metadata(site_id=site_id)
+    if device_ids is not None:
+        scoped_ids = set(device_ids)
+        node_metadata = {key: value for key, value in node_metadata.items() if key in scoped_ids}
     response = {
         'links': managed_links,
-        'node_metadata': get_topology_node_metadata(site_id=site_id),
+        'node_metadata': node_metadata,
         'unmanaged_nodes': unmanaged.get('unmanaged_nodes', []),
         'unmanaged_links': unmanaged.get('unmanaged_links', []),
         'truncated': len(managed_links) >= limit,

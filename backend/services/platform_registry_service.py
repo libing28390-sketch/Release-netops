@@ -71,7 +71,7 @@ ACTION_DEFINITIONS: tuple[dict[str, Any], ...] = (
     {"action_code": "get_temperature", "name_zh": "环境温度", "name_en": "Environment Temperature", "purpose": "温度健康度", "risk": "low", "consumers": ["inspection", "monitoring"], "fields": ["temperature"], "optional_fields": ["sensor", "status", "slot", "sensor_id", "lower", "warning", "alarm", "lower_limit", "warning_limit", "alarm_limit"], "max_records": 128},
     {"action_code": "get_clock", "name_zh": "系统时钟", "name_en": "System Clock", "purpose": "设备时间", "risk": "low", "consumers": ["inspection"], "fields": ["clock", "timezone"], "max_records": 8},
     {"action_code": "get_running_config", "name_zh": "运行配置", "name_en": "Running Configuration", "purpose": "配置备份和审计", "risk": "sensitive", "consumers": ["configuration", "inspection"], "fields": ["configuration"], "max_records": 1},
-    {"action_code": "get_startup_config", "name_zh": "启动配置", "name_en": "Startup Configuration", "purpose": "启动配置备份和审计", "risk": "sensitive", "consumers": ["configuration", "inspection"], "fields": ["configuration"], "max_records": 1},
+    {"action_code": "get_startup_config", "name_zh": "获取启动配置", "name_en": "Startup Configuration", "purpose": "启动配置备份和审计", "risk": "sensitive", "consumers": ["configuration", "inspection"], "fields": ["configuration"], "max_records": 1},
 )
 
 PARAMETERIZED_ACTION_DEFINITIONS: tuple[dict[str, Any], ...] = (

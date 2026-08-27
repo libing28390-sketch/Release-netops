@@ -3728,6 +3728,8 @@ def _init_db_logic(conn, *, allow_legacy_import: bool = True):
     )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_rack_devices_rack_id ON rack_devices(rack_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_racks_summary_scope ON racks(site_id, floor, room, row, status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rack_devices_rack_asset ON rack_devices(rack_id, asset_id)')
 
     # Inspection Items
     cursor.execute('''

@@ -158,6 +158,254 @@ def list_racks(conn, site_id: str = '', datacenter: str = '') -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+def list_rack_summaries(
+    conn,
+    *,
+    page: int = 1,
+    page_size: int = 50,
+    keyword: str = '',
+    site_id: str = '',
+    floor: str = '',
+    room: str = '',
+    row: str = '',
+    status: str = '',
+    health: str = '',
+) -> dict:
+    """Return a paged rack read model without loading full layouts.
+
+    The page query only returns rack metadata. Device occupancy, power and
+    monitoring coverage are calculated from two bounded batch queries for the
+    selected page, avoiding both N+1 layout requests and invented health data.
+    """
+    page = max(1, int(page))
+    page_size = min(500, max(1, int(page_size)))
+    filters: list[str] = []
+    params: list[object] = []
+
+    if site_id:
+        filters.append("r.site_id = ?")
+        params.append(site_id)
+    if floor:
+        filters.append("r.floor = ?")
+        params.append(floor)
+    if room:
+        filters.append("r.room = ?")
+        params.append(room)
+    if row:
+        filters.append("r.row = ?")
+        params.append(row)
+    if status:
+        filters.append("r.status = ?")
+        params.append(status)
+    if health:
+        offline_condition = "LOWER(COALESCE(d_health.status, '')) IN ('offline', 'unreachable', 'down', 'inactive')"
+        healthy_condition = "LOWER(COALESCE(d_health.status, '')) IN ('online', 'active', 'healthy', 'up')"
+        rack_devices_exist = "EXISTS (SELECT 1 FROM rack_devices rd_health WHERE rd_health.rack_id = r.id)"
+        monitored_exist = """EXISTS (
+            SELECT 1 FROM rack_devices rd_health
+            JOIN devices d_health ON d_health.asset_id = rd_health.asset_id
+            WHERE rd_health.rack_id = r.id
+        )"""
+        offline_exist = f"""EXISTS (
+            SELECT 1 FROM rack_devices rd_health
+            JOIN devices d_health ON d_health.asset_id = rd_health.asset_id
+            WHERE rd_health.rack_id = r.id AND {offline_condition}
+        )"""
+        unmonitored_exist = """EXISTS (
+            SELECT 1 FROM rack_devices rd_health
+            LEFT JOIN devices d_health ON d_health.asset_id = rd_health.asset_id
+            WHERE rd_health.rack_id = r.id AND d_health.id IS NULL
+        )"""
+        nonhealthy_exist = f"""EXISTS (
+            SELECT 1 FROM rack_devices rd_health
+            LEFT JOIN devices d_health ON d_health.asset_id = rd_health.asset_id
+            WHERE rd_health.rack_id = r.id
+              AND (d_health.id IS NULL OR NOT ({healthy_condition}))
+        )"""
+        if health == 'offline':
+            filters.append(offline_exist)
+        elif health == 'healthy':
+            filters.extend((rack_devices_exist, f"NOT ({nonhealthy_exist})"))
+        elif health == 'partial':
+            filters.extend((monitored_exist, unmonitored_exist, f"NOT ({offline_exist})"))
+        elif health == 'unknown':
+            filters.extend((rack_devices_exist, f"NOT ({monitored_exist})"))
+        elif health == 'empty':
+            filters.append(f"NOT ({rack_devices_exist})")
+    if keyword.strip():
+        pattern = f"%{keyword.strip().lower()}%"
+        filters.append(
+            """(
+                LOWER(COALESCE(r.name, '')) LIKE ? OR
+                LOWER(COALESCE(r.rack_code, '')) LIKE ? OR
+                LOWER(COALESCE(r.floor, '')) LIKE ? OR
+                LOWER(COALESCE(r.room, '')) LIKE ? OR
+                LOWER(COALESCE(r.row, '')) LIKE ? OR
+                LOWER(COALESCE(s.site_code, '')) LIKE ? OR
+                LOWER(COALESCE(s.site_name, '')) LIKE ? OR
+                EXISTS (
+                    SELECT 1 FROM rack_devices rd_search
+                    LEFT JOIN device_types dt_search ON dt_search.id = rd_search.device_type_id
+                    WHERE rd_search.rack_id = r.id AND (
+                        LOWER(COALESCE(rd_search.name, '')) LIKE ? OR
+                        LOWER(COALESCE(rd_search.serial_number, '')) LIKE ? OR
+                        LOWER(COALESCE(rd_search.asset_id, '')) LIKE ? OR
+                        LOWER(COALESCE(dt_search.vendor, '')) LIKE ? OR
+                        LOWER(COALESCE(dt_search.model, '')) LIKE ?
+                    )
+                )
+            )"""
+        )
+        params.extend([pattern] * 12)
+
+    where_sql = f" WHERE {' AND '.join(filters)}" if filters else ''
+    count_row = conn.execute(
+        f"""SELECT COUNT(*) AS total
+            FROM racks r LEFT JOIN sites s ON s.id = r.site_id
+            {where_sql}""",
+        tuple(params),
+    ).fetchone()
+    total = int(count_row['total'] if hasattr(count_row, 'keys') else count_row[0])
+    offset = (page - 1) * page_size
+    rows = conn.execute(
+        f"""SELECT
+                r.id, r.name, r.rack_name, r.rack_code, r.site_id,
+                s.site_code, s.site_name, r.datacenter, r.floor, r.room, r.row,
+                r.room_name, r.row_name, r.total_u, r.status,
+                r.power_capacity_w, r.power_capacity_watts,
+                r.max_weight_kg, r.cooling_zone, r.remarks, r.description,
+                r.placement_strategy, r.rack_type_id, r.width_mm, r.depth_mm,
+                r.allow_front_rear_mount, r.created_at, r.updated_at
+            FROM racks r LEFT JOIN sites s ON s.id = r.site_id
+            {where_sql}
+            ORDER BY COALESCE(s.site_code, ''), COALESCE(r.floor, ''),
+                     COALESCE(r.room, ''), COALESCE(r.row, ''), r.name
+            LIMIT ? OFFSET ?""",
+        tuple([*params, page_size, offset]),
+    ).fetchall()
+    rack_items = [_row_to_dict(item) for item in rows]
+    if not rack_items:
+        return {'items': [], 'total': total, 'page': page, 'page_size': page_size}
+
+    rack_ids = [str(item['id']) for item in rack_items]
+    placeholders = ','.join('?' for _ in rack_ids)
+    device_rows = conn.execute(
+        f"""SELECT rd.id, rd.rack_id, rd.asset_id, rd.start_u, rd.position,
+                   rd.status, dt.u_height, dt.power_watts
+            FROM rack_devices rd
+            JOIN device_types dt ON dt.id = rd.device_type_id
+            WHERE rd.rack_id IN ({placeholders})
+            ORDER BY rd.rack_id, rd.start_u""",
+        tuple(rack_ids),
+    ).fetchall()
+    devices_by_rack: dict[str, list[dict]] = {rack_id: [] for rack_id in rack_ids}
+    asset_ids: set[str] = set()
+    for row_item in device_rows:
+        device = _row_to_dict(row_item)
+        devices_by_rack.setdefault(str(device['rack_id']), []).append(device)
+        asset_id_value = str(device.get('asset_id') or '').strip()
+        if asset_id_value:
+            asset_ids.add(asset_id_value)
+
+    monitoring_by_asset: dict[str, list[str]] = {}
+    if asset_ids:
+        asset_placeholders = ','.join('?' for _ in asset_ids)
+        monitoring_rows = conn.execute(
+            f"""SELECT asset_id, status FROM devices
+                WHERE asset_id IN ({asset_placeholders})""",
+            tuple(sorted(asset_ids)),
+        ).fetchall()
+        for monitoring_row in monitoring_rows:
+            monitoring = _row_to_dict(monitoring_row)
+            asset_key = str(monitoring.get('asset_id') or '').strip()
+            if asset_key:
+                monitoring_by_asset.setdefault(asset_key, []).append(
+                    str(monitoring.get('status') or '').lower()
+                )
+
+    offline_states = {'offline', 'unreachable', 'down', 'inactive'}
+    healthy_states = {'online', 'active', 'healthy', 'up'}
+    summaries = []
+    for rack in rack_items:
+        devices = devices_by_rack.get(str(rack['id']), [])
+        front_occupied: set[int] = set()
+        rear_occupied: set[int] = set()
+        invalid_device_count = 0
+        power_used_watts = 0
+        monitored_device_count = 0
+        offline_device_count = 0
+        healthy_device_count = 0
+        unlinked_asset_count = 0
+
+        for device in devices:
+            start_u = int(device.get('start_u') or 0)
+            height_u = max(1, int(device.get('u_height') or 1))
+            end_u = start_u + height_u - 1
+            position = str(device.get('position') or '')
+            if start_u < 1 or end_u > int(rack.get('total_u') or 0) or position not in {'front', 'rear'}:
+                invalid_device_count += 1
+            else:
+                target = front_occupied if position == 'front' else rear_occupied
+                target.update(range(start_u, end_u + 1))
+            power_used_watts += int(device.get('power_watts') or 0)
+
+            asset_id_value = str(device.get('asset_id') or '').strip()
+            if not asset_id_value:
+                unlinked_asset_count += 1
+                continue
+            monitoring_states = monitoring_by_asset.get(asset_id_value, [])
+            if monitoring_states:
+                monitored_device_count += 1
+                if any(state in offline_states for state in monitoring_states):
+                    offline_device_count += 1
+                elif any(state in healthy_states for state in monitoring_states):
+                    healthy_device_count += 1
+
+        occupied = front_occupied | rear_occupied
+        total_u = int(rack.get('total_u') or 0)
+        capacity_watts = int(rack.get('power_capacity_watts') or rack.get('power_capacity_w') or 0)
+        device_count = len(devices)
+        unmonitored_device_count = device_count - monitored_device_count
+        if device_count == 0:
+            health_status = 'empty'
+            data_quality_status = 'empty'
+        elif offline_device_count > 0:
+            health_status = 'offline'
+            data_quality_status = 'invalid' if invalid_device_count else ('partial' if unmonitored_device_count else 'complete')
+        elif monitored_device_count == device_count:
+            health_status = 'healthy'
+            data_quality_status = 'invalid' if invalid_device_count else 'complete'
+        elif monitored_device_count > 0:
+            health_status = 'partial'
+            data_quality_status = 'invalid' if invalid_device_count else 'partial'
+        else:
+            health_status = 'unknown'
+            data_quality_status = 'invalid' if invalid_device_count else 'partial'
+
+        summaries.append({
+            **rack,
+            'site_label': rack.get('site_name') or rack.get('site_code') or rack.get('datacenter') or rack.get('site_id') or '',
+            'device_count': device_count,
+            'front_used': len(front_occupied),
+            'rear_used': len(rear_occupied),
+            'used_u': len(occupied),
+            'available_u': max(0, total_u - len(occupied)),
+            'u_utilization_pct': round(len(occupied) / total_u * 100, 1) if total_u > 0 else None,
+            'power_used_watts': power_used_watts,
+            'power_utilization_pct': round(power_used_watts / capacity_watts * 100, 1) if capacity_watts > 0 else None,
+            'monitored_device_count': monitored_device_count,
+            'healthy_device_count': healthy_device_count,
+            'offline_device_count': offline_device_count,
+            'unlinked_asset_count': unlinked_asset_count,
+            'unmonitored_device_count': unmonitored_device_count,
+            'invalid_device_count': invalid_device_count,
+            'health_status': health_status,
+            'data_quality_status': data_quality_status,
+        })
+
+    return {'items': summaries, 'total': total, 'page': page, 'page_size': page_size}
+
+
 def get_rack(conn, rack_id: str) -> dict:
     row = conn.execute(
         "SELECT r.*, s.site_code, s.site_name FROM racks r LEFT JOIN sites s ON s.id = r.site_id WHERE r.id = ?",
@@ -423,6 +671,36 @@ def _check_u_constraints(conn, rack_id: str, start_u: int, u_height: int,
             )
 
 
+def _check_asset_installation(conn, asset_id: str, exclude_device_id: str = '') -> None:
+    """Prevent one CMDB asset from being installed in multiple rack slots."""
+    normalized_asset_id = (asset_id or '').strip()
+    if not normalized_asset_id:
+        return
+
+    from database import _USE_PG
+    if _USE_PG:
+        # Valid assets share this row lock across racks, serializing concurrent
+        # installation attempts before the duplicate check.
+        conn.execute(
+            "SELECT 1 FROM physical_assets WHERE id = ? FOR UPDATE",
+            (normalized_asset_id,),
+        )
+
+    query = "SELECT id, name, rack_id FROM rack_devices WHERE asset_id = ?"
+    params: list[object] = [normalized_asset_id]
+    if exclude_device_id:
+        query += " AND id != ?"
+        params.append(exclude_device_id)
+    existing = conn.execute(query + " LIMIT 1", tuple(params)).fetchone()
+    if existing:
+        existing_row = _row_to_dict(existing)
+        raise ValueError(
+            "资产已上架："
+            f"'{normalized_asset_id}' 当前位于设备 '{existing_row.get('name') or existing_row.get('id')}'，"
+            "不能重复安装到其他机柜。"
+        )
+
+
 def list_rack_devices(conn, rack_id: str) -> list[dict]:
     """Return all devices in a rack with device type info, sorted by start_u."""
     rows = conn.execute("""
@@ -454,7 +732,8 @@ def create_rack_device(conn, *, name: str, rack_id: str, device_type_id: str,
     dt = get_device_type(conn, device_type_id)
     u_height = dt['u_height']
 
-    # Enforce constraints
+    # Enforce cross-rack asset uniqueness and rack-local U constraints.
+    _check_asset_installation(conn, asset_id)
     _check_u_constraints(conn, rack_id, start_u, u_height, position)
 
     device_id = str(uuid.uuid4())
@@ -479,8 +758,10 @@ def update_rack_device(conn, device_id: str, **fields) -> dict:
     device_type_id = fields.get('device_type_id') or existing['device_type_id']
     start_u = fields.get('start_u') if fields.get('start_u') is not None else existing['start_u']
     position = fields.get('position') or existing['position']
+    asset_id = fields.get('asset_id') if fields.get('asset_id') is not None else existing.get('asset_id', '')
 
     dt = get_device_type(conn, device_type_id)
+    _check_asset_installation(conn, asset_id, exclude_device_id=device_id)
     _check_u_constraints(conn, rack_id, start_u, dt['u_height'], position, exclude_device_id=device_id)
 
     updates = []

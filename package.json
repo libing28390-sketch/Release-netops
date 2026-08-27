@@ -19,6 +19,7 @@
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "tsc --noEmit",
     "test:frontend": "vitest --config vitest.config.ts",
+    "benchmark:rack-fleet": "tsx scripts/benchmark-rack-fleet.ts",
     "dev:internal": "node scripts/dev-internal.mjs",
     "start:internal": "node -e \"const p=process.platform==='win32'?'.venv/Scripts/python.exe':'.venv/bin/python';require('child_process').execSync('cross-env NODE_ENV=production '+p+' backend/main.py',{stdio:'inherit'})\"",
     "release:patch": "npm version patch && git push origin main --tags",
